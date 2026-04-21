@@ -1,5 +1,13 @@
 dist/
 node_modules/
 pnpm-lock.yaml
-docs/specs/
 .beads/
+
+# Hand-authored prose — do not reformat
+docs/specs/
+docs/superpowers/specs/
+docs/superpowers/plans/
+CLAUDE.md
+ONBOARDING.md
+AGENTS.md
+README.md
