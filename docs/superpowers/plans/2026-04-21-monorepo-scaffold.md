@@ -25,6 +25,7 @@
 ## Task 1: Root-level workspace scaffolding
 
 **Files:**
+
 - Create: `package.json`
 - Create: `pnpm-workspace.yaml`
 - Create: `.nvmrc`
@@ -102,6 +103,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 2: Backend package manifest and first install
 
 **Files:**
+
 - Create: `backend/package.json`
 - Created by install: `pnpm-lock.yaml`, `node_modules/`
 
@@ -168,6 +170,7 @@ Note: `node_modules/` is gitignored, so it's not staged. Only `backend/package.j
 ## Task 3: TypeScript configuration
 
 **Files:**
+
 - Create: `backend/tsconfig.json`
 - Create: `backend/tsconfig.build.json`
 
@@ -228,6 +231,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 4: ESLint + Prettier configuration
 
 **Files:**
+
 - Create: `eslint.config.js` (repo root)
 - Create: `.prettierrc.json` (repo root)
 - Create: `.prettierignore` (repo root)
@@ -270,6 +274,7 @@ export default tseslint.config(
 ```
 
 Key choices:
+
 - `projectService: true` lets typescript-eslint auto-discover the tsconfig for each linted file (handles monorepo nested tsconfigs cleanly).
 - `tsconfigRootDir: import.meta.dirname` anchors it to the repo root.
 - `eslintConfigPrettier` must be the **last** element — it overrides earlier formatting rules so Prettier has sole authority on formatting.
@@ -329,6 +334,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 5: Write the failing health-check test (TDD — test first)
 
 **Files:**
+
 - Create: `backend/src/__tests__/server.test.ts`
 
 - [ ] **Step 1: Create the test file**
@@ -366,6 +372,7 @@ The test file is staged in working tree but not committed. The next task impleme
 ## Task 6: Implement the health-check server (TDD — make it pass)
 
 **Files:**
+
 - Create: `backend/src/server.ts`
 
 - [ ] **Step 1: Create `backend/src/server.ts`**
@@ -434,6 +441,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 7: Verify the build produces a runnable artifact
 
 **Files:**
+
 - (none — this verifies existing config)
 
 - [ ] **Step 1: Run build**
@@ -477,6 +485,7 @@ pkill -f "node dist/server.js" || true
 ## Task 8: Replace AGENTS.md with thin pointer
 
 **Files:**
+
 - Modify: `AGENTS.md` (currently beads auto-generated, replace wholesale)
 
 - [ ] **Step 1: Overwrite `AGENTS.md` with thin pointer content**
@@ -516,6 +525,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 9: Dockerfile + local container smoke test
 
 **Files:**
+
 - Create: `backend/Dockerfile`
 - Create: `backend/.dockerignore`
 
@@ -568,6 +578,7 @@ docker build -t mythrun -f backend/Dockerfile .
 Expected: exits 0. The build walks through both stages. Final line: `Successfully tagged mythrun:latest` or similar.
 
 Common failure modes:
+
 - `lockfile is not up to date` → run `pnpm install` locally first so `pnpm-lock.yaml` is current.
 - `EACCES` on COPY → verify the `mythrun` user was created before the COPY (it is, in this Dockerfile).
 - `Cannot find module '/app/dist/server.js'` → the builder's `pnpm build` failed silently. Check builder stage output.
@@ -641,6 +652,7 @@ curl -sS http://localhost:3000/health
 ```
 
 Expected:
+
 - `pnpm install` — exits 0, "Already up to date."
 - `pnpm test` — all tests pass
 - `pnpm typecheck` — exits 0

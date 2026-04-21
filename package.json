@@ -2,7 +2,9 @@
   "name": "mythrun",
   "private": true,
   "packageManager": "pnpm@10.30.3",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

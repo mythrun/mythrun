@@ -173,6 +173,7 @@ Aggregate scripts use `pnpm -r` so verification is one command from repo root re
 ## ESLint config
 
 **`eslint.config.js`** (flat config):
+
 - Extends `@typescript-eslint/strict-type-checked` + `@typescript-eslint/stylistic-type-checked`
 - Extends `eslint-config-prettier` last (disables all formatting rules)
 - Custom rules:
@@ -186,6 +187,7 @@ Aggregate scripts use `pnpm -r` so verification is one command from repo root re
 ## Prettier config
 
 **`.prettierrc.json`**:
+
 ```json
 {
   "semi": false,

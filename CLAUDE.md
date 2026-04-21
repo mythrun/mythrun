@@ -30,6 +30,7 @@ The system has four cognitive tiers plus an offline prep engine. See `docs/specs
 All implementation work follows the spec suite in `docs/specs/`. The specs are the output of months of design and a six-team architecture audit. They are detailed enough to implement from directly.
 
 **Read specs in dependency order:**
+
 1. Architecture Overview (system topology, data model, interface contracts)
 2. Week 0: Ops Foundation (VPC, secrets, CI/CD)
 3. Infrastructure & DevOps (ECS, RDS, Redis config)
@@ -95,6 +96,7 @@ TDD is required for implementation code — write a failing test that defines "d
 Work continuously through implementation batches without stopping for per-task review. Commit and push directly to `main` — no feature branches or PRs unless explicitly requested. The human reviews via `git log` and conversation.
 
 **Stop and ask when:**
+
 - A real design decision comes up that isn't covered by a spec
 - Something fails and the right fix is ambiguous
 - A task requires human action (adding API keys, clicking in AWS console, etc.)
@@ -119,12 +121,14 @@ Work continuously through implementation batches without stopping for per-task r
 There is a working single-player prototype at `/Users/miklos/Desktop/Files/Personal/mythrun-v5/` that validated the core mechanics (dual-thinker, prep engine, enforced ignorance, skill checks, Scribe extraction). **It is reference-only.** The production codebase is a clean rewrite.
 
 What ports from the prototype (see Backend Core spec, section 10 of Pipeline spec):
+
 - LLM prompt templates (`.txt` files, validated through months of iteration)
 - Zod schemas for LLM output validation
 - Universal random table data (JSON)
 - SRD reference data
 
 What does NOT port:
+
 - Any code — everything is rewritten against the new schema (worlds vs campaigns, async Postgres, multiplayer, etc.)
 
 **Do not read the prototype codebase mid-session unless you have a specific question about a validated behavior.** The specs are complete; the prototype is a fallback reference.

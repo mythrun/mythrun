@@ -7,6 +7,7 @@
 A multiplayer AI Dungeon Master that runs D&D 5e campaigns. Players describe a world concept ("a dying kingdom where the sun hasn't risen in a hundred years"), an AI generates the complete setting in minutes, players create characters, and then play D&D in real-time with an AI DM that handles narrative, skill checks, and tactical combat.
 
 **Product targets:**
+
 - 2-5 players per campaign, text-based multiplayer chat
 - Full 5e combat engine with AI-generated voxel battle maps
 - Session-pack billing via Stripe (owner pays, players join free)
@@ -25,21 +26,22 @@ A working single-player prototype exists at `/Users/miklos/Desktop/Files/Persona
 Do NOT try to read all specs at once. Read them in dependency order as you need them:
 
 ### Always read first
+
 1. `CLAUDE.md` (this repo root) — project rules, ZFC principle, workflow conventions
 2. `docs/specs/2026-04-06-production-architecture-overview.md` — the system topology, data model, interface contracts. This is the "constitution" — every other spec conforms to it.
 
 ### Then read when relevant to your current task
 
-| Working on... | Read |
-|--------------|------|
-| AWS setup, Terraform, CI/CD | `2026-04-07-week0-ops-foundation.md` + `2026-04-10-infrastructure-devops.md` + `2026-04-20-setup-guide.md` |
-| Database schema, async Postgres, repository layer, server skeleton | `2026-04-13-backend-core.md` |
-| OAuth, JWT, user registration, invite system | `2026-04-13-auth-users.md` |
-| Stripe, credit ledger, session packs, subscriptions | `2026-04-13-billing-cost-controls.md` |
-| World gen pipeline, character creation, BullMQ jobs | `2026-04-13-world-campaign-pipeline.md` |
-| Live play, WebSockets, SessionController, Fast/Slow Thinker, Scribe | `2026-04-13-multiplayer-session-runtime.md` |
-| Combat system, voxel maps, rules engine | `2026-04-13-combat-engine.md` |
-| Frontend design, onboarding UX, chat UI, combat UI | `2026-04-10-ux-design.md` |
+| Working on...                                                       | Read                                                                                                       |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| AWS setup, Terraform, CI/CD                                         | `2026-04-07-week0-ops-foundation.md` + `2026-04-10-infrastructure-devops.md` + `2026-04-20-setup-guide.md` |
+| Database schema, async Postgres, repository layer, server skeleton  | `2026-04-13-backend-core.md`                                                                               |
+| OAuth, JWT, user registration, invite system                        | `2026-04-13-auth-users.md`                                                                                 |
+| Stripe, credit ledger, session packs, subscriptions                 | `2026-04-13-billing-cost-controls.md`                                                                      |
+| World gen pipeline, character creation, BullMQ jobs                 | `2026-04-13-world-campaign-pipeline.md`                                                                    |
+| Live play, WebSockets, SessionController, Fast/Slow Thinker, Scribe | `2026-04-13-multiplayer-session-runtime.md`                                                                |
+| Combat system, voxel maps, rules engine                             | `2026-04-13-combat-engine.md`                                                                              |
+| Frontend design, onboarding UX, chat UI, combat UI                  | `2026-04-10-ux-design.md`                                                                                  |
 
 ### Supplementary reading (optional but useful)
 
@@ -59,27 +61,19 @@ Until a tracker is configured, the user will coordinate tasks verbally.
 Work implements the specs in this dependency order:
 
 **Phase 0: Foundation**
+
 1. Week 0 (Ops Foundation): AWS account setup, Terraform state backend, VPC, secrets, CI/CD pipeline, first deployed health-check container
 2. Infrastructure & DevOps: ECS services, RDS, Redis, full AWS topology via Terraform
 
-**Phase 1: Backend core**
-3. Backend Core: Postgres schema + migrations, async repository, Fastify server skeleton
+**Phase 1: Backend core** 3. Backend Core: Postgres schema + migrations, async repository, Fastify server skeleton
 
-**Phase 2: Platform features (can parallelize some)**
-4. Auth & Users: Cognito integration, JWT middleware, username registration, invites
-5. Billing & Cost Controls: Stripe integration, credit ledger, subscription tiers, session packs
+**Phase 2: Platform features (can parallelize some)** 4. Auth & Users: Cognito integration, JWT middleware, username registration, invites 5. Billing & Cost Controls: Stripe integration, credit ledger, subscription tiers, session packs
 
-**Phase 3: Game features**
-6. World & Campaign Pipeline: Port prompt templates, build the two pipelines on BullMQ, implement world forking
-7. Multiplayer Session Runtime: Transient SessionController, WebSocket + Redis pub/sub, DM trigger, Fast/Slow Thinker, Scribe — the biggest piece
-8. Combat Engine Layer 1: Debug shell (text-based combat resolution)
-9. Combat Engine Layer 2: Full 5e rules engine + voxel maps (biggest single component)
+**Phase 3: Game features** 6. World & Campaign Pipeline: Port prompt templates, build the two pipelines on BullMQ, implement world forking 7. Multiplayer Session Runtime: Transient SessionController, WebSocket + Redis pub/sub, DM trigger, Fast/Slow Thinker, Scribe — the biggest piece 8. Combat Engine Layer 1: Debug shell (text-based combat resolution) 9. Combat Engine Layer 2: Full 5e rules engine + voxel maps (biggest single component)
 
-**Phase 4: Frontend**
-10. Frontend: New design system, onboarding flow, multiplayer chat UI, combat UI
+**Phase 4: Frontend** 10. Frontend: New design system, onboarding flow, multiplayer chat UI, combat UI
 
-**Phase 5: Hardening**
-11. Observability & Hardening: Structured logging, metrics, alarms, rate limiting, security headers
+**Phase 5: Hardening** 11. Observability & Hardening: Structured logging, metrics, alarms, rate limiting, security headers
 
 ### Before Starting Implementation
 
@@ -106,6 +100,7 @@ All commits are authored by Miklos (using his git config). When you contribute v
 ## First Session Checklist
 
 If this is the very first implementation session:
+
 1. Read this onboarding doc ✓
 2. Read `CLAUDE.md`
 3. Read the Architecture Overview spec
