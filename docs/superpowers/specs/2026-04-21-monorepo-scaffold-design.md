@@ -111,13 +111,14 @@ Aggregate scripts use `pnpm -r` so verification is one command from repo root re
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": ["dist"],
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src",
+    "lint": "eslint src --no-error-on-unmatched-pattern",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -127,13 +128,12 @@ Aggregate scripts use `pnpm -r` so verification is one command from repo root re
     "@types/node": "^24.x",
     "tsx": "^4.x",
     "typescript": "^5.x",
-    "vitest": "^3.x",
-    "eslint": "^9.x",
-    "@typescript-eslint/parser": "^8.x",
-    "@typescript-eslint/eslint-plugin": "^8.x"
+    "vitest": "^3.x"
   }
 }
 ```
+
+Note: `"files": ["dist"]` is required by the Dockerfile's `pnpm deploy` step so the compiled output gets included in the deploy artifact (otherwise excluded because `dist/` is gitignored). ESLint and Prettier live as root-level devDependencies (shared across packages) — no entry in backend/package.json. Flat ESLint 9 config uses the `typescript-eslint` meta-package, not the legacy `@typescript-eslint/parser` + `/eslint-plugin` pair.
 
 ## TypeScript config
 
@@ -198,7 +198,7 @@ Aggregate scripts use `pnpm -r` so verification is one command from repo root re
 }
 ```
 
-**`.prettierignore`**: `dist/`, `node_modules/`, `pnpm-lock.yaml`, `docs/specs/`, `.beads/`.
+**`.prettierignore`**: `dist/`, `node_modules/`, `pnpm-lock.yaml`, `.beads/`, plus hand-authored prose that should not be auto-reformatted (`docs/specs/`, `docs/superpowers/specs/`, `docs/superpowers/plans/`, `CLAUDE.md`, `ONBOARDING.md`, `AGENTS.md`, `README.md`).
 
 ## Health-check server
 
@@ -254,22 +254,31 @@ RUN corepack enable && pnpm install --frozen-lockfile --filter @mythrun/backend
 COPY backend/ ./backend/
 WORKDIR /app/backend
 RUN pnpm build
+# --legacy: pnpm 10 compat for workspaces without workspace deps. Revisit when
+# the first @mythrun/* workspace dep is added to backend.
+RUN pnpm --filter @mythrun/backend deploy --legacy --prod /app/deploy
 
 # ---- runtime ----
 FROM node:24-alpine
+RUN apk add --no-cache dumb-init
 WORKDIR /app
 RUN addgroup -S mythrun && adduser -S mythrun -G mythrun
-COPY --from=builder --chown=mythrun:mythrun /app/backend/dist ./dist
-COPY --from=builder --chown=mythrun:mythrun /app/backend/package.json ./
-COPY --from=builder --chown=mythrun:mythrun /app/backend/node_modules ./node_modules
+COPY --from=builder --chown=mythrun:mythrun /app/deploy ./
 USER mythrun
+ENV NODE_ENV=production
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
   CMD wget --quiet --tries=1 --spider http://localhost:3000/health || exit 1
-CMD ["node", "dist/server.js"]
+CMD ["dumb-init", "node", "dist/server.js"]
 ```
 
 Build context is the repo root (`docker build -t mythrun -f backend/Dockerfile .`). This lets the builder see `package.json`, `pnpm-lock.yaml`, and `backend/` simultaneously, which pnpm workspaces requires for `--filter` to resolve.
+
+**Why `pnpm deploy` instead of copying `node_modules` wholesale:** pnpm workspaces hoist real package tarballs to `<workspace-root>/node_modules/.pnpm/` and place symlinks in each package's `node_modules`. Copying just `backend/node_modules` into the runtime stage leaves dangling symlinks (the `.pnpm` store isn't there), and every import fails at startup. `pnpm deploy --legacy --prod /app/deploy` produces a self-contained directory with a flat `node_modules/` (prod deps only, no symlinks), the backend's `package.json`, and `dist/` (via the `"files": ["dist"]` field on `backend/package.json`). The runtime stage copies this whole directory in one step.
+
+**Why `dumb-init`:** Node running as PID 1 in a container does not get default signal handlers. `SIGTERM` from ECS on task stop would be ignored, forcing a 30-second `SIGKILL` timeout and dropping in-flight requests. `dumb-init` is a tiny init process that correctly forwards signals to its child — required for graceful rolling deploys.
+
+**Why `ENV NODE_ENV=production`:** Fastify and most Node libraries change behavior based on `NODE_ENV` — verbose logging, cache policy, error detail. Without it, the runtime gets dev-mode defaults.
 
 **`backend/.dockerignore`**:
 
