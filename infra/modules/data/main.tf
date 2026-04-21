@@ -151,6 +151,15 @@ resource "aws_elasticache_parameter_group" "main" {
 # AUTH token generated here (plaintext in state — acceptable given the state bucket
 # is SSE-S3 encrypted + TLS-only + restricted-access). Deferred: evaluate ElastiCache
 # IAM auth to eliminate token from state. Tracked in design's Out of Scope.
+#
+# Rotation contract: both aws_secretsmanager_secret_version.redis_auth (ignore_changes
+# on secret_string) and aws_elasticache_replication_group.main (ignore_changes on
+# auth_token) opt out of Terraform-driven AUTH updates after initial create. To rotate:
+#   1. Write a new value to mythrun/shared/redis-auth in AWS Secrets Manager.
+#   2. Apply the new token to Redis via aws elasticache modify-replication-group
+#      --auth-token-update-strategy SET (or the AWS console).
+# Terraform-side random_password remains pinned to its initial value; tainting it and
+# re-applying is NOT a rotation path (the ignore_changes blocks wouldn't propagate it).
 resource "random_password" "redis_auth" {
   length           = 32
   special          = true
@@ -209,5 +218,6 @@ resource "aws_elasticache_replication_group" "main" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [auth_token]
   }
 }
