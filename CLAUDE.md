@@ -67,17 +67,28 @@ The setup guide (`docs/specs/2026-04-20-setup-guide.md`) is your blank-AWS-accou
 
 ## Agent Instructions
 
-### Workflow
+### Trackers
 
-This project uses **Beads** for task tracking (or a similar issue tracker — TBD). The onboarding doc notes that Beads setup is part of initial project configuration.
+Two trackers serve different altitudes:
 
-Every implementation task follows this loop:
-1. **Pick up work** from the tracker
-2. **Understand before coding** — read the relevant spec deeply first
-3. **TDD** — write a failing test that defines "done" before writing implementation code
-4. **Implement** — minimum code to make the test pass
-5. **Verify** — run the full relevant test suite + `pnpm typecheck` + `pnpm lint`
-6. **Close the loop** — mark task done, commit with Conventional Commits
+- **Linear** (`MYT-` prefix, workspace: Mythrun, project: Mythrun Production) — long-term shipping view. Milestones = scope-named shipping checkpoints with scope-derived dates. Issues = multi-day work units with due dates. Morning-glance tool: "what's due today." Launch target: 2026-05-31.
+- **Beads** (`myth-` prefix, `.beads/` in repo, Dolt-backed, git-committed) — per-feature implementation tracking. Beads are hours-to-half-day tasks derived from an implementation plan. Survives compactions across sessions. Empty between features; populated when a Linear issue gets picked up.
+
+Never duplicate content between them. Linear stays at the shipping-view altitude; beads stays at the implementation-detail altitude.
+
+### Standard Implementation Workflow
+
+Every Linear issue goes through the full Superpowers workflow — no shortcuts, even for small tickets:
+
+1. **Pick up** a Linear issue for the current sprint.
+2. **Brainstorm** via the `superpowers:brainstorming` skill. Explore intent, requirements, edge cases, tradeoffs. End when the approach is aligned with Miklos.
+3. **Write the plan** via the `superpowers:writing-plans` skill. Plan lands at `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`.
+4. **Move the plan into Beads.** Decompose the plan into concrete beads (one per step) with `bd create`. Wire blockers with `bd dep`. This is the atomic work list for implementation.
+5. **Implement** via `superpowers:executing-plans` (review-checkpointed) or `superpowers:subagent-driven-development` (parallel subagents on independent beads). Close each bead as it's done (`bd close`).
+6. **Verify** — run the relevant test suite + `pnpm typecheck` + `pnpm lint` before marking anything done. Apply the `superpowers:verification-before-completion` skill here.
+7. **Close the loop** — close the Linear issue when all its beads are closed and the "done when" condition is met. Commit with Conventional Commits, push to `main`.
+
+TDD is required for implementation code — write a failing test that defines "done" before the implementation. The `superpowers:test-driven-development` skill enforces this.
 
 ### Human-Agent Review Workflow
 

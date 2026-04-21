@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -c 'if ((.tool_input.file_path // \"\") | test(\"docs/superpowers/plans/.*\\\\.md$\")) then {hookSpecificOutput:{hookEventName:\"PostToolUse\",additionalContext:\"You just wrote or edited an implementation plan. Decompose it into beads now: run `bd create` for each concrete step, wire `bd dep` for blockers. Required by the CLAUDE.md workflow — do this BEFORE starting implementation.\"}} else empty end'"
+          }
+        ]
+      }
+    ]
+  }
+}
