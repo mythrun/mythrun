@@ -140,13 +140,14 @@ resource "aws_elasticache_parameter_group" "main" {
     value = "300"
   }
   # Disable dangerous commands via rename (defense-in-depth against compromised workloads).
-  # CONFIG is NOT in this list: ElastiCache uses it internally and rejects attempts to rename it
-  # with "InvalidParameterValue: Command CONFIG cannot be renamed". Access to CONFIG on
-  # ElastiCache is already restricted at the platform layer — managed settings are AWS-side,
-  # not runtime-mutable by the client.
+  # ElastiCache already blocks CONFIG and DEBUG (and other admin commands like SHUTDOWN,
+  # REPLICAOF, MIGRATE) at the platform layer — attempting to rename them returns
+  # "InvalidParameterValue: Command X cannot be renamed". We only rename commands AWS lets
+  # us rename: FLUSHDB/FLUSHALL (mass data loss), KEYS (O(N) scan used by attackers), SCRIPT
+  # (arbitrary Lua execution).
   parameter {
     name  = "rename-commands"
-    value = "DEBUG \"\" FLUSHDB \"\" FLUSHALL \"\" KEYS \"\" SCRIPT \"\""
+    value = "FLUSHDB \"\" FLUSHALL \"\" KEYS \"\" SCRIPT \"\""
   }
 
   tags = { Name = "mythrun-redis7" }
