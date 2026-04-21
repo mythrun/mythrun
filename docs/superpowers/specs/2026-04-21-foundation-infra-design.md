@@ -3,7 +3,7 @@
 > **Linear issue**: MYT-25
 > **Milestone**: Ops Foundation (2026-04-27)
 > **Date**: 2026-04-21
-> **Status**: Design v2 — reviewed by agent team (Zero Cool, Acid Burn, Phreak, Cipher), findings verified against live AWS/Terraform docs, fixes incorporated
+> **Status**: Design v3 — reviewed by two independent agent teams (Zero Cool/Acid Burn/Phreak/Cipher, then blind review by Blossom/Buttercup/Bubbles/Professor Utonium). Findings verified against live AWS/Terraform docs; v3 incorporates convergent findings from both rounds.
 
 ## Goal
 
@@ -23,6 +23,7 @@ Plus:
 - Neither is reachable from outside the VPC (not publicly accessible, security groups locked down, explicit egress denied on `sg-rds`/`sg-redis`)
 - 5 Secrets Manager entries under `mythrun/staging/*` with placeholder values (anthropic, stripe-secret, stripe-webhook, cognito, rds-password)
 - 1 Secrets Manager entry at `mythrun/shared/redis-auth` with a generated AUTH token
+- 1 AWS auto-generated secret `rds!db-*` with the RDS master password (managed lifecycle — not named by us)
 - S3 state bucket has versioning + public-access-block + TLS-only bucket policy
 - `terraform plan` run a second time reports "No changes" (idempotent)
 - `scripts/bootstrap-databases.sh` exists in the repo (runs after MYT-30 provides in-VPC compute; not exercised in MYT-25)
@@ -68,6 +69,8 @@ Places where this design deviates from the older specs:
 | Redis AUTH secret location | `mythrun/{env}/redis-auth` per env (Week 0 §3.1) | `mythrun/shared/redis-auth` (single copy) | Redis itself is shared between staging and production per Week 0 §2.5. One token, both environments. Name matches the original spec (`redis-auth`) to preserve env-var mapping continuity (Infra §2.3). Each env's ECS task role (MYT-30) will get explicit read access to this shared secret. |
 | Deletion protection on shared RDS | Per-env toggle (staging off, prod on) | Unconditionally `deletion_protection = true`, `skip_final_snapshot = false`, `lifecycle { prevent_destroy = true }` (v2 revision) | Staging and prod share one instance. "Staging can be destroyed freely" doesn't apply when that same instance holds prod data. Hardening the shared instance protects both envs; staging-specific ephemeral operations are done at the DB level (drop and recreate `mythrun_staging` database), not the instance level. |
 | Per-env database + user creation | Implied but unaddressed | Explicit `scripts/bootstrap-databases.sh` run against the shared RDS after Terraform applies (v2 addition) | Backend Core's migration runner connects to an existing database — it does not `CREATE DATABASE` or `CREATE USER`. Someone has to create `mythrun_staging` and `mythrun_prod` databases + their users before migrations run. MYT-25 provides the script; Backend Core consumes it. |
+| Security group egress posture | Week 0 §2.3: "All security groups allow all outbound traffic" | `sg-rds` and `sg-redis` allow NO egress; `sg-ecs` egress scoped to 443 + RDS/Redis ports (v3 reconciliation per Prof Utonium) | Week 0's blanket statement was correct for `sg-ecs` (containers need to reach Anthropic/Stripe/ECR) but wrong for data-tier SGs — RDS and Redis have no legitimate outbound needs. Explicit locking prevents a future SG misconfig from turning data services into exfiltration channels. |
+| `mythrun/{env}/rds-password` semantics | Week 0 §3.1: RDS master password with 90-day Lambda rotation | Per-env app user password (not master), rotation is manual via operator runbook (v3 reconciliation per Prof Utonium) | RDS master password is now AWS-managed (`manage_master_user_password = true`) at an auto-generated secret name. `mythrun/{env}/rds-password` is repurposed for the per-env app user (`mythrun_staging`, `mythrun_prod`), which is what the application actually connects as (Infra §5.4). App user rotation is manual for MYT-25; a rotation runbook is a pre-launch deliverable (see Out of Scope). |
 
 ---
 
@@ -110,6 +113,7 @@ Resources created by `modules/network/main.tf`:
 
 **VPC**
 - `aws_vpc.main` — CIDR `10.0.0.0/16`, DNS support + DNS hostnames enabled (required for RDS/ElastiCache internal DNS).
+  - `lifecycle { prevent_destroy = true }` (v3 fix per Bubbles O-6: without this, a `terraform destroy` on shared could begin tearing down VPC-level resources before hitting the RDS/Redis prevent_destroy guards, leaving the workspace in an inconsistent state mid-destroy).
 
 **Subnets** (each in a specific AZ per Week 0 §2.1):
 - `aws_subnet.public_a` — `10.0.1.0/24` in `us-east-1a`
@@ -182,8 +186,7 @@ Per Infrastructure & DevOps §5, incorporating Zero Cool / Acid Burn / Phreak fi
   - `identifier = "mythrun"` (v2 addition per Zero Cool — explicit so verification commands can grep for it)
   - `engine = "postgres"`, `engine_version = "16"` (v2: partial major version per Zero Cool + Phreak; AWS picks latest 16.x minor)
   - `auto_minor_version_upgrade = true` (let AWS patch minors during maintenance window)
-  - `lifecycle { ignore_changes = [engine_version] }` (v2: prevent Terraform from fighting AWS about auto-patched minor versions — known drift issue in provider)
-  - `lifecycle { prevent_destroy = true }` (v2 addition — blocks accidental `terraform destroy` on the shared instance)
+  - **`lifecycle { ignore_changes = [engine_version], prevent_destroy = true }`** (v3 fix per Blossom C1: both concerns go in a single lifecycle block; Terraform rejects duplicate lifecycle blocks per resource. The combined block achieves both goals — AWS auto-patches minors without Terraform drift, AND the shared instance is protected from accidental `terraform destroy`)
   - `instance_class = "db.t4g.micro"`
   - `multi_az = false`
   - `storage_type = "gp3"`, `allocated_storage = 20`, `max_allocated_storage = 50`
@@ -231,7 +234,8 @@ Per Infrastructure & DevOps §6, incorporating Zero Cool fixes:
   - `parameter_group_name = aws_elasticache_parameter_group.main.name`
   - `maintenance_window = "mon:03:00-mon:04:00"`
   - `snapshot_retention_limit = 1`
-  - `lifecycle { prevent_destroy = true }` (v2 addition — matches RDS posture; Redis is shared between envs)
+  - `port = 6379` (v3 fix per Blossom I1: set explicitly so the resource's `port` attribute is reliably exported for data-module outputs; it's an argument, not a documented exported attribute when left defaulted)
+  - `lifecycle { prevent_destroy = true }` (matches RDS posture; Redis is shared between envs)
 
 Note on replication group vs cluster mode: we use a **replication group with 1 cluster** rather than a plain `aws_elasticache_cluster` because replication group is the only path that supports in-place scale-out to a replica later without recreating the resource. This is the AWS-recommended pattern even for single-node Redis when you anticipate growth.
 
@@ -319,9 +323,13 @@ locals {
 }
 
 resource "aws_secretsmanager_secret" "app_secrets" {
-  for_each = toset(local.secret_names)
-  name     = "mythrun/${local.env}/${each.key}"
+  for_each    = toset(local.secret_names)
+  name        = "mythrun/${local.env}/${each.key}"
   description = "Mythrun ${local.env} ${each.key} (value set out-of-band via bootstrap script or AWS Console)"
+  # v3 fix per Blossom C2: default is 30 days. If a staging secret is destroyed
+  # (typo fix, rename), the name is held for 30 days and cannot be recreated —
+  # breaks iteration. 7 days is enough to recover from accidents.
+  recovery_window_in_days = 7
 }
 
 resource "aws_secretsmanager_secret_version" "app_secrets" {
@@ -354,6 +362,20 @@ REGION="us-east-1"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 echo "Bootstrapping Terraform state bucket in $REGION..."
+
+# v3 addition per Blossom I5: fail fast if Terraform < 1.10 (required for use_lockfile)
+TF_VERSION=$(terraform version -json 2>/dev/null | jq -r .terraform_version 2>/dev/null || echo "missing")
+if [[ "$TF_VERSION" == "missing" ]]; then
+  echo "ERROR: terraform not found on PATH. Install Terraform >= 1.10." >&2
+  exit 1
+fi
+TF_MAJOR=$(echo "$TF_VERSION" | cut -d. -f1)
+TF_MINOR=$(echo "$TF_VERSION" | cut -d. -f2)
+if (( TF_MAJOR < 1 )) || (( TF_MAJOR == 1 && TF_MINOR < 10 )); then
+  echo "ERROR: Terraform $TF_VERSION detected; >= 1.10 required for native S3 state locking." >&2
+  exit 1
+fi
+echo "Terraform $TF_VERSION — OK."
 
 # Create bucket if it doesn't exist (idempotent)
 if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
@@ -433,7 +455,13 @@ REVOKE ALL PRIVILEGES ON DATABASE mythrun_staging FROM PUBLIC;
 -- Repeat for mythrun_prod when the Launch milestone lands.
 ```
 
-**Per-env passwords:** generated at bootstrap time, written to `mythrun/{env}/rds-password` secrets created by the per-env Terraform workspace (the staging workspace gets a new `rds-password` shell added — see updated staging main.tf below). The bootstrap script writes the value via `aws secretsmanager put-secret-value`.
+**Per-env password generation (v3 hardening per Buttercup I7):**
+
+- Generate via `aws secretsmanager get-random-password --password-length 32 --exclude-characters '/@"'\' --require-each-included-type` (AWS-side generation, avoids bash RNG quality concerns and predictable shell history).
+- The SQL must NOT bash-interpolate the password into the `CREATE USER` statement. Use a parameterized approach: write the password to a temp file with `0600` permissions, then invoke `psql --variable=app_pw="$password"` and reference it as `\set` variable in the SQL. This prevents SQL injection if the random password ever contains a stray quote that AWS's character exclusion didn't catch.
+- The bootstrap role (one-shot ECS task role) needs `secretsmanager:PutSecretValue` scoped to exactly `mythrun/{env}/rds-password` and `secretsmanager:GetSecretValue` on the RDS master user secret ARN. Revoke after one-time use.
+- Write the generated password to `mythrun/{env}/rds-password` via `aws secretsmanager put-secret-value` **after** the `CREATE USER` SQL succeeds — so the secret is never populated with credentials that don't work.
+- If the script fails partway through (e.g., `CREATE DATABASE` succeeded but the `put-secret-value` failed), the script must be idempotent — re-running should detect existing database + user and only fix the missing pieces.
 
 ---
 
@@ -496,6 +524,34 @@ The `infra/scripts/bootstrap-databases.sh` script creates `mythrun_staging` (dat
 
 If immediate end-to-end verification is needed before MYT-30, the script can be run via an SSM Session Manager tunnel (requires an SSM-enabled jump instance, deferred).
 
+---
+
+## Handoff sequence (v3 addition per Professor Utonium)
+
+The MYT-25 → MYT-30 → Backend Core chain has non-obvious ordering constraints. Here's the canonical sequence:
+
+1. **MYT-25 apply.** Bootstrap script creates the state bucket. `terraform apply` on `environments/shared/` provisions VPC, SGs, RDS, Redis, Redis AUTH secret, RDS master user secret (auto-generated name `rds!db-*`). `terraform apply` on `environments/staging/` creates 5 placeholder secrets under `mythrun/staging/*`, including `rds-password` as a placeholder.
+
+2. **MYT-25 → MYT-30 handoff.** No runtime workload connects to RDS or Redis yet. The shared RDS has only the default `postgres` database. The staging `rds-password` secret contains literal `"PLACEHOLDER"`.
+
+3. **MYT-30 apply (first part).** ECS cluster, ECR repo, task definitions, IAM roles. NO ECS service is started yet — only the infrastructure.
+
+4. **One-shot `bootstrap-databases.sh` run.** Executed via `aws ecs run-task` using the new task definition with an overridden CMD. The task:
+   - Reads the RDS master user secret (`rds!db-*`) to connect as admin.
+   - Runs `CREATE DATABASE mythrun_staging`.
+   - Generates a random password via `aws secretsmanager get-random-password`.
+   - Runs `CREATE USER mythrun_staging WITH PASSWORD '...'` + grants.
+   - Writes the password to `mythrun/staging/rds-password` via `put-secret-value`.
+   - Exits cleanly. Task role is single-use and revoked after.
+
+5. **MYT-30 apply (second part).** Now that `rds-password` has a real value and the target database exists, create the ECS service. First deployment's health check can successfully open `sslmode=verify-full` connections to `mythrun_staging` and the deployment succeeds.
+
+6. **Backend Core deploy.** Migration runner connects via `DATABASE_URL` (composed from outputs + `rds-password` secret), runs schema migrations against `mythrun_staging`. Works cleanly because database + user + password are already in place.
+
+**Failure mode without this ordering:** if MYT-30 creates the ECS service before step 4, the first deploy's health check fails (auth fails against placeholder password, database doesn't exist). ECS's deployment circuit breaker rolls back. Manual intervention needed to un-stick.
+
+**Responsibility for step 4 execution:** MYT-30's implementation plan (not MYT-25) owns running the bootstrap script at the correct time. This spec provides the script; the next spec invokes it.
+
 **Verify:**
 ```bash
 # Shared workspace
@@ -533,14 +589,16 @@ Based on Infrastructure & DevOps §1 service inventory, running MYT-25 resources
 | NAT Gateway data transfer | ~$0 pre-app-deploy, ~$3-9/mo steady-state once apps run (Anthropic streaming + ECR pulls + Secrets Manager) |
 | RDS `db.t4g.micro` Single-AZ + 20 GB gp3 | ~$14.71 ($12.41 instance + $2.30 storage) |
 | RDS automated backups (7-day, 20 GB) | $0 (free up to 100% of provisioned storage) |
-| ElastiCache `cache.t4g.micro` single-node | ~$11.68 |
-| Secrets Manager (7 secrets: 5 staging + 1 shared redis-auth + 1 RDS master auto-created) | ~$2.80 ($0.40/secret/month) |
-| **Elastic IP for NAT Gateway** | **~$3.65** (v2 fix: AWS began charging $0.005/hr for all public IPv4 Feb 2024, attached or not) |
+| ElastiCache `cache.t4g.micro` single-node | ~$12.41 (v3 fix per Bubbles: corrected from $11.68) |
+| Secrets Manager (7 secrets: 5 staging + 1 shared redis-auth + 1 RDS master auto-created) | ~$2.80 storage + ~$0.50-2/mo API calls once ECS tasks fetch on cold start |
+| **Elastic IP for NAT Gateway** | **~$3.65** (AWS began charging $0.005/hr for all public IPv4 Feb 2024, attached or not) |
 | Performance Insights (7-day retention) | $0 (free tier — bumping to long-term would add ~$7/mo per vCPU) |
+| KMS API calls (AWS-managed keys, no storage charge) | ~$0.50-3/mo at steady state (v3 addition per Bubbles) |
+| Cross-AZ data transfer (ECS ↔ RDS across AZs) | ~$2-8/mo at launch scale once apps deploy (v3 addition per Bubbles) |
 | VPC / subnets / route tables / SGs | $0 |
-| S3 state bucket | <$0.05 |
-| **Total idle** | **~$66/mo** |
-| **Steady-state once apps deploy** | **~$75-85/mo** (NAT data transfer dominates the variance) |
+| S3 state bucket | <$0.50/mo including API calls |
+| **Total idle (MYT-25 alone)** | **~$67/mo** |
+| **Steady-state once MYT-30 + Backend Core + apps deploy** | **~$100-125/mo** (v3 revision per Bubbles — NAT data transfer dominates the variance; original $75-85 was too conservative) |
 
 Staging + production share these resources per Week 0 §2.5, so prod adds only marginal cost (more secrets, more NAT traffic). Well within the $200 AWS budget alarm.
 
@@ -614,6 +672,15 @@ After `terraform apply` completes on both workspaces:
 | **State bucket noncurrent version expiration** and MFA delete | Hardening sweep — deferred; versioning stays unbounded for now (state history is valuable). |
 | **ElastiCache IAM authentication** (replaces AUTH token) | Observability & Hardening milestone — evaluate as replacement for AUTH token in state. |
 | **OCI labels on Docker images** (scaffold concern, not infra) | MYT-30 deploy workflow — already tracked in `myth-37p`. |
+| **CloudTrail, GuardDuty, AWS Config, VPC flow logs** (detective controls) | Observability & Hardening milestone per Buttercup I10/I11. ~$30/mo combined; genuinely valuable pre-launch. |
+| **CloudWatch alarms on RDS free storage and Redis memory** (the blind window between MYT-25 and MYT-30) | MYT-30 observability module. Low cost (~$0.30/alarm); worth considering earlier per Bubbles O-8. |
+| **App user password rotation runbook** (for `mythrun/{env}/rds-password`) | Pre-launch hardening ticket. AWS-managed rotation applies to master user only; app users are manual. |
+| **Redis AUTH token rotation runbook** (switch from `SET` to `ROTATE` strategy) | Pre-launch hardening ticket per Bubbles O-11. |
+| **RDS snapshot restore drill** (verify backups actually work) | Pre-launch hardening per Bubbles O-5. |
+| **Performance Insights retention bump** (7 days → 2 years, ~$14/mo) | Pre-launch when real traffic starts producing query history worth keeping. |
+| **Second NAT Gateway** (AZ-a outage currently takes down all private-subnet egress) | Pre-launch per Bubbles O-2. ~$36.50/mo. Not ship-blocker pre-revenue; is for the launch runbook. |
+| **Account-level S3 public access block** | Security hardening — prevents future-bucket misconfig regardless of per-bucket settings. |
+| **SSL client-side verification requirement** (`sslmode=verify-full` on DB client) | Backend Core spec — MYT-30's task definition must ship the RDS CA bundle and app must use `verify-full`. |
 
 ---
 
@@ -645,3 +712,9 @@ After `terraform apply` completes on both workspaces:
   - Security: shared-instance deletion protection unconditional (`prevent_destroy` + `deletion_protection` + `skip_final_snapshot = false`); explicit egress on all SGs (`sg-rds`/`sg-redis` egress none, `sg-ecs` egress scoped); TLS-only bucket policy on state bucket; `rds.force_ssl = 1` parameter.
   - Cost: EIP cost correction (+$3.65/mo); total idle ~$66/mo.
   - Coherence: Redis AUTH secret renamed `redis-auth-token` → `redis-auth`; added `scripts/bootstrap-databases.sh` to close the Backend Core handoff gap; added `rds-password` to staging secret list; pinned `required_version >= 1.10` in backend config; noted `network/` module grows in MYT-30.
+- **2026-04-21 v3** — second-round blind review (Blossom / Buttercup / Bubbles / Professor Utonium). Convergent findings from both teams locked in confidence that v2 fixes were real. New findings v2 missed, now incorporated:
+  - Ship-blocker fixes: merged duplicate `lifecycle` blocks on RDS into one (Blossom C1); explicit `port = 6379` on ElastiCache replication group (Blossom I1); added `prevent_destroy` to VPC (Bubbles O-6); `recovery_window_in_days = 7` on staging secrets to avoid 30-day name lockout (Blossom C2).
+  - Bootstrap hardening: Terraform version pre-check in `bootstrap.sh` (Blossom I5); `bootstrap-databases.sh` now specifies AWS-side random password generation, psql variable binding to avoid SQL injection, scoped one-shot task role, idempotency requirement (Buttercup I7).
+  - Documentation: added explicit reconciliation rows for SG egress lockdown and `rds-password` semantic change; added numbered "Handoff sequence" section walking MYT-25 → MYT-30 → bootstrap → Backend Core ordering (Professor Utonium).
+  - Out-of-Scope expanded: CloudTrail/GuardDuty/Config/VPC flow logs (Buttercup I10, I11); app user + Redis AUTH rotation runbooks; RDS snapshot restore drill; Performance Insights long-retention; second NAT Gateway pre-launch (all from Bubbles); account-level S3 PAB; SSL client-side `verify-full` requirement for Backend Core.
+  - Cost: ElastiCache corrected to $12.41 (not $11.68); KMS API calls + cross-AZ data transfer added as line items; steady-state revised from $75-85 to $100-125/mo.
