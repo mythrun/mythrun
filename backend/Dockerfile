@@ -1,15 +1,13 @@
 # ---- builder ----
 FROM node:24-alpine AS builder
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY backend/package.json ./backend/
 RUN corepack enable && pnpm install --frozen-lockfile --filter @mythrun/backend
 COPY backend/ ./backend/
 WORKDIR /app/backend
 RUN pnpm build
-# --legacy: pnpm 10 compat for workspaces without workspace deps. Revisit when
-# the first @mythrun/* workspace dep is added to backend.
-RUN pnpm --filter @mythrun/backend deploy --legacy --prod /app/deploy
+RUN pnpm --filter @mythrun/backend deploy --prod /app/deploy
 
 # ---- runtime ----
 FROM node:24-alpine
