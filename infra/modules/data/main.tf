@@ -139,10 +139,14 @@ resource "aws_elasticache_parameter_group" "main" {
     name  = "tcp-keepalive"
     value = "300"
   }
-  # Disable dangerous commands via rename (defense-in-depth against compromised workloads)
+  # Disable dangerous commands via rename (defense-in-depth against compromised workloads).
+  # CONFIG is NOT in this list: ElastiCache uses it internally and rejects attempts to rename it
+  # with "InvalidParameterValue: Command CONFIG cannot be renamed". Access to CONFIG on
+  # ElastiCache is already restricted at the platform layer — managed settings are AWS-side,
+  # not runtime-mutable by the client.
   parameter {
     name  = "rename-commands"
-    value = "CONFIG \"\" DEBUG \"\" FLUSHDB \"\" FLUSHALL \"\" KEYS \"\" SCRIPT \"\""
+    value = "DEBUG \"\" FLUSHDB \"\" FLUSHALL \"\" KEYS \"\" SCRIPT \"\""
   }
 
   tags = { Name = "mythrun-redis7" }
