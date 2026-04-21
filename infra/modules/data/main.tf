@@ -41,8 +41,9 @@ resource "aws_db_parameter_group" "main" {
     value = "65536" # kB = 64MB
   }
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot" # AWS classifies rds.force_ssl as static; omitting this causes a perpetual no-op diff.
   }
   parameter {
     name  = "log_parameter_max_length"
