@@ -139,16 +139,17 @@ resource "aws_elasticache_parameter_group" "main" {
     name  = "tcp-keepalive"
     value = "300"
   }
-  # Disable dangerous commands via rename (defense-in-depth against compromised workloads).
-  # ElastiCache already blocks CONFIG and DEBUG (and other admin commands like SHUTDOWN,
-  # REPLICAOF, MIGRATE) at the platform layer — attempting to rename them returns
-  # "InvalidParameterValue: Command X cannot be renamed". We only rename commands AWS lets
-  # us rename: FLUSHDB/FLUSHALL (mass data loss), KEYS (O(N) scan used by attackers), SCRIPT
-  # (arbitrary Lua execution).
-  parameter {
-    name  = "rename-commands"
-    value = "FLUSHDB \"\" FLUSHALL \"\" KEYS \"\" SCRIPT \"\""
-  }
+  # rename-commands intentionally omitted. Tried three times during MYT-25 apply:
+  # 1. "CONFIG ... DEBUG ..." rejected: "Command CONFIG cannot be renamed"
+  # 2. "DEBUG ..." rejected: "Command DEBUG cannot be renamed"
+  # 3. "FLUSHDB \"\" ..." rejected: "Renamed parameter expected to be alphanumeric"
+  # ElastiCache (a) already platform-blocks admin commands (CONFIG, DEBUG, SHUTDOWN,
+  # REPLICAOF, SAVE, BGSAVE, MIGRATE, SYNC) so renaming them is redundant and rejected,
+  # and (b) requires an alphanumeric alias for any rename — it doesn't accept "" as
+  # a "disable" target the way stock Redis does. Defense-in-depth here is carried by
+  # AUTH token + transit-TLS-required + SG (ECS-only ingress) + private subnet.
+  # Tracked as a follow-up: if we later want FLUSHDB/FLUSHALL/KEYS/SCRIPT guarded,
+  # rename them to an alphanumeric suffix that app code doesn't know (e.g. FLUSHALLdisabled).
 
   tags = { Name = "mythrun-redis7" }
 }
