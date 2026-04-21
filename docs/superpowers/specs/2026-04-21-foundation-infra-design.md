@@ -3,7 +3,7 @@
 > **Linear issue**: MYT-25
 > **Milestone**: Ops Foundation (2026-04-27)
 > **Date**: 2026-04-21
-> **Status**: Design v3 — reviewed by two independent agent teams (Zero Cool/Acid Burn/Phreak/Cipher, then blind review by Blossom/Buttercup/Bubbles/Professor Utonium). Findings verified against live AWS/Terraform docs; v3 incorporates convergent findings from both rounds.
+> **Status**: Design v4 — reviewed by three independent agent teams (Zero Cool/Acid Burn/Phreak/Cipher, then Blossom/Buttercup/Bubbles/Professor Utonium, then Batman/Black Widow/Spider-Man/Doctor Strange). Findings verified against live AWS/Terraform docs. Third round surfaced a spec-hierarchy conflict on Redis eviction policy which has been resolved by amending the parent Architecture Overview spec.
 
 ## Goal
 
@@ -63,14 +63,15 @@ Places where this design deviates from the older specs:
 
 | Topic | Older spec | This design | Why |
 |---|---|---|---|
-| Redis `maxmemory-policy` | `noeviction` (Architecture Overview §3) | `volatile-lru` (Infrastructure & DevOps §6.2) | Newer spec has explicit rationale. `noeviction` risks cascading failure under memory pressure (every write fails including BullMQ, rate limiting, pub/sub). `volatile-lru` evicts idle session states (which have TTLs and can be reloaded from Postgres checkpoints) before critical no-TTL keys. |
+| Redis `maxmemory-policy` | ~~`noeviction` (Architecture Overview §3, pre-amendment)~~ | `volatile-lru` — **now matches amended Architecture Overview §3 and Decisions Log** (updated 2026-04-21 after Doctor Strange's v3 review flagged spec-hierarchy conflict) | Amendment rationale: `noeviction` causes cascading failure across BullMQ + rate limiting + pub/sub + session state when memory fills. `volatile-lru` degrades gracefully — oldest idle session keys are evicted (TTL'd, reload from Postgres 5-min checkpoints on reconnect), BullMQ/rate-limit/pub-sub keys without TTLs are preserved. Graceful degradation preferred over total write failure during the 5-10 min scale-up window. |
 | Terraform state locking | DynamoDB lock table (Week 0 §7.3) | Native S3 locking (`use_lockfile = true`) | Terraform 1.10+ supports native S3 locking. DynamoDB-based locking is deprecated. One fewer AWS resource to provision, one fewer thing to break. |
 | RDS password management | Secrets Manager rotation Lambda, initial password in Secrets Manager (Week 0 §3.1) | `manage_master_user_password = true` (AWS-managed) | AWS RDS now natively integrates with Secrets Manager — rotation handled by AWS, password never touches Terraform state. Cleaner than the Lambda rotation pattern. |
 | Redis AUTH secret location | `mythrun/{env}/redis-auth` per env (Week 0 §3.1) | `mythrun/shared/redis-auth` (single copy) | Redis itself is shared between staging and production per Week 0 §2.5. One token, both environments. Name matches the original spec (`redis-auth`) to preserve env-var mapping continuity (Infra §2.3). Each env's ECS task role (MYT-30) will get explicit read access to this shared secret. |
 | Deletion protection on shared RDS | Per-env toggle (staging off, prod on) | Unconditionally `deletion_protection = true`, `skip_final_snapshot = false`, `lifecycle { prevent_destroy = true }` (v2 revision) | Staging and prod share one instance. "Staging can be destroyed freely" doesn't apply when that same instance holds prod data. Hardening the shared instance protects both envs; staging-specific ephemeral operations are done at the DB level (drop and recreate `mythrun_staging` database), not the instance level. |
 | Per-env database + user creation | Implied but unaddressed | Explicit `scripts/bootstrap-databases.sh` run against the shared RDS after Terraform applies (v2 addition) | Backend Core's migration runner connects to an existing database — it does not `CREATE DATABASE` or `CREATE USER`. Someone has to create `mythrun_staging` and `mythrun_prod` databases + their users before migrations run. MYT-25 provides the script; Backend Core consumes it. |
 | Security group egress posture | Week 0 §2.3: "All security groups allow all outbound traffic" | `sg-rds` and `sg-redis` allow NO egress; `sg-ecs` egress scoped to 443 + RDS/Redis ports (v3 reconciliation per Prof Utonium) | Week 0's blanket statement was correct for `sg-ecs` (containers need to reach Anthropic/Stripe/ECR) but wrong for data-tier SGs — RDS and Redis have no legitimate outbound needs. Explicit locking prevents a future SG misconfig from turning data services into exfiltration channels. |
-| `mythrun/{env}/rds-password` semantics | Week 0 §3.1: RDS master password with 90-day Lambda rotation | Per-env app user password (not master), rotation is manual via operator runbook (v3 reconciliation per Prof Utonium) | RDS master password is now AWS-managed (`manage_master_user_password = true`) at an auto-generated secret name. `mythrun/{env}/rds-password` is repurposed for the per-env app user (`mythrun_staging`, `mythrun_prod`), which is what the application actually connects as (Infra §5.4). App user rotation is manual for MYT-25; a rotation runbook is a pre-launch deliverable (see Out of Scope). |
+| `mythrun/{env}/rds-password` semantics | Week 0 §3.1: RDS master password with 90-day Lambda rotation | Per-env app user password (not master), rotation is manual via operator runbook (v3 reconciliation per Prof Utonium) | RDS master password is now AWS-managed (`manage_master_user_password = true`) at an auto-generated secret name. `mythrun/{env}/rds-password` is repurposed for the per-env app user (`mythrun_staging`, `mythrun_prod`), which is what the application actually connects as (Infra §5.4). App user rotation is manual for MYT-25; a rotation runbook is a **pre-launch blocker** (v4 per Doctor Strange — Week 0 committed to automatic rotation; losing that commitment cannot slip past launch). |
+| Backup retention | Architecture Overview §3 says 35 days; Infrastructure & DevOps §5.1 says 7 days | 7 days per Infra §5.1 (v4 addition per Doctor Strange — previously silent) | The two parent specs already disagreed. 7 days is the AWS-RDS default and keeps backup storage under the provisioned-storage free tier. 35 days would more than double backup storage cost and is overkill for a pre-launch system. Documented here so the Observability & Hardening milestone knows to revisit if compliance requirements demand longer retention. |
 
 ---
 
@@ -123,22 +124,27 @@ Resources created by `modules/network/main.tf`:
 
 **Internet Gateway + NAT**
 - `aws_internet_gateway.main`
-- `aws_eip.nat` — Elastic IP for NAT Gateway
-- `aws_nat_gateway.main` — in `public_a` subnet
+- `aws_eip.nat` — Elastic IP for NAT Gateway. Set `domain = "vpc"` explicitly (v4 per Batman I4 — v6 default, but explicit is more robust).
+- `aws_nat_gateway.main` — in `public_a` subnet. Add `depends_on = [aws_internet_gateway.main]` explicitly (v4 per Batman I5 — implicit dependency is otherwise only through the route table).
+- `var.num_nat_gateways` (default `1`) — module variable (v4 per Doctor Strange). When AZ redundancy is required, flip to `2` and the module creates a second NAT in `public_b` with a separate route table for `private_b`. No refactor needed.
 
 **Route tables**
 - `aws_route_table.public` — default route → IGW. Associated with both public subnets.
 - `aws_route_table.private` — default route → NAT. Associated with both private subnets.
   - Note (per Week 0 §2.1): when a second NAT Gateway is added for AZ redundancy, `private_b` will need its own route table. Module inputs should make this a future parameter change, not a refactor.
 
-**Security groups** (per Week 0 §2.3, with explicit egress hardening per Acid Burn review):
+**Security groups** (per Week 0 §2.3, with explicit egress hardening):
 
 | SG | Inbound | Egress | Purpose |
 |---|---|---|---|
-| `aws_security_group.alb` | 443 from `0.0.0.0/0`; 80 from `0.0.0.0/0` (redirect) | All (ALB proxies to ECS) | ALB (used by MYT-30) |
+| `aws_security_group.alb` | 443 from `0.0.0.0/0` (port 80 listener + rule added in MYT-30 alongside the actual ALB) | All (ALB proxies to ECS) | ALB (used by MYT-30) |
 | `aws_security_group.ecs` | 3000 from `alb` | 443 to `0.0.0.0/0` (Anthropic, Stripe, ECR, Secrets Manager); 5432 to `rds`; 6379 to `redis` | ECS tasks (used by MYT-30) |
 | `aws_security_group.rds` | 5432 from `ecs` | **None** | RDS — no outbound needed |
 | `aws_security_group.redis` | 6379 from `ecs` | **None** | Redis — no outbound needed |
+
+**Port 80 ingress note (v4 per Doctor Strange):** moved to MYT-30 where the HTTP→HTTPS redirect listener actually lives. No point opening a port on an SG where no listener exists.
+
+**Default VPC SG lockdown (v4 per Black Widow I6):** `aws_default_security_group` resource added to zero out inbound + outbound rules on the VPC's default SG. Prevents accidental "allow-all from self" inheritance if any future resource is launched into the default SG (e.g., a console-created test instance).
 
 Each rule is a separate `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule` resource (not the legacy inline blocks) for granular updates. Terraform creates `aws_security_group` resources with no default rules and we add every rule explicitly — this prevents the AWS default "allow all egress" from silently landing on `sg-rds` / `sg-redis`.
 
@@ -163,7 +169,7 @@ Resources created by `modules/data/main.tf`:
 
 Per Infrastructure & DevOps §5, incorporating Zero Cool / Acid Burn / Phreak fixes:
 
-- `aws_db_subnet_group.main` — spans `private_a` + `private_b`.
+- `aws_db_subnet_group.main` — `name = "mythrun-rds"`, spans `private_a` + `private_b` (v4 fix per Batman I11: `name` is required; was previously implied).
 - `aws_db_parameter_group.main` — family `postgres16`, parameters from §5.2:
   - Dynamic (apply immediately):
     - `log_min_duration_statement = 1000` (log queries >1s)
@@ -173,10 +179,11 @@ Per Infrastructure & DevOps §5, incorporating Zero Cool / Acid Burn / Phreak fi
     - `random_page_cost = 1.1`
     - `work_mem = 2MB`
     - `maintenance_work_mem = 64MB`
-    - `rds.force_ssl = 1` (v2 addition per Acid Burn — refuse non-TLS connections server-side)
+    - `rds.force_ssl = 1` (v2: refuse non-TLS connections server-side)
+    - `log_parameter_max_length = 0` (v4 per Black Widow M3: suppress parameter values in slow-query logs to prevent PII/secret bleed into CloudWatch; without this, slow queries log the parameter values which may contain user emails, UUIDs, etc.)
   - **Static (require `apply_method = "pending-reboot"`)**:
     - `max_connections = 80`
-    - `log_connections = on`
+    - `log_connections = on` — **verify at implementation time** per Batman I3: the parameter's `ApplyType` may be `dynamic` in Postgres 16 on RDS despite being static in upstream Postgres. Run `aws rds describe-engine-default-parameters --db-parameter-group-family postgres16 --query "EngineDefaults.Parameters[?ParameterName=='log_connections'].[ApplyType]"` before apply. If `dynamic`, move this to the dynamic list and drop `apply_method`.
     - `shared_buffers = "{DBInstanceClassMemory/4}"` (explicit for clarity; can be omitted to use RDS's default formula)
   - `effective_cache_size` uses RDS's default formula `{DBInstanceClassMemory*3/4}` — no explicit override
 
@@ -186,13 +193,14 @@ Per Infrastructure & DevOps §5, incorporating Zero Cool / Acid Burn / Phreak fi
   - `identifier = "mythrun"` (v2 addition per Zero Cool — explicit so verification commands can grep for it)
   - `engine = "postgres"`, `engine_version = "16"` (v2: partial major version per Zero Cool + Phreak; AWS picks latest 16.x minor)
   - `auto_minor_version_upgrade = true` (let AWS patch minors during maintenance window)
-  - **`lifecycle { ignore_changes = [engine_version], prevent_destroy = true }`** (v3 fix per Blossom C1: both concerns go in a single lifecycle block; Terraform rejects duplicate lifecycle blocks per resource. The combined block achieves both goals — AWS auto-patches minors without Terraform drift, AND the shared instance is protected from accidental `terraform destroy`)
+  - **`lifecycle { ignore_changes = [engine_version, final_snapshot_identifier], prevent_destroy = true }`** (v4: added `final_snapshot_identifier` to ignore_changes so the deterministic snapshot name doesn't cause drift. Both concerns go in a single lifecycle block; Terraform rejects duplicate lifecycle blocks per resource. The combined block achieves: AWS auto-patches minors without Terraform drift, shared instance is protected from accidental `terraform destroy`, final snapshot name is stable.)
   - `instance_class = "db.t4g.micro"`
   - `multi_az = false`
   - `storage_type = "gp3"`, `allocated_storage = 20`, `max_allocated_storage = 50`
   - `backup_retention_period = 7`, `backup_window = "02:00-02:30"`, `maintenance_window = "sun:03:00-sun:04:00"` (v2: tightened backup window to `02:00-02:30` leaving a 30-min gap before the maintenance window — avoids AWS validation edge cases with abutting windows)
   - `deletion_protection = true` (v2 revision — unconditionally on; see spec reconciliation row for rationale)
   - `skip_final_snapshot = false` (v2 revision — unconditional; staging ephemeral operations happen at the database level, not the instance level)
+  - `final_snapshot_identifier = "mythrun-final-${var.environment}"` (v4 fix per Batman C1 — required by the provider when `skip_final_snapshot = false`; without it, any replacement-forcing change or future `terraform destroy` fails. Added to `ignore_changes` below so setting the snapshot name deterministically doesn't cause drift.)
   - `performance_insights_enabled = true`, `performance_insights_retention_period = 7`
   - `storage_encrypted = true` (AWS-managed KMS key for MYT-25; CMK deferred to hardening sweep — see Out of Scope)
   - `publicly_accessible = false`
@@ -208,13 +216,14 @@ Per Infrastructure & DevOps §5, incorporating Zero Cool / Acid Burn / Phreak fi
 
 Per Infrastructure & DevOps §6, incorporating Zero Cool fixes:
 
-- `aws_elasticache_subnet_group.main` — spans `private_a` + `private_b`.
+- `aws_elasticache_subnet_group.main` — `name = "mythrun-redis"`, spans `private_a` + `private_b` (v4 fix per Batman I12: `name` is required).
 - `aws_elasticache_parameter_group.main` — family `redis7`, parameters from §6.2:
   - `maxmemory-policy = "volatile-lru"`
   - `timeout = "0"`
   - `tcp-keepalive = "300"`
-  - (v2 fix per Zero Cool I5: removed `notify-keyspace-events = ""` — setting a parameter to its default value can cause perpetual diff plans as ElastiCache's describe API reports the param as "not user-modified" while Terraform still tracks it. If we want the default, omit the block.)
-- `random_password.redis_auth` — 32 characters, `special = true`, `override_special = "!&#$^<>-"` (v2 fix per Zero Cool I3: ElastiCache AUTH tokens restrict nonalphanumeric chars to `! & # $ ^ < > -` only; excluded chars are `@ " /`. The `override_special` argument in `random_password` specifies which special chars are **allowed**, not excluded).
+  - **`rename-command` entries** (v4 per Black Widow M6): rename dangerous commands to empty strings so they cannot be invoked, even by a compromised ECS task with the AUTH token: `CONFIG`, `DEBUG`, `FLUSHDB`, `FLUSHALL`, `KEYS`, `SCRIPT`. Free defense-in-depth. Syntax: `rename-commands = "CONFIG \"\" DEBUG \"\" FLUSHDB \"\" FLUSHALL \"\" KEYS \"\" SCRIPT \"\""`. Note: the app does not use any of these commands (BullMQ uses `LPUSH`/`RPOP`/etc.; session state uses `HSET`/`HGET`/`EXPIRE`).
+  - (v2 fix: removed `notify-keyspace-events = ""` — setting a parameter to its default value can cause perpetual diff plans.)
+- `random_password.redis_auth` — 32 characters, `special = true`, `override_special = "!&#$^<>-"` (v2: ElastiCache AUTH tokens restrict nonalphanumeric chars to `! & # $ ^ < > -` only; excluded chars are `@ " /`. `override_special` specifies which special chars are **allowed**, not excluded). Plus `min_upper = 1`, `min_lower = 1`, `min_numeric = 1`, `min_special = 1` (v4 per Batman I7: guarantees generated token meets ElastiCache's implicit complexity expectation even in the statistically unlikely case that a 32-char random string happens to be all letters).
 - `aws_secretsmanager_secret.redis_auth` — name `mythrun/shared/redis-auth` (v2: renamed from `redis-auth-token` to match Week 0 §3.1 env-var naming convention). Lives in shared scope (not `mythrun/{env}/redis-auth`) because Redis itself is shared across staging + production. **Implication for MYT-30:** each env's ECS task role will need read access to `mythrun/shared/redis-auth` in addition to its own `mythrun/{env}/*` scope.
 - `aws_secretsmanager_secret_version.redis_auth` — stores `random_password.redis_auth.result`. `lifecycle { ignore_changes = [secret_string] }` (v2 addition per Zero Cool M3 — prevents Terraform from overwriting the value if rotated out-of-band later).
 - `aws_elasticache_replication_group.main`:
@@ -313,33 +322,46 @@ data "terraform_remote_state" "shared" {
 
 locals {
   env = "staging"
-  secret_names = [
+  # Secrets populated manually via AWS Console / CLI — placeholder initial version is OK
+  manual_secret_names = [
     "anthropic-api-key",
     "stripe-secret-key",
     "stripe-webhook-secret",
     "cognito-client-secret",
-    "rds-password",  # v2 addition per Cipher: populated by bootstrap-databases.sh with the per-env app user password
+  ]
+  # Secrets populated by bootstrap-databases.sh — NO initial version created here,
+  # because `terraform apply -replace` on a _secret_version resource would overwrite
+  # the real value with PLACEHOLDER (v4 fix per Batman C4).
+  bootstrap_secret_names = [
+    "rds-password",
   ]
 }
 
-resource "aws_secretsmanager_secret" "app_secrets" {
-  for_each    = toset(local.secret_names)
+resource "aws_secretsmanager_secret" "manual_secrets" {
+  for_each    = toset(local.manual_secret_names)
   name        = "mythrun/${local.env}/${each.key}"
-  description = "Mythrun ${local.env} ${each.key} (value set out-of-band via bootstrap script or AWS Console)"
-  # v3 fix per Blossom C2: default is 30 days. If a staging secret is destroyed
-  # (typo fix, rename), the name is held for 30 days and cannot be recreated —
-  # breaks iteration. 7 days is enough to recover from accidents.
-  recovery_window_in_days = 7
+  description = "Mythrun ${local.env} ${each.key} (value set via AWS Console/CLI out-of-band)"
+  recovery_window_in_days = 7  # v3: default 30 days creates name lockout on destroy
 }
 
-resource "aws_secretsmanager_secret_version" "app_secrets" {
-  for_each      = aws_secretsmanager_secret.app_secrets
+resource "aws_secretsmanager_secret_version" "manual_secrets" {
+  for_each      = aws_secretsmanager_secret.manual_secrets
   secret_id     = each.value.id
-  secret_string = "PLACEHOLDER — set via bootstrap-databases.sh (rds-password) or AWS Console (others)"
+  secret_string = "PLACEHOLDER — set via AWS Console / CLI"
 
   lifecycle {
     ignore_changes = [secret_string]
   }
+}
+
+# rds-password: shell only, no version. bootstrap-databases.sh creates the first version.
+# This avoids the landmine where `terraform apply -replace` on a placeholder version
+# would overwrite a real password.
+resource "aws_secretsmanager_secret" "bootstrap_secrets" {
+  for_each    = toset(local.bootstrap_secret_names)
+  name        = "mythrun/${local.env}/${each.key}"
+  description = "Mythrun ${local.env} ${each.key} (value created by bootstrap-databases.sh — NO Terraform-managed version)"
+  recovery_window_in_days = 7
 }
 ```
 
@@ -424,8 +446,22 @@ aws s3api put-bucket-tagging \
   --bucket "$BUCKET" \
   --tagging 'TagSet=[{Key=Project,Value=mythrun},{Key=ManagedBy,Value=manual},{Key=Environment,Value=shared}]'
 
+# v4 addition per Black Widow I7: expire noncurrent versions after 90 days
+# (state history is valuable but unbounded growth is cost smell + long-tail secret exposure)
+aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" --lifecycle-configuration '{
+  "Rules": [
+    {
+      "ID": "ExpireNoncurrentVersions",
+      "Status": "Enabled",
+      "Filter": {},
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 90 }
+    }
+  ]
+}'
+
 echo "Done. SSE-S3 encryption is on by default (AWS default since Jan 2023)."
 echo "Native S3 state locking is configured via use_lockfile=true in backend.tf (Terraform >=1.10)."
+echo "Noncurrent versions expire after 90 days."
 ```
 
 Dropped from Week 0 spec: the DynamoDB lock table block. Native S3 locking replaces it.
@@ -462,6 +498,34 @@ REVOKE ALL PRIVILEGES ON DATABASE mythrun_staging FROM PUBLIC;
 - The bootstrap role (one-shot ECS task role) needs `secretsmanager:PutSecretValue` scoped to exactly `mythrun/{env}/rds-password` and `secretsmanager:GetSecretValue` on the RDS master user secret ARN. Revoke after one-time use.
 - Write the generated password to `mythrun/{env}/rds-password` via `aws secretsmanager put-secret-value` **after** the `CREATE USER` SQL succeeds — so the secret is never populated with credentials that don't work.
 - If the script fails partway through (e.g., `CREATE DATABASE` succeeded but the `put-secret-value` failed), the script must be idempotent — re-running should detect existing database + user and only fix the missing pieces.
+
+**v4 addition per Spider-Man O-H1 — `--verify` mode and named partial-failure states:**
+
+The script MUST support `bootstrap-databases.sh --verify` which performs the following checks without mutating state:
+
+```sql
+-- Verify database exists
+SELECT 1 FROM pg_database WHERE datname = 'mythrun_staging';
+-- Verify user exists
+SELECT 1 FROM pg_user WHERE usename = 'mythrun_staging';
+-- Verify user has expected grants
+SELECT has_database_privilege('mythrun_staging', 'mythrun_staging', 'CONNECT');
+```
+
+Plus:
+```bash
+aws secretsmanager describe-secret --secret-id mythrun/staging/rds-password \
+  --query 'VersionIdsToStages' --output text
+# Expected: a version with 'AWSCURRENT' stage (not just the shell with no version)
+```
+
+Three named partial-failure states, each with a recovery path:
+
+1. **`DB_ONLY`**: database exists, user does not. Recovery: re-run bootstrap with `--user-only` which creates user + password + writes secret.
+2. **`USER_ONLY`**: database + user exist but secret has no version (or is still `PLACEHOLDER`). Recovery: re-run bootstrap with `--secret-only` which `ALTER USER ... WITH PASSWORD '<new>'` + writes secret.
+3. **`SECRET_MISMATCH`**: database + user + secret all exist but the app can't authenticate. The secret value and the actual DB password have drifted. Recovery: run `--reset-password` which generates a new password, does `ALTER USER`, and overwrites the secret.
+
+All three recovery paths must be safe to run against a live but unconnected database (no app connections yet). Backend Core's migration runner should have a preflight check that calls `bootstrap-databases.sh --verify` before connecting and fails loud if verification fails.
 
 ---
 
@@ -619,8 +683,9 @@ Staging + production share these resources per Week 0 §2.5, so prod adds only m
 | Someone edits a secret value via console, Terraform overwrites it | Low | `lifecycle { ignore_changes = [secret_string] }` on every `aws_secretsmanager_secret_version`. |
 | Cost creep from forgotten resources | Low | Every resource tagged with `Project=mythrun` + `Environment`. AWS Budgets alarm at $200 (already configured). |
 | First apply takes longer than estimated | Medium | RDS can take 10+ min. Just wait. Don't cancel mid-apply. |
-| Static RDS parameters cause first apply to fail | Low | `apply_method = "pending-reboot"` explicitly set on `max_connections`, `log_connections`, `shared_buffers` (v2 fix per Zero Cool I1). |
-| Per-env DBs missing when Backend Core's migrations run | Medium | `scripts/bootstrap-databases.sh` documented and exercised before Backend Core's first migration (v2 fix per Cipher). |
+| Static RDS parameters cause first apply to fail | Low | `apply_method = "pending-reboot"` explicitly set on `max_connections`, `log_connections`, `shared_buffers` (v2 fix). Verify `log_connections` classification at implementation time (v4 per Batman I3). |
+| Per-env DBs missing when Backend Core's migrations run | Medium | `scripts/bootstrap-databases.sh` documented and exercised before Backend Core's first migration. Script supports `--verify` mode + three named partial-failure recovery paths (v4 per Spider-Man O-H1). |
+| **Someone needs to intentionally delete the shared RDS/Redis/VPC** (e.g., region migration) | Low | Unlock procedure (v4 per Spider-Man O-M4): (1) in Terraform, remove `prevent_destroy = true` from the resource's lifecycle block, (2) `terraform apply` — no resource change, just updates the lifecycle metadata, (3) on RDS only: set `deletion_protection = false` in Terraform + `terraform apply`, (4) `terraform destroy`. Four steps, two `apply`s before destroy, enforces deliberation. If someone removes both `prevent_destroy` AND `deletion_protection` in one commit, require a second reviewer before merging (branch protection rule — deferred to org-level hardening). |
 
 ---
 
@@ -681,6 +746,10 @@ After `terraform apply` completes on both workspaces:
 | **Second NAT Gateway** (AZ-a outage currently takes down all private-subnet egress) | Pre-launch per Bubbles O-2. ~$36.50/mo. Not ship-blocker pre-revenue; is for the launch runbook. |
 | **Account-level S3 public access block** | Security hardening — prevents future-bucket misconfig regardless of per-bucket settings. |
 | **SSL client-side verification requirement** (`sslmode=verify-full` on DB client) | Backend Core spec — MYT-30's task definition must ship the RDS CA bundle and app must use `verify-full`. |
+| **IMDSv2 enforcement on ECS task definitions** | MYT-30 per Black Widow C6 — task definitions must require IMDSv2-only metadata access with hop limit 1. |
+| **RDS snapshot restore drill** | Pre-launch per Spider-Man O-H3 — one-time test restore of the empty RDS to a new instance to verify the backup chain works end-to-end. ~$1 cost (one hour of runtime). Only way to know your DR plan is real. |
+| **Maintenance window review** | Post-launch per Spider-Man O-M6 — current Sun 03:00-04:00 UTC = Sat 20:00-23:00 Pacific, which is D&D prime time. Measure actual user activity in week 2 and shift to the true low-traffic window. |
+| **App-user password rotation runbook** | **PRE-LAUNCH BLOCKER** per Doctor Strange — Week 0 §3.1 committed to automatic 90-day rotation on `mythrun/{env}/rds-password`. The design silently downgrades to manual when repurposing the secret for the app user. The rotation runbook + mechanism must exist before launch so the automatic-rotation commitment isn't silently abandoned. |
 
 ---
 
@@ -718,3 +787,12 @@ After `terraform apply` completes on both workspaces:
   - Documentation: added explicit reconciliation rows for SG egress lockdown and `rds-password` semantic change; added numbered "Handoff sequence" section walking MYT-25 → MYT-30 → bootstrap → Backend Core ordering (Professor Utonium).
   - Out-of-Scope expanded: CloudTrail/GuardDuty/Config/VPC flow logs (Buttercup I10, I11); app user + Redis AUTH rotation runbooks; RDS snapshot restore drill; Performance Insights long-retention; second NAT Gateway pre-launch (all from Bubbles); account-level S3 PAB; SSL client-side `verify-full` requirement for Backend Core.
   - Cost: ElastiCache corrected to $12.41 (not $11.68); KMS API calls + cross-AZ data transfer added as line items; steady-state revised from $75-85 to $100-125/mo.
+- **2026-04-21 v4** — third-round blind review (Batman / Black Widow / Spider-Man / Doctor Strange). Three-round convergence now provides very strong evidence the foundations are solid. Biggest surface: **Doctor Strange challenged the Redis `maxmemory-policy` spec hierarchy** — the design was silently overriding the Architecture Overview (parent spec). Resolution: the parent Architecture Overview was **amended** to adopt `volatile-lru` with full rationale in its Decisions Log, chosen deliberately for graceful degradation over cascading failure; the MYT-25 design's reconciliation row now reflects "design follows amended parent" instead of "design overrides parent." New findings incorporated:
+  - Ship-blocker fixes: `final_snapshot_identifier` added (Batman C1 — required when `skip_final_snapshot = false`); `rds-password` secret architecture split into shell-only (no Terraform-managed version) to eliminate the placeholder-overwrite landmine on `apply -replace` (Batman C4); explicit `name` arguments on `aws_db_subnet_group` and `aws_elasticache_subnet_group` (Batman I11/I12).
+  - Network hardening: `domain = "vpc"` on EIP (Batman I4); explicit `depends_on` on NAT Gateway (Batman I5); `num_nat_gateways` module variable exposed for future AZ redundancy (Doctor Strange); `aws_default_security_group` zeroing the VPC default SG (Black Widow I6); port 80 ingress on `sg-alb` moved to MYT-30 where its listener lives (Doctor Strange).
+  - Data-plane hardening: `log_parameter_max_length = 0` to prevent PII leaking into slow-query logs (Black Widow M3); `log_connections` classification flagged for implementation-time verification (Batman I3); `rename-commands` on Redis parameter group to disable `CONFIG`, `DEBUG`, `FLUSHDB`, `FLUSHALL`, `KEYS`, `SCRIPT` (Black Widow M6); `random_password` explicit `min_upper/lower/numeric/special` complexity guards (Batman I7).
+  - State bucket hardening: lifecycle policy to expire noncurrent versions after 90 days (Black Widow I7).
+  - Bootstrap: `bootstrap-databases.sh --verify` mode with three named partial-failure recovery paths (DB_ONLY, USER_ONLY, SECRET_MISMATCH) per Spider-Man O-H1.
+  - Ops: "unlock procedure" runbook for intentional RDS deletion (Spider-Man O-M4).
+  - Out-of-Scope additions: IMDSv2 enforcement for MYT-30 (Black Widow C6); RDS snapshot restore drill (Spider-Man O-H3); maintenance window review post-launch (Spider-Man O-M6); **app-user password rotation runbook elevated to pre-launch blocker** from "hardening sweep" (Doctor Strange — Week 0 committed to automatic rotation; commitment must not silently erode).
+  - New reconciliation rows: backup retention (Arch Overview 35d vs Infra 7d; design follows Infra); Redis policy row updated to reflect amended parent spec.
