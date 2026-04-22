@@ -42,3 +42,25 @@ output "redis_auth_secret_arn" {
   value     = module.data.redis_auth_secret_arn
   sensitive = true
 }
+
+# ======== DNS outputs ========
+# Consumed by staging (MYT-30) and future production workspaces via
+# data.terraform_remote_state.shared — they read zone_id to create A-alias
+# records and wildcard_cert_arn to attach to their ALB listeners.
+
+output "dns_zone_id" {
+  value = module.dns.zone_id
+}
+
+output "dns_zone_name" {
+  value = module.dns.zone_name
+}
+
+output "name_servers" {
+  value       = module.dns.name_servers
+  description = "Set these four at Squarespace Domains → DNS → Nameservers → Custom."
+}
+
+output "wildcard_cert_arn" {
+  value = module.dns.wildcard_cert_arn
+}
