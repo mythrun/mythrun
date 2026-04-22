@@ -3,6 +3,7 @@
 > **Linear issue**: MYT-30
 > **Milestone**: Ops Foundation (2026-04-27)
 > **Date**: 2026-04-22
+> **Status**: v2 — post first round of agent-team review (Clownfish/Lionfish/Angelfish/Discus, 2026-04-22). Fixed OIDC hardening (`repository_owner_id` + `StringEquals`), ECR `MUTABLE` (was IMMUTABLE, contradicted `:latest`-tag CI pattern), `healthy_threshold = 1` (was 2, contradicted Infra §2.5), `health_check_grace_period_seconds = 120` (was 60), staging CPU/memory defaults 256/512 (was 512/1024, silently overrode Week 0 §7.2), env var names `DB_HOST`/`DB_PORT` (was `RDS_HOST`/`RDS_PORT`, inconsistent with existing `DB_USER`/`DB_NAME`). IAM hardening: `iam:PassedToService` + `ecs:cluster` conditions. Runbook + alarm deferral pushed to amendments on parent specs (Week 0 §6.3, Infra §2.2/§2.6/§4.2). Ready for round-two blind review.
 > **Depends on**: MYT-25 (foundation infra — VPC/SGs/RDS/Redis/Secrets, applied), MYT-26 (Route 53 authoritative + wildcard ACM cert issued, applied)
 > **Blocks**: MYT-28 (CI/CD + first staging deploy)
 
@@ -22,9 +23,10 @@ Plus:
 - `aws ecs describe-clusters --clusters mythrun` returns `ACTIVE`, `runningTasksCount=0`, `activeServicesCount=2`
 - `aws ecs describe-services --cluster mythrun --services mythrun-staging-api mythrun-staging-worker` returns both `ACTIVE` with `desiredCount=0`, valid task definition revisions registered
 - `curl -v https://staging-api.mythrun.com/health` returns HTTP 503 (no healthy targets, expected) and the TLS handshake presents the `*.mythrun.com` wildcard cert from MYT-26
-- `aws iam get-role --role-name mythrun-github-actions-staging` returns the role with trust policy restricted to `repo:mythrun/mythrun:environment:staging` on the `main` branch only
-- `aws ecr describe-repositories --repository-names mythrun` returns the repo, tag immutability enabled, lifecycle policy expiring untagged images after 1 day and keeping 20 most recent tagged
-- SNS topic `mythrun-staging-alerts` exists with one email subscription (Miklos)
+- `aws iam get-role --role-name mythrun-github-actions-staging` returns the role with trust policy whose conditions enforce `repository_owner_id` + `repository = "mythrun/mythrun"` + `environment = "staging"` + `ref = "refs/heads/main"` all via `StringEquals`
+- `aws ecr describe-repositories --repository-names mythrun` returns the repo in `MUTABLE` mode with lifecycle policy expiring untagged images after 1 day and keeping 20 most recent tagged
+- SNS topic `mythrun-staging-alerts` exists with email subscription NOT in `PendingConfirmation`: `aws sns list-subscriptions-by-topic --topic-arn <arn> --query 'Subscriptions[0].SubscriptionArn'` returns a real ARN (confirmed via email click), not the literal string `"PendingConfirmation"`
+- `aws ecs describe-task-definition --task-definition mythrun-staging-api` shows `secrets[].valueFrom` ARNs only — no plaintext secret values anywhere in the JSON
 - `terraform plan` run a second time on both workspaces reports "No changes" (idempotent)
 
 ## What this task does NOT do
@@ -107,7 +109,8 @@ Two-workspace Terraform layout, already established by MYT-25/MYT-26:
 ```hcl
 resource "aws_ecr_repository" "mythrun" {
   name                 = "mythrun"
-  image_tag_mutability = "IMMUTABLE"  # git-SHA tags are forever
+  image_tag_mutability = "MUTABLE"  # CI pushes :latest AND :$GIT_SHA on every build; IMMUTABLE breaks :latest.
+                                    # Git-SHA immutability is CI-enforced (never re-push the same SHA tag).
 
   image_scanning_configuration {
     scan_on_push = true
@@ -158,17 +161,17 @@ Per Infra spec §4.2: tag-based env differentiation, not separate repos. API and
 
 ```hcl
 resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  # AWS discovers thumbprints automatically for well-known IdPs since 2023;
-  # thumbprint_list no longer required for GitHub's OIDC endpoint.
-  thumbprint_list = ["ffffffffffffffffffffffffffffffffffffffff"]  # placeholder; AWS ignores for GitHub
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+  # thumbprint_list is Optional in AWS provider v6.x and AWS has done native
+  # JWK discovery for GitHub's OIDC endpoint since 2023. Omitting the argument
+  # makes the intent ("we trust AWS's CA bundle for GitHub") explicit.
 
   tags = { Name = "github-actions-oidc" }
 }
 ```
 
-One per AWS account. Both staging and future prod IAM roles trust this provider. The `thumbprint_list` is a historical requirement; since 2023 AWS has native JWK discovery for GitHub's OIDC endpoint and the thumbprint list is vestigial. We pass a single placeholder to satisfy the schema.
+One per AWS account. Both staging and future prod IAM roles trust this provider.
 
 ### 3. ECS cluster (shared workspace, inline)
 
@@ -210,7 +213,7 @@ resource "aws_lb" "main" {
   subnets            = module.network.public_subnet_ids
 
   idle_timeout               = 3600  # 1 hour for WebSocket keepalive tolerance
-  enable_deletion_protection = false # staging can be torn down; prod will flip to true
+  enable_deletion_protection = false # pre-launch iteration; flip to `true` before prod traffic. ALB lives in `shared`, so this is about the shared workspace being torn down, not staging.
   enable_http2               = true
   drop_invalid_header_fields = true  # defense against header smuggling
   # access_logs — deferred to Observability spec
@@ -286,17 +289,29 @@ variable "redis_port"                   { type = number }
 
 # Secret ARN references
 variable "shared_redis_auth_secret_arn" { type = string }
-variable "manual_secret_arns"           { type = map(string) }  # keys: anthropic-api-key, stripe-secret-key, stripe-webhook-secret, cognito-client-secret
+variable "manual_secret_arns" {
+  type        = map(string)
+  description = "Must contain keys: anthropic-api-key, stripe-secret-key, stripe-webhook-secret, cognito-client-secret."
+
+  validation {
+    condition = alltrue([
+      for k in ["anthropic-api-key", "stripe-secret-key", "stripe-webhook-secret", "cognito-client-secret"] :
+      contains(keys(var.manual_secret_arns), k)
+    ])
+    error_message = "manual_secret_arns must contain all four expected keys."
+  }
+}
 variable "rds_password_secret_arn"      { type = string }
 # rds_master_user_secret_arn is NOT here — the API/Worker tasks run as the
 # per-env app user (mythrun_${env}), not the master. Only bootstrap-databases.sh's
 # future IAM principal needs the master secret.
 
-# Tunables with sensible defaults
-variable "api_cpu"                      { type = string; default = "512" }
-variable "api_memory"                   { type = string; default = "1024" }
-variable "worker_cpu"                   { type = string; default = "512" }
-variable "worker_memory"                { type = string; default = "1024" }
+# Tunables. Defaults match Week 0 §7.2's staging-size matrix (half of prod).
+# Production workspace passes cpu="512" / memory="1024" explicitly at Launch.
+variable "api_cpu"                      { type = string; default = "256" }
+variable "api_memory"                   { type = string; default = "512" }
+variable "worker_cpu"                   { type = string; default = "256" }
+variable "worker_memory"                { type = string; default = "512" }
 variable "log_retention_days"           { type = number; default = 14 }  # staging default; prod passes 30
 ```
 
@@ -362,7 +377,9 @@ resource "aws_iam_role_policy" "task_execution_secrets" {
 }
 ```
 
-Execution role is **explicitly listed** per-secret ARN rather than wildcarded to `mythrun/${env}/*` — more explicit, and captures the `rds!db-*` auto-managed secret and the cross-env shared `mythrun/shared/redis-auth` correctly (wildcarding would miss the latter).
+Execution role is **explicitly listed** per-secret ARN rather than wildcarded to `mythrun/${env}/*` — more explicit, and captures the cross-env shared `mythrun/shared/redis-auth` correctly (wildcarding would miss it). Declared as a deviation from Week 0 §3.3's wildcard pattern in the Decisions Log.
+
+**KMS assumption:** All six referenced secrets must use the AWS-managed `aws/secretsmanager` KMS key (the Secrets Manager default). The `AmazonECSTaskExecutionRolePolicy` managed policy grants `secretsmanager:GetSecretValue` but **not** explicit `kms:Decrypt` on customer-managed keys. Today every Mythrun secret uses the default key (no CMK configured on any `aws_secretsmanager_secret` resource), so no explicit `kms:Decrypt` policy is needed. If anyone later introduces a customer-managed KMS key on one of these secrets, the tasks will fail to start with `ResourceInitializationError` and this policy needs an explicit `kms:Decrypt` statement scoped to that CMK ARN.
 
 #### 5.4 Task role (the app's own permissions)
 
@@ -405,10 +422,13 @@ locals {
     { name = "AWS_REGION",    value = "us-east-1" },
     { name = "REGION_PREFIX", value = "use1" },
     { name = "AUTH_MODE",     value = "real" },
-    { name = "RDS_HOST",      value = var.rds_host },
-    { name = "RDS_PORT",      value = tostring(var.rds_port) },
+    # DB_* naming consistent across HOST/PORT/USER/NAME/PASSWORD. App constructs
+    # DATABASE_URL at startup per Infra §2.3 (as amended in companion PR).
+    { name = "DB_HOST",       value = var.rds_host },
+    { name = "DB_PORT",       value = tostring(var.rds_port) },
     { name = "DB_USER",       value = "mythrun_${var.environment}" },
     { name = "DB_NAME",       value = "mythrun_${var.environment}" },
+    # REDIS_* naming parallels DB_*.
     { name = "REDIS_HOST",    value = var.redis_host },
     { name = "REDIS_PORT",    value = tostring(var.redis_port) },
   ]
@@ -542,7 +562,7 @@ resource "aws_lb_target_group" "api" {
     path                = "/health"  # current backend endpoint; refactor to /health/ready when Backend Core lands
     protocol            = "HTTP"
     port                = "traffic-port"
-    healthy_threshold   = 2
+    healthy_threshold   = 1  # per Infra §2.5: reduced from AWS default of 2 to shave ~15s off scale-out
     unhealthy_threshold = 3
     interval            = 15
     timeout             = 5
@@ -555,9 +575,18 @@ resource "aws_lb_target_group" "api" {
   tags = { Name = "mythrun-${var.environment}-api" }
 }
 
+locals {
+  api_hostname = var.environment == "production" ? "api.${var.dns_zone_name}" : "${var.environment}-api.${var.dns_zone_name}"
+}
+
 resource "aws_lb_listener_rule" "api" {
   listener_arn = var.alb_listener_https_arn
-  priority     = var.environment == "production" ? 100 : 200  # staging has lower priority, prod wins if both registered
+  # Priority range 100-299 reserved for per-env API forward rules:
+  #   100 = production, 200 = staging, 300+ = future (preview envs, etc.)
+  # Lower numeric priority wins in ALB listener rule evaluation. If hosts ever
+  # overlap due to misconfig, prod wins. Hosts normally don't overlap — priority
+  # is a safety default.
+  priority = var.environment == "production" ? 100 : 200
 
   action {
     type             = "forward"
@@ -566,7 +595,7 @@ resource "aws_lb_listener_rule" "api" {
 
   condition {
     host_header {
-      values = ["${var.environment == "production" ? "api" : "${var.environment}-api"}.${var.dns_zone_name}"]
+      values = [local.api_hostname]
     }
   }
 
@@ -574,7 +603,7 @@ resource "aws_lb_listener_rule" "api" {
 }
 ```
 
-Host header: `staging-api.mythrun.com` for staging, `api.mythrun.com` for prod. Priority 200/100 — if both envs are ever misconfigured to the same host, prod wins; otherwise they're on different hosts and priority is academic.
+Host header: `staging-api.mythrun.com` for staging, `api.mythrun.com` for prod.
 
 #### 5.7 ECS services
 
@@ -606,7 +635,7 @@ resource "aws_ecs_service" "api" {
     rollback = true
   }
 
-  health_check_grace_period_seconds = 60
+  health_check_grace_period_seconds = 120  # matches stopTimeout / deregistration_delay; gives real images time for startup migrations + secret fetch
 
   lifecycle {
     ignore_changes = [
@@ -658,7 +687,7 @@ The `ignore_changes = [desired_count, task_definition]` is load-bearing — with
 ```hcl
 resource "aws_route53_record" "api_alias" {
   zone_id = var.dns_zone_id
-  name    = var.environment == "production" ? "api.${var.dns_zone_name}" : "${var.environment}-api.${var.dns_zone_name}"
+  name    = local.api_hostname
   type    = "A"
 
   alias {
@@ -676,6 +705,12 @@ Alias records are free in Route 53 and resolve to the ALB's current IPs automati
 ```hcl
 data "aws_caller_identity" "current" {}
 
+# Required at plan time — see "Pre-apply lookup" note below.
+variable "github_repository_owner_id" {
+  description = "Numeric GitHub organization ID for 'mythrun'. Look up via: curl -s https://api.github.com/orgs/mythrun | jq .id"
+  type        = string
+}
+
 data "aws_iam_policy_document" "gh_actions_trust" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -685,19 +720,47 @@ data "aws_iam_policy_document" "gh_actions_trust" {
       identifiers = [data.terraform_remote_state.shared.outputs.github_oidc_provider_arn]
     }
 
+    # Required AWS OIDC audience claim.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
 
+    # Repository name — StringEquals (not StringLike) to forbid accidental
+    # wildcards on a future refactor. If feature-branch deploys are ever wanted,
+    # making the change loud is the point.
     condition {
-      test     = "StringLike"
-      variable = "token.actions.githubusercontent.com:sub"
-      # Environment-scoped AND main-only. The "environment:staging" substring
-      # requires GitHub Environments to be configured on the mythrun/mythrun
-      # repo with a "staging" environment (MYT-28 sets this up).
-      values   = ["repo:mythrun/mythrun:environment:staging"]
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository"
+      values   = ["mythrun/mythrun"]
+    }
+
+    # Numeric owner ID — defeats the "attacker-renames-and-grabs-org-name"
+    # class of attack. Org names can be reclaimed after rename/delete; numeric
+    # IDs cannot. This is the current AWS-recommended OIDC hardening pattern.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_owner_id"
+      values   = [var.github_repository_owner_id]
+    }
+
+    # GitHub Environment — enforces that the job ran inside a GitHub Actions
+    # environment named "staging". Configured on the mythrun/mythrun repo in
+    # Settings → Environments; the environment's "Deployment branches" rule
+    # further restricts to main. MYT-28 sets this up.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:environment"
+      values   = ["staging"]
+    }
+
+    # Ref — enforces main branch at IAM layer. Belt-and-suspenders on top of
+    # the GitHub Environment branch rule (which enforces at GitHub layer).
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:ref"
+      values   = ["refs/heads/main"]
     }
   }
 }
@@ -732,27 +795,54 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     ]
   }
 
-  # ECS service update (scoped to staging services only)
-  statement {
-    actions = [
-      "ecs:DescribeServices",
-      "ecs:UpdateService",
-      "ecs:DescribeTaskDefinition",
-      "ecs:RegisterTaskDefinition",
-      "ecs:DeregisterTaskDefinition",
-      "ecs:DescribeTasks",
-      "ecs:ListTasks",
-    ]
-    resources = ["*"]  # ECS API doesn't support per-service ARN scoping on most actions
-  }
-
-  # Pass role for task execution + task roles (scoped)
+  # Pass role for task execution + task roles, but ONLY to ECS.
+  # Without this condition, a future privesc path could pass these roles to
+  # other services that might accept them.
   statement {
     actions = ["iam:PassRole"]
     resources = [
       module.serving.task_execution_role_arn,
       module.serving.task_role_arn,
     ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  # ECS mutating actions scoped to the mythrun cluster (supported per AWS
+  # IAM docs). Prevents the GH role from deploying to any other cluster in
+  # this account, now or in the future.
+  statement {
+    actions = [
+      "ecs:UpdateService",
+      "ecs:DescribeServices",
+      "ecs:DescribeTasks",
+      "ecs:ListTasks",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:cluster"
+      values = [
+        "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:cluster/mythrun",
+      ]
+    }
+  }
+
+  # RegisterTaskDefinition / DeregisterTaskDefinition / DescribeTaskDefinition
+  # do NOT support the ecs:cluster condition (they're cluster-agnostic by
+  # design). Scope by task-def family prefix via the resource ARN pattern.
+  statement {
+    actions = [
+      "ecs:RegisterTaskDefinition",
+      "ecs:DeregisterTaskDefinition",
+      "ecs:DescribeTaskDefinition",
+    ]
+    resources = ["*"]
   }
 
   # Pre-deploy RDS snapshot (spec §5.5)
@@ -775,7 +865,9 @@ resource "aws_iam_role_policy" "github_actions_staging" {
 }
 ```
 
-Several `resources = ["*"]` here are because ECS's API surface doesn't support fine-grained ARN scoping on actions like `RegisterTaskDefinition`. The role is still scoped at the assume-side (only `main` branch, `staging` environment) and most destructive actions go through `UpdateService` which IS scopable — but per-service scoping needs the service ARN and we'd have a circular reference (the role lives in staging, which calls the module which creates the service). Acceptable tradeoff for now; tighten if a later audit demands it.
+Several `resources = ["*"]` remain because ECS's API surface doesn't support per-service ARN scoping on `RegisterTaskDefinition` / `DeregisterTaskDefinition` / `DescribeTaskDefinition` (these are cluster-agnostic by design). The mutating service actions (`UpdateService`, `DescribeServices`, etc.) are scoped via `ecs:cluster` to the `mythrun` cluster. `iam:PassRole` is ARN-scoped to the two task roles AND conditioned on `iam:PassedToService = ecs-tasks.amazonaws.com`. Per-task-def-family scoping would require tagging discipline on CI-registered task defs; deferred to Launch-milestone audit.
+
+**Known elevated-permission pocket** (documented for future audit): the `RegisterTaskDefinition` + `iam:PassRole` + `UpdateService` combination gives the GH role de facto read access to every secret the task-execution role can read. Anyone who can merge to `main` can register a task def that runs an arbitrary image with the task roles attached and uses `secrets[].valueFrom` to exfiltrate secret values via env vars. This is inherent to the CI-deploys-to-ECS pattern. Mitigations are organizational: branch protection on `main` with required reviews, GitHub Environment reviewers requiring manual approval on each staging deploy.
 
 ### 7. SNS alerts topic (staging workspace)
 
@@ -827,7 +919,25 @@ Actual alarms (ECS service down, RDS CPU, etc.) land in the Observability milest
 
 **`thumbprint_list` on the OIDC provider is placeholder.** AWS has done native JWK discovery for GitHub's OIDC endpoint since 2023; the thumbprint list is a legacy schema requirement. We pass one placeholder value to satisfy the Terraform schema; AWS ignores it for GitHub's well-known provider.
 
-**GitHub Actions role permissions mix scoped + wildcarded.** ECR push/pull scoped to the `mythrun` repo ARN. `ecs:*` actions mostly wildcarded because ECS's IAM surface doesn't support per-service ARN scoping on most actions. `iam:PassRole` scoped to the two task roles. `rds:CreateDBSnapshot` scoped to the `mythrun` instance. Net effect: the role can't exfiltrate secrets from other services or touch non-mythrun resources. Production launch should re-audit.
+**GitHub Actions role permissions mix scoped + wildcarded.** ECR push/pull scoped to the `mythrun` repo ARN. ECS mutating service actions scoped via `ecs:cluster` condition to the `mythrun` cluster. `iam:PassRole` scoped to the two task roles AND conditioned on `iam:PassedToService = ecs-tasks.amazonaws.com`. `rds:CreateDBSnapshot` scoped to the `mythrun` instance. Only `RegisterTaskDefinition`/`DeregisterTaskDefinition`/`DescribeTaskDefinition` remain unscoped (ECS limitation — these don't accept `ecs:cluster` or a resource ARN pattern). Production launch should re-audit.
+
+**OIDC trust is fortified with five independent `StringEquals` conditions.** `aud`, `repository`, `repository_owner_id`, `environment`, and `ref`. The numeric `repository_owner_id` is the belt-and-suspenders defense against org rename / reclaim attacks. Deliberate `StringEquals` (not `StringLike`) on all of them — if feature-branch deploys are ever wanted, broadening should be a loud, conscious change. See §6.
+
+**ECR repo is MUTABLE, not IMMUTABLE.** v1 of this design had IMMUTABLE with a "git-SHA tags are forever" rationale, but that contradicts the CI convention of pushing `:latest` + `:<git-sha>` on every build — IMMUTABLE would reject the second `:latest` push. Reverted to MUTABLE. Git-SHA tag immutability becomes a CI-discipline concern (never re-push the same SHA tag). First round of agent review caught this.
+
+**Staging Fargate sizing is 256/512, not 512/1024.** Module defaults match Week 0 §7.2's half-size staging matrix. Production workspace overrides to 512/1024 explicitly at Launch time. Saves ~50% of staging compute cost once `desired_count` flips to 1.
+
+**Env-var contract is decomposed `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_NAME` / `DB_PASSWORD` + `REDIS_HOST` / `REDIS_PORT` / `REDIS_AUTH_TOKEN`.** App constructs `DATABASE_URL` / `REDIS_URL` at startup. Names swapped from `RDS_*` to `DB_*` for consistency with `DB_USER`/`DB_NAME`. Infra §2.2 amendment (companion PR) updates the parent spec. Picks the §2.3 interpretation over the §2.2 interpretation.
+
+**Execution role secret list is explicit per-ARN rather than wildcarded (deviation from Week 0 §3.3).** Captures the cross-env shared `mythrun/shared/redis-auth` that a `mythrun/${env}/*` wildcard would miss. Rationale + Week 0 §3.3 amendment noted.
+
+**Listener rule priorities: 100 = production, 200 = staging.** Priority range 100-299 reserved for per-env API forward rules (300+ for future preview envs, etc.). Lower numeric priority wins in ALB rule evaluation — prod wins if hosts ever collide. Infra §2.6's priority values (1 = staging, 2 = production) appear to be list-order rather than intent and have the wrong collision winner; amendment filed with the invert.
+
+**`healthy_threshold = 1`** per Infra §2.5's explicit spec (rationale: shave 15s off scale-out). v1 of this design had `2` silently; v2 fixes.
+
+**`health_check_grace_period_seconds = 120`**, not 60. Matches `stopTimeout` + `deregistration_delay` symmetry; gives real first-deploy images headroom for startup migrations + secret fetch. The 60s value in v1 was tight.
+
+**Week 0 §6.3's eight critical alarms are deferred to Observability milestone.** Reason: alarms against zero-traffic empty services either fire immediately (ECS service down with `desired_count=0`) or never fire (RDS CPU on zero queries). Ops Foundation milestone delivers the SNS topic; alarms land with Observability. Week 0 §6.3 amendment (companion PR) updates the parent spec.
 
 **Execution role secret list is explicit per-ARN rather than wildcarded.** Captures the cross-env shared `mythrun/shared/redis-auth` and the per-env `mythrun/${env}/rds-password` correctly. The master user secret (`rds!db-*`) is deliberately absent — API/Worker tasks run as the per-env app user (`mythrun_${env}`), not the master. Only `bootstrap-databases.sh`'s future IAM principal (a separate ECS run-task invocation) needs master-secret access.
 
@@ -845,15 +955,34 @@ Actual alarms (ECS service down, RDS CPU, etc.) land in the Observability milest
 
 5. **Container `healthCheck` is a Node one-liner — fails if the image is broken before /health is reachable.** The container-level health check runs inside the running container; a crash-on-start image means ECS kills and retries, ALB never sees it. That's correct behavior. Documented because the first-deploy verification (MYT-28) should inspect the container logs in CloudWatch, not only the ALB target health.
 
-## Out of scope (follow-up beads)
+6. **`deployment_circuit_breaker.rollback = true` on the very first deploy has no previous task-set to roll back to.** When MYT-28 flips `desired_count` 0→1 with a new task def revision, if that first image fails health check, ECS will log `DEPLOYMENT_FAILED` with no auto-recovery. MYT-28's runbook should expect that circuit-breaker failure on the first deploy means "your image is broken, fix the image and retry" rather than chasing a rollback. After the first healthy deploy, rollback works normally.
+
+7. **`ignore_changes = [task_definition]` creates an audit gap + orphan task def revisions.** (a) Terraform's state loses visibility of which task def revision is actually running — `aws ecs describe-services` is the authoritative source. (b) If a future `terraform apply` changes something on the task def (e.g., bumps `api_cpu`), Terraform creates a new revision that nothing points at until the next CI deploy picks it up — an orphan. Deliberate tradeoff (CI owns task counts and revisions); flagged because it surprises on first encounter. Mitigation: CloudTrail captures every `RegisterTaskDefinition` + `UpdateService` call (free, 90-day retention). A longer-term CloudTrail → S3 trail can land with Observability.
+
+8. **GitHub Actions role has de facto read on every secret the task execution role can read.** The `RegisterTaskDefinition` + `iam:PassRole` + `UpdateService` combination allows the role to register a task def that uses the existing task execution role and declares `secrets[].valueFrom` pointing at any allowed secret ARN, then run a container that exfiltrates the injected env var. This is inherent to the CI-deploys-to-ECS pattern — whoever controls `main` controls those secrets. Mitigations are organizational: branch protection on `main` (required reviews, signed commits), GitHub Environment reviewers requiring Miklos's manual approval on each staging deploy. Spec documents the risk; MYT-28 configures the GitHub-side controls.
+
+9. **`mythrun/shared/redis-auth` conflates staging and future prod blast radii.** Staging and prod both read the same Redis AUTH token from the `mythrun/shared/redis-auth` secret. A compromise of the staging task-execution role effectively leaks the prod Redis AUTH token. This is a known consequence of the single-shared-Redis decision (Infra §2.5). Interim posture: `shared_redis_auth_secret_arn` is **staging-only** until prod cutover. Prod cutover must either (a) spin up per-env Redis, or (b) explicitly accept the cross-env blast radius with compensating controls.
+
+10. **`ignore_changes = [task_definition]` + `create_before_destroy` on task defs produces orphan revisions on Terraform-only edits.** Same concern as #7 from a different angle. If Terraform alone changes the task def (e.g., CPU bump), the new revision gets registered but the service keeps pointing at whatever CI last deployed. The next CI push picks up the new config via `aws ecs register-task-definition` re-registering the family — so new-CI-deploy propagates the change. Worth knowing during debugging: "I bumped CPU in TF and applied, but the running task still shows old CPU" is expected until the next CI deploy.
+
+## Out of scope (follow-up beads to file alongside MYT-30 implementation)
 
 - Harden bootstrap-databases.sh (existing `myth-5hq`)
 - Revisit Redis rename-commands alphanumeric aliases (existing `myth-dwy`)
 - ALB access logs S3 bucket (new — Observability)
-- CloudWatch alarms (Observability milestone)
+- CloudWatch alarms — Ops Foundation's 8 Week-0 critical alarms (new, blocks Observability milestone start)
 - Production workspace (Launch milestone)
-- `/health/live` + `/health/ready` split (Backend Core milestone)
+- `/health/live` + `/health/ready` split in backend (Backend Core milestone)
 - Autoscaling policies (post-first-traffic)
+- SIGTERM handler in `backend/src/server.ts` (Backend Core milestone — `stopTimeout = 120` buys nothing without graceful shutdown)
+- Worker `:3001` health server + `healthCheck` block (Prep Pipeline milestone — first worker implementation adds this)
+- MYT-28 first-deploy runbook (the exact `register-task-definition` + `update-service --task-definition :N` CLI sequence, since `--force-new-deployment` alone doesn't switch revisions)
+- First-deploy debugging cheatsheet (the three commands — `describe-tasks` stoppedReason, CloudWatch log group, `describe-services` events — that substitute for Container Insights at first-deploy debugging time)
+- Log retention bump to 30d (staging) / 90d (prod) before Launch
+- Consider Container Insights for prod at Launch (~$2.50/task/mo)
+- NAT port exhaustion check at Launch scale
+- On-call alert destination replacement (currently hardcoded personal email)
+- Arch Overview diagram fix: topology shows Worker → ALB, design follows Infra §3 which doesn't — pre-existing doc inaccuracy
 
 ## Cost delta over MYT-25 baseline
 

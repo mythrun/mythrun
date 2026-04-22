@@ -69,12 +69,18 @@ The API service handles all HTTP REST endpoints and WebSocket connections. It is
 
 ### 2.2 Environment Variables (Non-Secret)
 
+**Amended 2026-04-22 (MYT-30 serving-infra design):** The app uses **decomposed** env vars, not pre-built `DATABASE_URL` / `REDIS_URL`. Task definitions inject `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_NAME` + `REDIS_HOST` / `REDIS_PORT` as plain env vars, and `DB_PASSWORD` + `REDIS_AUTH_TOKEN` via Secrets Manager. The app constructs `DATABASE_URL` / `REDIS_URL` at startup. This resolves the internal contradiction between the original §2.2 ("injected as URL") and §2.3 ("app constructs URL"). The decomposed form avoids putting secrets in env vars (URL contains the password) and keeps the task def JSON free of secret interpolation.
+
 | Variable | Value | Source |
 |----------|-------|--------|
 | `NODE_ENV` | `production` or `staging` | Task definition |
 | `PORT` | `3000` | Task definition |
-| `DATABASE_URL` | `postgresql://...` | Task definition (host/port/db from RDS endpoint, credentials from Secrets Manager) |
-| `REDIS_URL` | `redis://...` | Task definition (host/port from ElastiCache endpoint, auth from Secrets Manager) |
+| `DB_HOST` | RDS endpoint hostname | Task definition (from RDS endpoint output) |
+| `DB_PORT` | `5432` | Task definition (from RDS port output) |
+| `DB_USER` | `mythrun_${env}` | Task definition (fixed per env — matches user created by bootstrap-databases.sh) |
+| `DB_NAME` | `mythrun_${env}` | Task definition (fixed per env) |
+| `REDIS_HOST` | ElastiCache primary endpoint hostname | Task definition (from Redis endpoint output) |
+| `REDIS_PORT` | `6379` | Task definition (from Redis port output) |
 | `AUTH_MODE` | `real` | Always `real` in deployed environments |
 | `AWS_REGION` | `us-east-1` | Task definition |
 | `REGION_PREFIX` | `use1` | For Redis key namespacing (`{region}:session:{id}`) |
@@ -124,10 +130,12 @@ The application constructs `DATABASE_URL` and `REDIS_URL` at startup by combinin
 
 ### 2.6 ALB Listener Rules
 
+**Amended 2026-04-22 (MYT-30 serving-infra design):** Priority values are 100 (production) / 200 (staging) — not the original 1/2. ALB rule evaluation uses lower numeric priority as higher priority, so 100 wins if the two hosts ever collide (prod-wins-on-conflict is the intended safety default; the original 1/2 had staging winning, which was likely list-order, not intent). Priority range 100-299 is reserved for per-env API forward rules; 300+ for future preview environments.
+
 | Priority | Condition | Action | Environment |
 |----------|-----------|--------|-------------|
-| 1 | Host: `staging-api.mythrun.com` | Forward to staging target group | Staging |
-| 2 | Host: `api.mythrun.com` | Forward to production target group | Production |
+| 100 | Host: `api.mythrun.com` | Forward to production target group | Production |
+| 200 | Host: `staging-api.mythrun.com` | Forward to staging target group | Staging |
 | Default | None | Return 404 | — |
 
 ---
@@ -203,10 +211,13 @@ CMD ["node", "--max-old-space-size=768", "dist/server.js"]
 
 ### 4.2 Image Management
 
+**Amended 2026-04-22 (MYT-30 serving-infra design):** ECR `image_tag_mutability` is `MUTABLE` (not IMMUTABLE). IMMUTABLE mode blocks overwriting *any* existing tag — CI's repeated `docker push :latest` would fail. Git-SHA tag immutability becomes a CI-discipline concern: CI must never re-push the same `{git-sha}` tag. The repo's lifecycle policy + CI's one-tag-per-SHA discipline together deliver the same immutability guarantee for SHA tags that IMMUTABLE mode would give.
+
 | Setting | Value |
 |---------|-------|
 | ECR repository | `mythrun` |
-| Tag strategy | `{git-sha}` (immutable) + `latest` (convenience) |
+| `image_tag_mutability` | `MUTABLE` (enables `:latest` convenience tag) |
+| Tag strategy | `{git-sha}` (CI-enforced immutable) + `latest` (convenience, overwritten each build) |
 | Lifecycle policy | Keep 20 most recent tagged images; expire untagged after 1 day |
 | Scan on push | Enabled (ECR basic vulnerability scanning) |
 

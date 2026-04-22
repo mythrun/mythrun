@@ -186,6 +186,8 @@ The ECS task execution role gets a scoped policy:
 
 Staging tasks get the same policy scoped to `mythrun/staging/*`. A staging container cannot read production secrets.
 
+**Amended 2026-04-22 (MYT-30 serving-infra design):** The implementation uses an **explicit per-ARN list** rather than a wildcard, because the shared `mythrun/shared/redis-auth` secret is accessed by both staging and production task roles and a per-env wildcard (`mythrun/staging/*`) would miss it. Implementation lists: `mythrun/shared/redis-auth` + `mythrun/${env}/rds-password` + the four manual secret ARNs (anthropic, stripe-secret, stripe-webhook, cognito). The per-env isolation claim still holds because the list is constructed per-role. See `docs/superpowers/specs/2026-04-22-serving-infra-design.md` §5.3 for the Terraform shape.
+
 ### 3.4 Terraform State Protection
 
 The Terraform state S3 bucket:
@@ -425,6 +427,8 @@ Pino JSON output. At Week 0, logs contain:
 Application-level fields (request ID, user ID, campaign ID, LLM call metadata) are added when the application code is updated in later sub-projects.
 
 ### 6.3 Critical Alarms
+
+**Amended 2026-04-22 (MYT-30 serving-infra design):** Alarm **provisioning** (CloudWatch alarm resources) moved out of Ops Foundation into the Observability & Hardening sub-spec. Rationale: alarms against zero-traffic empty services either fire immediately (e.g. "API service down" when `desired_count = 0` by design) or never fire (e.g. "RDS high CPU" on a database with zero connections). Ops Foundation delivers the SNS topics (`mythrun-critical-alerts` for prod, `mythrun-staging-alerts` for staging) + Miklos's email/SMS subscriptions — the plumbing alarms will publish into. The eight alarms below are the Observability sub-spec's work, blocked on real traffic existing (Platform milestone onward).
 
 Week 0 alarms are limited to "the service is down" scenarios. Granular alarms (error rates, latency, LLM spend) come in the Observability & Hardening sub-spec.
 
