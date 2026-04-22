@@ -1,6 +1,7 @@
 {
   "name": "mythrun",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=24.0.0"
