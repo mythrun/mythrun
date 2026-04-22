@@ -42,10 +42,10 @@ Scope the task role tightly. Revoke after use.
 
 ### Modes
 
-- `--verify` — check current state. Prints `OK`, `DB_ONLY`, `USER_ONLY`, or `MISSING`.
+- `--verify` — check current state. Prints `OK`, `DB_ONLY`, `SECRET_MISSING`, or `MISSING`.
 - default — create whatever is missing. Idempotent.
 - `--user-only` — DB exists but user doesn't. Create user + password.
-- `--secret-only` / `--reset-password` — rotate the app user password.
+- `--secret-only` / `--reset-password` — rotate the app user password. Aliases; use `--secret-only` when the stored secret is absent, `--reset-password` when it's known-wrong.
 
 ### Recovery from partial failures
 
@@ -54,4 +54,4 @@ State reported by `--verify`:
 - `OK` — nothing to do.
 - `MISSING` — run the default (no flags). Creates DB + user + secret.
 - `DB_ONLY` — run with `--user-only`.
-- `USER_ONLY` — run with `--secret-only`. The DB user exists but we don't know its password. `--secret-only` rotates the password via `ALTER USER` and writes the new value to Secrets Manager.
+- `SECRET_MISSING` — run with `--secret-only`. The DB user exists but we don't know its password. `--secret-only` rotates the password via `ALTER USER` and writes the new value to Secrets Manager.

@@ -11,11 +11,13 @@
 # Modes:
 #   (default)         Create database + user + password secret. Idempotent.
 #   --verify          Check current state without mutating. Prints one of:
-#                     OK / DB_ONLY / USER_ONLY / SECRET_MISMATCH / MISSING
+#                     OK / DB_ONLY / SECRET_MISSING / MISSING
 #   --user-only       DB exists but user doesn't: create user + password + secret.
 #   --secret-only     DB + user exist but secret version missing or placeholder:
 #                     ALTER USER password + write secret.
-#   --reset-password  Everything exists but password is wrong: rotate it.
+#   --reset-password  Alias of --secret-only: rotate password + write secret.
+#                     Use when the stored secret is known-wrong (drift) rather
+#                     than missing.
 #
 # Required env vars (injected via ECS task role):
 #   AWS_REGION                us-east-1
@@ -24,16 +26,29 @@
 
 set -euo pipefail
 
+# Scrub sensitive values from the environment on any exit path (including
+# unexpected interpreter tracing via `set -x`). Capture $? first so the trap
+# doesn't overwrite a non-zero abort code with unset's exit 0.
+trap 'rc=$?; unset PGPASSWORD MASTER_PASS MASTER_JSON; exit $rc' EXIT
+
 ENV=""
 MODE="default"
+
+set_mode() {
+  if [[ "$MODE" != "default" ]]; then
+    echo "ERROR: multiple mode flags specified (got --$1 after --$MODE)" >&2
+    exit 2
+  fi
+  MODE="$1"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env)            ENV="$2"; shift 2 ;;
-    --verify)         MODE="verify"; shift ;;
-    --user-only)      MODE="user-only"; shift ;;
-    --secret-only)    MODE="secret-only"; shift ;;
-    --reset-password) MODE="reset-password"; shift ;;
+    --verify)         set_mode "verify"; shift ;;
+    --user-only)      set_mode "user-only"; shift ;;
+    --secret-only)    set_mode "secret-only"; shift ;;
+    --reset-password) set_mode "reset-password"; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -49,7 +64,10 @@ if [[ ! "$ENV" =~ ^(staging|production)$ ]]; then
 fi
 
 : "${AWS_REGION:=us-east-1}"
-: "${RDS_MASTER_SECRET_ARN:?RDS_MASTER_SECRET_ARN env var required}"
+if [[ -z "${RDS_MASTER_SECRET_ARN:-}" ]]; then
+  echo "ERROR: RDS_MASTER_SECRET_ARN env var required" >&2
+  exit 1
+fi
 
 DB_NAME="mythrun_${ENV}"
 DB_USER="mythrun_${ENV}"
@@ -64,24 +82,42 @@ MASTER_PASS=$(echo "$MASTER_JSON" | jq -r .password)
 RDS_HOST=$(echo "$MASTER_JSON" | jq -r .host)
 RDS_PORT=$(echo "$MASTER_JSON" | jq -r .port)
 
+# Guard against a malformed master secret (e.g. a manually edited version that
+# dropped a field). jq emits the string "null" for missing keys.
+for pair in "username:$MASTER_USER" "password:$MASTER_PASS" "host:$RDS_HOST" "port:$RDS_PORT"; do
+  field="${pair%%:*}"
+  value="${pair#*:}"
+  if [[ -z "$value" || "$value" == "null" ]]; then
+    echo "ERROR: RDS master secret missing '$field'" >&2
+    exit 1
+  fi
+done
+
 # Base psql command; connects to the 'postgres' maintenance DB.
 export PGPASSWORD="$MASTER_PASS"
 PSQL_MASTER=(psql --host="$RDS_HOST" --port="$RDS_PORT" --username="$MASTER_USER" \
              --dbname=postgres --no-password --tuples-only --no-align)
 
 # --- verify mode ---
+# Propagates psql failures (no `|| true`) so a transient RDS blip aborts the
+# script rather than misreporting state and triggering a destructive path.
+# Idempotency of the CREATE branches depends on this: CREATE DATABASE and
+# CREATE USER have no IF NOT EXISTS form in Postgres, so fail-fast is the
+# only safe posture.
 verify_state() {
   local db_exists user_exists secret_has_version
 
-  db_exists=$("${PSQL_MASTER[@]}" -c "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME';" | tr -d '[:space:]' || true)
-  user_exists=$("${PSQL_MASTER[@]}" -c "SELECT 1 FROM pg_user WHERE usename = '$DB_USER';" | tr -d '[:space:]' || true)
+  db_exists=$("${PSQL_MASTER[@]}" -c "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME';" | tr -d '[:space:]')
+  user_exists=$("${PSQL_MASTER[@]}" -c "SELECT 1 FROM pg_user WHERE usename = '$DB_USER';" | tr -d '[:space:]')
+  # describe-secret: `|| echo ""` is intentional — "secret has no version yet"
+  # is a legitimate state, not an error.
   secret_has_version=$(aws secretsmanager describe-secret --secret-id "$APP_SECRET_ID" \
     --region "$AWS_REGION" --query 'VersionIdsToStages' --output text 2>/dev/null || echo "")
 
   if [[ "$db_exists" == "1" && "$user_exists" == "1" && -n "$secret_has_version" ]]; then
     echo "OK"; return 0
   elif [[ "$db_exists" == "1" && "$user_exists" == "1" ]]; then
-    echo "USER_ONLY"; return 0  # DB + user, but no secret version
+    echo "SECRET_MISSING"; return 0  # DB + user, but no secret version
   elif [[ "$db_exists" == "1" ]]; then
     echo "DB_ONLY"; return 0
   else
@@ -90,6 +126,8 @@ verify_state() {
 }
 
 generate_password() {
+  # Excludes /, @, ", ', \ — characters that bite Postgres libpq URI parsing
+  # (the URI scheme uses /, @) or shell/SQL quoting (quotes, backslash).
   aws secretsmanager get-random-password \
     --password-length 32 \
     --exclude-characters '/@"'\''\' \
@@ -149,11 +187,11 @@ case "$MODE" in
   default)
     state=$(verify_state)
     case "$state" in
-      OK)            echo "Nothing to do (already bootstrapped)." ;;
-      MISSING)       create_db_and_user ;;
-      DB_ONLY)       create_user_only ;;
-      USER_ONLY)     rotate_password ;;
-      *)             echo "ERROR: unexpected state '$state'" >&2; exit 1 ;;
+      OK)             echo "Nothing to do (already bootstrapped)." ;;
+      MISSING)        create_db_and_user ;;
+      DB_ONLY)        create_user_only ;;
+      SECRET_MISSING) rotate_password ;;
+      *)              echo "ERROR: unexpected state '$state'" >&2; exit 1 ;;
     esac
     ;;
   user-only)    create_user_only ;;
