@@ -10,5 +10,5 @@ output "zone_name" {
 
 output "name_servers" {
   value       = aws_route53_zone.main.name_servers
-  description = "Four AWS nameservers to set at the registrar (Squarespace). Displayed after apply."
+  description = "Four AWS nameservers. Set these at Squarespace Domains → DNS → Custom nameservers to cut DNS over to AWS."
 }

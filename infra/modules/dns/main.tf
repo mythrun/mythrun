@@ -8,7 +8,7 @@ resource "aws_route53_zone" "main" {
   name    = var.domain_name
   comment = "Mythrun production DNS — managed by Terraform"
 
-  tags = { Name = "mythrun-com" }
+  tags = { Name = var.domain_name }
 }
 
 # ======== Email records (preserve exactly from Squarespace audit) ========
@@ -58,14 +58,28 @@ resource "aws_route53_record" "dmarc" {
 }
 
 # DKIM public key at google._domainkey subdomain.
-# The DKIM value exceeds DNS's 255-char-per-string limit. The AWS Terraform
-# provider auto-chunks when records is a list of strings >255 chars, splitting
-# at 255-char boundaries. We pass the raw value and let the provider handle it.
+#
+# DNS TXT strings have a 255-octet-per-string wire-format limit. DKIM public
+# keys are ~256-400 chars, so we must emit multiple quoted substrings joined
+# by spaces — Route 53 rejects a single Value longer than 255 chars.
+#
+# Input contract: var.dkim_key_rrdata is the raw DKIM value (v=DKIM1;k=rsa;p=...
+# with the full ~256-400 char body). We chunk it here so the caller doesn't
+# have to know about DNS wire format. Output format: `"chunk1" "chunk2" ...`
+# which Route 53 accepts as a single Value representing multi-string TXT rdata.
 resource "aws_route53_record" "dkim" {
   zone_id = aws_route53_zone.main.zone_id
   name    = "google._domainkey.${var.domain_name}"
   type    = "TXT"
   ttl     = 300
 
-  records = [var.dkim_key_rrdata]
+  records = [
+    format(
+      "\"%s\"",
+      join("\" \"", [
+        for i in range(0, length(var.dkim_key_rrdata), 255) :
+        substr(var.dkim_key_rrdata, i, 255)
+      ]),
+    ),
+  ]
 }
