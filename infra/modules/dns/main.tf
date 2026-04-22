@@ -60,13 +60,16 @@ resource "aws_route53_record" "dmarc" {
 # DKIM public key at google._domainkey subdomain.
 #
 # DNS TXT strings have a 255-octet-per-string wire-format limit. DKIM public
-# keys are ~256-400 chars, so we must emit multiple quoted substrings joined
-# by spaces — Route 53 rejects a single Value longer than 255 chars.
+# keys are ~256-400 chars, so we emit multiple substrings joined by the
+# literal sequence `" "` — Route 53 rejects a single Value longer than 255
+# chars. The AWS provider adds outer double-quotes to each element in
+# `records`, so our expression must produce `chunk1" "chunk2` (unquoted on
+# the outside, quoted-and-spaced between chunks). After the provider wraps,
+# Route 53 receives `"chunk1" "chunk2"` as a single multi-string TXT value.
 #
 # Input contract: var.dkim_key_rrdata is the raw DKIM value (v=DKIM1;k=rsa;p=...
-# with the full ~256-400 char body). We chunk it here so the caller doesn't
-# have to know about DNS wire format. Output format: `"chunk1" "chunk2" ...`
-# which Route 53 accepts as a single Value representing multi-string TXT rdata.
+# with the full ~256-400 char body). Caller doesn't need to know about DNS
+# wire format.
 resource "aws_route53_record" "dkim" {
   zone_id = aws_route53_zone.main.zone_id
   name    = "google._domainkey.${var.domain_name}"
@@ -74,13 +77,10 @@ resource "aws_route53_record" "dkim" {
   ttl     = 300
 
   records = [
-    format(
-      "\"%s\"",
-      join("\" \"", [
-        for i in range(0, length(var.dkim_key_rrdata), 255) :
-        substr(var.dkim_key_rrdata, i, 255)
-      ]),
-    ),
+    join("\" \"", [
+      for i in range(0, length(var.dkim_key_rrdata), 255) :
+      substr(var.dkim_key_rrdata, i, 255)
+    ]),
   ]
 }
 
