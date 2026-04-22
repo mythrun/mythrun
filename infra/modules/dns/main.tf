@@ -83,3 +83,57 @@ resource "aws_route53_record" "dkim" {
     ),
   ]
 }
+
+# ======== Wildcard ACM certificate ========
+#
+# Covers the apex (mythrun.com) plus any single-label subdomain (staging-api,
+# api, www). Two-label subdomains would require separate SANs — not a concern
+# for launch.
+#
+# validation_method = "DNS" means ACM gives us a CNAME record to publish; it
+# then polls that CNAME to prove domain control. No private keys traverse the
+# public internet.
+
+resource "aws_acm_certificate" "wildcard" {
+  domain_name               = var.domain_name
+  subject_alternative_names = ["*.${var.domain_name}"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = { Name = "mythrun-wildcard" }
+}
+
+# Publish the CNAME records ACM asks for. In the common case of apex + wildcard
+# sharing a parent domain, ACM dedupes and returns a single validation option.
+# for_each handles both cases (1 or 2 options).
+
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.wildcard.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  allow_overwrite = true
+  zone_id         = aws_route53_zone.main.zone_id
+  name            = each.value.name
+  type            = each.value.type
+  ttl             = 60
+  records         = [each.value.record]
+}
+
+# Waits until ACM flips the cert to ISSUED. This resource can sit in
+# "Still creating..." for ~5-30 min the first time because ACM only starts
+# validating once the zone is globally authoritative (post-NS-swap). We avoid
+# that wait by running the first `terraform apply` with -target flags that
+# EXCLUDE this resource, letting us cut over nameservers between applies.
+
+resource "aws_acm_certificate_validation" "wildcard" {
+  certificate_arn         = aws_acm_certificate.wildcard.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
