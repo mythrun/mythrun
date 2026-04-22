@@ -120,7 +120,7 @@ variable "manual_secret_arns" {
 }
 
 variable "rds_password_secret_arn" {
-  description = "ARN of mythrun/${var.environment}/rds-password. Injected as DB_PASSWORD. Stored as a plain-string password by bootstrap-databases.sh (no JSON-path suffix on valueFrom)."
+  description = "ARN of the mythrun/<env>/rds-password secret. Injected as DB_PASSWORD. Stored as a plain-string password by bootstrap-databases.sh (no JSON-path suffix on valueFrom)."
   type        = string
 }
 
