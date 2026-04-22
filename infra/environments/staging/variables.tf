@@ -3,3 +3,15 @@ variable "environment" {
   type        = string
   default     = "staging"
 }
+
+variable "github_repository_owner_id" {
+  description = "Numeric GitHub organization ID for 'mythrun'. Looked up via: curl -s https://api.github.com/orgs/mythrun | jq .id . Used in the OIDC trust policy's repository_owner_id condition — immune to org rename/reclaim attacks."
+  type        = string
+  default     = "274691930" # mythrun org (confirmed 2026-04-22 via GitHub API)
+}
+
+variable "alerts_email" {
+  description = "Email address to subscribe to the staging alerts SNS topic. Must be confirmed by clicking the AWS confirmation link after apply."
+  type        = string
+  default     = "miklos.bowling@gmail.com"
+}
