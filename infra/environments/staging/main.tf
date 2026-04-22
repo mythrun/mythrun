@@ -156,6 +156,19 @@ data "aws_iam_policy_document" "gh_actions_trust" {
       variable = "token.actions.githubusercontent.com:ref"
       values   = ["refs/heads/main"]
     }
+
+    # AWS IAM requires the trust policy to pin `:sub` (not just the split
+    # claims above) — rejects CreateRole otherwise with
+    # "must evaluate, using StringEquals/StringLike/StringEqualsIgnoreCase,
+    # token.actions.githubusercontent.com:sub which is not scoped to all".
+    # The `sub` claim is constructed by GitHub as
+    # "repo:<owner>/<name>:environment:<env>", so pinning it is redundant
+    # with `repository` + `environment` above — but AWS insists.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:mythrun/mythrun:environment:staging"]
+    }
   }
 }
 

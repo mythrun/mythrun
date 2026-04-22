@@ -23,7 +23,7 @@ Plus:
 - `aws ecs describe-clusters --clusters mythrun` returns `ACTIVE`, `runningTasksCount=0`, `activeServicesCount=2`
 - `aws ecs describe-services --cluster mythrun --services mythrun-staging-api mythrun-staging-worker` returns both `ACTIVE` with `desiredCount=0`, valid task definition revisions registered
 - `curl -v https://staging-api.mythrun.com/health` returns HTTP 503 (no healthy targets, expected) and the TLS handshake presents the `*.mythrun.com` wildcard cert from MYT-26
-- `aws iam get-role --role-name mythrun-github-actions-staging` returns the role with trust policy whose conditions enforce `repository_owner_id` + `repository = "mythrun/mythrun"` + `environment = "staging"` + `ref = "refs/heads/main"` all via `StringEquals`
+- `aws iam get-role --role-name mythrun-github-actions-staging` returns the role with trust policy whose conditions enforce `repository_owner_id` + `repository = "mythrun/mythrun"` + `environment = "staging"` + `ref = "refs/heads/main"` + `sub = "repo:mythrun/mythrun:environment:staging"` all via `StringEquals`
 - `aws ecr describe-repositories --repository-names mythrun` returns the repo in `MUTABLE` mode with lifecycle policy expiring untagged images after 1 day and keeping 20 most recent tagged
 - SNS topic `mythrun-staging-alerts` exists with email subscription NOT in `PendingConfirmation`: `aws sns list-subscriptions-by-topic --topic-arn <arn> --query 'Subscriptions[0].SubscriptionArn'` returns a real ARN (confirmed via email click), not the literal string `"PendingConfirmation"`
 - `aws ecs describe-task-definition --task-definition mythrun-staging-api` shows `secrets[].valueFrom` ARNs only — no plaintext secret values anywhere in the JSON
@@ -772,6 +772,19 @@ data "aws_iam_policy_document" "gh_actions_trust" {
       variable = "token.actions.githubusercontent.com:ref"
       values   = ["refs/heads/main"]
     }
+
+    # AWS IAM requires `:sub` be pinned (not just the split claims above) —
+    # CreateRole fails with "must evaluate, using StringEquals/StringLike/
+    # StringEqualsIgnoreCase, token.actions.githubusercontent.com:sub which
+    # is not scoped to all". The `sub` claim is built by GitHub as
+    # "repo:<owner>/<name>:environment:<env>", so pinning it is redundant
+    # with `repository` + `environment` — but AWS insists. Surfaced at
+    # apply-time during MYT-30 T5, added in v3 of this spec.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:mythrun/mythrun:environment:staging"]
+    }
   }
 }
 
@@ -945,7 +958,7 @@ Actual alarms (ECS service down, RDS CPU, etc.) land in the Observability milest
 
 **GitHub Actions role permissions mix scoped + wildcarded.** ECR push/pull scoped to the `mythrun` repo ARN. ECS mutating service actions scoped via `ecs:cluster` condition to the `mythrun` cluster. `iam:PassRole` scoped to the two task roles AND conditioned on `iam:PassedToService = ecs-tasks.amazonaws.com`. `rds:CreateDBSnapshot` scoped to the `mythrun` instance. Only `RegisterTaskDefinition`/`DeregisterTaskDefinition`/`DescribeTaskDefinition` remain unscoped (ECS limitation — these don't accept `ecs:cluster` or a resource ARN pattern). Production launch should re-audit.
 
-**OIDC trust is fortified with five independent `StringEquals` conditions.** `aud`, `repository`, `repository_owner_id`, `environment`, and `ref`. The numeric `repository_owner_id` is the belt-and-suspenders defense against org rename / reclaim attacks. Deliberate `StringEquals` (not `StringLike`) on all of them — if feature-branch deploys are ever wanted, broadening should be a loud, conscious change. See §6.
+**OIDC trust has six `StringEquals` conditions.** `aud`, `repository`, `repository_owner_id`, `environment`, `ref`, and `sub`. The numeric `repository_owner_id` is the belt-and-suspenders defense against org rename / reclaim attacks. The `sub` condition (added in v3 after AWS rejected CreateRole at apply time) is technically redundant with `repository` + `environment` since GitHub constructs `sub` from them, but AWS IAM requires it be pinned — not optional. Deliberate `StringEquals` (not `StringLike`) on all of them — if feature-branch deploys are ever wanted, broadening should be a loud, conscious change. See §6.
 
 **ECR repo is MUTABLE, not IMMUTABLE.** v1 of this design had IMMUTABLE with a "git-SHA tags are forever" rationale, but that contradicts the CI convention of pushing `:latest` + `:<git-sha>` on every build — IMMUTABLE would reject the second `:latest` push. Reverted to MUTABLE. Git-SHA tag immutability becomes a CI-discipline concern (never re-push the same SHA tag). First round of agent review caught this.
 
