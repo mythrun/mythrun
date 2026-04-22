@@ -452,21 +452,36 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/mythrun-github-actions
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: us-east-1
       
+      # Register a new task def revision pointing at the just-pushed image,
+      # then update the service to use it. `--force-new-deployment` alone does
+      # NOT switch task-def revisions — the `--task-definition` flag is
+      # load-bearing. Recommend using aws-actions/amazon-ecs-deploy-task-definition
+      # which handles the describe→patch→register→update flow correctly
+      # (stripping read-only fields, etc.).
       - name: Deploy to ECS staging
         run: |
+          # Detailed runbook in bead myth-bcx; abridged sequence here.
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition mythrun-staging-api \
+            --query 'taskDefinition' --output json \
+            | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            | jq --arg img "$IMAGE_URI" '.containerDefinitions[0].image = $img')
+          NEW_REV=$(aws ecs register-task-definition --cli-input-json "$TASK_DEF" --query 'taskDefinition.revision' --output text)
           aws ecs update-service \
-            --cluster mythrun-staging \
-            --service mythrun-api-staging \
+            --cluster mythrun \
+            --service mythrun-staging-api \
+            --task-definition mythrun-staging-api:$NEW_REV \
+            --desired-count 1 \
             --force-new-deployment
       
       - name: Wait for stability
         run: |
           aws ecs wait services-stable \
-            --cluster mythrun-staging \
-            --services mythrun-api-staging
+            --cluster mythrun \
+            --services mythrun-staging-api
 
   deploy-production:
     needs: deploy-staging
@@ -476,22 +491,32 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/mythrun-github-actions
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-production
           aws-region: us-east-1
       
+      # Same register-then-update pattern as staging; cluster is shared.
       - name: Deploy to ECS production
         run: |
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition mythrun-production-api \
+            --query 'taskDefinition' --output json \
+            | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            | jq --arg img "$IMAGE_URI" '.containerDefinitions[0].image = $img')
+          NEW_REV=$(aws ecs register-task-definition --cli-input-json "$TASK_DEF" --query 'taskDefinition.revision' --output text)
           aws ecs update-service \
-            --cluster mythrun-production \
-            --service mythrun-api-production \
+            --cluster mythrun \
+            --service mythrun-production-api \
+            --task-definition mythrun-production-api:$NEW_REV \
             --force-new-deployment
       
       - name: Wait for stability
         run: |
           aws ecs wait services-stable \
-            --cluster mythrun-production \
-            --services mythrun-api-production
+            --cluster mythrun \
+            --services mythrun-production-api
 ```
+
+**Amended 2026-04-22 (MYT-30 serving-infra design):** Cluster and service names corrected — there is a single shared cluster `mythrun` (not per-env `mythrun-staging`/`mythrun-production`) with per-env services `mythrun-staging-api` / `mythrun-production-api`. GitHub Actions role names are per-env (`mythrun-github-actions-staging` / `mythrun-github-actions-production`) for least-privilege scoping. Deploy step uses register-then-update (not `--force-new-deployment` alone) because the latter doesn't switch task-def revisions.
 
 **Action versions are current as of April 2026**: `configure-aws-credentials@v6`, `setup-node@v6`, `pnpm/action-setup@v4`, `amazon-ecr-login@v2`.
 

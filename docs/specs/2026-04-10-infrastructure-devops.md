@@ -47,11 +47,15 @@ The API service handles all HTTP REST endpoints and WebSocket connections. It is
 
 ### 2.1 Task Definition
 
+**Amended 2026-04-22 (MYT-30 serving-infra design):** The CPU/memory values in this table are the **production** values. Staging uses half-size (CPU=256, Memory=512) per Week 0 §7.2's module parameterization matrix. The Fargate sizing matrix (staging vs prod) is owned by Week 0 §7.2; §2.1 gives the per-task-def settings at prod scale.
+
 | Setting | Value | Rationale |
 |---------|-------|-----------|
 | Family | `mythrun-{env}-api` | Environment-scoped naming |
-| CPU | 512 (0.5 vCPU) | Sufficient for WebSocket + REST at launch scale |
-| Memory | 1024 (1 GB) | Node.js with streaming LLM responses + WebSocket state |
+| CPU (prod) | 512 (0.5 vCPU) | Sufficient for WebSocket + REST at launch scale |
+| CPU (staging) | 256 (0.25 vCPU) | Per Week 0 §7.2 |
+| Memory (prod) | 1024 (1 GB) | Node.js with streaming LLM responses + WebSocket state |
+| Memory (staging) | 512 (0.5 GB) | Per Week 0 §7.2 |
 | Network mode | `awsvpc` | Required for Fargate; each task gets its own ENI |
 | Launch type | `FARGATE` | Managed, no EC2 instances to maintain |
 | Platform version | `LATEST` | Fargate platform version |
@@ -94,7 +98,9 @@ The API service handles all HTTP REST endpoints and WebSocket connections. It is
 | `STRIPE_WEBHOOK_SECRET` | `mythrun/{env}/stripe-webhook-secret` |
 | `COGNITO_CLIENT_SECRET` | `mythrun/{env}/cognito-client-secret` |
 | `DB_PASSWORD` | `mythrun/{env}/rds-password` |
-| `REDIS_AUTH_TOKEN` | `mythrun/{env}/redis-auth` |
+| `REDIS_AUTH_TOKEN` | `mythrun/shared/redis-auth` (**shared across envs** — amended 2026-04-22) |
+
+**Amended 2026-04-22 (MYT-30 serving-infra design):** The Redis AUTH token is stored at `mythrun/shared/redis-auth` (not per-env) because the single shared ElastiCache replication group created in MYT-25 has one AUTH token used by both staging and future prod task roles. Both envs' task execution roles include this ARN explicitly. This also means a staging task-role compromise can read the prod Redis AUTH token — flagged in the MYT-30 design's Risks section; interim mitigation is staging-only until prod cutover.
 
 The application constructs `DATABASE_URL` and `REDIS_URL` at startup by combining the non-secret host/port with the injected password/auth token.
 
@@ -161,9 +167,11 @@ All other settings (CPU, memory, image, secrets, environment variables, log grou
 
 ### 3.2 Service Configuration
 
+**Amended 2026-04-22 (MYT-30 serving-infra design):** The steady-state values below describe Prep Pipeline milestone onward — once a real `dist/worker.js` exists. During the interim (MYT-30 through the start of Prep Pipeline), the worker service is provisioned with `desired_count = 0` so that no task attempts to boot against the `:placeholder` ECR image. Flipped to `desired_count = 1` by the Prep Pipeline milestone's first CI deploy.
+
 | Setting | Value | Rationale |
 |---------|-------|-----------|
-| Desired count | 1 | Always-on, picks up jobs immediately |
+| Desired count | 1 (0 during MYT-30→Prep Pipeline interim) | Always-on, picks up jobs immediately |
 | Min capacity | 1 | No scale-to-zero (avoids cold start on pipeline jobs) |
 | Max capacity | 1 | No auto-scaling at launch; single worker handles the pipeline volume |
 | Deployment type | Rolling update | Simpler than blue/green; no user-facing connections to drain |

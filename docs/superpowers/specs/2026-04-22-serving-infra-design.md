@@ -3,7 +3,7 @@
 > **Linear issue**: MYT-30
 > **Milestone**: Ops Foundation (2026-04-27)
 > **Date**: 2026-04-22
-> **Status**: v2 — post first round of agent-team review (Clownfish/Lionfish/Angelfish/Discus, 2026-04-22). Fixed OIDC hardening (`repository_owner_id` + `StringEquals`), ECR `MUTABLE` (was IMMUTABLE, contradicted `:latest`-tag CI pattern), `healthy_threshold = 1` (was 2, contradicted Infra §2.5), `health_check_grace_period_seconds = 120` (was 60), staging CPU/memory defaults 256/512 (was 512/1024, silently overrode Week 0 §7.2), env var names `DB_HOST`/`DB_PORT` (was `RDS_HOST`/`RDS_PORT`, inconsistent with existing `DB_USER`/`DB_NAME`). IAM hardening: `iam:PassedToService` + `ecs:cluster` conditions. Runbook + alarm deferral pushed to amendments on parent specs (Week 0 §6.3, Infra §2.2/§2.6/§4.2). Ready for round-two blind review.
+> **Status**: v3 — post two rounds of blind agent-team review (round 1: Clownfish/Lionfish/Angelfish/Discus; round 2: Mandarinfish/Moray/Betta/Koi — both 2026-04-22). Round 2 found no new blockers; findings converged on doc hygiene, parent-spec consistency, and additive hardening. v3 fixes: RegisterTaskDefinition/DeregisterTaskDefinition ARN-scoped on family pattern (DescribeTaskDefinition remains `*` — unavoidable), dropped `create_before_destroy` on task defs (AWS never destroys task-def revisions, the lifecycle is misleading), Decisions Log `thumbprint_list` entry now matches the HCL (omitted, not placeholder), main-body MYT-28 deploy language replaced with explicit `register-task-definition` + `update-service --task-definition :N` sequence, done-when split into apply-time vs post-apply-confirmation, Risks §6 gains specific rollback-recovery remediation, `rds:CreateDBSnapshot` removed from staging role (prod-only scope per Infra §5.5), ALB access logs citation corrected, SNS topic gains KMS + lifecycle note, task-def `startPeriod` bumped to 60, `platform_version = "LATEST"` explicit, `slow_start` comment added. Parent specs: Infra §2.1 + §2.3 + §3.2 and Week 0 §3.1 gain 2026-04-22 amendments for staging sizing, Redis AUTH path, and worker interim state.
 > **Depends on**: MYT-25 (foundation infra — VPC/SGs/RDS/Redis/Secrets, applied), MYT-26 (Route 53 authoritative + wildcard ACM cert issued, applied)
 > **Blocks**: MYT-28 (CI/CD + first staging deploy)
 
@@ -27,6 +27,10 @@ Plus:
 - `aws ecr describe-repositories --repository-names mythrun` returns the repo in `MUTABLE` mode with lifecycle policy expiring untagged images after 1 day and keeping 20 most recent tagged
 - SNS topic `mythrun-staging-alerts` exists with email subscription NOT in `PendingConfirmation`: `aws sns list-subscriptions-by-topic --topic-arn <arn> --query 'Subscriptions[0].SubscriptionArn'` returns a real ARN (confirmed via email click), not the literal string `"PendingConfirmation"`
 - `aws ecs describe-task-definition --task-definition mythrun-staging-api` shows `secrets[].valueFrom` ARNs only — no plaintext secret values anywhere in the JSON
+
+**Post-apply, out-of-band manual step** (can't be verified from the apply terminal, required before MYT-30 is fully closed):
+
+- Click the AWS-sent email confirmation link for the `mythrun-staging-alerts` SNS subscription. Verify with: `aws sns list-subscriptions-by-topic --topic-arn <arn> --query 'Subscriptions[0].SubscriptionArn'` — must return a real ARN, not the literal string `"PendingConfirmation"`.
 - `terraform plan` run a second time on both workspaces reports "No changes" (idempotent)
 
 ## What this task does NOT do
@@ -35,7 +39,7 @@ Explicit exclusions to prevent scope creep:
 
 - **Production workspace.** `infra/environments/production/` is created with the Launch milestone, not MYT-30. Staging-only here.
 - **First image push + desired_count=1 flip.** That's MYT-28. MYT-30 produces the substrate; MYT-28 validates an end-to-end deploy.
-- **ALB access log S3 bucket.** Deferred to the Observability spec per Infra & DevOps spec §5.3. Follow-up bead tracks it.
+- **ALB access log S3 bucket.** Deferred to the Observability spec. Week 0 §5.3 (ALB Configuration) mentions "access logs bucket" as a deferral target; Infra spec does not re-spec access logs. Neither parent gives it a concrete bucket-naming/retention policy yet. Follow-up bead tracks it.
 - **CloudWatch alarms** (ECS service down, ALB 5xx, RDS CPU, Redis memory, ACM expiry, etc.). All Observability-milestone work. SNS topic lands here so alarms can be wired in without schema changes.
 - **Autoscaling policies** (CPU-based, connection-based, scheduled). Infra spec §7 spec'd them but with `desired_count=0` there's nothing to scale. Land when real traffic arrives.
 - **Custom WebSocket metrics** (`MythrunTotalWebSocketConnections` etc.). App has no WebSockets yet.
@@ -213,7 +217,7 @@ resource "aws_lb" "main" {
   subnets            = module.network.public_subnet_ids
 
   idle_timeout               = 3600  # 1 hour for WebSocket keepalive tolerance
-  enable_deletion_protection = false # pre-launch iteration; flip to `true` before prod traffic. ALB lives in `shared`, so this is about the shared workspace being torn down, not staging.
+  enable_deletion_protection = true  # ALB is in `shared/` and serves both staging + (future) prod. Deliberate friction against accidental teardown; to rebuild, explicitly flip to false first.
   enable_http2               = true
   drop_invalid_header_fields = true  # defense against header smuggling
   # access_logs — deferred to Observability spec
@@ -485,13 +489,14 @@ resource "aws_ecs_task_definition" "api" {
       interval    = 15
       timeout     = 5
       retries     = 3
-      startPeriod = 30
+      startPeriod = 60  # gives real images time for startup migrations + secret fetch + DB pool warm-up before probing begins
     }
   }])
 
-  lifecycle {
-    create_before_destroy = true  # cuts over cleanly on new revision
-  }
+  # No lifecycle block — AWS never destroys task-def revisions (they go INACTIVE),
+  # so create_before_destroy is cosmetic and misleading here. Task-def changes
+  # are additive by design; the service's ignore_changes = [task_definition] means
+  # CI owns which revision is live regardless.
 
   tags = { Name = "mythrun-${var.environment}-api" }
 }
@@ -541,9 +546,11 @@ resource "aws_ecs_task_definition" "worker" {
 ```
 
 Container image points at `${ecr_url}:placeholder` — a tag that doesn't exist. This is intentional and safe because:
-- Task def registration itself doesn't validate the image tag exists
-- `desired_count = 0` on the service means ECS never tries to pull
-- MYT-28's first CI run registers a new task def revision pointing at the real git-SHA tag and flips `desired_count` to 1 via `update-service --force-new-deployment`
+- Task def registration itself doesn't validate the image tag exists (RegisterTaskDefinition is a pure metadata API).
+- `desired_count = 0` on the service means ECS never tries to pull.
+- MYT-28's first CI run performs a specific two-step sequence: (1) `aws ecs register-task-definition` to produce a new revision pointing at the real git-SHA image, then (2) `aws ecs update-service --task-definition mythrun-staging-api:<N> --desired-count 1` to switch the service to that revision and start a task. Note: `update-service --force-new-deployment` **alone does not switch task-def revisions** — it redeploys the service's currently-pinned revision, which would keep using `:placeholder` and fail the pull. The `--task-definition` flag is load-bearing.
+
+The detailed command sequence (including read-only-field stripping on the describe→patch→register→update flow) lives in the MYT-28 first-deploy runbook (bead `myth-bcx`), authored alongside MYT-30 and consumed by MYT-28's GitHub Actions workflow.
 
 The `:placeholder` never gets pulled. If someone bumps `desired_count` before MYT-28 runs, the task fails to start and ECS surfaces the pull error — not silent.
 
@@ -570,6 +577,7 @@ resource "aws_lb_target_group" "api" {
   }
 
   deregistration_delay = 120  # matches ECS stopTimeout; in-flight LLM calls get grace
+  slow_start           = 0    # explicitly disabled; non-zero slow_start conflicts with health_check_grace_period_seconds semantics
   # stickiness off — session state lives in Redis
 
   tags = { Name = "mythrun-${var.environment}-api" }
@@ -611,9 +619,10 @@ Host header: `staging-api.mythrun.com` for staging, `api.mythrun.com` for prod.
 resource "aws_ecs_service" "api" {
   name            = "mythrun-${var.environment}-api"
   cluster         = var.ecs_cluster_name
-  task_definition = aws_ecs_task_definition.api.arn
-  launch_type     = "FARGATE"
-  desired_count   = 0  # MYT-28 bumps to 1 after first image push
+  task_definition  = aws_ecs_task_definition.api.arn
+  launch_type      = "FARGATE"
+  platform_version = "LATEST"  # explicit per Infra §2.1; matches default
+  desired_count    = 0  # MYT-28 bumps to 1 after first image push
 
   network_configuration {
     subnets          = var.private_subnet_ids
@@ -650,11 +659,12 @@ resource "aws_ecs_service" "api" {
 }
 
 resource "aws_ecs_service" "worker" {
-  name            = "mythrun-${var.environment}-worker"
-  cluster         = var.ecs_cluster_name
-  task_definition = aws_ecs_task_definition.worker.arn
-  launch_type     = "FARGATE"
-  desired_count   = 0
+  name             = "mythrun-${var.environment}-worker"
+  cluster          = var.ecs_cluster_name
+  task_definition  = aws_ecs_task_definition.worker.arn
+  launch_type      = "FARGATE"
+  platform_version = "LATEST"
+  desired_count    = 0
 
   network_configuration {
     subnets          = var.private_subnet_ids
@@ -833,29 +843,35 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     }
   }
 
-  # RegisterTaskDefinition / DeregisterTaskDefinition / DescribeTaskDefinition
-  # do NOT support the ecs:cluster condition (they're cluster-agnostic by
-  # design). Scope by task-def family prefix via the resource ARN pattern.
+  # RegisterTaskDefinition + DeregisterTaskDefinition DO support resource-ARN
+  # scoping on task-definition family patterns. Lock them to this env's family
+  # so the staging role can't register task defs targeting the prod family
+  # (even though ecs:UpdateService above would still block the actual deploy
+  # via ecs:cluster, unscoped register() clutters CloudTrail and leaves stale
+  # task defs registered in the account).
   statement {
     actions = [
       "ecs:RegisterTaskDefinition",
       "ecs:DeregisterTaskDefinition",
-      "ecs:DescribeTaskDefinition",
     ]
+    resources = [
+      "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/mythrun-${var.environment}-*:*",
+    ]
+  }
+
+  # DescribeTaskDefinition does NOT support ecs:cluster OR resource-ARN
+  # scoping (per AWS Service Authorization Reference — it requires "*").
+  # Unavoidable.
+  statement {
+    actions   = ["ecs:DescribeTaskDefinition"]
     resources = ["*"]
   }
 
-  # Pre-deploy RDS snapshot (spec §5.5)
-  statement {
-    actions = [
-      "rds:CreateDBSnapshot",
-      "rds:DescribeDBSnapshots",
-    ]
-    resources = [
-      "arn:aws:rds:us-east-1:${data.aws_caller_identity.current.account_id}:db:mythrun",
-      "arn:aws:rds:us-east-1:${data.aws_caller_identity.current.account_id}:snapshot:mythrun-*",
-    ]
-  }
+  # rds:CreateDBSnapshot intentionally omitted from the staging role.
+  # Infra §5.5 specifies pre-deploy snapshots for PRODUCTION deploys only;
+  # staging has deletion_protection disabled and no snapshot discipline.
+  # The production GH role (lands at Launch) will carry this permission
+  # scoped to `mythrun-*` snapshots.
 }
 
 resource "aws_iam_role_policy" "github_actions_staging" {
@@ -873,7 +889,8 @@ Several `resources = ["*"]` remain because ECS's API surface doesn't support per
 
 ```hcl
 resource "aws_sns_topic" "alerts" {
-  name = "mythrun-staging-alerts"
+  name              = "mythrun-staging-alerts"
+  kms_master_key_id = "alias/aws/sns"  # AWS-managed KMS for encryption-at-rest; zero additional cost
 
   tags = { Name = "mythrun-staging-alerts" }
 }
@@ -882,6 +899,13 @@ resource "aws_sns_topic_subscription" "alerts_email" {
   topic_arn = aws_sns_topic.alerts.arn
   protocol  = "email"
   endpoint  = var.alerts_email
+
+  # Note: email subscriptions start in "PendingConfirmation" state until the
+  # recipient clicks the AWS-sent confirmation link. Re-running `terraform apply`
+  # while pending is a no-op (confirmation status isn't a Terraform-managed
+  # attribute). Done-when verification is two-phase (see spec's "Done when"
+  # section): apply-time confirms the resource exists; post-email-click confirms
+  # the subscription ARN is no longer the literal "PendingConfirmation" string.
 }
 ```
 
@@ -911,13 +935,13 @@ Actual alarms (ECS service down, RDS CPU, etc.) land in the Observability milest
 
 **No `/health/live` / `/health/ready` split yet.** Existing `/health` returns 200 with no dependency checks. Splitting adds endpoints that would be no-op aliases until Backend Core lands real DB/Redis clients. Revisit then.
 
-**ALB access logs deferred.** Per Infra spec §5.3 (Week 0 spec defers this to Observability). Zero traffic today means zero operational value. Follow-up bead tracks it.
+**ALB access logs deferred.** Week 0 §5.3 (ALB Configuration) mentions an access-logs bucket as something the Observability spec will own; neither parent has a concrete bucket-naming scheme or retention policy yet. Zero traffic today means zero operational value. Follow-up bead tracks it.
 
 **No autoscaling today.** `desired_count = 0` → nothing to scale. Autoscaling policies (CPU/connection-based/scheduled per Infra spec §7) land when the app has real traffic.
 
 **SNS topic created, no alarms.** Topic is cheap, no alarms until Observability. Subscribing Miklos's email requires an out-of-band confirmation click — that's expected AWS UX, not a smell.
 
-**`thumbprint_list` on the OIDC provider is placeholder.** AWS has done native JWK discovery for GitHub's OIDC endpoint since 2023; the thumbprint list is a legacy schema requirement. We pass one placeholder value to satisfy the Terraform schema; AWS ignores it for GitHub's well-known provider.
+**`thumbprint_list` is omitted entirely on the OIDC provider.** It's `Optional` in AWS provider v6.x, and AWS has done native JWK discovery for GitHub's OIDC endpoint since 2023. Omitting the argument makes the intent explicit ("we trust AWS's CA bundle for GitHub") — v1 of this design passed a placeholder value; v2/v3 just drop the line.
 
 **GitHub Actions role permissions mix scoped + wildcarded.** ECR push/pull scoped to the `mythrun` repo ARN. ECS mutating service actions scoped via `ecs:cluster` condition to the `mythrun` cluster. `iam:PassRole` scoped to the two task roles AND conditioned on `iam:PassedToService = ecs-tasks.amazonaws.com`. `rds:CreateDBSnapshot` scoped to the `mythrun` instance. Only `RegisterTaskDefinition`/`DeregisterTaskDefinition`/`DescribeTaskDefinition` remain unscoped (ECS limitation — these don't accept `ecs:cluster` or a resource ARN pattern). Production launch should re-audit.
 
@@ -955,7 +979,7 @@ Actual alarms (ECS service down, RDS CPU, etc.) land in the Observability milest
 
 5. **Container `healthCheck` is a Node one-liner — fails if the image is broken before /health is reachable.** The container-level health check runs inside the running container; a crash-on-start image means ECS kills and retries, ALB never sees it. That's correct behavior. Documented because the first-deploy verification (MYT-28) should inspect the container logs in CloudWatch, not only the ALB target health.
 
-6. **`deployment_circuit_breaker.rollback = true` on the very first deploy has no previous task-set to roll back to.** When MYT-28 flips `desired_count` 0→1 with a new task def revision, if that first image fails health check, ECS will log `DEPLOYMENT_FAILED` with no auto-recovery. MYT-28's runbook should expect that circuit-breaker failure on the first deploy means "your image is broken, fix the image and retry" rather than chasing a rollback. After the first healthy deploy, rollback works normally.
+6. **`deployment_circuit_breaker.rollback = true` on the very first deploy has no previous task-set to roll back to.** When MYT-28 flips `desired_count` 0→1 with a new task def revision, if that first image fails health check, ECS marks the deployment `FAILED` and the service may enter a stuck rollout state where subsequent `update-service` calls are rejected until the rollout is explicitly reset. **Recovery procedure** (to capture in the MYT-28 runbook): (a) fix the image, push a new tag, register a new task-def revision N+1; (b) `aws ecs update-service --cluster mythrun --service mythrun-staging-api --task-definition mythrun-staging-api:N+1 --desired-count 1 --force-new-deployment` — the `--force-new-deployment` flag together with the new revision bypasses the stuck rollout. If that fails, `aws ecs update-service --cluster mythrun --service mythrun-staging-api --desired-count 0` to drain fully, then retry the deploy from zero. After the first healthy deploy, rollback works normally.
 
 7. **`ignore_changes = [task_definition]` creates an audit gap + orphan task def revisions.** (a) Terraform's state loses visibility of which task def revision is actually running — `aws ecs describe-services` is the authoritative source. (b) If a future `terraform apply` changes something on the task def (e.g., bumps `api_cpu`), Terraform creates a new revision that nothing points at until the next CI deploy picks it up — an orphan. Deliberate tradeoff (CI owns task counts and revisions); flagged because it surprises on first encounter. Mitigation: CloudTrail captures every `RegisterTaskDefinition` + `UpdateService` call (free, 90-day retention). A longer-term CloudTrail → S3 trail can land with Observability.
 

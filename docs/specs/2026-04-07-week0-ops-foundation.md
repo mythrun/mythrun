@@ -144,7 +144,9 @@ This saves ~$120/mo vs. a full VPC mirror. The trade-off: a staging bug that cra
 
 ### 3.1 Secrets Inventory
 
-All secrets stored in AWS Secrets Manager. Each environment has its own set.
+All secrets stored in AWS Secrets Manager. Each environment has its own set, with one cross-env exception (Redis AUTH — see note below).
+
+**Amended 2026-04-22 (MYT-30 serving-infra design):** Redis AUTH lives at `mythrun/shared/redis-auth`, not `mythrun/{env}/redis-auth`. The single shared ElastiCache replication group (MYT-25) has one AUTH token that both staging and future prod consume. Cross-env implication + mitigation documented in Infra §2.3 and the MYT-30 design's Risks section.
 
 | Secret | Secrets Manager Key | Rotation | Notes |
 |--------|-------------------|----------|-------|
@@ -152,7 +154,7 @@ All secrets stored in AWS Secrets Manager. Each environment has its own set.
 | Stripe secret key | `mythrun/{env}/stripe-secret-key` | Manual | Staging uses Stripe test mode key |
 | Stripe webhook signing secret | `mythrun/{env}/stripe-webhook-secret` | Manual | Different per environment |
 | RDS database password | `mythrun/{env}/rds-password` | Automatic (90 days) | Secrets Manager rotation Lambda |
-| Redis auth token | `mythrun/{env}/redis-auth` | Manual | Single instance at launch |
+| Redis auth token | `mythrun/shared/redis-auth` | Manual | **Shared across envs** — single replication group has one token |
 | Cognito client secret | `mythrun/{env}/cognito-client-secret` | Manual | |
 
 ### 3.2 ECS Integration
