@@ -11,6 +11,9 @@ RUN pnpm --filter @mythrun/backend deploy --prod /app/deploy
 
 # ---- runtime ----
 FROM node:24-alpine
+LABEL org.opencontainers.image.source="https://github.com/mythrun/mythrun"
+LABEL org.opencontainers.image.title="mythrun-backend"
+LABEL org.opencontainers.image.licenses="UNLICENSED"
 RUN apk add --no-cache dumb-init
 WORKDIR /app
 RUN addgroup -S mythrun && adduser -S mythrun -G mythrun

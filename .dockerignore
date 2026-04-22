@@ -1,0 +1,37 @@
+# Build context is the repo root (`docker build -f backend/Dockerfile .`).
+# This file governs what gets sent to the Docker daemon.
+
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+
+# Tests — only runtime artifacts belong in the image.
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+
+# Secrets and local env.
+.env*
+
+# VCS + tooling state.
+.git
+.gitignore
+.github
+
+# Docs and tracker state — not needed at build time.
+docs
+*.md
+.beads
+.claude
+
+# Infra-as-code lives alongside but isn't part of the backend image.
+infra
+
+# Editor + OS noise.
+.vscode
+.idea
+.DS_Store
+*.log
