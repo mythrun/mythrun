@@ -64,3 +64,42 @@ output "name_servers" {
 output "wildcard_cert_arn" {
   value = module.dns.wildcard_cert_arn
 }
+
+# ======== Compute-platform outputs (added by MYT-30) ========
+# Consumed by staging (and future production) workspaces via
+# data.terraform_remote_state.shared.
+
+output "ecr_repository_url" {
+  value       = aws_ecr_repository.mythrun.repository_url
+  description = "ECR repo URL like '862127484110.dkr.ecr.us-east-1.amazonaws.com/mythrun'."
+}
+
+output "ecs_cluster_name" {
+  value       = aws_ecs_cluster.main.name
+  description = "Name of the shared ECS cluster ('mythrun')."
+}
+
+output "alb_arn" {
+  value       = aws_lb.main.arn
+  description = "ARN of the shared ALB."
+}
+
+output "alb_dns_name" {
+  value       = aws_lb.main.dns_name
+  description = "ALB's public DNS name (target for Route 53 A-alias records)."
+}
+
+output "alb_zone_id" {
+  value       = aws_lb.main.zone_id
+  description = "ALB's hosted zone ID (for Route 53 A-alias; NOT a Route 53 zone_id)."
+}
+
+output "alb_listener_https_arn" {
+  value       = aws_lb_listener.https.arn
+  description = "ARN of the HTTPS listener (per-env serving modules attach listener_rules here)."
+}
+
+output "github_oidc_provider_arn" {
+  value       = aws_iam_openid_connect_provider.github.arn
+  description = "ARN of the GitHub OIDC provider (per-env GH Actions IAM roles trust this)."
+}
