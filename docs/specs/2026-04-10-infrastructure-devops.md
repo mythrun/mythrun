@@ -129,7 +129,7 @@ The application constructs `DATABASE_URL` and `REDIS_URL` at startup by combinin
 | Health check path | `/health/ready` (readiness check — verifies Postgres + Redis connectivity, distinct from ECS liveness check) |
 | Health check interval | 15s |
 | Health check timeout | 5s |
-| Healthy threshold | 1 (reduced from 2 to shave 15s off scale-out time; container liveness check already validates the process) |
+| Healthy threshold | 2 (AWS minimum — originally spec'd as 1 but provider rejects that with "expected healthy_threshold to be in the range (2 - 10)"; amended 2026-04-22 during MYT-30 apply. If scale-out latency matters, tune `interval` instead — AWS allows 5s min for HTTP). |
 | Unhealthy threshold | 3 |
 | Deregistration delay | 120s |
 | Stickiness | Disabled |

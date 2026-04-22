@@ -250,7 +250,7 @@ resource "aws_lb_target_group" "api" {
     path                = "/health" # current backend endpoint; refactor to /health/ready when Backend Core lands (bead myth-nf3)
     protocol            = "HTTP"
     port                = "traffic-port"
-    healthy_threshold   = 1 # per Infra §2.5: reduced from AWS default of 2 to shave ~15s off scale-out
+    healthy_threshold   = 2 # AWS minimum — Infra §2.5 originally called for 1 but AWS rejects that (provider enforces range 2–10)
     unhealthy_threshold = 3
     interval            = 15
     timeout             = 5
