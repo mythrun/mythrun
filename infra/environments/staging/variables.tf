@@ -11,7 +11,7 @@ variable "github_repository_owner_id" {
 }
 
 variable "alerts_email" {
-  description = "Email address to subscribe to the staging alerts SNS topic. Must be confirmed by clicking the AWS confirmation link after apply."
+  description = "Email address to subscribe to the staging alerts SNS topic. Must be confirmed by clicking the AWS confirmation link after apply. Kept separate from personal inbox so it transitions cleanly to a team alias (alerts@mythrun.com) or PagerDuty at Launch."
   type        = string
-  default     = "miklos.bowling@gmail.com"
+  default     = "miklos@mythrun.com"
 }
