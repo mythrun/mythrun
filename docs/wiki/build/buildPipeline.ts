@@ -41,7 +41,7 @@ function collectPages(root: string, structure: Section[]): Page[] {
   pages.push({
     section: null,
     pageSlug: 'index',
-    pageTitle: 'Mythrun Wiki',
+    pageTitle: 'Home',
     contentAbs: join(root, 'content/index.html'),
     outRel: 'index.html',
     depth: 0,
@@ -141,6 +141,17 @@ async function resolveDiagrams(
   return { html: result, count }
 }
 
+function filterSlots(
+  allSlots: Record<string, string>,
+  declared: Set<string>,
+): Record<string, string> {
+  const filtered: Record<string, string> = {}
+  for (const name of declared) {
+    filtered[name] = allSlots[name] ?? ''
+  }
+  return filtered
+}
+
 function collectShellSlotNames(shell: string): Set<string> {
   const names = new Set<string>()
   const re = /<!--\s*@(\w+)\s*-->/g
@@ -231,17 +242,10 @@ async function renderPage(
   const diagrams = await resolveDiagrams(stripMetaComments(rawContent), ctx.root, ctx.dotHeader)
   const withToc = extractToc(diagrams.html)
 
-  const allSlots = buildSlots(
-    page,
-    ctx.structure,
-    driftBanner + withToc.html,
-    renderToc(withToc.entries),
+  const slots = filterSlots(
+    buildSlots(page, ctx.structure, driftBanner + withToc.html, renderToc(withToc.entries)),
+    ctx.shellSlotNames,
   )
-  const slots: Record<string, string> = {}
-  for (const name of ctx.shellSlotNames) {
-    slots[name] = allSlots[name] ?? ''
-  }
-
   const html = renderShell(ctx.shell, slots)
   const outAbs = join(ctx.siteDir, page.outRel)
   await mkdir(dirname(outAbs), { recursive: true })
