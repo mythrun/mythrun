@@ -224,6 +224,66 @@ article svg text {
   font-family: var(--mono);
 }
 
+/* Inline rationale callouts — visually distinct from the surrounding narrative
+ * so the reader's eye can choose to engage or skip. Authored by the subagent
+ * at the paragraph where each non-obvious decision is first referenced. */
+article aside.wiki-rationale {
+  background: rgba(137, 90, 60, 0.05);
+  border-left: 3px solid var(--ember-600);
+  padding: 10px 14px;
+  margin: 12px 0 16px 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--paper-700);
+}
+article aside.wiki-rationale strong {
+  color: var(--paper-900);
+  margin-right: 4px;
+}
+article aside.wiki-rationale p {
+  margin: 0;
+  color: inherit;
+}
+article aside.wiki-rationale p + p {
+  margin-top: 8px;
+}
+
+/* Runbooks index — auto-generated list on the Runbooks top-nav page. */
+.wiki-runbook-index {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0 0;
+}
+.wiki-runbook-index li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--paper-300);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+}
+.wiki-runbook-index li:last-child {
+  border-bottom: none;
+}
+.wiki-runbook-index a {
+  font-family: var(--serif);
+  color: var(--paper-900);
+  text-decoration: none;
+  font-size: 17px;
+}
+.wiki-runbook-index a:hover {
+  color: var(--ember-600);
+  text-decoration: underline;
+}
+.wiki-runbook-index .wiki-runbook-home {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--paper-500);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .wiki-drift-banner {
   background: var(--paper-100);
   border-left: 4px solid var(--danger-500);

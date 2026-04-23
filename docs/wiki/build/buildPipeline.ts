@@ -8,6 +8,7 @@ import { renderDot } from './renderDot.ts'
 import { renderShell } from './renderShell.ts'
 import { validateStructure } from './validate.ts'
 import { parsePageMeta, checkDrift, renderDriftBanner, rewriteSourceHash } from './drift.ts'
+import { extractRunbookEntries, type RunbookEntry } from './extractRunbooks.ts'
 
 export type BuildMode = 'build' | 'check' | 'accept-drift'
 
@@ -201,29 +202,80 @@ interface PageOutcome {
   warning: string | null
 }
 
-async function renderPage(
-  page: Page,
-  ctx: {
-    root: string
-    repoRoot: string
-    structure: Section[]
-    mode: BuildMode
-    shell: string
-    dotHeader: string
-    shellSlotNames: Set<string>
-    siteDir: string
-  },
-): Promise<PageOutcome> {
-  const rawContent = await readFile(page.contentAbs, 'utf-8')
-  const meta = parsePageMeta(rawContent)
+interface RunbookAggregateItem {
+  pageOutRel: string
+  sectionTitle: string
+  pageTitle: string
+  entries: RunbookEntry[]
+}
 
-  let currentHash: string | null = null
-  if (meta.sourcePaths.length > 0) {
-    currentHash = 'sha256:' + (await computeSourceHash(meta.sourcePaths, ctx.repoRoot))
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+async function scanAllRunbooks(pages: Page[]): Promise<RunbookAggregateItem[]> {
+  const aggregate: RunbookAggregateItem[] = []
+  for (const page of pages) {
+    const raw = await readFile(page.contentAbs, 'utf-8')
+    const stripped = stripMetaComments(raw)
+    const toc = extractToc(stripped)
+    const entries = extractRunbookEntries(toc.entries)
+    if (entries.length > 0) {
+      aggregate.push({
+        pageOutRel: page.outRel,
+        sectionTitle: page.section?.title ?? '',
+        pageTitle: page.pageTitle,
+        entries,
+      })
+    }
   }
+  return aggregate
+}
 
+function renderRunbookIndex(aggregate: RunbookAggregateItem[], rootPath: string): string {
+  const flat = aggregate.flatMap((a) =>
+    a.entries.map((e) => ({
+      title: e.title,
+      href: `${rootPath}${a.pageOutRel}#${e.id}`,
+      home: a.pageTitle === 'Overview' ? a.sectionTitle : `${a.sectionTitle} → ${a.pageTitle}`,
+    })),
+  )
+  flat.sort((x, y) => x.title.localeCompare(y.title))
+  if (flat.length === 0) {
+    return '<p class="wiki-runbook-empty" style="color:var(--paper-500)">No runbooks yet — they appear here as operational procedures ship on architectural pages.</p>'
+  }
+  const lis = flat
+    .map(
+      (f) =>
+        `<li><a href="${f.href}">${escapeHtml(f.title)}</a><span class="wiki-runbook-home">${escapeHtml(f.home)}</span></li>`,
+    )
+    .join('\n  ')
+  return `<ul class="wiki-runbook-index">\n  ${lis}\n</ul>`
+}
+
+function resolveRunbookIndex(
+  content: string,
+  aggregate: RunbookAggregateItem[],
+  rootPath: string,
+): string {
+  if (!content.includes('<!-- @runbooks-index -->')) return content
+  return content.replace(/<!--\s*@runbooks-index\s*-->/g, renderRunbookIndex(aggregate, rootPath))
+}
+
+interface DriftOutcome {
+  warning: string | null
+  checkError: string | null
+  banner: string
+}
+
+async function handleDrift(
+  page: Page,
+  rawContent: string,
+  meta: ReturnType<typeof parsePageMeta>,
+  currentHash: string | null,
+  ctx: { root: string; mode: BuildMode },
+): Promise<DriftOutcome> {
   const drift = checkDrift(meta, currentHash)
-
   let warning: string | null = null
   let checkError: string | null = null
   if (ctx.mode === 'accept-drift' && drift.drifted && currentHash !== null) {
@@ -235,15 +287,52 @@ async function renderPage(
   } else if (ctx.mode === 'build' && drift.drifted) {
     warning = `drift warning: ${relative(ctx.root, page.contentAbs)} (${drift.status})`
   }
-
-  const driftBanner =
+  const banner =
     drift.drifted && ctx.mode !== 'accept-drift' ? renderDriftBanner(meta.sourcePaths) + '\n' : ''
+  return { warning, checkError, banner }
+}
 
-  const diagrams = await resolveDiagrams(stripMetaComments(rawContent), ctx.root, ctx.dotHeader)
+async function renderPage(
+  page: Page,
+  ctx: {
+    root: string
+    repoRoot: string
+    structure: Section[]
+    mode: BuildMode
+    shell: string
+    dotHeader: string
+    shellSlotNames: Set<string>
+    siteDir: string
+    runbookAggregate: RunbookAggregateItem[]
+  },
+): Promise<PageOutcome> {
+  const rawContent = await readFile(page.contentAbs, 'utf-8')
+  const meta = parsePageMeta(rawContent)
+
+  let currentHash: string | null = null
+  if (meta.sourcePaths.length > 0) {
+    currentHash = 'sha256:' + (await computeSourceHash(meta.sourcePaths, ctx.repoRoot))
+  }
+
+  const { warning, checkError, banner } = await handleDrift(
+    page,
+    rawContent,
+    meta,
+    currentHash,
+    ctx,
+  )
+
+  const rootPath = page.depth === 0 ? '' : '../'
+  const withRunbookIndex = resolveRunbookIndex(
+    stripMetaComments(rawContent),
+    ctx.runbookAggregate,
+    rootPath,
+  )
+  const diagrams = await resolveDiagrams(withRunbookIndex, ctx.root, ctx.dotHeader)
   const withToc = extractToc(diagrams.html)
 
   const slots = filterSlots(
-    buildSlots(page, ctx.structure, driftBanner + withToc.html, renderToc(withToc.entries)),
+    buildSlots(page, ctx.structure, banner + withToc.html, renderToc(withToc.entries)),
     ctx.shellSlotNames,
   )
   const html = renderShell(ctx.shell, slots)
@@ -287,9 +376,22 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
   await mkdir(siteDir, { recursive: true })
 
   const pages = collectPages(root, structure)
+  // Scan all pages for runbook entries before rendering, so the Runbooks
+  // index page gets the full aggregated list regardless of iteration order.
+  const runbookAggregate = await scanAllRunbooks(pages)
   let diagramsRendered = 0
   let strictFailures = 0
-  const ctx = { root, repoRoot, structure, mode, shell, dotHeader, shellSlotNames, siteDir }
+  const ctx = {
+    root,
+    repoRoot,
+    structure,
+    mode,
+    shell,
+    dotHeader,
+    shellSlotNames,
+    siteDir,
+    runbookAggregate,
+  }
 
   for (const page of pages) {
     const outcome = await renderPage(page, ctx)
