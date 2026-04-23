@@ -723,22 +723,25 @@ describe('renderDot', () => {
     await renderDot('digraph { a }', '')
   })
 
-  it('returns an SVG string starting with <svg', async () => {
+  it('returns an SVG string starting with <svg (prolog + DOCTYPE stripped)', async () => {
     const svg = await renderDot('digraph { a -> b }', '')
     expect(svg).toMatch(/^<svg\b/)
     expect(svg).toContain('</svg>')
+    expect(svg).not.toContain('<?xml')
+    expect(svg).not.toContain('<!DOCTYPE')
   })
 
   it('prepends the supplied header before the user source inner body', async () => {
     const header = 'graph [bgcolor="#ABCDEF"]'
     const svg = await renderDot('digraph { a -> b }', header)
-    expect(svg).toContain('#ABCDEF')
+    // Graphviz lowercases hex literals in its SVG output — match case-insensitively.
+    expect(svg).toMatch(/#abcdef/i)
   })
 
   it('substitutes "ember" color alias with #8A5A3C', async () => {
     const source = 'digraph { a [color="ember"] }'
     const svg = await renderDot(source, '')
-    expect(svg).toContain('#8A5A3C')
+    expect(svg).toMatch(/#8a5a3c/i)
     expect(svg).not.toContain('"ember"')
   })
 
@@ -766,14 +769,29 @@ Expected: FAIL with "Cannot find module '../renderDot.ts'".
 - [ ] **Step 3: Implement `docs/wiki/build/renderDot.ts`**
 
 ```ts
-import { Graphviz } from '@hpcc-js/wasm/graphviz'
-
-let cached: Awaited<ReturnType<typeof Graphviz.load>> | null = null
-
-async function getGraphviz() {
-  if (cached === null) {
-    cached = await Graphviz.load()
+// The upstream `@hpcc-js/wasm@2.33.2` ships `types/graphviz.d.ts` as a bare
+// `export * from "@hpcc-js/wasm-graphviz"` that re-exports from a sibling
+// package which is not listed as a dependency and is not installed. The
+// runtime bundle at the `./graphviz` subpath is fine — it exports a
+// `Graphviz` namespace with an async `load()` — but TypeScript resolves the
+// subpath's types to an empty module. We augment the subpath here with the
+// minimal slice of the API that `renderDot` actually uses. This keeps the
+// code strictly typed without falling back to `any` or assertions.
+declare module '@hpcc-js/wasm/graphviz' {
+  export interface GraphvizRenderer {
+    dot(source: string, format: 'svg' | 'dot' | 'json'): string
   }
+  export const Graphviz: {
+    load: () => Promise<GraphvizRenderer>
+  }
+}
+
+import { Graphviz, type GraphvizRenderer } from '@hpcc-js/wasm/graphviz'
+
+let cached: GraphvizRenderer | null = null
+
+async function getGraphviz(): Promise<GraphvizRenderer> {
+  cached ??= await Graphviz.load()
   return cached
 }
 
@@ -790,14 +808,22 @@ function injectHeader(source: string, header: string): string {
   if (match === null) {
     throw new Error('renderDot: could not locate opening graph brace to inject header')
   }
-  const idx = (match.index ?? 0) + match[0].length
+  const idx = match.index + match[0].length
   return `${source.slice(0, idx)}\n  ${header}\n${source.slice(idx)}`
 }
 
 export async function renderDot(source: string, header: string): Promise<string> {
   const prepared = substituteAliases(injectHeader(source, header))
   const graphviz = await getGraphviz()
-  return graphviz.dot(prepared, 'svg')
+  const raw = graphviz.dot(prepared, 'svg')
+  // Strip the XML prolog and DOCTYPE — HTML5 parsers treat `<?xml ... ?>` as
+  // a bogus comment when inlined, which renders inconsistently across browsers.
+  // Return just the <svg>…</svg> slice for safe inline embedding in page bodies.
+  const svgStart = raw.indexOf('<svg')
+  if (svgStart === -1) {
+    throw new Error('renderDot: Graphviz output did not contain an <svg element')
+  }
+  return raw.slice(svgStart)
 }
 ```
 

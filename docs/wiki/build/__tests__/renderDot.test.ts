@@ -7,12 +7,12 @@ describe('renderDot', () => {
     await renderDot('digraph { a }', '')
   })
 
-  it('returns an SVG string containing <svg …> and </svg>', async () => {
+  it('returns an SVG string starting with <svg (prolog + DOCTYPE stripped)', async () => {
     const svg = await renderDot('digraph { a -> b }', '')
-    // Graphviz 14.x prefixes its output with an XML prolog + DOCTYPE, so we
-    // match the <svg element anywhere rather than at index 0.
-    expect(svg).toMatch(/<svg\b/)
+    expect(svg).toMatch(/^<svg\b/)
     expect(svg).toContain('</svg>')
+    expect(svg).not.toContain('<?xml')
+    expect(svg).not.toContain('<!DOCTYPE')
   })
 
   it('prepends the supplied header before the user source inner body', async () => {

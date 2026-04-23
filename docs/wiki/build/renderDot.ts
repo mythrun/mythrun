@@ -44,5 +44,13 @@ function injectHeader(source: string, header: string): string {
 export async function renderDot(source: string, header: string): Promise<string> {
   const prepared = substituteAliases(injectHeader(source, header))
   const graphviz = await getGraphviz()
-  return graphviz.dot(prepared, 'svg')
+  const raw = graphviz.dot(prepared, 'svg')
+  // Strip the XML prolog and DOCTYPE — HTML5 parsers treat `<?xml ... ?>` as
+  // a bogus comment when inlined, which renders inconsistently across browsers.
+  // Return just the <svg>…</svg> slice for safe inline embedding in page bodies.
+  const svgStart = raw.indexOf('<svg')
+  if (svgStart === -1) {
+    throw new Error('renderDot: Graphviz output did not contain an <svg element')
+  }
+  return raw.slice(svgStart)
 }
