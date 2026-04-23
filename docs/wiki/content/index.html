@@ -1,0 +1,49 @@
+<h1>Mythrun Wiki</h1>
+
+<p class="lead">
+  An agent-maintained, as-built view of the whole Mythrun system — both the application code and the
+  AWS infrastructure. Diagrammed, cross-linked, and updated alongside every Linear issue that ships.
+</p>
+
+<!-- @diagram: index/wiki-map -->
+
+<h2>Sections</h2>
+
+<p>
+  The wiki is organized into seven sections. <strong>Infra</strong> comes first because AWS
+  resources are inherently harder to hold in your head than code; visualizing them cleanly is the
+  highest-leverage payoff.
+</p>
+
+<ul>
+  <li>
+    <a href="infra/index.html">Infra</a> — AWS topology, Terraform modules, environments,
+    networking, compute, data plane, DNS, secrets, CI/CD, observability.
+  </li>
+  <li>
+    <a href="runtime/index.html">Runtime</a> — session loop, Fast Thinker, Slow Thinker, Scribe, DM
+    Trigger, prompts, Anthropic integration.
+  </li>
+  <li><a href="data/index.html">Data</a> — schemas, repositories, Postgres, Redis, BullMQ.</li>
+  <li>
+    <a href="auth-billing/index.html">Auth &amp; Billing</a> — Cognito, JWT, invites, Stripe,
+    credits.
+  </li>
+  <li>
+    <a href="world-campaign/index.html">World &amp; Campaign</a> — prep engine, world store,
+    campaign pipeline.
+  </li>
+  <li><a href="combat/index.html">Combat</a> — rules engine, voxel maps, map rendering.</li>
+  <li>
+    <a href="frontend/index.html">Frontend</a> — components, Three.js layer, design system adapters.
+  </li>
+</ul>
+
+<h2>How this is maintained</h2>
+
+<p>
+  Every section page declares which source files (code paths, Terraform directories) it documents.
+  On each build, the wiki computes a hash of those sources and compares it to the hash captured at
+  the page's last update. Mismatches render a visible drift banner on the page and fail
+  <code>pnpm wiki:check</code> in CI, so pages can't silently go stale.
+</p>
