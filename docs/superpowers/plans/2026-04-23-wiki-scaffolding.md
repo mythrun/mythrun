@@ -629,9 +629,9 @@ export function extractToc(fragment: string): ExtractTocResult {
     if (existingId !== undefined) {
       id = existingId
     } else {
-      const base = slugify(text) || `heading-${entries.length + 1}`
+      const base = slugify(text) || `heading-${String(entries.length + 1)}`
       const count = seen.get(base) ?? 0
-      id = count === 0 ? base : `${base}-${count + 1}`
+      id = count === 0 ? base : `${base}-${String(count + 1)}`
       seen.set(base, count + 1)
     }
 
