@@ -1,0 +1,24 @@
+{
+  "name": "@mythrun/wiki",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsx build.ts",
+    "check": "tsx build.ts --check",
+    "accept-drift": "tsx build.ts --accept-drift",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . --no-error-on-unmatched-pattern",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hpcc-js/wasm": "^2.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

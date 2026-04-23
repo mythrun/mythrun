@@ -3,7 +3,7 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', 'docs/**', '.beads/**', '**/*.config.js'],
+    ignores: ['**/dist/**', '**/node_modules/**', 'docs/wiki/site/**', 'docs/superpowers/**', 'docs/specs/**', '.beads/**', '**/*.config.js'],
   },
   ...tseslint.configs.strictTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,
