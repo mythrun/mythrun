@@ -1,0 +1,36 @@
+name: Wiki
+
+on:
+  pull_request:
+    paths:
+      - 'docs/wiki/**'
+      - 'infra/**'
+      - 'backend/**'
+      - '.github/workflows/wiki-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/wiki/**'
+      - 'infra/**'
+      - 'backend/**'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck wiki
+        run: pnpm --filter @mythrun/wiki typecheck
+      - name: Test wiki
+        run: pnpm --filter @mythrun/wiki test
+      - name: Check wiki freshness
+        run: pnpm wiki:check

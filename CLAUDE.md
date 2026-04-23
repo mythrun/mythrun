@@ -87,7 +87,7 @@ Every Linear issue goes through the full Superpowers workflow — no shortcuts, 
 4. **Move the plan into Beads.** Decompose the plan into concrete beads (one per step) with `bd create`. Wire blockers with `bd dep`. This is the atomic work list for implementation.
 5. **Implement** via `superpowers:executing-plans` (review-checkpointed) or `superpowers:subagent-driven-development` (parallel subagents on independent beads). Close each bead as it's done (`bd close`).
 6. **Verify** — run the relevant test suite + `pnpm typecheck` + `pnpm lint` before marking anything done. Apply the `superpowers:verification-before-completion` skill here.
-7. **Close the loop** — close the Linear issue when all its beads are closed and the "done when" condition is met. Commit with Conventional Commits, push to `main`.
+7. **Close the loop** — close the Linear issue when all its beads are closed and the "done when" condition is met. Commit with Conventional Commits, push to `main`. When the issue's status is flipped to Done via `mcp__linear-server__save_issue`, a `PostToolUse` hook (`.claude/hooks/post-linear-close.sh`) injects a reminder to dispatch the wiki-update subagent with the prompt from `docs/wiki/AUTHORING.md`. Do not skip this — the subagent runs autonomously and commits wiki updates in its own commit(s) before the session ends.
 
 TDD is required for implementation code — write a failing test that defines "done" before the implementation. The `superpowers:test-driven-development` skill enforces this.
 
@@ -115,6 +115,7 @@ Work continuously through implementation batches without stopping for per-task r
 - Never hardcode model names — use config constants
 - Tier boundaries are hard. If you're tempted to pass plot info to the Fast Thinker, stop. That's a bug.
 - Session Close Protocol: `git status` → `git add` → `git commit` → `git push`. Work is not done until pushed.
+- Wiki is not optional. Every Linear issue that ships code or infra updates the wiki in the same session, via the hook-dispatched subagent. CI (`pnpm wiki:check`) gates merges on wiki freshness.
 
 ## The Prototype Repo
 
