@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title><!-- @pageTitle --> · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="<!-- @rootPath -->assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="<!-- @rootPath -->styles.css" />
+  </head>
+  <body data-section="<!-- @sectionSlug -->" data-page="<!-- @pageSlug -->">
+    <header class="wiki-header">
+      <a href="<!-- @rootPath -->index.html" class="wiki-lockup">
+        <img src="<!-- @rootPath -->assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><!-- @topnav --></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><!-- @sidebar --></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><!-- @crumbs --></div>
+        <article><!-- @content --></article>
+        <footer class="wiki-page-footer"><!-- @lastUpdated --></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <!-- @toc -->
+      </aside>
+    </div>
+    <script src="<!-- @rootPath -->helper.js"></script>
+  </body>
+</html>

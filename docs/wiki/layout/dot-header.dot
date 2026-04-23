@@ -1,0 +1,24 @@
+graph [
+  bgcolor="#EFE9DC",
+  fontname="IBM Plex Mono",
+  fontsize=11,
+  rankdir=LR,
+  margin=0.2,
+]
+node [
+  shape=box,
+  style="filled",
+  fillcolor="#EFE9DC",
+  color="#231B12",
+  fontcolor="#231B12",
+  fontname="IBM Plex Mono",
+  fontsize=11,
+  penwidth=1.5,
+]
+edge [
+  color="#231B12",
+  fontname="IBM Plex Mono",
+  fontsize=10,
+  penwidth=1.2,
+  arrowsize=0.7,
+]
