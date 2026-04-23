@@ -1047,6 +1047,24 @@ describe('validateStructure', () => {
     const result = await validateStructure(badStructure, resolve(here, 'fixtures/validate/ok'))
     expect(result.errors.some((e) => /first page.*index/i.test(e))).toBe(true)
   })
+
+  it('reports a clear error when the content directory itself does not exist', async () => {
+    const result = await validateStructure(
+      structure,
+      resolve(here, 'fixtures/validate/does-not-exist'),
+    )
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toMatch(/content directory does not exist/i)
+  })
+
+  it('never flags the landing content/index.html as orphan even with an empty structure', async () => {
+    const result = await validateStructure([], resolve(here, 'fixtures/validate/ok'))
+    // infra/index.html is orphan because structure is empty, but index.html is NOT.
+    const landingOrphan = result.errors.some(
+      (e) => /index\.html.*orphan/i.test(e) && !e.includes('infra'),
+    )
+    expect(landingOrphan).toBe(false)
+  })
 })
 ```
 
@@ -1069,7 +1087,10 @@ export interface ValidateResult {
   errors: string[]
 }
 
-async function enumerateHtmlFiles(dir: string, base = dir): Promise<string[]> {
+async function enumerateHtmlFiles(dir: string, base: string): Promise<string[]> {
+  // Only suppress errors during recursion — a missing nested directory mid-walk
+  // is a rare race and not a wiki-author concern. The top-level contentDir
+  // existence is checked by the caller and surfaced as its own error class.
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
   const nested: string[][] = await Promise.all(
     entries.map(async (entry) => {
@@ -1097,7 +1118,7 @@ export async function validateStructure(
     }
     seenSectionSlugs.add(section.slug)
 
-    if (section.pages[0]?.slug !== 'index') {
+    if (section.pages[0].slug !== 'index') {
       errors.push(`first page of section "${section.slug}" must have slug "index"`)
     }
 
@@ -1110,6 +1131,19 @@ export async function validateStructure(
     }
   }
 
+  // Fail fast and loud if the content directory itself doesn't exist — avoids
+  // a misleading cascade of "content file X is missing" errors when the real
+  // problem is a bad path.
+  const contentDirExists = await stat(contentDir)
+    .then((s) => s.isDirectory())
+    .catch(() => false)
+  if (!contentDirExists) {
+    errors.push(`content directory does not exist at ${contentDir}`)
+    return { errors }
+  }
+
+  // Landing page at content/index.html is not part of any section — auto-declare
+  // so the orphan scan doesn't flag it.
   const declared = new Set<string>()
   declared.add('index.html')
   for (const section of structure) {
@@ -1118,16 +1152,11 @@ export async function validateStructure(
     }
   }
 
-  const actual = new Set(await enumerateHtmlFiles(contentDir))
+  const actual = new Set(await enumerateHtmlFiles(contentDir, contentDir))
 
   for (const relPath of declared) {
     if (!actual.has(relPath)) {
-      const exists = await stat(join(contentDir, relPath))
-        .then(() => true)
-        .catch(() => false)
-      if (!exists) {
-        errors.push(`content file ${relPath} is missing (declared in structure)`)
-      }
+      errors.push(`content file ${relPath} is missing (declared in structure)`)
     }
   }
 
@@ -1141,13 +1170,7 @@ export async function validateStructure(
 }
 ```
 
-- [ ] **Step 5: Add landing-page exemption to test and impl**
-
-The landing page `content/index.html` has no corresponding structure entry (it's the root landing, not part of any section). In step 4, `declared.add('index.html')` handles this. Update the `ok/index.html` fixture expectation in test case 1 to include it as declared (already done in impl).
-
-Verify the first test case still passes with this handling — `ok/` has both `index.html` and `infra/index.html`, structure only declares `infra/index.html`, and we auto-declare `index.html`. Good.
-
-- [ ] **Step 6: Run tests**
+- [ ] **Step 5: Run tests**
 
 ```bash
 pnpm --filter @mythrun/wiki test validate
@@ -1155,7 +1178,7 @@ pnpm --filter @mythrun/wiki test validate
 
 Expected: all PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add docs/wiki/build/validate.ts docs/wiki/build/__tests__/validate.test.ts docs/wiki/build/__tests__/fixtures/validate/

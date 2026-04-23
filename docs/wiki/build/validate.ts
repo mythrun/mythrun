@@ -6,7 +6,10 @@ export interface ValidateResult {
   errors: string[]
 }
 
-async function enumerateHtmlFiles(dir: string, base = dir): Promise<string[]> {
+async function enumerateHtmlFiles(dir: string, base: string): Promise<string[]> {
+  // Only suppress errors during recursion — a missing nested directory mid-walk
+  // is a rare race and not a wiki-author concern. The top-level contentDir
+  // existence is checked by the caller and surfaced as its own error class.
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
   const nested: string[][] = await Promise.all(
     entries.map(async (entry) => {
@@ -19,12 +22,6 @@ async function enumerateHtmlFiles(dir: string, base = dir): Promise<string[]> {
     }),
   )
   return nested.flat().sort()
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  return stat(path)
-    .then(() => true)
-    .catch(() => false)
 }
 
 export async function validateStructure(
@@ -53,6 +50,19 @@ export async function validateStructure(
     }
   }
 
+  // Fail fast and loud if the content directory itself doesn't exist — avoids
+  // a misleading cascade of "content file X is missing" errors when the real
+  // problem is a bad path.
+  const contentDirExists = await stat(contentDir)
+    .then((s) => s.isDirectory())
+    .catch(() => false)
+  if (!contentDirExists) {
+    errors.push(`content directory does not exist at ${contentDir}`)
+    return { errors }
+  }
+
+  // Landing page at content/index.html is not part of any section — auto-declare
+  // so the orphan scan doesn't flag it.
   const declared = new Set<string>()
   declared.add('index.html')
   for (const section of structure) {
@@ -61,14 +71,11 @@ export async function validateStructure(
     }
   }
 
-  const actual = new Set(await enumerateHtmlFiles(contentDir))
+  const actual = new Set(await enumerateHtmlFiles(contentDir, contentDir))
 
   for (const relPath of declared) {
     if (!actual.has(relPath)) {
-      const exists = await fileExists(join(contentDir, relPath))
-      if (!exists) {
-        errors.push(`content file ${relPath} is missing (declared in structure)`)
-      }
+      errors.push(`content file ${relPath} is missing (declared in structure)`)
     }
   }
 

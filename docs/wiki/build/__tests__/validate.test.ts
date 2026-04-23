@@ -61,4 +61,22 @@ describe('validateStructure', () => {
     const result = await validateStructure(badStructure, resolve(here, 'fixtures/validate/ok'))
     expect(result.errors.some((e) => /first page.*index/i.test(e))).toBe(true)
   })
+
+  it('reports a clear error when the content directory itself does not exist', async () => {
+    const result = await validateStructure(
+      structure,
+      resolve(here, 'fixtures/validate/does-not-exist'),
+    )
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toMatch(/content directory does not exist/i)
+  })
+
+  it('never flags the landing content/index.html as orphan even with an empty structure', async () => {
+    const result = await validateStructure([], resolve(here, 'fixtures/validate/ok'))
+    // infra/index.html is orphan because structure is empty, but index.html is NOT.
+    const landingOrphan = result.errors.some(
+      (e) => /index\.html.*orphan/i.test(e) && !e.includes('infra'),
+    )
+    expect(landingOrphan).toBe(false)
+  })
 })
