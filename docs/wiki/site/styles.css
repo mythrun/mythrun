@@ -39,7 +39,7 @@ body {
 .wiki-lockup {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   text-decoration: none;
   color: inherit;
 }
@@ -53,7 +53,7 @@ body {
   color: var(--paper-500);
   text-transform: uppercase;
   border-left: 1px solid var(--paper-300);
-  padding-left: 12px;
+  padding-left: 14px;
 }
 .wiki-topnav {
   display: flex;
