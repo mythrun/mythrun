@@ -7,10 +7,13 @@ Open `site/index.html` in a browser to view. Every HTML file works directly via 
 ## Commands
 
 ```bash
+pnpm wiki:dev              # serve on http://localhost:3100, watch source, auto-reload browser on rebuild
 pnpm wiki:build            # rebuild site/ (permissive; drift renders a banner)
 pnpm wiki:check            # strict build (used in CI; non-zero on drift)
 pnpm wiki:accept-drift     # lock source hashes after updating a page
 ```
+
+Override the dev port with `WIKI_DEV_PORT=<n> pnpm wiki:dev`.
 
 ## Files
 
