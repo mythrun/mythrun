@@ -29,7 +29,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 32px;
+  padding: 28px 36px;
   border-bottom: 1px solid var(--paper-300);
   background: var(--paper-100);
   position: sticky;
@@ -39,21 +39,21 @@ body {
 .wiki-lockup {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 22px;
   text-decoration: none;
   color: inherit;
 }
 .wiki-lockup img {
-  height: 44px;
+  height: 96px;
 }
 .wiki-label {
   font-family: var(--mono);
-  font-size: 13px;
-  letter-spacing: 2px;
+  font-size: 15px;
+  letter-spacing: 3px;
   color: var(--paper-500);
   text-transform: uppercase;
   border-left: 1px solid var(--paper-300);
-  padding-left: 12px;
+  padding-left: 16px;
 }
 .wiki-topnav {
   display: flex;
@@ -75,13 +75,12 @@ body {
   color: var(--paper-900);
 }
 /* Runbooks is a utility tab (auto-generated cross-cutting index, not an
- * architectural section), so it's dimmed one step on the paper ramp to signal
- * its different role. Active state stays ember like the other tabs. */
+ * architectural section). Rendered in ember even at rest so it stands out
+ * as a deliberate accent — only one tab in the bar gets this treatment.
+ * When active, it still gets the ember underline from the generic rule
+ * above, so the inactive→active transition adds the underline. */
 .wiki-topnav a[href*='runbooks/']:not(.active) {
-  color: var(--paper-500);
-}
-.wiki-topnav a[href*='runbooks/']:not(.active):hover {
-  color: var(--paper-700);
+  color: var(--ember-600);
 }
 
 .wiki-shell {
