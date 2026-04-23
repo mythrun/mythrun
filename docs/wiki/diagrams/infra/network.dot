@@ -1,0 +1,53 @@
+digraph network {
+  // VPC layout: two AZs, public/private split, single NAT, four security
+  // groups with explicit traffic paths.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_vpc {
+    label="VPC  10.0.0.0/16";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    subgraph cluster_pub_a {
+      label="public-a  10.0.1.0/24";
+      style="dotted";
+      igw     [label="Internet\nGateway"];
+      nat     [label="NAT\nGateway", color="ember", fontcolor="ember"];
+      alb_a   [label="ALB"];
+    }
+
+    subgraph cluster_pub_b {
+      label="public-b  10.0.2.0/24";
+      style="dotted";
+      alb_b   [label="ALB"];
+    }
+
+    subgraph cluster_priv_a {
+      label="private-a  10.0.10.0/24";
+      style="dotted";
+      ecs_a [label="ECS tasks"];
+      rds   [label="RDS"];
+      redis [label="Redis"];
+    }
+
+    subgraph cluster_priv_b {
+      label="private-b  10.0.20.0/24";
+      style="dotted";
+      ecs_b [label="ECS tasks"];
+    }
+  }
+
+  internet [label="Internet", color="ember", fontcolor="ember"];
+
+  internet -> igw     [label="443"];
+  igw      -> alb_a   [style=invis];
+  alb_a    -> ecs_a   [label="3000"];
+  alb_b    -> ecs_b   [label="3000"];
+  ecs_a    -> rds     [label="5432"];
+  ecs_a    -> redis   [label="6379"];
+  ecs_a    -> nat     [label="443 out"];
+  ecs_b    -> nat     [label="443 out"];
+  nat      -> igw;
+}

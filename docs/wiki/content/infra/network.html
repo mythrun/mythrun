@@ -1,0 +1,148 @@
+<!-- source: infra/modules/network/ -->
+<!-- source-hash: sha256:4ea2ce07f14c700578751ecc2cda4578665b3d2eb843006f1d9d138ef524ee9f -->
+<!-- last-ticket: MYT-25 -->
+
+<h1>Network</h1>
+
+<p class="lead">
+  The VPC everything else runs in. Two AZs, public/private split, a single NAT, and four security
+  groups that carve out who can talk to whom.
+</p>
+
+<!-- @diagram: infra/network -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The VPC (<code>10.0.0.0/16</code>) spans two availability zones in <code>us-east-1</code>. Each AZ
+  has one public and one private subnet. Public subnets hold the ALB and the NAT Gateway. Private
+  subnets hold ECS tasks, RDS, and Redis — nothing in them has a public IP, and
+  <code>map_public_ip_on_launch</code> is off even in the public subnets.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two AZs, not three</strong> — RDS needs a DB subnet group spanning at least two AZs even
+  for Single-AZ instances. Three AZs at launch would add a third NAT-gateway-sized cost without
+  changing availability for anything we're running today. The module accepts a list and can be bumped
+  to three without a rewrite.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Single NAT (not an HA pair)</strong> — a per-AZ NAT pair would double the ~$32/month NAT
+  cost. A shared route table points both private subnets at the NAT in AZ-a. The
+  <code>num_nat_gateways</code> variable exists so the module splits into per-AZ route tables the
+  day AZ-a outage tolerance matters.
+</aside>
+
+<h2>Security groups</h2>
+
+<p>Four SGs carve out traffic paths, each with ingress and egress declared as separate resources:</p>
+
+<ul>
+  <li><code>alb</code> — inbound 443 from the internet; egress to anywhere.</li>
+  <li><code>ecs</code> — inbound 3000 from the ALB SG; egress to 443 on the internet, 5432 to RDS, 6379 to Redis.</li>
+  <li><code>rds</code> — inbound 5432 from the ECS SG; no egress.</li>
+  <li><code>redis</code> — inbound 6379 from the ECS SG; no egress.</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>No default egress on SGs</strong> — Terraform's <code>aws_security_group</code> now creates
+  groups with no egress rules unless you add them, and all four SGs declare egress explicitly. RDS and
+  Redis have no egress at all: they have no legitimate outbound need, and the deny is a cheap
+  defense-in-depth layer if something is ever accidentally launched into the wrong group.
+</aside>
+
+<p>
+  The VPC's <em>default</em> SG is also zeroed out with an empty
+  <code>aws_default_security_group</code> resource. Anything accidentally launched without an
+  explicit SG inherits zero rules.
+</p>
+
+<h2>Routing</h2>
+
+<p>
+  The public route table sends <code>0.0.0.0/0</code> through the Internet Gateway; both public
+  subnets attach to it. The private route table sends <code>0.0.0.0/0</code> through the NAT
+  Gateway; both private subnets attach to it. The NAT's Elastic IP is the only public IP in the VPC
+  that Mythrun owns.
+</p>
+
+<h2>Integration points</h2>
+
+<p>
+  The <a href="data.html">Data</a> module places RDS and Redis into the private subnets and
+  attaches them to the <code>rds</code> and <code>redis</code> SGs. Future
+  <a href="index.html">serving infrastructure</a> will place ECS tasks into the private subnets and
+  the <code>ecs</code> SG, and attach the ALB to public subnets and the <code>alb</code> SG.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Inputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Default</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>environment</code></td>
+      <td>—</td>
+      <td>Logical label for tags.</td>
+    </tr>
+    <tr>
+      <td><code>vpc_cidr</code></td>
+      <td><code>10.0.0.0/16</code></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><code>azs</code></td>
+      <td><code>["us-east-1a", "us-east-1b"]</code></td>
+      <td>Index 0 = "a", index 1 = "b".</td>
+    </tr>
+    <tr>
+      <td><code>num_nat_gateways</code></td>
+      <td><code>1</code></td>
+      <td>Validated to 1 or 2.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Outputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Output</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>vpc_id</code></td>
+      <td>string</td>
+    </tr>
+    <tr>
+      <td><code>public_subnet_ids</code></td>
+      <td>list of 2</td>
+    </tr>
+    <tr>
+      <td><code>private_subnet_ids</code></td>
+      <td>list of 2</td>
+    </tr>
+    <tr>
+      <td><code>alb_sg_id</code>, <code>ecs_sg_id</code>, <code>rds_sg_id</code>, <code>redis_sg_id</code></td>
+      <td>string</td>
+    </tr>
+    <tr>
+      <td><code>nat_gateway_id</code></td>
+      <td>string</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p><code>infra/modules/network/</code></p>

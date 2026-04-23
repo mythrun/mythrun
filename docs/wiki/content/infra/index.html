@@ -1,14 +1,152 @@
+<!-- source: infra/ -->
+<!-- source: infra/scripts/bootstrap.sh -->
+<!-- source-hash: sha256:a0a6c818668b90e73e4b5dfc0be0cab7834e74f31ed7e37b6a6ebef06c1dc54e -->
+<!-- last-ticket: MYT-25 -->
+
 <h1>Infra</h1>
 
 <p class="lead">
-  Mythrun's AWS infrastructure: accounts, environments, Terraform modules, networking, compute, data
-  plane, DNS, secrets, CI/CD, observability.
+  Everything Mythrun runs on: a single AWS account in <code>us-east-1</code>, carved into Terraform
+  modules and composed by per-environment workspaces.
 </p>
 
+<h2>How it fits together</h2>
+
 <p>
-  Nothing built here yet. This section will be populated in Phase 2 of the wiki rollout, pulling
-  from <code>infra/</code> in the repo. Expect pages covering the <code>network</code>,
-  <code>data</code>, <code>serving</code>, and <code>dns</code> modules, each with a DOT diagram of
-  the AWS resources it creates, plus environment pages (<code>shared</code>, <code>staging</code>)
-  showing how those modules compose.
+  Infrastructure lives in the <code>infra/</code> directory as a small set of modules and a handful
+  of environment workspaces. Modules describe a single piece of AWS surface area; workspaces decide
+  which modules to compose and with which inputs.
 </p>
+
+<p>The modules shipped so far:</p>
+
+<ul>
+  <li>
+    <a href="network.html">Network</a> — VPC, public/private subnets across two AZs, NAT, security
+    groups.
+  </li>
+  <li>
+    <a href="data.html">Data</a> — RDS Postgres, ElastiCache Redis, and the Secrets Manager entries
+    that front them.
+  </li>
+</ul>
+
+<p>
+  Two workspaces consume those modules: <code>shared/</code> creates the single cross-environment
+  footprint (VPC, ALB, ECS cluster, RDS, Redis — resources we don't double up per env), and
+  <code>staging/</code> creates per-env resources that read shared outputs via
+  <code>terraform_remote_state</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Shared vs per-env split</strong> — a second Postgres or VPC would double cost without
+  buying anything real in staging. Sensitive boundaries (per-env databases, per-env app users, per-env
+  IAM roles) sit inside the shared infrastructure; noisy-neighbor and blast-radius concerns are
+  revisited before production traffic lands.
+</aside>
+
+<h2>State and bootstrap</h2>
+
+<p>
+  Terraform state lives in the <code>mythrun-terraform-state</code> S3 bucket — one key per
+  workspace. <code>bootstrap.sh</code> creates the bucket itself: SSE-S3 encryption, versioning,
+  public-access block, TLS-only bucket policy, 90-day noncurrent expiration. Native S3 state locking
+  (<code>use_lockfile = true</code>) replaces DynamoDB; every backend declares
+  <code>required_version &gt;= 1.10</code> to pin that feature on.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>No DynamoDB lock table</strong> — Terraform 1.10 added native object-lock based state
+  locking. It's one less resource to provision, one less bill, and the lock semantics are simpler to
+  reason about.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3>Create the state bucket in a new AWS account</h3>
+<ol>
+  <li>Configure AWS credentials for the target account.</li>
+  <li>Verify <code>terraform &gt;= 1.10</code> and <code>jq</code> are on the <code>PATH</code>.</li>
+  <li>Run <code>bash infra/scripts/bootstrap.sh</code>.</li>
+  <li>
+    The script is idempotent — re-running against an existing bucket reconciles its settings without
+    recreating it.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The <a href="network.html">Network</a> page drills into the VPC. The <a href="data.html">Data</a>
+  page covers RDS, Redis, and the bootstrap script that creates per-env databases inside the shared
+  RDS instance.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>State bucket</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Setting</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Name</td>
+      <td><code>mythrun-terraform-state</code></td>
+    </tr>
+    <tr>
+      <td>Region</td>
+      <td><code>us-east-1</code></td>
+    </tr>
+    <tr>
+      <td>Encryption</td>
+      <td>SSE-S3 (AES256), bucket key enabled</td>
+    </tr>
+    <tr>
+      <td>Versioning</td>
+      <td>Enabled; noncurrent expires after 90 days</td>
+    </tr>
+    <tr>
+      <td>Public access</td>
+      <td>Blocked (all four controls)</td>
+    </tr>
+    <tr>
+      <td>Transport</td>
+      <td>TLS-only (<code>aws:SecureTransport=false</code> denied)</td>
+    </tr>
+    <tr>
+      <td>Locking</td>
+      <td>Native S3 object lock (<code>use_lockfile</code>)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Workspaces</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Workspace</th>
+      <th>State key</th>
+      <th>Contents</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>shared</code></td>
+      <td><code>environments/shared/terraform.tfstate</code></td>
+      <td>Network + Data modules</td>
+    </tr>
+    <tr>
+      <td><code>staging</code></td>
+      <td><code>environments/staging/terraform.tfstate</code></td>
+      <td>Per-env secret shells (reads shared state)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p><code>infra/</code></p>

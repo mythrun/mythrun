@@ -4,7 +4,11 @@ export const structure: Section[] = [
   {
     slug: 'infra',
     title: 'Infra',
-    pages: [{ slug: 'index', title: 'Overview' }],
+    pages: [
+      { slug: 'index', title: 'Overview' },
+      { slug: 'network', title: 'Network' },
+      { slug: 'data', title: 'Data plane' },
+    ],
   },
   {
     slug: 'runtime',
