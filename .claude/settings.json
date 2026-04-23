@@ -10,6 +10,15 @@
             "command": "jq -c 'if ((.tool_input.file_path // \"\") | test(\"docs/superpowers/plans/.*\\\\.md$\")) then {hookSpecificOutput:{hookEventName:\"PostToolUse\",additionalContext:\"You just wrote or edited an implementation plan. Decompose it into beads now: run `bd create` for each concrete step, wire `bd dep` for blockers. Required by the CLAUDE.md workflow — do this BEFORE starting implementation.\"}} else empty end'"
           }
         ]
+      },
+      {
+        "matcher": "mcp__linear-server__save_issue",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-linear-close.sh"
+          }
+        ]
       }
     ]
   }
