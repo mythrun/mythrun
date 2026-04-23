@@ -35,4 +35,11 @@ describe('renderShell', () => {
     const out = renderShell(shell, { maybe: '' })
     expect(out).toBe('[]')
   })
+
+  it('does not match @name tokens outside an HTML comment', () => {
+    const shell = '<p>Email me @steve at work.</p>'
+    // No slots needed — the @steve is not a marker, so no provided values required.
+    const out = renderShell(shell, {})
+    expect(out).toBe(shell)
+  })
 })

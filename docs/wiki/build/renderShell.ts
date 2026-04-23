@@ -1,5 +1,3 @@
-const slotRegex = /<!--\s*@(\w+)\s*-->/g
-
 export function renderShell(shell: string, slots: Record<string, string>): string {
   const required = new Set<string>()
   const scanRegex = /<!--\s*@(\w+)\s*-->/g
@@ -19,5 +17,9 @@ export function renderShell(shell: string, slots: Record<string, string>): strin
     }
   }
 
-  return shell.replace(slotRegex, (_full, name: string) => slots[name] ?? '')
+  // Function-local to avoid module-level /g regex lastIndex state. Safe today
+  // because String.prototype.replace resets internally, but a latent footgun
+  // if a future refactor moves this to exec() in a loop.
+  const replaceRegex = /<!--\s*@(\w+)\s*-->/g
+  return shell.replace(replaceRegex, (_full, name: string) => slots[name] ?? '')
 }

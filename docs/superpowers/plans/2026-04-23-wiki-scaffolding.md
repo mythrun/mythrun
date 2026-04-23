@@ -892,6 +892,12 @@ describe('renderShell', () => {
     const out = renderShell(shell, { maybe: '' })
     expect(out).toBe('[]')
   })
+
+  it('does not match @name tokens outside an HTML comment', () => {
+    const shell = '<p>Email me @steve at work.</p>'
+    const out = renderShell(shell, {})
+    expect(out).toBe(shell)
+  })
 })
 ```
 
@@ -906,14 +912,12 @@ Expected: FAIL with "Cannot find module '../renderShell.ts'".
 - [ ] **Step 3: Implement `docs/wiki/build/renderShell.ts`**
 
 ```ts
-const slotRegex = /<!--\s*@(\w+)\s*-->/g
-
 export function renderShell(shell: string, slots: Record<string, string>): string {
   const required = new Set<string>()
-  let scanMatch: RegExpExecArray | null
   const scanRegex = /<!--\s*@(\w+)\s*-->/g
-  while ((scanMatch = scanRegex.exec(shell)) !== null) {
-    required.add(scanMatch[1]!)
+  for (let m = scanRegex.exec(shell); m !== null; m = scanRegex.exec(shell)) {
+    const name = m[1]
+    if (name !== undefined) required.add(name)
   }
 
   for (const slot of required) {
@@ -927,7 +931,11 @@ export function renderShell(shell: string, slots: Record<string, string>): strin
     }
   }
 
-  return shell.replace(slotRegex, (_full, name: string) => slots[name] ?? '')
+  // Function-local to avoid module-level /g regex lastIndex state. Safe today
+  // because String.prototype.replace resets internally, but a latent footgun
+  // if a future refactor moves this to exec() in a loop.
+  const replaceRegex = /<!--\s*@(\w+)\s*-->/g
+  return shell.replace(replaceRegex, (_full, name: string) => slots[name] ?? '')
 }
 ```
 
