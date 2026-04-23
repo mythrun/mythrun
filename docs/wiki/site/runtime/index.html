@@ -25,15 +25,407 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime</div>
-        <article><h1>Runtime</h1>
-<p class="lead">Cognitive tiers, session loop, prompts, Anthropic integration.</p>
-<p>Nothing built here yet. Will be populated as runtime components ship.</p>
+        <article>
+<h1>Backend</h1>
+
+<p class="lead">
+  The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a single
+  <code>/health</code> endpoint, and a multi-stage Dockerfile that packages it into a minimal
+  runtime image.
+</p>
+
+<svg width="1040pt" height="446pt"
+ viewBox="14.00 14.00 1026.00 431.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 427.4)">
+<title>backend</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-413 1007.37,-413 1007.37,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_repo</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="0,-113 0,-401 479.14,-401 479.14,-113 0,-113"/>
+<text xml:space="preserve" text-anchor="middle" x="239.57" y="-387.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pnpm workspace &#160;(repo root)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_backend</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="37.87,-113 37.87,-253 479.14,-253 479.14,-113 37.87,-113"/>
+<text xml:space="preserve" text-anchor="middle" x="258.51" y="-239.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/ &#160;(@mythrun/backend)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_wiki</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="0,-253 0,-310 194.23,-310 194.23,-253 0,-253"/>
+<text xml:space="preserve" text-anchor="middle" x="97.11" y="-296.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">docs/wiki/ &#160;(@mythrun/wiki)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_image</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="302.24,-8 302.24,-113 771.26,-113 771.26,-8 302.24,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="536.75" y="-99.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/Dockerfile &#160;(multi&#45;stage)</text>
+</g>
+<!-- root -->
+<g id="node1" class="node">
+<title>root</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="175.16,-380.04 18.06,-380.04 18.06,-309.96 175.16,-309.96 175.16,-380.04"/>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-361.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">package.json</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-348.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm&#45;workspace.yaml</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-335.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.npmrc</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-321.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.nvmrc</text>
+</g>
+<!-- pkg -->
+<g id="node2" class="node">
+<title>pkg</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="155.36,-156.84 37.87,-156.84 37.87,-113.16 155.36,-113.16 155.36,-156.84"/>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-138.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">package.json</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-125.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tsconfig.json</text>
+</g>
+<!-- builder -->
+<g id="node6" class="node">
+<title>builder</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="531.95,-91.64 302.24,-91.64 302.24,-8.36 531.95,-8.36 531.95,-91.64"/>
+<text xml:space="preserve" text-anchor="middle" x="417.1" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">builder</text>
+<text xml:space="preserve" text-anchor="middle" x="417.1" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">node:24&#45;alpine</text>
+<text xml:space="preserve" text-anchor="middle" x="417.1" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm install &#45;&#45;frozen&#45;lockfile</text>
+<text xml:space="preserve" text-anchor="middle" x="417.1" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm build</text>
+<text xml:space="preserve" text-anchor="middle" x="417.1" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm deploy &#45;&#45;prod</text>
+</g>
+<!-- pkg&#45;&gt;builder -->
+<g id="edge2" class="edge">
+<title>pkg&#45;&gt;builder</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M156.03,-119.41C194.4,-109.17 246.04,-95.39 293.19,-82.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="293.74,-85.19 299.87,-81.02 292.48,-80.46 293.74,-85.19"/>
+<text xml:space="preserve" text-anchor="middle" x="248.23" y="-105.61" font-family="Courier,monospace" font-size="10.00">docker build</text>
+</g>
+<!-- src -->
+<g id="node3" class="node">
+<title>src</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="155.36,-231.44 37.87,-231.44 37.87,-174.56 155.36,-174.56 155.36,-231.44"/>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-212.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/server.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-199.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Fastify</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-186.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /health</text>
+</g>
+<!-- tests -->
+<g id="node4" class="node">
+<title>tests</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="479.14,-224.84 355.05,-224.84 355.05,-181.16 479.14,-181.16 479.14,-224.84"/>
+<text xml:space="preserve" text-anchor="middle" x="417.1" y="-206.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/__tests__/</text>
+<text xml:space="preserve" text-anchor="middle" x="417.1" y="-193.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">vitest</text>
+</g>
+<!-- src&#45;&gt;tests -->
+<g id="edge1" class="edge">
+<title>src&#45;&gt;tests</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M156.03,-203C209.58,-203 288.97,-203 345.93,-203"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="345.71,-205.45 352.71,-203 345.71,-200.55 345.71,-205.45"/>
+<text xml:space="preserve" text-anchor="middle" x="248.23" y="-206" font-family="Courier,monospace" font-size="10.00">vitest</text>
+</g>
+<!-- src&#45;&gt;builder -->
+<!-- wiki -->
+<g id="node5" class="node">
+<title>wiki</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="152.06,-289 41.17,-289 41.17,-253 152.06,-253 152.06,-289"/>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-267.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wiki package</text>
+</g>
+<!-- runtime -->
+<g id="node7" class="node">
+<title>runtime</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="771.26,-91.64 633.96,-91.64 633.96,-8.36 771.26,-8.36 771.26,-91.64"/>
+<text xml:space="preserve" text-anchor="middle" x="702.61" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runtime</text>
+<text xml:space="preserve" text-anchor="middle" x="702.61" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">node:24&#45;alpine</text>
+<text xml:space="preserve" text-anchor="middle" x="702.61" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dumb&#45;init</text>
+<text xml:space="preserve" text-anchor="middle" x="702.61" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">non&#45;root mythrun</text>
+<text xml:space="preserve" text-anchor="middle" x="702.61" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">EXPOSE 3000</text>
+</g>
+<!-- builder&#45;&gt;runtime -->
+<g id="edge4" class="edge">
+<title>builder&#45;&gt;runtime</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M532.6,-50C563.65,-50 596.53,-50 624.94,-50"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="624.8,-52.45 631.8,-50 624.8,-47.55 624.8,-52.45"/>
+<text xml:space="preserve" text-anchor="middle" x="582.96" y="-65" font-family="Courier,monospace" font-size="10.00">pnpm deploy</text>
+<text xml:space="preserve" text-anchor="middle" x="582.96" y="-53" font-family="Courier,monospace" font-size="10.00">/app/deploy</text>
+</g>
+<!-- port -->
+<g id="node8" class="node">
+<title>port</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1003.37,-68 879.27,-68 879.27,-32 1003.37,-32 1003.37,-68"/>
+<text xml:space="preserve" text-anchor="middle" x="941.32" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">:3000 &#160;/health</text>
+</g>
+<!-- runtime&#45;&gt;port -->
+<g id="edge5" class="edge">
+<title>runtime&#45;&gt;port</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M771.76,-50C802.6,-50 839.01,-50 870.09,-50"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.89,-52.45 876.89,-50 869.89,-47.55 869.89,-52.45"/>
+<text xml:space="preserve" text-anchor="middle" x="825.27" y="-65" font-family="Courier,monospace" font-size="10.00">HEALTHCHECK</text>
+<text xml:space="preserve" text-anchor="middle" x="825.27" y="-53" font-family="Courier,monospace" font-size="10.00">wget /health</text>
+</g>
+</g>
+</svg>
+
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The repository is a pnpm monorepo. The root <code>package.json</code> pins
+  <code>pnpm@10.30.3</code> via <code>packageManager</code> and <code>node &gt;= 24</code> via
+  <code>engines</code>; <code>pnpm-workspace.yaml</code> declares two workspace packages today —
+  <code>backend/</code> and <code>docs/wiki/</code> — and the root exposes the single-word
+  verbs (<code>pnpm test</code>, <code>pnpm typecheck</code>, <code>pnpm lint</code>,
+  <code>pnpm build</code>) that fan out across every workspace via <code>pnpm -r</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Monorepo from day one, not a polyrepo</strong> — the backend, the wiki, and every future
+  piece (prep worker, frontend, Terraform-companion tools) share a lockfile, a TypeScript version,
+  and a single CI run. A second repo would double tooling for no real isolation: all of these
+  deploy together.
+</aside>
+
+<p>
+  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. It depends on Fastify and
+  nothing else in production, with <code>tsx</code>, <code>typescript</code>, and <code>vitest</code>
+  as dev dependencies. The source tree is intentionally shallow right now: <code>src/server.ts</code>
+  exports a <code>buildApp()</code> factory and, on import, listens on <code>PORT</code> (default
+  <code>3000</code>) bound to <code>0.0.0.0</code>. The factory exists so the test file in
+  <code>src/__tests__/server.test.ts</code> can build an app and drive it via
+  <code>app.inject()</code> without opening a socket.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>buildApp</code> factory, not a top-level instance</strong> — Fastify's
+  <code>inject</code> method needs a built-but-not-listening app. Exporting a factory means the
+  same file serves both the production boot path and the tests, with no duplicated wiring.
+</aside>
+
+<h2 id="typescript-and-lint">TypeScript and lint</h2>
+
+<p>
+  The backend's <code>tsconfig.json</code> turns on every strictness knob that changes code —
+  <code>strict</code>, <code>noUncheckedIndexedAccess</code>, <code>exactOptionalPropertyTypes</code>
+  — with ES2023/NodeNext module resolution. <code>tsconfig.build.json</code> extends it and
+  excludes <code>__tests__/</code> so the built <code>dist/</code> carries only runtime code.
+</p>
+
+<p>
+  ESLint sits at the repo root and runs against every workspace. The config composes
+  <code>typescript-eslint</code>'s strict + stylistic type-checked presets, adds a repo-specific
+  ban on default exports (<code>no-restricted-syntax</code>), caps modules at 400 lines and
+  functions at 50, and forbids <code>any</code> and non-null assertions outright.
+  <code>eslint-config-prettier</code> is applied last so Prettier owns formatting.
+</p>
+
+<h2 id="the-container-image">The container image</h2>
+
+<p>
+  <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. The builder
+  stage copies the root lockfile, <code>.npmrc</code>, and the backend's <code>package.json</code>,
+  runs <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the
+  source and builds. The last step of the builder is
+  <code>pnpm --filter @mythrun/backend deploy --prod /app/deploy</code>, which produces a
+  self-contained directory with only the backend's production dependencies. The runtime stage is a
+  fresh <code>node:24-alpine</code> that installs <code>dumb-init</code>, creates a non-root
+  <code>mythrun</code> user, copies <code>/app/deploy</code> in with owner set, and runs
+  <code>dumb-init node dist/server.js</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>pnpm deploy</code> instead of copying <code>node_modules</code></strong> — a
+  workspace's <code>node_modules</code> is a forest of symlinks pointing back into the pnpm store
+  and sibling packages. Copying that across a stage gives you dangling symlinks. <code>pnpm
+  deploy</code> materializes a proper single-package tree suitable for the runtime image.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>inject-workspace-packages=true</code> in <code>.npmrc</code></strong> — without
+  this, <code>pnpm deploy</code> refuses to bundle workspace dependencies without the
+  <code>--legacy</code> flag. The flag worked but is deprecated; the <code>.npmrc</code> setting
+  is the supported path on pnpm 10.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>dumb-init</code> as PID 1</strong> — Node.js doesn't reap zombie children or
+  forward signals correctly when it runs as PID 1 under Docker. <code>dumb-init</code> is ~20 KB,
+  forwards SIGTERM so <code>docker stop</code> shuts down gracefully, and costs nothing at idle.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Non-root <code>mythrun</code> user</strong> — the runtime user exists only to own
+  <code>/app</code>. It has no shell, no sudo, no home directory worth mentioning. ECS and most
+  scanners flag containers running as root; this sidesteps the finding and costs nothing.
+</aside>
+
+<p>
+  The image declares a <code>HEALTHCHECK</code> that hits <code>http://localhost:3000/health</code>
+  every 30 s. Dockerfile metadata carries the OCI source/title/license labels so registries render
+  a useful preview without a separate manifest step.
+</p>
+
+<h2 id="the-dockerignore-pair">The <code>.dockerignore</code> pair</h2>
+
+<p>
+  Two <code>.dockerignore</code> files work together. The root one is authoritative — it's what
+  Docker reads when the build context is the repo root (<code>docker build -f backend/Dockerfile
+  .</code>). It excludes <code>node_modules</code>, <code>dist</code>, tests, docs, Terraform,
+  tracker state, and every editor/OS droppings pattern. <code>backend/.dockerignore</code> is a
+  narrower duplicate kept alongside the Dockerfile as a readable hint for anyone building with
+  <code>backend/</code> as context; Docker only uses it in that case.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="run-the-backend-locally">Run the backend locally</h3>
+<ol>
+  <li>From the repo root: <code>pnpm install</code>.</li>
+  <li>
+    <code>pnpm dev</code> — starts the backend under <code>tsx watch</code>, reloading on file
+    changes.
+  </li>
+  <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>
+</ol>
+
+<h3 id="run-the-full-verification-suite">Run the full verification suite</h3>
+<ol>
+  <li>
+    <code>pnpm install &amp;&amp; pnpm test &amp;&amp; pnpm typecheck &amp;&amp; pnpm lint</code>
+    — the "done when" of every implementation ticket. All four must exit 0.
+  </li>
+  <li>
+    Each command fans out across every workspace via <code>pnpm -r</code>; a failure in any
+    workspace fails the root command.
+  </li>
+</ol>
+
+<h3 id="build-and-run-the-container-image">Build and run the container image</h3>
+<ol>
+  <li>
+    From the repo root:
+    <code>docker build -t mythrun -f backend/Dockerfile .</code>
+    — build context is the repo root so the lockfile, <code>.npmrc</code>, and
+    <code>pnpm-workspace.yaml</code> are visible.
+  </li>
+  <li><code>docker run -p 3000:3000 mythrun</code>.</li>
+  <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>
+  <li>
+    <code>docker inspect --format='{{.State.Health.Status}}' &lt;container&gt;</code> confirms the
+    <code>HEALTHCHECK</code> is reporting <code>healthy</code>.
+  </li>
+</ol>
+
+<h3 id="add-a-new-workspace-package">Add a new workspace package</h3>
+<ol>
+  <li>Create the directory with its own <code>package.json</code> (scoped <code>@mythrun/*</code>).</li>
+  <li>
+    Add the directory to <code>pnpm-workspace.yaml</code>. Root <code>pnpm -r</code> commands pick
+    it up automatically.
+  </li>
+  <li>
+    Add the scripts the root commands fan out to (<code>test</code>, <code>typecheck</code>,
+    <code>lint</code>, optionally <code>build</code>). Workspaces without a given script are
+    silently skipped.
+  </li>
+  <li>
+    <code>pnpm install</code> from the root to materialize dependencies and update the lockfile.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The <a href="../infra/data.html">data plane</a> owns the Postgres and Redis endpoints this
+  service will eventually connect to; the <a href="../infra/network.html">network</a> module
+  owns the <code>ecs</code> security group the container will launch into. Cognitive-tier code
+  (Fast Thinker, Slow Thinker, Scribe, DM Trigger) lands as additional modules under
+  <code>backend/src/</code>; they'll share this server's lifecycle, config, and Dockerfile.
+</p>
+
+<h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
+
+<h3 id="runtime-configuration">Runtime configuration</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Env var</th>
+      <th>Default</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>PORT</code></td>
+      <td><code>3000</code></td>
+      <td>The container exposes and health-checks this port.</td>
+    </tr>
+    <tr>
+      <td><code>NODE_ENV</code></td>
+      <td><code>production</code> (in image)</td>
+      <td>Set by the runtime stage; left unset in dev.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="http-surface">HTTP surface</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Path</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/health</code></td>
+      <td><code>200 {"status":"ok"}</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="toolchain-pins">Toolchain pins</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Tool</th>
+      <th>Pin</th>
+      <th>Declared in</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Node</td>
+      <td><code>24</code> (LTS)</td>
+      <td><code>.nvmrc</code>, <code>engines</code>, <code>node:24-alpine</code></td>
+    </tr>
+    <tr>
+      <td>pnpm</td>
+      <td><code>10.30.3</code></td>
+      <td><code>packageManager</code> + <code>corepack enable</code></td>
+    </tr>
+    <tr>
+      <td>TypeScript</td>
+      <td><code>^5.6</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+    <tr>
+      <td>Fastify</td>
+      <td><code>^5.1</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+    <tr>
+      <td>Vitest</td>
+      <td><code>^3.0</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/</code>, <code>pnpm-workspace.yaml</code>, <code>package.json</code>,
+  <code>.npmrc</code>, <code>.nvmrc</code>, <code>.dockerignore</code>,
+  <code>eslint.config.js</code>.
+</p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <p class="wiki-toc-empty" style="font-size:11px;color:var(--paper-500);">—</p>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#typescript-and-lint">TypeScript and lint</a></li><li style="padding-left:0"><a href="#the-container-image">The container image</a></li><li style="padding-left:0"><a href="#the-dockerignore-pair">The .dockerignore pair</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image">Build and run the container image</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

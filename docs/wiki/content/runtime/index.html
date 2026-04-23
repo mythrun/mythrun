@@ -1,3 +1,288 @@
-<h1>Runtime</h1>
-<p class="lead">Cognitive tiers, session loop, prompts, Anthropic integration.</p>
-<p>Nothing built here yet. Will be populated as runtime components ship.</p>
+<!-- source: backend/src/ -->
+<!-- source: backend/package.json -->
+<!-- source: backend/tsconfig.json -->
+<!-- source: backend/tsconfig.build.json -->
+<!-- source: backend/Dockerfile -->
+<!-- source: backend/.dockerignore -->
+<!-- source: package.json -->
+<!-- source: pnpm-workspace.yaml -->
+<!-- source: .npmrc -->
+<!-- source: .nvmrc -->
+<!-- source: .dockerignore -->
+<!-- source: eslint.config.js -->
+<!-- source-hash: sha256:dfb8f27b8f3161079d55a7e937f1dd180c3d97281275e0544a14cd3a827ad0b5 -->
+<!-- last-ticket: MYT-27 -->
+
+<h1>Backend</h1>
+
+<p class="lead">
+  The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a single
+  <code>/health</code> endpoint, and a multi-stage Dockerfile that packages it into a minimal
+  runtime image.
+</p>
+
+<!-- @diagram: runtime/backend -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The repository is a pnpm monorepo. The root <code>package.json</code> pins
+  <code>pnpm@10.30.3</code> via <code>packageManager</code> and <code>node &gt;= 24</code> via
+  <code>engines</code>; <code>pnpm-workspace.yaml</code> declares two workspace packages today —
+  <code>backend/</code> and <code>docs/wiki/</code> — and the root exposes the single-word
+  verbs (<code>pnpm test</code>, <code>pnpm typecheck</code>, <code>pnpm lint</code>,
+  <code>pnpm build</code>) that fan out across every workspace via <code>pnpm -r</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Monorepo from day one, not a polyrepo</strong> — the backend, the wiki, and every future
+  piece (prep worker, frontend, Terraform-companion tools) share a lockfile, a TypeScript version,
+  and a single CI run. A second repo would double tooling for no real isolation: all of these
+  deploy together.
+</aside>
+
+<p>
+  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. It depends on Fastify and
+  nothing else in production, with <code>tsx</code>, <code>typescript</code>, and <code>vitest</code>
+  as dev dependencies. The source tree is intentionally shallow right now: <code>src/server.ts</code>
+  exports a <code>buildApp()</code> factory and, on import, listens on <code>PORT</code> (default
+  <code>3000</code>) bound to <code>0.0.0.0</code>. The factory exists so the test file in
+  <code>src/__tests__/server.test.ts</code> can build an app and drive it via
+  <code>app.inject()</code> without opening a socket.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>buildApp</code> factory, not a top-level instance</strong> — Fastify's
+  <code>inject</code> method needs a built-but-not-listening app. Exporting a factory means the
+  same file serves both the production boot path and the tests, with no duplicated wiring.
+</aside>
+
+<h2>TypeScript and lint</h2>
+
+<p>
+  The backend's <code>tsconfig.json</code> turns on every strictness knob that changes code —
+  <code>strict</code>, <code>noUncheckedIndexedAccess</code>, <code>exactOptionalPropertyTypes</code>
+  — with ES2023/NodeNext module resolution. <code>tsconfig.build.json</code> extends it and
+  excludes <code>__tests__/</code> so the built <code>dist/</code> carries only runtime code.
+</p>
+
+<p>
+  ESLint sits at the repo root and runs against every workspace. The config composes
+  <code>typescript-eslint</code>'s strict + stylistic type-checked presets, adds a repo-specific
+  ban on default exports (<code>no-restricted-syntax</code>), caps modules at 400 lines and
+  functions at 50, and forbids <code>any</code> and non-null assertions outright.
+  <code>eslint-config-prettier</code> is applied last so Prettier owns formatting.
+</p>
+
+<h2>The container image</h2>
+
+<p>
+  <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. The builder
+  stage copies the root lockfile, <code>.npmrc</code>, and the backend's <code>package.json</code>,
+  runs <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the
+  source and builds. The last step of the builder is
+  <code>pnpm --filter @mythrun/backend deploy --prod /app/deploy</code>, which produces a
+  self-contained directory with only the backend's production dependencies. The runtime stage is a
+  fresh <code>node:24-alpine</code> that installs <code>dumb-init</code>, creates a non-root
+  <code>mythrun</code> user, copies <code>/app/deploy</code> in with owner set, and runs
+  <code>dumb-init node dist/server.js</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>pnpm deploy</code> instead of copying <code>node_modules</code></strong> — a
+  workspace's <code>node_modules</code> is a forest of symlinks pointing back into the pnpm store
+  and sibling packages. Copying that across a stage gives you dangling symlinks. <code>pnpm
+  deploy</code> materializes a proper single-package tree suitable for the runtime image.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>inject-workspace-packages=true</code> in <code>.npmrc</code></strong> — without
+  this, <code>pnpm deploy</code> refuses to bundle workspace dependencies without the
+  <code>--legacy</code> flag. The flag worked but is deprecated; the <code>.npmrc</code> setting
+  is the supported path on pnpm 10.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>dumb-init</code> as PID 1</strong> — Node.js doesn't reap zombie children or
+  forward signals correctly when it runs as PID 1 under Docker. <code>dumb-init</code> is ~20 KB,
+  forwards SIGTERM so <code>docker stop</code> shuts down gracefully, and costs nothing at idle.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Non-root <code>mythrun</code> user</strong> — the runtime user exists only to own
+  <code>/app</code>. It has no shell, no sudo, no home directory worth mentioning. ECS and most
+  scanners flag containers running as root; this sidesteps the finding and costs nothing.
+</aside>
+
+<p>
+  The image declares a <code>HEALTHCHECK</code> that hits <code>http://localhost:3000/health</code>
+  every 30 s. Dockerfile metadata carries the OCI source/title/license labels so registries render
+  a useful preview without a separate manifest step.
+</p>
+
+<h2>The <code>.dockerignore</code> pair</h2>
+
+<p>
+  Two <code>.dockerignore</code> files work together. The root one is authoritative — it's what
+  Docker reads when the build context is the repo root (<code>docker build -f backend/Dockerfile
+  .</code>). It excludes <code>node_modules</code>, <code>dist</code>, tests, docs, Terraform,
+  tracker state, and every editor/OS droppings pattern. <code>backend/.dockerignore</code> is a
+  narrower duplicate kept alongside the Dockerfile as a readable hint for anyone building with
+  <code>backend/</code> as context; Docker only uses it in that case.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3>Run the backend locally</h3>
+<ol>
+  <li>From the repo root: <code>pnpm install</code>.</li>
+  <li>
+    <code>pnpm dev</code> — starts the backend under <code>tsx watch</code>, reloading on file
+    changes.
+  </li>
+  <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>
+</ol>
+
+<h3>Run the full verification suite</h3>
+<ol>
+  <li>
+    <code>pnpm install &amp;&amp; pnpm test &amp;&amp; pnpm typecheck &amp;&amp; pnpm lint</code>
+    — the "done when" of every implementation ticket. All four must exit 0.
+  </li>
+  <li>
+    Each command fans out across every workspace via <code>pnpm -r</code>; a failure in any
+    workspace fails the root command.
+  </li>
+</ol>
+
+<h3>Build and run the container image</h3>
+<ol>
+  <li>
+    From the repo root:
+    <code>docker build -t mythrun -f backend/Dockerfile .</code>
+    — build context is the repo root so the lockfile, <code>.npmrc</code>, and
+    <code>pnpm-workspace.yaml</code> are visible.
+  </li>
+  <li><code>docker run -p 3000:3000 mythrun</code>.</li>
+  <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>
+  <li>
+    <code>docker inspect --format='{{.State.Health.Status}}' &lt;container&gt;</code> confirms the
+    <code>HEALTHCHECK</code> is reporting <code>healthy</code>.
+  </li>
+</ol>
+
+<h3>Add a new workspace package</h3>
+<ol>
+  <li>Create the directory with its own <code>package.json</code> (scoped <code>@mythrun/*</code>).</li>
+  <li>
+    Add the directory to <code>pnpm-workspace.yaml</code>. Root <code>pnpm -r</code> commands pick
+    it up automatically.
+  </li>
+  <li>
+    Add the scripts the root commands fan out to (<code>test</code>, <code>typecheck</code>,
+    <code>lint</code>, optionally <code>build</code>). Workspaces without a given script are
+    silently skipped.
+  </li>
+  <li>
+    <code>pnpm install</code> from the root to materialize dependencies and update the lockfile.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The <a href="../infra/data.html">data plane</a> owns the Postgres and Redis endpoints this
+  service will eventually connect to; the <a href="../infra/network.html">network</a> module
+  owns the <code>ecs</code> security group the container will launch into. Cognitive-tier code
+  (Fast Thinker, Slow Thinker, Scribe, DM Trigger) lands as additional modules under
+  <code>backend/src/</code>; they'll share this server's lifecycle, config, and Dockerfile.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Runtime configuration</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Env var</th>
+      <th>Default</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>PORT</code></td>
+      <td><code>3000</code></td>
+      <td>The container exposes and health-checks this port.</td>
+    </tr>
+    <tr>
+      <td><code>NODE_ENV</code></td>
+      <td><code>production</code> (in image)</td>
+      <td>Set by the runtime stage; left unset in dev.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>HTTP surface</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Path</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/health</code></td>
+      <td><code>200 {"status":"ok"}</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Toolchain pins</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Tool</th>
+      <th>Pin</th>
+      <th>Declared in</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Node</td>
+      <td><code>24</code> (LTS)</td>
+      <td><code>.nvmrc</code>, <code>engines</code>, <code>node:24-alpine</code></td>
+    </tr>
+    <tr>
+      <td>pnpm</td>
+      <td><code>10.30.3</code></td>
+      <td><code>packageManager</code> + <code>corepack enable</code></td>
+    </tr>
+    <tr>
+      <td>TypeScript</td>
+      <td><code>^5.6</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+    <tr>
+      <td>Fastify</td>
+      <td><code>^5.1</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+    <tr>
+      <td>Vitest</td>
+      <td><code>^3.0</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/</code>, <code>pnpm-workspace.yaml</code>, <code>package.json</code>,
+  <code>.npmrc</code>, <code>.nvmrc</code>, <code>.dockerignore</code>,
+  <code>eslint.config.js</code>.
+</p>

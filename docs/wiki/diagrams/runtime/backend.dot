@@ -1,0 +1,47 @@
+digraph backend {
+  // The backend package: pnpm monorepo workspace that builds a runtime Docker
+  // image. Left: source tree and dev loop. Right: the two-stage image build.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_repo {
+    label="pnpm workspace  (repo root)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    root    [label="package.json\npnpm-workspace.yaml\n.npmrc\n.nvmrc"];
+
+    subgraph cluster_backend {
+      label="backend/  (@mythrun/backend)";
+      style="dotted";
+      pkg     [label="package.json\ntsconfig.json"];
+      src     [label="src/server.ts\nFastify\nGET /health"];
+      tests   [label="src/__tests__/\nvitest"];
+    }
+
+    subgraph cluster_wiki {
+      label="docs/wiki/  (@mythrun/wiki)";
+      style="dotted";
+      wiki    [label="wiki package"];
+    }
+  }
+
+  subgraph cluster_image {
+    label="backend/Dockerfile  (multi-stage)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    builder [label="builder\nnode:24-alpine\npnpm install --frozen-lockfile\npnpm build\npnpm deploy --prod"];
+    runtime [label="runtime\nnode:24-alpine\ndumb-init\nnon-root mythrun\nEXPOSE 3000", color="ember", fontcolor="ember"];
+  }
+
+  port [label=":3000  /health", color="ember", fontcolor="ember"];
+
+  src     -> tests   [label="vitest", style=dashed];
+  pkg     -> builder [label="docker build"];
+  src     -> builder [style=invis];
+  builder -> runtime [label="pnpm deploy\n/app/deploy"];
+  runtime -> port    [label="HEALTHCHECK\nwget /health"];
+}
