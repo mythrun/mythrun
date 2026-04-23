@@ -48,4 +48,32 @@ describe('extractToc', () => {
     const { entries } = extractToc('<h1>Page</h1><h2>Keep</h2><h4>Skip</h4>')
     expect(entries).toEqual([{ level: 2, id: 'keep', text: 'Keep' }])
   })
+
+  it('reserves a user-provided id so a later auto-slug disambiguates instead of colliding', () => {
+    const { entries } = extractToc('<h2 id="inputs">Manual</h2><h2>Inputs</h2>')
+    expect(entries).toEqual([
+      { level: 2, id: 'inputs', text: 'Manual' },
+      { level: 2, id: 'inputs-2', text: 'Inputs' },
+    ])
+  })
+
+  it('strips inline tags from the toc text while preserving them in rendered html', () => {
+    const { entries, html } = extractToc('<h2>Inputs <code>ft</code></h2>')
+    expect(entries[0]?.text).toBe('Inputs ft')
+    expect(html).toContain('<code>ft</code>')
+  })
+
+  it('preserves non-id attributes on headings when injecting an id', () => {
+    const { html } = extractToc('<h2 class="lead">Inputs</h2>')
+    expect(html).toContain('class="lead"')
+    expect(html).toContain('id="inputs"')
+  })
+
+  it('falls back to heading-N when the slug would be empty', () => {
+    const { entries } = extractToc('<h2>   </h2><h2>—</h2>')
+    expect(entries).toEqual([
+      { level: 2, id: 'heading-1', text: '' },
+      { level: 2, id: 'heading-2', text: '—' },
+    ])
+  })
 })

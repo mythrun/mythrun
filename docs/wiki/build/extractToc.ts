@@ -35,6 +35,9 @@ export function extractToc(fragment: string): ExtractTocResult {
       let id: string
       if (existingId !== undefined) {
         id = existingId
+        // Reserve the user-declared id so a later auto-slug that collides with
+        // it disambiguates rather than emitting a duplicate DOM id.
+        seen.set(id, (seen.get(id) ?? 0) + 1)
       } else {
         const base = slugify(text) || `heading-${String(entries.length + 1)}`
         const count = seen.get(base) ?? 0
