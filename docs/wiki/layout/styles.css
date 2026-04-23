@@ -74,6 +74,15 @@ body {
 .wiki-topnav a:hover {
   color: var(--paper-900);
 }
+/* Runbooks is a utility tab (auto-generated cross-cutting index, not an
+ * architectural section), so it's dimmed one step on the paper ramp to signal
+ * its different role. Active state stays ember like the other tabs. */
+.wiki-topnav a[href*='runbooks/']:not(.active) {
+  color: var(--paper-500);
+}
+.wiki-topnav a[href*='runbooks/']:not(.active):hover {
+  color: var(--paper-700);
+}
 
 .wiki-shell {
   display: grid;
