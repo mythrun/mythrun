@@ -16,3 +16,6 @@ dist/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Superpowers brainstorming scratch
+.superpowers/
