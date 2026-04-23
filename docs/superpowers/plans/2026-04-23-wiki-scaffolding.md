@@ -231,6 +231,8 @@ git commit -m "feat(wiki): set up @mythrun/wiki workspace package"
 
 - [ ] **Step 1: Create `docs/wiki/build/types.ts`**
 
+Only the three types that cross module boundaries. Build-time internal types (e.g., the flattened per-page record used by the build pipeline) are defined locally in Task 12 — no need to pre-declare them here.
+
 ```ts
 export interface Page {
   slug: string
@@ -243,25 +245,10 @@ export interface Section {
   pages: [Page, ...Page[]]
 }
 
-export interface BuildPage {
-  section: Section
-  page: Page
-  contentPath: string
-  outputPath: string
-  depth: number
-}
-
 export interface PageMeta {
   sourcePaths: string[]
   sourceHash: string | null
   lastTicket: string | null
-}
-
-export interface RenderedPage {
-  buildPage: BuildPage
-  html: string
-  drifted: boolean
-  currentHash: string | null
 }
 ```
 

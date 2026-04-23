@@ -9,23 +9,8 @@ export interface Section {
   pages: [Page, ...Page[]]
 }
 
-export interface BuildPage {
-  section: Section
-  page: Page
-  contentPath: string
-  outputPath: string
-  depth: number
-}
-
 export interface PageMeta {
   sourcePaths: string[]
   sourceHash: string | null
   lastTicket: string | null
-}
-
-export interface RenderedPage {
-  buildPage: BuildPage
-  html: string
-  drifted: boolean
-  currentHash: string | null
 }
