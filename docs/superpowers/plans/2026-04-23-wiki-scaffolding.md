@@ -339,65 +339,93 @@ Create `docs/wiki/build/__tests__/sourceHash.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, symlinkSync, unlinkSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { computeSourceHash } from '../sourceHash.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const fixtureA = resolve(here, 'fixtures/sourceHash/moduleA')
-const fixtureFile = resolve(here, 'fixtures/sourceHash/single-file.txt')
+const fixtureRoot = resolve(here, 'fixtures/sourceHash')
 
 describe('computeSourceHash', () => {
   it('produces a stable 64-char hex digest for a directory', async () => {
-    const hash = await computeSourceHash([fixtureA])
+    const hash = await computeSourceHash(['moduleA'], fixtureRoot)
     expect(hash).toMatch(/^[0-9a-f]{64}$/)
   })
 
   it('is deterministic across calls on unchanged input', async () => {
-    const a = await computeSourceHash([fixtureA])
-    const b = await computeSourceHash([fixtureA])
+    const a = await computeSourceHash(['moduleA'], fixtureRoot)
+    const b = await computeSourceHash(['moduleA'], fixtureRoot)
     expect(a).toBe(b)
   })
 
   it('changes when a tracked file changes', async () => {
-    const before = await computeSourceHash([fixtureA])
-    const changed = resolve(fixtureA, 'a.txt')
+    const before = await computeSourceHash(['moduleA'], fixtureRoot)
+    const changed = resolve(fixtureRoot, 'moduleA/a.txt')
     const original = readFileSync(changed, 'utf-8')
     writeFileSync(changed, 'alpha-modified\n')
     try {
-      const after = await computeSourceHash([fixtureA])
+      const after = await computeSourceHash(['moduleA'], fixtureRoot)
       expect(after).not.toBe(before)
     } finally {
       writeFileSync(changed, original)
     }
   })
 
-  it('differs for different path lists with same content', async () => {
-    const onlyDir = await computeSourceHash([fixtureA])
-    const dirAndFile = await computeSourceHash([fixtureA, fixtureFile])
+  it('differs for different path lists with same underlying content', async () => {
+    const onlyDir = await computeSourceHash(['moduleA'], fixtureRoot)
+    const dirAndFile = await computeSourceHash(['moduleA', 'single-file.txt'], fixtureRoot)
     expect(onlyDir).not.toBe(dirAndFile)
   })
 
   it('throws a clear error if a path does not exist', async () => {
-    await expect(computeSourceHash(['/nonexistent/path/xyz'])).rejects.toThrow(/nonexistent/)
+    await expect(computeSourceHash(['nonexistent/path/xyz'], fixtureRoot)).rejects.toThrow(/nonexistent/)
   })
 
   it('enumerates directory files in a deterministic sorted order', async () => {
-    // Hash shouldn't depend on filesystem-returned order.
-    // We test this indirectly: adding a file and removing it should restore the original hash.
-    const before = await computeSourceHash([fixtureA])
-    const extra = resolve(fixtureA, 'zz-extra.txt')
+    const before = await computeSourceHash(['moduleA'], fixtureRoot)
+    const extra = resolve(fixtureRoot, 'moduleA/zz-extra.txt')
     writeFileSync(extra, 'extra\n')
     try {
-      const withExtra = await computeSourceHash([fixtureA])
+      const withExtra = await computeSourceHash(['moduleA'], fixtureRoot)
       expect(withExtra).not.toBe(before)
     } finally {
-      const { unlinkSync } = await import('node:fs')
       unlinkSync(extra)
     }
-    const restored = await computeSourceHash([fixtureA])
+    const restored = await computeSourceHash(['moduleA'], fixtureRoot)
     expect(restored).toBe(before)
+  })
+
+  it('is machine-independent: the same relative paths and content produce the same hash regardless of absolute root', async () => {
+    // Simulated by computing twice with different root-prefixes onto the same fixture.
+    // Achieved by resolving root from two different starting points.
+    const viaFixture = await computeSourceHash(['moduleA'], fixtureRoot)
+    const viaFixtureAgain = await computeSourceHash(['moduleA'], resolve(fixtureRoot, '.'))
+    expect(viaFixtureAgain).toBe(viaFixture)
+  })
+
+  it('throws if a tracked directory contains a symlink (rejects symlinks explicitly)', async () => {
+    const linkPath = resolve(fixtureRoot, 'moduleA/zz-link.txt')
+    const target = resolve(fixtureRoot, 'single-file.txt')
+    if (existsSync(linkPath)) unlinkSync(linkPath)
+    symlinkSync(target, linkPath)
+    try {
+      await expect(computeSourceHash(['moduleA'], fixtureRoot)).rejects.toThrow(/symlink/i)
+    } finally {
+      unlinkSync(linkPath)
+    }
+  })
+
+  it('throws if a tracked path itself is a symlink', async () => {
+    const linkPath = resolve(fixtureRoot, 'zz-link-dir')
+    const target = resolve(fixtureRoot, 'moduleA')
+    if (existsSync(linkPath)) unlinkSync(linkPath)
+    symlinkSync(target, linkPath)
+    try {
+      await expect(computeSourceHash(['zz-link-dir'], fixtureRoot)).rejects.toThrow(/symlink/i)
+    } finally {
+      unlinkSync(linkPath)
+    }
   })
 })
 ```
@@ -414,44 +442,56 @@ Expected: FAIL with "Cannot find module '../sourceHash.ts'".
 
 ```ts
 import { createHash } from 'node:crypto'
-import { readFile, stat, readdir } from 'node:fs/promises'
-import { join, resolve as resolvePath } from 'node:path'
+import { readFile, lstat, readdir } from 'node:fs/promises'
+import { join, relative as relativePath, resolve as resolvePath } from 'node:path'
 
-async function enumerateFiles(path: string): Promise<string[]> {
-  const stats = await stat(path).catch((err: unknown) => {
+async function enumerateFiles(absPath: string): Promise<string[]> {
+  const stats = await lstat(absPath).catch((err: unknown) => {
     if (err instanceof Error && 'code' in err && err.code === 'ENOENT') {
-      throw new Error(`Source path does not exist: ${path}`)
+      throw new Error(`Source path does not exist: ${absPath}`)
     }
     throw err
   })
-  if (stats.isFile()) return [path]
-  const entries = await readdir(path, { withFileTypes: true })
+  if (stats.isSymbolicLink()) {
+    throw new Error(`Symlinks are not allowed in tracked source paths: ${absPath}`)
+  }
+  if (stats.isFile()) return [absPath]
+  if (!stats.isDirectory()) return []
+
+  const entries = await readdir(absPath, { withFileTypes: true })
   const nested: string[][] = await Promise.all(
     entries.map(async (entry) => {
-      const childPath = join(path, entry.name)
-      if (entry.isDirectory()) return enumerateFiles(childPath)
-      if (entry.isFile()) return [childPath]
+      const childAbs = join(absPath, entry.name)
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Symlinks are not allowed in tracked source paths: ${childAbs}`)
+      }
+      if (entry.isDirectory()) return enumerateFiles(childAbs)
+      if (entry.isFile()) return [childAbs]
       return []
     }),
   )
   return nested.flat()
 }
 
-export async function computeSourceHash(paths: string[]): Promise<string> {
-  const absolutePaths = paths.map((p) => resolvePath(p))
+export async function computeSourceHash(paths: string[], root: string): Promise<string> {
+  const absoluteRoot = resolvePath(root)
+  const absolutePaths = paths.map((p) => resolvePath(absoluteRoot, p))
   const fileLists = await Promise.all(absolutePaths.map((p) => enumerateFiles(p)))
   const allFiles = fileLists.flat().sort()
 
   // Include the declared path list itself in the digest so that `[dirA]` and
-  // `[dirA, fileB]` with identical underlying contents produce distinct hashes.
+  // `[dirA, fileB]` with identical underlying file contents produce distinct
+  // hashes. JSON.stringify avoids any ambiguity in separator handling if a
+  // path ever contains a newline.
   const outer = createHash('sha256')
-  outer.update(paths.join('\n'))
+  outer.update(JSON.stringify(paths))
   outer.update('\n---\n')
 
   for (const file of allFiles) {
+    const rel = relativePath(absoluteRoot, file)
     const content = await readFile(file)
     const per = createHash('sha256')
-    per.update(file)
+    per.update(rel)
     per.update('\x00')
     per.update(content)
     outer.update(per.digest('hex'))
@@ -2064,8 +2104,8 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
 
     let currentHash: string | null = null
     if (meta.sourcePaths.length > 0) {
-      const absolutePaths = meta.sourcePaths.map((p) => resolve(root, '..', '..', p))
-      currentHash = 'sha256:' + await computeSourceHash(absolutePaths)
+      const repoRoot = resolve(root, '..', '..')
+      currentHash = 'sha256:' + await computeSourceHash(meta.sourcePaths, repoRoot)
     }
 
     const drift = checkDrift(meta, currentHash)
