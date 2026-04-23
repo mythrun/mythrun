@@ -3,7 +3,8 @@ digraph wiki_map {
   // primary visualization target. The Mythrun quill mark is conceptually the
   // root of the tree.
   rankdir=TB;
-  node [shape=box, style="filled", fillcolor="#EFE9DC", color="#231B12", fontname="IBM Plex Mono", fontsize=11];
+  // Node defaults inherited from layout/dot-header.dot (box, filled, paper/ink,
+  // Courier for accurate box-sizing, 11pt, 1.5 penwidth, 0.22/0.12 margin).
 
   root [label="Mythrun", color="ember", fontcolor="ember"];
 

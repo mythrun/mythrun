@@ -1,6 +1,6 @@
 graph [
   bgcolor="#EFE9DC",
-  fontname="IBM Plex Mono",
+  fontname="Courier",
   fontsize=11,
   rankdir=LR,
   margin=0.2,
@@ -11,13 +11,14 @@ node [
   fillcolor="#EFE9DC",
   color="#231B12",
   fontcolor="#231B12",
-  fontname="IBM Plex Mono",
+  fontname="Courier",
   fontsize=11,
   penwidth=1.5,
+  margin="0.22,0.12",
 ]
 edge [
   color="#231B12",
-  fontname="IBM Plex Mono",
+  fontname="Courier",
   fontsize=10,
   penwidth=1.2,
   arrowsize=0.7,

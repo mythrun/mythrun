@@ -45,10 +45,10 @@ await runBuild()
 // to site/, which triggers the browser-sync reload via the `files` config
 // passed to init() below. Brace expansion keeps this to a single string
 // because the browser-sync type signature only accepts one pattern.
-const watcher = bs.watch(
-  '{content/**/*,layout/**/*,diagrams/**/*,assets/**/*,structure.ts}',
-  { cwd: here, ignoreInitial: true },
-)
+const watcher = bs.watch('{content/**/*,layout/**/*,diagrams/**/*,assets/**/*,structure.ts}', {
+  cwd: here,
+  ignoreInitial: true,
+})
 const onChange = (file: string): void => {
   console.log(`[wiki-dev] changed: ${file}`)
   void runBuild()
