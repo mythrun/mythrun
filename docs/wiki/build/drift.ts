@@ -3,12 +3,15 @@ import type { PageMeta } from './types.ts'
 const sourceHashRegex = /<!--\s*source-hash:\s*(sha256:[0-9a-f]+)\s*-->/
 const lastTicketRegex = /<!--\s*last-ticket:\s*([A-Z]+-\d+)\s*-->/
 
-// The `[^\n-]` first-char class is intentional: it prevents `source-hash:` and
-// `source-hash ...` from matching this regex (since those lines would start
-// with `-` after `source`). If you ever declare a tracked path that literally
-// begins with `-`, this will reject it — that's fine, paths shouldn't start
-// with `-` anyway.
-const sourceCommentPattern = String.raw`<!--\s*source:\s*([^\n-][^\n]*?)\s*-->`
+// The literal `source:` (with colon) can't match `source-hash:` (with dash), so
+// the pattern naturally excludes hash comments without needing a first-char
+// exclusion trick. The capture is non-greedy and surrounding `\s*` trims
+// whitespace, so `<!-- source:  /path/  -->` cleanly captures `/path/`.
+const sourceCommentPattern = String.raw`<!--\s*source:\s*([^\n]+?)\s*-->`
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
 
 export function parsePageMeta(content: string): PageMeta {
   const sourcePaths: string[] = []
@@ -47,7 +50,10 @@ export function checkDrift(meta: PageMeta, currentHash: string | null): DriftRes
 }
 
 export function renderDriftBanner(sourcePaths: string[]): string {
-  const pathList = sourcePaths.map((p) => `<code>${p}</code>`).join(', ')
+  // Defensive HTML escape — paths come from content-file comments which are
+  // agent-authored today, but that process assumption can erode. Escape now
+  // so we don't have to audit every future author path.
+  const pathList = sourcePaths.map((p) => `<code>${escapeHtml(p)}</code>`).join(', ')
   return [
     '<div class="wiki-drift-banner" role="alert">',
     '  <strong>⚠️ Source has drifted.</strong>',
@@ -69,9 +75,10 @@ export function rewriteSourceHash(content: string, newHash: string): string {
     return content.replace(sourceHashRegex, `<!-- source-hash: ${newHash} -->`)
   }
 
-  // Insert after the last <!-- source: --> comment.
+  // Insert after the last <!-- source: --> comment. Reuses sourceCommentPattern
+  // so the boundary-finding regex stays in sync with the source-detection regex.
   let lastEnd = -1
-  const locateRegex = /<!--\s*source:[^\n]*-->/g
+  const locateRegex = new RegExp(sourceCommentPattern, 'g')
   for (let m = locateRegex.exec(content); m !== null; m = locateRegex.exec(content)) {
     lastEnd = m.index + m[0].length
   }

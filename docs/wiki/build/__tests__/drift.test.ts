@@ -37,6 +37,19 @@ describe('parsePageMeta', () => {
     const meta = parsePageMeta(content)
     expect(meta.sourcePaths).toEqual(['a/b', 'c/d'])
   })
+
+  it('does not confuse a source-hash comment with a source comment', () => {
+    const content = '<!-- source-hash: sha256:deadbeef -->\n<h1>x</h1>'
+    const meta = parsePageMeta(content)
+    expect(meta.sourcePaths).toEqual([])
+    expect(meta.sourceHash).toBe('sha256:deadbeef')
+  })
+
+  it('trims surrounding whitespace and does not leak leading spaces into captured paths', () => {
+    const content = '<!-- source:   /path/with/internal spaces   -->\n'
+    const meta = parsePageMeta(content)
+    expect(meta.sourcePaths).toEqual(['/path/with/internal spaces'])
+  })
 })
 
 describe('checkDrift', () => {
@@ -77,6 +90,12 @@ describe('renderDriftBanner', () => {
     expect(html).toContain('infra/modules/network/')
     expect(html).toContain('infra/modules/data/')
     expect(html).toContain('wiki-drift-banner')
+  })
+
+  it('escapes HTML special characters in source paths', () => {
+    const html = renderDriftBanner(['path/with/<script>evil</script>/'])
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
   })
 })
 

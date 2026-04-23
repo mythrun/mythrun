@@ -1334,16 +1334,25 @@ Expected: FAIL with "Cannot find module '../drift.ts'".
 ```ts
 import type { PageMeta } from './types.ts'
 
-const sourceRegex = /<!--\s*source:\s*([^\n-][^\n]*?)\s*-->/g
 const sourceHashRegex = /<!--\s*source-hash:\s*(sha256:[0-9a-f]+)\s*-->/
 const lastTicketRegex = /<!--\s*last-ticket:\s*([A-Z]+-\d+)\s*-->/
 
+// The literal `source:` (with colon) can't match `source-hash:` (with dash), so
+// the pattern naturally excludes hash comments without needing a first-char
+// exclusion trick. The capture is non-greedy and surrounding `\s*` trims
+// whitespace, so `<!-- source:  /path/  -->` cleanly captures `/path/`.
+const sourceCommentPattern = String.raw`<!--\s*source:\s*([^\n]+?)\s*-->`
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 export function parsePageMeta(content: string): PageMeta {
   const sourcePaths: string[] = []
-  let match: RegExpExecArray | null
-  const re = /<!--\s*source:\s*([^\n-][^\n]*?)\s*-->/g
-  while ((match = re.exec(content)) !== null) {
-    sourcePaths.push(match[1]!)
+  const re = new RegExp(sourceCommentPattern, 'g')
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+    const path = m[1]
+    if (path !== undefined) sourcePaths.push(path)
   }
   const hashMatch = sourceHashRegex.exec(content)
   const ticketMatch = lastTicketRegex.exec(content)
@@ -1375,7 +1384,10 @@ export function checkDrift(meta: PageMeta, currentHash: string | null): DriftRes
 }
 
 export function renderDriftBanner(sourcePaths: string[]): string {
-  const pathList = sourcePaths.map((p) => `<code>${p}</code>`).join(', ')
+  // Defensive HTML escape — paths come from content-file comments which are
+  // agent-authored today, but that process assumption can erode. Escape now
+  // so we don't have to audit every future author path.
+  const pathList = sourcePaths.map((p) => `<code>${escapeHtml(p)}</code>`).join(', ')
   return [
     '<div class="wiki-drift-banner" role="alert">',
     '  <strong>⚠️ Source has drifted.</strong>',
@@ -1386,21 +1398,22 @@ export function renderDriftBanner(sourcePaths: string[]): string {
 }
 
 export function rewriteSourceHash(content: string, newHash: string): string {
-  if (!sourceRegex.test(content)) {
-    sourceRegex.lastIndex = 0
+  // Check for source comments using a function-local regex to avoid module-level
+  // lastIndex state leaks.
+  const sourceCheck = new RegExp(sourceCommentPattern)
+  if (sourceCheck.exec(content) === null) {
     throw new Error('rewriteSourceHash: page has no source declarations')
   }
-  sourceRegex.lastIndex = 0
 
-  if (sourceHashRegex.test(content)) {
+  if (sourceHashRegex.exec(content) !== null) {
     return content.replace(sourceHashRegex, `<!-- source-hash: ${newHash} -->`)
   }
 
-  // Insert after the last <!-- source: --> comment.
+  // Insert after the last <!-- source: --> comment. Reuses sourceCommentPattern
+  // so the boundary-finding regex stays in sync with the source-detection regex.
   let lastEnd = -1
-  let m: RegExpExecArray | null
-  const re = /<!--\s*source:[^\n]*-->/g
-  while ((m = re.exec(content)) !== null) {
+  const locateRegex = new RegExp(sourceCommentPattern, 'g')
+  for (let m = locateRegex.exec(content); m !== null; m = locateRegex.exec(content)) {
     lastEnd = m.index + m[0].length
   }
   if (lastEnd === -1) {
