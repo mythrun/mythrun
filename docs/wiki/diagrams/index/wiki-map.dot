@@ -1,0 +1,28 @@
+digraph wiki_map {
+  // Landing page "map of the wiki" — seven sections with Infra centered as the
+  // primary visualization target. The Mythrun quill mark is conceptually the
+  // root of the tree.
+  rankdir=TB;
+  node [shape=box, style="filled", fillcolor="#EFE9DC", color="#231B12", fontname="IBM Plex Mono", fontsize=11];
+
+  root [label="Mythrun", color="ember", fontcolor="ember"];
+
+  infra     [label="Infra"];
+  runtime   [label="Runtime"];
+  data      [label="Data"];
+  authbill  [label="Auth & Billing"];
+  world     [label="World & Campaign"];
+  combat    [label="Combat"];
+  frontend  [label="Frontend"];
+
+  { rank=same; infra runtime data }
+  { rank=same; authbill world combat frontend }
+
+  root -> infra [color="ember", penwidth=2];
+  root -> runtime;
+  root -> data;
+  root -> authbill;
+  root -> world;
+  root -> combat;
+  root -> frontend;
+}
