@@ -44,7 +44,7 @@ body {
   color: inherit;
 }
 .wiki-lockup img {
-  height: 96px;
+  height: 80px;
 }
 .wiki-label {
   font-family: var(--mono);
@@ -59,7 +59,7 @@ body {
   display: flex;
   gap: 20px;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 15px;
 }
 .wiki-topnav a {
   color: var(--paper-700);
@@ -81,6 +81,12 @@ body {
  * above, so the inactive→active transition adds the underline. */
 .wiki-topnav a[href*='runbooks/']:not(.active) {
   color: var(--ember-600);
+}
+/* Needs higher specificity than the generic `:hover` rule above, because
+ * the default-state override is also 0,3,0; without this explicit hover,
+ * the ember-600 default wins through the pseudo-class. */
+.wiki-topnav a[href*='runbooks/']:not(.active):hover {
+  color: var(--paper-900);
 }
 
 .wiki-shell {
