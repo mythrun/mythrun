@@ -1,6 +1,6 @@
 import type { PageMeta } from './types.ts'
 
-const sourceHashRegex = /<!--\s*source-hash:\s*(sha256:[0-9a-zA-Z]+)\s*-->/
+const sourceHashRegex = /<!--\s*source-hash:\s*(sha256:[0-9a-f]+)\s*-->/
 const lastTicketRegex = /<!--\s*last-ticket:\s*([A-Z]+-\d+)\s*-->/
 
 // The `[^\n-]` first-char class is intentional: it prevents `source-hash:` and

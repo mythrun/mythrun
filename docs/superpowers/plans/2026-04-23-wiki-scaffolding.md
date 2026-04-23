@@ -1299,16 +1299,16 @@ describe('renderDriftBanner', () => {
 
 describe('rewriteSourceHash', () => {
   it('replaces an existing source-hash comment', () => {
-    const input = '<!-- source: x -->\n<!-- source-hash: sha256:old -->\n<h1>hi</h1>'
-    const out = rewriteSourceHash(input, 'sha256:new')
-    expect(out).toContain('<!-- source-hash: sha256:new -->')
-    expect(out).not.toContain('sha256:old')
+    const input = '<!-- source: x -->\n<!-- source-hash: sha256:deadbeef -->\n<h1>hi</h1>'
+    const out = rewriteSourceHash(input, 'sha256:cafebabe')
+    expect(out).toContain('<!-- source-hash: sha256:cafebabe -->')
+    expect(out).not.toContain('sha256:deadbeef')
   })
 
   it('inserts a source-hash comment after the last source comment when none exists', () => {
     const input = '<!-- source: x -->\n<!-- source: y -->\n<h1>hi</h1>'
-    const out = rewriteSourceHash(input, 'sha256:new')
-    expect(out).toContain('<!-- source-hash: sha256:new -->')
+    const out = rewriteSourceHash(input, 'sha256:cafebabe')
+    expect(out).toContain('<!-- source-hash: sha256:cafebabe -->')
     // Inserted after the last <!-- source: -->, before the <h1>
     expect(out.indexOf('<!-- source: y -->')).toBeLessThan(out.indexOf('<!-- source-hash:'))
     expect(out.indexOf('<!-- source-hash:')).toBeLessThan(out.indexOf('<h1>'))
@@ -1316,7 +1316,7 @@ describe('rewriteSourceHash', () => {
 
   it('throws when attempting to rewrite a page with no source declarations', () => {
     const input = '<h1>hi</h1>'
-    expect(() => rewriteSourceHash(input, 'sha256:new')).toThrow(/no source/i)
+    expect(() => rewriteSourceHash(input, 'sha256:cafebabe')).toThrow(/no source/i)
   })
 })
 ```
