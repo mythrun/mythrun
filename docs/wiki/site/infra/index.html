@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html" class="active">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../runbooks/index.html">Runbooks</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html" class="active">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html" class="active">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra</div>
         <article>
@@ -52,13 +52,17 @@
     <a href="data.html">Data</a> — RDS Postgres, ElastiCache Redis, and the Secrets Manager entries
     that front them.
   </li>
+  <li>
+    <a href="dns.html">DNS</a> — Route 53 hosted zone for <code>mythrun.com</code>, Google Workspace
+    email records, and the wildcard ACM certificate.
+  </li>
 </ul>
 
 <p>
   Two workspaces consume those modules: <code>shared/</code> creates the single cross-environment
-  footprint (VPC, ALB, ECS cluster, RDS, Redis — resources we don't double up per env), and
-  <code>staging/</code> creates per-env resources that read shared outputs via
-  <code>terraform_remote_state</code>.
+  footprint (VPC, ALB, ECS cluster, RDS, Redis, DNS zone + wildcard cert — resources we don't
+  double up per env), and <code>staging/</code> creates per-env resources that read shared outputs
+  via <code>terraform_remote_state</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -160,7 +164,7 @@
     <tr>
       <td><code>shared</code></td>
       <td><code>environments/shared/terraform.tfstate</code></td>
-      <td>Network + Data modules</td>
+      <td>Network + Data + DNS modules</td>
     </tr>
     <tr>
       <td><code>staging</code></td>

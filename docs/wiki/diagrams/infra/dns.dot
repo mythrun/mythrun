@@ -1,0 +1,41 @@
+digraph dns {
+  // Public hosted zone for mythrun.com + wildcard ACM cert.
+  // Three groups: registrar (Squarespace, post-cutover just holds the NS
+  // pointer), Route 53 zone (email records + wildcard cert validation),
+  // downstream consumers (ALB HTTPS listener, per-env A-alias records).
+  rankdir=LR;
+  compound=true;
+
+  registrar [label="Squarespace\nregistrar\n(NS → AWS)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_zone {
+    label="Route 53 zone  mythrun.com";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    mx     [label="MX\n5× Google\nWorkspace"];
+    spf    [label="TXT apex\nSPF + Google\nverify"];
+    dmarc  [label="TXT _dmarc\np=quarantine"];
+    dkim   [label="TXT google._domainkey\nDKIM\n(chunked)"];
+    acme   [label="CNAME _acme-\nvalidation"];
+  }
+
+  subgraph cluster_acm {
+    label="ACM  us-east-1";
+    style="dotted";
+
+    cert [label="Wildcard cert\n*.mythrun.com\n+ mythrun.com SAN", color="ember", fontcolor="ember"];
+  }
+
+  google  [label="Google Workspace\nmail servers"];
+  alb     [label="ALB HTTPS\nlistener"];
+  perenv  [label="staging-api /\napi  A-alias\n(per-env workspace)"];
+
+  registrar -> mx      [style=invis];
+  mx    -> google      [label="inbound mail"];
+  cert  -> acme        [label="DNS-01\nchallenge"];
+  acme  -> cert        [label="ISSUED"];
+  cert  -> alb         [label="arn →\nlistener"];
+  perenv -> mx         [style=invis];
+}
