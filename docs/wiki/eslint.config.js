@@ -3,7 +3,14 @@ import rootConfig from '../../eslint.config.js'
 export default [
   ...rootConfig,
   {
-    ignores: ['site/**', 'content/**', 'layout/**', 'diagrams/**', 'assets/**'],
+    ignores: [
+      'site/**',
+      'content/**',
+      'layout/**',
+      'diagrams/**',
+      'assets/**',
+      'build/__tests__/fixtures/**',
+    ],
   },
   {
     // describe(...) arrow functions naturally exceed the function-size cap
