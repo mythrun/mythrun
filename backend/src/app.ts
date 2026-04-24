@@ -24,3 +24,4 @@ export const createShutdown = (app: FastifyInstance): ShutdownHandler => {
     }
   }
 }
+// MYT-28 idempotency marker — verifies second push produces new task-def revision
