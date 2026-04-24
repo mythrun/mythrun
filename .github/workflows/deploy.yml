@@ -1,0 +1,226 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '.beads/**'
+      - '**/*.md'
+      - 'wiki/**'
+      - '.github/wiki/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  # Group by target ECS service, not by ref. Future branch-based preview
+  # deploys or the prod append will not share a group with staging.
+  group: deploy-mythrun-staging-api
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: mythrun
+  BASE_IMAGE_REF: docker-hub/library/node:24-alpine
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    outputs:
+      image: ${{ steps.digest.outputs.image }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda  # v4.1.0
+
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v6.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Scope install to backend + transitive workspace deps so sibling
+      # workspace issues (e.g., @mythrun/wiki) don't red-light a backend
+      # deploy. --frozen-lockfile still validates the full lockfile.
+      - run: pnpm install --frozen-lockfile --filter @mythrun/backend...
+
+      - run: pnpm --filter @mythrun/backend lint
+      - run: pnpm --filter @mythrun/backend typecheck
+      - run: pnpm --filter @mythrun/backend test
+
+      - name: Pre-flight — verify required vars are set
+        run: |
+          if [[ -z "${{ vars.AWS_ACCOUNT_ID }}" ]]; then
+            echo "::error::vars.AWS_ACCOUNT_ID is not set. Configure at Settings → Environments → staging → Environment variables."
+            exit 1
+          fi
+
+      - name: Assume AWS role via OIDC
+        # Reference vars.AWS_ACCOUNT_ID inline — do NOT hoist to job-level env:.
+        # Load-bearing: pnpm install above runs BEFORE OIDC assume so npm
+        # lifecycle scripts cannot exfiltrate AWS creds.
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076  # v2.0.1
+
+      - name: Build and push image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          IMAGE_URI="$REGISTRY/${{ env.ECR_REPO }}:${{ github.sha }}"
+          LATEST_URI="$REGISTRY/${{ env.ECR_REPO }}:latest"
+          docker build \
+            --platform linux/amd64 \
+            --build-arg BASE_IMAGE_REGISTRY="$REGISTRY" \
+            --label "org.opencontainers.image.source=https://github.com/mythrun/mythrun" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "com.mythrun.workflow_run=${{ github.run_id }}" \
+            --label "com.mythrun.workflow_run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -t "$IMAGE_URI" -t "$LATEST_URI" \
+            -f backend/Dockerfile .
+          docker push "$IMAGE_URI"
+          docker push "$LATEST_URI"
+
+      - name: Resolve image digest (local inspect, no ECR API call)
+        id: digest
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          IMAGE_URI="$REGISTRY/${{ env.ECR_REPO }}:${{ github.sha }}"
+          # RepoDigests is populated by docker after a successful push —
+          # <registry>/<repo>@sha256:<digest>. Reading docker's local record
+          # bypasses any window where an attacker with ECR push could re-tag
+          # between our push and an ECR describe-images call.
+          DIGEST_REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_URI")
+          if [[ -z "$DIGEST_REF" || "$DIGEST_REF" != *"@sha256:"* ]]; then
+            echo "::error::Failed to resolve digest-addressed URI from docker inspect"
+            exit 1
+          fi
+          echo "Digest-addressed image: $DIGEST_REF"
+          echo "image=$DIGEST_REF" >> "$GITHUB_OUTPUT"
+          echo "::notice::Deployed image digest: $DIGEST_REF"
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    env:
+      ECS_CLUSTER: mythrun
+      ECS_SERVICE: mythrun-staging-api
+      TASK_DEF_FAMILY: mythrun-staging-api
+      CONTAINER_NAME: api
+      API_HOSTNAME: staging-api.mythrun.com
+    steps:
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch current task definition
+        # The render-task-definition action strips read-only fields itself;
+        # no jq 'del(...)' pre-strip needed.
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition \
+            --task-definition "${{ env.TASK_DEF_FAMILY }}" \
+            --query 'taskDefinition' \
+            > task-def.json
+
+      - name: Render new task definition with digest image
+        id: taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@6bb171240ff2b056ea6c599c9d2370c043f200be  # v1.7.3
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image }}
+
+      - name: Deploy new revision
+        # Does NOT check rolloutState — see the explicit poll step below.
+        uses: aws-actions/amazon-ecs-deploy-task-definition@538b32884c2bf327057c6805f0315e5ee92102cc  # v2.3.2
+        with:
+          task-definition: ${{ steps.taskdef.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+          wait-for-minutes: 15
+
+      - name: Ensure desired-count is 1
+        # First deploy: flips 0 → 1. Subsequent: no-op. Runs AFTER deploy
+        # action so ECS never tries to place on the :placeholder revision.
+        run: |
+          aws ecs update-service \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --service "${{ env.ECS_SERVICE }}" \
+            --desired-count 1 > /dev/null
+
+      - name: Verify deployment completed (poll rolloutState)
+        # `aws ecs wait services-stable` returns SUCCESS even after
+        # circuit-breaker rollback. Poll rolloutState to catch that.
+        run: |
+          set -euo pipefail
+          max_attempts=12
+          for attempt in $(seq 1 "$max_attempts"); do
+            SVC_JSON=$(aws ecs describe-services \
+              --cluster "${{ env.ECS_CLUSTER }}" \
+              --services "${{ env.ECS_SERVICE }}" \
+              --query 'services[0]')
+            ROLLOUT=$(echo "$SVC_JSON" | jq -r '.deployments[] | select(.status=="PRIMARY") | .rolloutState')
+            RUNNING=$(echo "$SVC_JSON" | jq -r '.runningCount')
+            DESIRED=$(echo "$SVC_JSON" | jq -r '.desiredCount')
+            FAILED=$(echo "$SVC_JSON" | jq -r '.deployments[] | select(.status=="PRIMARY") | .failedTasks')
+            echo "attempt=$attempt rolloutState=$ROLLOUT running=$RUNNING desired=$DESIRED failed=$FAILED"
+
+            if [[ "$ROLLOUT" == "FAILED" ]]; then
+              echo "::error::Deployment FAILED (circuit breaker). See MYT-30 Risks §6 for recovery."
+              exit 1
+            fi
+
+            if [[ "$ROLLOUT" == "COMPLETED" && "$RUNNING" == "$DESIRED" && "$FAILED" == "0" ]]; then
+              echo "Deployment verified."
+              exit 0
+            fi
+
+            if [[ "$attempt" -lt "$max_attempts" ]]; then
+              sleep 10
+            fi
+          done
+          echo "::error::Deployment did not reach COMPLETED within 2 min"
+          exit 1
+
+      - name: Smoke test
+        env:
+          API_HOSTNAME: ${{ env.API_HOSTNAME }}
+        run: |
+          set -euo pipefail
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            echo "Smoke test attempt $attempt of $attempts..."
+            # jq failure is guarded by the enclosing 'if' — do not hoist out.
+            if body=$(curl -fsS --max-time 30 "https://${API_HOSTNAME}/health"); then
+              echo "Response: $body"
+              if echo "$body" | jq -e '.status == "ok"' > /dev/null; then
+                echo "Smoke test passed."
+                exit 0
+              fi
+            fi
+            if [[ "$attempt" -lt "$attempts" ]]; then
+              sleep 10
+            fi
+          done
+          echo "::error::Smoke test failed after $attempts attempts"
+          exit 1
