@@ -1,0 +1,68 @@
+digraph serving {
+  // Compute platform: shared ECR + OIDC + ECS cluster + ALB + HTTPS listener
+  // on one side, per-env task defs + services + target group + GH deploy role
+  // on the other. Arrows show which shared resources each per-env piece reads.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_shared {
+    label="shared workspace";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    ecr      [label="ECR\nmythrun"];
+    oidc     [label="GitHub OIDC\nprovider"];
+    cluster  [label="ECS cluster\nmythrun\n(Fargate only)"];
+    alb      [label="ALB\nmythrun-alb"];
+    listener [label="HTTPS listener\n:443\nTLS13-1-2"];
+    redirect [label=":80 → :443\nredirect"];
+  }
+
+  subgraph cluster_staging {
+    label="staging workspace";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    api_td     [label="API task def\nmythrun-staging-api\nimage :placeholder"];
+    worker_td  [label="Worker task def\nmythrun-staging-worker\nimage :placeholder"];
+    exec_role  [label="task-execution\nrole"];
+    task_role  [label="task role"];
+    api_svc    [label="ECS service\napi\ndesired=0"];
+    worker_svc [label="ECS service\nworker\ndesired=0"];
+    tg         [label="Target group\nmythrun-staging-api\nhealth /health"];
+    rule       [label="Listener rule\nhost =\nstaging-api.\nmythrun.com"];
+    alias      [label="R53 A-alias\nstaging-api ."];
+    gh_role    [label="GH Actions role\nmythrun-github-\nactions-staging"];
+    sns        [label="SNS topic\nmythrun-staging-\nalerts"];
+  }
+
+  github [label="GitHub Actions\nmain branch\n+ staging env", color="ember", fontcolor="ember"];
+
+  // shared internals
+  alb      -> listener [style=invis];
+  alb      -> redirect [style=invis];
+
+  // staging wires into shared
+  api_td    -> ecr      [label="image base"];
+  worker_td -> ecr      [label="image base"];
+  api_svc   -> cluster  [label="runs in"];
+  worker_svc -> cluster [label="runs in"];
+  rule      -> listener [label="attaches to"];
+  tg        -> alb      [label="registered"];
+  api_svc   -> tg       [label="load-balancer"];
+  alias     -> alb      [label="A-alias"];
+
+  api_svc   -> api_td     [label="uses"];
+  api_svc   -> exec_role  [label="uses"];
+  api_svc   -> task_role  [label="uses"];
+  worker_svc -> worker_td [label="uses"];
+
+  // CI path
+  github  -> oidc    [label="OIDC\nAssumeRole"];
+  github  -> gh_role [label="assumes"];
+  gh_role -> ecr     [label="push :sha"];
+  gh_role -> api_svc [label="UpdateService"];
+  gh_role -> worker_svc [label="UpdateService"];
+}

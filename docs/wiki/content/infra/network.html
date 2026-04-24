@@ -71,9 +71,10 @@
 
 <p>
   The <a href="data.html">Data</a> module places RDS and Redis into the private subnets and
-  attaches them to the <code>rds</code> and <code>redis</code> SGs. Future
-  <a href="index.html">serving infrastructure</a> will place ECS tasks into the private subnets and
-  the <code>ecs</code> SG, and attach the ALB to public subnets and the <code>alb</code> SG.
+  attaches them to the <code>rds</code> and <code>redis</code> SGs. The
+  <a href="serving.html">Serving</a> module places ECS tasks into the private subnets under the
+  <code>ecs</code> SG, and the shared ALB lives in the public subnets under the <code>alb</code>
+  SG.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>

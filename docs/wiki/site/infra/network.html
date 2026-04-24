@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html" class="active">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../runbooks/index.html">Runbooks</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html" class="active">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html" class="active">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html">Serving</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra › Network</div>
         <article>
@@ -239,9 +239,10 @@
 
 <p>
   The <a href="data.html">Data</a> module places RDS and Redis into the private subnets and
-  attaches them to the <code>rds</code> and <code>redis</code> SGs. Future
-  <a href="index.html">serving infrastructure</a> will place ECS tasks into the private subnets and
-  the <code>ecs</code> SG, and attach the ALB to public subnets and the <code>alb</code> SG.
+  attaches them to the <code>rds</code> and <code>redis</code> SGs. The
+  <a href="serving.html">Serving</a> module places ECS tasks into the private subnets under the
+  <code>ecs</code> SG, and the shared ALB lives in the public subnets under the <code>alb</code>
+  SG.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>

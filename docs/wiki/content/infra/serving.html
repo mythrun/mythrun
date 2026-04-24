@@ -1,0 +1,382 @@
+<!-- source: infra/modules/serving/ -->
+<!-- source: infra/environments/shared/main.tf -->
+<!-- source: infra/environments/shared/outputs.tf -->
+<!-- source: infra/environments/staging/main.tf -->
+<!-- source: infra/environments/staging/outputs.tf -->
+<!-- source: infra/environments/staging/variables.tf -->
+<!-- source-hash: sha256:21e0213dde99eb80597191a6e43568884685833738b8107510227711878bc08f -->
+<!-- last-ticket: MYT-30 -->
+
+<h1>Serving</h1>
+
+<p class="lead">
+  The compute platform that runs the API and the Worker. A shared ECR repo, an ECS cluster, and
+  the ALB on one side; per-env task definitions, services, target groups, and the GitHub-Actions
+  deploy role on the other.
+</p>
+
+<!-- @diagram: infra/serving -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Serving splits along the same shared-vs-per-env line the rest of the infra does. The shared
+  workspace owns the resources that would be wasteful or confusing to duplicate — one ECR repo,
+  one GitHub OIDC provider, one ECS cluster, one ALB, one HTTPS listener. The per-env workspace
+  (today only <code>staging/</code>) consumes those through <code>terraform_remote_state</code>
+  and adds everything that has to exist twice by nature: task definitions, services, a target
+  group, a listener rule, a DNS A-alias, a scoped GitHub Actions IAM role, and an SNS alerts
+  topic.
+</p>
+
+<h2>Shared compute platform</h2>
+
+<p>
+  The ECR repo is named <code>mythrun</code> and is shared by both the API and the Worker
+  container definitions — same image, different <code>command</code>. Scan-on-push is enabled.
+  The lifecycle policy expires untagged images after a day and keeps only the 20 most recent
+  tagged images.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>MUTABLE</code> tag mutability, not <code>IMMUTABLE</code></strong> — CI pushes
+  the same image under two tags (<code>:latest</code> alongside <code>:$GIT_SHA</code>), and an
+  immutable repo would reject every second <code>:latest</code> push. Git-SHA immutability is
+  instead a CI-discipline concern: never re-push the same SHA tag.
+</aside>
+
+<p>
+  One <code>aws_iam_openid_connect_provider</code> for
+  <code>token.actions.githubusercontent.com</code> lives in the shared workspace. Both the
+  staging role and the future production role will trust this same provider. The
+  <code>thumbprint_list</code> is omitted — AWS has done native JWK discovery for GitHub's OIDC
+  endpoint since 2023, and the field is optional in the v6 provider.
+</p>
+
+<p>
+  The ECS cluster is named <code>mythrun</code> and offers only Fargate as a capacity provider.
+  Container Insights is disabled to save the per-task fee; first-deploy debugging relies on raw
+  CloudWatch Logs and <code>describe-tasks</code>.
+</p>
+
+<p>
+  The ALB is a single internet-facing <code>application</code> load balancer in the public
+  subnets with the shared <code>alb</code> security group. It has HTTP/2 on, invalid-header
+  dropping on, a 3600-second idle timeout for WebSocket tolerance, and deletion protection on.
+  Two listeners hang off it: <code>:80</code> permanently redirects to <code>:443</code>; the
+  <code>:443</code> HTTPS listener terminates TLS with the wildcard ACM cert from the
+  <a href="dns.html">DNS module</a> and uses
+  <code>ELBSecurityPolicy-TLS13-1-2-2021-06</code>. Its default action is a plain
+  <code>404</code>; matching traffic is routed by per-env listener rules attached from the
+  serving module.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Deletion protection on the shared ALB</strong> — the ALB serves both staging and the
+  future production environment. Any <code>terraform destroy</code> accident that took it out
+  would cut both at once. Flipping the flag to <code>false</code> is a deliberate,
+  separately-reviewed change.
+</aside>
+
+<h2>Per-env task definitions and services</h2>
+
+<p>
+  The <code>serving</code> module produces the per-env surface: two CloudWatch log groups
+  (<code>/mythrun/&lt;env&gt;/api</code>, <code>/mythrun/&lt;env&gt;/worker</code>), two IAM
+  roles, two task definitions, a target group, a listener rule, two ECS services, and a Route 53
+  A-alias record. Every resource is named <code>mythrun-&lt;env&gt;-*</code> so staging and
+  production never collide.
+</p>
+
+<p>
+  Two IAM roles sit behind each task: the <em>task-execution role</em> is what ECS uses
+  <em>before</em> the container starts — pulling the image, fetching secrets from Secrets
+  Manager, shipping the first log line. The <em>task role</em> is what the app assumes at
+  runtime; today it only grants <code>cloudwatch:PutMetricData</code> under the
+  <code>Mythrun/&lt;env&gt;</code> namespace. Both use the
+  <code>AmazonECSTaskExecutionRolePolicy</code> baseline plus an explicit per-ARN secrets policy.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Per-ARN secrets list, not a wildcard</strong> — a naive
+  <code>mythrun/&lt;env&gt;/*</code> wildcard would miss the one secret whose path doesn't match
+  the env prefix: <code>mythrun/shared/redis-auth</code>. Enumerating ARNs makes that boundary
+  explicit. The RDS master secret (<code>rds!db-*</code>) is deliberately absent — the app runs
+  as the per-env <code>mythrun_&lt;env&gt;</code> user, not the master.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>No explicit <code>kms:Decrypt</code> statement</strong> — all six referenced secrets
+  use the AWS-managed <code>aws/secretsmanager</code> key, for which
+  <code>AmazonECSTaskExecutionRolePolicy</code> already allows decrypt transparently. The day
+  any secret moves to a customer-managed CMK, that ResourceInitializationError becomes a
+  readable signal to add a scoped statement.
+</aside>
+
+<p>
+  Task definitions are registered pointing at <code>ecr_repository_url:placeholder</code> —
+  a tag that doesn't exist. Registration is pure metadata and does not pull the image; with
+  <code>desired_count = 0</code> on both services, ECS never tries. CI replaces both pieces on
+  first deploy: it registers a new task-def revision pointing at the real
+  <code>:&lt;git-sha&gt;</code> tag and flips <code>desired_count</code> to 1 via
+  <code>update-service</code>. A <code>lifecycle.ignore_changes = [desired_count,
+  task_definition]</code> on each service keeps Terraform permanently out of CI's way
+  afterwards.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Services are owned by Terraform, revisions are owned by CI</strong> — Terraform
+  creates the service once and hands off <code>desired_count</code> and
+  <code>task_definition</code> forever. Any other shape (Terraform re-creates the service on
+  every deploy, or CI creates the service) either produces zero-downtime-breaking replacements
+  or splits ownership so state and reality drift apart.
+</aside>
+
+<p>
+  The API's container definition exposes <code>3000</code>, runs
+  <code>node --max-old-space-size=768 dist/server.js</code>, declares a container-level
+  HEALTHCHECK that curls <code>http://localhost:3000/health</code> through Node's own
+  <code>http</code> module, and has a 120-second <code>stopTimeout</code>. The Worker mirrors
+  the API but omits the port mapping and the container healthcheck — the worker doesn't
+  exist yet, and the internal BullMQ-pingable HTTP server on <code>:3001</code> that the spec
+  calls for is deferred to the Prep Pipeline milestone.
+</p>
+
+<p>
+  Both task definitions pull the same six secrets: <code>ANTHROPIC_API_KEY</code>,
+  <code>STRIPE_SECRET_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>,
+  <code>COGNITO_CLIENT_SECRET</code>, <code>DB_PASSWORD</code>, <code>REDIS_AUTH_TOKEN</code>.
+  The first four are per-env manual shells (values set in the AWS console out-of-band);
+  <code>DB_PASSWORD</code> is the per-env RDS secret that
+  <a href="data.html#bootstrap-databases">bootstrap-databases.sh</a> populates;
+  <code>REDIS_AUTH_TOKEN</code> is the cross-env <code>mythrun/shared/redis-auth</code>.
+  Environment variables (<code>DB_HOST</code>, <code>REDIS_HOST</code>, <code>NODE_ENV</code>,
+  <code>PORT</code>, and friends) are plain values the app composes into a
+  <code>DATABASE_URL</code> at startup.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>DB_PASSWORD</code> has no <code>:password::</code> suffix on
+  <code>valueFrom</code></strong> — <code>bootstrap-databases.sh</code> writes the secret value
+  as a plain string (<code>--secret-string "$pw"</code>), not as a JSON object. The moment it
+  becomes JSON, the <code>valueFrom</code> needs a JSON-path suffix.
+</aside>
+
+<h2>ALB routing and DNS</h2>
+
+<p>
+  The per-env target group is a Fargate-compatible (<code>target_type = "ip"</code>) group
+  that health-checks <code>/health</code> on <code>:3000</code>. <code>healthy_threshold</code>
+  is <code>2</code> (AWS rejects the spec's original value of <code>1</code>); the
+  <code>deregistration_delay</code> of <code>120</code> seconds matches the container
+  <code>stopTimeout</code> so in-flight LLM calls get grace during rolling deploys; stickiness
+  is off because session state lives in Redis; slow-start is explicitly disabled.
+</p>
+
+<p>
+  A single host-based listener rule routes
+  <code>staging-api.mythrun.com</code> (or <code>api.mythrun.com</code> in production) to that
+  target group. Priority is reserved in the <code>100-299</code> band: production = 100,
+  staging = 200. Production wins if hosts ever accidentally collide.
+</p>
+
+<p>
+  A Route 53 A-alias record in the shared zone points
+  <code>&lt;env&gt;-api.mythrun.com</code> at the ALB's DNS name. The alias uses the ALB's own
+  hosted zone ID, not the Route 53 zone ID, and disables Route 53 health-checking since the
+  ALB already owns it.
+</p>
+
+<h2>The GitHub Actions deploy role</h2>
+
+<p>
+  <code>mythrun-github-actions-staging</code> is the role CI assumes to push images and update
+  services. Its trust policy is deliberately boring: every condition is
+  <code>StringEquals</code>, never <code>StringLike</code>. The federated principal is the
+  shared OIDC provider; five conditions narrow who can assume it.
+</p>
+
+<ul>
+  <li><code>aud = sts.amazonaws.com</code> — the standard audience check.</li>
+  <li><code>repository = mythrun/mythrun</code> — only this repo.</li>
+  <li><code>repository_owner_id = 274691930</code> — the numeric org ID, immune to rename or reclaim attacks.</li>
+  <li><code>environment = staging</code> — requires the GitHub Environment named <code>staging</code> (configured separately in repo settings).</li>
+  <li><code>ref = refs/heads/main</code> — belt-and-suspenders on top of the Environment's own branch protection.</li>
+  <li><code>sub = repo:mythrun/mythrun:environment:staging</code> — redundant with the above, but AWS IAM rejects <code>CreateRole</code> unless <code>:sub</code> is pinned explicitly.</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>All <code>StringEquals</code>, no <code>StringLike</code></strong> — the two
+  operators would behave identically today because none of the values contain wildcards, but
+  swapping to <code>StringLike</code> invites a future refactor that introduces a real wildcard
+  to silently broaden who can assume the role. Keeping the operator strict is free insurance.
+</aside>
+
+<p>
+  The permissions policy grants exactly what a deploy needs: an account-wide
+  <code>ecr:GetAuthorizationToken</code> (AWS doesn't let it be ARN-scoped), the ECR push/pull
+  verbs scoped to the <code>mythrun</code> repo, ECS <code>UpdateService</code> /
+  <code>DescribeServices</code> / <code>DescribeTasks</code> / <code>ListTasks</code>
+  conditioned on the <code>mythrun</code> cluster, <code>RegisterTaskDefinition</code> and
+  <code>DeregisterTaskDefinition</code> scoped to the <code>mythrun-staging-*</code> family,
+  and <code>iam:PassRole</code> on the two task roles conditioned on
+  <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Production snapshot
+  permissions (<code>rds:CreateDBSnapshot</code>) are deliberately absent; they belong to the
+  future production role.
+</p>
+
+<h2>SNS alerts topic</h2>
+
+<p>
+  <code>mythrun-staging-alerts</code> is the SNS topic that CloudWatch alarms will eventually
+  publish to. It lands with a single email subscription to <code>miklos@mythrun.com</code> and
+  is encrypted at rest with the AWS-managed <code>alias/aws/sns</code> key. The email
+  subscription starts in <code>PendingConfirmation</code> and stays there until the recipient
+  clicks the AWS-sent confirmation link — that confirmation is not a Terraform-managed
+  attribute, so re-running <code>apply</code> while pending is a no-op.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Topic now, alarms later</strong> — MYT-30 stops at the topic and subscription so
+  first-deploy surfaces (ECS CircuitBreaker rollbacks, task failures) have a destination the
+  day they're wired up. The actual alarm resources live in the Observability milestone.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="confirm-the-alerts-email-subscription">Confirm the alerts email subscription</h3>
+<ol>
+  <li>
+    Run <code>aws sns list-subscriptions-by-topic --topic-arn &lt;mythrun-staging-alerts
+    ARN&gt; --query 'Subscriptions[0].SubscriptionArn'</code>.
+  </li>
+  <li>
+    If it prints <code>PendingConfirmation</code>, open the inbox for the
+    <code>alerts_email</code> address (<code>miklos@mythrun.com</code> by default) and click
+    the AWS confirmation link.
+  </li>
+  <li>Re-run the same command; the ARN should now be the full subscription ARN.</li>
+</ol>
+
+<h3 id="rotate-the-manual-secret-values">Rotate a manual secret value</h3>
+<ol>
+  <li>
+    Manual secrets (<code>anthropic-api-key</code>, <code>stripe-secret-key</code>,
+    <code>stripe-webhook-secret</code>, <code>cognito-client-secret</code>) have
+    <code>ignore_changes = [secret_string]</code> on their Terraform version — safe to update
+    out-of-band.
+  </li>
+  <li>
+    <code>aws secretsmanager put-secret-value --secret-id mythrun/&lt;env&gt;/&lt;name&gt;
+    --secret-string &lt;value&gt;</code>.
+  </li>
+  <li>
+    Roll the ECS service so running tasks pick up the new version:
+    <code>aws ecs update-service --cluster mythrun --service mythrun-&lt;env&gt;-api
+    --force-new-deployment</code>.
+  </li>
+</ol>
+
+<h3 id="deregister-an-old-task-definition-revision">Deregister an old task-definition revision</h3>
+<ol>
+  <li>
+    AWS never deletes task-def revisions, only marks them <code>INACTIVE</code>. Old revisions
+    accumulate but cost nothing.
+  </li>
+  <li>
+    To prune: <code>aws ecs list-task-definitions --family-prefix mythrun-&lt;env&gt;-api</code>
+    then <code>aws ecs deregister-task-definition --task-definition mythrun-&lt;env&gt;-api:&lt;N&gt;</code>.
+  </li>
+  <li>
+    Do not deregister the revision currently pinned to a running service — describe the service
+    first to confirm the revision numbers don't overlap.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  ECS tasks launch into the <a href="network.html">network module</a>'s private subnets
+  under the <code>ecs</code> security group. Task definitions read secrets from the
+  <a href="data.html">data plane</a> (per-env <code>rds-password</code>, shared
+  <code>redis-auth</code>) and the manual per-env secret shells. The ALB uses the wildcard
+  ACM cert from the <a href="dns.html">DNS module</a>, and the per-env A-alias is published
+  into the same Route 53 zone. The
+  <a href="../runtime/index.html">Backend</a> image built from
+  <code>backend/Dockerfile</code> is what gets pushed to ECR and pointed at by task
+  definitions on every deploy.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Module inputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Default</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>environment</code></td><td>—</td><td>One of <code>staging</code>, <code>production</code>.</td></tr>
+    <tr><td><code>vpc_id</code>, <code>private_subnet_ids</code>, <code>ecs_sg_id</code></td><td>—</td><td>Passed through from the network module.</td></tr>
+    <tr><td><code>ecs_cluster_name</code>, <code>ecr_repository_url</code></td><td>—</td><td>From the shared workspace.</td></tr>
+    <tr><td><code>alb_arn</code>, <code>alb_listener_https_arn</code>, <code>alb_dns_name</code>, <code>alb_zone_id</code></td><td>—</td><td>From the shared workspace.</td></tr>
+    <tr><td><code>dns_zone_id</code>, <code>dns_zone_name</code></td><td>—</td><td>From the shared workspace's DNS module.</td></tr>
+    <tr><td><code>rds_host</code>, <code>rds_port</code>, <code>redis_host</code>, <code>redis_port</code></td><td>—</td><td>Injected as env vars.</td></tr>
+    <tr><td><code>shared_redis_auth_secret_arn</code>, <code>manual_secret_arns</code>, <code>rds_password_secret_arn</code></td><td>—</td><td>Injected as task-def <code>secrets</code>.</td></tr>
+    <tr><td><code>api_cpu</code> / <code>api_memory</code></td><td><code>256</code> / <code>512</code></td><td>Production overrides at Launch.</td></tr>
+    <tr><td><code>worker_cpu</code> / <code>worker_memory</code></td><td><code>256</code> / <code>512</code></td><td></td></tr>
+    <tr><td><code>log_retention_days</code></td><td><code>14</code></td><td>Production should pass <code>30</code>.</td></tr>
+  </tbody>
+</table>
+
+<h3>Module outputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Output</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>api_service_arn</code>, <code>worker_service_arn</code></td><td>string</td></tr>
+    <tr><td><code>target_group_arn</code></td><td>string</td></tr>
+    <tr><td><code>task_execution_role_arn</code>, <code>task_role_arn</code></td><td>string</td></tr>
+    <tr><td><code>api_hostname</code></td><td>string (e.g. <code>staging-api.mythrun.com</code>)</td></tr>
+  </tbody>
+</table>
+
+<h3>Shared workspace additions</h3>
+<table>
+  <thead>
+    <tr><th>Resource</th><th>Name / key</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ECR repo</td><td><code>mythrun</code> (MUTABLE, scan-on-push)</td></tr>
+    <tr><td>OIDC provider</td><td><code>token.actions.githubusercontent.com</code></td></tr>
+    <tr><td>ECS cluster</td><td><code>mythrun</code> (Fargate only)</td></tr>
+    <tr><td>ALB</td><td><code>mythrun-alb</code> (deletion-protected)</td></tr>
+    <tr><td>Listeners</td><td>HTTPS :443 with wildcard cert; HTTP :80 redirect</td></tr>
+  </tbody>
+</table>
+
+<h3>Staging-workspace additions</h3>
+<table>
+  <thead>
+    <tr><th>Resource</th><th>Name</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>GH Actions role</td><td><code>mythrun-github-actions-staging</code></td></tr>
+    <tr><td>SNS topic</td><td><code>mythrun-staging-alerts</code></td></tr>
+    <tr><td>Hostname</td><td><code>staging-api.mythrun.com</code></td></tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>infra/modules/serving/</code>, <code>infra/environments/shared/main.tf</code>,
+  <code>infra/environments/staging/main.tf</code>.
+</p>

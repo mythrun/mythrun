@@ -9,6 +9,7 @@ export const structure: Section[] = [
       { slug: 'network', title: 'Network' },
       { slug: 'data', title: 'Data plane' },
       { slug: 'dns', title: 'DNS' },
+      { slug: 'serving', title: 'Serving' },
     ],
   },
   {
