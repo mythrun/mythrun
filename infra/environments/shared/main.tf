@@ -68,12 +68,25 @@ resource "aws_ecr_lifecycle_policy" "mythrun" {
           tagStatus      = "tagged"
           tagPatternList = ["*"]
           countType      = "imageCountMoreThan"
-          countNumber    = 20
+          countNumber    = 50
         }
         action = { type = "expire" }
       },
     ]
   })
+}
+
+# ======== ECR pull-through cache for Docker Hub ========
+# Routes base-image pulls (node:24-alpine et al.) through our ECR instead
+# of Docker Hub directly. Avoids the 100-pulls/6h anonymous rate limit
+# that GitHub-hosted runner IP pools can trigger at team scale, and
+# improves cold-start latency by keeping pulls in-region.
+# Cache repos (e.g., docker-hub/library/node) are auto-created on first pull.
+# IAM additions in the staging workspace's GH Actions role policy (MYT-28).
+
+resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
+  ecr_repository_prefix = "docker-hub"
+  upstream_registry_url = "registry-1.docker.io"
 }
 
 # ======== GitHub Actions OIDC Provider ========
