@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # GitHub Actions version bumps (for SHA-pinned action references in
+  # .github/workflows/*.yml). Proposes PRs weekly; reviewed by hand,
+  # never auto-merged — every bump is a new audit opportunity.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
