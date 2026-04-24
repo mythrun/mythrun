@@ -143,7 +143,7 @@ jobs:
 
       - name: Render new task definition with digest image
         id: taskdef
-        uses: aws-actions/amazon-ecs-render-task-definition@6bb171240ff2b056ea6c599c9d2370c043f200be  # v1.7.3
+        uses: aws-actions/amazon-ecs-render-task-definition@77954e213ba1f9f9cb016b86a1d4f6fcdea0d57e  # v1.8.4
         with:
           task-definition: task-def.json
           container-name: ${{ env.CONTAINER_NAME }}
