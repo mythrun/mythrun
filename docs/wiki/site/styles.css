@@ -284,12 +284,15 @@ article svg text {
 /* Expand modal — dark backdrop, paper-100 inner, diagram at viewport scale. */
 .wiki-diagram-modal {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: none;
   align-items: center;
   justify-content: center;
   background: rgba(35, 27, 18, 0.88);
-  z-index: 100;
+  z-index: 9999;
   padding: 32px;
 }
 .wiki-diagram-modal.open {
@@ -299,18 +302,15 @@ article svg text {
   background: var(--paper-100);
   border: 1px solid var(--paper-300);
   padding: 24px;
-  max-width: min(90vw, 1400px);
+  width: min(90vw, 1400px);
   max-height: 90vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: auto;
+  box-sizing: border-box;
 }
 .wiki-diagram-modal-inner svg {
-  max-width: 100%;
-  max-height: calc(90vh - 48px);
-  width: auto;
+  width: 100%;
   height: auto;
+  max-height: calc(90vh - 48px);
   display: block;
 }
 .wiki-diagram-modal-inner svg text {
