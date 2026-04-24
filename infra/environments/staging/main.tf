@@ -199,6 +199,21 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     ]
     resources = [
       "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun",
+      "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*",
+    ]
+  }
+
+  # Pull-through cache: auto-create cache repos + trigger upstream pulls.
+  # Scoped to the docker-hub/* prefix (set by the shared workspace's
+  # aws_ecr_pull_through_cache_rule.docker_hub). Without these, the first
+  # `docker pull` through the cache fails at ECR authz.
+  statement {
+    actions = [
+      "ecr:CreateRepository",
+      "ecr:BatchImportUpstreamImage",
+    ]
+    resources = [
+      "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*",
     ]
   }
 
