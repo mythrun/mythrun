@@ -115,8 +115,11 @@ resource "aws_iam_role_policy" "task_cloudwatch_metrics" {
 # registration is pure metadata (no image pull). desired_count=0 on the service
 # means ECS never tries to pull. MYT-28's first CI run registers a new revision
 # pointing at the real git-SHA tag + calls update-service --task-definition :N.
-# No lifecycle block: AWS never destroys task-def revisions (they go INACTIVE);
-# create_before_destroy would be cosmetic + misleading here.
+# Task defs use create_before_destroy so in-place argument changes
+# (env var, memory, log group) register the new revision before
+# deregistering the old one. The previous "no lifecycle" stance (MYT-30)
+# missed that destroy-and-replace fires on arg changes — correction in
+# MYT-28 per Duncan review.
 
 locals {
   common_env = [
@@ -195,6 +198,10 @@ resource "aws_ecs_task_definition" "api" {
   }])
 
   tags = { Name = "mythrun-${var.environment}-api" }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecs_task_definition" "worker" {
@@ -234,6 +241,10 @@ resource "aws_ecs_task_definition" "worker" {
   }])
 
   tags = { Name = "mythrun-${var.environment}-worker" }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # ======== ALB Target Group ========
