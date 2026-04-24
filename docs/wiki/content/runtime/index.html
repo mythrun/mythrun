@@ -10,8 +10,8 @@
 <!-- source: .nvmrc -->
 <!-- source: .dockerignore -->
 <!-- source: eslint.config.js -->
-<!-- source-hash: sha256:dfb8f27b8f3161079d55a7e937f1dd180c3d97281275e0544a14cd3a827ad0b5 -->
-<!-- last-ticket: MYT-27 -->
+<!-- source-hash: sha256:fd75038fffa906b6c4b97a81640444b9c510588df360e01015a94a85798d2227 -->
+<!-- last-ticket: MYT-28 -->
 
 <h1>Backend</h1>
 
@@ -44,17 +44,35 @@
 <p>
   The <code>backend/</code> workspace is <code>@mythrun/backend</code>. It depends on Fastify and
   nothing else in production, with <code>tsx</code>, <code>typescript</code>, and
-  <code>vitest</code> as dev dependencies. The source tree is intentionally shallow right now:
-  <code>src/server.ts</code> exports a <code>buildApp()</code> factory and, on import, listens on
-  <code>PORT</code> (default <code>3000</code>) bound to <code>0.0.0.0</code>. The factory exists so
-  the test file in <code>src/__tests__/server.test.ts</code> can build an app and drive it via
-  <code>app.inject()</code> without opening a socket.
+  <code>vitest</code> as dev dependencies. The source tree is intentionally shallow right now: two
+  files under <code>src/</code>. <code>app.ts</code> exports <code>buildApp()</code> (a pure factory
+  that returns a Fastify instance with <code>GET /health</code> registered) plus
+  <code>createShutdown(app)</code> (a pure function that returns a signal handler). Nothing in
+  <code>app.ts</code> has side effects on import — no listener, no signal hooks.
+  <code>server.ts</code> is the thin entrypoint: it calls <code>buildApp()</code>,
+  <code>await app.listen</code> on <code>PORT</code> (default <code>3000</code>) bound to
+  <code>0.0.0.0</code>, and then registers the <code>createShutdown</code> handler against
+  <code>SIGTERM</code> and <code>SIGINT</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong><code>buildApp</code> factory, not a top-level instance</strong> — Fastify's
-  <code>inject</code> method needs a built-but-not-listening app. Exporting a factory means the same
-  file serves both the production boot path and the tests, with no duplicated wiring.
+  <strong
+    >Factory and shutdown live in <code>app.ts</code>, listen in <code>server.ts</code></strong
+  >
+  — Fastify's <code>inject</code> method needs a built-but-not-listening app, and the shutdown
+  handler needs to be unit-testable against a spy on <code>process.exit</code>. Isolating the listen
+  + signal wiring in a separate file means importing <code>app.ts</code> from tests has zero side
+  effects, and the signal handlers are a pure function that takes a Fastify instance and returns a
+  handler — testable in isolation via <code>vi.spyOn(process, 'exit')</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>SIGTERM handling matters on ECS</strong> — ECS sends SIGTERM when it deregisters a task
+  for any reason (rolling deploy, service scale-down, capacity rebalance). Without a handler, Node
+  exits on the default kernel disposition and in-flight requests get truncated. The handler calls
+  <code>app.close()</code> (which stops accepting connections and waits for in-flight requests to
+  drain) before <code>process.exit(0)</code>; the 120-second <code>stopTimeout</code> on the task
+  definition gives LLM calls time to finish before ECS sends SIGKILL.
 </aside>
 
 <h2>TypeScript and lint</h2>
@@ -78,16 +96,31 @@
 <h2>The container image</h2>
 
 <p>
-  <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. The builder
-  stage copies the root lockfile, <code>.npmrc</code>, and the backend's <code>package.json</code>,
-  runs <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the source
-  and builds. The last step of the builder is
+  <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. Both stage
+  <code>FROM</code> lines resolve via a <code>BASE_IMAGE_REGISTRY</code> ARG: when
+  <a href="../infra/ci-cd.html">CI</a> passes <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code>
+  (the account-specific ECR host), the base image is pulled through the
+  <a href="../infra/serving.html">pull-through cache</a>; when unset (local builds), the ARG expands
+  to an empty string and the <code>FROM</code> reference becomes
+  <code>ecr-public/docker/library/node:24-alpine</code> which does not resolve on Docker Hub — local
+  builds must pass the build-arg or keep a one-off <code>Dockerfile.local</code> pointing at
+  <code>docker.io/library/node:24-alpine</code>. The builder stage copies the root lockfile,
+  <code>.npmrc</code>, and the backend's <code>package.json</code>, runs
+  <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the source and
+  builds. The last step of the builder is
   <code>pnpm --filter @mythrun/backend deploy --prod /app/deploy</code>, which produces a
   self-contained directory with only the backend's production dependencies. The runtime stage is a
   fresh <code>node:24-alpine</code> that installs <code>dumb-init</code>, creates a non-root
   <code>mythrun</code> user, copies <code>/app/deploy</code> in with owner set, and runs
   <code>dumb-init node dist/server.js</code>.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Registry-host ARG, not a hard-coded ECR URL</strong> — hard-coding the ECR host would make
+  the Dockerfile CI-only and lock out local builds. An ARG with an empty default preserves the usual
+  <code>FROM</code> semantics in CI (where the ARG is set) and leaves local developers with one
+  explicit knob.
+</aside>
 
 <aside class="wiki-rationale">
   <strong><code>pnpm deploy</code> instead of copying <code>node_modules</code></strong> — a
@@ -127,10 +160,14 @@
   Two <code>.dockerignore</code> files work together. The root one is authoritative — it's what
   Docker reads when the build context is the repo root (<code
     >docker build -f backend/Dockerfile .</code
-  >). It excludes <code>node_modules</code>, <code>dist</code>, tests, docs, Terraform, tracker
-  state, and every editor/OS droppings pattern. <code>backend/.dockerignore</code> is a narrower
-  duplicate kept alongside the Dockerfile as a readable hint for anyone building with
-  <code>backend/</code> as context; Docker only uses it in that case.
+  >). It excludes <code>node_modules</code>, <code>dist</code>, tests, the
+  <code>.git</code> directory, <code>.github</code>, <code>docs/</code>, <code>infra/</code>,
+  <code>.beads/</code>, <code>.claude/</code>, the wiki build output, project-level tooling configs
+  (<code>.prettier*</code>, <code>eslint.config.js</code>, <code>.nvmrc</code>), and every editor/OS
+  droppings pattern — shaving roughly 100 MB off a cold build context.
+  <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the Dockerfile as a
+  readable hint for anyone building with <code>backend/</code> as context; Docker only uses it in
+  that case.
 </p>
 
 <h2>Operating this piece</h2>
@@ -157,13 +194,19 @@
   </li>
 </ol>
 
-<h3>Build and run the container image</h3>
+<h3>Build and run the container image locally</h3>
 <ol>
   <li>
+    The default <code>FROM</code> path in <code>backend/Dockerfile</code> expects the ECR
+    pull-through cache and won't resolve on a laptop. For local builds, keep a one-off
+    <code>backend/Dockerfile.local</code> whose <code>FROM</code> lines point at
+    <code>docker.io/library/node:24-alpine</code>, or rewrite <code>FROM</code> to that image in
+    place while iterating.
+  </li>
+  <li>
     From the repo root:
-    <code>docker build -t mythrun -f backend/Dockerfile .</code>
-    — build context is the repo root so the lockfile, <code>.npmrc</code>, and
-    <code>pnpm-workspace.yaml</code> are visible.
+    <code>docker build -t mythrun -f backend/Dockerfile.local .</code> — build context is the repo
+    root so the lockfile, <code>.npmrc</code>, and <code>pnpm-workspace.yaml</code> are visible.
   </li>
   <li><code>docker run -p 3000:3000 mythrun</code>.</li>
   <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>

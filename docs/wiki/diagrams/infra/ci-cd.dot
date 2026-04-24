@@ -1,0 +1,76 @@
+digraph ci_cd {
+  // The deploy pipeline: push-to-main fans out into a two-job GitHub Actions
+  // workflow. The build job assumes the OIDC role, builds through the ECR
+  // pull-through cache, pushes a digest-addressable image, and resolves the
+  // digest locally. The deploy job renders a new task-def revision pointing
+  // at that digest, calls update-service, polls rolloutState, and smoke-tests
+  // the public /health URL.
+  rankdir=LR;
+  compound=true;
+
+  push    [label="push → main\n(code paths only)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_build {
+    label="build job";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    install [label="pnpm install\n--filter @mythrun/backend...\n(before OIDC assume)"];
+    gate    [label="lint · typecheck · test"];
+    assume1 [label="configure-aws-credentials\nassume OIDC role"];
+    build   [label="docker build\n--build-arg\nBASE_IMAGE_REGISTRY"];
+    push_ecr [label="docker push\n:$GIT_SHA + :latest"];
+    digest  [label="docker inspect\nRepoDigests[0]\n(no ECR describe)"];
+  }
+
+  subgraph cluster_deploy {
+    label="deploy-staging job";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    assume2 [label="configure-aws-credentials\nassume OIDC role"];
+    fetch   [label="describe-task-definition"];
+    render  [label="render-task-definition\nimage = digest"];
+    deploy  [label="amazon-ecs-deploy\nupdate-service"];
+    flip    [label="desired_count → 1\n(no-op after first)"];
+    poll    [label="poll rolloutState\nfail on circuit-breaker\n(every 10s, ≤ 2 min)"];
+    smoke   [label="curl /health\n.status == \"ok\"\n(3 retries)"];
+  }
+
+  subgraph cluster_aws {
+    label="AWS (us-east-1)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    role    [label="mythrun-github-\nactions-staging\n(StringEquals all)"];
+    cache   [label="ECR pull-through\necr-public/docker/\nlibrary/node", color="ember", fontcolor="ember"];
+    ecr     [label="ECR\nmythrun\n:latest + :$SHA"];
+    service [label="ECS service\nmythrun-staging-api"];
+    endpoint [label="staging-api.\nmythrun.com\n/health", color="ember", fontcolor="ember"];
+  }
+
+  push    -> install;
+  install -> gate;
+  gate    -> assume1;
+  assume1 -> role     [label="OIDC\nAssumeRole"];
+  assume1 -> build;
+  build   -> cache    [label="FROM cache"];
+  build   -> push_ecr;
+  push_ecr -> ecr;
+  push_ecr -> digest;
+  digest  -> assume2  [label="image = @sha256:…"];
+  assume2 -> role     [label="OIDC\nAssumeRole"];
+  assume2 -> fetch;
+  fetch   -> render;
+  render  -> deploy;
+  deploy  -> service  [label="new task-def\nrevision"];
+  deploy  -> flip;
+  flip    -> service;
+  flip    -> poll;
+  poll    -> service  [label="describe-services"];
+  poll    -> smoke;
+  smoke   -> endpoint [label="HTTPS"];
+}

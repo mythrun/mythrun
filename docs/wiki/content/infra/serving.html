@@ -4,8 +4,8 @@
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/environments/staging/outputs.tf -->
 <!-- source: infra/environments/staging/variables.tf -->
-<!-- source-hash: sha256:21e0213dde99eb80597191a6e43568884685833738b8107510227711878bc08f -->
-<!-- last-ticket: MYT-30 -->
+<!-- source-hash: sha256:c227628c10c51b398426fbce744517b31115cc973aa8da9d059abe73518dde0d -->
+<!-- last-ticket: MYT-28 -->
 
 <h1>Serving</h1>
 
@@ -33,8 +33,34 @@
 <p>
   The ECR repo is named <code>mythrun</code> and is shared by both the API and the Worker container
   definitions — same image, different <code>command</code>. Scan-on-push is enabled. The lifecycle
-  policy expires untagged images after a day and keeps only the 20 most recent tagged images.
+  policy expires untagged images after a day and keeps only the 50 most recent tagged images.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>50-image retention, not 20</strong> — CI pushes <code>:$GIT_SHA</code> and
+  <code>:latest</code> on every deploy to <code>main</code>, so each deploy consumes two of the
+  retention slots. Twenty would give roughly ten deploys of rollback headroom; fifty gives about
+  twenty-five. Storage cost is negligible at backend-image size.
+</aside>
+
+<p>
+  Alongside the <code>mythrun</code> repo, the shared workspace declares an
+  <code>aws_ecr_pull_through_cache_rule</code> whose upstream is <code>public.ecr.aws</code>.
+  Base-image pulls (<code>node:24-alpine</code> and friends) route through this cache instead of
+  Docker Hub directly: CI's <code>docker build</code> passes
+  <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code> and the Dockerfile's
+  <code>FROM</code> resolves to
+  <code
+    >&lt;account&gt;.dkr.ecr.&lt;region&gt;.amazonaws.com/ecr-public/docker/library/node:24-alpine</code
+  >. Cache repos under the <code>ecr-public/*</code> prefix are auto-created on first pull.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Upstream is ECR Public, not <code>registry-1.docker.io</code></strong> — AWS's
+  pull-through cache for Docker Hub proper now requires Secrets Manager-stored auth credentials
+  (policy change, 2026). <code>public.ecr.aws</code> is AWS's official auth-free mirror of Docker
+  Hub's Library namespace. Same images, no credentials path, no rate-limit exposure.
+</aside>
 
 <aside class="wiki-rationale">
   <strong><code>MUTABLE</code> tag mutability, not <code>IMMUTABLE</code></strong> — CI pushes the
@@ -113,12 +139,15 @@
 <p>
   Task definitions are registered pointing at <code>ecr_repository_url:placeholder</code> — a tag
   that doesn't exist. Registration is pure metadata and does not pull the image; with
-  <code>desired_count = 0</code> on both services, ECS never tries. CI replaces both pieces on first
-  deploy: it registers a new task-def revision pointing at the real
-  <code>:&lt;git-sha&gt;</code> tag and flips <code>desired_count</code> to 1 via
+  <code>desired_count = 0</code> on both services, ECS never tries. The
+  <a href="ci-cd.html">CI/CD pipeline</a> replaces both pieces on first deploy: it registers a new
+  task-def revision pointing at the image's digest and flips <code>desired_count</code> to 1 via
   <code>update-service</code>. A
   <code>lifecycle.ignore_changes = [desired_count, task_definition]</code> on each service keeps
-  Terraform permanently out of CI's way afterwards.
+  Terraform permanently out of CI's way afterwards. Both task-definition resources also carry
+  <code>lifecycle { create_before_destroy = true }</code> so argument changes (env var edits, memory
+  resizes, log-group renames) register the new revision before deregistering the old, instead of
+  tearing the service's revision out from under it.
 </p>
 
 <aside class="wiki-rationale">
@@ -128,6 +157,21 @@
   deploy, or CI creates the service) either produces zero-downtime-breaking replacements or splits
   ownership so state and reality drift apart.
 </aside>
+
+<aside class="wiki-rationale">
+  <strong><code>create_before_destroy</code> on task defs</strong> — Terraform-initiated
+  destroy-and-replace fires on any task-def argument change that can't be modified in place. Without
+  the lifecycle flag, that sequence deregisters the currently-live revision before the replacement
+  exists, and ECS momentarily has no revision to fall back to if a concurrent auto-scaling event
+  runs. With the flag, the new revision is registered first and the old one deregistered only after.
+</aside>
+
+<p>
+  Today, after the first CI deploy, the <code>mythrun-staging-api</code> service runs at
+  <code>desired_count=1</code> on a real git-SHA-addressed revision. The
+  <code>mythrun-staging-worker</code> service stays at <code>desired_count=0</code> on the
+  <code>:placeholder</code> revision until real worker code ships in the Prep Pipeline milestone.
+</p>
 
 <p>
   The API's container definition exposes <code>3000</code>, runs
@@ -201,8 +245,8 @@
   <li><code>aud = sts.amazonaws.com</code> — the standard audience check.</li>
   <li><code>repository = mythrun/mythrun</code> — only this repo.</li>
   <li>
-    <code>repository_owner_id = 274691930</code> — the numeric org ID, immune to rename or reclaim
-    attacks.
+    <code>repository_id = 1216403029</code> — the numeric repo ID, immutable across org or repo
+    renames, strictly stronger than pinning owner-only.
   </li>
   <li>
     <code>environment = staging</code> — requires the GitHub Environment named
@@ -219,6 +263,14 @@
 </ul>
 
 <aside class="wiki-rationale">
+  <strong><code>repository_id</code>, not <code>repository_owner_id</code></strong> — AWS's IAM
+  allowlist of supported GitHub OIDC condition keys does not include
+  <code>repository_owner_id</code>; <code>sts:AssumeRoleWithWebIdentity</code> silently fails with
+  an opaque error when that key is used. <code>repository_id</code> is on the allowlist and achieves
+  the same rename-resistance — pinning a specific repo ID implies a specific owner.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>All <code>StringEquals</code>, no <code>StringLike</code></strong> — the two operators
   would behave identically today because none of the values contain wildcards, but swapping to
   <code>StringLike</code> invites a future refactor that introduces a real wildcard to silently
@@ -228,7 +280,10 @@
 <p>
   The permissions policy grants exactly what a deploy needs: an account-wide
   <code>ecr:GetAuthorizationToken</code> (AWS doesn't let it be ARN-scoped), the ECR push/pull verbs
-  scoped to the <code>mythrun</code> repo, ECS <code>UpdateService</code> /
+  scoped to both the <code>mythrun</code> repo and the <code>ecr-public/*</code> pull-through cache
+  prefix, <code>ecr:CreateRepository</code> + <code>ecr:BatchImportUpstreamImage</code> scoped to
+  <code>ecr-public/*</code> (so the first pull through a previously-unseen upstream can auto-create
+  the cache repo and trigger the import), ECS <code>UpdateService</code> /
   <code>DescribeServices</code> / <code>DescribeTasks</code> / <code>ListTasks</code> conditioned on
   the <code>mythrun</code> cluster, <code>RegisterTaskDefinition</code> and
   <code>DeregisterTaskDefinition</code> scoped to the <code>mythrun-staging-*</code> family, and
@@ -237,6 +292,13 @@
   (<code>rds:CreateDBSnapshot</code>) are deliberately absent; they belong to the future production
   role.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Single role for build + deploy, for now</strong> — ideally the build and deploy jobs would
+  assume distinct roles (build needs ECR push, deploy needs ECS mutate; no job needs both).
+  Splitting them is a pre-production hardening item — a follow-up bead tracks the split before the
+  prod job is appended.
+</aside>
 
 <h2>SNS alerts topic</h2>
 
@@ -326,7 +388,7 @@
   from the <a href="dns.html">DNS module</a>, and the per-env A-alias is published into the same
   Route 53 zone. The <a href="../runtime/index.html">Backend</a> image built from
   <code>backend/Dockerfile</code> is what gets pushed to ECR and pointed at by task definitions on
-  every deploy.
+  every deploy — see <a href="ci-cd.html">CI/CD</a> for how that deploy is executed.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -442,7 +504,11 @@
   <tbody>
     <tr>
       <td>ECR repo</td>
-      <td><code>mythrun</code> (MUTABLE, scan-on-push)</td>
+      <td><code>mythrun</code> (MUTABLE, scan-on-push, keep 50)</td>
+    </tr>
+    <tr>
+      <td>ECR pull-through cache</td>
+      <td><code>ecr-public</code> prefix → <code>public.ecr.aws</code></td>
     </tr>
     <tr>
       <td>OIDC provider</td>

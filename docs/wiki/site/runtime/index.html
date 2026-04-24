@@ -36,20 +36,20 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1040pt" height="446pt"
- viewBox="14.00 14.00 1026.00 431.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<svg width="1283pt" height="446pt"
+ viewBox="14.00 14.00 1269.00 431.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 427.4)">
 <title>backend</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-413 1007.37,-413 1007.37,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-413 1250.68,-413 1250.68,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_repo</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="0,-113 0,-401 479.14,-401 479.14,-113 0,-113"/>
-<text xml:space="preserve" text-anchor="middle" x="239.57" y="-387.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pnpm workspace &#160;(repo root)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="0,-113 0,-401 676.25,-401 676.25,-113 0,-113"/>
+<text xml:space="preserve" text-anchor="middle" x="338.12" y="-387.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pnpm workspace &#160;(repo root)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_backend</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="37.87,-113 37.87,-253 479.14,-253 479.14,-113 37.87,-113"/>
-<text xml:space="preserve" text-anchor="middle" x="258.51" y="-239.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/ &#160;(@mythrun/backend)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="27.97,-113 27.97,-253 676.25,-253 676.25,-113 27.97,-113"/>
+<text xml:space="preserve" text-anchor="middle" x="352.11" y="-239.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/ &#160;(@mythrun/backend)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_wiki</title>
@@ -58,8 +58,8 @@
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_image</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="302.24,-8 302.24,-113 771.26,-113 771.26,-8 302.24,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="536.75" y="-99.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/Dockerfile &#160;(multi&#45;stage)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="492.74,-8 492.74,-113 1014.57,-113 1014.57,-8 492.74,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="753.65" y="-99.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/Dockerfile &#160;(multi&#45;stage)</text>
 </g>
 <!-- root -->
 <g id="node1" class="node">
@@ -78,82 +78,100 @@
 <text xml:space="preserve" text-anchor="middle" x="96.61" y="-125.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tsconfig.json</text>
 </g>
 <!-- builder -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>builder</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="531.95,-91.64 302.24,-91.64 302.24,-8.36 531.95,-8.36 531.95,-91.64"/>
-<text xml:space="preserve" text-anchor="middle" x="417.1" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">builder</text>
-<text xml:space="preserve" text-anchor="middle" x="417.1" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">node:24&#45;alpine</text>
-<text xml:space="preserve" text-anchor="middle" x="417.1" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm install &#45;&#45;frozen&#45;lockfile</text>
-<text xml:space="preserve" text-anchor="middle" x="417.1" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm build</text>
-<text xml:space="preserve" text-anchor="middle" x="417.1" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm deploy &#45;&#45;prod</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="722.45,-91.64 492.74,-91.64 492.74,-8.36 722.45,-8.36 722.45,-91.64"/>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">builder</text>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FROM $BASE/...:24&#45;alpine</text>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm install &#45;&#45;frozen&#45;lockfile</text>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm build</text>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm deploy &#45;&#45;prod</text>
 </g>
 <!-- pkg&#45;&gt;builder -->
-<g id="edge2" class="edge">
+<g id="edge4" class="edge">
 <title>pkg&#45;&gt;builder</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M156.03,-119.41C194.4,-109.17 246.04,-95.39 293.19,-82.8"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="293.74,-85.19 299.87,-81.02 292.48,-80.46 293.74,-85.19"/>
-<text xml:space="preserve" text-anchor="middle" x="248.23" y="-105.61" font-family="Courier,monospace" font-size="10.00">docker build</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M155.31,-112.42C188.91,-100.23 232.38,-86.06 272.24,-78 341.5,-63.99 420.19,-56.97 483.83,-53.47"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="483.64,-55.93 490.5,-53.11 483.38,-51.04 483.64,-55.93"/>
+<text xml:space="preserve" text-anchor="middle" x="363.99" y="-105" font-family="Courier,monospace" font-size="10.00">docker build</text>
+<text xml:space="preserve" text-anchor="middle" x="363.99" y="-93" font-family="Courier,monospace" font-size="10.00">&#45;&#45;build&#45;arg</text>
+<text xml:space="preserve" text-anchor="middle" x="363.99" y="-81" font-family="Courier,monospace" font-size="10.00">BASE_IMAGE_REGISTRY</text>
 </g>
-<!-- src -->
+<!-- app -->
 <g id="node3" class="node">
-<title>src</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="155.36,-231.44 37.87,-231.44 37.87,-174.56 155.36,-174.56 155.36,-231.44"/>
-<text xml:space="preserve" text-anchor="middle" x="96.61" y="-212.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/server.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="96.61" y="-199.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Fastify</text>
-<text xml:space="preserve" text-anchor="middle" x="96.61" y="-186.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /health</text>
+<title>app</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="165.26,-231.44 27.97,-231.44 27.97,-174.56 165.26,-174.56 165.26,-231.44"/>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-212.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/app.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-199.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildApp()</text>
+<text xml:space="preserve" text-anchor="middle" x="96.61" y="-186.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createShutdown()</text>
+</g>
+<!-- server -->
+<g id="node4" class="node">
+<title>server</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="455.74,-166.84 272.24,-166.84 272.24,-123.16 455.74,-123.16 455.74,-166.84"/>
+<text xml:space="preserve" text-anchor="middle" x="363.99" y="-148.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/server.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="363.99" y="-135.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listen + SIGTERM/SIGINT</text>
+</g>
+<!-- app&#45;&gt;server -->
+<g id="edge1" class="edge">
+<title>app&#45;&gt;server</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M165.95,-188.06C195.69,-181.57 231.1,-173.82 263.66,-166.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="263.77,-169.19 270.09,-165.3 262.73,-164.4 263.77,-169.19"/>
+<text xml:space="preserve" text-anchor="middle" x="233.23" y="-180.47" font-family="Courier,monospace" font-size="10.00">imports</text>
 </g>
 <!-- tests -->
-<g id="node4" class="node">
-<title>tests</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="479.14,-224.84 355.05,-224.84 355.05,-181.16 479.14,-181.16 479.14,-224.84"/>
-<text xml:space="preserve" text-anchor="middle" x="417.1" y="-206.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/__tests__/</text>
-<text xml:space="preserve" text-anchor="middle" x="417.1" y="-193.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">vitest</text>
-</g>
-<!-- src&#45;&gt;tests -->
-<g id="edge1" class="edge">
-<title>src&#45;&gt;tests</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M156.03,-203C209.58,-203 288.97,-203 345.93,-203"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="345.71,-205.45 352.71,-203 345.71,-200.55 345.71,-205.45"/>
-<text xml:space="preserve" text-anchor="middle" x="248.23" y="-206" font-family="Courier,monospace" font-size="10.00">vitest</text>
-</g>
-<!-- src&#45;&gt;builder -->
-<!-- wiki -->
 <g id="node5" class="node">
+<title>tests</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="676.25,-202.44 538.95,-202.44 538.95,-145.56 676.25,-145.56 676.25,-202.44"/>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-183.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/__tests__/</text>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-170.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">app.test.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="607.6" y="-157.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">shutdown.test.ts</text>
+</g>
+<!-- app&#45;&gt;tests -->
+<g id="edge2" class="edge">
+<title>app&#45;&gt;tests</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M165.99,-199.1C260.6,-193.71 430.93,-184.01 529.8,-178.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="529.89,-180.82 536.74,-177.98 529.62,-175.93 529.89,-180.82"/>
+<text xml:space="preserve" text-anchor="middle" x="363.99" y="-195.79" font-family="Courier,monospace" font-size="10.00">vitest</text>
+</g>
+<!-- server&#45;&gt;tests -->
+<!-- server&#45;&gt;builder -->
+<!-- wiki -->
+<g id="node6" class="node">
 <title>wiki</title>
 <polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="152.06,-289 41.17,-289 41.17,-253 152.06,-253 152.06,-289"/>
 <text xml:space="preserve" text-anchor="middle" x="96.61" y="-267.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wiki package</text>
 </g>
 <!-- runtime -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>runtime</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="771.26,-91.64 633.96,-91.64 633.96,-8.36 771.26,-8.36 771.26,-91.64"/>
-<text xml:space="preserve" text-anchor="middle" x="702.61" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runtime</text>
-<text xml:space="preserve" text-anchor="middle" x="702.61" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">node:24&#45;alpine</text>
-<text xml:space="preserve" text-anchor="middle" x="702.61" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dumb&#45;init</text>
-<text xml:space="preserve" text-anchor="middle" x="702.61" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">non&#45;root mythrun</text>
-<text xml:space="preserve" text-anchor="middle" x="702.61" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">EXPOSE 3000</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1014.57,-91.64 824.46,-91.64 824.46,-8.36 1014.57,-8.36 1014.57,-91.64"/>
+<text xml:space="preserve" text-anchor="middle" x="919.52" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runtime</text>
+<text xml:space="preserve" text-anchor="middle" x="919.52" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FROM $BASE/...:24&#45;alpine</text>
+<text xml:space="preserve" text-anchor="middle" x="919.52" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dumb&#45;init</text>
+<text xml:space="preserve" text-anchor="middle" x="919.52" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">non&#45;root mythrun</text>
+<text xml:space="preserve" text-anchor="middle" x="919.52" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">EXPOSE 3000</text>
 </g>
 <!-- builder&#45;&gt;runtime -->
-<g id="edge4" class="edge">
+<g id="edge6" class="edge">
 <title>builder&#45;&gt;runtime</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M532.6,-50C563.65,-50 596.53,-50 624.94,-50"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="624.8,-52.45 631.8,-50 624.8,-47.55 624.8,-52.45"/>
-<text xml:space="preserve" text-anchor="middle" x="582.96" y="-65" font-family="Courier,monospace" font-size="10.00">pnpm deploy</text>
-<text xml:space="preserve" text-anchor="middle" x="582.96" y="-53" font-family="Courier,monospace" font-size="10.00">/app/deploy</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M723.12,-50C753.25,-50 785.58,-50 815.09,-50"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="814.92,-52.45 821.92,-50 814.92,-47.55 814.92,-52.45"/>
+<text xml:space="preserve" text-anchor="middle" x="773.46" y="-65" font-family="Courier,monospace" font-size="10.00">pnpm deploy</text>
+<text xml:space="preserve" text-anchor="middle" x="773.46" y="-53" font-family="Courier,monospace" font-size="10.00">/app/deploy</text>
 </g>
 <!-- port -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>port</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1003.37,-68 879.27,-68 879.27,-32 1003.37,-32 1003.37,-68"/>
-<text xml:space="preserve" text-anchor="middle" x="941.32" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">:3000 &#160;/health</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1246.68,-68 1122.58,-68 1122.58,-32 1246.68,-32 1246.68,-68"/>
+<text xml:space="preserve" text-anchor="middle" x="1184.63" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">:3000 &#160;/health</text>
 </g>
 <!-- runtime&#45;&gt;port -->
-<g id="edge5" class="edge">
+<g id="edge7" class="edge">
 <title>runtime&#45;&gt;port</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M771.76,-50C802.6,-50 839.01,-50 870.09,-50"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.89,-52.45 876.89,-50 869.89,-47.55 869.89,-52.45"/>
-<text xml:space="preserve" text-anchor="middle" x="825.27" y="-65" font-family="Courier,monospace" font-size="10.00">HEALTHCHECK</text>
-<text xml:space="preserve" text-anchor="middle" x="825.27" y="-53" font-family="Courier,monospace" font-size="10.00">wget /health</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1015.13,-50C1047.58,-50 1083.3,-50 1113.46,-50"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1113.41,-52.45 1120.41,-50 1113.41,-47.55 1113.41,-52.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1068.58" y="-65" font-family="Courier,monospace" font-size="10.00">HEALTHCHECK</text>
+<text xml:space="preserve" text-anchor="middle" x="1068.58" y="-53" font-family="Courier,monospace" font-size="10.00">wget /health</text>
 </g>
 </g>
 </svg>
@@ -184,17 +202,35 @@
 <p>
   The <code>backend/</code> workspace is <code>@mythrun/backend</code>. It depends on Fastify and
   nothing else in production, with <code>tsx</code>, <code>typescript</code>, and
-  <code>vitest</code> as dev dependencies. The source tree is intentionally shallow right now:
-  <code>src/server.ts</code> exports a <code>buildApp()</code> factory and, on import, listens on
-  <code>PORT</code> (default <code>3000</code>) bound to <code>0.0.0.0</code>. The factory exists so
-  the test file in <code>src/__tests__/server.test.ts</code> can build an app and drive it via
-  <code>app.inject()</code> without opening a socket.
+  <code>vitest</code> as dev dependencies. The source tree is intentionally shallow right now: two
+  files under <code>src/</code>. <code>app.ts</code> exports <code>buildApp()</code> (a pure factory
+  that returns a Fastify instance with <code>GET /health</code> registered) plus
+  <code>createShutdown(app)</code> (a pure function that returns a signal handler). Nothing in
+  <code>app.ts</code> has side effects on import — no listener, no signal hooks.
+  <code>server.ts</code> is the thin entrypoint: it calls <code>buildApp()</code>,
+  <code>await app.listen</code> on <code>PORT</code> (default <code>3000</code>) bound to
+  <code>0.0.0.0</code>, and then registers the <code>createShutdown</code> handler against
+  <code>SIGTERM</code> and <code>SIGINT</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong><code>buildApp</code> factory, not a top-level instance</strong> — Fastify's
-  <code>inject</code> method needs a built-but-not-listening app. Exporting a factory means the same
-  file serves both the production boot path and the tests, with no duplicated wiring.
+  <strong
+    >Factory and shutdown live in <code>app.ts</code>, listen in <code>server.ts</code></strong
+  >
+  — Fastify's <code>inject</code> method needs a built-but-not-listening app, and the shutdown
+  handler needs to be unit-testable against a spy on <code>process.exit</code>. Isolating the listen
+  + signal wiring in a separate file means importing <code>app.ts</code> from tests has zero side
+  effects, and the signal handlers are a pure function that takes a Fastify instance and returns a
+  handler — testable in isolation via <code>vi.spyOn(process, 'exit')</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>SIGTERM handling matters on ECS</strong> — ECS sends SIGTERM when it deregisters a task
+  for any reason (rolling deploy, service scale-down, capacity rebalance). Without a handler, Node
+  exits on the default kernel disposition and in-flight requests get truncated. The handler calls
+  <code>app.close()</code> (which stops accepting connections and waits for in-flight requests to
+  drain) before <code>process.exit(0)</code>; the 120-second <code>stopTimeout</code> on the task
+  definition gives LLM calls time to finish before ECS sends SIGKILL.
 </aside>
 
 <h2 id="typescript-and-lint">TypeScript and lint</h2>
@@ -218,16 +254,31 @@
 <h2 id="the-container-image">The container image</h2>
 
 <p>
-  <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. The builder
-  stage copies the root lockfile, <code>.npmrc</code>, and the backend's <code>package.json</code>,
-  runs <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the source
-  and builds. The last step of the builder is
+  <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. Both stage
+  <code>FROM</code> lines resolve via a <code>BASE_IMAGE_REGISTRY</code> ARG: when
+  <a href="../infra/ci-cd.html">CI</a> passes <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code>
+  (the account-specific ECR host), the base image is pulled through the
+  <a href="../infra/serving.html">pull-through cache</a>; when unset (local builds), the ARG expands
+  to an empty string and the <code>FROM</code> reference becomes
+  <code>ecr-public/docker/library/node:24-alpine</code> which does not resolve on Docker Hub — local
+  builds must pass the build-arg or keep a one-off <code>Dockerfile.local</code> pointing at
+  <code>docker.io/library/node:24-alpine</code>. The builder stage copies the root lockfile,
+  <code>.npmrc</code>, and the backend's <code>package.json</code>, runs
+  <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the source and
+  builds. The last step of the builder is
   <code>pnpm --filter @mythrun/backend deploy --prod /app/deploy</code>, which produces a
   self-contained directory with only the backend's production dependencies. The runtime stage is a
   fresh <code>node:24-alpine</code> that installs <code>dumb-init</code>, creates a non-root
   <code>mythrun</code> user, copies <code>/app/deploy</code> in with owner set, and runs
   <code>dumb-init node dist/server.js</code>.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Registry-host ARG, not a hard-coded ECR URL</strong> — hard-coding the ECR host would make
+  the Dockerfile CI-only and lock out local builds. An ARG with an empty default preserves the usual
+  <code>FROM</code> semantics in CI (where the ARG is set) and leaves local developers with one
+  explicit knob.
+</aside>
 
 <aside class="wiki-rationale">
   <strong><code>pnpm deploy</code> instead of copying <code>node_modules</code></strong> — a
@@ -267,10 +318,14 @@
   Two <code>.dockerignore</code> files work together. The root one is authoritative — it's what
   Docker reads when the build context is the repo root (<code
     >docker build -f backend/Dockerfile .</code
-  >). It excludes <code>node_modules</code>, <code>dist</code>, tests, docs, Terraform, tracker
-  state, and every editor/OS droppings pattern. <code>backend/.dockerignore</code> is a narrower
-  duplicate kept alongside the Dockerfile as a readable hint for anyone building with
-  <code>backend/</code> as context; Docker only uses it in that case.
+  >). It excludes <code>node_modules</code>, <code>dist</code>, tests, the
+  <code>.git</code> directory, <code>.github</code>, <code>docs/</code>, <code>infra/</code>,
+  <code>.beads/</code>, <code>.claude/</code>, the wiki build output, project-level tooling configs
+  (<code>.prettier*</code>, <code>eslint.config.js</code>, <code>.nvmrc</code>), and every editor/OS
+  droppings pattern — shaving roughly 100 MB off a cold build context.
+  <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the Dockerfile as a
+  readable hint for anyone building with <code>backend/</code> as context; Docker only uses it in
+  that case.
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -297,13 +352,19 @@
   </li>
 </ol>
 
-<h3 id="build-and-run-the-container-image">Build and run the container image</h3>
+<h3 id="build-and-run-the-container-image-locally">Build and run the container image locally</h3>
 <ol>
   <li>
+    The default <code>FROM</code> path in <code>backend/Dockerfile</code> expects the ECR
+    pull-through cache and won't resolve on a laptop. For local builds, keep a one-off
+    <code>backend/Dockerfile.local</code> whose <code>FROM</code> lines point at
+    <code>docker.io/library/node:24-alpine</code>, or rewrite <code>FROM</code> to that image in
+    place while iterating.
+  </li>
+  <li>
     From the repo root:
-    <code>docker build -t mythrun -f backend/Dockerfile .</code>
-    — build context is the repo root so the lockfile, <code>.npmrc</code>, and
-    <code>pnpm-workspace.yaml</code> are visible.
+    <code>docker build -t mythrun -f backend/Dockerfile.local .</code> — build context is the repo
+    root so the lockfile, <code>.npmrc</code>, and <code>pnpm-workspace.yaml</code> are visible.
   </li>
   <li><code>docker run -p 3000:3000 mythrun</code>.</li>
   <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>
@@ -435,7 +496,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#typescript-and-lint">TypeScript and lint</a></li><li style="padding-left:0"><a href="#the-container-image">The container image</a></li><li style="padding-left:0"><a href="#the-dockerignore-pair">The .dockerignore pair</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image">Build and run the container image</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#typescript-and-lint">TypeScript and lint</a></li><li style="padding-left:0"><a href="#the-container-image">The container image</a></li><li style="padding-left:0"><a href="#the-dockerignore-pair">The .dockerignore pair</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image-locally">Build and run the container image locally</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

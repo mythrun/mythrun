@@ -1,0 +1,360 @@
+<!-- source: .github/workflows/deploy.yml -->
+<!-- source: .github/dependabot.yml -->
+<!-- source-hash: sha256:c3604c4bf9748dad6af70fe2415165130946d64218deb96999ca0d23d2bc319e -->
+<!-- last-ticket: MYT-28 -->
+
+<h1>CI/CD</h1>
+
+<p class="lead">
+  The push-to-deploy pipeline. A two-job GitHub Actions workflow that on every push to
+  <code>main</code> builds the backend image through an ECR pull-through cache, assumes the
+  <a href="serving.html#the-github-actions-deploy-role">staging GitHub Actions role</a> via OIDC,
+  registers a new task-def revision pinned to the image digest, rolls the ECS service, polls for
+  circuit-breaker rollback, and smoke-tests the public <code>/health</code> URL.
+</p>
+
+<!-- @diagram: infra/ci-cd -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The workflow lives at <code>.github/workflows/deploy.yml</code>. It triggers on pushes to
+  <code>main</code> whose paths include application code — doc-only and tracker-only commits
+  (<code>docs/**</code>, <code>.beads/**</code>, <code>**/*.md</code>, <code>wiki/**</code>) skip
+  the run. <code>workflow_dispatch</code> is on so a deploy can be re-run by hand from the Actions
+  tab without pushing a no-op commit.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One concurrency group per ECS service, not per branch</strong> — a future branch-based
+  preview deploy or the eventual prod append won't share a queue with staging. Two simultaneous
+  pushes to <code>main</code> serialize against <code>deploy-mythrun-staging-api</code>;
+  <code>cancel-in-progress</code> is off so a mid-roll deploy finishes before the next one starts.
+</aside>
+
+<h2>The build job</h2>
+
+<p>
+  The build job checks out the repo, sets up pnpm + Node from <code>.nvmrc</code>, and runs
+  <code>pnpm install --frozen-lockfile --filter @mythrun/backend...</code>. The
+  <code>@mythrun/backend...</code> filter scopes install to the backend and its transitive workspace
+  dependencies so a broken sibling workspace (say <code>@mythrun/wiki</code>) can't red-light a
+  backend deploy. <code>--frozen-lockfile</code> still validates the whole lockfile, so lockfile
+  drift is caught regardless of the filter. After install, the job runs lint, typecheck, and test
+  against the backend package — the same four verbs the Backend page documents, scoped to the
+  workspace being shipped.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>pnpm install</code> runs before the OIDC role assume</strong> — npm lifecycle
+  scripts execute at install time. Running them before AWS credentials are in the environment means
+  a compromised transitive dependency can't exfiltrate the deploy role's STS token. This ordering is
+  load-bearing; do not hoist the assume step.
+</aside>
+
+<p>
+  After the verification gates pass, the job assumes the
+  <code>mythrun-github-actions-staging</code> IAM role through the shared
+  <a href="serving.html#the-github-actions-deploy-role">GitHub OIDC provider</a>, logs in to ECR,
+  and runs <code>docker build</code>. The build passes
+  <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code> — the account-specific ECR host — so the
+  <a href="../runtime/index.html">backend Dockerfile</a> resolves its <code>FROM</code> through the
+  ECR pull-through cache instead of Docker Hub directly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Pull-through cache, not Docker Hub direct</strong> — GitHub-hosted runner IP pools
+  collectively hit Docker Hub's 100-pulls-per-6h anonymous rate limit at team scale, and direct
+  pulls add transit latency to every cold build. Routing through
+  <code>aws_ecr_pull_through_cache_rule.ecr_public</code> keeps pulls in-region and auth-free.
+  Upstream is <code>public.ecr.aws</code> (AWS's official mirror of the Docker Hub Library
+  namespace), not <code>registry-1.docker.io</code> directly — Docker-Hub-proper pull-through now
+  requires Secrets Manager-stored credentials, which the ECR Public path sidesteps.
+</aside>
+
+<p>
+  The build step tags the image twice — <code>:$GIT_SHA</code> and <code>:latest</code> — and pushes
+  both. OCI image labels carry the source URL, the revision SHA, the build timestamp, and a pair of
+  <code>com.mythrun.workflow_run*</code> labels that make the pushed image clickable back to the
+  originating run in registries that render OCI annotations. The final build step resolves the
+  image's content-addressable digest by reading Docker's local <code>RepoDigests</code> array via
+  <code>docker inspect --format='{{index .RepoDigests 0}}'</code> and publishes it as the job
+  output.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Local <code>docker inspect</code>, not <code>aws ecr describe-images</code></strong> —
+  calling ECR after the push introduces a TOCTOU window: an attacker with ECR push could re-tag
+  <code>:$GIT_SHA</code> to point at a different image between our push and our describe, and the
+  deploy would silently pin to the attacker's digest. Reading Docker's own record of the push closes
+  that window — the digest is whatever docker just uploaded.
+</aside>
+
+<h2>The deploy-staging job</h2>
+
+<p>
+  The deploy job reassumes the same role (jobs don't share credentials) and walks the task
+  definition through a render-update-verify cycle. It calls
+  <code>aws ecs describe-task-definition --task-definition mythrun-staging-api</code> to grab the
+  current revision, runs <code>amazon-ecs-render-task-definition</code> to swap the container image
+  for the digest-addressed URI from the build job's output, and then
+  <code>amazon-ecs-deploy-task-definition</code> registers the new revision and calls
+  <code>update-service</code>. <code>wait-for-service-stability: true</code> blocks until ECS
+  reports the deployment settled, with a 15-minute ceiling.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Digest-pinned image, not <code>:$GIT_SHA</code></strong> — ECS task definitions resolve
+  tags at task-launch time. A tag-pinned task def would revisit the registry on every placement and
+  be vulnerable to the same re-tag attack the <code>docker inspect</code> step defends against. A
+  digest-pinned task def is immutable by construction.
+</aside>
+
+<p>
+  After the deploy action returns, the job runs <code>update-service --desired-count 1</code>. On
+  the very first deploy this flips the service from <code>0 → 1</code> (task definitions get
+  registered at <code>:placeholder</code> with <code>desired_count=0</code> — see the
+  <a href="serving.html#per-env-task-definitions-and-services">Serving</a> page); on every deploy
+  after, it's a no-op. Ordering matters: the desired-count flip runs <em>after</em> the deploy
+  action, so ECS never attempts to place on the <code>:placeholder</code> revision.
+</p>
+
+<p>
+  The wait-for-stability flag alone isn't enough to catch a failed deploy — AWS's
+  <code>services-stable</code> waiter returns SUCCESS even after a circuit-breaker rollback. The
+  next step polls <code>describe-services</code> directly every 10 seconds for up to two minutes,
+  reading <code>deployments[].rolloutState</code> on the PRIMARY deployment. On
+  <code>COMPLETED</code> with <code>running == desired</code> and zero failed tasks, the step
+  passes; on <code>FAILED</code>, the step fails immediately with a pointer to the recovery runbook;
+  a two-minute no-progress window also fails the job.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Explicit <code>rolloutState</code> poll, not just the waiter</strong> — the ECS deployment
+  circuit breaker rolls the service back to the previous task-def revision when a new revision's
+  tasks repeatedly fail to reach healthy. The waiter observes the service settled, doesn't notice it
+  settled at the <em>old</em> revision. Reading <code>rolloutState</code> is the only way to
+  distinguish a real success from a rollback-that-settled.
+</aside>
+
+<p>
+  The final step smoke-tests <code>https://staging-api.mythrun.com/health</code>. It retries three
+  times with a 10-second pause between attempts and demands both a 200 response and a JSON body
+  matching <code>.status == "ok"</code>. Body-matching guards against the ALB's default-action
+  <code>404</code> succeeding by accident: a listener-rule misconfiguration would still return 200
+  from something, but not <code>{"status":"ok"}</code> from the backend.
+</p>
+
+<h2>Dependabot for SHA-pinned actions</h2>
+
+<p>
+  Every third-party action in the workflow is pinned by commit SHA, not by tag, because tag
+  mutations upstream are the dominant supply-chain threat vector for CI.
+  <code>.github/dependabot.yml</code> schedules weekly bump PRs against the
+  <code>github-actions</code> ecosystem and caps concurrent open PRs at five. Bumps are reviewed by
+  hand — never auto-merged — because each SHA change is a fresh opportunity to audit what the action
+  is doing.
+</p>
+
+<h2>GitHub Environment configuration</h2>
+
+<p>
+  Both jobs declare <code>environment: staging</code>. The
+  <a href="https://github.com/mythrun/mythrun/settings/environments"
+    >GitHub Environment named <code>staging</code></a
+  >
+  is configured in the repo UI, not in Terraform — environments are a GitHub construct. Two settings
+  matter: deployment-branches is restricted to <code>main</code> (belt-and-suspenders on top of the
+  trust policy's <code>:ref</code> condition), and <code>AWS_ACCOUNT_ID</code> is set as an
+  <em>environment variable</em>, not a secret. The account ID is not a credential, and variables
+  render in logs where a secret would be masked — useful when debugging a trust-policy mismatch.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="rerun-a-failed-deploy">Rerun a failed deploy</h3>
+<ol>
+  <li>
+    Go to the Actions tab, click the failing run, and use the <code>Re-run failed jobs</code>
+    button. The concurrency group serializes the retry behind any in-flight deploy.
+  </li>
+  <li>
+    If the failure was in the <code>rolloutState</code> poll, the deploy may have already rolled
+    back by itself — confirm with
+    <code
+      >aws ecs describe-services --cluster mythrun --services mythrun-staging-api --query
+      'services[0].deployments'</code
+    >
+    before pushing a fix.
+  </li>
+  <li>
+    If the smoke test failed but <code>rolloutState</code> was <code>COMPLETED</code>, the new
+    revision reached RUNNING but <code>/health</code> didn't come back clean. Tail CloudWatch
+    (<code>/mythrun/staging/api</code>) before re-rolling.
+  </li>
+</ol>
+
+<h3 id="trigger-a-manual-deploy">Trigger a manual deploy (no new commit)</h3>
+<ol>
+  <li>
+    In the Actions tab, select the <code>Deploy</code> workflow and use
+    <code>Run workflow</code> against the <code>main</code> branch.
+  </li>
+  <li>
+    This rebuilds and redeploys the same SHA that's currently on <code>main</code>. Useful when the
+    image in ECR needs to be rolled forward for a base-image refresh without a source change.
+  </li>
+</ol>
+
+<h3 id="roll-back-to-a-previous-revision">Roll back to a previous revision</h3>
+<ol>
+  <li>
+    List the task-def family:
+    <code>aws ecs list-task-definitions --family-prefix mythrun-staging-api</code>.
+  </li>
+  <li>
+    Point the service at an earlier revision:
+    <code
+      >aws ecs update-service --cluster mythrun --service mythrun-staging-api --task-definition
+      mythrun-staging-api:&lt;N&gt;</code
+    >. The circuit breaker is on, so if the old revision is itself broken the service will roll
+    forward again, not leave you at zero tasks.
+  </li>
+  <li>
+    Push a revert commit to <code>main</code> to keep the next CI run from re-deploying the bad
+    revision on top.
+  </li>
+</ol>
+
+<h3 id="recover-from-pull-through-cache-cold-start">
+  Recover from a pull-through cache cold start
+</h3>
+<ol>
+  <li>
+    The first build after the cache rule is created (or after a new upstream image hasn't been
+    pulled in 30+ days) takes noticeably longer while ECR fetches from <code>public.ecr.aws</code>.
+    This is expected — no action needed.
+  </li>
+  <li>
+    If the build fails with an ECR authorization error on
+    <code>ecr-public/docker/library/*</code>, the GH Actions role is missing
+    <code>ecr:CreateRepository</code> or <code>ecr:BatchImportUpstreamImage</code> on the
+    <code>ecr-public/*</code> prefix — see the
+    <a href="serving.html#the-github-actions-deploy-role">Serving</a>
+    page's IAM notes.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The workflow consumes the <a href="serving.html">Serving</a> module's GitHub Actions role, ECR
+  repo, ECS cluster, and the staging API service. The image it builds is produced by the
+  <a href="../runtime/index.html">backend</a> Dockerfile, which reads the
+  <code>BASE_IMAGE_REGISTRY</code> ARG this workflow sets. The pull-through cache itself is a
+  shared-workspace resource — see the Serving page's shared-platform section. Post-launch, a sibling
+  prod job will be appended to this same workflow, assuming a separate
+  <code>mythrun-github-actions-production</code> role (<a href="serving.html">Serving</a>, follow-up
+  bead).
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Workflow triggers</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Trigger</th>
+      <th>Condition</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>push</code></td>
+      <td>
+        <code>main</code>, <code>paths-ignore</code>:
+        <code>docs/** .beads/** **/*.md wiki/** .github/wiki/**</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>workflow_dispatch</code></td>
+      <td>Manual run from the Actions UI on any branch listed under the staging Environment</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Job-level environment</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>AWS_REGION</code></td>
+      <td><code>us-east-1</code></td>
+    </tr>
+    <tr>
+      <td><code>ECR_REPO</code></td>
+      <td><code>mythrun</code></td>
+    </tr>
+    <tr>
+      <td><code>ECS_CLUSTER</code></td>
+      <td><code>mythrun</code></td>
+    </tr>
+    <tr>
+      <td><code>ECS_SERVICE</code></td>
+      <td><code>mythrun-staging-api</code></td>
+    </tr>
+    <tr>
+      <td><code>TASK_DEF_FAMILY</code></td>
+      <td><code>mythrun-staging-api</code></td>
+    </tr>
+    <tr>
+      <td><code>CONTAINER_NAME</code></td>
+      <td><code>api</code></td>
+    </tr>
+    <tr>
+      <td><code>API_HOSTNAME</code></td>
+      <td><code>staging-api.mythrun.com</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Timeouts</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Step</th>
+      <th>Limit</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Build job</td>
+      <td>15 min</td>
+    </tr>
+    <tr>
+      <td>Deploy job</td>
+      <td>20 min</td>
+    </tr>
+    <tr>
+      <td><code>wait-for-service-stability</code></td>
+      <td>15 min</td>
+    </tr>
+    <tr>
+      <td><code>rolloutState</code> poll</td>
+      <td>2 min (12 × 10 s)</td>
+    </tr>
+    <tr>
+      <td>Smoke test</td>
+      <td>3 attempts × 30 s</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p><code>.github/workflows/deploy.yml</code>, <code>.github/dependabot.yml</code>.</p>

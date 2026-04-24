@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html" class="active">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../runbooks/index.html">Runbooks</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html" class="active">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html">Serving</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html" class="active">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html">Serving</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra</div>
         <article>
@@ -59,6 +59,11 @@
   <li>
     <a href="serving.html">Serving</a> — ECS task definitions, services, target group, listener
     rule, DNS A-alias, IAM task roles, and the GitHub Actions deploy role.
+  </li>
+  <li>
+    <a href="ci-cd.html">CI/CD</a> — the push-to-deploy pipeline: two-job GitHub Actions workflow,
+    ECR pull-through cache, digest-pinned task-def revisions, rollout verification, and Dependabot
+    for SHA-pinned actions.
   </li>
 </ul>
 

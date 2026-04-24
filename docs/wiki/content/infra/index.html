@@ -1,7 +1,7 @@
 <!-- source: infra/ -->
 <!-- source: infra/scripts/bootstrap.sh -->
-<!-- source-hash: sha256:fb6751ccb0b81015672a984fd40dd628563136f5400cce3df9888bb328f69e38 -->
-<!-- last-ticket: MYT-30 -->
+<!-- source-hash: sha256:270a784e18c4bf3c7bd8331db7faff075e2155deb413c0a48385a4eb524ab23f -->
+<!-- last-ticket: MYT-28 -->
 
 <h1>Infra</h1>
 
@@ -36,6 +36,11 @@
   <li>
     <a href="serving.html">Serving</a> — ECS task definitions, services, target group, listener
     rule, DNS A-alias, IAM task roles, and the GitHub Actions deploy role.
+  </li>
+  <li>
+    <a href="ci-cd.html">CI/CD</a> — the push-to-deploy pipeline: two-job GitHub Actions workflow,
+    ECR pull-through cache, digest-pinned task-def revisions, rollout verification, and Dependabot
+    for SHA-pinned actions.
   </li>
 </ul>
 

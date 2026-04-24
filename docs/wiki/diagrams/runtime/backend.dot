@@ -16,8 +16,9 @@ digraph backend {
       label="backend/  (@mythrun/backend)";
       style="dotted";
       pkg     [label="package.json\ntsconfig.json"];
-      src     [label="src/server.ts\nFastify\nGET /health"];
-      tests   [label="src/__tests__/\nvitest"];
+      app     [label="src/app.ts\nbuildApp()\ncreateShutdown()"];
+      server  [label="src/server.ts\nlisten + SIGTERM/SIGINT"];
+      tests   [label="src/__tests__/\napp.test.ts\nshutdown.test.ts"];
     }
 
     subgraph cluster_wiki {
@@ -33,15 +34,17 @@ digraph backend {
     color="ember";
     fontcolor="ember";
 
-    builder [label="builder\nnode:24-alpine\npnpm install --frozen-lockfile\npnpm build\npnpm deploy --prod"];
-    runtime [label="runtime\nnode:24-alpine\ndumb-init\nnon-root mythrun\nEXPOSE 3000", color="ember", fontcolor="ember"];
+    builder [label="builder\nFROM $BASE/...:24-alpine\npnpm install --frozen-lockfile\npnpm build\npnpm deploy --prod"];
+    runtime [label="runtime\nFROM $BASE/...:24-alpine\ndumb-init\nnon-root mythrun\nEXPOSE 3000", color="ember", fontcolor="ember"];
   }
 
   port [label=":3000  /health", color="ember", fontcolor="ember"];
 
-  src     -> tests   [label="vitest", style=dashed];
-  pkg     -> builder [label="docker build"];
-  src     -> builder [style=invis];
+  app     -> server  [label="imports"];
+  app     -> tests   [label="vitest", style=dashed];
+  server  -> tests   [style=invis];
+  pkg     -> builder [label="docker build\n--build-arg\nBASE_IMAGE_REGISTRY"];
+  server  -> builder [style=invis];
   builder -> runtime [label="pnpm deploy\n/app/deploy"];
   runtime -> port    [label="HEALTHCHECK\nwget /health"];
 }
