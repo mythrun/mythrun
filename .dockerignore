@@ -35,3 +35,16 @@ infra
 .idea
 .DS_Store
 *.log
+
+# Additional tooling noise (MYT-28 tighten)
+**/.DS_Store
+*.tsbuildinfo
+wiki
+README.md
+ONBOARDING.md
+AGENTS.md
+CLAUDE.md
+.prettierignore
+.prettierrc.json
+.nvmrc
+eslint.config.js
