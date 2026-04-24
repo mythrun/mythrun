@@ -1,12 +1,14 @@
 # ---- builder ----
 # BASE_IMAGE_REGISTRY is the ECR pull-through-cache registry host (e.g.,
 # <account>.dkr.ecr.us-east-1.amazonaws.com). CI sets this via
-# --build-arg. Unset/empty → the FROM below resolves to a bare
-# "docker-hub/library/node:24-alpine" path that does NOT exist on Docker
-# Hub — local builds must pass --build-arg, or maintain a one-off
+# --build-arg. Unset/empty → the FROM below resolves to
+# "ecr-public/docker/library/node:24-alpine" which does NOT exist on
+# Docker Hub — local builds must pass --build-arg, or maintain a one-off
 # Dockerfile.local pointing at docker.io/library/node:24-alpine.
+# Upstream is ECR Public (public.ecr.aws) not Docker Hub directly —
+# Docker Hub pull-through now requires Secrets Manager auth.
 ARG BASE_IMAGE_REGISTRY=""
-FROM ${BASE_IMAGE_REGISTRY:+${BASE_IMAGE_REGISTRY}/}docker-hub/library/node:24-alpine AS builder
+FROM ${BASE_IMAGE_REGISTRY:+${BASE_IMAGE_REGISTRY}/}ecr-public/docker/library/node:24-alpine AS builder
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY backend/package.json ./backend/
@@ -20,7 +22,7 @@ RUN pnpm --filter @mythrun/backend deploy --prod /app/deploy
 # Note: ARG BASE_IMAGE_REGISTRY persists from the builder stage in multi-stage
 # Dockerfiles, but Docker requires redeclaration before each post-FROM reference.
 ARG BASE_IMAGE_REGISTRY=""
-FROM ${BASE_IMAGE_REGISTRY:+${BASE_IMAGE_REGISTRY}/}docker-hub/library/node:24-alpine
+FROM ${BASE_IMAGE_REGISTRY:+${BASE_IMAGE_REGISTRY}/}ecr-public/docker/library/node:24-alpine
 LABEL org.opencontainers.image.source="https://github.com/mythrun/mythrun"
 LABEL org.opencontainers.image.title="mythrun-backend"
 LABEL org.opencontainers.image.licenses="UNLICENSED"

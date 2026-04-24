@@ -76,17 +76,26 @@ resource "aws_ecr_lifecycle_policy" "mythrun" {
   })
 }
 
-# ======== ECR pull-through cache for Docker Hub ========
+# ======== ECR pull-through cache for Docker Hub (via ECR Public) ========
 # Routes base-image pulls (node:24-alpine et al.) through our ECR instead
 # of Docker Hub directly. Avoids the 100-pulls/6h anonymous rate limit
 # that GitHub-hosted runner IP pools can trigger at team scale, and
 # improves cold-start latency by keeping pulls in-region.
-# Cache repos (e.g., docker-hub/library/node) are auto-created on first pull.
-# IAM additions in the staging workspace's GH Actions role policy (MYT-28).
+#
+# Upstream is public.ecr.aws (ECR Public Gallery's mirror of Docker Hub
+# official images) rather than registry-1.docker.io — AWS's pull-through
+# cache for Docker Hub proper now requires Secrets Manager-stored auth
+# credentials, which we skip by going through the auth-free public mirror.
+# The `docker/library/*` namespace on ECR Public is the official Docker
+# Hub Library mirror.
+#
+# Cache repos (e.g., ecr-public/docker/library/node) are auto-created on
+# first pull. IAM additions live in the staging workspace's GH Actions
+# role policy (MYT-28).
 
-resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
-  ecr_repository_prefix = "docker-hub"
-  upstream_registry_url = "registry-1.docker.io"
+resource "aws_ecr_pull_through_cache_rule" "ecr_public" {
+  ecr_repository_prefix = "ecr-public"
+  upstream_registry_url = "public.ecr.aws"
 }
 
 # ======== GitHub Actions OIDC Provider ========
