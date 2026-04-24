@@ -5,3 +5,22 @@ export const buildApp = (): FastifyInstance => {
   app.get('/health', () => ({ status: 'ok' }))
   return app
 }
+
+export type ShutdownSignal = 'SIGTERM' | 'SIGINT'
+
+export type ShutdownHandler = (signal: ShutdownSignal) => Promise<void>
+
+export const createShutdown = (app: FastifyInstance): ShutdownHandler => {
+  return async (signal) => {
+    try {
+      app.log.info({ signal }, 'shutting down')
+      // Yield once so pino's async log queue drains before close.
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await app.close()
+      process.exit(0)
+    } catch (err) {
+      app.log.error({ err, signal }, 'error during shutdown')
+      process.exit(1)
+    }
+  }
+}
