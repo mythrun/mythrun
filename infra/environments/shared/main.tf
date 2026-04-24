@@ -63,7 +63,7 @@ resource "aws_ecr_lifecycle_policy" "mythrun" {
       },
       {
         rulePriority = 2
-        description  = "Keep 20 most recent tagged images"
+        description  = "Keep 50 most recent tagged images"
         selection = {
           tagStatus      = "tagged"
           tagPatternList = ["*"]
