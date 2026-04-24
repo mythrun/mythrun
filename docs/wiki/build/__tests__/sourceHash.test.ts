@@ -78,6 +78,21 @@ describe('computeSourceHash', () => {
     }
   })
 
+  it('excludes gitignored files from the hash (CI-portable)', async () => {
+    // The fixture's .gitignore matches `ignored-*.txt`. Writing such a file
+    // must not change the hash — otherwise local-only artifacts (terraform
+    // state, node_modules, etc.) would poison the hash on CI vs dev.
+    const before = await computeSourceHash(['moduleA'], fixtureRoot)
+    const ignored = resolve(fixtureRoot, 'moduleA/ignored-local-only.txt')
+    writeFileSync(ignored, 'should not affect hash\n')
+    try {
+      const after = await computeSourceHash(['moduleA'], fixtureRoot)
+      expect(after).toBe(before)
+    } finally {
+      unlinkSync(ignored)
+    }
+  })
+
   it('throws if a tracked path itself is a symlink', async () => {
     const linkPath = resolve(fixtureRoot, 'zz-link-dir')
     const target = resolve(fixtureRoot, 'moduleA')
