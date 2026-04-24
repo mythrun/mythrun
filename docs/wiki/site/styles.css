@@ -238,6 +238,105 @@ article svg text {
   font-family: var(--mono);
 }
 
+/* Diagram figure wrapper — hosts the SVG and the click-to-expand button. */
+.wiki-diagram {
+  position: relative;
+  margin: 16px 0;
+  padding: 0;
+}
+.wiki-diagram svg {
+  margin: 0; /* svg margins come from .wiki-diagram instead */
+}
+.wiki-diagram-expand {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--paper-100);
+  border: 1px solid var(--paper-300);
+  color: var(--paper-500);
+  cursor: pointer;
+  opacity: 0.7;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.wiki-diagram:hover .wiki-diagram-expand,
+.wiki-diagram-expand:focus-visible {
+  opacity: 1;
+}
+.wiki-diagram-expand:hover {
+  color: var(--ember-600);
+  border-color: var(--ember-600);
+}
+.wiki-diagram-expand svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* Expand modal — dark backdrop, paper-100 inner, diagram at viewport scale. */
+.wiki-diagram-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(35, 27, 18, 0.88);
+  z-index: 100;
+  padding: 32px;
+}
+.wiki-diagram-modal.open {
+  display: flex;
+}
+.wiki-diagram-modal-inner {
+  background: var(--paper-100);
+  border: 1px solid var(--paper-300);
+  padding: 24px;
+  max-width: min(90vw, 1400px);
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+.wiki-diagram-modal-inner svg {
+  max-width: 100%;
+  max-height: calc(90vh - 48px);
+  width: auto;
+  height: auto;
+  display: block;
+}
+.wiki-diagram-modal-inner svg text {
+  font-family: var(--mono);
+}
+.wiki-diagram-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  background: transparent;
+  border: 1px solid var(--paper-300);
+  color: var(--paper-100);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.wiki-diagram-modal-close:hover {
+  color: var(--ember-600);
+  border-color: var(--ember-600);
+}
+
 /* Inline rationale callouts — visually distinct from the surrounding narrative
  * so the reader's eye can choose to engage or skip. Authored by the subagent
  * at the paragraph where each non-obvious decision is first referenced. */

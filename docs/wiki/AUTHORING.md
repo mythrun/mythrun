@@ -238,11 +238,13 @@ Never paste raw terraform graph output, raw tf blocks, or raw code. The wiki is
 illustrative, not instructional.
 
 STEP 6 — BUILD
-pnpm wiki:build     # regenerates site/ including the Runbooks auto-index
-pnpm wiki:check     # must exit 0
+pnpm wiki:build      # regenerates site/ including the Runbooks auto-index
+pnpm wiki:check      # must exit 0
+pnpm format:check    # must exit 0 — run `npx prettier --write docs/wiki/content/`
+                     # if it flags any new pages you authored
 
-If wiki:check fails, fix the underlying issue (missing source path, orphan page,
-stale hash) and loop.
+If any of these fail, fix the underlying issue (missing source path, orphan
+page, stale hash, prettier violation) and loop.
 
 STEP 7 — COMMIT
 Commit message:

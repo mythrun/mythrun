@@ -119,6 +119,21 @@ function renderCrumbs(
   return `<a href="${rootPath}index.html">Wiki</a> › ${sectionTitle} › ${pageTitle}`
 }
 
+const EXPAND_ICON_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>'
+
+function wrapDiagramForExpand(svg: string): string {
+  return [
+    '<figure class="wiki-diagram">',
+    '  ',
+    svg,
+    '  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">',
+    `    ${EXPAND_ICON_SVG}`,
+    '  </button>',
+    '</figure>',
+  ].join('\n')
+}
+
 async function resolveDiagrams(
   content: string,
   root: string,
@@ -136,7 +151,7 @@ async function resolveDiagrams(
     const dotPath = join(root, 'diagrams', `${id}.dot`)
     const dotSource = await readFile(dotPath, 'utf-8')
     const svg = await renderDot(dotSource, header)
-    result = result.replace(match[0], svg)
+    result = result.replace(match[0], wrapDiagramForExpand(svg))
     count += 1
   }
   return { html: result, count }

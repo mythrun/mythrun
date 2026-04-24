@@ -41,10 +41,10 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>AWS manages the master password</strong> — <code>manage_master_user_password = true</code>
-  puts the <code>mythrun_admin</code> password in an AWS-managed Secrets Manager entry that
-  Terraform never sees. The password is never in state, never in plan output, never in a tfvars
-  file. Rotations are an AWS-side concern.
+  <strong>AWS manages the master password</strong> —
+  <code>manage_master_user_password = true</code> puts the <code>mythrun_admin</code> password in an
+  AWS-managed Secrets Manager entry that Terraform never sees. The password is never in state, never
+  in plan output, never in a tfvars file. Rotations are an AWS-side concern.
 </aside>
 
 <p>
@@ -68,9 +68,8 @@
 <p>
   Redis 7.1 on <code>cache.t4g.micro</code>, single-node replication group. Encrypted at rest, TLS
   required on the wire (<code>transit_encryption_mode = required</code>), AUTH token required on
-  every connection. <code>maxmemory-policy</code> is <code>volatile-lru</code> — the app is
-  expected to set TTLs on anything cacheable and leave session state without TTL so it isn't
-  evicted.
+  every connection. <code>maxmemory-policy</code> is <code>volatile-lru</code> — the app is expected
+  to set TTLs on anything cacheable and leave session state without TTL so it isn't evicted.
 </p>
 
 <aside class="wiki-rationale">
@@ -97,8 +96,8 @@
 
 <ul>
   <li>
-    <strong>AWS-managed RDS master secret</strong> — auto-created by the RDS instance; never read
-    by the app. Used only by <a href="#bootstrap-databases">bootstrap-databases.sh</a>.
+    <strong>AWS-managed RDS master secret</strong> — auto-created by the RDS instance; never read by
+    the app. Used only by <a href="#bootstrap-databases">bootstrap-databases.sh</a>.
   </li>
   <li>
     <strong><code>mythrun/shared/redis-auth</code></strong> — written once by Terraform, then opted
@@ -118,7 +117,10 @@
 
 <h3 id="bootstrap-databases">Bootstrap databases for an environment</h3>
 <ol>
-  <li>Run from inside the VPC — RDS isn't publicly accessible. A one-shot ECS task on the shared cluster is the supported path.</li>
+  <li>
+    Run from inside the VPC — RDS isn't publicly accessible. A one-shot ECS task on the shared
+    cluster is the supported path.
+  </li>
   <li>
     Pass <code>--env staging</code> or <code>--env production</code>. The task role needs
     <code>secretsmanager:GetSecretValue</code> on the RDS master secret ARN and
@@ -138,8 +140,9 @@
     Generate a new token and write it to <code>mythrun/shared/redis-auth</code> in Secrets Manager.
   </li>
   <li>
-    Apply the new token to Redis: <code>aws elasticache modify-replication-group
-    --auth-token-update-strategy SET</code> (or the AWS console).
+    Apply the new token to Redis:
+    <code>aws elasticache modify-replication-group --auth-token-update-strategy SET</code> (or the
+    AWS console).
   </li>
   <li>
     Do not taint the Terraform <code>random_password</code> resource and re-apply — both the secret
@@ -158,8 +161,9 @@
   </li>
   <li>
     <code>MISSING</code> → run with no flags. <code>DB_ONLY</code> → run with
-    <code>--user-only</code>. <code>SECRET_MISSING</code> → run with <code>--secret-only</code>
-    (rotates the password via <code>ALTER USER</code> and writes the new value).
+    <code>--user-only</code>. <code>SECRET_MISSING</code> → run with
+    <code>--secret-only</code> (rotates the password via <code>ALTER USER</code> and writes the new
+    value).
   </li>
 </ol>
 
@@ -183,14 +187,38 @@
     </tr>
   </thead>
   <tbody>
-    <tr><td><code>environment</code></td><td>—</td></tr>
-    <tr><td><code>private_subnet_ids</code></td><td>— (must span 2 AZs)</td></tr>
-    <tr><td><code>rds_sg_id</code>, <code>redis_sg_id</code></td><td>—</td></tr>
-    <tr><td><code>rds_instance_class</code></td><td><code>db.t4g.micro</code></td></tr>
-    <tr><td><code>rds_allocated_storage</code></td><td><code>20</code> GB</td></tr>
-    <tr><td><code>rds_max_allocated_storage</code></td><td><code>50</code> GB</td></tr>
-    <tr><td><code>redis_node_type</code></td><td><code>cache.t4g.micro</code></td></tr>
-    <tr><td><code>redis_engine_version</code></td><td><code>7.1</code></td></tr>
+    <tr>
+      <td><code>environment</code></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>private_subnet_ids</code></td>
+      <td>— (must span 2 AZs)</td>
+    </tr>
+    <tr>
+      <td><code>rds_sg_id</code>, <code>redis_sg_id</code></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>rds_instance_class</code></td>
+      <td><code>db.t4g.micro</code></td>
+    </tr>
+    <tr>
+      <td><code>rds_allocated_storage</code></td>
+      <td><code>20</code> GB</td>
+    </tr>
+    <tr>
+      <td><code>rds_max_allocated_storage</code></td>
+      <td><code>50</code> GB</td>
+    </tr>
+    <tr>
+      <td><code>redis_node_type</code></td>
+      <td><code>cache.t4g.micro</code></td>
+    </tr>
+    <tr>
+      <td><code>redis_engine_version</code></td>
+      <td><code>7.1</code></td>
+    </tr>
   </tbody>
 </table>
 
@@ -203,12 +231,30 @@
     </tr>
   </thead>
   <tbody>
-    <tr><td><code>rds_endpoint</code></td><td>string (hostname, no port)</td></tr>
-    <tr><td><code>rds_port</code></td><td>number</td></tr>
-    <tr><td><code>rds_master_user_secret_arn</code></td><td>string (sensitive)</td></tr>
-    <tr><td><code>redis_endpoint</code></td><td>string</td></tr>
-    <tr><td><code>redis_port</code></td><td>number (6379)</td></tr>
-    <tr><td><code>redis_auth_secret_arn</code></td><td>string (sensitive)</td></tr>
+    <tr>
+      <td><code>rds_endpoint</code></td>
+      <td>string (hostname, no port)</td>
+    </tr>
+    <tr>
+      <td><code>rds_port</code></td>
+      <td>number</td>
+    </tr>
+    <tr>
+      <td><code>rds_master_user_secret_arn</code></td>
+      <td>string (sensitive)</td>
+    </tr>
+    <tr>
+      <td><code>redis_endpoint</code></td>
+      <td>string</td>
+    </tr>
+    <tr>
+      <td><code>redis_port</code></td>
+      <td>number (6379)</td>
+    </tr>
+    <tr>
+      <td><code>redis_auth_secret_arn</code></td>
+      <td>string (sensitive)</td>
+    </tr>
   </tbody>
 </table>
 

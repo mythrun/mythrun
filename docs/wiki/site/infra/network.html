@@ -33,6 +33,8 @@
   groups that carve out who can talk to whom.
 </p>
 
+<figure class="wiki-diagram">
+  
 <svg width="1136pt" height="226pt"
  viewBox="14.00 14.00 1122.00 211.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 207.4)">
@@ -178,6 +180,10 @@
 </g>
 </svg>
 
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
 
 <h2 id="how-it-fits-together">How it fits together</h2>
 
@@ -191,8 +197,8 @@
 <aside class="wiki-rationale">
   <strong>Two AZs, not three</strong> — RDS needs a DB subnet group spanning at least two AZs even
   for Single-AZ instances. Three AZs at launch would add a third NAT-gateway-sized cost without
-  changing availability for anything we're running today. The module accepts a list and can be bumped
-  to three without a rewrite.
+  changing availability for anything we're running today. The module accepts a list and can be
+  bumped to three without a rewrite.
 </aside>
 
 <aside class="wiki-rationale">
@@ -204,20 +210,26 @@
 
 <h2 id="security-groups">Security groups</h2>
 
-<p>Four SGs carve out traffic paths, each with ingress and egress declared as separate resources:</p>
+<p>
+  Four SGs carve out traffic paths, each with ingress and egress declared as separate resources:
+</p>
 
 <ul>
   <li><code>alb</code> — inbound 443 from the internet; egress to anywhere.</li>
-  <li><code>ecs</code> — inbound 3000 from the ALB SG; egress to 443 on the internet, 5432 to RDS, 6379 to Redis.</li>
+  <li>
+    <code>ecs</code> — inbound 3000 from the ALB SG; egress to 443 on the internet, 5432 to RDS,
+    6379 to Redis.
+  </li>
   <li><code>rds</code> — inbound 5432 from the ECS SG; no egress.</li>
   <li><code>redis</code> — inbound 6379 from the ECS SG; no egress.</li>
 </ul>
 
 <aside class="wiki-rationale">
-  <strong>No default egress on SGs</strong> — Terraform's <code>aws_security_group</code> now creates
-  groups with no egress rules unless you add them, and all four SGs declare egress explicitly. RDS and
-  Redis have no egress at all: they have no legitimate outbound need, and the deny is a cheap
-  defense-in-depth layer if something is ever accidentally launched into the wrong group.
+  <strong>No default egress on SGs</strong> — Terraform's <code>aws_security_group</code> now
+  creates groups with no egress rules unless you add them, and all four SGs declare egress
+  explicitly. RDS and Redis have no egress at all: they have no legitimate outbound need, and the
+  deny is a cheap defense-in-depth layer if something is ever accidentally launched into the wrong
+  group.
 </aside>
 
 <p>
@@ -238,8 +250,8 @@
 <h2 id="integration-points">Integration points</h2>
 
 <p>
-  The <a href="data.html">Data</a> module places RDS and Redis into the private subnets and
-  attaches them to the <code>rds</code> and <code>redis</code> SGs. The
+  The <a href="data.html">Data</a> module places RDS and Redis into the private subnets and attaches
+  them to the <code>rds</code> and <code>redis</code> SGs. The
   <a href="serving.html">Serving</a> module places ECS tasks into the private subnets under the
   <code>ecs</code> SG, and the shared ALB lives in the public subnets under the <code>alb</code>
   SG.
@@ -302,7 +314,10 @@
       <td>list of 2</td>
     </tr>
     <tr>
-      <td><code>alb_sg_id</code>, <code>ecs_sg_id</code>, <code>rds_sg_id</code>, <code>redis_sg_id</code></td>
+      <td>
+        <code>alb_sg_id</code>, <code>ecs_sg_id</code>, <code>rds_sg_id</code>,
+        <code>redis_sg_id</code>
+      </td>
       <td>string</td>
     </tr>
     <tr>

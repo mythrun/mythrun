@@ -16,29 +16,31 @@
 
 <p>
   The <code>dns</code> module lives in the shared workspace because the zone is cross-environment:
-  staging and production subdomains (<code>staging-api</code>, <code>api</code>, apex, <code>www</code>)
-  all resolve through the same authoritative nameservers, and one wildcard cert fronts all of them.
-  The module creates the public hosted zone, replays the email record set from the pre-cutover
-  Squarespace audit, and provisions a validated wildcard ACM certificate whose ARN is re-exported
-  for per-env consumers.
+  staging and production subdomains (<code>staging-api</code>, <code>api</code>, apex,
+  <code>www</code>) all resolve through the same authoritative nameservers, and one wildcard cert
+  fronts all of them. The module creates the public hosted zone, replays the email record set from
+  the pre-cutover Squarespace audit, and provisions a validated wildcard ACM certificate whose ARN
+  is re-exported for per-env consumers.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Zone lives in <code>shared/</code>, not per-env</strong> — there is exactly one
   <code>mythrun.com</code>. Putting the zone in staging or production would either duplicate
-  nameserver assignments (you can only delegate to one set) or force production to depend on
-  staging state. Shared is the only placement that doesn't create a false hierarchy between envs.
+  nameserver assignments (you can only delegate to one set) or force production to depend on staging
+  state. Shared is the only placement that doesn't create a false hierarchy between envs.
 </aside>
 
 <h2>The email record set</h2>
 
 <p>
   Google Workspace mail is load-bearing — it's Miklos's inbox. The cutover rule was
-  <em>replicate the Squarespace records exactly, verify against AWS nameservers before flipping the
-  registrar, and swap NS only once resolution is green.</em> Nine records carry the entire email
-  surface: five MX rows (Google's four aspmx hosts at priorities 1/5/5/10/10), an apex TXT
-  collapsing SPF and Google site-verification into one RRSET, a DMARC record at
-  <code>_dmarc</code>, and a DKIM record at <code>google._domainkey</code>.
+  <em
+    >replicate the Squarespace records exactly, verify against AWS nameservers before flipping the
+    registrar, and swap NS only once resolution is green.</em
+  >
+  Nine records carry the entire email surface: five MX rows (Google's four aspmx hosts at priorities
+  1/5/5/10/10), an apex TXT collapsing SPF and Google site-verification into one RRSET, a DMARC
+  record at <code>_dmarc</code>, and a DKIM record at <code>google._domainkey</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -49,12 +51,12 @@
 
 <p>
   DKIM is the record with a wire-format quirk. A DNS TXT string is capped at 255 octets; DKIM public
-  keys are ~256–400 chars, so the value has to be split into multiple character-strings. The
-  AWS provider already wraps each <code>records[]</code> element in outer double-quotes before
-  sending to Route 53, so the Terraform expression produces chunks joined by the literal
+  keys are ~256–400 chars, so the value has to be split into multiple character-strings. The AWS
+  provider already wraps each <code>records[]</code> element in outer double-quotes before sending
+  to Route 53, so the Terraform expression produces chunks joined by the literal
   <code>" "</code> sequence <em>without</em> its own outer quotes. After the provider wraps, Route
-  53 receives <code>"chunk1" "chunk2"</code> — a single TXT record composed of two character-strings,
-  which is exactly the DKIM wire format.
+  53 receives <code>"chunk1" "chunk2"</code> — a single TXT record composed of two
+  character-strings, which is exactly the DKIM wire format.
 </p>
 
 <aside class="wiki-rationale">
@@ -69,8 +71,8 @@
 
 <p>
   A single <code>aws_acm_certificate</code> covers the apex (<code>mythrun.com</code>) plus any
-  one-label subdomain (<code>*.mythrun.com</code>). Two-label subdomains would need their own SANs
-  — a non-concern at launch. Validation is DNS-01: ACM returns one CNAME record per unique parent
+  one-label subdomain (<code>*.mythrun.com</code>). Two-label subdomains would need their own SANs —
+  a non-concern at launch. Validation is DNS-01: ACM returns one CNAME record per unique parent
   domain, Terraform publishes it via <code>for_each</code>, and a
   <code>aws_acm_certificate_validation</code> waiter blocks downstream use until ACM flips the cert
   to <code>ISSUED</code>. The outputs re-export the waiter's <code>certificate_arn</code>, not the
@@ -93,8 +95,8 @@
   <code>dns_zone_id</code>, <code>dns_zone_name</code>, <code>name_servers</code> (informational
   after the cutover), and <code>wildcard_cert_arn</code>. Per-env workspaces read them via
   <code>data.terraform_remote_state.shared</code> and use them to build A-alias records for their
-  ALB targets and to attach the wildcard cert to their HTTPS listeners. The shared workspace's
-  HTTPS listener itself also consumes <code>module.dns.wildcard_cert_arn</code> directly.
+  ALB targets and to attach the wildcard cert to their HTTPS listeners. The shared workspace's HTTPS
+  listener itself also consumes <code>module.dns.wildcard_cert_arn</code> directly.
 </p>
 
 <h2>Operating this piece</h2>
@@ -114,9 +116,9 @@
     records + ACM cert provision, but the cert stays <code>PENDING_VALIDATION</code> until step 5.
   </li>
   <li>
-    Verify every email record resolves against AWS nameservers directly: <code>dig
-    @ns-XXX.awsdns-XX.com +short MX mythrun.com</code> (and the same for each TXT). Gate the
-    cutover on all of them matching the Squarespace audit.
+    Verify every email record resolves against AWS nameservers directly:
+    <code>dig @ns-XXX.awsdns-XX.com +short MX mythrun.com</code> (and the same for each TXT). Gate
+    the cutover on all of them matching the Squarespace audit.
   </li>
   <li>
     At the registrar, swap nameservers to the four AWS NS values printed by
@@ -162,9 +164,9 @@
 
 <p>
   The wildcard cert lands on the <a href="index.html">shared ALB's HTTPS listener</a>; per-env
-  <a href="network.html">serving infrastructure</a> attaches host-based listener rules and
-  publishes its own A-alias records into this zone. Email flows through the MX records to Google
-  Workspace; that boundary is opaque to Mythrun.
+  <a href="network.html">serving infrastructure</a> attaches host-based listener rules and publishes
+  its own A-alias records into this zone. Email flows through the MX records to Google Workspace;
+  that boundary is opaque to Mythrun.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -235,11 +237,31 @@
     </tr>
   </thead>
   <tbody>
-    <tr><td>apex</td><td>MX</td><td>Five Google Workspace mail servers (priorities 1/5/5/10/10).</td></tr>
-    <tr><td>apex</td><td>TXT</td><td>SPF + Google site verification (one RRSET, two strings).</td></tr>
-    <tr><td><code>_dmarc</code></td><td>TXT</td><td>DMARC policy: <code>p=quarantine</code>, <code>rua=dev@</code>.</td></tr>
-    <tr><td><code>google._domainkey</code></td><td>TXT</td><td>DKIM public key, multi-string encoded.</td></tr>
-    <tr><td>ACM-assigned</td><td>CNAME</td><td>Wildcard cert DNS-01 validation (one per unique parent).</td></tr>
+    <tr>
+      <td>apex</td>
+      <td>MX</td>
+      <td>Five Google Workspace mail servers (priorities 1/5/5/10/10).</td>
+    </tr>
+    <tr>
+      <td>apex</td>
+      <td>TXT</td>
+      <td>SPF + Google site verification (one RRSET, two strings).</td>
+    </tr>
+    <tr>
+      <td><code>_dmarc</code></td>
+      <td>TXT</td>
+      <td>DMARC policy: <code>p=quarantine</code>, <code>rua=dev@</code>.</td>
+    </tr>
+    <tr>
+      <td><code>google._domainkey</code></td>
+      <td>TXT</td>
+      <td>DKIM public key, multi-string encoded.</td>
+    </tr>
+    <tr>
+      <td>ACM-assigned</td>
+      <td>CNAME</td>
+      <td>Wildcard cert DNS-01 validation (one per unique parent).</td>
+    </tr>
   </tbody>
 </table>
 

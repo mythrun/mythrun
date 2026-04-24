@@ -65,16 +65,16 @@
 <p>
   Two workspaces consume those modules: <code>shared/</code> creates the single cross-environment
   footprint (VPC, ALB, ECS cluster, ECR repo, GitHub OIDC provider, RDS, Redis, DNS zone + wildcard
-  cert — resources we don't double up per env), and <code>staging/</code> creates per-env
-  resources that read shared outputs via <code>terraform_remote_state</code>: task defs and
-  services, per-env secret shells, the scoped GitHub Actions IAM role, and an SNS alerts topic.
+  cert — resources we don't double up per env), and <code>staging/</code> creates per-env resources
+  that read shared outputs via <code>terraform_remote_state</code>: task defs and services, per-env
+  secret shells, the scoped GitHub Actions IAM role, and an SNS alerts topic.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Shared vs per-env split</strong> — a second Postgres or VPC would double cost without
-  buying anything real in staging. Sensitive boundaries (per-env databases, per-env app users, per-env
-  IAM roles) sit inside the shared infrastructure; noisy-neighbor and blast-radius concerns are
-  revisited before production traffic lands.
+  buying anything real in staging. Sensitive boundaries (per-env databases, per-env app users,
+  per-env IAM roles) sit inside the shared infrastructure; noisy-neighbor and blast-radius concerns
+  are revisited before production traffic lands.
 </aside>
 
 <h2 id="state-and-bootstrap">State and bootstrap</h2>
@@ -98,7 +98,9 @@
 <h3 id="create-the-state-bucket-in-a-new-aws-account">Create the state bucket in a new AWS account</h3>
 <ol>
   <li>Configure AWS credentials for the target account.</li>
-  <li>Verify <code>terraform &gt;= 1.10</code> and <code>jq</code> are on the <code>PATH</code>.</li>
+  <li>
+    Verify <code>terraform &gt;= 1.10</code> and <code>jq</code> are on the <code>PATH</code>.
+  </li>
   <li>Run <code>bash infra/scripts/bootstrap.sh</code>.</li>
   <li>
     The script is idempotent — re-running against an existing bucket reconciles its settings without
@@ -174,7 +176,9 @@
     <tr>
       <td><code>staging</code></td>
       <td><code>environments/staging/terraform.tfstate</code></td>
-      <td>Serving module + per-env secret shells + GH Actions role + SNS alerts (reads shared state)</td>
+      <td>
+        Serving module + per-env secret shells + GH Actions role + SNS alerts (reads shared state)
+      </td>
     </tr>
   </tbody>
 </table>

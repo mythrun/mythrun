@@ -34,6 +34,8 @@
   runtime image.
 </p>
 
+<figure class="wiki-diagram">
+  
 <svg width="1040pt" height="446pt"
  viewBox="14.00 14.00 1026.00 431.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 427.4)">
@@ -156,6 +158,10 @@
 </g>
 </svg>
 
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
 
 <h2 id="how-it-fits-together">How it fits together</h2>
 
@@ -163,48 +169,49 @@
   The repository is a pnpm monorepo. The root <code>package.json</code> pins
   <code>pnpm@10.30.3</code> via <code>packageManager</code> and <code>node &gt;= 24</code> via
   <code>engines</code>; <code>pnpm-workspace.yaml</code> declares two workspace packages today —
-  <code>backend/</code> and <code>docs/wiki/</code> — and the root exposes the single-word
-  verbs (<code>pnpm test</code>, <code>pnpm typecheck</code>, <code>pnpm lint</code>,
+  <code>backend/</code> and <code>docs/wiki/</code> — and the root exposes the single-word verbs
+  (<code>pnpm test</code>, <code>pnpm typecheck</code>, <code>pnpm lint</code>,
   <code>pnpm build</code>) that fan out across every workspace via <code>pnpm -r</code>.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Monorepo from day one, not a polyrepo</strong> — the backend, the wiki, and every future
   piece (prep worker, frontend, Terraform-companion tools) share a lockfile, a TypeScript version,
-  and a single CI run. A second repo would double tooling for no real isolation: all of these
-  deploy together.
+  and a single CI run. A second repo would double tooling for no real isolation: all of these deploy
+  together.
 </aside>
 
 <p>
   The <code>backend/</code> workspace is <code>@mythrun/backend</code>. It depends on Fastify and
-  nothing else in production, with <code>tsx</code>, <code>typescript</code>, and <code>vitest</code>
-  as dev dependencies. The source tree is intentionally shallow right now: <code>src/server.ts</code>
-  exports a <code>buildApp()</code> factory and, on import, listens on <code>PORT</code> (default
-  <code>3000</code>) bound to <code>0.0.0.0</code>. The factory exists so the test file in
-  <code>src/__tests__/server.test.ts</code> can build an app and drive it via
+  nothing else in production, with <code>tsx</code>, <code>typescript</code>, and
+  <code>vitest</code> as dev dependencies. The source tree is intentionally shallow right now:
+  <code>src/server.ts</code> exports a <code>buildApp()</code> factory and, on import, listens on
+  <code>PORT</code> (default <code>3000</code>) bound to <code>0.0.0.0</code>. The factory exists so
+  the test file in <code>src/__tests__/server.test.ts</code> can build an app and drive it via
   <code>app.inject()</code> without opening a socket.
 </p>
 
 <aside class="wiki-rationale">
   <strong><code>buildApp</code> factory, not a top-level instance</strong> — Fastify's
-  <code>inject</code> method needs a built-but-not-listening app. Exporting a factory means the
-  same file serves both the production boot path and the tests, with no duplicated wiring.
+  <code>inject</code> method needs a built-but-not-listening app. Exporting a factory means the same
+  file serves both the production boot path and the tests, with no duplicated wiring.
 </aside>
 
 <h2 id="typescript-and-lint">TypeScript and lint</h2>
 
 <p>
   The backend's <code>tsconfig.json</code> turns on every strictness knob that changes code —
-  <code>strict</code>, <code>noUncheckedIndexedAccess</code>, <code>exactOptionalPropertyTypes</code>
-  — with ES2023/NodeNext module resolution. <code>tsconfig.build.json</code> extends it and
-  excludes <code>__tests__/</code> so the built <code>dist/</code> carries only runtime code.
+  <code>strict</code>, <code>noUncheckedIndexedAccess</code>,
+  <code>exactOptionalPropertyTypes</code> — with ES2023/NodeNext module resolution.
+  <code>tsconfig.build.json</code> extends it and excludes <code>__tests__/</code> so the built
+  <code>dist/</code> carries only runtime code.
 </p>
 
 <p>
   ESLint sits at the repo root and runs against every workspace. The config composes
-  <code>typescript-eslint</code>'s strict + stylistic type-checked presets, adds a repo-specific
-  ban on default exports (<code>no-restricted-syntax</code>), caps modules at 400 lines and
-  functions at 50, and forbids <code>any</code> and non-null assertions outright.
+  <code>typescript-eslint</code>'s strict + stylistic type-checked presets, adds a repo-specific ban
+  on default exports (<code>no-restricted-syntax</code>), caps modules at 400 lines and functions at
+  50, and forbids <code>any</code> and non-null assertions outright.
   <code>eslint-config-prettier</code> is applied last so Prettier owns formatting.
 </p>
 
@@ -213,8 +220,8 @@
 <p>
   <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. The builder
   stage copies the root lockfile, <code>.npmrc</code>, and the backend's <code>package.json</code>,
-  runs <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the
-  source and builds. The last step of the builder is
+  runs <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the source
+  and builds. The last step of the builder is
   <code>pnpm --filter @mythrun/backend deploy --prod /app/deploy</code>, which produces a
   self-contained directory with only the backend's production dependencies. The runtime stage is a
   fresh <code>node:24-alpine</code> that installs <code>dumb-init</code>, creates a non-root
@@ -225,21 +232,21 @@
 <aside class="wiki-rationale">
   <strong><code>pnpm deploy</code> instead of copying <code>node_modules</code></strong> — a
   workspace's <code>node_modules</code> is a forest of symlinks pointing back into the pnpm store
-  and sibling packages. Copying that across a stage gives you dangling symlinks. <code>pnpm
-  deploy</code> materializes a proper single-package tree suitable for the runtime image.
+  and sibling packages. Copying that across a stage gives you dangling symlinks.
+  <code>pnpm deploy</code> materializes a proper single-package tree suitable for the runtime image.
 </aside>
 
 <aside class="wiki-rationale">
   <strong><code>inject-workspace-packages=true</code> in <code>.npmrc</code></strong> — without
   this, <code>pnpm deploy</code> refuses to bundle workspace dependencies without the
-  <code>--legacy</code> flag. The flag worked but is deprecated; the <code>.npmrc</code> setting
-  is the supported path on pnpm 10.
+  <code>--legacy</code> flag. The flag worked but is deprecated; the <code>.npmrc</code> setting is
+  the supported path on pnpm 10.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong><code>dumb-init</code> as PID 1</strong> — Node.js doesn't reap zombie children or
-  forward signals correctly when it runs as PID 1 under Docker. <code>dumb-init</code> is ~20 KB,
-  forwards SIGTERM so <code>docker stop</code> shuts down gracefully, and costs nothing at idle.
+  <strong><code>dumb-init</code> as PID 1</strong> — Node.js doesn't reap zombie children or forward
+  signals correctly when it runs as PID 1 under Docker. <code>dumb-init</code> is ~20 KB, forwards
+  SIGTERM so <code>docker stop</code> shuts down gracefully, and costs nothing at idle.
 </aside>
 
 <aside class="wiki-rationale">
@@ -250,18 +257,19 @@
 
 <p>
   The image declares a <code>HEALTHCHECK</code> that hits <code>http://localhost:3000/health</code>
-  every 30 s. Dockerfile metadata carries the OCI source/title/license labels so registries render
-  a useful preview without a separate manifest step.
+  every 30 s. Dockerfile metadata carries the OCI source/title/license labels so registries render a
+  useful preview without a separate manifest step.
 </p>
 
 <h2 id="the-dockerignore-pair">The <code>.dockerignore</code> pair</h2>
 
 <p>
   Two <code>.dockerignore</code> files work together. The root one is authoritative — it's what
-  Docker reads when the build context is the repo root (<code>docker build -f backend/Dockerfile
-  .</code>). It excludes <code>node_modules</code>, <code>dist</code>, tests, docs, Terraform,
-  tracker state, and every editor/OS droppings pattern. <code>backend/.dockerignore</code> is a
-  narrower duplicate kept alongside the Dockerfile as a readable hint for anyone building with
+  Docker reads when the build context is the repo root (<code
+    >docker build -f backend/Dockerfile .</code
+  >). It excludes <code>node_modules</code>, <code>dist</code>, tests, docs, Terraform, tracker
+  state, and every editor/OS droppings pattern. <code>backend/.dockerignore</code> is a narrower
+  duplicate kept alongside the Dockerfile as a readable hint for anyone building with
   <code>backend/</code> as context; Docker only uses it in that case.
 </p>
 
@@ -307,7 +315,9 @@
 
 <h3 id="add-a-new-workspace-package">Add a new workspace package</h3>
 <ol>
-  <li>Create the directory with its own <code>package.json</code> (scoped <code>@mythrun/*</code>).</li>
+  <li>
+    Create the directory with its own <code>package.json</code> (scoped <code>@mythrun/*</code>).
+  </li>
   <li>
     Add the directory to <code>pnpm-workspace.yaml</code>. Root <code>pnpm -r</code> commands pick
     it up automatically.
@@ -325,11 +335,11 @@
 <h2 id="integration-points">Integration points</h2>
 
 <p>
-  The <a href="../infra/data.html">data plane</a> owns the Postgres and Redis endpoints this
-  service will eventually connect to; the <a href="../infra/network.html">network</a> module
-  owns the <code>ecs</code> security group the container will launch into. Cognitive-tier code
-  (Fast Thinker, Slow Thinker, Scribe, DM Trigger) lands as additional modules under
-  <code>backend/src/</code>; they'll share this server's lifecycle, config, and Dockerfile.
+  The <a href="../infra/data.html">data plane</a> owns the Postgres and Redis endpoints this service
+  will eventually connect to; the <a href="../infra/network.html">network</a> module owns the
+  <code>ecs</code> security group the container will launch into. Cognitive-tier code (Fast Thinker,
+  Slow Thinker, Scribe, DM Trigger) lands as additional modules under <code>backend/src/</code>;
+  they'll share this server's lifecycle, config, and Dockerfile.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
