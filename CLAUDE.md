@@ -116,6 +116,7 @@ Work continuously through implementation batches without stopping for per-task r
 - Tier boundaries are hard. If you're tempted to pass plot info to the Fast Thinker, stop. That's a bug.
 - Session Close Protocol: `git status` → `git add` → `git commit` → `git push`. Work is not done until pushed.
 - Wiki is not optional. Every Linear issue that ships code or infra updates the wiki in the same session, via the hook-dispatched subagent. CI (`pnpm wiki:check`) gates merges on wiki freshness.
+- **Never accept an unexplained failure.** When something doesn't work for a reason you don't understand, *finding the root cause is the task* — not a nice-to-have. Read docs, search issues, dispatch a research subagent, file a question. Only propose workarounds or concessions *after* you can name the cause. "It just doesn't work, let's ship the reduced version" is never the right call by itself; sometimes the reduced version is right, but only once you can explain what's actually happening.
 
 ## The Prototype Repo
 

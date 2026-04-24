@@ -108,11 +108,17 @@ module "serving" {
 # Trust policy hardens against:
 #   - missing audience (aud must be sts.amazonaws.com)
 #   - wrong repo (repository must be mythrun/mythrun)
-#   - org rename/reclaim attacks (repository_owner_id is the numeric ID)
+#   - repo-rename AND org-rename/reclaim attacks (repository_id is the numeric
+#     repo ID, immutable across renames — see MYT-28 debugging history)
 #   - wrong GitHub Environment (must be 'staging')
 #   - wrong branch (must be main)
 # All conditions are StringEquals — StringLike with no wildcards would behave
 # identically today but invite silent broadening on a future refactor.
+#
+# Historical note (MYT-28, 2026-04-24): we originally pinned `repository_owner_id`
+# but AWS silently rejects that key — it's not in the IAM allowlist of supported
+# GitHub OIDC condition keys. Swapped to `repository_id` (strictly stronger: a
+# specific repo ID implies a specific owner).
 
 data "aws_iam_policy_document" "gh_actions_trust" {
   statement {
@@ -137,8 +143,8 @@ data "aws_iam_policy_document" "gh_actions_trust" {
 
     condition {
       test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:repository_owner_id"
-      values   = [var.github_repository_owner_id]
+      variable = "token.actions.githubusercontent.com:repository_id"
+      values   = [var.github_repository_id]
     }
 
     # Requires a GitHub Environment named "staging" on the mythrun/mythrun

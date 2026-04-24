@@ -59,32 +59,6 @@ jobs:
             exit 1
           fi
 
-      - name: DEBUG — dump OIDC token claims
-        # TEMPORARY: AWS AssumeRoleWithWebIdentity is failing with opaque
-        # "AccessDenied / unknown error" — decode the actual JWT GitHub is
-        # sending so we can cross-check the six trust-policy conditions.
-        # Remove this step once the trust mismatch is identified and fixed.
-        run: |
-          set -euo pipefail
-          RESP=$(curl -sLS \
-            -H "User-Agent: actions/oidc-client" \
-            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com")
-          TOKEN=$(echo "$RESP" | jq -r .value)
-          export TOKEN
-          echo "::group::OIDC JWT claims (header + payload; signature redacted)"
-          python3 - <<'PY'
-          import base64, json, os
-          t = os.environ["TOKEN"]
-          header_b, payload_b, _sig = t.split(".")
-          def b64(s):
-              s += "=" * (-len(s) % 4)
-              return base64.urlsafe_b64decode(s).decode()
-          print("HEADER:", json.dumps(json.loads(b64(header_b)), indent=2))
-          print("PAYLOAD:", json.dumps(json.loads(b64(payload_b)), indent=2))
-          PY
-          echo "::endgroup::"
-
       - name: Assume AWS role via OIDC
         # Reference vars.AWS_ACCOUNT_ID inline — do NOT hoist to job-level env:.
         # Load-bearing: pnpm install above runs BEFORE OIDC assume so npm
