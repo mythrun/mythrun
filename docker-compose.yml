@@ -1,0 +1,66 @@
+# NOT A SECRET: POSTGRES_PASSWORD below is local-only, 127.0.0.1-bound,
+# fake-data only. See spec §7.8.
+
+name: mythrun
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: mythrun
+      POSTGRES_PASSWORD: mythrun_dev
+      POSTGRES_DB: mythrun
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mythrun -d mythrun -h 127.0.0.1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Note: redis-cli ping does NOT exercise auth. If requirepass is added
+  # later, healthchecks pass while real clients with wrong creds fail.
+  redis-realtime:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis-batch:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:

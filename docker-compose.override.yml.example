@@ -1,0 +1,16 @@
+# Copy to docker-compose.override.yml (gitignored) and edit if you need to
+# remap host ports — e.g., when Homebrew Postgres on 5432 conflicts with the
+# project's compose stack.
+#
+# Compose merges override.yml on top of compose.yml automatically.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:15432:5432"   # change host-side; container side stays 5432
+  redis-realtime:
+    ports:
+      - "127.0.0.1:16379:6379"
+  redis-batch:
+    ports:
+      - "127.0.0.1:16380:6379"
