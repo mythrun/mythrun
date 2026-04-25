@@ -1,8 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createShutdown, buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
+import type { Pool } from 'pg'
+import type { Redis } from 'ioredis'
 
 type ExitFn = (code?: string | number | null) => never
+
+interface MockClients {
+  pg: { end: ReturnType<typeof vi.fn> } & Partial<Pool>
+  redisRealtime: { quit: ReturnType<typeof vi.fn> } & Partial<Redis>
+  redisBatch: { quit: ReturnType<typeof vi.fn> } & Partial<Redis>
+}
+
+function makeMockClients(): MockClients {
+  return {
+    pg: { end: vi.fn().mockResolvedValue(undefined) },
+    redisRealtime: { quit: vi.fn().mockResolvedValue('OK') },
+    redisBatch: { quit: vi.fn().mockResolvedValue('OK') },
+  }
+}
 
 describe('createShutdown', () => {
   let exitSpy: ReturnType<typeof vi.fn<ExitFn>>
@@ -12,39 +28,84 @@ describe('createShutdown', () => {
     exitSpy = vi.fn<ExitFn>(() => undefined as never)
     process.exit = exitSpy
   })
-
   afterEach(() => {
     process.exit = originalExit
   })
 
-  it('calls app.close before process.exit(0) on clean shutdown', async () => {
+  it('drains in order: app.close → pg.end → redis.quit (both), then exit(0)', async () => {
     const app = buildApp({} as AppDeps)
+    const clients = makeMockClients()
     const callOrder: string[] = []
 
     vi.spyOn(app, 'close').mockImplementation(
       (() => {
-        callOrder.push('close')
+        callOrder.push('app.close')
         return Promise.resolve()
       }) as unknown as typeof app.close,
     )
+    clients.pg.end.mockImplementation(() => {
+      callOrder.push('pg.end')
+      return Promise.resolve()
+    })
+    clients.redisRealtime.quit.mockImplementation(() => {
+      callOrder.push('redis-realtime.quit')
+      return Promise.resolve('OK')
+    })
+    clients.redisBatch.quit.mockImplementation(() => {
+      callOrder.push('redis-batch.quit')
+      return Promise.resolve('OK')
+    })
     exitSpy.mockImplementation((code) => {
       callOrder.push(`exit:${String(code)}`)
       return undefined as never
     })
 
-    const handler = createShutdown(app)
+    const handler = createShutdown(app, {
+      pg: clients.pg as unknown as Pool,
+      redisRealtime: clients.redisRealtime as unknown as Redis,
+      redisBatch: clients.redisBatch as unknown as Redis,
+    })
     await handler('SIGTERM')
 
-    expect(callOrder).toEqual(['close', 'exit:0'])
+    expect(callOrder).toEqual([
+      'app.close',
+      'pg.end',
+      'redis-realtime.quit',
+      'redis-batch.quit',
+      'exit:0',
+    ])
   })
 
   it('exits with code 1 if app.close throws', async () => {
     const app = buildApp({} as AppDeps)
+    const clients = makeMockClients()
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.reject(new Error('boom'))) as unknown as typeof app.close,
     )
 
-    const handler = createShutdown(app)
+    const handler = createShutdown(app, {
+      pg: clients.pg as unknown as Pool,
+      redisRealtime: clients.redisRealtime as unknown as Redis,
+      redisBatch: clients.redisBatch as unknown as Redis,
+    })
+    await handler('SIGTERM')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+  })
+
+  it('exits with code 1 if pg.end throws (after app.close succeeded)', async () => {
+    const app = buildApp({} as AppDeps)
+    const clients = makeMockClients()
+    vi.spyOn(app, 'close').mockImplementation(
+      (() => Promise.resolve()) as unknown as typeof app.close,
+    )
+    clients.pg.end.mockRejectedValue(new Error('pg boom'))
+
+    const handler = createShutdown(app, {
+      pg: clients.pg as unknown as Pool,
+      redisRealtime: clients.redisRealtime as unknown as Redis,
+      redisBatch: clients.redisBatch as unknown as Redis,
+    })
     await handler('SIGTERM')
 
     expect(exitSpy).toHaveBeenCalledWith(1)
