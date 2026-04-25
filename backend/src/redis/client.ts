@@ -10,5 +10,12 @@ export function createRedisClient(url: string): Redis {
     retryStrategy: () => null,
     enableOfflineQueue: false,
   }
-  return new Redis(url, options)
+  const client = new Redis(url, options)
+  // ioredis emits 'error' events for transient connection failures even when
+  // the calling code already handles the rejection via .ping()/.get() etc.
+  // Without a listener, Node logs "Unhandled error event" noise during
+  // closePartials cleanup if the client never successfully connected. Real
+  // errors still surface through the per-call promise rejections.
+  client.on('error', () => undefined)
+  return client
 }
