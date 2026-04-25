@@ -64,7 +64,21 @@ describe('server boot gate', () => {
       .mockImplementationOnce(() => fakeRtr)
       .mockImplementationOnce(() => fakeRtb)
     process.exitCode = undefined
-    process.env = { ...origEnv, ...REQUIRED_ENV }
+    // Strip any DB_*/REDIS_* component-form vars from origEnv so the
+    // tests' URL-form REQUIRED_ENV controls behavior deterministically.
+    // env.ts now accepts either form; without this clear, a developer
+    // shell that exports DB_HOST etc. would mask the "missing DATABASE_URL"
+    // test path.
+    const cleaned = { ...origEnv }
+    delete cleaned.DB_HOST
+    delete cleaned.DB_PORT
+    delete cleaned.DB_USER
+    delete cleaned.DB_NAME
+    delete cleaned.DB_PASSWORD
+    delete cleaned.REDIS_HOST
+    delete cleaned.REDIS_PORT
+    delete cleaned.REDIS_AUTH_TOKEN
+    process.env = { ...cleaned, ...REQUIRED_ENV }
     vi.spyOn(process, 'exit').mockImplementation(((() => undefined) as unknown) as typeof process.exit)
   })
 
