@@ -4,21 +4,26 @@
 <!-- source: backend/tsconfig.build.json -->
 <!-- source: backend/Dockerfile -->
 <!-- source: backend/.dockerignore -->
+<!-- source: backend/.env.development.example -->
 <!-- source: package.json -->
 <!-- source: pnpm-workspace.yaml -->
 <!-- source: .npmrc -->
 <!-- source: .nvmrc -->
 <!-- source: .dockerignore -->
+<!-- source: .gitignore -->
 <!-- source: eslint.config.js -->
-<!-- source-hash: sha256:fd75038fffa906b6c4b97a81640444b9c510588df360e01015a94a85798d2227 -->
-<!-- last-ticket: MYT-28 -->
+<!-- source: docker-compose.yml -->
+<!-- source: docker-compose.override.yml.example -->
+<!-- source-hash: sha256:e754fccb3082279896105d90343366ba9502cfc2e5761834aad18a2dcb62362f -->
+<!-- last-ticket: MYT-29 -->
 
 <h1>Backend</h1>
 
 <p class="lead">
-  The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a single
-  <code>/health</code> endpoint, and a multi-stage Dockerfile that packages it into a minimal
-  runtime image.
+  The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a
+  dependency-injected data layer, a retry-then-fail-loud boot gate gated behind
+  <code>BOOT_GATE_ENABLED</code>, and a local docker-compose stack (Postgres + two Redis instances)
+  the dev loop probes on start.
 </p>
 
 <!-- @diagram: runtime/backend -->
@@ -31,7 +36,9 @@
   <code>engines</code>; <code>pnpm-workspace.yaml</code> declares two workspace packages today —
   <code>backend/</code> and <code>docs/wiki/</code> — and the root exposes the single-word verbs
   (<code>pnpm test</code>, <code>pnpm typecheck</code>, <code>pnpm lint</code>,
-  <code>pnpm build</code>) that fan out across every workspace via <code>pnpm -r</code>.
+  <code>pnpm build</code>) that fan out across every workspace via <code>pnpm -r</code>. A second
+  cluster of root scripts (<code>pnpm db:up</code>, <code>pnpm db:down</code>,
+  <code>pnpm db:reset</code>) wraps the docker-compose local data stack.
 </p>
 
 <aside class="wiki-rationale">
@@ -42,147 +49,358 @@
 </aside>
 
 <p>
-  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. It depends on Fastify and
-  nothing else in production, with <code>tsx</code>, <code>typescript</code>, and
-  <code>vitest</code> as dev dependencies. The source tree is intentionally shallow right now: two
-  files under <code>src/</code>. <code>app.ts</code> exports <code>buildApp()</code> (a pure factory
-  that returns a Fastify instance with <code>GET /health</code> registered) plus
-  <code>createShutdown(app)</code> (a pure function that returns a signal handler). Nothing in
-  <code>app.ts</code> has side effects on import — no listener, no signal hooks.
-  <code>server.ts</code> is the thin entrypoint: it calls <code>buildApp()</code>,
-  <code>await app.listen</code> on <code>PORT</code> (default <code>3000</code>) bound to
-  <code>0.0.0.0</code>, and then registers the <code>createShutdown</code> handler against
-  <code>SIGTERM</code> and <code>SIGINT</code>.
+  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. Production dependencies are
+  <code>fastify</code>, <code>pg</code>, and <code>ioredis</code>; dev dependencies are
+  <code>tsx</code>, <code>typescript</code>, and <code>vitest</code>. The source tree is shallow but
+  no longer flat: <code>app.ts</code> / <code>server.ts</code> / <code>app-deps.ts</code> at the
+  root, with one-file subdirectories for <code>boot/</code>, <code>config/</code>, <code>db/</code>,
+  and <code>redis/</code>. Each subdirectory has a colocated <code>__tests__/</code>.
+</p>
+
+<h2>The app factory and the dependency-injection shape</h2>
+
+<p>
+  <code>app.ts</code> exports <code>buildApp(deps: AppDeps)</code> — a pure factory that returns a
+  Fastify instance with <code>GET /health</code> registered — and
+  <code>createShutdown(app, clients)</code>, a pure function that returns a signal handler.
+  <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares the injection shape:
+  <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis }</code>. Nothing in
+  <code>app.ts</code> has side effects on import — no listener, no signal hooks, no connection
+  opens. The deps parameter is unused by the single <code>/health</code> route today; Backend Core's
+  first plugin will add <code>app.decorate('pg', deps.pg)</code> and the matching
+  <code>declare module 'fastify'</code> augmentation.
 </p>
 
 <aside class="wiki-rationale">
-  <strong
-    >Factory and shutdown live in <code>app.ts</code>, listen in <code>server.ts</code></strong
-  >
-  — Fastify's <code>inject</code> method needs a built-but-not-listening app, and the shutdown
-  handler needs to be unit-testable against a spy on <code>process.exit</code>. Isolating the listen
-  + signal wiring in a separate file means importing <code>app.ts</code> from tests has zero side
-  effects, and the signal handlers are a pure function that takes a Fastify instance and returns a
-  handler — testable in isolation via <code>vi.spyOn(process, 'exit')</code>.
+  <strong>Factory-with-deps before any plugin needs them</strong> — establishing the
+  <code>AppDeps</code> contract now means every subsequent plugin lands a decorator onto a shape
+  that already exists in every build and test harness. The alternative — <code>buildApp()</code> no-
+  arg today, refactor when schema lands — would churn every test in the Backend Core PR.
+</aside>
+
+<p>
+  <code>createShutdown</code> produces a signal handler that drains in a fixed order: Fastify's
+  <code>app.close()</code> first (stops accepting connections, waits for in-flight requests), then
+  <code>pg.end()</code>, then <code>redisRealtime.quit()</code> and <code>redisBatch.quit()</code>.
+  The handler yields once via <code>setImmediate</code> before closing so pino's async log queue can
+  flush the "shutting down" line.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Drain order: HTTP → pg → redis</strong> — closing Fastify first guarantees no new query
+  hits the pool while it's draining. <code>pg.end()</code> waits for in-flight queries to settle.
+  Redis <code>quit()</code> (not <code>disconnect()</code>) flushes in-flight commands gracefully
+  instead of ripping the socket; any commands already written to the wire complete.
 </aside>
 
 <aside class="wiki-rationale">
   <strong>SIGTERM handling matters on ECS</strong> — ECS sends SIGTERM when it deregisters a task
   for any reason (rolling deploy, service scale-down, capacity rebalance). Without a handler, Node
-  exits on the default kernel disposition and in-flight requests get truncated. The handler calls
-  <code>app.close()</code> (which stops accepting connections and waits for in-flight requests to
-  drain) before <code>process.exit(0)</code>; the 120-second <code>stopTimeout</code> on the task
-  definition gives LLM calls time to finish before ECS sends SIGKILL.
+  exits on the default kernel disposition and in-flight requests and queries get truncated. The
+  120-second <code>stopTimeout</code> on the task definition gives LLM calls time to finish before
+  ECS sends SIGKILL.
 </aside>
 
-<h2>TypeScript and lint</h2>
+<h2>The boot gate and its opt-in flag</h2>
+
+<p>
+  <code>server.ts</code> has two startup paths. <code>BOOT_GATE_ENABLED=1</code> (or
+  <code>true</code>) runs the full boot gate: load + validate env, open a pg <code>Pool</code> and
+  two <code>Redis</code> clients, probe each sequentially with retry-backoff, then
+  <code>app.listen</code>. Anything else — including the default when the var is unset — runs
+  <code>fallbackStart</code>: no env validation, no client creation, stub deps passed to
+  <code>buildApp</code>, listen immediately. The dev <code>.env.development</code> sets the flag to
+  <code>1</code>; the staging ECS task definition does not set it, so the deployed binary stays at
+  <code>/health</code>-only with the full data-layer code path dormant.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Boot gate off by default in production</strong> — staging's RDS is bootstrapped with a
+  placeholder password until Backend Core lands schema + migrations and
+  <code>bootstrap-databases.sh</code> sets the real per-env password. A default-on boot gate would
+  crash the ECS task on every deploy with <code>password authentication failed</code> and trip the
+  deployment circuit breaker. Keeping the gate opt-in lets the data-layer code ship (exercised by
+  tests and by <code>pnpm dev</code>) while production remains on the MYT-28 entrypoint until a
+  single env-var flip enables it.
+</aside>
+
+<p>
+  Inside the gate, signal handlers are installed <em>before</em> any resource creation —
+  <code>installSignalHandlers</code> in <code>boot/signal-handlers.ts</code> attaches SIGINT/SIGTERM
+  listeners to an <code>AbortController</code>. That signal is threaded through every
+  <code>waitFor</code> probe, so a Ctrl-C during retry backoff aborts the sleep immediately instead
+  of waiting out the current delay.
+</p>
+
+<p>
+  <code>boot/wait-for.ts</code> is the retry helper. It runs the probe once, then retries after
+  <code>[200, 500, 1000, 2000]</code> ms — five total attempts, ~3.7-second budget — and rethrows a
+  labeled error naming which service failed. Probes are sequential, not parallel: three local
+  services starting under <code>docker compose up -d --wait</code> reach healthy at the same moment,
+  so serial vs parallel produce identical wall time and the serial shape gives a clean "the
+  <em>Postgres</em> probe failed" error instead of a collapsed-Promise.all mess.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Fail loud, don't retry forever</strong> — ioredis defaults to infinite retry and would
+  keep a process alive until its operator noticed. A bounded retry budget plus
+  <code>process.exitCode = 1</code> plus a 5-second watchdog <code>setTimeout().unref()</code> means
+  a broken boot becomes a crash-loop the container orchestrator can see and alert on.
+</aside>
+
+<p>
+  If any probe exhausts its retries, the catch block runs <code>closePartials</code> (<code
+    >Promise.allSettled</code
+  >
+  over whichever clients were created), logs the labeled error, sets
+  <code>process.exitCode = 1</code>, and arms the watchdog. The watchdog force-exits after five
+  seconds if any client's socket kept the event loop alive past cleanup; <code>unref()</code>
+  ensures it doesn't block exit when cleanup succeeds.
+</p>
+
+<h2>The pg pool and its sslmode trick</h2>
+
+<p>
+  <code>db/postgres.ts</code> exports <code>createPgPool(url)</code>. Naively handing a
+  <code>postgresql://...?sslmode=require</code> URL to node-postgres does not produce a working RDS
+  connection: pg's URL parser sets <code>ssl: true</code> (which defaults to
+  <code>rejectUnauthorized: true</code>) and then doesn't reliably honor an explicit
+  <code>ssl</code> override passed alongside the URL. RDS presents a chain rooted in Amazon's RSA CA
+  which Node's default trust store does not include, so the handshake fails with
+  <code>SELF_SIGNED_CERT_IN_CHAIN</code> even though <code>sslmode=require</code> only asks for
+  encryption, not chain validation.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Strip <code>sslmode</code> from the URL, set <code>ssl</code> ourselves</strong> — this is
+  the only shape where one call site handles dev (no sslmode → no TLS), staging/prod
+  <code>sslmode=require</code> (encryption-only, <code>rejectUnauthorized: false</code>), and the
+  future <code>verify-ca</code>/<code>verify-full</code> modes (<code
+    >rejectUnauthorized: true</code
+  >
+  plus a <code>ca</code> bundle, not yet enabled). Letting pg's URL parser pick wins no clarity and
+  loses prod.
+</aside>
+
+<h2>The redis client and its retry policy</h2>
+
+<p>
+  <code>redis/client.ts</code> exports <code>createRedisClient(url)</code>, constructing an ioredis
+  <code>Redis</code> with <code>lazyConnect: true</code>, <code>maxRetriesPerRequest: 1</code>,
+  <code>retryStrategy: () =&gt; null</code>, and <code>enableOfflineQueue: false</code>. A noop
+  <code>'error'</code> listener is attached so the process doesn't log "Unhandled error event" noise
+  during <code>closePartials</code> if the client never successfully connected.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>ioredis retries disabled; all retry policy in <code>waitFor</code></strong> — ioredis's
+  default is aggressive auto-connect plus infinite retry, which fights the boot gate's bounded retry
+  loop (the client would keep trying to reconnect after <code>closePartials</code> and keep the
+  event loop alive, blocking process exit). Disabling ioredis retry puts the whole retry policy in
+  one place: <code>wait-for.ts</code>.
+</aside>
+
+<h2>The env loader accepts two shapes</h2>
+
+<p>
+  <code>config/env.ts</code> exports <code>loadEnv()</code> returning a frozen
+  <code>Env { databaseUrl, redisRealtimeUrl, redisBatchUrl, port }</code>. Dev
+  <code>.env.development</code> provides <code>DATABASE_URL</code>, <code>REDIS_REALTIME_URL</code>,
+  and <code>REDIS_BATCH_URL</code> directly. Production's
+  <a href="../infra/serving.html">ECS task definition</a> sets the component form instead —
+  <code>DB_HOST</code>, <code>DB_PORT</code>, <code>DB_USER</code>, <code>DB_NAME</code>,
+  <code>DB_PASSWORD</code>, <code>REDIS_HOST</code>, <code>REDIS_PORT</code>,
+  <code>REDIS_AUTH_TOKEN</code> — and the loader constructs the URLs from those components.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two shapes because ECS already speaks component-form</strong> — the serving module's
+  Terraform wires component env vars and secrets into the task definition well before the app
+  existed to consume them. Rewriting the task definition to match a URL-form-only loader would touch
+  a dozen Terraform resources; teaching the loader to accept either shape touches one file and
+  leaves the deploy pipeline alone.
+</aside>
+
+<p>
+  Component-form Postgres URLs always get <code>?sslmode=require</code> appended (RDS enforces TLS
+  and <code>createPgPool</code> knows how to handle it). Component-form Redis URLs use
+  <code>rediss://</code> with the auth token when one is set, plain <code>redis://</code>
+  otherwise. Production currently runs a single Redis cluster shared between realtime and batch;
+  both URLs point at the same instance until the two-cluster split ships.
+</p>
+
+<h2>The local dev loop</h2>
+
+<p>
+  The repo-root <code>docker-compose.yml</code> declares three services —
+  <code>postgres</code> (Postgres 16 on <code>127.0.0.1:5432</code>),
+  <code>redis-realtime</code> (Redis 7.2 on <code>127.0.0.1:6379</code>), and
+  <code>redis-batch</code> (Redis 7.2 on <code>127.0.0.1:6380</code>). Each has a healthcheck, 10 MB
+  × 3-file log rotation, and binds only to the loopback interface. Postgres has a named
+  <code>pgdata</code> volume; the Redis services run with <code>--save "" --appendonly no</code> so
+  they're pure in-memory and <code>docker compose down</code> resets them cleanly.
+  <code>pnpm db:up</code> wraps <code>docker compose up -d --wait</code>;
+  <code>pnpm db:reset</code> wipes the Postgres volume.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two Redis containers locally, even though prod is one</strong> — the production
+  two-cluster split is a future ticket, but keeping the dev topology two-clustered exercises the
+  code path that opens and probes two clients. A single-Redis local stack would let a bug in that
+  code path hide until it shipped.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>127.0.0.1 binding, not default <code>0.0.0.0</code></strong> — Compose's default
+  <code>ports</code> shape binds the container to every interface on the host. A laptop on an
+  untrusted network would then expose a passwordless Postgres to anything on that network. Pinning
+  to loopback is free and closes that hole.
+</aside>
+
+<p>
+  <code>backend/.env.development.example</code> is committed as the template;
+  <code>backend/.env.development</code> is gitignored. Values there match the compose stack's
+  ports/credentials and include <code>BOOT_GATE_ENABLED=1</code> and sentinel placeholders for
+  external-service keys (<code>REPLACE_ME_dev_only</code> — obviously-fake strings that won't trip
+  GitHub's secret-scanning if the file is accidentally committed).
+  <code>backend/package.json</code>'s <code>dev</code> script is
+  <code>tsx watch --env-file=.env.development src/server.ts</code>, using Node's native
+  <code>--env-file</code> flag rather than a dotenv dependency.
+  <code>docker-compose.override.yml</code> is also gitignored;
+  <code>docker-compose.override.yml.example</code> is the template, used when a developer needs to
+  remap host ports (e.g. a Homebrew Postgres already bound to 5432).
+</p>
+
+<h2>TypeScript, lint, and the container image</h2>
 
 <p>
   The backend's <code>tsconfig.json</code> turns on every strictness knob that changes code —
   <code>strict</code>, <code>noUncheckedIndexedAccess</code>,
   <code>exactOptionalPropertyTypes</code> — with ES2023/NodeNext module resolution.
   <code>tsconfig.build.json</code> extends it and excludes <code>__tests__/</code> so the built
-  <code>dist/</code> carries only runtime code.
+  <code>dist/</code> carries only runtime code. ESLint sits at the repo root and runs against every
+  workspace: <code>typescript-eslint</code> strict + stylistic type-checked presets, a repo-specific
+  ban on default exports, a 400-line module cap, a 50-line function cap, and
+  <code>any</code>/non-null-assertion bans. <code>eslint-config-prettier</code> is applied last so
+  Prettier owns formatting.
 </p>
-
-<p>
-  ESLint sits at the repo root and runs against every workspace. The config composes
-  <code>typescript-eslint</code>'s strict + stylistic type-checked presets, adds a repo-specific ban
-  on default exports (<code>no-restricted-syntax</code>), caps modules at 400 lines and functions at
-  50, and forbids <code>any</code> and non-null assertions outright.
-  <code>eslint-config-prettier</code> is applied last so Prettier owns formatting.
-</p>
-
-<h2>The container image</h2>
 
 <p>
   <code>backend/Dockerfile</code> is two stages on top of <code>node:24-alpine</code>. Both stage
-  <code>FROM</code> lines resolve via a <code>BASE_IMAGE_REGISTRY</code> ARG: when
-  <a href="../infra/ci-cd.html">CI</a> passes <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code>
-  (the account-specific ECR host), the base image is pulled through the
-  <a href="../infra/serving.html">pull-through cache</a>; when unset (local builds), the ARG expands
-  to an empty string and the <code>FROM</code> reference becomes
-  <code>ecr-public/docker/library/node:24-alpine</code> which does not resolve on Docker Hub — local
-  builds must pass the build-arg or keep a one-off <code>Dockerfile.local</code> pointing at
-  <code>docker.io/library/node:24-alpine</code>. The builder stage copies the root lockfile,
-  <code>.npmrc</code>, and the backend's <code>package.json</code>, runs
-  <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, then copies the source and
-  builds. The last step of the builder is
-  <code>pnpm --filter @mythrun/backend deploy --prod /app/deploy</code>, which produces a
-  self-contained directory with only the backend's production dependencies. The runtime stage is a
-  fresh <code>node:24-alpine</code> that installs <code>dumb-init</code>, creates a non-root
-  <code>mythrun</code> user, copies <code>/app/deploy</code> in with owner set, and runs
-  <code>dumb-init node dist/server.js</code>.
+  <code>FROM</code> lines resolve via a <code>BASE_IMAGE_REGISTRY</code> ARG: CI passes
+  <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code> (the account-specific ECR host) so the base
+  image is pulled through the <a href="../infra/serving.html">pull-through cache</a>. When the ARG
+  is unset (local builds), <code>FROM</code> resolves to
+  <code>ecr-public/docker/library/node:24-alpine</code>, which does not exist on Docker Hub — local
+  builds must pass the build-arg or keep a one-off <code>backend/Dockerfile.local</code> pointing at
+  <code>docker.io/library/node:24-alpine</code>. The builder stage installs with
+  <code>pnpm install --frozen-lockfile --filter @mythrun/backend</code>, builds, then runs
+  <code>pnpm --filter @mythrun/backend deploy --prod /app/deploy</code>; the runtime stage copies
+  that directory in, adds <code>dumb-init</code>, runs as a non-root <code>mythrun</code> user, and
+  executes <code>dumb-init node dist/server.js</code>.
 </p>
-
-<aside class="wiki-rationale">
-  <strong>Registry-host ARG, not a hard-coded ECR URL</strong> — hard-coding the ECR host would make
-  the Dockerfile CI-only and lock out local builds. An ARG with an empty default preserves the usual
-  <code>FROM</code> semantics in CI (where the ARG is set) and leaves local developers with one
-  explicit knob.
-</aside>
 
 <aside class="wiki-rationale">
   <strong><code>pnpm deploy</code> instead of copying <code>node_modules</code></strong> — a
   workspace's <code>node_modules</code> is a forest of symlinks pointing back into the pnpm store
   and sibling packages. Copying that across a stage gives you dangling symlinks.
   <code>pnpm deploy</code> materializes a proper single-package tree suitable for the runtime image.
+  <code>inject-workspace-packages=true</code> in <code>.npmrc</code> is the supported pnpm-10 way to
+  make <code>deploy</code> bundle workspace dependencies without the deprecated
+  <code>--legacy</code> flag.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong><code>inject-workspace-packages=true</code> in <code>.npmrc</code></strong> — without
-  this, <code>pnpm deploy</code> refuses to bundle workspace dependencies without the
-  <code>--legacy</code> flag. The flag worked but is deprecated; the <code>.npmrc</code> setting is
-  the supported path on pnpm 10.
-</aside>
-
-<aside class="wiki-rationale">
-  <strong><code>dumb-init</code> as PID 1</strong> — Node.js doesn't reap zombie children or forward
-  signals correctly when it runs as PID 1 under Docker. <code>dumb-init</code> is ~20 KB, forwards
-  SIGTERM so <code>docker stop</code> shuts down gracefully, and costs nothing at idle.
-</aside>
-
-<aside class="wiki-rationale">
-  <strong>Non-root <code>mythrun</code> user</strong> — the runtime user exists only to own
-  <code>/app</code>. It has no shell, no sudo, no home directory worth mentioning. ECS and most
-  scanners flag containers running as root; this sidesteps the finding and costs nothing.
+  <strong><code>dumb-init</code> + non-root <code>mythrun</code> user</strong> — Node doesn't reap
+  zombies or forward signals correctly as PID 1 under Docker; <code>dumb-init</code> (~20 KB) fixes
+  both and costs nothing at idle. The non-root user exists only to own <code>/app</code>
+  and sidesteps container-scanner findings for running as root.
 </aside>
 
 <p>
-  The image declares a <code>HEALTHCHECK</code> that hits <code>http://localhost:3000/health</code>
-  every 30 s. Dockerfile metadata carries the OCI source/title/license labels so registries render a
-  useful preview without a separate manifest step.
-</p>
-
-<h2>The <code>.dockerignore</code> pair</h2>
-
-<p>
-  Two <code>.dockerignore</code> files work together. The root one is authoritative — it's what
-  Docker reads when the build context is the repo root (<code
-    >docker build -f backend/Dockerfile .</code
-  >). It excludes <code>node_modules</code>, <code>dist</code>, tests, the
-  <code>.git</code> directory, <code>.github</code>, <code>docs/</code>, <code>infra/</code>,
-  <code>.beads/</code>, <code>.claude/</code>, the wiki build output, project-level tooling configs
-  (<code>.prettier*</code>, <code>eslint.config.js</code>, <code>.nvmrc</code>), and every editor/OS
-  droppings pattern — shaving roughly 100 MB off a cold build context.
-  <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the Dockerfile as a
-  readable hint for anyone building with <code>backend/</code> as context; Docker only uses it in
-  that case.
+  The image declares a container-level HEALTHCHECK that hits
+  <code>http://localhost:3000/health</code> every 30 s through Node's own <code>http</code> module.
+  Two <code>.dockerignore</code> files work together — the root one is authoritative for repo-root
+  build contexts, <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the
+  Dockerfile as a readable hint.
 </p>
 
 <h2>Operating this piece</h2>
 
-<h3>Run the backend locally</h3>
+<h3 id="run-the-backend-locally">Run the backend locally</h3>
 <ol>
   <li>From the repo root: <code>pnpm install</code>.</li>
   <li>
-    <code>pnpm dev</code> — starts the backend under <code>tsx watch</code>, reloading on file
-    changes.
+    Copy <code>backend/.env.development.example</code> to <code>backend/.env.development</code>.
+    Replace the <code>REPLACE_ME_dev_only</code> sentinels with real keys only if you're exercising
+    those integrations; the boot gate itself doesn't need them.
+  </li>
+  <li>
+    <code>pnpm db:up</code> — brings up Postgres + both Redis containers and waits until every
+    healthcheck passes.
+  </li>
+  <li>
+    <code>pnpm dev</code> — starts the backend under <code>tsx watch</code>. Expect three
+    <code>✓ ready</code> lines (Postgres, Redis realtime, Redis batch) before
+    <code>app.listen</code> logs. Reloads on source changes.
   </li>
   <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>
 </ol>
 
-<h3>Run the full verification suite</h3>
+<h3 id="reset-the-local-data-stack">Reset the local data stack</h3>
+<ol>
+  <li>
+    <code>pnpm db:down</code> stops the containers without touching the named
+    <code>pgdata</code> volume; next <code>pnpm db:up</code> keeps existing Postgres data.
+  </li>
+  <li>
+    <code>pnpm db:reset</code> wipes the Postgres volume and brings the stack back up clean. Redis
+    is volumeless, so <code>db:down</code>/<code>db:up</code> already resets it.
+  </li>
+</ol>
+
+<h3 id="remap-local-ports">Remap local ports when something on the host conflicts</h3>
+<ol>
+  <li>
+    Copy <code>docker-compose.override.yml.example</code> to
+    <code>docker-compose.override.yml</code> (gitignored). Compose merges it on top of
+    <code>docker-compose.yml</code> automatically.
+  </li>
+  <li>
+    Edit the host-side of each port mapping (e.g. <code>127.0.0.1:15432:5432</code>). Leave the
+    container-side alone.
+  </li>
+  <li>
+    Update <code>backend/.env.development</code> so <code>DATABASE_URL</code> /
+    <code>REDIS_REALTIME_URL</code> / <code>REDIS_BATCH_URL</code> point at the remapped host ports.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-failed-boot-gate">Diagnose a failed boot gate</h3>
+<ol>
+  <li>
+    The error line names the probe that exhausted retries, e.g.
+    <code>waitFor(Redis (realtime)): exhausted 5 attempts; last error: ...</code>.
+  </li>
+  <li>
+    For a Postgres failure, verify <code>pnpm db:up</code> succeeded and that
+    <code>DATABASE_URL</code> in <code>.env.development</code> matches the compose credentials
+    (defaults: user <code>mythrun</code>, password <code>mythrun_dev</code>, db
+    <code>mythrun</code>).
+  </li>
+  <li>
+    For a Redis failure, note that <code>redis-cli ping</code> inside the container does not
+    exercise auth; a passing compose healthcheck with a failing app probe suggests the
+    <code>REDIS_*_URL</code> is wrong or points at the other Redis instance.
+  </li>
+  <li>
+    If the process hangs instead of exiting after the error, upgrade
+    <code>ioredis</code>/<code>pg</code> or check whether a new Redis option is keeping a socket
+    alive past <code>quit()</code>. The 5-second watchdog force-exits either way.
+  </li>
+</ol>
+
+<h3 id="run-the-full-verification-suite">Run the full verification suite</h3>
 <ol>
   <li>
     <code>pnpm install &amp;&amp; pnpm test &amp;&amp; pnpm typecheck &amp;&amp; pnpm lint</code>
@@ -190,18 +408,19 @@
   </li>
   <li>
     Each command fans out across every workspace via <code>pnpm -r</code>; a failure in any
-    workspace fails the root command.
+    workspace fails the root command. Tests mock the probe functions, not the clients themselves, so
+    the suite does not require <code>pnpm db:up</code>.
   </li>
 </ol>
 
-<h3>Build and run the container image locally</h3>
+<h3 id="build-and-run-the-container-image-locally">Build and run the container image locally</h3>
 <ol>
   <li>
     The default <code>FROM</code> path in <code>backend/Dockerfile</code> expects the ECR
     pull-through cache and won't resolve on a laptop. For local builds, keep a one-off
     <code>backend/Dockerfile.local</code> whose <code>FROM</code> lines point at
-    <code>docker.io/library/node:24-alpine</code>, or rewrite <code>FROM</code> to that image in
-    place while iterating.
+    <code>docker.io/library/node:24-alpine</code>, or rewrite <code>FROM</code> in place while
+    iterating.
   </li>
   <li>
     From the repo root:
@@ -209,14 +428,14 @@
     root so the lockfile, <code>.npmrc</code>, and <code>pnpm-workspace.yaml</code> are visible.
   </li>
   <li><code>docker run -p 3000:3000 mythrun</code>.</li>
-  <li><code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>.</li>
   <li>
-    <code>docker inspect --format='{{.State.Health.Status}}' &lt;container&gt;</code> confirms the
-    <code>HEALTHCHECK</code> is reporting <code>healthy</code>.
+    <code>curl localhost:3000/health</code> should return <code>{"status":"ok"}</code>. The
+    container runs with <code>BOOT_GATE_ENABLED</code> unset, so it uses the fallback start and does
+    not need a reachable Postgres or Redis.
   </li>
 </ol>
 
-<h3>Add a new workspace package</h3>
+<h3 id="add-a-new-workspace-package">Add a new workspace package</h3>
 <ol>
   <li>
     Create the directory with its own <code>package.json</code> (scoped <code>@mythrun/*</code>).
@@ -238,11 +457,14 @@
 <h2>Integration points</h2>
 
 <p>
-  The <a href="../infra/data.html">data plane</a> owns the Postgres and Redis endpoints this service
-  will eventually connect to; the <a href="../infra/network.html">network</a> module owns the
-  <code>ecs</code> security group the container will launch into. Cognitive-tier code (Fast Thinker,
-  Slow Thinker, Scribe, DM Trigger) lands as additional modules under <code>backend/src/</code>;
-  they'll share this server's lifecycle, config, and Dockerfile.
+  The <a href="../infra/data.html">data plane</a> owns the Postgres and Redis endpoints production
+  connects to; the <a href="../infra/network.html">network</a> module owns the <code>ecs</code>
+  security group the container launches into. The
+  <a href="../infra/serving.html">serving module</a> wires the prod env vars and secrets that
+  <code>loadEnv</code>'s component-form branch consumes and that the boot gate — once enabled —
+  probes. Cognitive-tier code (Fast Thinker, Slow Thinker, Scribe, DM Trigger) lands as additional
+  modules under <code>backend/src/</code>; they'll share this server's lifecycle,
+  <code>AppDeps</code> shape, and Dockerfile.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -267,6 +489,83 @@
       <td><code>production</code> (in image)</td>
       <td>Set by the runtime stage; left unset in dev.</td>
     </tr>
+    <tr>
+      <td><code>BOOT_GATE_ENABLED</code></td>
+      <td>unset</td>
+      <td>
+        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging/prod leave it unset so the
+        container runs the fallback start until Backend Core is ready.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>DATABASE_URL</code> <em>or</em> <code>DB_HOST</code> / <code>DB_PORT</code> /
+        <code>DB_USER</code> / <code>DB_NAME</code> / <code>DB_PASSWORD</code>
+      </td>
+      <td>—</td>
+      <td>
+        URL form (dev) or component form (prod ECS). Component form always appends
+        <code>?sslmode=require</code>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>REDIS_REALTIME_URL</code> / <code>REDIS_BATCH_URL</code> <em>or</em>
+        <code>REDIS_HOST</code> / <code>REDIS_PORT</code> / <code>REDIS_AUTH_TOKEN</code>
+      </td>
+      <td>—</td>
+      <td>
+        Component form uses <code>rediss://</code> when <code>REDIS_AUTH_TOKEN</code> is set, plain
+        <code>redis://</code> otherwise.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Source tree</h3>
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Exports</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/server.ts</code></td>
+      <td><code>main()</code> — boot gate vs fallback start, awaited at module top.</td>
+    </tr>
+    <tr>
+      <td><code>src/app.ts</code></td>
+      <td><code>buildApp(deps)</code>, <code>createShutdown(app, clients)</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/app-deps.ts</code></td>
+      <td>
+        <code>AppDeps { pg, redisRealtime, redisBatch }</code>,
+        <code>ShutdownClients</code> (re-exported from <code>app.ts</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/boot/wait-for.ts</code></td>
+      <td><code>waitFor({ label, probe, signal })</code>, <code>RETRY_DELAYS_MS</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/boot/signal-handlers.ts</code></td>
+      <td><code>installSignalHandlers(controller)</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/config/env.ts</code></td>
+      <td><code>loadEnv(): Env</code> (frozen).</td>
+    </tr>
+    <tr>
+      <td><code>src/db/postgres.ts</code></td>
+      <td><code>createPgPool(url)</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/redis/client.ts</code></td>
+      <td><code>createRedisClient(url)</code>.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -284,6 +583,41 @@
       <td><code>GET</code></td>
       <td><code>/health</code></td>
       <td><code>200 {"status":"ok"}</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Local docker-compose stack</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Service</th>
+      <th>Image</th>
+      <th>Host port</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>postgres</code></td>
+      <td><code>postgres:16-alpine</code></td>
+      <td><code>127.0.0.1:5432</code></td>
+      <td>
+        User/password/db all <code>mythrun</code>/<code>mythrun_dev</code>/<code>mythrun</code>.
+        Named <code>pgdata</code> volume.
+      </td>
+    </tr>
+    <tr>
+      <td><code>redis-realtime</code></td>
+      <td><code>redis:7.2-alpine</code></td>
+      <td><code>127.0.0.1:6379</code></td>
+      <td>No auth, no persistence.</td>
+    </tr>
+    <tr>
+      <td><code>redis-batch</code></td>
+      <td><code>redis:7.2-alpine</code></td>
+      <td><code>127.0.0.1:6380</code></td>
+      <td>No auth, no persistence.</td>
     </tr>
   </tbody>
 </table>
@@ -319,6 +653,16 @@
       <td><code>backend/package.json</code></td>
     </tr>
     <tr>
+      <td>pg</td>
+      <td><code>^8.13</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+    <tr>
+      <td>ioredis</td>
+      <td><code>^5.4</code></td>
+      <td><code>backend/package.json</code></td>
+    </tr>
+    <tr>
       <td>Vitest</td>
       <td><code>^3.0</code></td>
       <td><code>backend/package.json</code></td>
@@ -329,7 +673,8 @@
 <h2>Source</h2>
 
 <p>
-  <code>backend/</code>, <code>pnpm-workspace.yaml</code>, <code>package.json</code>,
-  <code>.npmrc</code>, <code>.nvmrc</code>, <code>.dockerignore</code>,
-  <code>eslint.config.js</code>.
+  <code>backend/</code>, <code>docker-compose.yml</code>,
+  <code>docker-compose.override.yml.example</code>, <code>pnpm-workspace.yaml</code>,
+  <code>package.json</code>, <code>.npmrc</code>, <code>.nvmrc</code>, <code>.dockerignore</code>,
+  <code>.gitignore</code>, <code>eslint.config.js</code>.
 </p>

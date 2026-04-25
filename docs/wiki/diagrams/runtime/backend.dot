@@ -1,6 +1,8 @@
 digraph backend {
-  // The backend package: pnpm monorepo workspace that builds a runtime Docker
-  // image. Left: source tree and dev loop. Right: the two-stage image build.
+  // The backend package: pnpm monorepo workspace that runs locally against a
+  // docker-compose data stack and ships as a multi-stage image. Top-left: the
+  // source tree + dev loop (local compose services feed the boot gate).
+  // Bottom-right: the two-stage image build. Everything converges on :3000.
   rankdir=LR;
   compound=true;
 
@@ -10,22 +12,31 @@ digraph backend {
     color="ember";
     fontcolor="ember";
 
-    root    [label="package.json\npnpm-workspace.yaml\n.npmrc\n.nvmrc"];
+    root    [label="package.json\npnpm-workspace.yaml\ndocker-compose.yml\n.env.development.example"];
 
     subgraph cluster_backend {
       label="backend/  (@mythrun/backend)";
       style="dotted";
-      pkg     [label="package.json\ntsconfig.json"];
-      app     [label="src/app.ts\nbuildApp()\ncreateShutdown()"];
-      server  [label="src/server.ts\nlisten + SIGTERM/SIGINT"];
-      tests   [label="src/__tests__/\napp.test.ts\nshutdown.test.ts"];
-    }
 
-    subgraph cluster_wiki {
-      label="docs/wiki/  (@mythrun/wiki)";
-      style="dotted";
-      wiki    [label="wiki package"];
+      appdeps [label="src/app-deps.ts\nAppDeps { pg, redisRealtime, redisBatch }"];
+      app     [label="src/app.ts\nbuildApp(deps)\ncreateShutdown(app, deps)"];
+      server  [label="src/server.ts\nboot gate | fallbackStart"];
+      env     [label="src/config/env.ts\nURL form | component form"];
+      boot    [label="src/boot/\nwait-for, signal-handlers"];
+      db      [label="src/db/postgres.ts\nstrips ?sslmode, sets ssl"];
+      redis   [label="src/redis/client.ts\nlazyConnect, no retry"];
     }
+  }
+
+  subgraph cluster_compose {
+    label="docker-compose  (local dev only)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    pg_local    [label="postgres:16\n127.0.0.1:5432"];
+    rtr_local   [label="redis:7.2\n127.0.0.1:6379\nrealtime"];
+    rtb_local   [label="redis:7.2\n127.0.0.1:6380\nbatch"];
   }
 
   subgraph cluster_image {
@@ -34,17 +45,28 @@ digraph backend {
     color="ember";
     fontcolor="ember";
 
-    builder [label="builder\nFROM $BASE/...:24-alpine\npnpm install --frozen-lockfile\npnpm build\npnpm deploy --prod"];
+    builder [label="builder\nFROM $BASE/...:24-alpine\npnpm install\npnpm build\npnpm deploy --prod"];
     runtime [label="runtime\nFROM $BASE/...:24-alpine\ndumb-init\nnon-root mythrun\nEXPOSE 3000", color="ember", fontcolor="ember"];
   }
 
   port [label=":3000  /health", color="ember", fontcolor="ember"];
 
-  app     -> server  [label="imports"];
-  app     -> tests   [label="vitest", style=dashed];
-  server  -> tests   [style=invis];
-  pkg     -> builder [label="docker build\n--build-arg\nBASE_IMAGE_REGISTRY"];
-  server  -> builder [style=invis];
-  builder -> runtime [label="pnpm deploy\n/app/deploy"];
-  runtime -> port    [label="HEALTHCHECK\nwget /health"];
+  // Wiring within backend/
+  appdeps -> app      [label="shape"];
+  env     -> server   [label="loadEnv"];
+  db      -> server   [label="createPgPool"];
+  redis   -> server   [label="createRedisClient"];
+  boot    -> server   [label="waitFor\nsignal-handlers"];
+  app     -> server   [label="buildApp\ncreateShutdown"];
+
+  // Dev loop
+  pg_local  -> server [label="SELECT 1", style=dashed];
+  rtr_local -> server [label="PING", style=dashed];
+  rtb_local -> server [label="PING", style=dashed];
+
+  // Image build
+  root    -> builder  [label="docker build\n--build-arg\nBASE_IMAGE_REGISTRY"];
+  builder -> runtime  [label="pnpm deploy\n/app/deploy"];
+  runtime -> port     [label="HEALTHCHECK"];
+  server  -> port     [label="app.listen", style=dashed];
 }
