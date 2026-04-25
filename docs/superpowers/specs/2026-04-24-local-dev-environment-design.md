@@ -198,6 +198,49 @@ export async function buildApp(_deps: AppDeps) {
 
 The constructor-injection pattern (`buildApp` receives clients as args, doesn't construct them) keeps tests trivially able to swap in fakes without `vi.mock()` gymnastics, and prevents accidental module-level singletons that leak state between test runs. `server.ts` retains the client references for shutdown cleanup.
 
+### 5.5 Dev/prod parity: env-divergence compresses into the URL string
+
+A core property of this design is that **caller code is completely environment-agnostic.** Repositories, plugins, route handlers — none of them know or care whether they're talking to local Docker Postgres or AWS RDS. The only env-specific input is the URL string read from `process.env`, and the divergence is fully absorbed by the connection string format and the factory wrappers.
+
+```
+┌─ Layer 1: env vars (env-specific) ──────────────────────────┐
+│  Dev:  DATABASE_URL=postgresql://mythrun:mythrun_dev@        │
+│        localhost:5432/mythrun                                │
+│  Prod: DATABASE_URL=postgresql://mythrun:<secret>@           │
+│        mythrun-prod.xyz.rds.amazonaws.com:5432/mythrun       │
+│        ?sslmode=require                                      │
+│                                                              │
+│  Dev:  REDIS_REALTIME_URL=redis://localhost:6379             │
+│  Prod: REDIS_REALTIME_URL=rediss://<auth>@                   │
+│        mythrun-prod.xyz.cache.amazonaws.com:6379             │
+└──────────────────────────────────────────────────────────────┘
+                          ▼
+┌─ Layer 2: factory wrappers (env-agnostic) ──────────────────┐
+│  createPgPool(url) → pg.Pool                                 │
+│    parses ?sslmode= from URL, sets ssl: { ... }              │
+│  createRedisClient(url) → ioredis.Redis                      │
+│    rediss:// vs redis:// in URL handles TLS in ioredis       │
+└──────────────────────────────────────────────────────────────┘
+                          ▼
+┌─ Layer 3: caller code (env-agnostic) ───────────────────────┐
+│  await app.pg.query('SELECT * FROM users WHERE id=$1', [id]) │
+│  await app.redisRealtime.set('session:abc', payload)         │
+│  Same shape against local Docker, against RDS, against any   │
+│  Postgres-compatible target.                                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Why no `IDatabase` / `RedisAdapter` abstraction layer:** The library types (`pg.Pool`, `ioredis.Redis`) ARE the env-agnostic abstraction. Adding a hand-rolled wrapper interface on top would (a) force us to re-export every method we want callers to use, (b) couple our type system to a hypothetical future swap of the underlying library, and (c) violate ZFC by adding an abstraction that doesn't make AI calls or solve a domain problem. By using the libraries directly as the caller-facing types, callers get full IDE autocomplete and type safety, and there's no "is this dev or prod" branching anywhere downstream.
+
+**Where parity *could* leak (out of scope this ticket but worth knowing):**
+
+- **Pool sizing** (Backend Core). `PG_POOL_MAX=10` dev vs `=50` prod, set in `createPgPool` config — never visible to callers.
+- **Redis Cluster mode** (post-launch scale concern). ElastiCache can run sharded; `ioredis` then needs `new Redis.Cluster([...])`. Both environments use single-instance mode per current architecture spec, so non-issue.
+- **Transaction isolation defaults.** RDS and local Postgres ship identical defaults today; if a non-default is ever set via RDS parameter group, mirror it in compose or set explicitly per-transaction in code.
+- **Pub/sub topology at scale.** Single Redis instance handles dev + early prod; high-fanout scaling may require Streams or different topology. Future concern, not env-parity concern.
+
+None of these affect MYT-29's scope. They're noted to make the parity model honest about its limits.
+
 ## 6. File-level design
 
 ### New files
