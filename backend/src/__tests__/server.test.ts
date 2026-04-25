@@ -36,6 +36,7 @@ const REQUIRED_ENV = {
   REDIS_REALTIME_URL: 'redis://h:6379',
   REDIS_BATCH_URL: 'redis://h:6380',
   PORT: '3000',
+  BOOT_GATE_ENABLED: '1',
 }
 
 const TEST_TIMEOUT_MS = 30_000

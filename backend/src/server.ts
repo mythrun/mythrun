@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
+import type { AppDeps } from './app-deps.js'
 import { buildApp, createShutdown } from './app.js'
 import { loadEnv } from './config/env.js'
 import { installSignalHandlers } from './boot/signal-handlers.js'
@@ -19,7 +20,44 @@ async function closePartials(
   ])
 }
 
+// MYT-29 boot gate is opt-in. Default off so the deployed binary in
+// staging/prod can stay at /health-only until Backend Core wires real
+// schema/migrations + bootstrap-databases.sh sets the real RDS password
+// (myth-ml8). Dev .env.development sets BOOT_GATE_ENABLED=1.
+//
+// Spec §3.7 ("this ticket does not yet exercise that path in prod") is
+// honored by the default-off behavior; MYT-28's deploy pipeline stays
+// green serving /health while the data-layer code path is dormant.
+function bootGateEnabled(): boolean {
+  const raw = process.env.BOOT_GATE_ENABLED ?? ''
+  return raw === '1' || raw.toLowerCase() === 'true'
+}
+
+async function fallbackStart(): Promise<void> {
+  // Boot-gate-disabled path: equivalent to the MYT-28 entrypoint.
+  // No env validation, no client creation, no data-layer probes.
+  // /health works; everything else is dormant until the boot gate is
+  // enabled.
+  const stubDeps: AppDeps = {
+    pg: { end: () => Promise.resolve() } as unknown as Pool,
+    redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
+    redisBatch: { quit: () => Promise.resolve('OK') } as unknown as Redis,
+  }
+  const app = buildApp(stubDeps)
+  const port = Number(process.env.PORT ?? 3000)
+  await app.listen({ port, host: '0.0.0.0' })
+  const handleShutdown = createShutdown(app, stubDeps)
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => void handleShutdown(signal))
+  }
+}
+
 export async function main(): Promise<void> {
+  if (!bootGateEnabled()) {
+    await fallbackStart()
+    return
+  }
+
   // Signal handlers FIRST, before any resource creation. A SIGINT during
   // boot must close partial clients cleanly (see spec §9.7).
   const abortController = new AbortController()
