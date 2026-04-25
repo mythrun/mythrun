@@ -20,3 +20,4 @@ dist/
 # Superpowers brainstorming scratch
 .superpowers/
 .playwright-mcp/
+docker-compose.override.yml
