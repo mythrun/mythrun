@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createShutdown, buildApp } from '../app.js'
+import type { AppDeps } from '../app-deps.js'
 
 type ExitFn = (code?: string | number | null) => never
 
@@ -17,7 +18,7 @@ describe('createShutdown', () => {
   })
 
   it('calls app.close before process.exit(0) on clean shutdown', async () => {
-    const app = buildApp()
+    const app = buildApp({} as AppDeps)
     const callOrder: string[] = []
 
     vi.spyOn(app, 'close').mockImplementation(
@@ -38,7 +39,7 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if app.close throws', async () => {
-    const app = buildApp()
+    const app = buildApp({} as AppDeps)
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.reject(new Error('boom'))) as unknown as typeof app.close,
     )

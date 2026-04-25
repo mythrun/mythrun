@@ -1,5 +1,14 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { buildApp } from '../app.js'
+import type { AppDeps } from '../app-deps.js'
+import type { Pool } from 'pg'
+import type { Redis } from 'ioredis'
+
+const mockDeps: AppDeps = {
+  pg: {} as Pool,
+  redisRealtime: {} as Redis,
+  redisBatch: {} as Redis,
+}
 
 describe('buildApp', () => {
   let app: ReturnType<typeof buildApp> | undefined
@@ -11,12 +20,12 @@ describe('buildApp', () => {
   })
 
   it('builds a Fastify instance with no side effects on import', () => {
-    app = buildApp()
+    app = buildApp(mockDeps)
     expect(app).toBeDefined()
   })
 
   it('/health returns {status:"ok"}', async () => {
-    app = buildApp()
+    app = buildApp(mockDeps)
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ status: 'ok' })
