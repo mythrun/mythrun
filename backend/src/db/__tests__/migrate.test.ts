@@ -6,6 +6,7 @@ import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
 import { createPgPool } from '../postgres.js'
 import { runMigrations } from '../migrate.js'
+import { LOCK_KEY } from '../lock-key.js'
 import { guardTestDatabase } from './guard-db.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -252,4 +253,110 @@ $$ LANGUAGE plpgsql;`,
     expect(drift).toBeDefined()
     expect(drift?.missing).toEqual(['999_ghost.sql'])
   })
+
+  it('Test 8: abortSignal requests a graceful stop between migrations', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_a.sql': 'CREATE TABLE a (id INT)',
+      '002_b.sql': 'CREATE TABLE b (id INT)',
+      '003_c.sql': 'CREATE TABLE c (id INT)',
+    })
+    const controller = new AbortController()
+    const lines: Record<string, unknown>[] = []
+    const sink: DestinationStream = {
+      write: (s: string) => {
+        const obj = JSON.parse(s) as Record<string, unknown>
+        lines.push(obj)
+        if (obj.event === 'migrate.applied') {
+          controller.abort()
+        }
+      },
+    }
+    const logger = pino(
+      { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
+      sink,
+    )
+    const applied = await runMigrations({
+      pool,
+      migrationsDir: fixtureDir,
+      logger,
+      abortSignal: controller.signal,
+    })
+    expect(applied.map((m) => m.version)).toEqual(['001_a.sql'])
+    const bExists = await pool.query<{ count: string }>(
+      `SELECT count(*)::text FROM information_schema.tables WHERE table_schema='public' AND table_name='b'`,
+    )
+    expect(bExists.rows[0]?.count).toBe('0')
+    const aborted = lines.find((l) => l.event === 'migrate.aborted')
+    expect(aborted).toBeDefined()
+  })
+
+  it('Test 9: logger contract — emits expected events with shared runId', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_a.sql': 'CREATE TABLE a (id INT)',
+      '002_b.sql': 'CREATE TABLE b (id INT)',
+      '003_c.sql': 'CREATE TABLE c (id INT)',
+    })
+    const { logger, lines } = makeSpyLogger()
+    await runMigrations({ pool, migrationsDir: fixtureDir, logger, runId: 'fixed-run-id' })
+    const events = lines.map((l) => l.event)
+    expect(events).toContain('migrate.start')
+    expect(events).toContain('migrate.lock_acquired')
+    expect(events).toContain('migrate.plan')
+    expect(events.filter((e) => e === 'migrate.applied')).toHaveLength(3)
+    expect(events).toContain('migrate.lock_released')
+    expect(events).toContain('migrate.done')
+    expect(events).not.toContain('migrate.failed')
+    for (const line of lines) {
+      if (line.event === 'migrate.signal_received') continue
+      expect(line.runId).toBe('fixed-run-id')
+    }
+    for (const line of lines) {
+      expect(line.component).toBe('migrate')
+    }
+    const applied = lines.filter((l) => l.event === 'migrate.applied')
+    for (const a of applied) {
+      expect(a.version).toMatch(/^00\d_[abc]\.sql$/)
+      expect(typeof a.durationMs).toBe('number')
+    }
+  })
+
+  it('Test 11: error logs include serialized stack and pg fields', async () => {
+    fixtureDir = makeFixtureDir({ '001_broken.sql': 'NOT SQL;' })
+    const { logger, lines } = makeSpyLogger()
+    await expect(runMigrations({ pool, migrationsDir: fixtureDir, logger })).rejects.toThrow()
+    const failed = lines.find((l) => l.event === 'migrate.failed')
+    expect(failed).toBeDefined()
+    const err = failed?.err as Record<string, unknown> | undefined
+    expect(typeof err?.message).toBe('string')
+    expect(typeof err?.stack).toBe('string')
+    // pg's std serializer captures `code` (SQLSTATE).
+    expect(typeof err?.code).toBe('string')
+  })
+
+  it('Test 13: lock-wait heartbeat fires with holder info', async () => {
+    fixtureDir = makeFixtureDir({ '001_a.sql': 'CREATE TABLE a (id INT)' })
+    // Hold the lock from a separate client.
+    const holder = createPgPool(databaseUrl, { max: 1 })
+    const holderClient = await holder.connect()
+    await holderClient.query("SET application_name = 'test-holder'")
+    await holderClient.query('SELECT pg_advisory_lock($1)', [LOCK_KEY.toString()])
+    try {
+      const { logger, lines } = makeSpyLogger()
+      const runPromise = runMigrations({ pool, migrationsDir: fixtureDir, logger })
+      // Wait long enough for at least one heartbeat (5s + jitter).
+      await new Promise((r) => setTimeout(r, 6500))
+      // Release the holder so the runner can proceed.
+      await holderClient.query('SELECT pg_advisory_unlock_all()')
+      await runPromise
+      const waiting = lines.filter((l) => l.event === 'migrate.lock_waiting')
+      expect(waiting.length).toBeGreaterThanOrEqual(1)
+      const first = waiting[0] ?? {}
+      expect(typeof first.waitMsSoFar).toBe('number')
+      const heldBy = first.holder as { applicationName: string | null } | null | undefined
+      expect(heldBy?.applicationName).toBe('test-holder')
+    } finally {
+      holderClient.release()
+      await holder.end()
+    }
+  }, 30_000)
 })

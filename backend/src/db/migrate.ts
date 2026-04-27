@@ -334,15 +334,17 @@ interface LockHolder {
 
 async function queryHolder(client: PoolClient): Promise<LockHolder | null> {
   // pg_locks splits the bigint advisory key across classid (high 32) + objid (low 32),
-  // with objsubid = 1 marking int8-style advisory locks.
+  // with objsubid = 1 marking int8-style advisory locks. Both classid and objid
+  // are `oid` (unsigned 32-bit) — casting the masked bigint to `int` (signed
+  // int4) overflows when either half exceeds 2^31. Cast to `oid` instead.
   const sql = `
     SELECT psa.pid, psa.application_name, psa.state,
            psa.query_start, psa.query
       FROM pg_locks pl
       JOIN pg_stat_activity psa ON psa.pid = pl.pid
      WHERE pl.locktype = 'advisory'
-       AND pl.classid  = (($1::bigint >> 32) & x'FFFFFFFF'::bigint)::int
-       AND pl.objid    = ($1::bigint & x'FFFFFFFF'::bigint)::int
+       AND pl.classid  = ((($1::bigint >> 32) & x'FFFFFFFF'::bigint)::bigint)::oid
+       AND pl.objid    = (($1::bigint & x'FFFFFFFF'::bigint)::bigint)::oid
        AND pl.objsubid = 1
        AND pl.granted  = true
      LIMIT 1
