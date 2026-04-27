@@ -164,7 +164,7 @@ The runner is called:
 - Migrations are **append-only**. Never edit a migration that has been applied to staging or prod.
 - Destructive changes (DROP COLUMN, DROP TABLE) require a two-step migration: first deprecate (stop reading), then remove in a later migration.
 - Long-running migrations (large index creation) use `CREATE INDEX CONCURRENTLY` and must set `SET statement_timeout = 0` at the top of the file.
-- Each migration file is idempotent where possible (use `IF NOT EXISTS`, `IF EXISTS` guards).
+- `IF NOT EXISTS` / `IF EXISTS` guards belong on **data migrations and ALTER statements** (where re-running matters because the row state could already be partially set up). Schema-creating migrations (`CREATE TABLE`, `CREATE INDEX`) use **bare DDL** — the runner's `_migrations` table guarantees a file runs exactly once, so `IF NOT EXISTS` here would silently paper over drift (e.g. an operator manually creating a conflicting table) instead of failing loudly.
 
 ---
 
