@@ -16,6 +16,11 @@ export interface Env {
 // batch (the two-cluster split is a future ticket). When only the
 // component form is given, both REDIS_REALTIME_URL and REDIS_BATCH_URL
 // point at the same constructed URL. Dev keeps two distinct URLs.
+//
+// Per-process invariant: either DATABASE_URL or MIGRATE_DATABASE_URL is
+// set per process; never both. The API task uses DATABASE_URL only; the
+// migrate task uses MIGRATE_DATABASE_URL only. Loaders that inherit both
+// would silently expose the migration role's connection to the API.
 
 function buildDatabaseUrl(): string {
   // Migrations may run as a different role than the API (rds_superuser

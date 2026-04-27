@@ -189,4 +189,19 @@ describe('loadEnv (MIGRATE_DATABASE_URL precedence)', () => {
     const env = loadEnv()
     expect(env.databaseUrl).toBe(URL_FORM.DATABASE_URL)
   })
+
+  it('empty MIGRATE_DATABASE_URL falls through to component form (no DATABASE_URL)', () => {
+    Object.assign(process.env, COMPONENT_FORM)
+    process.env.MIGRATE_DATABASE_URL = ''
+    const env = loadEnv()
+    expect(env.databaseUrl).toBe(
+      'postgresql://mythrun_staging:secret-pw@rds.example.com:5432/mythrun_staging?sslmode=require',
+    )
+  })
+
+  it('MIGRATE_DATABASE_URL wins over component-form vars', () => {
+    Object.assign(process.env, COMPONENT_FORM)
+    process.env.MIGRATE_DATABASE_URL = 'postgresql://m:m@m:5432/migrate'
+    expect(loadEnv().databaseUrl).toBe('postgresql://m:m@m:5432/migrate')
+  })
 })
