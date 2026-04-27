@@ -1,6 +1,6 @@
 import { Pool, type PoolConfig } from 'pg'
 
-export function createPgPool(url: string): Pool {
+export function createPgPool(url: string, overrides?: Partial<PoolConfig>): Pool {
   // pg does NOT reliably auto-derive TLS from `?sslmode=require` in the URL —
   // its URL parser may set `ssl: true` (default rejectUnauthorized: true)
   // and not honor an explicit `ssl` override passed alongside the URL. RDS
@@ -26,5 +26,5 @@ export function createPgPool(url: string): Pool {
   } else if (sslMode === 'verify-ca' || sslMode === 'verify-full') {
     config.ssl = { rejectUnauthorized: true }
   }
-  return new Pool(config)
+  return new Pool({ ...config, ...overrides })
 }
