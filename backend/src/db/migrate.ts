@@ -1,3 +1,10 @@
+import { readdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
+import type { Pool, PoolClient } from 'pg'
+import type pino from 'pino'
+import { LOCK_KEY } from './lock-key.js'
+
 const FILENAME_RE = /^[0-9]{3,}_[a-z0-9_]+\.sql$/
 
 export function isValidMigrationFilename(name: string): boolean {
@@ -67,4 +74,263 @@ function stripDollarQuoted(input: string): string {
     i++
   }
   return out
+}
+
+export type MigrateLogger = Pick<pino.BaseLogger, 'info' | 'warn' | 'error' | 'debug'>
+
+export interface AppliedMigration {
+  readonly version: string
+  readonly durationMs: number
+}
+
+export interface MigrationOptions {
+  readonly pool: Pool
+  readonly migrationsDir: string
+  readonly logger: MigrateLogger
+  readonly abortSignal?: AbortSignal | undefined
+  readonly runId?: string | undefined
+}
+
+export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigration[]> {
+  const { pool, migrationsDir, logger, abortSignal } = opts
+  const runId = opts.runId ?? cryptoRandomId()
+  const runStart = performance.now()
+  const appliedSoFar: AppliedMigration[] = []
+
+  const versionRow = await pool.query<{ version: string }>('SELECT version() AS version')
+  const pgServerVersion = versionRow.rows[0]?.version
+  logger.info(
+    { event: 'migrate.start', runId, migrationsDir, pgServerVersion, nodeVersion: process.version },
+    'migrate.start',
+  )
+
+  const client = await pool.connect()
+  let lockStart = 0
+  let acquiredLock = false
+  let errorPath: Error | undefined
+
+  try {
+    lockStart = performance.now()
+    await acquireAdvisoryLockWithHeartbeat(client, runId, logger, abortSignal)
+    acquiredLock = true
+    logger.info(
+      { event: 'migrate.lock_acquired', runId, waitMs: Math.round(performance.now() - lockStart) },
+      'migrate.lock_acquired',
+    )
+
+    await client.query(
+      'CREATE TABLE IF NOT EXISTS _migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())',
+    )
+
+    const allFiles = (await readdir(migrationsDir)).filter(
+      (n) => n.endsWith('.sql') && !n.startsWith('.'),
+    )
+    for (const f of allFiles) {
+      if (!isValidMigrationFilename(f)) {
+        throw new Error(
+          `invalid migration filename: ${f}. Required grammar: ^[0-9]{3,}_[a-z0-9_]+\\.sql$`,
+        )
+      }
+    }
+    const files = allFiles.sort()
+    if (files.length === 0) {
+      logger.info({ event: 'migrate.no_migrations_found', runId }, 'migrate.no_migrations_found')
+      return appliedSoFar
+    }
+
+    const appliedRows = await client.query<{ version: string }>(
+      'SELECT version FROM _migrations',
+    )
+    const applied = new Set(appliedRows.rows.map((r) => r.version))
+    const pending = files.filter((f) => !applied.has(f))
+    logger.info(
+      {
+        event: 'migrate.plan',
+        runId,
+        pending: pending.length,
+        total: files.length,
+        pendingVersions: pending,
+      },
+      'migrate.plan',
+    )
+
+    for (const file of pending) {
+      if (abortSignal?.aborted) {
+        logger.warn(
+          {
+            event: 'migrate.aborted',
+            runId,
+            appliedSoFar: appliedSoFar.length,
+            remaining: pending.length - appliedSoFar.length,
+          },
+          'migrate.aborted',
+        )
+        return appliedSoFar
+      }
+
+      const contents = await readFile(join(migrationsDir, file), 'utf8')
+      validateNoTransactionStatements(file, contents)
+
+      const start = performance.now()
+      try {
+        await client.query('BEGIN')
+        await client.query('SET LOCAL statement_timeout = 0')
+        await client.query("SET LOCAL lock_timeout = '30s'")
+        await client.query("SET LOCAL application_name = 'mythrun-migrate'")
+        await client.query(contents)
+        await client.query('INSERT INTO _migrations (version) VALUES ($1)', [file])
+        await client.query('COMMIT')
+      } catch (pgErr) {
+        try {
+          await client.query('ROLLBACK')
+        } catch {
+          /* swallow; reported below */
+        }
+        const durationMs = Math.round(performance.now() - start)
+        logger.error(
+          { event: 'migrate.failed', runId, version: file, durationMs, err: pgErr },
+          'migrate.failed',
+        )
+        const err = pgErr instanceof Error ? pgErr : new Error(String(pgErr))
+        const wrapped = new Error(`migration ${file} failed: ${err.message}`, { cause: err })
+        errorPath = wrapped
+        throw wrapped
+      }
+      const durationMs = Math.round(performance.now() - start)
+      logger.info(
+        { event: 'migrate.applied', runId, version: file, durationMs },
+        'migrate.applied',
+      )
+      appliedSoFar.push({ version: file, durationMs })
+    }
+
+    return appliedSoFar
+  } catch (err) {
+    errorPath ??= err instanceof Error ? err : new Error(String(err))
+    throw errorPath
+  } finally {
+    if (acquiredLock) {
+      try {
+        await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY.toString()])
+        logger.info(
+          { event: 'migrate.lock_released', runId, holdMs: Math.round(performance.now() - lockStart) },
+          'migrate.lock_released',
+        )
+      } catch (unlockErr) {
+        logger.warn(
+          { event: 'migrate.unlock_failed', runId, err: unlockErr },
+          'migrate.unlock_failed',
+        )
+      }
+    }
+    if (errorPath) {
+      client.release(errorPath)
+    } else {
+      try {
+        await client.query('DISCARD ALL')
+      } catch {
+        /* best-effort */
+      }
+      client.release()
+    }
+    logger.info(
+      {
+        event: 'migrate.done',
+        runId,
+        applied: appliedSoFar.length,
+        totalMs: Math.round(performance.now() - runStart),
+      },
+      'migrate.done',
+    )
+  }
+}
+
+async function acquireAdvisoryLockWithHeartbeat(
+  client: PoolClient,
+  runId: string,
+  logger: MigrateLogger,
+  abortSignal: AbortSignal | undefined,
+): Promise<void> {
+  const lockArg = LOCK_KEY.toString()
+  const tryRes = await client.query<{ ok: boolean }>(
+    'SELECT pg_try_advisory_lock($1) AS ok',
+    [lockArg],
+  )
+  if (tryRes.rows[0]?.ok) return
+
+  const lockStart = performance.now()
+  let lastHeartbeatAt = 0
+  const heartbeatIntervalMs = 5000
+  for (;;) {
+    if (abortSignal?.aborted) {
+      throw new Error('migrate aborted while waiting for advisory lock')
+    }
+    const now = performance.now()
+    if (now - lastHeartbeatAt >= heartbeatIntervalMs) {
+      const holder = await queryHolder(client).catch(() => null)
+      logger.info(
+        {
+          event: 'migrate.lock_waiting',
+          runId,
+          waitMsSoFar: Math.round(now - lockStart),
+          holder,
+        },
+        'migrate.lock_waiting',
+      )
+      lastHeartbeatAt = now
+    }
+    await new Promise((r) => setTimeout(r, 500))
+    const again = await client.query<{ ok: boolean }>(
+      'SELECT pg_try_advisory_lock($1) AS ok',
+      [lockArg],
+    )
+    if (again.rows[0]?.ok) return
+  }
+}
+
+interface LockHolder {
+  pid: number
+  applicationName: string | null
+  state: string | null
+  queryStartedAt: string | null
+  queryPreview: string | null
+}
+
+async function queryHolder(client: PoolClient): Promise<LockHolder | null> {
+  // pg_locks splits the bigint advisory key across classid (high 32) + objid (low 32),
+  // with objsubid = 1 marking int8-style advisory locks.
+  const sql = `
+    SELECT psa.pid, psa.application_name, psa.state,
+           psa.query_start, psa.query
+      FROM pg_locks pl
+      JOIN pg_stat_activity psa ON psa.pid = pl.pid
+     WHERE pl.locktype = 'advisory'
+       AND pl.classid  = (($1::bigint >> 32) & x'FFFFFFFF'::bigint)::int
+       AND pl.objid    = ($1::bigint & x'FFFFFFFF'::bigint)::int
+       AND pl.objsubid = 1
+       AND pl.granted  = true
+     LIMIT 1
+  `
+  const res = await client.query<{
+    pid: number
+    application_name: string | null
+    state: string | null
+    query_start: Date | null
+    query: string | null
+  }>(sql, [LOCK_KEY.toString()])
+  const row = res.rows[0]
+  if (!row) return null
+  return {
+    pid: row.pid,
+    applicationName: row.application_name,
+    state: row.state,
+    queryStartedAt: row.query_start ? row.query_start.toISOString() : null,
+    queryPreview: row.query ? row.query.slice(0, 200) : null,
+  }
+}
+
+function cryptoRandomId(): string {
+  // Fallback when caller doesn't supply runId — full uuidv7 is preferred but
+  // we don't import the package here so server-boot wiring can pass its own.
+  return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }
