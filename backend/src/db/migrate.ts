@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import type { Pool, PoolClient } from 'pg'
-import type pino from 'pino'
+import pino from 'pino'
 import { LOCK_KEY } from './lock-key.js'
 
 const FILENAME_RE = /^[0-9]{3,}_[a-z0-9_]+\.sql$/
@@ -371,4 +371,84 @@ function fallbackRunId(): string {
   // Fallback when caller doesn't supply runId — full uuidv7 is preferred but
   // we don't import the package here so server-boot wiring can pass its own.
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
+}
+
+/**
+ * Build a pino err-serializer that:
+ *   - wraps pino.stdSerializers.err
+ *   - recurses into Error.cause chains
+ *   - deletes pg's connectionParameters / connectionString keys at every level
+ *   - replaces literal password substrings in message/stack with [REDACTED]
+ *
+ * Pino's `redact: { paths }` only matches one nesting level per `*`; this
+ * serializer is the primary defense against rds_superuser password leakage
+ * via pg DatabaseError fields. The CLI block in Task 12 wires it via
+ * `serializers: { err: buildErrSerializer(() => env?.databaseUrl) }`.
+ *
+ * The getter form (rather than passing the URL directly) is so the CLI can
+ * pass `() => env?.databaseUrl` and the serializer reads the URL lazily
+ * AFTER `loadEnv()` has run — the logger is constructed BEFORE env loads
+ * so it can log loadEnv's own failure.
+ */
+function stripPgConnectionFields(
+  obj: Record<string, unknown>,
+  password: string | undefined,
+): void {
+  delete obj.connectionParameters
+  delete obj.connectionString
+  if (password) {
+    const escaped = password.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(escaped, 'g')
+    if (typeof obj.message === 'string') {
+      obj.message = obj.message.replace(re, '[REDACTED]')
+    }
+    if (typeof obj.stack === 'string') {
+      obj.stack = obj.stack.replace(re, '[REDACTED]')
+    }
+  }
+  if (obj.cause && typeof obj.cause === 'object') {
+    stripPgConnectionFields(obj.cause as Record<string, unknown>, password)
+  }
+}
+
+function copyOwnPropsInto(target: Record<string, unknown>, source: object): void {
+  const sourceRecord = source as Record<string, unknown>
+  for (const key of Object.keys(sourceRecord)) {
+    if (!(key in target)) {
+      target[key] = sourceRecord[key]
+    }
+  }
+}
+
+// pino.stdSerializers.err flattens cause into message/stack; we structurally
+// re-attach it under `cause` so consumers (and our redactor) can recurse.
+function serializeWithCause(err: unknown): Record<string, unknown> {
+  const base = pino.stdSerializers.err(err as Error) as unknown as Record<string, unknown>
+  if (err && typeof err === 'object' && 'cause' in err) {
+    const rawCause: unknown = err.cause
+    if (rawCause && typeof rawCause === 'object') {
+      const serializedCause = serializeWithCause(rawCause)
+      copyOwnPropsInto(serializedCause, rawCause)
+      base.cause = serializedCause
+    }
+  }
+  return base
+}
+
+export function buildErrSerializer(
+  getDatabaseUrl: () => string | undefined,
+): (err: unknown) => Record<string, unknown> {
+  return (err: unknown): Record<string, unknown> => {
+    const base = serializeWithCause(err)
+    if (err && typeof err === 'object') copyOwnPropsInto(base, err)
+    let password: string | undefined
+    try {
+      const url = getDatabaseUrl()
+      password = url ? new URL(url).password || undefined : undefined
+    } catch {
+      /* malformed URL — nothing to redact */
+    }
+    stripPgConnectionFields(base, password)
+    return base
+  }
 }
