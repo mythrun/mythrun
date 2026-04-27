@@ -472,9 +472,19 @@ CREATE TABLE pipeline_runs (
   input_tokens INTEGER DEFAULT 0,
   output_tokens INTEGER DEFAULT 0,
   cost_usd NUMERIC(10,6) DEFAULT 0,
-  user_id UUID REFERENCES users(id),
-  UNIQUE(COALESCE(world_id, campaign_id), stage, COALESCE(user_id, '00000000-0000-0000-0000-000000000000'))
+  user_id UUID REFERENCES users(id)
 );
+-- Postgres table-level UNIQUE constraints accept only column lists, not
+-- expressions, so the "one run per (world|campaign, stage, user)" invariant
+-- ships as a UNIQUE INDEX. The COALESCE on user_id collapses NULL to a
+-- sentinel UUID so two NULL-user rows for the same stage collide; without
+-- it, NULL ≠ NULL would let multiple anonymous runs slip past.
+CREATE UNIQUE INDEX idx_pipeline_runs_unique
+  ON pipeline_runs (
+    COALESCE(world_id, campaign_id),
+    stage,
+    COALESCE(user_id, '00000000-0000-0000-0000-000000000000'::uuid)
+  );
 
 -- World Snapshots
 CREATE TABLE world_snapshots (
