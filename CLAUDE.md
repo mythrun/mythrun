@@ -87,7 +87,11 @@ Every Linear issue goes through the full Superpowers workflow — no shortcuts, 
 4. **Move the plan into Beads.** Decompose the plan into concrete beads (one per step) with `bd create`. Wire blockers with `bd dep`. This is the atomic work list for implementation.
 5. **Implement** via `superpowers:executing-plans` (review-checkpointed) or `superpowers:subagent-driven-development` (parallel subagents on independent beads). Close each bead as it's done (`bd close`).
 6. **Verify** — run the relevant test suite + `pnpm typecheck` + `pnpm lint` before marking anything done. Apply the `superpowers:verification-before-completion` skill here.
-7. **Close the loop** — close the Linear issue when all its beads are closed and the "done when" condition is met. Commit with Conventional Commits, push to `main`. When the issue's status is flipped to Done via `mcp__linear-server__save_issue`, a `PostToolUse` hook (`.claude/hooks/post-linear-close.sh`) injects a reminder to dispatch the wiki-update subagent with the prompt from `docs/wiki/AUTHORING.md`. Do not skip this — the subagent runs autonomously and commits wiki updates in its own commit(s) before the session ends.
+7. **Close the loop** — when all beads are closed and the "done when" condition is met:
+   1. Commit any remaining code with Conventional Commits. **Do not push yet.**
+   2. Dispatch the wiki-update subagent with the prompt from `docs/wiki/AUTHORING.md` (parameterized with the Linear issue id). The subagent updates `docs/wiki/` and commits its own changes locally.
+   3. **Now `git push`** — code commits + wiki commit land in a single push, so CI sees a consistent state. (Pushing code first and letting the wiki catch up later guarantees a transient red `wiki:check` run between the two pushes; we avoid that.)
+   4. Flip the Linear issue to Done via `mcp__linear-server__save_issue`. A `PostToolUse` hook (`.claude/hooks/post-linear-close.sh`) emits a reminder to dispatch the wiki subagent — that hook is a **backstop** in case step 2 was skipped, not the primary trigger. If the wiki was already updated in step 2, the subagent will detect no drift and exit cleanly.
 
 TDD is required for implementation code — write a failing test that defines "done" before the implementation. The `superpowers:test-driven-development` skill enforces this.
 

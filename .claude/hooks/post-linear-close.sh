@@ -29,24 +29,26 @@ shopt -u nocasematch
 
 cat <<EOF
 <system-reminder>
-Linear issue ${issue_id} was just transitioned to ${state_name}. Before ending
-your turn, dispatch a wiki-update subagent to sync docs/wiki/ with the code
-and infra changes this issue introduced.
+Linear issue ${issue_id} was just transitioned to ${state_name}. Per the
+Standard Implementation Workflow in CLAUDE.md, the wiki update should
+already have landed BEFORE the code push (step 2 of the close-the-loop
+sequence) so CI doesn't see a code-ahead-of-wiki transient red.
 
-Use the Agent tool with subagent_type="general-purpose", model="opus", and the
-prompt template from docs/wiki/AUTHORING.md under "Wiki Update Subagent Prompt",
-parameterized with linearIssueId=${issue_id}.
+If you already dispatched the wiki subagent earlier in this turn and its
+commits landed in the same push as the code, ignore this reminder — the
+hook fires unconditionally and is a backstop, not the primary trigger.
 
-The subagent will:
-  1. Read the Linear issue's description and comments.
-  2. Walk git diffs for the commits attributed to this issue.
-  3. Update or add docs/wiki/content/<section>/<page>.html and
-     docs/wiki/diagrams/<section>/<name>.dot files as needed.
-  4. Run pnpm wiki:accept-drift <page> to lock updated hashes.
-  5. Run pnpm wiki:check to confirm no drift remains.
-  6. Commit and push the wiki changes.
+If you did NOT dispatch the wiki subagent yet, do it now:
+- Agent tool: subagent_type="general-purpose", model="opus".
+- Prompt template: docs/wiki/AUTHORING.md → "Wiki Update Subagent Prompt".
+- Parameterized with linearIssueId=${issue_id}.
 
-Do not skip this. The wiki is not optional — it must stay within one Linear
-issue of main.
+The subagent will read the issue + walk git diffs + update wiki content
+and diagrams + run pnpm wiki:accept-drift + pnpm wiki:check + commit
+and push. If it runs against an already-up-to-date wiki it will exit
+clean with no commits.
+
+Do not skip this. The wiki is not optional — it must stay within one
+Linear issue of main.
 </system-reminder>
 EOF
