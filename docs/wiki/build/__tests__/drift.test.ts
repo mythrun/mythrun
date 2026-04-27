@@ -119,4 +119,29 @@ describe('rewriteSourceHash', () => {
     const input = '<h1>hi</h1>'
     expect(() => rewriteSourceHash(input, 'sha256:cafebabe')).toThrow(/no source/i)
   })
+
+  it('replaces the AUTHORING.md <auto> placeholder with a real hash', () => {
+    const input = '<!-- source: x -->\n<!-- source-hash: sha256:<auto> -->\n<h1>hi</h1>'
+    const out = rewriteSourceHash(input, 'sha256:cafebabe')
+    expect(out).toContain('<!-- source-hash: sha256:cafebabe -->')
+    expect(out).not.toContain('<auto>')
+    // Critically: only ONE source-hash comment in the output, not two.
+    const matches = out.match(/<!--\s*source-hash:/g) ?? []
+    expect(matches).toHaveLength(1)
+  })
+
+  it('replaces the <auto-maintained> placeholder variant', () => {
+    const input = '<!-- source: x -->\n<!-- source-hash: sha256:<auto-maintained> -->\n<h1>hi</h1>'
+    const out = rewriteSourceHash(input, 'sha256:cafebabe')
+    expect(out).toContain('<!-- source-hash: sha256:cafebabe -->')
+    expect(out).not.toContain('<auto-maintained>')
+  })
+})
+
+describe('parsePageMeta — placeholder handling', () => {
+  it('treats the <auto> placeholder as no hash (drift = new page)', () => {
+    const input = '<!-- source: x -->\n<!-- source-hash: sha256:<auto> -->\n<h1>hi</h1>'
+    const meta = parsePageMeta(input)
+    expect(meta.sourceHash).toBeNull()
+  })
 })

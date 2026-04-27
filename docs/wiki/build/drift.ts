@@ -1,6 +1,13 @@
 import type { PageMeta } from './types.ts'
 
-const sourceHashRegex = /<!--\s*source-hash:\s*(sha256:[0-9a-f]+)\s*-->/
+// Matches a real `sha256:<hex>` hash OR the `<auto>` / `<auto-maintained>`
+// placeholder convention from AUTHORING.md examples. Without the placeholder
+// alternative, rewriteSourceHash fell through to the "insert" branch instead
+// of replacing the placeholder, leaving stale `<!-- source-hash: sha256:<auto> -->`
+// comments next to the real hash on first accept-drift. Capture group 1 is
+// the real hash when present; group 2 is the placeholder marker.
+const sourceHashRegex =
+  /<!--\s*source-hash:\s*(?:(sha256:[0-9a-f]+)|sha256:(<auto(?:-maintained)?>))\s*-->/
 const lastTicketRegex = /<!--\s*last-ticket:\s*([A-Z]+-\d+)\s*-->/
 
 // The literal `source:` (with colon) can't match `source-hash:` (with dash), so
