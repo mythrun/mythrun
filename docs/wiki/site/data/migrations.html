@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html" class="active">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../runbooks/index.html">Runbooks</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/migrations.html" class="active">Migrations</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html">Schema</a></li><li><a href="../data/migrations.html" class="active">Migrations</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Data › Migrations</div>
         <article>
@@ -386,9 +386,14 @@
 
 <p>
   The opposite case — an applied row whose file is missing from disk — is a warning, not an error:
-  <code>migrate.drift_missing_files</code> with the missing list. The run continues. The
-  checksum-drift follow-up upgrades this to error-on-content-changed once content hashes are stored;
-  today it's a queryable signal that someone deleted a migration file from the working tree.
+  <code>migrate.drift_missing_files</code> with the missing list and an actionable
+  <code>hint</code> field. The hint names the canonical recovery (<code
+    >pnpm db:reset && pnpm db:migrate</code
+  >) so a contributor seeing the warning during the MYT-32 → MYT-33 transition knows what to do
+  without grepping the design doc; if drift surfaces outside that transition the same hint says
+  "investigate before continuing." The run continues either way. The checksum-drift follow-up
+  upgrades this to error-on-content-changed once content hashes are stored; today it's a queryable
+  signal that someone deleted a migration file from the working tree.
 </p>
 
 <h3 id="lock-wait-heartbeat-visibility-while-blocked">Lock-wait heartbeat: visibility while blocked</h3>
@@ -454,9 +459,11 @@
     <code>mythrun</code>(<code>_test</code>|<code>_ci</code>) when invoked from tests.
   </li>
   <li>
-    From the repo root: <code>pnpm db:migrate</code>. First run applies
-    <code>001_smoke.sql</code> (a <code>CREATE EXTENSION IF NOT EXISTS pgcrypto</code> placeholder);
-    a second run is a no-op that logs <code>migrate.no_pending</code> and exits 0.
+    From the repo root: <code>pnpm db:migrate</code>. On a fresh DB, the runner applies
+    <code>001_initial_schema.sql</code>, <code>002_indexes.sql</code>,
+    <code>003_srd_reference_data.sql</code> in order — the
+    <a href="./schema.html">initial schema</a>. A second run is a no-op that logs
+    <code>migrate.no_pending</code> and exits 0.
   </li>
   <li>
     To author a new migration: add <code>NNN_short_name.sql</code> to
@@ -551,15 +558,20 @@ aws ecs execute-command \
 <h2 id="integration-points">Integration points</h2>
 
 <p>
-  The runner reuses <a href="../runtime/index.html"><code>createPgPool</code></a> from the backend
-  workspace and the <a href="../runtime/index.html"><code>installSignalHandlers</code></a> shape the
-  boot gate already established. The eventual server-boot wiring will call
-  <code>runMigrations</code> after the <code>waitFor(pg)</code> probe and before
-  <code>app.listen</code>; the <code>MigrateLogger</code> type is narrowed to a <code>Pick</code> of
-  pino's base logger so Fastify's <code>app.log</code> satisfies it without a cast. The deploy
-  pipeline (<a href="../infra/ci-cd.html">CI/CD</a>) will pick up a one-off ECS task pattern as a
-  follow-up bead — the runner already supports that mode by virtue of being a CLI; the bead is
-  task-definition wiring and the migration-role secret.
+  The runner applies the <a href="./schema.html">initial schema</a> — three files in
+  <code>backend/migrations/</code>, 35 application tables + 22 named indexes + 3 SRD reference
+  tables — onto a fresh database; the <code>schema</code> page is the explainer for what those files
+  lay down. The runner reuses <a href="../runtime/index.html"><code>createPgPool</code></a> from the
+  backend workspace and the
+  <a href="../runtime/index.html"><code>installSignalHandlers</code></a> shape the boot gate already
+  established. The eventual server-boot wiring will call <code>runMigrations</code> after the
+  <code>waitFor(pg)</code> probe and before <code>app.listen</code>; the
+  <code>MigrateLogger</code> type is narrowed to a <code>Pick</code> of pino's base logger so
+  Fastify's <code>app.log</code> satisfies it without a cast. The deploy pipeline (<a
+    href="../infra/ci-cd.html"
+    >CI/CD</a
+  >) will pick up a one-off ECS task pattern as a follow-up bead — the runner already supports that
+  mode by virtue of being a CLI; the bead is task- definition wiring and the migration-role secret.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -699,7 +711,11 @@ aws ecs execute-command \
     <tr>
       <td><code>migrate.drift_missing_files</code></td>
       <td>warn</td>
-      <td><code>missing</code> (versions in <code>_migrations</code> with no file on disk)</td>
+      <td>
+        <code>missing</code> (versions in <code>_migrations</code> with no file on disk),
+        <code>hint</code> (recovery guidance — points at <code>pnpm db:reset</code> for the MYT-32 →
+        MYT-33 transition)
+      </td>
     </tr>
     <tr>
       <td><code>migrate.no_migrations_found</code></td>

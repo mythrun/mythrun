@@ -1,0 +1,387 @@
+<!-- source: backend/migrations/001_initial_schema.sql -->
+<!-- source: backend/migrations/002_indexes.sql -->
+<!-- source: backend/migrations/003_srd_reference_data.sql -->
+<!-- source-hash: sha256:0bb4ce65441f9f3aa6b8aedfc4f999bf14c8a54106feea9026e2e218aa5c5c2d -->
+<!-- last-ticket: MYT-33 -->
+
+<h1>Schema</h1>
+
+<p class="lead">
+  The initial Postgres shape Mythrun runs on: 35 application tables grouped into identity, worlds,
+  campaigns, sessions, and ops; 22 named performance indexes; 3 empty SRD reference tables waiting
+  on data load. Every primary key is a UUIDv7. The schema is enforced at the DB layer, not the app
+  layer.
+</p>
+
+<!-- @diagram: data/schema -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The schema is the union of three migration files in <code>backend/migrations/</code>:
+  <code>001_initial_schema.sql</code> ships every <code>CREATE TABLE</code> in topological FK order,
+  <code>002_indexes.sql</code> adds the named performance and uniqueness indexes,
+  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables. The
+  <a href="./migrations.html">migrations runner</a> applies all three end-to-end on a fresh
+  database. The diagram clusters tables by the story they tell — read it left to right.
+</p>
+
+<h3>Identity and billing</h3>
+
+<p>
+  <code>users</code> is the gravitational center of the identity cluster. Cognito's <code>sub</code>
+  is the external identity (UNIQUE), email is the readable identity (UNIQUE), and
+  <code>auth_provider</code> is constrained to <code>google</code> or <code>discord</code> by a
+  CHECK so the application can match without first-checking format. Stripe customer IDs live on the
+  user row; subscription state is a separate <code>user_subscriptions</code> table linked to
+  <code>subscription_tiers</code> (a config table keyed by string, not UUID, because the row
+  identity is "the Pro tier" not "this instance of the Pro tier").
+</p>
+
+<p>
+  <code>credit_ledger</code> is the only place credit balance lives. There is no
+  <code>credit_balance</code> column on <code>users</code>. Granting credits is an INSERT; spending
+  credits is an INSERT with a negative amount; the current balance is a sum over rows. The
+  <code>idx_credit_ledger_user_type</code> composite index makes that sum a hot-path query.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Append-only ledger, not a mutable balance column</strong> — billing accuracy is
+  load-bearing. A mutable balance is a single row that can be wrong; a ledger is an audit trail that
+  can be replayed. Refunds, gifts, expirations, and disputes all become INSERTs with an explicit
+  <code>source_type</code> (<code>purchase | subscription | gift | trial | refund | debit</code>),
+  not in-place edits we'd have to reconstruct from Stripe webhooks. The Billing & Cost Controls spec
+  picks this up; the schema commits to it now so we don't ship a mutable balance and then try to
+  unship it.
+</aside>
+
+<h3>Worlds and entities</h3>
+
+<p>
+  A <code>world</code> is the prep-engine output: a setting with a concept, tone, geography,
+  political situation, and a tree of <code>entities</code> (NPCs, locations, factions, items). Each
+  entity carries a <code>prose_kernel</code> (1:1, the LLM-authored prose chunk that gets re-served
+  whenever the entity surfaces in play) and zero or more <code>facts</code> with explicit
+  <code>access_level</code> (<code>public | private | secret</code>) and
+  <code>narrative_status</code> (<code>undelivered | delivered | developed | resolved</code>). The
+  enforced-ignorance boundary in the runtime reads <code>access_level</code> directly from this
+  column — the schema is what makes the boundary checkable.
+</p>
+
+<p>
+  <code>worlds.source_world_id</code> is a self-reference for forks: a copy of someone else's shared
+  world starts as a child row pointing back at its origin. <code>ON DELETE SET NULL</code>
+  preserves the fork even if the origin is deleted; the link goes nullish, the world stands alone.
+</p>
+
+<p>
+  <code>relationships</code> connects two entities by string-typed kind ("owns", "rules",
+  "estranged-from"); <code>entity_hierarchy</code> is the parent/child tree separately because a
+  village belongs to a region belongs to a kingdom and we walk that often.
+  <code>random_tables</code> + <code>random_table_entries</code> hold per-world rollables.
+  <code>stat_blocks</code> + <code>stat_block_actions</code> are the combat-relevant numbers,
+  attached to entities by FK with <code>ON DELETE SET NULL</code> so you can swap a stat block out
+  without losing the entity.
+</p>
+
+<h3>Campaigns and play</h3>
+
+<p>
+  A <code>campaign</code> is a play instance over a world. <code>world_id</code> cascades on delete;
+  <code>source_world_id</code> records "this campaign was created from this prep snapshot of the
+  world" and goes nullish on origin deletion. <code>campaign_members</code> ties users to campaigns
+  with <code>role IN ('owner', 'player')</code> and a <code>UNIQUE(campaign_id, user_id)</code> so
+  no one is on the same campaign twice. <code>campaign_invites</code> hold redeemable codes with
+  optional expiry and use caps.
+</p>
+
+<p>
+  <code>characters</code> are the player avatars: stats, hit points, level, class, the
+  <code>character_skills</code> / <code>features</code> / <code>equipment</code> /
+  <code>spells</code> satellites. A character points at its <code>campaign</code> (CASCADE) and
+  optionally at an <code>entity</code> (SET NULL) — when a player retires a character, the entity
+  that represented them in the world stays.
+</p>
+
+<p>
+  Live play happens in a <code>session</code> bound to a campaign.
+  <code>session_messages</code> hold every line of the transcript with a <code>seq</code> column so
+  replay is deterministic; <code>session_participants</code> records who was present.
+  <code>world_snapshots</code> is a point-in-time freeze of world state used by
+  <code>session_preps</code> (the FT context + ST playbook the runtime loads at session start).
+  <code>session_usage</code> tracks per-session token spend for the budget caps.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Partial-unique <code>idx_sessions_one_active</code> instead of an app-layer check</strong>
+  — at most one session per campaign can be in <code>status = 'active'</code> at a time. An
+  application-layer check ("query for an active session, refuse to start a second") loses to a race:
+  two clients both query, both see no active session, both INSERT. Postgres
+  <code>CREATE UNIQUE INDEX ... WHERE status = 'active'</code> moves the invariant into the
+  database: the second INSERT errors with a unique-violation, which the runtime translates into a
+  user-facing "your campaign already has an active session." The partial predicate matters: ended
+  and crashed sessions accumulate freely; only active is bounded to one. The Multiplayer Session
+  Runtime spec depends on this guarantee.
+</aside>
+
+<h3>Pipeline runs and ops</h3>
+
+<p>
+  <code>pipeline_runs</code> is the prep-engine and session-prep job ledger: one row per (world or
+  campaign) × stage × user attempt, carrying status, token counts, cost, and start/complete
+  timestamps. The "one row per (world|campaign, stage, user)" invariant ships as a separate
+  <code>CREATE UNIQUE INDEX</code>, not a table-level <code>UNIQUE</code>:
+</p>
+
+<pre><code>CREATE UNIQUE INDEX idx_pipeline_runs_unique
+  ON pipeline_runs (
+    COALESCE(world_id, campaign_id),
+    stage,
+    COALESCE(user_id, '00000000-0000-0000-0000-000000000000'::uuid)
+  );</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>UNIQUE INDEX with COALESCE, not a table-level UNIQUE</strong> — Postgres table-level
+  <code>UNIQUE</code> constraints accept only column lists, not expressions. The invariant we want
+  is "the same stage can't run twice for the same world-or-campaign and the same user," but the
+  identifier is split across <code>world_id</code> and <code>campaign_id</code> (one is set, the
+  other is null), and <code>user_id</code> can be null for system-initiated runs. A naive
+  <code>UNIQUE(world_id, campaign_id, stage, user_id)</code> wouldn't enforce uniqueness across the
+  null columns at all (NULL ≠ NULL in SQL). The COALESCE collapses the null cases to a sentinel —
+  for <code>user_id</code> the all-zeros UUID with an explicit <code>::uuid</code> cast so type
+  unification works — and the resulting expression-based index does what we want. The original spec
+  §4 had this as a table-level UNIQUE and would have failed to apply; that bug got fixed in the same
+  commit as this transcription.
+</aside>
+
+<p>
+  <code>world_marketplace</code> and <code>moderation_flags</code> are schema-ready but not built at
+  launch — the columns exist so the marketplace and trust-and-safety milestones don't need a
+  schema-migration ceremony when they ship. <code>settings</code> is a key-value bag for global
+  feature flags and ops knobs, intentionally simple.
+</p>
+
+<h3>SRD reference tables</h3>
+
+<p>
+  <code>srd_monsters</code>, <code>srd_spells</code>, <code>srd_conditions</code> are read-only
+  reference data — the System Reference Document content used by the combat engine and prep
+  pipeline. The tables exist now; the data load is a follow-up bead in the prep-pipeline milestone.
+  Until then, no test or seed should reference an <code>srd_*</code> row by id.
+</p>
+
+<h3>Cascade rules: which deletes ripple</h3>
+
+<p>
+  The FK cascade rules encode the cleanup paths. Deleting a <code>user</code> CASCADEs through
+  <code>credit_ledger</code> and <code>user_subscriptions</code> but leaves <code>worlds</code> and
+  <code>campaigns</code> orphaned (the FK is <code>NO ACTION</code> on <code>created_by</code>) —
+  user deletion is a billing-team operation, not a content-delete operation. Deleting a
+  <code>world</code> CASCADEs through <code>entities</code> → <code>facts</code> +
+  <code>prose_kernels</code> + <code>relationships</code> + <code>entity_hierarchy</code>, and
+  through <code>campaigns</code> → <code>sessions</code> → <code>session_messages</code>: a world
+  delete is a tear-everything-down operation. Stat blocks detach to <code>SET NULL</code> on entity
+  deletion; characters detach to <code>SET NULL</code> on entity deletion. The schema-parity test in
+  <code>migrate-schema.test.ts</code> pins each of these rules so a future migration can't silently
+  flip a CASCADE to a NO ACTION (or vice versa).
+</p>
+
+<h3>What's not in the schema yet</h3>
+
+<p>
+  UUIDv7 generation. Tables declare <code>id UUID PRIMARY KEY</code> with no default; the
+  application generates the id at insert time using a UUIDv7 library. The DB-level fallback function
+  is roadmapped to a separate ticket.
+</p>
+
+<p>
+  Repository layer. The <code>backend/src/db/</code> directory ships only <code>migrate.ts</code>,
+  <code>lock-key.ts</code>, and <code>postgres.ts</code> right now. Per-table query helpers, Zod
+  result schemas, and transaction wrappers come in MYT-34.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="apply-the-schema-locally">Apply the schema locally</h3>
+<ol>
+  <li>
+    <code>pnpm db:up</code> if Postgres isn't running. <code>pnpm db:reset</code> wipes the docker
+    volume and gives you a fresh database — recommended whenever you pull a branch that touches
+    migrations.
+  </li>
+  <li>
+    <code>pnpm db:migrate</code> applies all three migration files end-to-end. A second run is a
+    no-op.
+  </li>
+  <li>
+    Verify the shape:
+    <pre><code>docker compose exec postgres psql -U mythrun -d mythrun -c "\dt"
+docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
+    You should see 39 tables (1 <code>_migrations</code> + 35 application + 3 SRD) and the
+    <code>idx_*</code> index set.
+  </li>
+</ol>
+
+<h3 id="recover-from-the-myt-32-myt-33-transition">Recover from the MYT-32 → MYT-33 transition</h3>
+<ol>
+  <li>
+    Symptom: the runner emits <code>migrate.drift_missing_files</code> with
+    <code>missing: ["001_smoke.sql"]</code> and a <code>hint</code> field pointing at
+    <code>pnpm db:reset</code>.
+  </li>
+  <li>
+    The cause: your local database was migrated under MYT-32 (which shipped
+    <code>001_smoke.sql</code>) and now MYT-33 has replaced that file with
+    <code>001_initial_schema.sql</code>. The smoke row is still in <code>_migrations</code> with no
+    file on disk.
+  </li>
+  <li>
+    Fix it forward: <code>pnpm db:reset && pnpm db:migrate</code>. The reset wipes the docker volume
+    (clearing the stale <code>_migrations</code> rows); the second command applies the three real
+    migrations cleanly. The drift warning goes away.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The <a href="./migrations.html">migrations runner</a> applies these three files; the runner's
+  <code>_migrations</code> bookkeeping is what the drift hint is reasoning about. Downstream, the
+  <a href="../runtime/index.html">backend runtime</a>'s repository layer will read and write these
+  tables; the <a href="../auth-billing/index.html">auth & billing</a> stories build on
+  <code>users</code>, <code>credit_ledger</code>, <code>user_subscriptions</code>, and
+  <code>stripe_events</code>; the
+  <a href="../world-campaign/index.html">world & campaign</a> pipeline writes <code>worlds</code> +
+  <code>entities</code> + <code>facts</code> + <code>prose_kernels</code>.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Tables by cluster</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Cluster</th>
+      <th>Tables</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Framework metadata</td>
+      <td><code>_migrations</code></td>
+    </tr>
+    <tr>
+      <td>Identity & billing</td>
+      <td>
+        <code>users</code>, <code>credit_ledger</code>, <code>subscription_tiers</code>,
+        <code>user_subscriptions</code>, <code>session_packs</code>, <code>purchases</code>,
+        <code>stripe_events</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Worlds & entities</td>
+      <td>
+        <code>worlds</code>, <code>entities</code>, <code>prose_kernels</code>, <code>facts</code>,
+        <code>relationships</code>, <code>entity_hierarchy</code>, <code>random_tables</code>,
+        <code>random_table_entries</code>, <code>stat_blocks</code>, <code>stat_block_actions</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Campaigns & play</td>
+      <td>
+        <code>campaigns</code>, <code>campaign_members</code>, <code>campaign_invites</code>,
+        <code>characters</code>, <code>character_skills</code>, <code>character_features</code>,
+        <code>character_equipment</code>, <code>character_spells</code>, <code>sessions</code>,
+        <code>session_messages</code>, <code>session_participants</code>,
+        <code>world_snapshots</code>, <code>session_preps</code>, <code>session_usage</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Pipeline & ops</td>
+      <td>
+        <code>pipeline_runs</code>, <code>world_marketplace</code>, <code>moderation_flags</code>,
+        <code>settings</code>
+      </td>
+    </tr>
+    <tr>
+      <td>SRD reference (empty)</td>
+      <td><code>srd_monsters</code>, <code>srd_spells</code>, <code>srd_conditions</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Named indexes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Index</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>idx_credit_ledger_user_type</code></td>
+      <td><code>(user_id, credit_type, expires_at)</code> — balance-sum hot path</td>
+    </tr>
+    <tr>
+      <td><code>idx_user_subscriptions_user</code></td>
+      <td><code>(user_id)</code></td>
+    </tr>
+    <tr>
+      <td><code>idx_pipeline_runs_unique</code></td>
+      <td>UNIQUE INDEX with COALESCE — see rationale above</td>
+    </tr>
+    <tr>
+      <td><code>idx_entities_world</code>, <code>idx_entities_world_type</code></td>
+      <td>Hot path for ST / Scribe / session loading</td>
+    </tr>
+    <tr>
+      <td><code>idx_facts_entity</code>, <code>idx_facts_entity_access_status</code></td>
+      <td>Fact filtering by entity + access level + narrative status</td>
+    </tr>
+    <tr>
+      <td><code>idx_relationships_source</code>, <code>idx_relationships_target</code></td>
+      <td>Both directions of relationship lookup</td>
+    </tr>
+    <tr>
+      <td><code>idx_session_messages_session_seq</code></td>
+      <td>Ordered transcript replay</td>
+    </tr>
+    <tr>
+      <td><code>idx_sessions_one_active</code></td>
+      <td>UNIQUE PARTIAL INDEX <code>WHERE status = 'active'</code> — see rationale</td>
+    </tr>
+    <tr>
+      <td>
+        <code>idx_campaigns_created_by</code>, <code>idx_campaign_members_user</code>,
+        <code>idx_campaign_members_campaign</code>, <code>idx_sessions_campaign</code>,
+        <code>idx_session_preps_campaign</code>, <code>idx_pipeline_runs_world</code>,
+        <code>idx_pipeline_runs_campaign</code>, <code>idx_random_tables_world</code>,
+        <code>idx_characters_campaign</code>, <code>idx_characters_user</code>,
+        <code>idx_world_snapshots_campaign</code>, <code>idx_purchases_user</code>
+      </td>
+      <td>Single-column FK lookup indexes</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Schema-parity test</h3>
+
+<p>
+  <code>backend/src/db/__tests__/migrate-schema.test.ts</code> runs the three migrations against a
+  clean DB and asserts the full set: every table name, every <code>idx_*</code> index name, every
+  CHECK constraint, every FK <code>ON DELETE</code> rule, and the partial-unique predicate on
+  <code>idx_sessions_one_active</code>. A transcription typo or a future schema-drift PR fails the
+  test with a clear diff.
+</p>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/migrations/001_initial_schema.sql</code>,
+  <code>backend/migrations/002_indexes.sql</code>,
+  <code>backend/migrations/003_srd_reference_data.sql</code>,
+  <code>backend/src/db/__tests__/migrate-schema.test.ts</code>.
+</p>

@@ -23,6 +23,7 @@ export const structure: Section[] = [
     title: 'Data',
     pages: [
       { slug: 'index', title: 'Overview' },
+      { slug: 'schema', title: 'Schema' },
       { slug: 'migrations', title: 'Migrations' },
     ],
   },

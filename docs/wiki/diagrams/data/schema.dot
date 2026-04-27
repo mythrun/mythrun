@@ -1,0 +1,117 @@
+digraph schema {
+  // High-level entity-relationship view of the initial schema. Boxes are
+  // table clusters grouped by responsibility; edges are FK relationships.
+  // Per-column detail belongs in the appendix and the migration files,
+  // not on the diagram.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  subgraph cluster_identity {
+    label="Identity & Billing";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    users   [label="users\ncognito_sub UNIQUE\nemail UNIQUE"];
+    ledger  [label="credit_ledger\n(append-only)"];
+    subs    [label="user_subscriptions"];
+    tiers   [label="subscription_tiers"];
+    packs   [label="session_packs"];
+    purch   [label="purchases"];
+    stripe  [label="stripe_events\n(idempotency)"];
+  }
+
+  subgraph cluster_world {
+    label="Worlds & Entities";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    worlds   [label="worlds\nsource_world_id → worlds\n(forks)"];
+    entities [label="entities\nnpc | location |\nfaction | item"];
+    kernels  [label="prose_kernels\n(1:1 with entity)"];
+    facts    [label="facts\npublic | private |\nsecret"];
+    rels     [label="relationships"];
+    hier     [label="entity_hierarchy"];
+    rtables  [label="random_tables\n+ entries"];
+    statbk   [label="stat_blocks\n+ actions"];
+  }
+
+  subgraph cluster_campaign {
+    label="Campaigns & Play";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    camps     [label="campaigns"];
+    members   [label="campaign_members\n(owner | player)"];
+    invites   [label="campaign_invites"];
+    chars     [label="characters\n+ skills, features,\nequipment, spells"];
+    sessions  [label="sessions\nstatus: active |\nended | crashed"];
+    msgs      [label="session_messages\n(seq-ordered)"];
+    parts     [label="session_participants"];
+    snaps     [label="world_snapshots"];
+    preps     [label="session_preps"];
+    usage     [label="session_usage\n(token cost)"];
+  }
+
+  subgraph cluster_ops {
+    label="Pipeline & Ops";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    runs    [label="pipeline_runs\nUNIQUE INDEX on\n(world|campaign,\nstage, user)"];
+    market  [label="world_marketplace"];
+    flags   [label="moderation_flags"];
+    sets    [label="settings"];
+  }
+
+  subgraph cluster_srd {
+    label="SRD Reference (read-only)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    monsters [label="srd_monsters"];
+    spells   [label="srd_spells"];
+    conds    [label="srd_conditions"];
+  }
+
+  // Identity edges
+  users -> ledger    [label="CASCADE"];
+  users -> subs      [label="CASCADE"];
+  tiers -> subs      [label=""];
+  users -> purch     [label=""];
+
+  // Worlds edges
+  users    -> worlds   [label="created_by"];
+  worlds   -> entities [label="CASCADE"];
+  entities -> kernels  [label="CASCADE 1:1"];
+  entities -> facts    [label="CASCADE"];
+  entities -> rels     [label="src/tgt CASCADE"];
+  entities -> hier     [label="CASCADE"];
+  worlds   -> rtables  [label="CASCADE"];
+  statbk   -> entities [label="SET NULL"];
+
+  // Campaign edges
+  worlds  -> camps    [label="CASCADE"];
+  camps   -> members  [label="CASCADE"];
+  users   -> members  [label="CASCADE"];
+  camps   -> invites  [label="CASCADE"];
+  camps   -> chars    [label="CASCADE"];
+  entities -> chars   [label="SET NULL"];
+  camps   -> sessions [label="CASCADE"];
+  sessions -> msgs    [label="CASCADE"];
+  sessions -> parts   [label="CASCADE"];
+  camps   -> snaps    [label="CASCADE"];
+  camps   -> preps    [label="CASCADE"];
+  sessions -> usage   [label="CASCADE"];
+
+  // Ops edges
+  worlds -> runs    [label="CASCADE"];
+  camps  -> runs    [label="CASCADE"];
+  worlds -> market  [label="CASCADE"];
+}
