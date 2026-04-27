@@ -3,7 +3,7 @@
 > **Linear issue**: [MYT-32](https://linear.app/mythrun/issue/MYT-32) — Backend Core: schema migration runner (`migrate.ts`)
 > **Parent spec**: `docs/specs/2026-04-13-backend-core.md` §3 (Migration Runner)
 > **Date**: 2026-04-26
-> **Status**: Draft v2 (post-blind-review)
+> **Status**: Draft v3 (post-production-lens)
 
 ## 1. Goal
 
@@ -16,8 +16,9 @@ The runner must be:
 - Concurrency-safe via Postgres advisory lock (two ECS tasks racing on deploy is a real scenario, not a hypothetical).
 - Append-only honor system (we trust the rule "never edit applied migrations"; no checksum drift detection in v1).
 - Usable as a CLI (`pnpm db:migrate`) and as an importable function (so future code can call it from server boot).
+- **Production-grade observability and operability from day one** — structured logs (pino), per-migration timing in the return shape and the logs, signal handling (SIGTERM during ECS deploys is real, not theoretical), and explicit recovery instructions. The runner will run unattended in CloudWatch-logged ECS tasks; v1 must be queryable.
 
-Out of scope: server-boot wiring, `CREATE INDEX CONCURRENTLY` support (handled by a future no-transaction header), checksum drift detection, the actual schema migrations, structured/JSON logging, automatic rollback.
+Out of scope: server-boot wiring, `CREATE INDEX CONCURRENTLY` support (handled by a future no-transaction header), checksum drift detection, the actual schema migrations, automatic rollback.
 
 ## 2. File Layout
 
@@ -48,21 +49,30 @@ Rationale (locked in during brainstorm):
 // backend/src/db/migrate.ts
 
 import type { Pool } from 'pg'
+import type { Logger } from 'pino'
 
 export interface AppliedMigration {
   readonly version: string
+  readonly durationMs: number
+}
+
+export interface MigrateOptions {
+  readonly pool: Pool
+  readonly migrationsDir: string
+  readonly logger: Logger
+  readonly abortSignal?: AbortSignal
 }
 
 export async function runMigrations(
-  pool: Pool,
-  migrationsDir: string,
+  opts: MigrateOptions,
 ): Promise<AppliedMigration[]>
 ```
 
-- Returns the list of migrations applied **during this invocation**. Empty array = nothing was pending.
+- Returns migrations applied **during this invocation**, each with the wall-clock duration of its transaction. Empty array = nothing was pending.
 - Throws on first failure. Does not attempt subsequent files.
 - The caller owns the pool's lifecycle (the runner does not call `pool.end()`).
-- `durationMs` was considered and dropped — nothing in the DoD asserts on it. The CLI logs wall time of each `applied_at` differential if humans want it; the structured return shape stays minimal.
+- `logger` is required (no default). The CLI passes a pino instance; future server-boot wiring will pass the Fastify logger; tests pass a silent fixture logger. This makes log-routing the caller's concern, not the runner's.
+- `abortSignal` lets the CLI's signal handler request a graceful stop after the in-flight transaction commits. When fired, the runner finishes the current migration (or rolls it back on error) and returns; subsequent unapplied migrations are deferred to the next run.
 
 ## 4. Tracking Table
 
@@ -80,37 +90,53 @@ CREATE TABLE IF NOT EXISTS _migrations (
 ## 5. Algorithm
 
 ```
+0. logger.info({ migrationsDir }, 'migrate.start')
 1. client = await pool.connect()                                // one dedicated session
    try:
      2. await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY])
-        // LOCK_KEY: a stable BIGINT computed once via Postgres itself —
-        // `SELECT hashtextextended('mythrun_migrate', 0)` — captured as a
-        // module-level constant rather than recomputed each run, so a
-        // future Postgres hash-function change can't desync runners.
+        // LOCK_KEY: a stable BIGINT, captured as a module-level constant.
+        // Computed once via `SELECT hashtextextended('mythrun_migrate', 0)`
+        // and pinned in the source so a future Postgres hash-function
+        // change can't desync runners.
         // Blocks (does not error) if another runner is mid-migration.
+        logger.debug('migrate.lock_acquired')
      3. await client.query('CREATE TABLE IF NOT EXISTS _migrations ...')
      4. files = (readdir migrationsDir)
                   .filter(name → name.endsWith('.sql') && !name.startsWith('.'))
                   .sort()
-        if files.length === 0: return []
+        if files.length === 0:
+          logger.info('migrate.no_migrations_found')
+          return []
      5. applied = SELECT version FROM _migrations
-     6. for each file in files \ applied, in order:
+        pending = files \ applied
+        logger.info({ pending: pending.length, total: files.length }, 'migrate.plan')
+     6. for each file in pending, in order:
+          if abortSignal?.aborted:
+            logger.warn({ remaining: ... }, 'migrate.aborted')
+            return appliedSoFar                                  // graceful stop
           a. validateNoTransactionStatements(fileContents)      // see §5.1
-          b. BEGIN
-          c. SET LOCAL statement_timeout = 0
-          d. SET LOCAL lock_timeout = '30s'
-          e. client.query(fileContents)
-          f. INSERT INTO _migrations (version) VALUES ($1)
-          g. COMMIT
-          h. console.log('✓ applied <version>')
-        on error in (b)–(f):
+          b. start = performance.now()
+          c. BEGIN
+          d. SET LOCAL statement_timeout = 0
+          e. SET LOCAL lock_timeout = '30s'
+          f. client.query(fileContents)
+          g. INSERT INTO _migrations (version) VALUES ($1)
+          h. COMMIT
+          i. durationMs = Math.round(performance.now() - start)
+          j. logger.info({ version, durationMs }, 'migrate.applied')
+          k. appliedSoFar.push({ version, durationMs })
+        on error in (c)–(g):
           - try client.query('ROLLBACK')                        // best-effort
-          - console.error('✗ migration <version> failed: <pgmsg>')
-          - throw new Error(`migration ${version} failed: ${pgErr.message}`)
+          - logger.error({ version, err: pgErr, durationMs }, 'migrate.failed')
+          - throw new Error(`migration ${version} failed: ${pgErr.message}`,
+                            { cause: pgErr })                    // preserve stack
    finally:
      - try await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY])
+       (logged at debug; advisory locks also auto-release on connection close,
+        so failure here doesn't leak state)
      - if error path: client.release(true)                      // destroy
        else:           client.release()                          // back to pool
+     - logger.info({ applied: appliedSoFar.length }, 'migrate.done')
 ```
 
 **Why the advisory lock.** Two runners both `SELECT version FROM _migrations` simultaneously, both see "001 not applied," both run the same `CREATE TABLE` — second runner gets `duplicate_table` from Postgres, not the unique-PK violation we'd hoped would save us. `pg_advisory_lock` is a session-level mutex Postgres provides exactly for this: serializes startup work without modifying schema. Held for the duration of the run.
@@ -140,6 +166,7 @@ At the bottom of `migrate.ts`:
 ```ts
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import pino from 'pino'
 import { loadEnv } from '../config/env.js'
 import { createPgPool } from './postgres.js'
 
@@ -152,14 +179,42 @@ const DEFAULT_MIGRATIONS_DIR = resolve(__dirname, '../../migrations')
 
 const argv1 = process.argv[1]
 if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
+  // pino emits JSON to stdout. In dev, operators pipe through `pino-pretty`
+  // (already used by Fastify in MYT-29). In CI/prod, CloudWatch ingests
+  // structured JSON natively — `event` field becomes queryable.
+  const logger = pino({
+    level: process.env.LOG_LEVEL ?? 'info',
+    base: { component: 'migrate' },
+  })
+
+  const abortController = new AbortController()
+  const onSignal = (signal: NodeJS.Signals) => {
+    logger.warn({ signal }, 'migrate.signal_received')
+    abortController.abort()
+  }
+  process.on('SIGTERM', onSignal)
+  process.on('SIGINT', onSignal)
+
   const env = loadEnv()
   const pool = createPgPool(env.databaseUrl)
   try {
-    const applied = await runMigrations(pool, DEFAULT_MIGRATIONS_DIR)
-    if (applied.length === 0) console.log('No pending migrations.')
-    else console.log(`Applied ${applied.length} migration(s).`)
+    const applied = await runMigrations({
+      pool,
+      migrationsDir: DEFAULT_MIGRATIONS_DIR,
+      logger,
+      abortSignal: abortController.signal,
+    })
+    logger.info(
+      { count: applied.length, versions: applied.map((m) => m.version) },
+      applied.length === 0 ? 'migrate.no_pending' : 'migrate.complete',
+    )
+    if (abortController.signal.aborted) {
+      // Aborted-but-graceful: in-flight migration committed (or none was running).
+      // Exit 130 by convention; deploy orchestration can retry the task.
+      process.exitCode = 130
+    }
   } catch (err) {
-    console.error('✗ Migration failed:', err instanceof Error ? err.message : err)
+    logger.error({ err }, 'migrate.fatal')
     process.exitCode = 1
   } finally {
     await pool.end()
@@ -169,26 +224,31 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
 
 The `argv1 &&` guard is required — under `noUncheckedIndexedAccess`, `process.argv[1]` is `string | undefined`, and `pathToFileURL('')` throws `ERR_INVALID_ARG_VALUE`.
 
+**Signal handling**: SIGTERM is what ECS sends during deploys (default 30s grace). The handler trips an `AbortSignal`; the runner finishes its current transaction (or rolls it back on error) and returns. The exit code 130 (Bash convention for SIGINT/SIGTERM-terminated) lets ECS task orchestration distinguish "runner exited cleanly because told to" from "runner crashed" (exit 1). The next task replacement re-runs the migration and converges.
+
 ## 7. Logging
 
-Plain `console.log` / `console.error`. The runner is a developer/CI tool — there's no Fastify instance to attach pino to and no consumer that needs structured JSON. This matches the tone of MYT-29's boot output (`✓ Postgres ready`).
+Pino, structured JSON, injected via `MigrateOptions.logger`. The runner emits these events (`event` is the second argument to pino's logger calls and surfaces as the `msg` field in JSON):
 
-Output is emitted **after** the `COMMIT` returns, never before — we don't want to claim success for a transaction that hasn't landed.
+| Event | Level | Fields | When |
+|-------|-------|--------|------|
+| `migrate.start` | info | `migrationsDir` | Top of `runMigrations` |
+| `migrate.lock_acquired` | debug | — | After `pg_advisory_lock` returns |
+| `migrate.no_migrations_found` | info | — | Migrations dir is empty after filter |
+| `migrate.plan` | info | `pending`, `total` | After comparing applied vs available |
+| `migrate.applied` | info | `version`, `durationMs` | After each successful `COMMIT` |
+| `migrate.failed` | error | `version`, `err`, `durationMs` | After `ROLLBACK` on a failed migration |
+| `migrate.aborted` | warn | `appliedSoFar`, `remaining` | When `abortSignal` fires between migrations |
+| `migrate.done` | info | `applied` (count) | `finally` block |
+| `migrate.signal_received` | warn | `signal` | CLI-level handler |
+| `migrate.complete` / `migrate.no_pending` | info | `count`, `versions` | CLI summary |
+| `migrate.fatal` | error | `err` | CLI-level catch |
 
-```
-✓ applied 001_smoke.sql
-✓ applied 002_indexes.sql
-Applied 2 migration(s).
-```
+All structured-log emission for `migrate.applied` happens **after** the `COMMIT` returns — we don't claim success for a transaction that hasn't landed. The `durationMs` is captured around the BEGIN→COMMIT span.
 
-On failure:
+Dev humans pipe stdout through `pino-pretty` (already a transitive dep via Fastify) for color formatting; ECS/CI keeps the raw JSON for CloudWatch.
 
-```
-✗ migration 002_broken.sql failed: syntax error at or near "FOO"
-✗ Migration failed: migration 002_broken.sql failed: syntax error at or near "FOO"
-```
-
-Structured logging, per-file timing, and CloudWatch metrics are deliberate omissions for v1 — captured as follow-up beads (§13).
+`pino` becomes a direct backend dependency (it's currently transitive through Fastify; making it explicit ensures the runner can be invoked without Fastify being constructed).
 
 ## 8. Build & Invocation
 
@@ -324,6 +384,7 @@ Each test creates its own temp directory of `.sql` files via `fs.mkdtempSync(pat
 Fixtures: `001_a.sql` (`CREATE TABLE a (id INT)`), `002_b.sql` (`CREATE TABLE b (id INT)`), `003_c.sql` (`CREATE TABLE c (id INT)`).
 Assertions:
 - `runMigrations` returns 3 entries with versions `001_a.sql`, `002_b.sql`, `003_c.sql` in that order.
+- Each entry's `durationMs` is `>= 0` and finite (timing is captured, not dropped silently).
 - Tables `a`, `b`, `c` exist.
 - `SELECT version FROM _migrations ORDER BY version` returns the three filenames.
 
@@ -380,6 +441,24 @@ Assertions:
 - `runMigrations` throws before any DB work; error mentions transaction-statement validation.
 - `_migrations` table exists but is empty (validation fires before the loop body runs against this file).
 
+**Test 8 — `abortSignal` requests a graceful stop between migrations.**
+Fixtures: `001_a.sql`, `002_b.sql`, `003_c.sql` (all valid).
+Setup: pre-arm an `AbortController`. Pass its signal to `runMigrations`. Use a logger spy that calls `abortController.abort()` after the first `migrate.applied` event.
+Assertions:
+- `runMigrations` returns 1 entry (`001_a.sql` only).
+- Tables `b` and `c` do **not** exist.
+- `_migrations` contains exactly `('001_a.sql')`.
+- Re-running `runMigrations` *without* the abort signal completes the remaining two — convergence on retry.
+
+**Test 9 — pino logger receives the expected event names with the expected fields.**
+Use a `pino()` logger configured with a destination spy (write to a string-array sink, parse JSON per line).
+Fixtures: same as Test 1.
+Assertions:
+- The captured log includes events `migrate.start`, `migrate.plan`, three `migrate.applied` events with `{ version, durationMs }`, and `migrate.done`.
+- Each `migrate.applied` event's `version` matches the file order.
+- No `migrate.failed` event is present.
+- This pins the operability contract: future refactors that drop a structured event break a test, not just an unread log.
+
 ### 10.6 What we're NOT testing here
 
 - Concurrent runners racing — covered in design via advisory lock; integration test would require parallel processes, deferred.
@@ -399,10 +478,12 @@ Assertions:
 | `migrationsDir` missing | `readdir` throws ENOENT → CLI exits 1 |
 | File contains `BEGIN`/`COMMIT`/`ROLLBACK` | Validation rejects before any DB work; error names the file and the offending token |
 | SQL error in migration | `ROLLBACK` (best-effort) → log version + pg message → throw → CLI exits 1; client destroyed (`release(true)`) |
-| `pool.end()` failure during CLI shutdown | Logged but doesn't change exit code |
-| SIGINT/SIGTERM mid-run | Process exits; Postgres rolls back the open transaction server-side; advisory lock auto-releases on connection close. Operator re-runs to converge. |
+| `pool.end()` failure during CLI shutdown | Logged at error level but doesn't change exit code |
+| SIGTERM/SIGINT between migrations | `AbortSignal` fires → runner returns the migrations applied so far → CLI exits 130. Re-running converges. |
+| SIGTERM/SIGINT during a migration's transaction | OS cancels the syscall; pg client raises an error on next operation; falls into the SQL-error path → `ROLLBACK` (best-effort) → `release(true)` → throw → CLI exits 1. Postgres rolls back server-side regardless. Advisory lock auto-releases on connection close. |
+| Process killed with SIGKILL | No graceful path. Postgres rolls back the open transaction server-side; advisory lock auto-releases. Operator re-runs to converge. |
 
-No retries anywhere. The runner is a one-shot tool.
+No retries anywhere. The runner is a one-shot tool — convergence is the deploy orchestrator's job (re-run the task).
 
 ## 12. Recovery (informational)
 
@@ -420,8 +501,6 @@ To create after this ticket lands:
 - Add `CREATE INDEX CONCURRENTLY` support via a `-- pg-migrate: no-transaction` header.
 - Add file-checksum drift detection on `_migrations` (extra column, fail if previously-applied file's hash changed).
 - Pick the prod invocation pattern (one-off ECS task vs. server CMD chain) and wire the deploy.
-- Add structured logging + per-migration timing if operability demands.
-- SIGINT handler that prints "interrupted — re-run to converge" and exits 130 (currently relies on default abort).
 
 ## 14. Definition of Done
 
@@ -429,12 +508,27 @@ To create after this ticket lands:
 - `backend/migrations/001_smoke.sql` exists with `CREATE EXTENSION IF NOT EXISTS pgcrypto`.
 - `backend/Dockerfile` runtime stage copies `migrations/` so the compiled binary can find them in the container.
 - `backend/vitest.config.ts` sets `fileParallelism: false` and loads `.env.development` via the setup file.
-- `backend/src/db/__tests__/migrate.test.ts` covers Tests 1, 2, 3, 3b, 4, 5, 6, 7 against the real local Postgres, behind the `guardTestDatabase` check.
+- `backend/src/db/__tests__/migrate.test.ts` covers Tests 1, 2, 3, 3b, 4, 5, 6, 7, 8, 9 against the real local Postgres, behind the `guardTestDatabase` check.
+- `pino` is a direct dependency of `backend/package.json` (not relying on Fastify's transitive include).
 - `pnpm db:migrate` works against `pnpm db:up`'d Postgres: first run applies `001_smoke.sql`, second run is a no-op.
 - `pnpm typecheck` + `pnpm lint` + `pnpm test` all green.
 - Backend Core spec §3 directory + tracking-table details match the design (already updated during brainstorming).
 
-## 15. Changes Since v1 (post-blind-review)
+## 15. Changes in v3 (post-production-lens)
+
+After the v2 review, Miklos called out a YAGNI reflex on operability. v3 corrects it:
+
+1. **`durationMs` restored** to `AppliedMigration` and asserted in Test 1.
+2. **Pino logger injected** via `MigrateOptions` (no more `console.log`). All emit points produce structured events with stable names; Test 9 pins the contract.
+3. **`AbortSignal` parameter** plumbed through `runMigrations`. CLI traps SIGTERM/SIGINT, fires the signal, runner finishes the in-flight transaction and returns; CLI exits 130 so the deploy orchestrator can distinguish "told to stop" from "crashed."
+4. **`pino` promoted to a direct dependency** of `backend/package.json`.
+5. **Error throws use `{ cause }`** to preserve pg stack traces.
+6. **Test 8 (graceful abort)** and **Test 9 (logger contract)** added.
+7. **§13 follow-ups trimmed** — items now in v1 are no longer follow-ups.
+
+The standing rule for this codebase: production-grade defaults. Deferring observability/operability for a binary that runs in ECS unattended is a bug, not a simplification.
+
+## 16. Changes Since v1 (post-blind-review)
 
 Recorded for traceability. v1 was reviewed by four subagents in parallel. Convergent findings drove these revisions:
 
