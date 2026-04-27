@@ -4,6 +4,17 @@
 
 A build-time generator that produces an interactive search-and-expand schema reference page for the internal wiki, sourced from `backend/migrations/*.sql`. Replaces the (deliberately-skipped) v1 hand-authored page. After this lands, a contributor browsing the wiki can search for any table or column and expand to see types, nullability, defaults, FK targets + `ON DELETE` rules, CHECK constraints, and indexes — and the answer is always whatever the migrations say, because the page is regenerated from them on every `pnpm wiki:build`.
 
+## Page-kind framing: Narrative vs Reference
+
+This bead also formalizes a split that's been latent in the wiki since the runbooks index shipped:
+
+- **Narrative pages** — hand-authored, story-shaped, voice-driven explainers governed by AUTHORING.md principles 1–4 (illustrative, explainer-not-reference, story-shaped, diagram-central). One page per coherent concept of the system; the reader scrolls front-to-back to learn. Lives in topical sections: `Infra`, `Runtime`, `Data`, `Auth & Billing`, `World & Campaign`, `Combat`, `Frontend`.
+- **Reference pages** — derived views over data that lives elsewhere in the repo or in other wiki pages. Auto-generated from upstream sources. Lookup-shaped, not narrative; no rationale callouts, no top-of-page diagram, no "How it fits together" section. The reader arrives with a specific question ("which tables have a CASCADE on user deletion?", "what's the runbook to expand the CIDR range?") and uses the page as an index.
+
+Today's `Runbooks` top-level section already fits the Reference shape; it's just been the only one. With the schema reference now being the second, this bead renames the section from `runbooks` to `reference` and treats it as the home for all auto-generated lookup material going forward. The seven narrative sections stay narrative; the Reference section is for tool-shaped pages.
+
+Future Reference candidates (out of scope for this bead, but the section now has a home for them): a CHECK-constraint inventory, an environment-variable index, a feature-flag inventory, a Terraform-output catalog. Each would slot in as `reference/<thing>.html`.
+
 ## Goals
 
 1. Schema reference content is regenerated from `backend/migrations/` automatically. No hand-authoring of column-level reference data.
@@ -40,10 +51,10 @@ schemaRenderer.ts ─── pure (metadata) => string
 HTML fragment         (<details>-per-table search-and-expand UI)
         │
         ▼
-buildPipeline.ts ───── splices fragment into content/data/schema-reference.html
+buildPipeline.ts ───── splices fragment into content/reference/schema.html
         │              at the <!-- @schema-reference --> marker
         ▼
-site/data/schema-reference.html
+site/reference/schema.html
 ```
 
 ### Module layout
@@ -72,7 +83,7 @@ site/data/schema-reference.html
 **Existing files touched:**
 
 - **`docs/wiki/build/buildPipeline.ts`** — add `resolveSchemaReference(content, fragment)` mirroring the existing `resolveRunbookIndex` (line 271). The build context gains a `schemaFragment: string | null` field; if any page contains `<!-- @schema-reference -->`, the orchestrator runs once before page rendering and the fragment is reused. (We pre-scan, like `scanAllRunbooks` at line 231, so the extractor runs at most once per build regardless of how many pages might reference the marker.)
-- **`docs/wiki/structure.ts`** — add `{ slug: 'schema-reference', title: 'Schema reference' }` to the `data` section after `migrations`.
+- **`docs/wiki/structure.ts`** — rename the existing `runbooks` section slug + title to `reference` / `Reference`. Move the existing `{ slug: 'index', title: 'Overview' }` page to `{ slug: 'runbooks', title: 'Runbooks' }` (the page is no longer the section's overview; it's a sibling of the schema reference). Add a new `{ slug: 'index', title: 'Overview' }` for the section landing, plus `{ slug: 'schema', title: 'Schema reference' }` for the new page. Final order: `Overview`, `Runbooks`, `Schema reference`.
 - **`docs/wiki/layout/helper.js`** — add `setupSchemaReferenceSearch()` initializer alongside `setActiveToc()` and `setupDiagramModal()`. Vanilla IIFE, same shape as the existing functions. Behavior:
   - On input event, lowercase the query.
   - Walk `.schema-table` elements:
@@ -85,15 +96,21 @@ site/data/schema-reference.html
   - Wire `#schema-expand-all` / `#schema-collapse-all` buttons (delegate to setting/removing the `open` attribute on each `.schema-table`).
 - **`docs/wiki/layout/styles.css`** — add minimal styles: `.schema-table`, `.schema-table-name`, `.schema-table-meta`, `.schema-columns`, `.schema-columns th/td` (monospace for type/default/references columns), `.hidden { display: none; }`, `mark` (subtle yellow background, no text color override), `.schema-controls` (flex row for search input + counter + buttons). Maker's-workshop voice — match the existing `wiki-rationale` / `wiki-runbook-index` density.
 - **`.github/workflows/wiki-check.yml`** — add a `postgres:16-alpine` service container exactly mirroring `deploy.yml:30-46` (same env, same healthcheck, port 5432), and export `DATABASE_URL=postgresql://mythrun:mythrun_dev@localhost:5432/mythrun` for the `pnpm wiki:check` step.
-- **`docs/wiki/AUTHORING.md`** — add a new short section between "Page header comments" and "Authoring conventions" titled "Auto-generated reference pages". Documents: when this pattern applies (structured artifact-derived reference, not narrative); how the source-hash works (points at the upstream artifact, drifts when the artifact changes, contributor runs `pnpm wiki:accept-drift` after rebuild); the marker-replacement convention; and a one-liner that the schema reference is the only page using this convention today.
+- **`docs/wiki/AUTHORING.md`** — two additions:
+  1. A new section near the top (after "The seven principles") titled **"Narrative vs Reference pages"**. Documents the page-kind split: narrative pages live in topical sections (Infra, Runtime, Data, Auth & Billing, World & Campaign, Combat, Frontend) and follow the seven principles + canonical page spine; reference pages live under the `Reference` section and are derived views (auto-aggregated from other pages or auto-generated from upstream artifacts). The seven principles + canonical spine apply to narrative pages only. Reference pages have their own minimal shape: `<h1>` title + `<p class="lead">` + (optionally) source comments + a marker the build replaces, no diagram, no rationale callouts, no "How it fits together."
+  2. A new section after "Page header comments" titled **"Auto-generated reference pages"** documenting the marker-replacement convention specifically: how the build detects a marker (`<!-- @runbooks-index -->`, `<!-- @schema-reference -->`), how the source-hash mechanism applies when the upstream artifact lives outside the wiki (points at the artifact, drifts when the artifact changes, contributor runs `pnpm wiki:accept-drift`), and a list of the markers in use today.
 
-**New content file:**
+**New / moved content files:**
 
-- **`docs/wiki/content/data/schema-reference.html`** — structure:
+- **`docs/wiki/content/runbooks/index.html` → `docs/wiki/content/reference/runbooks.html`** — the existing runbook index page moves to its new home and is renamed (it was the section overview at `runbooks/index.html`; it's now a sibling page at `reference/runbooks.html`). Content is unchanged: lead paragraph + `<!-- @runbooks-index -->` marker. The wiki-build's runbook aggregation (which scans every page for runbook entries) keeps working without code changes — the marker is what triggers replacement, not the page slug.
+
+- **`docs/wiki/content/reference/index.html`** — new section landing. Short prose describing what Reference is for ("derived views over data that lives elsewhere — for looking up specific things, not learning the system; the topical sections are where the system is explained"). Lists the available reference pages with one-line descriptions. No source-hash (sourceless landing pages are allowed per AUTHORING.md).
+
+- **`docs/wiki/content/reference/schema.html`** — the new schema reference page. Structure:
   - Source-comment header (`<!-- source: backend/migrations/001_initial_schema.sql -->` plus `002_indexes.sql`, `003_srd_reference_data.sql`, the source-hash placeholder, and `<!-- last-ticket: MYT-33 --> `).
   - `<h1>Schema reference</h1>`.
   - `<p class="lead">` — one sentence: "Every table, column, constraint, and index in the Mythrun database — searchable. Generated from `backend/migrations/`, regenerated on every wiki build."
-  - `<p>` of context — single paragraph explaining the difference from the explainer page, and that the page is auto-generated.
+  - `<p>` of context — single paragraph explaining the difference from the explainer at `data/schema.html` (this page is for lookup; that page tells the story), and that the page is auto-generated.
   - The static search controls block:
     ```html
     <div class="schema-controls">
@@ -104,11 +121,11 @@ site/data/schema-reference.html
     </div>
     ```
   - `<div id="schema-tables-container"><!-- @schema-reference --></div>` — the marker the build replaces.
-  - `<h2>Integration points</h2>` paragraph cross-linking back to `./schema.html` (the narrative explainer) and `./migrations.html` (the runner).
+  - `<h2>Integration points</h2>` paragraph cross-linking back to `../data/schema.html` (the narrative explainer) and `../data/migrations.html` (the runner).
 
 **Updated content file:**
 
-- **`docs/wiki/content/data/schema.html`** — the existing "Integration points" paragraph gains one sentence pointing readers at `./schema-reference.html` for "every column, every constraint, every index — searchable."
+- **`docs/wiki/content/data/schema.html`** — the existing "Integration points" paragraph gains one sentence pointing readers at `../reference/schema.html` for "every column, every constraint, every index — searchable."
 
 ### Drift contract
 
@@ -116,12 +133,12 @@ The page's `<!-- source: -->` comments declare `backend/migrations/001_initial_s
 
 When a migration changes:
 
-1. Contributor runs `pnpm wiki:build`. The generator regenerates the HTML; the build writes `site/data/schema-reference.html`. The drift mechanism notices the source files changed: emits a drift warning (mode=`build`) or banner.
-2. Contributor inspects the regenerated page in `pnpm wiki:dev`. Looks right? Run `pnpm wiki:accept-drift`. The hash in `content/data/schema-reference.html` updates.
+1. Contributor runs `pnpm wiki:build`. The generator regenerates the HTML; the build writes `site/reference/schema.html`. The drift mechanism notices the source files changed: emits a drift warning (mode=`build`) or banner.
+2. Contributor inspects the regenerated page in `pnpm wiki:dev`. Looks right? Run `pnpm wiki:accept-drift`. The hash in `content/reference/schema.html` updates.
 3. Commit the migration AND the updated content file (only the source-hash comment changes — the HTML body never changes because the static shell is stable).
 4. CI runs `pnpm wiki:check`. The build re-runs the generator against CI Postgres, recomputes the hash, compares to the committed hash. They match → green.
 
-If a contributor forgets step 2, CI is red with `drift: docs/wiki/content/data/schema-reference.html (mismatch)`.
+If a contributor forgets step 2, CI is red with `drift: docs/wiki/content/reference/schema.html (mismatch)`.
 
 The content file's hand-written shell rarely changes — only the `<!-- source-hash: -->` comment does. A migration change touches one wiki file (the schema-reference content) plus the migration itself.
 
@@ -301,24 +318,27 @@ Estimated added build time: 2-3 seconds. Total `pnpm wiki:build`: still under 5 
 
 The plan-into-beads decomposition will live in the implementation plan (next step), but the rough order:
 
-1. Skeleton: empty `schemaRef.html` content file with the marker, `structure.ts` entry, hardcoded test fragment in `buildPipeline.ts` to verify the splice plumbing.
-2. `schemaExtractor.ts` against the existing migrations (lift the queries from `migrate-schema.test.ts`), with a thin smoke test that runs it locally and asserts ≥35 tables.
-3. `schemaRenderer.ts` against a fixture `SchemaMetadata`, with the unit-test suite.
-4. Wire extractor → renderer → buildPipeline. Run `pnpm wiki:build` end-to-end. Verify the page in `pnpm wiki:dev`.
-5. `helper.js` search/filter/highlight + counter + expand-all/collapse-all. Verify in browser.
-6. `styles.css` polish.
-7. `.github/workflows/wiki-check.yml` Postgres service container + `DATABASE_URL` env. Verify in CI on the PR.
-8. `AUTHORING.md` section on auto-generated pages.
-9. Cross-link from `content/data/schema.html` to the new reference page.
-10. Run `pnpm typecheck && pnpm lint && pnpm test && pnpm wiki:check` — green.
+1. **Section refactor.** Rename `runbooks` → `reference` in `structure.ts`. Move `content/runbooks/index.html` → `content/reference/runbooks.html`. Add a new `content/reference/index.html` section landing. Run `pnpm wiki:build` and confirm the runbooks page still renders correctly under its new path (the `<!-- @runbooks-index -->` marker is content-driven, not path-driven, so no code change should be needed).
+2. **Skeleton.** New `content/reference/schema.html` content file with the marker and source comments, plus a hardcoded test fragment in `buildPipeline.ts` to verify the splice plumbing end-to-end before any DB code lands.
+3. **Extractor.** `schemaExtractor.ts` against the existing migrations (lift the queries from `migrate-schema.test.ts`); thin smoke test that runs locally and asserts ≥35 tables and the cluster map covers them all.
+4. **Renderer.** `schemaRenderer.ts` against a fixture `SchemaMetadata`, with the unit-test suite (table-by-table HTML structure, edge cases, escaping).
+5. **Wire.** Extractor → renderer → buildPipeline. Replace the hardcoded fragment with the real path. Run `pnpm wiki:build` end-to-end. Verify the page in `pnpm wiki:dev`.
+6. **Client-side.** `helper.js` search/filter/highlight + counter + expand-all/collapse-all. Verify in browser.
+7. **Style.** `styles.css` polish.
+8. **CI.** `.github/workflows/wiki-check.yml` Postgres service container + `DATABASE_URL` env. Verify in CI on the PR.
+9. **AUTHORING.md.** Two additions: Narrative vs Reference framing near the top; auto-generated-page convention after Page header comments.
+10. **Cross-link.** `content/data/schema.html` integration-points paragraph adds the link to `../reference/schema.html`.
+11. **Verify.** `pnpm typecheck && pnpm lint && pnpm test && pnpm wiki:check` — green.
 
 ## Done when
 
-- `pnpm wiki:build` produces `site/data/schema-reference.html` with all 38 tables expandable, all columns, all indexes (including the partial unique and the COALESCE expression-based unique), all CHECKs, all FK delete rules.
+- The wiki has a top-level `Reference` section containing `Overview`, `Runbooks`, and `Schema reference`. The runbooks page works as before (the existing `<!-- @runbooks-index -->` aggregation continues to fire).
+- `pnpm wiki:build` produces `site/reference/schema.html` with all 38 tables expandable, all columns, all indexes (including the partial unique and the COALESCE expression-based unique), all CHECKs, all FK delete rules.
 - The page's search input filters by table-name or column-name with match highlighting and a `Showing N of 38 tables` counter.
 - Adding a hypothetical `004_test.sql` with `CREATE TABLE foo (id UUID PRIMARY KEY)` and rerunning `pnpm wiki:build` regenerates the page to include `foo`. Removing the file restores the previous page.
 - `pnpm wiki:check` fires drift if `backend/migrations/` changes and the page's source-hash hasn't been updated.
-- The page is cross-linked from `data/schema.html`'s integration points and back.
+- `data/schema.html` cross-links to `reference/schema.html`, and the reference page links back to both `data/schema.html` and `data/migrations.html`.
+- `AUTHORING.md` documents the Narrative vs Reference page-kind split and the auto-generated-page marker convention.
 - `pnpm typecheck && pnpm lint && pnpm test && pnpm wiki:check` green locally.
 - CI's `wiki-check` job is green with the Postgres service container active.
-- A wiki commit on the same branch as the implementation lands the page + the drift baseline.
+- A single wiki commit on the same branch as the implementation lands the section refactor + the new schema reference page + the drift baseline + the cross-links.
