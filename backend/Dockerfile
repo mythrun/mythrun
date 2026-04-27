@@ -30,6 +30,7 @@ RUN apk add --no-cache dumb-init
 WORKDIR /app
 RUN addgroup -S mythrun && adduser -S mythrun -G mythrun
 COPY --from=builder --chown=mythrun:mythrun /app/deploy ./
+COPY --from=builder --chown=mythrun:mythrun /app/backend/migrations ./migrations
 USER mythrun
 ENV NODE_ENV=production
 EXPOSE 3000
