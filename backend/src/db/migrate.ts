@@ -161,7 +161,13 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
     const missing = [...applied].filter((v) => !fileSet.has(v)).sort()
     if (missing.length > 0) {
       logger.warn(
-        { event: 'migrate.drift_missing_files', runId, missing },
+        {
+          event: 'migrate.drift_missing_files',
+          runId,
+          missing,
+          hint:
+            'applied migrations are missing on disk. If this is the MYT-32→MYT-33 transition, run `pnpm db:reset && pnpm db:migrate`. Otherwise, investigate before continuing — a previously-applied migration was deleted or renamed.',
+        },
         'migrate.drift_missing_files',
       )
     }

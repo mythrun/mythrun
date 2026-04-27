@@ -252,6 +252,8 @@ $$ LANGUAGE plpgsql;`,
     const drift = lines.find((l) => l.event === 'migrate.drift_missing_files')
     expect(drift).toBeDefined()
     expect(drift?.missing).toEqual(['999_ghost.sql'])
+    expect(typeof drift?.hint).toBe('string')
+    expect((drift?.hint as string).length).toBeGreaterThan(0)
   })
 
   it('Test 8: abortSignal requests a graceful stop between migrations', async () => {
