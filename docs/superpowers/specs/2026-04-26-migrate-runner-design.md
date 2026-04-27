@@ -3,7 +3,7 @@
 > **Linear issue**: [MYT-32](https://linear.app/mythrun/issue/MYT-32) — Backend Core: schema migration runner (`migrate.ts`)
 > **Parent spec**: `docs/specs/2026-04-13-backend-core.md` §3 (Migration Runner)
 > **Date**: 2026-04-26
-> **Status**: Draft v6 (post-fourth-blind-review)
+> **Status**: v6 (final — three targeted fixes from round 5 folded in below)
 
 ## 1. Goal
 
@@ -178,6 +178,12 @@ CREATE TABLE IF NOT EXISTS _migrations (
                      'migrate.unlock_failed')
          // Backstop: advisory locks auto-release on socket close.
        }
+     - if (success path) await client.query('DISCARD ALL')
+       // Defends against a migration that did `RESET application_name`
+       // (or any non-LOCAL session change) and would otherwise leave
+       // the client in a polluted state for the next pool checkout.
+       // No-op if everything was SET LOCAL. On error path we destroy
+       // the client below, so DISCARD is unnecessary there.
      - if error path: client.release(pgErr)        // pg-pool: release(err) destroys
        else:           client.release()
      - logger.info({ event: 'migrate.done', runId,
@@ -205,14 +211,19 @@ Try pg_try_advisory_lock(LOCK_KEY).
 If acquired immediately: return.
 Otherwise:
   Loop:
-    Query holder info:
+    Query holder info (advisory locks split a bigint across two
+    32-bit columns: classid = high 32 bits, objid = low 32 bits;
+    objsubid = 1 marks an int8-style advisory lock):
+
       SELECT psa.pid, psa.application_name, psa.state,
              psa.query_start, psa.query
         FROM pg_locks pl
         JOIN pg_stat_activity psa ON psa.pid = pl.pid
        WHERE pl.locktype = 'advisory'
-         AND pl.objid = LOCK_KEY_LOWER_32 -- pg_locks splits the bigint
-         AND pl.granted = true
+         AND pl.classid  = ((LOCK_KEY >> 32) & x'FFFFFFFF'::bigint)::int
+         AND pl.objid    = (LOCK_KEY & x'FFFFFFFF'::bigint)::int
+         AND pl.objsubid = 1
+         AND pl.granted  = true
     logger.info({ event: 'migrate.lock_waiting', runId,
                   waitMsSoFar, holder: { pid, applicationName,
                   state, queryStartedAt, queryPreview } },
@@ -346,31 +357,41 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
   // If anyone later adds `transport: { target: 'pino-pretty' }`, they
   // MUST also call `await logger.flush()` before exit or `migrate.fatal`
   // events will be lost.
-  // Custom err serializer wraps pino.stdSerializers.err to strip pg's
-  // connection-string fragments. Without this, a pool.connect() failure
-  // can land the rds_superuser password in CloudWatch via err.message
-  // or err.connectionParameters.password. Pair with redact paths.
-  const errSerializer = (err: unknown) => {
-    const base = pino.stdSerializers.err(err as Error)
-    // pg's DatabaseError / connection errors may carry these:
-    const stripped = { ...base } as Record<string, unknown>
-    delete stripped.connectionParameters
-    delete stripped.connectionString
-    if (typeof stripped.message === 'string' && env?.databaseUrl) {
-      // Defensive: if any password substring made it into message/stack,
-      // replace it with a marker. env may be undefined on the loadEnv
-      // failure path — we accept the residual risk there because the
-      // failure happens before any pg.connect attempt.
-      const url = new URL(env.databaseUrl)
-      if (url.password) {
-        const re = new RegExp(url.password.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
-        stripped.message = (stripped.message as string).replace(re, '[REDACTED]')
-        if (typeof stripped.stack === 'string') {
-          stripped.stack = (stripped.stack as string).replace(re, '[REDACTED]')
-        }
-      }
+  // env is declared BEFORE the logger so the err serializer's closure
+  // can read env?.databaseUrl when it fires. Type is the inferred return
+  // of loadEnv() | undefined; loadEnv may throw before assignment.
+  let env: ReturnType<typeof loadEnv> | undefined
+
+  // Custom err serializer wraps pino.stdSerializers.err and recurses into
+  // err.cause so a wrapped pg error doesn't leak the rds_superuser password.
+  // Pino's `redact: { paths }` does NOT match arbitrary depth — `*.password`
+  // matches one level only — so we enumerate the known leak paths AND keep
+  // this serializer as the primary defense. Removing one without the other
+  // is unsafe.
+  const stripPgConnectionFields = (obj: Record<string, unknown>, password: string | undefined): void => {
+    delete obj.connectionParameters
+    delete obj.connectionString
+    if (password && typeof obj.message === 'string') {
+      const re = new RegExp(password.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+      obj.message = (obj.message as string).replace(re, '[REDACTED]')
     }
-    return stripped
+    if (password && typeof obj.stack === 'string') {
+      const re = new RegExp(password.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+      obj.stack = (obj.stack as string).replace(re, '[REDACTED]')
+    }
+    // Recurse into cause chain (Error.cause from `throw new Error(..., { cause })`).
+    if (obj.cause && typeof obj.cause === 'object') {
+      stripPgConnectionFields(obj.cause as Record<string, unknown>, password)
+    }
+  }
+  const errSerializer = (err: unknown): Record<string, unknown> => {
+    const base = pino.stdSerializers.err(err as Error) as Record<string, unknown>
+    let password: string | undefined
+    try {
+      password = env?.databaseUrl ? new URL(env.databaseUrl).password || undefined : undefined
+    } catch { /* malformed URL — nothing to redact */ }
+    stripPgConnectionFields(base, password)
+    return base
   }
 
   const logger = pino({
@@ -378,9 +399,17 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
     base: { component: 'migrate' },
     serializers: { err: errSerializer },
     redact: {
+      // Belt-and-suspenders. Pino's `*` matches exactly one level, so
+      // we enumerate the actual leak paths the std serializer + pg
+      // produce. Primary defense is errSerializer; this is defense in
+      // depth in case a future change drops the serializer.
       paths: [
-        '*.password', '*.connectionString', '*.connectionParameters',
-        '*.connectionParameters.password',
+        'err.connectionParameters',
+        'err.connectionParameters.password',
+        'err.connectionString',
+        'err.cause.connectionParameters',
+        'err.cause.connectionParameters.password',
+        'err.cause.connectionString',
       ],
       remove: true,
     },
@@ -392,7 +421,6 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
     logger.warn({ event: 'migrate.signal_received' }, 'migrate.signal_received')
   })
 
-  let env
   try {
     env = loadEnv()
   } catch (err) {
@@ -765,11 +793,12 @@ Assertions:
 - A `migrate.drift_missing_files` event with `missing: ['999_ghost.sql']` is logged.
 - The run still applies `001_a.sql` successfully (does not error).
 
-**Test 16 — password redaction in error logs.**
-Setup: `DATABASE_URL` containing a known password (e.g. `pw123secret`). Force `pool.connect()` to fail (e.g. wrong port).
+**Test 16 — password redaction in error logs (top-level + cause chain).**
+Setup: `DATABASE_URL` containing a known password (e.g. `pw123secret`). Force `pool.connect()` to fail (e.g. wrong port). Also construct a `new Error('outer', { cause: pgErr })` and feed it through the err serializer directly.
 Assertions:
-- The captured `migrate.fatal` event's `err.message` and `err.stack` (if present) do NOT contain the literal password.
+- The captured `migrate.fatal` event's `err.message`, `err.stack`, **and `err.cause.message` / `err.cause.stack`** (if present) do NOT contain the literal password.
 - If they would have, they contain `[REDACTED]` instead.
+- `err.connectionParameters`, `err.cause.connectionParameters`, `err.connectionString`, `err.cause.connectionString` are absent from the serialized output.
 
 **Test 17 — empty `MIGRATE_DATABASE_URL` falls through to `DATABASE_URL`.**
 Setup: `MIGRATE_DATABASE_URL=""`, valid `DATABASE_URL`. Run a no-op migration set.
@@ -902,7 +931,21 @@ Note: the wiki update happens via the post-Linear-close hook subagent per CLAUDE
 
 Note: manual verification against staging RDS is moved to §13 — it requires the migration role with `rds_superuser` to exist (a follow-up provisioning task), ECS Exec to be enabled on the staging service, and the prod-invocation pattern to be picked. None of those are present today; gating MYT-32 on them would block the ticket on out-of-scope work.
 
-## 15. Changes in v6 (post-fourth-blind-review)
+## 15. Final Pass (Round 5 Selective Fold)
+
+A fifth blind-review round was run. Most of its findings were polish or were artifacts of a non-blind prompt that asked one reviewer to "verify v6's claimed fixes" — which biased it toward grading the changelog rather than reading the design. Three substantive bugs from that round are folded in here without a v7 rewrite:
+
+1. **Pino redact paths enumerated explicitly.** `*.password` matches exactly one level; the actual leak paths are `err.connectionParameters.password`, `err.cause.connectionParameters.password`, etc. Plus the err serializer now recurses into `err.cause` so wrapped pg errors don't leak the password through the cause chain. Test 16 expanded to cover the cause subtree.
+2. **`pg_locks` advisory-lock query split correctly.** A bigint advisory lock splits across `classid` (high 32) and `objid` (low 32) with `objsubid = 1`. The §5.1 holder query used a placeholder; v7 pins the actual SQL.
+3. **`DISCARD ALL` before `client.release()` on the success path.** Defends against a migration that did `RESET application_name` (or any non-LOCAL session change), which would otherwise pollute the next pool checkout. Test 12 already pins the LOCAL invariant; DISCARD ALL is the broader defense.
+
+`env` is now declared before the logger so the err serializer's closure has the right type and binding.
+
+We stopped here. Prior rounds' high-leverage findings (advisory lock, pino err serializer, signal handling, RDS privilege, CI Postgres service, application_name LOCAL semantics, MIGRATE_DATABASE_URL, dollar-quote-aware validation, out-of-order detection) are all in. Round 5 surfaced the three above plus a long tail of polish — `maxFileBytes`, statement_timeout coordination with ECS grace, doc reorganization, build-order subsection, etc. — none of which are blockers and several of which are subjective. They live in §13 follow-ups (where they belong) or are accepted as the spec's current state.
+
+The spec is bigger than ideal (a meta-lesson saved to `feedback_blind_review_pendulum.md`); the design itself is sound.
+
+## 16. Changes in v6 (post-fourth-blind-review)
 
 Reviewed by Yangtze/Volga/Rhine/Limpopo (security, error actionability, edge cases, completeness audit). Convergent and high-priority findings:
 
@@ -921,7 +964,7 @@ Reviewed by Yangtze/Volga/Rhine/Limpopo (security, error actionability, edge cas
 13. **`abortSignal` listener cleanup** (Yangtze) — design notes that future server-boot wiring must use `{ once: true }` or remove listeners; v6 CLI is fine because the controller is per-process.
 14. **ECS Exec audit-logging precondition** (Yangtze) — §13's "provision migration role" item now includes `executeCommandConfiguration.logging`.
 
-## 16. Changes in v5 (post-third-blind-review)
+## 17. Changes in v5 (post-third-blind-review)
 
 Reviewed by Cavatappi/Orecchiette/Pici/Bucatini. Convergent findings:
 
@@ -951,7 +994,7 @@ Reviewed by Cavatappi/Orecchiette/Pici/Bucatini. Convergent findings:
 24. **Idle-timeout invariant inside open transaction documented** (Orecchiette).
 25. **`SET LOCAL` override-by-migration-script semantics documented** as intentional escape hatch (Orecchiette).
 
-## 17. Earlier Versions
+## 18. Earlier Versions
 
 - **v1** — initial brainstorm output.
 - **v2** — first blind review (Bert/SQL, Ernie/tests, Oscar/ops, Big Bird/scope): advisory lock, statement timeouts, BEGIN/COMMIT validation, `release()` discipline, PG15 default privileges, vitest parallelism, dotenv, guard-db, argv guard, Dockerfile copy, workspace scripts, Tests 3b/6/7.
