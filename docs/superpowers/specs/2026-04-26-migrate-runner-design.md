@@ -3,7 +3,7 @@
 > **Linear issue**: [MYT-32](https://linear.app/mythrun/issue/MYT-32) — Backend Core: schema migration runner (`migrate.ts`)
 > **Parent spec**: `docs/specs/2026-04-13-backend-core.md` §3 (Migration Runner)
 > **Date**: 2026-04-26
-> **Status**: Draft v5 (post-third-blind-review)
+> **Status**: Draft v6 (post-fourth-blind-review)
 
 ## 1. Goal
 
@@ -205,17 +205,30 @@ Try pg_try_advisory_lock(LOCK_KEY).
 If acquired immediately: return.
 Otherwise:
   Loop:
+    Query holder info:
+      SELECT psa.pid, psa.application_name, psa.state,
+             psa.query_start, psa.query
+        FROM pg_locks pl
+        JOIN pg_stat_activity psa ON psa.pid = pl.pid
+       WHERE pl.locktype = 'advisory'
+         AND pl.objid = LOCK_KEY_LOWER_32 -- pg_locks splits the bigint
+         AND pl.granted = true
     logger.info({ event: 'migrate.lock_waiting', runId,
-                  waitMsSoFar: ... }, 'migrate.lock_waiting')
-    setTimeout(500ms)             // small initial poll
+                  waitMsSoFar, holder: { pid, applicationName,
+                  state, queryStartedAt, queryPreview } },
+                'another runner is holding LOCK_KEY (' +
+                'pid=<pid> app=<applicationName>); abort with ' +
+                'SIGTERM if stale')
+    setTimeout(500ms)             // poll
     Try pg_try_advisory_lock again.
     If acquired: return.
-  After 5s, switch to a 5s heartbeat interval (pg_try_advisory_lock
-  every 500ms but emit the heartbeat log once every 5s).
+  After 5s, emit the heartbeat log once every 5s (continue polling).
   Honors abortSignal between attempts.
 ```
 
-Without this, a runner blocked behind another runner's lock emits `migrate.start` then silence until acquisition, leaving the operator unable to distinguish "wedged" from "crashed." The heartbeat surfaces wait time as a queryable metric.
+The holder-pid query is best-effort — if it fails (auth/permissions), the heartbeat still fires with `holder: null`. Without holder info, "another runner is blocking us" is non-actionable.
+
+Without this loop entirely, a runner blocked behind another runner's lock emits `migrate.start` then silence until acquisition, leaving the operator unable to distinguish "wedged" from "crashed."
 
 ### 5.2 LOCK_KEY (`backend/src/db/lock-key.ts`)
 
@@ -245,13 +258,71 @@ The exact bigint is captured at implementation time by running the SQL above aga
 
 ### 5.3 Migration File Validation
 
-Before executing each file, regex-reject any of these statements at line-start (case-insensitive, ignoring leading whitespace):
+Two checks before executing each file:
+
+**(a) Filename grammar.** Enforce `^[0-9]{3,}_[a-z0-9_]+\.sql$` at `readdir` time. Rejects: spaces, unicode, uppercase, missing prefix. Reason: pinned grammar makes lexicographic sort unambiguous and protects against locale/encoding surprises in the `version` column.
+
+**(b) Forbidden top-level transaction control.** The naive `^\s*(BEGIN|COMMIT|ROLLBACK|...)\s*$` regex is wrong: PL/pgSQL bodies (`DO $$ BEGIN ... END $$`, `CREATE FUNCTION ... AS $$ BEGIN ... END $$`) contain literal `BEGIN`/`END` lines. The eventual real schema migrations will include trigger/function definitions; a naive regex would falsely reject them.
+
+The validator is dollar-quote-aware:
 
 ```
-^\s*(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|END)\s*[;]?\s*$
+1. Tokenize the file into runs of:
+   - dollar-quoted blocks ($tag$...$tag$ where tag may be empty: $$...$$)
+   - everything else
+2. For each non-dollar-quoted run, scan line by line.
+3. On each line, strip line comments (-- ...) and block comments (/* ... */).
+4. If the trimmed line consists solely of (case-insensitive):
+   - BEGIN ; ?
+   - COMMIT ; ?
+   - ROLLBACK ; ?
+   - START TRANSACTION ; ?
+   - END ; ?  (note: END is also a PL/pgSQL block terminator;
+              we already stripped dollar-quoted runs so this is
+              top-level only)
+   reject with: `migration ${file} contains forbidden top-level
+                 transaction statement '${match}' at line ${n}.
+                 The runner wraps each file in BEGIN/COMMIT;
+                 nested transaction control is not allowed.
+                 Remove the statement or split into a separate file.`
 ```
 
-`CREATE INDEX CONCURRENTLY` is also incompatible with our wrapper transaction; supported in a future ticket via an opt-in `-- pg-migrate: no-transaction` header.
+Test 7 covers a fixture with a top-level `COMMIT;` (rejected). Test 7b (new) covers a fixture with `DO $$ BEGIN ... END $$` containing the keyword (accepted) and a fixture with `CREATE OR REPLACE FUNCTION ... AS $$ BEGIN ... END $$;` (accepted).
+
+`CREATE INDEX CONCURRENTLY` is incompatible with our wrapper transaction and is rejected with a similar message; supported in a future ticket via an opt-in `-- pg-migrate: no-transaction` header.
+
+### 5.4 Out-of-order Migration Detection
+
+After computing `applied` and `files`:
+
+```
+maxApplied = lexicographically max of `applied` (or empty string if applied is empty)
+outOfOrder = files filtered to (file in pending AND file < maxApplied)
+if outOfOrder is non-empty:
+  throw new Error(
+    `out-of-order migrations detected: ${outOfOrder.join(', ')} ` +
+    `precede already-applied ${maxApplied}. ` +
+    `Rebase to a version greater than the highest applied. ` +
+    `If you intentionally need to backfill, see §12 Recovery.`
+  )
+```
+
+Reason: a teammate adds `002_x.sql` while `003_y.sql` is already applied in staging. Most migration runners forbid this because applying `002` after `003` violates the implicit invariant that "what runs in staging runs in prod, in order." Forbid in v1; revisit if a team workflow demands otherwise.
+
+### 5.5 Drift Detection (Missing Files)
+
+After computing `applied` and `files`:
+
+```
+missing = applied filtered to (entry not in files)
+if missing is non-empty:
+  logger.warn({ event: 'migrate.drift_missing_files', runId,
+                missing }, 'migrate.drift_missing_files')
+  // continue — v1 honors the append-only convention; the
+  // checksum-drift follow-up upgrades this to error.
+```
+
+Surfaces accidentally-deleted-from-disk migrations as a queryable signal without breaking the run. Operator decides whether to investigate.
 
 ## 6. CLI Entrypoint
 
@@ -275,10 +346,44 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
   // If anyone later adds `transport: { target: 'pino-pretty' }`, they
   // MUST also call `await logger.flush()` before exit or `migrate.fatal`
   // events will be lost.
+  // Custom err serializer wraps pino.stdSerializers.err to strip pg's
+  // connection-string fragments. Without this, a pool.connect() failure
+  // can land the rds_superuser password in CloudWatch via err.message
+  // or err.connectionParameters.password. Pair with redact paths.
+  const errSerializer = (err: unknown) => {
+    const base = pino.stdSerializers.err(err as Error)
+    // pg's DatabaseError / connection errors may carry these:
+    const stripped = { ...base } as Record<string, unknown>
+    delete stripped.connectionParameters
+    delete stripped.connectionString
+    if (typeof stripped.message === 'string' && env?.databaseUrl) {
+      // Defensive: if any password substring made it into message/stack,
+      // replace it with a marker. env may be undefined on the loadEnv
+      // failure path — we accept the residual risk there because the
+      // failure happens before any pg.connect attempt.
+      const url = new URL(env.databaseUrl)
+      if (url.password) {
+        const re = new RegExp(url.password.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+        stripped.message = (stripped.message as string).replace(re, '[REDACTED]')
+        if (typeof stripped.stack === 'string') {
+          stripped.stack = (stripped.stack as string).replace(re, '[REDACTED]')
+        }
+      }
+    }
+    return stripped
+  }
+
   const logger = pino({
     level: process.env.LOG_LEVEL ?? 'info',
     base: { component: 'migrate' },
-    serializers: { err: pino.stdSerializers.err },
+    serializers: { err: errSerializer },
+    redact: {
+      paths: [
+        '*.password', '*.connectionString', '*.connectionParameters',
+        '*.connectionParameters.password',
+      ],
+      remove: true,
+    },
   })
 
   const abortController = new AbortController()
@@ -304,7 +409,13 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
   // Migrations may run as a different role than the API (rds_superuser
   // for CREATE EXTENSION). MIGRATE_DATABASE_URL takes precedence; fallback
   // to DATABASE_URL keeps local dev working out of the box.
-  const databaseUrl = process.env.MIGRATE_DATABASE_URL ?? env.databaseUrl
+  //
+  // Explicit empty-string check — Terraform `secret = var.x != "" ? var.x : null`
+  // emits "" rather than unset, and `??` only falls through on null/undefined.
+  const migrateUrlRaw = process.env.MIGRATE_DATABASE_URL
+  const databaseUrl = (migrateUrlRaw && migrateUrlRaw.length > 0)
+    ? migrateUrlRaw
+    : env.databaseUrl
 
   const pool = createPgPool(databaseUrl, {
     max: 1,                       // CLI uses one client; no point in 10
@@ -332,14 +443,31 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
       process.exitCode = 130
     }
   } catch (err) {
-    // Privilege errors get a hint so the operator knows where to look.
+    // Best-effort hint table for the most common operator-facing failures.
+    // Hints are advisory; spec the codes/messages here once so the runbook
+    // can mirror them.
     const pgErr = (err instanceof Error && err.cause) ?? err
-    const hint = (pgErr as { code?: string })?.code === '42501'
-      ? 'Postgres rejected the statement with insufficient_privilege. ' +
-        'On RDS, CREATE EXTENSION requires rds_superuser — verify the ' +
-        'migration role (see Backend Core §8.3).'
-      : undefined
-    logger.error({ event: 'migrate.fatal', runId, err, ...(hint && { hint }) }, 'migrate.fatal')
+    const code = (pgErr as { code?: string })?.code
+    const sysCode = (pgErr as { code?: string })?.code  // pg uses SQLSTATE codes; Node errno also lands in `code`
+    let hint: string | undefined
+    if (code === '42501') {
+      hint = 'insufficient_privilege. Common causes: (1) migration role lacks rds_superuser for CREATE EXTENSION (see §8.4); (2) role lacks USAGE/CREATE on target schema; (3) RLS policy blocks the statement.'
+    } else if (code === '28P01') {
+      hint = 'auth failed for the migration role. Verify MIGRATE_DATABASE_URL / DATABASE_URL credentials match the role secret.'
+    } else if (code === '3D000') {
+      hint = 'database does not exist. For local dev, run `pnpm db:up`. For RDS, verify the `dbname` in the URL matches the provisioned DB.'
+    } else if (sysCode === 'ECONNREFUSED') {
+      hint = 'Postgres unreachable. For local dev, run `pnpm db:up`. For staging/prod, verify the security group allows the migration task to reach RDS on 5432.'
+    } else if (sysCode === 'ENOTFOUND') {
+      hint = 'hostname could not be resolved. Verify the DB host in the URL.'
+    } else if (sysCode === 'ETIMEDOUT') {
+      hint = 'connection timed out (10s). Likely a security group / VPC routing issue between the migration task and RDS.'
+    }
+    logger.error(
+      { event: 'migrate.fatal', runId, err, ...(hint && { hint }),
+        nextStep: `query CloudWatch with: filter component='migrate' and runId='${runId}'` },
+      'migrate.fatal',
+    )
     process.exitCode = 1
   } finally {
     await pool.end()
@@ -612,8 +740,42 @@ Tests 1–11 from v4, plus:
 Setup: a pool with `max: 1` (one shared client). Run a successful migration. Then check out the same client and query `current_setting('application_name')`.
 Assertion: returns the empty string (or whatever the pool's default is), **not** `'mythrun-migrate'`. This pins the `SET LOCAL` invariant — an implementation that uses bare `SET` would fail this test.
 
-**Test 13 — lock-wait heartbeat fires.**
-Setup: in a separate `pg.Client`, `SELECT pg_advisory_lock(LOCK_KEY)`. Run `runMigrations` against the same DB; it will block. After 6s, log spy should have at least one `migrate.lock_waiting` event with a non-zero `waitMsSoFar`. Release the external lock; assert acquisition completes and `migrate.lock_acquired` records `waitMs >= ~6000`.
+**Test 13 — lock-wait heartbeat fires with holder info.**
+Setup: in a separate `pg.Client` (set `application_name = 'test-holder'` first), `SELECT pg_advisory_lock(LOCK_KEY)`. Run `runMigrations` against the same DB; it will block. After 6s, log spy should have at least one `migrate.lock_waiting` event with non-zero `waitMsSoFar` AND a non-null `holder.applicationName === 'test-holder'`. Release the external lock; assert acquisition completes.
+
+**Test 7b — PL/pgSQL DO/FUNCTION blocks containing `BEGIN` are accepted.**
+Fixtures:
+- `001_do_block.sql`: `DO $$ BEGIN RAISE NOTICE 'hi'; END $$;`
+- `002_function.sql`: `CREATE OR REPLACE FUNCTION f() RETURNS void AS $$ BEGIN RAISE NOTICE 'hi'; END $$ LANGUAGE plpgsql;`
+- `003_top_level_begin.sql`: `BEGIN;` on its own line (rejected).
+Assertions:
+- `runMigrations` applies `001_do_block.sql` and `002_function.sql` successfully.
+- `runMigrations` throws on `003_top_level_begin.sql` with a message naming the file and line.
+- `_migrations` contains the first two but not the third.
+
+**Test 14 — out-of-order migration is rejected.**
+Fixtures: a temp dir with `001_a.sql`, `003_c.sql` (skip 002). Pre-insert `001_a.sql` and `003_c.sql` into `_migrations`. Add `002_b.sql` to the dir. Run `runMigrations`.
+Assertions:
+- Throws with a message containing "out-of-order" and "002_b.sql".
+- `_migrations` unchanged; no `b` table created.
+
+**Test 15 — drift warning when applied row has no file on disk.**
+Fixtures: pre-insert `_migrations.version = '999_ghost.sql'`. Temp dir has only `001_a.sql`. Run `runMigrations`.
+Assertions:
+- A `migrate.drift_missing_files` event with `missing: ['999_ghost.sql']` is logged.
+- The run still applies `001_a.sql` successfully (does not error).
+
+**Test 16 — password redaction in error logs.**
+Setup: `DATABASE_URL` containing a known password (e.g. `pw123secret`). Force `pool.connect()` to fail (e.g. wrong port).
+Assertions:
+- The captured `migrate.fatal` event's `err.message` and `err.stack` (if present) do NOT contain the literal password.
+- If they would have, they contain `[REDACTED]` instead.
+
+**Test 17 — empty `MIGRATE_DATABASE_URL` falls through to `DATABASE_URL`.**
+Setup: `MIGRATE_DATABASE_URL=""`, valid `DATABASE_URL`. Run a no-op migration set.
+Assertions:
+- `runMigrations` succeeds.
+- The connection used the `DATABASE_URL` value (verifiable via `application_name` or by checking the parsed dbHost in `migrate.start`).
 
 **Test 9 (logger contract) — concretized sink.**
 
@@ -706,14 +868,19 @@ A full runbook with screenshots is filed as a follow-up bead (§13).
 
 ## 13. Follow-up Beads (Not This Ticket)
 
-- Wire `runMigrations` into server boot before `app.listen`. Order: `waitFor(pg)` → `runMigrations(pool)` → `app.listen`. Server passes `app.log` (Fastify logger satisfies `MigrateLogger`).
-- Pick the prod invocation pattern, wire the Terraform task definition with the migration-role secret + `MIGRATE_DATABASE_URL`, verify `rds_superuser`, and budget-check that any expected migration fits the ECS grace window.
-- Write the recovery runbook for staging/prod, referenced by §12.
-- Reconcile Backend Core spec §6 (still describes `runMigrations(pool)` single-arg, `pool.ts`, and a `createServer()` shape that doesn't match the MYT-29 boot gate).
-- `--dry-run` flag (acquires lock, prints plan, releases) and `--list-pending` (no lock).
-- `CREATE INDEX CONCURRENTLY` support via `-- pg-migrate: no-transaction` header.
-- File-checksum drift detection.
-- Suppress pino `pid`/`hostname` in production if log volume becomes a concern.
+- **Provision the staging migration role** with `rds_superuser` and a dedicated Secrets Manager secret. Enable ECS Exec on the staging service (`enableExecuteCommand: true` + `executeCommandConfiguration.logging` to a dedicated CloudWatch group / S3 bucket — required precondition for §12 recovery procedure to be safe).
+- **Manual staging-RDS verification** (was DoD in v5; moved here): run `node dist/db/migrate.js` against staging once via ECS Exec, capture log output, attach to the prod-invocation ticket. Confirms binary + env contract + TLS + `rds_superuser` privilege all line up.
+- **Pick the prod invocation pattern** (one-off ECS task vs server CMD chain), wire the Terraform task definition with the migration-role secret + `MIGRATE_DATABASE_URL`, budget-check that any expected migration fits the ECS grace window.
+- **Wire `runMigrations` into server boot** before `app.listen`. Order: `waitFor(pg)` → `runMigrations(pool)` → `app.listen`. Server passes `app.log` (FastifyBaseLogger satisfies `MigrateLogger`).
+- **Write the recovery runbook** for staging/prod, referenced by §12. Includes screenshots / paste-ready commands for ECS Exec, common error remediation paths, and the CloudWatch Insights cookbook from §7.1.
+- **Reconcile Backend Core spec §6** with v6 design: §6 still references `pool.ts` / `createPool` / a `createServer()` shape that doesn't match MYT-29's boot gate or v6's `runMigrations` signature. Update or delete §6's example.
+- **Reconcile Backend Core spec §3** with v6: the prose algorithm in §3 is still the v1 "~30 lines" sketch. Either expand to match v6 or replace with a pointer to this design doc.
+- **`--dry-run` flag** (acquires lock, prints plan, releases) and **`--list-pending`** (no lock) — operator pre-deploy ergonomics.
+- **`CREATE INDEX CONCURRENTLY` support** via `-- pg-migrate: no-transaction` header.
+- **File-checksum drift detection**, upgrading `migrate.drift_missing_files` from warn-only to error-on-content-changed.
+- **Liveness probe (`SELECT 1`) before lock acquisition** — surfaces stale pooled connections cleanly.
+- **Suppress pino `pid`/`hostname`** in production if log volume becomes a concern.
+- **`maxFileBytes` / large-migration handling** — currently no cap; SRD bulk inserts may need `\copy` or staged inserts when they land.
 
 ## 14. Definition of Done
 
@@ -729,11 +896,32 @@ A full runbook with screenshots is filed as a follow-up bead (§13).
 - `.github/workflows/deploy.yml` adds the `postgres:16-alpine` service and `DATABASE_URL` to the test step.
 - `pino` and `uuidv7` are direct dependencies of `backend/package.json`. Versions pinned in `package.json`: `pino@^10.3.1`, `uuidv7@^1.0.2` (or current).
 - `pnpm db:migrate` works locally: first run applies `001_smoke.sql`, second is a no-op.
-- **Manual verification against staging RDS**: run `node dist/db/migrate.js` against staging once via ECS Exec or a one-off task. Capture the structured log output (must include `migrate.start`, `migrate.lock_acquired`, `migrate.applied`, `migrate.done` with non-empty `durationMs`) and attach to the ticket. Only way to confirm binary, env contract, TLS, and `rds_superuser` privilege all line up before §13 lands.
-- **Wiki**: a new page at `docs/wiki/content/runtime/migrations.html` (or extension to an existing runtime page) documents the runner contract, `pnpm db:migrate`, the CloudWatch Insights cookbook, and the recovery pointer to §12. Per CLAUDE.md "wiki is not optional."
 - `pnpm typecheck` + `pnpm lint` + `pnpm test` all green locally and in CI.
 
-## 15. Changes in v5 (post-third-blind-review)
+Note: the wiki update happens via the post-Linear-close hook subagent per CLAUDE.md, not as a hand-written DoD bullet.
+
+Note: manual verification against staging RDS is moved to §13 — it requires the migration role with `rds_superuser` to exist (a follow-up provisioning task), ECS Exec to be enabled on the staging service, and the prod-invocation pattern to be picked. None of those are present today; gating MYT-32 on them would block the ticket on out-of-scope work.
+
+## 15. Changes in v6 (post-fourth-blind-review)
+
+Reviewed by Yangtze/Volga/Rhine/Limpopo (security, error actionability, edge cases, completeness audit). Convergent and high-priority findings:
+
+1. **Password redaction in pino err serializer** (Yangtze BLOCKER) — pg's `DatabaseError` and connection failures can carry `connectionParameters.password` and connection-string fragments. Custom err serializer wraps `pino.stdSerializers.err` to delete those keys and replace any literal-password substring with `[REDACTED]`. Pino `redact: { paths, remove: true }` adds belt-and-suspenders. Test 16 pins this.
+2. **Empty-string `MIGRATE_DATABASE_URL` guard** (Yangtze BLOCKER) — `??` only falls through on null/undefined; Terraform `cond ? x : null` patterns emit `""`. Explicit length check. Test 17 pins this.
+3. **PL/pgSQL DO/FUNCTION block validation** (Rhine BLOCKER) — naive `^\s*BEGIN\s*$` regex falsely rejected dollar-quoted bodies. New validator is dollar-quote-aware and only inspects top-level lines. Test 7b pins both directions.
+4. **Out-of-order migration policy** (Rhine BLOCKER) — silently applying a `002` after `003` was unstated. v6 explicitly errors with a clear message. Test 14.
+5. **Filename grammar enforcement** (Rhine) — `^[0-9]{3,}_[a-z0-9_]+\.sql$`. Pinned at `readdir` time.
+6. **Drift detection for missing files** (Rhine) — `applied \ files` non-empty emits `migrate.drift_missing_files` warn. Test 15.
+7. **Lock-wait holder enrichment** (Volga) — heartbeat queries `pg_stat_activity` for the holder's pid/application_name/state/query and includes them in the log. Test 13 updated.
+8. **Connection-error hint table** (Volga) — CLI catches map common pg / Node errno codes (42501/28P01/3D000/ECONNREFUSED/ENOTFOUND/ETIMEDOUT) to actionable hints. Generic fatal includes a paste-ready CloudWatch query keyed on `runId`.
+9. **42501 hint expanded** (Volga) — three causes listed, not just rds_superuser.
+10. **Wiki bullet removed from DoD** (Limpopo) — handled by the post-Linear-close hook subagent per CLAUDE.md, not by the implementer.
+11. **Manual staging-RDS verification moved to §13** (Limpopo) — requires staging migration role + ECS Exec to be provisioned, neither of which exists today. Gating MYT-32 on them would block the ticket on out-of-scope provisioning.
+12. **Backend Core spec §3/§6 reconciliation as explicit follow-ups** (Limpopo) — v5 claimed §3 was "updated to match" but the prose algorithm and §6 server-boot example still drift.
+13. **`abortSignal` listener cleanup** (Yangtze) — design notes that future server-boot wiring must use `{ once: true }` or remove listeners; v6 CLI is fine because the controller is per-process.
+14. **ECS Exec audit-logging precondition** (Yangtze) — §13's "provision migration role" item now includes `executeCommandConfiguration.logging`.
+
+## 16. Changes in v5 (post-third-blind-review)
 
 Reviewed by Cavatappi/Orecchiette/Pici/Bucatini. Convergent findings:
 
@@ -763,10 +951,11 @@ Reviewed by Cavatappi/Orecchiette/Pici/Bucatini. Convergent findings:
 24. **Idle-timeout invariant inside open transaction documented** (Orecchiette).
 25. **`SET LOCAL` override-by-migration-script semantics documented** as intentional escape hatch (Orecchiette).
 
-## 16. Earlier Versions
+## 17. Earlier Versions
 
 - **v1** — initial brainstorm output.
 - **v2** — first blind review (Bert/SQL, Ernie/tests, Oscar/ops, Big Bird/scope): advisory lock, statement timeouts, BEGIN/COMMIT validation, `release()` discipline, PG15 default privileges, vitest parallelism, dotenv, guard-db, argv guard, Dockerfile copy, workspace scripts, Tests 3b/6/7.
 - **v3** — production-lens correction: restored `durationMs`, swapped console for pino, AbortSignal + signal handling, structured event names, Tests 8/9. Saved `feedback_production_lens.md`.
 - **v4** — second blind review (Vermillion/Chartreuse/Periwinkle/Mauve): pino `err` serializer, `event` field, `runId`, `application_name`, RDS privilege docs, CI Postgres service, `installSignalHandlers` reuse, recovery actionability, staging-RDS DoD gate, Test 11.
-- **v5** — this version, items 1–25 above.
+- **v5** — third blind review (Cavatappi/Orecchiette/Pici/Bucatini): pool config + connection timeout, `SET LOCAL application_name`, `release(err)`, lock-wait heartbeat, `MIGRATE_DATABASE_URL`, `MigrateLogger` narrowing, `DestinationStream` cast removed, Tests 12/13, CloudWatch cookbook, recovery commands, naming polish.
+- **v6** — this version, items 1–14 above.
