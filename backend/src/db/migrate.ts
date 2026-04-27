@@ -1,9 +1,14 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { Pool, PoolClient } from 'pg'
 import pino from 'pino'
+import { uuidv7 } from 'uuidv7'
+import { installSignalHandlers } from '../boot/signal-handlers.js'
+import { loadEnv } from '../config/env.js'
 import { LOCK_KEY } from './lock-key.js'
+import { createPgPool } from './postgres.js'
 
 const FILENAME_RE = /^[0-9]{3,}_[a-z0-9_]+\.sql$/
 
@@ -450,5 +455,112 @@ export function buildErrSerializer(
     }
     stripPgConnectionFields(base, password)
     return base
+  }
+}
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const DEFAULT_MIGRATIONS_DIR = resolve(__dirname, '../../migrations')
+
+const argv1 = process.argv[1]
+if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
+  // env is declared BEFORE the logger so the err serializer's closure
+  // can read env?.databaseUrl when it fires.
+  let env: ReturnType<typeof loadEnv> | undefined
+
+  const logger = pino({
+    level: process.env.LOG_LEVEL ?? 'info',
+    base: { component: 'migrate' },
+    serializers: { err: buildErrSerializer(() => env?.databaseUrl) },
+    redact: {
+      paths: [
+        'err.connectionParameters',
+        'err.connectionParameters.password',
+        'err.connectionString',
+        'err.cause.connectionParameters',
+        'err.cause.connectionParameters.password',
+        'err.cause.connectionString',
+      ],
+      remove: true,
+    },
+  })
+
+  const abortController = new AbortController()
+  installSignalHandlers(abortController)
+  abortController.signal.addEventListener('abort', () => {
+    logger.warn({ event: 'migrate.signal_received' }, 'migrate.signal_received')
+  })
+
+  try {
+    env = loadEnv()
+  } catch (err) {
+    logger.error(
+      { event: 'migrate.fatal', err },
+      'migrate.fatal — check DATABASE_URL or backend/.env.development. ' +
+        'For local dev: run `pnpm db:up` and copy `.env.development.example` to `.env.development`.',
+    )
+    process.exitCode = 1
+    process.exit()
+  }
+
+  const pool = createPgPool(env.databaseUrl, {
+    max: 1,
+    connectionTimeoutMillis: 10_000,
+  })
+
+  const runId = uuidv7()
+  try {
+    const applied = await runMigrations({
+      pool,
+      migrationsDir: DEFAULT_MIGRATIONS_DIR,
+      logger,
+      abortSignal: abortController.signal,
+      runId,
+    })
+    logger.info(
+      {
+        event: applied.length === 0 ? 'migrate.no_pending' : 'migrate.complete',
+        runId,
+        count: applied.length,
+        versions: applied.map((m) => m.version),
+      },
+      applied.length === 0 ? 'migrate.no_pending' : 'migrate.complete',
+    )
+    if (abortController.signal.aborted) {
+      // Aborted-but-graceful: in-flight migration committed. Exit 130
+      // by convention — the deploy script keys on this to distinguish
+      // "told to stop" from "crashed" (exit 1).
+      process.exitCode = 130
+    }
+  } catch (err) {
+    const cause = (err instanceof Error && err.cause) ?? err
+    const code = (cause as { code?: string }).code
+    let hint: string | undefined
+    if (code === '42501') {
+      hint = 'insufficient_privilege. Common causes: (1) migration role lacks rds_superuser for CREATE EXTENSION (see spec §8.4); (2) role lacks USAGE/CREATE on target schema; (3) RLS policy blocks the statement.'
+    } else if (code === '28P01') {
+      hint = 'auth failed. Verify MIGRATE_DATABASE_URL / DATABASE_URL credentials match the role secret.'
+    } else if (code === '3D000') {
+      hint = 'database does not exist. For local dev, run `pnpm db:up`. For RDS, verify the dbname.'
+    } else if (code === 'ECONNREFUSED') {
+      hint = 'Postgres unreachable. For local dev, run `pnpm db:up`. For staging/prod, check the security group.'
+    } else if (code === 'ENOTFOUND') {
+      hint = 'hostname could not be resolved. Verify the DB host in the URL.'
+    } else if (code === 'ETIMEDOUT') {
+      hint = 'connection timed out (10s). Likely a security group / VPC routing issue.'
+    }
+    logger.error(
+      {
+        event: 'migrate.fatal',
+        runId,
+        err,
+        ...(hint && { hint }),
+        nextStep: `query CloudWatch with: filter component='migrate' and runId='${runId}'`,
+      },
+      'migrate.fatal',
+    )
+    process.exitCode = 1
+  } finally {
+    await pool.end()
   }
 }

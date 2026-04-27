@@ -15,6 +15,7 @@
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d --wait",
+    "db:migrate": "pnpm --filter @mythrun/backend db:migrate",
     "wiki:build": "pnpm --filter @mythrun/wiki build",
     "wiki:check": "pnpm --filter @mythrun/wiki check",
     "wiki:accept-drift": "pnpm --filter @mythrun/wiki accept-drift",
