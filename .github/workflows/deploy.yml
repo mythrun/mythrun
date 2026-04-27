@@ -33,6 +33,20 @@ jobs:
     environment: staging
     outputs:
       image: ${{ steps.digest.outputs.image }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mythrun
+          POSTGRES_PASSWORD: mythrun_dev
+          POSTGRES_DB: mythrun
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mythrun"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
@@ -51,6 +65,8 @@ jobs:
       - run: pnpm --filter @mythrun/backend lint
       - run: pnpm --filter @mythrun/backend typecheck
       - run: pnpm --filter @mythrun/backend test
+        env:
+          DATABASE_URL: postgresql://mythrun:mythrun_dev@127.0.0.1:5432/mythrun
 
       - name: Pre-flight — verify required vars are set
         run: |
