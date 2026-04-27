@@ -359,4 +359,39 @@ $$ LANGUAGE plpgsql;`,
       await holder.end()
     }
   }, 30_000)
+
+  it('Test 12: application_name does not leak through pool checkout', async () => {
+    // Pin the SET LOCAL + DISCARD ALL invariant. A regression to bare
+    // `SET application_name` (without LOCAL) would leak the migrate's
+    // application_name to the next pool checkout — the API server, in
+    // future shared-pool topology. This test fails loudly if that happens.
+    fixtureDir = makeFixtureDir({
+      '001_a.sql': 'CREATE TABLE a (id INT)',
+    })
+
+    // Use a max:1 pool so the SAME client gets handed back after the
+    // runner releases it. (With max>1, a fresh client could be created
+    // and bypass the leak detection.)
+    const singleClientPool = createPgPool(databaseUrl, { max: 1 })
+    try {
+      const { logger } = makeSpyLogger()
+      await runMigrations({ pool: singleClientPool, migrationsDir: fixtureDir, logger })
+
+      // Re-check out the same client and inspect application_name.
+      const client = await singleClientPool.connect()
+      try {
+        const res = await client.query<{ name: string }>(
+          `SELECT current_setting('application_name') AS name`,
+        )
+        // Default is empty string or driver default ('node-postgres'), but
+        // critically NOT 'mythrun-migrate'. The runner's SET LOCAL +
+        // DISCARD ALL must have reset session state.
+        expect(res.rows[0]?.name).not.toBe('mythrun-migrate')
+      } finally {
+        client.release()
+      }
+    } finally {
+      await singleClientPool.end()
+    }
+  })
 })
