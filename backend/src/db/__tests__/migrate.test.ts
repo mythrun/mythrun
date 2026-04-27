@@ -117,4 +117,139 @@ describe('runMigrations (integration)', () => {
     )
     expect(rows.rows[0]?.count).toBe('2')
   })
+
+  it('Test 2: partial state — only unapplied migrations run', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_a.sql': 'CREATE TABLE a (id INT)',
+      '002_b.sql': 'CREATE TABLE b (id INT)',
+      '003_c.sql': 'CREATE TABLE c (id INT)',
+    })
+    // Pre-state: 001 already "applied", and table a pre-exists
+    await pool.query(
+      'CREATE TABLE IF NOT EXISTS _migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())',
+    )
+    await pool.query("INSERT INTO _migrations (version) VALUES ('001_a.sql')")
+    await pool.query('CREATE TABLE a (id INT)')
+
+    const { logger } = makeSpyLogger()
+    const applied = await runMigrations({ pool, migrationsDir: fixtureDir, logger })
+    expect(applied.map((m) => m.version)).toEqual(['002_b.sql', '003_c.sql'])
+    const rows = await pool.query<{ version: string }>(
+      `SELECT version FROM _migrations ORDER BY version`,
+    )
+    expect(rows.rows.map((r) => r.version)).toEqual(['001_a.sql', '002_b.sql', '003_c.sql'])
+  })
+
+  it('Test 3: failed migration aborts the run', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_a.sql': 'CREATE TABLE a (id INT)',
+      '002_broken.sql': 'THIS IS NOT VALID SQL;',
+      '003_c.sql': 'CREATE TABLE c (id INT)',
+    })
+    const { logger } = makeSpyLogger()
+    await expect(
+      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
+    ).rejects.toThrow(/002_broken\.sql/)
+
+    const tables = await pool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('a','c')`,
+    )
+    expect(tables.rows.map((r) => r.table_name)).toEqual(['a'])
+    const rows = await pool.query<{ version: string }>(
+      `SELECT version FROM _migrations ORDER BY version`,
+    )
+    expect(rows.rows.map((r) => r.version)).toEqual(['001_a.sql'])
+  })
+
+  it('Test 3b: bookkeeping insert is inside the transaction', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_ok.sql': 'CREATE TABLE ok (id INT)',
+      '002_writes_then_fails.sql': 'CREATE TABLE x (id INT); SELECT 1/0;',
+    })
+    const { logger } = makeSpyLogger()
+    await expect(
+      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
+    ).rejects.toThrow()
+    const xExists = await pool.query<{ count: string }>(
+      `SELECT count(*)::text FROM information_schema.tables WHERE table_schema='public' AND table_name='x'`,
+    )
+    expect(xExists.rows[0]?.count).toBe('0')
+    const rows = await pool.query<{ version: string }>(`SELECT version FROM _migrations`)
+    expect(rows.rows.map((r) => r.version)).not.toContain('002_writes_then_fails.sql')
+  })
+
+  it('Test 6: non-.sql files and dotfiles are ignored', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_a.sql': 'CREATE TABLE a (id INT)',
+      '002_b.sql': 'CREATE TABLE b (id INT)',
+      'README.md': '# notes',
+      '.DS_Store': 'binary-noise',
+      'notes.txt': 'plain',
+    })
+    const { logger } = makeSpyLogger()
+    const applied = await runMigrations({ pool, migrationsDir: fixtureDir, logger })
+    expect(applied.map((m) => m.version)).toEqual(['001_a.sql', '002_b.sql'])
+  })
+
+  it('Test 7: top-level COMMIT is rejected', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_bad.sql': 'CREATE TABLE x (id INT);\nCOMMIT;',
+    })
+    const { logger } = makeSpyLogger()
+    await expect(
+      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
+    ).rejects.toThrow(/forbidden top-level transaction statement/)
+    const rows = await pool.query<{ count: string }>(`SELECT count(*)::text FROM _migrations`)
+    expect(rows.rows[0]?.count).toBe('0')
+  })
+
+  it('Test 7b: PL/pgSQL DO blocks and CREATE FUNCTION bodies are accepted', async () => {
+    fixtureDir = makeFixtureDir({
+      '001_do_block.sql': `DO $$ BEGIN RAISE NOTICE 'hi'; END $$;`,
+      '002_function.sql': `CREATE OR REPLACE FUNCTION f() RETURNS void AS $$
+BEGIN
+  RAISE NOTICE 'hi';
+END
+$$ LANGUAGE plpgsql;`,
+    })
+    const { logger } = makeSpyLogger()
+    const applied = await runMigrations({ pool, migrationsDir: fixtureDir, logger })
+    expect(applied.map((m) => m.version)).toEqual(['001_do_block.sql', '002_function.sql'])
+  })
+
+  it('Test 14: out-of-order migration is rejected', async () => {
+    await pool.query(
+      'CREATE TABLE IF NOT EXISTS _migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())',
+    )
+    await pool.query(
+      "INSERT INTO _migrations (version) VALUES ('001_a.sql'), ('003_c.sql')",
+    )
+    fixtureDir = makeFixtureDir({
+      '001_a.sql': 'CREATE TABLE a (id INT)',
+      '002_b.sql': 'CREATE TABLE b (id INT)',
+      '003_c.sql': 'CREATE TABLE c (id INT)',
+    })
+    const { logger } = makeSpyLogger()
+    await expect(
+      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
+    ).rejects.toThrow(/out-of-order.*002_b\.sql/)
+    const exists = await pool.query<{ count: string }>(
+      `SELECT count(*)::text FROM information_schema.tables WHERE table_schema='public' AND table_name='b'`,
+    )
+    expect(exists.rows[0]?.count).toBe('0')
+  })
+
+  it('Test 15: drift warning when applied row has no file on disk', async () => {
+    await pool.query(
+      'CREATE TABLE IF NOT EXISTS _migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())',
+    )
+    await pool.query("INSERT INTO _migrations (version) VALUES ('999_ghost.sql')")
+    fixtureDir = makeFixtureDir({ '001_a.sql': 'CREATE TABLE a (id INT)' })
+    const { logger, lines } = makeSpyLogger()
+    const applied = await runMigrations({ pool, migrationsDir: fixtureDir, logger })
+    expect(applied.map((m) => m.version)).toEqual(['001_a.sql'])
+    const drift = lines.find((l) => l.event === 'migrate.drift_missing_files')
+    expect(drift).toBeDefined()
+    expect(drift?.missing).toEqual(['999_ghost.sql'])
+  })
 })

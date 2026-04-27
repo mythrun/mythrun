@@ -93,7 +93,7 @@ export interface MigrationOptions {
 
 export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigration[]> {
   const { pool, migrationsDir, logger, abortSignal } = opts
-  const runId = opts.runId ?? cryptoRandomId()
+  const runId = opts.runId ?? fallbackRunId()
   const runStart = performance.now()
   const appliedSoFar: AppliedMigration[] = []
 
@@ -107,6 +107,12 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
   const client = await pool.connect()
   let lockStart = 0
   let acquiredLock = false
+  // errorPath is set in two places: (1) the inner catch after BEGIN, where
+  // pg state has been touched and the error is the wrapped Error with cause;
+  // (2) the outer catch, for pre-pg failures (filename validation, readdir
+  // ENOENT) where there's nothing to roll back. The finally block branches
+  // on it: release(err) destroys the client; release() returns it to pool
+  // after DISCARD ALL.
   let errorPath: Error | undefined
 
   try {
@@ -143,6 +149,36 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
     )
     const applied = new Set(appliedRows.rows.map((r) => r.version))
     const pending = files.filter((f) => !applied.has(f))
+
+    // Drift: applied rows without a file on disk. Warn and continue;
+    // the checksum-drift follow-up may upgrade this to error.
+    const fileSet = new Set(files)
+    const missing = [...applied].filter((v) => !fileSet.has(v)).sort()
+    if (missing.length > 0) {
+      logger.warn(
+        { event: 'migrate.drift_missing_files', runId, missing },
+        'migrate.drift_missing_files',
+      )
+    }
+
+    // Out-of-order: pending versions lex-less than the highest applied that
+    // also exists on disk. Drift rows (applied without a file) are excluded
+    // from this baseline — they're already reported by the drift warning and
+    // shouldn't gate ordering decisions.
+    const appliedOnDisk = [...applied].filter((v) => fileSet.has(v))
+    if (appliedOnDisk.length > 0) {
+      const maxApplied = appliedOnDisk.sort().at(-1) ?? ''
+      const outOfOrder = pending.filter((p) => p < maxApplied)
+      if (outOfOrder.length > 0) {
+        throw new Error(
+          `out-of-order migrations detected: ${outOfOrder.join(', ')} ` +
+            `precede already-applied ${maxApplied}. ` +
+            `Rebase to a version greater than the highest applied. ` +
+            `If you intentionally need to backfill, see spec §12 Recovery.`,
+        )
+      }
+    }
+
     logger.info(
       {
         event: 'migrate.plan',
@@ -329,7 +365,7 @@ async function queryHolder(client: PoolClient): Promise<LockHolder | null> {
   }
 }
 
-function cryptoRandomId(): string {
+function fallbackRunId(): string {
   // Fallback when caller doesn't supply runId — full uuidv7 is preferred but
   // we don't import the package here so server-boot wiring can pass its own.
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
