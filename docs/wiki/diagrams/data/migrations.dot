@@ -1,0 +1,60 @@
+digraph migrations {
+  // The migration runner: a CLI (or, eventually, the server boot) connects with
+  // a single pooled client, takes the pinned advisory lock, reads pending files
+  // from backend/migrations/, and applies each one inside its own BEGIN/COMMIT
+  // span. Bookkeeping rows in _migrations make re-runs idempotent. Pino events
+  // tagged with `runId` flow into CloudWatch Logs Insights for triage.
+  rankdir=LR;
+  compound=true;
+
+  cli [label="pnpm db:migrate\n(or node dist/db/migrate.js)\nMIGRATE_DATABASE_URL\n| DATABASE_URL", color="ember", fontcolor="ember"];
+
+  subgraph cluster_runner {
+    label="runMigrations  (backend/src/db/migrate.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    pool   [label="pg.Pool\nmax: 1\nconnectionTimeoutMillis: 10s"];
+    lock   [label="pg_advisory_lock\nLOCK_KEY pinned\nheartbeat every 5s"];
+    plan   [label="readdir migrations/\nvalidate filename + body\nout-of-order check\ndrift warning"];
+    apply  [label="for each pending:\nBEGIN\nSET LOCAL application_name\nrun file\nINSERT _migrations\nCOMMIT"];
+    cleanup [label="finally:\npg_advisory_unlock\nDISCARD ALL\nclient.release()"];
+  }
+
+  subgraph cluster_db {
+    label="Postgres";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    track  [label="_migrations\n(version PK, applied_at)"];
+    schema [label="application schema\n(public.*)"];
+  }
+
+  subgraph cluster_files {
+    label="backend/migrations/  (append-only)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    files  [label="NNN_name.sql\n[0-9]{3,}_[a-z0-9_]+\\.sql"];
+  }
+
+  logs [label="pino → stdout\nevent, runId, durationMs\n→ CloudWatch Logs", color="ember", fontcolor="ember"];
+
+  cli   -> pool   [label="connect"];
+  pool  -> lock   [label="session"];
+  lock  -> plan   [label="held"];
+  files -> plan   [label="readdir"];
+  track -> plan   [label="SELECT applied"];
+  plan  -> apply  [label="pending list"];
+  apply -> schema [label="DDL/DML"];
+  apply -> track  [label="INSERT version"];
+  apply -> cleanup [label="success | error"];
+  cleanup -> pool [label="release"];
+
+  apply -> logs   [label="migrate.applied", style=dashed];
+  lock  -> logs   [label="migrate.lock_*", style=dashed];
+  cleanup -> logs [label="migrate.done", style=dashed];
+}

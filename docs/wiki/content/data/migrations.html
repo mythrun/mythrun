@@ -1,0 +1,546 @@
+<!-- source: backend/src/db/migrate.ts -->
+<!-- source: backend/src/db/lock-key.ts -->
+<!-- source: backend/migrations/ -->
+<!-- source-hash: sha256:caf0129c19da127504d62f27e885faabefca41fd946198feb7a235dbe49a99b4 -->
+<!-- last-ticket: MYT-32 -->
+
+<h1>Migrations</h1>
+
+<p class="lead">
+  How the Postgres schema evolves: append-only <code>.sql</code> files in
+  <code>backend/migrations/</code>, applied one transaction at a time by a CLI that takes a pinned
+  advisory lock and writes a tracking row per file.
+</p>
+
+<!-- @diagram: data/migrations -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Every schema change is a numbered <code>.sql</code> file under <code>backend/migrations/</code>.
+  Filenames follow <code>[0-9]{3,}_[a-z0-9_]+\.sql</code> — three-or-more digits, an underscore,
+  lowercase identifier — so a lexicographic sort is also a chronological one. Once a file lands on
+  <code>main</code>, it is immutable; corrective work ships as a new file with a higher number. The
+  runner reads the directory at boot, compares it against a tracking table, and applies whatever's
+  pending in order.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Append-only honor system, not file-checksum drift detection</strong> — v1 trusts authors
+  not to edit applied files. A checksum-drift follow-up upgrades the existing
+  <code>migrate.drift_missing_files</code> warning to error-on-content-changed; until that ships,
+  the convention is enforced by code review and the
+  <a href="#run-migrations-locally">never edit applied files</a> runbook discipline.
+</aside>
+
+<h3>The advisory lock and the session it lives in</h3>
+
+<p>
+  Two simultaneous runners — a deploy task and an operator running
+  <code>pnpm db:migrate</code> against the same DB — would both <code>SELECT</code> the same pending
+  list and both try the same <code>CREATE TABLE</code>. The second one would crash on
+  <code>duplicate_table</code>. The runner avoids this with <code>pg_advisory_lock(LOCK_KEY)</code>:
+  a session-scoped mutex Postgres provides for exactly this kind of cross-process coordination. The
+  lock is held for the run and auto-releases when the socket closes, so a SIGKILL'd runner doesn't
+  strand the lock.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Advisory lock, not a unique-PK guard on <code>_migrations</code></strong> — a unique-PK
+  guard catches the duplicate <em>insert</em>, but the second runner has already started executing
+  the migration's DDL by then. With DDL like <code>CREATE EXTENSION</code> or
+  <code>CREATE FUNCTION</code> the failure mode is "second runner crashes mid-statement, half-
+  applied state left behind." The advisory lock serializes the whole run, including the read of
+  <code>_migrations</code>, so the second runner blocks until the first one is fully done.
+</aside>
+
+<p>
+  <code>LOCK_KEY</code> is a pinned bigint in <code>backend/src/db/lock-key.ts</code>, derived once
+  from <code>SELECT hashtextextended('mythrun_migrate', 0)</code> against PostgreSQL 16. A drift
+  test asserts the literal so a future refactor can't silently change it during a rolling deploy
+  (which would put old and new code on different lock keys, defeating the guard).
+</p>
+
+<p>
+  The lock, the bookkeeping insert, and the migration SQL all share one <code>pg.PoolClient</code>.
+  Advisory locks are session-scoped — they don't survive checking the client back into the pool — so
+  the runner uses a <code>max: 1</code> pool, holds the same client throughout, and only releases at
+  the very end. Connection timeout is bounded at 10 seconds; the default of 0 hangs forever and
+  that's not what an operator wants when RDS is unreachable.
+</p>
+
+<h3>Session hygiene: SET LOCAL and DISCARD ALL</h3>
+
+<p>
+  Each migration runs inside <code>BEGIN</code> / <code>COMMIT</code>. Before executing the file,
+  the runner sets three session variables — but only with <code>SET LOCAL</code>, so they reset on
+  <code>COMMIT</code>. <code>statement_timeout</code> goes to <code>0</code> (migrations can be
+  slow), <code>lock_timeout</code> goes to <code>30s</code> (so a stuck DDL doesn't wait
+  indefinitely on a row-level lock from the API), and <code>application_name</code> goes to
+  <code>mythrun-migrate</code> so the migration session shows up distinctly in
+  <code>pg_stat_activity</code> and Performance Insights.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>SET LOCAL application_name</code>, not bare <code>SET</code></strong> — bare
+  <code>SET application_name = 'mythrun-migrate'</code> survives <code>release()</code> back to the
+  pool. The next checkout — eventually the API server, when this runner shares a pool with server
+  boot — would see itself as <code>mythrun-migrate</code> in <code>pg_stat_activity</code> until it
+  reconnected, polluting triage. <code>SET LOCAL</code> scopes to the transaction; on
+  <code>COMMIT</code> the value is gone. Test 12 in the suite pins this invariant.
+</aside>
+
+<p>
+  On the success path, the runner also calls <code>DISCARD ALL</code> before <code>release()</code>.
+  <code>SET LOCAL</code> is enough <em>if every change in the file uses it</em>;
+  <code>DISCARD ALL</code> is the broader defense for a migration author who reaches for a bare
+  <code>SET</code> or <code>RESET application_name</code>. On the error path the client is destroyed
+  via <code>release(err)</code> instead — pg-pool's documented signature for "close this socket,
+  don't return it to the pool" — so <code>DISCARD</code> is unnecessary there.
+</p>
+
+<h3>The tracking table and the per-file transaction</h3>
+
+<p>
+  <code>_migrations</code> is a single-column table created inside the locked section (<code
+    >CREATE TABLE IF NOT EXISTS</code
+  >, so a fresh-DB race doesn't trip <code>duplicate_table</code>). The underscore prefix is the
+  framework-metadata convention; no application table uses one. <code>version</code> stores the full
+  filename as the natural key — no surrogate id, no checksum column yet.
+</p>
+
+<p>
+  For each pending file: <code>BEGIN</code>, <code>SET LOCAL</code>, run the file contents,
+  <code>INSERT INTO _migrations</code>, <code>COMMIT</code>. A SQL error rolls the whole transaction
+  back, including the bookkeeping insert, so the next run sees the file as still pending. The runner
+  emits <code>migrate.failed</code> with the file's <code>durationMs</code>, re-throws an
+  <code>Error</code> with <code>cause</code> chained to the pg error, and stops — later files don't
+  attempt.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One transaction per file, not one transaction for the whole run</strong> — bundling all
+  files into one transaction sounds atomic but isn't useful here: the second migration in a run
+  often depends on the first having committed (e.g. an index on a table the previous file just
+  created). Per-file gives "all-or-nothing for this change" without coupling unrelated changes. The
+  cost — a partial run leaves the DB at an intermediate version — is exactly what
+  <code>_migrations</code> tracks, so the next run picks up where the failed one stopped.
+</aside>
+
+<h3>Validation: filename grammar and dollar-quote-aware body scan</h3>
+
+<p>
+  Two checks before the runner touches the DB. First, the filename grammar regex above; anything
+  else in <code>backend/migrations/</code> is rejected with a clear error (no spaces, no unicode, no
+  missing prefix). Second, a body scan that rejects top-level
+  <code>BEGIN</code>/<code>COMMIT</code>/<code>ROLLBACK</code>/<code>END</code>/<code
+    >START TRANSACTION</code
+  >
+  — the wrapper transaction is ours, and nested transaction control breaks the per-file atomicity
+  story.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The body scan is dollar-quote-aware</strong> — a naive <code>^\s*BEGIN\s*$</code> regex
+  would falsely reject <code>DO $$ BEGIN ... END $$;</code> blocks and
+  <code>CREATE FUNCTION ... AS $$ ... $$</code> bodies, which are exactly the shapes the real schema
+  migrations will use for triggers and helpers. The validator strips dollar-quoted runs (preserving
+  line numbers for error messages) before scanning. <code>CREATE INDEX CONCURRENTLY</code> is also
+  rejected because it's incompatible with the wrapper transaction; an opt-in
+  <code>-- pg-migrate: no-transaction</code> header is roadmapped.
+</aside>
+
+<h3>Out-of-order detection and drift warning</h3>
+
+<p>
+  After computing applied vs pending, the runner compares lexicographically. If a pending file is
+  less than the highest applied version (e.g. <code>002_x.sql</code> shows up after
+  <code>003_y.sql</code> already ran in staging), the run errors out with a "rebase to a version
+  greater than the highest applied" message. A teammate's branch that adds
+  <code>002_x.sql</code> while <code>003_y.sql</code> is already deployed is the canonical case.
+</p>
+
+<p>
+  The opposite case — an applied row whose file is missing from disk — is a warning, not an error:
+  <code>migrate.drift_missing_files</code> with the missing list. The run continues. The
+  checksum-drift follow-up upgrades this to error-on-content-changed once content hashes are stored;
+  today it's a queryable signal that someone deleted a migration file from the working tree.
+</p>
+
+<h3>Lock-wait heartbeat: visibility while blocked</h3>
+
+<p>
+  Without a heartbeat, a runner blocked behind another runner's lock would emit
+  <code>migrate.start</code> and then go silent — leaving an operator unable to distinguish "wedged"
+  from "crashed." The runner instead loops on <code>pg_try_advisory_lock</code> with a 500 ms poll,
+  and every 5 seconds emits <code>migrate.lock_waiting</code> with <code>waitMsSoFar</code> and a
+  holder snapshot (pid, application_name, query state) read from <code>pg_stat_activity</code>. The
+  holder query is best-effort — if it fails on permissions, the heartbeat still fires with
+  <code>holder: null</code> — but most of the time it tells the operator exactly which process is
+  blocking them.
+</p>
+
+<h3>Signal handling and exit codes</h3>
+
+<p>
+  The CLI installs SIGINT/SIGTERM handlers (the same <code>installSignalHandlers</code> the
+  <a href="../runtime/index.html">backend boot gate</a> uses) wired to an
+  <code>AbortController</code>. SIGTERM does <em>not</em> cancel an in-flight pg query — that's a
+  Postgres limitation, not a runner choice. What it does is trip the abort signal, which the runner
+  checks <em>between</em> migrations: any in-flight file completes (or fails normally), then the
+  runner returns the migrations applied so far and exits 130 instead of 0. Exit 1 is reserved for
+  crashes (env load failure, unreachable DB, SQL error). The deploy-script bead picks up that
+  distinction to tell "told to stop" apart from "broke."
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Why <code>MIGRATE_DATABASE_URL</code> takes precedence over <code>DATABASE_URL</code></strong
+  >
+  — the API container connects with a least-privileged app role (Auth &amp; Users spec). The
+  migration container needs <code>rds_superuser</code> for <code>CREATE EXTENSION</code> and
+  similar. Two roles, two secrets, but only one URL contract: if
+  <code>MIGRATE_DATABASE_URL</code> is set the runner uses it, otherwise it falls back to
+  <code>DATABASE_URL</code> so local dev (one role, one URL) keeps working. The check is an explicit
+  length test, not <code>??</code>, because Terraform <code>cond ? var : null</code> patterns
+  sometimes emit empty strings that <code>??</code> would not skip.
+</aside>
+
+<h3>Structured logs and CloudWatch</h3>
+
+<p>
+  Every event is a pino structured-JSON line with a top-level <code>event</code> key, the
+  <code>runId</code> (UUIDv7 generated per invocation), and either a <code>version</code> /
+  <code>durationMs</code> pair (per-file events) or a totals payload (run-level events). A custom
+  <code>err</code> serializer wraps <code>pino.stdSerializers.err</code> to recurse into
+  <code>err.cause</code> and strip <code>connectionParameters</code> /
+  <code>connectionString</code> fields — pg's <code>DatabaseError</code> can otherwise leak the
+  password from the connection URL into a log line. <code>pino.redact</code> with explicit paths is
+  layered behind the serializer as defense in depth.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="run-migrations-locally">Run migrations locally</h3>
+<ol>
+  <li>
+    <code>pnpm db:up</code> if the local Postgres isn't running. The runner connects to whatever
+    <code>DATABASE_URL</code> resolves to in <code>backend/.env.development</code>; the safety guard
+    refuses anything other than <code>localhost</code> +
+    <code>mythrun</code>(<code>_test</code>|<code>_ci</code>) when invoked from tests.
+  </li>
+  <li>
+    From the repo root: <code>pnpm db:migrate</code>. First run applies
+    <code>001_smoke.sql</code> (a <code>CREATE EXTENSION IF NOT EXISTS pgcrypto</code> placeholder);
+    a second run is a no-op that logs <code>migrate.no_pending</code> and exits 0.
+  </li>
+  <li>
+    To author a new migration: add <code>NNN_short_name.sql</code> to
+    <code>backend/migrations/</code>, where <code>NNN</code> is the next number after the highest
+    file currently in the directory. Lowercase identifier, underscores only.
+  </li>
+  <li>
+    <strong>Never edit an applied migration file.</strong> If the change is wrong, ship a new file
+    that fixes it forward. The append-only convention is what makes "what runs in staging runs in
+    prod" meaningful.
+  </li>
+</ol>
+
+<h3 id="inspect-a-migration-run-in-cloudwatch">Inspect a migration run in CloudWatch</h3>
+<ol>
+  <li>
+    Open Logs Insights against the ECS task's log group. Every migration event carries
+    <code>component = "migrate"</code> at the base, so cross-component noise filters out cleanly.
+  </li>
+  <li>
+    Recent failures with context:
+    <pre><code>filter component = "migrate" and event = "migrate.failed"
+| fields @timestamp, runId, version, durationMs, err.code, err.message
+| sort @timestamp desc
+| limit 50</code></pre>
+  </li>
+  <li>
+    Slow migrations (look for outliers across runs):
+    <pre><code>filter component = "migrate" and event = "migrate.applied"
+| stats avg(durationMs), max(durationMs), count(*) by version
+| sort max(durationMs) desc</code></pre>
+  </li>
+  <li>
+    Lock-contention investigation — every <code>migrate.lock_waiting</code> event carries a holder
+    snapshot:
+    <pre><code>filter component = "migrate" and (event = "migrate.lock_waiting" or event = "migrate.lock_acquired")
+| fields @timestamp, runId, waitMsSoFar, waitMs
+| sort @timestamp desc</code></pre>
+  </li>
+  <li>
+    Reconstruct a single run end-to-end given a <code>runId</code> from another query:
+    <pre><code>filter component = "migrate" and runId = "&lt;paste-runId&gt;"
+| sort @timestamp asc</code></pre>
+  </li>
+  <li>
+    Did the last deploy actually migrate anything?
+    <pre><code>filter component = "migrate" and (event = "migrate.complete" or event = "migrate.no_pending")
+| fields @timestamp, runId, count, versions
+| sort @timestamp desc
+| limit 10</code></pre>
+  </li>
+</ol>
+
+<h3 id="recover-from-a-bad-migration">Recover from a bad migration</h3>
+<ol>
+  <li>
+    Find the failing run in CloudWatch — the recent-failures query above gets you the
+    <code>runId</code> and <code>version</code> in one shot. Pull the full run with the "reconstruct
+    a single run" query to see the SQL error and where it stopped.
+  </li>
+  <li>
+    Open a session into a running task with ECS Exec (<code>enableExecuteCommand</code> is
+    provisioned per the <a href="../infra/serving.html">serving module</a>):
+    <pre><code>aws ecs list-tasks \
+  --cluster mythrun \
+  --service-name mythrun-staging-api \
+  --region us-east-1
+
+aws ecs execute-command \
+  --cluster mythrun \
+  --task &lt;TASK_ARN&gt; \
+  --container api \
+  --interactive \
+  --command "/bin/sh"</code></pre>
+  </li>
+  <li>
+    Connect with the migration role (the one with <code>rds_superuser</code> if the failed statement
+    needed it). Apply corrective SQL by hand and commit.
+  </li>
+  <li>
+    If the next run should reapply the fixed migration, delete the row:
+    <code>DELETE FROM _migrations WHERE version = '&lt;filename&gt;'</code>. Otherwise leave the row
+    in place and ship a new <code>NNN_fix_*.sql</code> that does the cleanup forward.
+  </li>
+  <li>
+    Trigger another deploy (or run the migration task directly). Verify with the "did the last
+    deploy actually migrate anything?" query above that the corrective change shows up in
+    <code>versions</code>.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The runner reuses <a href="../runtime/index.html"><code>createPgPool</code></a> from the backend
+  workspace and the <a href="../runtime/index.html"><code>installSignalHandlers</code></a> shape the
+  boot gate already established. The eventual server-boot wiring will call
+  <code>runMigrations</code> after the <code>waitFor(pg)</code> probe and before
+  <code>app.listen</code>; the <code>MigrateLogger</code> type is narrowed to a <code>Pick</code> of
+  pino's base logger so Fastify's <code>app.log</code> satisfies it without a cast. The deploy
+  pipeline (<a href="../infra/ci-cd.html">CI/CD</a>) will pick up a one-off ECS task pattern as a
+  follow-up bead — the runner already supports that mode by virtue of being a CLI; the bead is
+  task-definition wiring and the migration-role secret.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Environment variables</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Var</th>
+      <th>Default</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>MIGRATE_DATABASE_URL</code></td>
+      <td>unset</td>
+      <td>
+        Takes precedence over <code>DATABASE_URL</code> when set and non-empty. Production points
+        this at the migration role's secret; the API role connects via <code>DATABASE_URL</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>DATABASE_URL</code></td>
+      <td>—</td>
+      <td>
+        Fallback when <code>MIGRATE_DATABASE_URL</code> is unset or empty. Component-form (<code
+          >DB_HOST</code
+        >
+        / <code>DB_USER</code> / etc.) also accepted by
+        <a href="../runtime/index.html"><code>loadEnv</code></a
+        >.
+      </td>
+    </tr>
+    <tr>
+      <td><code>LOG_LEVEL</code></td>
+      <td><code>info</code></td>
+      <td>
+        <code>debug</code> available for future per-statement timing. Lock-wait heartbeats are
+        info-level on purpose.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Exit codes</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Code</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>0</code></td>
+      <td>Success — every pending migration applied, or nothing was pending.</td>
+    </tr>
+    <tr>
+      <td><code>130</code></td>
+      <td>
+        Graceful abort — SIGTERM/SIGINT received between migrations. Any migration in flight at the
+        time of the signal completed normally; no half-applied state.
+      </td>
+    </tr>
+    <tr>
+      <td><code>1</code></td>
+      <td>
+        Crash — env load failure, unreachable DB, validation error, or SQL error. The deploy
+        orchestrator's job is to retry; the runner converges on re-run.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Structured log events</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>Level</th>
+      <th>Fields (in addition to <code>runId</code>)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>migrate.start</code></td>
+      <td>info</td>
+      <td>
+        <code>migrationsDir</code>, <code>pgServerVersion</code>, <code>dbHost</code>,
+        <code>nodeVersion</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>migrate.lock_waiting</code></td>
+      <td>info</td>
+      <td>
+        <code>waitMsSoFar</code>, <code>holder</code> (pid, applicationName, state, queryStartedAt,
+        queryPreview)
+      </td>
+    </tr>
+    <tr>
+      <td><code>migrate.lock_acquired</code></td>
+      <td>info</td>
+      <td><code>waitMs</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.lock_released</code></td>
+      <td>info</td>
+      <td><code>holdMs</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.unlock_failed</code></td>
+      <td>warn</td>
+      <td><code>err</code> (auto-release on socket close is the backstop)</td>
+    </tr>
+    <tr>
+      <td><code>migrate.plan</code></td>
+      <td>info</td>
+      <td><code>pending</code>, <code>total</code>, <code>pendingVersions</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.applied</code></td>
+      <td>info</td>
+      <td><code>version</code>, <code>durationMs</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.failed</code></td>
+      <td>error</td>
+      <td><code>version</code>, <code>durationMs</code>, <code>err</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.aborted</code></td>
+      <td>warn</td>
+      <td><code>appliedSoFar</code>, <code>remaining</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.drift_missing_files</code></td>
+      <td>warn</td>
+      <td><code>missing</code> (versions in <code>_migrations</code> with no file on disk)</td>
+    </tr>
+    <tr>
+      <td><code>migrate.no_migrations_found</code></td>
+      <td>info</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>migrate.no_pending</code> / <code>migrate.complete</code></td>
+      <td>info</td>
+      <td><code>count</code>, <code>versions</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.done</code></td>
+      <td>info</td>
+      <td><code>applied</code>, <code>totalMs</code></td>
+    </tr>
+    <tr>
+      <td><code>migrate.fatal</code></td>
+      <td>error</td>
+      <td>
+        <code>err</code>, <code>hint?</code> (mapped from SQLSTATE / errno), <code>nextStep</code>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Filesystem layout</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>backend/migrations/</code></td>
+      <td>
+        Append-only <code>.sql</code> files. Lives outside <code>backend/src/</code> so it isn't
+        compiled. The Dockerfile runtime stage copies it to <code>/app/migrations</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/db/migrate.ts</code></td>
+      <td>
+        <code>runMigrations()</code> + the CLI entrypoint guarded by <code>import.meta.url</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/db/lock-key.ts</code></td>
+      <td>The pinned <code>LOCK_KEY</code> bigint. A drift test asserts the literal.</td>
+    </tr>
+    <tr>
+      <td><code>_migrations</code> (in DB)</td>
+      <td>
+        <code>(version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT now())</code>. Created
+        inside the locked section. The only <code>_*</code> table the application owns.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/db/migrate.ts</code>, <code>backend/src/db/lock-key.ts</code>,
+  <code>backend/migrations/</code>.
+</p>
