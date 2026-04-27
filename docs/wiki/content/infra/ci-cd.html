@@ -226,6 +226,59 @@
   </li>
 </ol>
 
+<h3 id="bootstrap-a-new-service-from-placeholder">
+  Bootstrap a new ECS service from <code>:placeholder</code>
+</h3>
+<p>
+  Terraform creates each ECS service with <code>desired_count = 0</code> and
+  <code>image = ":placeholder"</code>, then ignores changes to <code>desired_count</code> and
+  <code>task_definition</code>. This decouples infra from the first deploy — Terraform sets the
+  service shape, CI does the first revision flip. Today's <code>deploy.yml</code> workflow
+  automates the sequence below; the steps are documented for future prod bring-up and for any
+  future scenario where a service has been reset to <code>:placeholder</code>.
+</p>
+<ol>
+  <li>
+    Build and push the image tagged with the git SHA:
+    <code>docker push $REGISTRY/mythrun:&lt;sha&gt;</code> and
+    <code>docker push $REGISTRY/mythrun:latest</code>.
+  </li>
+  <li>
+    Fetch the current task definition (revision 1, with the <code>:placeholder</code> image):
+    <code
+      >aws ecs describe-task-definition --task-definition mythrun-staging-api --query
+      'taskDefinition'</code
+    >.
+  </li>
+  <li>
+    Patch <code>containerDefinitions[0].image</code> to point at the real SHA. Strip the
+    read-only fields the API rejects on register: <code>taskDefinitionArn</code>,
+    <code>revision</code>, <code>status</code>, <code>requiresAttributes</code>,
+    <code>compatibilities</code>, <code>registeredAt</code>, <code>registeredBy</code>.
+    The <code>aws-actions/amazon-ecs-deploy-task-definition</code> action handles this
+    field-stripping correctly — prefer it over hand-rolled <code>jq</code>.
+  </li>
+  <li>
+    Register the patched definition:
+    <code>aws ecs register-task-definition --cli-input-json file://patched.json</code>. This
+    produces revision 2.
+  </li>
+  <li>
+    Point the service at the new revision AND scale up:
+    <code
+      >aws ecs update-service --cluster mythrun --service mythrun-staging-api --task-definition
+      mythrun-staging-api:2 --desired-count 1 --force-new-deployment</code
+    >.
+  </li>
+</ol>
+<aside class="wiki-rationale">
+  <strong>Why <code>--task-definition</code> is load-bearing</strong> — without it, the service
+  keeps the <code>:placeholder</code> revision and only forces a new deployment of that broken
+  image. <code>--force-new-deployment</code> on its own does NOT switch revisions; it just rolls
+  the current one. The first deploy of a fresh service must always combine
+  <code>--task-definition</code>, <code>--desired-count 1</code>, and the force flag.
+</aside>
+
 <h3 id="recover-from-pull-through-cache-cold-start">
   Recover from a pull-through cache cold start
 </h3>
