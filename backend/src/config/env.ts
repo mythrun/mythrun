@@ -18,6 +18,14 @@ export interface Env {
 // point at the same constructed URL. Dev keeps two distinct URLs.
 
 function buildDatabaseUrl(): string {
+  // Migrations may run as a different role than the API (rds_superuser
+  // for CREATE EXTENSION). MIGRATE_DATABASE_URL takes precedence; fallback
+  // to DATABASE_URL keeps local dev working out of the box.
+  // Explicit length-after-trim check — Terraform `cond ? x : null` patterns
+  // emit "" rather than null, and `??` only falls through on null/undefined.
+  const migrateRaw = process.env.MIGRATE_DATABASE_URL?.trim()
+  if (migrateRaw && migrateRaw.length > 0) return migrateRaw
+
   const explicit = process.env.DATABASE_URL
   if (explicit) return explicit
   const host = process.env.DB_HOST
@@ -27,7 +35,7 @@ function buildDatabaseUrl(): string {
   const password = process.env.DB_PASSWORD
   if (!host || !port || !user || !name || !password) {
     throw new Error(
-      'Missing database config: provide DATABASE_URL, or all of DB_HOST/DB_PORT/DB_USER/DB_NAME/DB_PASSWORD',
+      'Missing database config: provide DATABASE_URL (or MIGRATE_DATABASE_URL), or all of DB_HOST/DB_PORT/DB_USER/DB_NAME/DB_PASSWORD',
     )
   }
   // Prod (RDS) requires TLS; createPgPool parses ?sslmode and sets the

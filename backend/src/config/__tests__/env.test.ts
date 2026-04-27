@@ -23,6 +23,7 @@ const COMPONENT_FORM = {
 const ORIGINAL_ENV = { ...process.env }
 
 function clearAll(): void {
+  delete process.env.MIGRATE_DATABASE_URL
   delete process.env.DATABASE_URL
   delete process.env.REDIS_REALTIME_URL
   delete process.env.REDIS_BATCH_URL
@@ -151,5 +152,41 @@ describe('loadEnv (mixed)', () => {
     const env = loadEnv()
     expect(env.redisRealtimeUrl).toBe('redis://override:6379')
     expect(env.redisBatchUrl).toBe('rediss://:redis-secret@cache.example.com:6379')
+  })
+})
+
+describe('loadEnv (MIGRATE_DATABASE_URL precedence)', () => {
+  beforeEach(() => {
+    clearAll()
+  })
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV }
+  })
+
+  it('uses MIGRATE_DATABASE_URL when set and non-empty', () => {
+    Object.assign(process.env, URL_FORM)
+    process.env.MIGRATE_DATABASE_URL = 'postgresql://m:m@m:5432/migrate'
+    const env = loadEnv()
+    expect(env.databaseUrl).toBe('postgresql://m:m@m:5432/migrate')
+  })
+
+  it('falls through to DATABASE_URL when MIGRATE_DATABASE_URL is empty string', () => {
+    Object.assign(process.env, URL_FORM)
+    process.env.MIGRATE_DATABASE_URL = ''
+    const env = loadEnv()
+    expect(env.databaseUrl).toBe(URL_FORM.DATABASE_URL)
+  })
+
+  it('falls through to DATABASE_URL when MIGRATE_DATABASE_URL is whitespace only', () => {
+    Object.assign(process.env, URL_FORM)
+    process.env.MIGRATE_DATABASE_URL = '   '
+    const env = loadEnv()
+    expect(env.databaseUrl).toBe(URL_FORM.DATABASE_URL)
+  })
+
+  it('falls through to DATABASE_URL when MIGRATE_DATABASE_URL is unset', () => {
+    Object.assign(process.env, URL_FORM)
+    const env = loadEnv()
+    expect(env.databaseUrl).toBe(URL_FORM.DATABASE_URL)
   })
 })
