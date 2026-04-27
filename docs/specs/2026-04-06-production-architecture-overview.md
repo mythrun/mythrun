@@ -223,8 +223,10 @@ Browser ──HTTPS──> ALB ──> ECS Fargate: API Service (REST + WebSocke
                           |──> ElastiCache Redis
                           |──> Anthropic API (via NAT Gateway)
                           |──> Stripe API (via NAT Gateway)
-                   ALB ──> ECS Fargate: Worker Service (BullMQ pipelines)
+                   ECS Fargate: Worker Service (BullMQ pipelines)
                           |──> (same RDS, Redis, Anthropic connections)
+                          (no ALB target group; pulls jobs from Redis;
+                           internal /health on a sidecar port — not internet-facing)
 ```
 
 VPC topology, subnet layout, security groups, NAT Gateway configuration, and auto-scaling policies are defined in the Infrastructure sub-spec.
