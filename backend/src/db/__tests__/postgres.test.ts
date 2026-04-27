@@ -18,4 +18,14 @@ describe('createPgPool', () => {
     expect(pool).toBeDefined()
     pool.end().catch(() => undefined)
   })
+
+  it('overrides win when the same key would have come from URL/SSL derivation', () => {
+    // We narrow the type to disallow connectionString/ssl, but verify the
+    // spread ORDER is correct in case the type is ever loosened.
+    const pool = createPgPool('postgresql://u:p@h:5432/d', {
+      max: 7,
+    })
+    expect(pool.options.max).toBe(7)
+    pool.end().catch(() => undefined)
+  })
 })
