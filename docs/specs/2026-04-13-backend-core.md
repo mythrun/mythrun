@@ -60,13 +60,13 @@ Everything after this (auth, billing, pipeline, sessions, combat) is built on to
 ```
 mythrun/
   backend/
+    migrations/         # Numbered SQL files (outside src/ — never compiled)
     src/
       config/           # App config, model config
       db/
-        migrations/     # Numbered SQL files
         repository.ts   # Async repository layer
         types.ts        # TypeScript types for all entities
-        pool.ts         # pg Pool setup
+        postgres.ts     # pg Pool setup (`createPgPool`)
         migrate.ts      # Migration runner
       llm/
         client.ts       # LLM abstraction (rewritten for async patterns)
@@ -123,7 +123,7 @@ Same strict rules as prototype, plus:
 
 ### How It Works
 
-Migrations are raw SQL files in `backend/src/db/migrations/`, named with a numeric prefix:
+Migrations are raw SQL files in `backend/migrations/` (sibling of `src/`, kept outside the TypeScript source tree so the compiler never touches them), named with a numeric prefix:
 
 ```
 migrations/
@@ -132,26 +132,25 @@ migrations/
   003_seed_demo_world.sql
 ```
 
-A `_migrations` table in Postgres tracks which files have been applied:
+A `_migrations` table in Postgres tracks which files have been applied. The leading underscore marks it as infrastructure metadata (sorts to the bottom of `\dt`, signals "framework table, not domain"). The filename is the natural key — no surrogate id:
 
 ```sql
 CREATE TABLE IF NOT EXISTS _migrations (
-  id SERIAL PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
+  version TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-### Migration Runner (`migrate.ts`)
+### Migration Runner (`backend/src/db/migrate.ts`)
 
 ~30 lines of code:
 1. Ensure `_migrations` table exists
-2. Read all `.sql` files from `migrations/` directory, sorted by name
-3. Query `_migrations` for already-applied filenames
+2. Read all `.sql` files from `backend/migrations/`, sorted by name
+3. Query `_migrations` for already-applied filenames (`version` column)
 4. For each unapplied file, in order:
    a. Begin transaction
    b. Execute the SQL
-   c. Insert the filename into `_migrations`
+   c. Insert the filename into `_migrations.version`
    d. Commit
 5. Log each applied migration
 
