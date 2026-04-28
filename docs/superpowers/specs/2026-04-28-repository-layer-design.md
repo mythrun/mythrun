@@ -3,57 +3,58 @@
 > **Linear issue**: [MYT-34](https://linear.app/mythrun/issue/MYT-34) — Backend Core: repository layer (UUIDv7, namespace pattern, query helpers)
 > **Parent spec**: `docs/specs/2026-04-13-backend-core.md` §5 (Repository Layer)
 > **Date**: 2026-04-28
-> **Status**: v1
+> **Status**: v2 (post-blind-review)
 
 ## 1. Goal
 
-Build the repository layer: a closure-based factory that returns typed, namespaced data-access methods over the schema landed in MYT-33. CLAUDE.md mandates "all DB access through the repository layer" — this ticket establishes that layer, scoped to the namespaces whose consumers exist or are about to exist (Auth/Billing/Sessions need `users` immediately).
+Build the repository layer: a closure-based factory that returns typed, namespaced data-access methods over the schema landed in MYT-33. CLAUDE.md mandates "all DB access through the repository layer" — this ticket establishes that layer, scoped to namespaces whose consumers exist or are imminent.
 
 The contract: every TS file outside `backend/src/repo/` that wants to read or write the database calls `repo.<namespace>.<method>(...)`. No raw `pool.query(...)` in route handlers, services, or workers.
 
-## 2. Scope: foundation namespaces only
+## 2. Scope: 4 foundation namespaces
 
-Spec §5.2 lists 25 namespaces. **This ticket ships 6** — the foundation set whose consumers are cross-cutting and already designed (or about to be):
+Spec §5.2 lists 25 namespaces. **This ticket ships 4** — `users`, `worlds`, `campaigns`, `sessions`. The remaining 21 are deferred to consumer tickets per the context-coherence rule (`feedback_context_coherence.md`): batching producer with consumer reduces wrong-shape APIs.
 
-- `users`, `worlds`, `campaigns`, `sessions`, `characters`, `credits`
+The deferrals from v1 of this spec were:
 
-The other 19 are deferred to the downstream tickets where their consumers are designed. The deferral policy and tracking beads are documented in Backend Core spec §5 ("Namespace Deferral Policy" subsection); a future agent picking up Auth/Billing/Pipeline/Sessions runs `bd list --label=repo-deferred` to find what to add inline.
+- **`characters`** → deferred to Prep Pipeline character-creation tickets. Per-skill/feature/equipment/spell add APIs are guesses without the character-creation flow designed. Filing a new bead `repo-deferred`.
+- **`credits`** → deferred to **MYT-40** ("Billing: credit ledger schema additions + atomic debit pattern"). MYT-40 owns the atomic debit design; shipping a separate `credits.grant`/`debit`/`getBalance` here invites a TOCTOU race (concurrent session-starts both read balance=1 then both debit, user goes to -1) that MYT-40's atomic-debit work is the right place to solve. No new bead needed — MYT-40 already covers it; spec §5 deferral table updated.
+- **`worlds.fork`** → deferred to Prep Pipeline. Fork semantics are explicitly Pipeline-owned (entity copy, fact deduplication, etc.); shipping the lineage-record half here without the substance creates a half-method.
+- **`sessions.updateRunningSummary`** → deferred to Session Runtime + Combat L1 milestone (Slow Thinker is the consumer).
+- **`users.softDelete`** → deferred. No caller in the next 2-3 tickets; the idempotency-guard nuance is exactly the kind of detail that wants a real consumer to constrain the design.
 
-Rationale (saved as `feedback_context_coherence.md`): batching producer code with consumer context produces fewer wrong-shape APIs than designing in isolation. Even though the total work is the same, the design-coherence cost of guessing at consumer needs across multiple agent sessions is real.
+The remaining 19 namespaces from spec §5.2 are tracked via beads tagged `repo-deferred` (`bd list --label=repo-deferred`).
 
 ## 3. File layout
 
 ```
 backend/src/repo/
-  index.ts                 # createRepo(pool) → { users, worlds, campaigns, sessions, characters, credits }
-  uuidv7.ts                # thin wrapper around the uuidv7 package; testability seam
-  types.ts                 # row interfaces (User, World, Campaign, Session, Character, CreditLedgerEntry, …)
+  index.ts                 # createRepo(pool) → { users, worlds, campaigns, sessions }
+  uuidv7.ts                # one-line wrapper around the uuidv7 package; testability seam
+  types.ts                 # row interfaces (User, World, Campaign, Session) + Update input types
   mappers.ts               # snake_case row → camelCase TS object
   users.ts                 # createUsersRepo(pool)
   worlds.ts                # createWorldsRepo(pool)
   campaigns.ts             # createCampaignsRepo(pool)
   sessions.ts              # createSessionsRepo(pool)
-  characters.ts            # createCharactersRepo(pool)
-  credits.ts               # createCreditsRepo(pool)
   __tests__/
     users.test.ts          # real-DB integration tests, one per namespace
     worlds.test.ts
     campaigns.test.ts
     sessions.test.ts
-    characters.test.ts
-    credits.test.ts
     mappers.test.ts        # pure unit tests
 backend/src/app-deps.ts    # MODIFIED — adds repo: Repo
-backend/src/app.ts         # MODIFIED — buildApp signature accepts the new field (still no-op consumer)
-backend/src/server.ts      # MODIFIED — constructs repo from pool, passes to buildApp
+backend/src/app.ts         # MODIFIED — buildApp signature accepts repo (still no-op consumer)
+backend/src/server.ts      # MODIFIED — boot-gate path constructs repo; fallbackStart constructs repo over the stub pool (which throws on use)
+backend/src/db/migrate.ts  # MODIFIED — CLI block imports uuidv7 from repo/uuidv7.ts (single seam)
 ```
 
-Each namespace file is ~50–150 lines depending on method count. Methods follow the closure factory pattern from spec §5:
+Each namespace file is ~50–150 lines depending on method count. Closure factory pattern from spec §5:
 
 ```ts
 import { type Pool } from 'pg'
 import { uuidv7 } from './uuidv7.js'
-import { type User, type UserUpdate } from './types.js'
+import { type User, type CreateUserInput, type UserUpdate } from './types.js'
 import { toUser, type UserDbRow } from './mappers.js'
 
 export function createUsersRepo(pool: Pool) {
@@ -75,18 +76,21 @@ export function createUsersRepo(pool: Pool) {
       const row = result.rows[0]
       return row ? toUser(row) : null
     },
-    // …
+    getByCognitoSub: async (sub: string): Promise<User | null> => { /* … */ },
+    getByEmail: async (email: string): Promise<User | null> => { /* … */ },
+    update: async (id: string, patch: UserUpdate): Promise<User> => { /* see §4.4 */ },
   }
 }
 ```
 
-`index.ts` composes:
+`index.ts`:
 
 ```ts
 import { type Pool } from 'pg'
 import { createUsersRepo } from './users.js'
 import { createWorldsRepo } from './worlds.js'
-// …
+import { createCampaignsRepo } from './campaigns.js'
+import { createSessionsRepo } from './sessions.js'
 
 export function createRepo(pool: Pool) {
   return {
@@ -94,8 +98,6 @@ export function createRepo(pool: Pool) {
     worlds: createWorldsRepo(pool),
     campaigns: createCampaignsRepo(pool),
     sessions: createSessionsRepo(pool),
-    characters: createCharactersRepo(pool),
-    credits: createCreditsRepo(pool),
   }
 }
 
@@ -104,11 +106,9 @@ export type Repo = ReturnType<typeof createRepo>
 
 ## 4. Design decisions
 
-Captured during brainstorming; all defaults to "what the spec/Linear issue would suggest" except where the brainstorm landed differently.
-
 ### 4.1 camelCase TS surface, snake_case in SQL, mappers in between
 
-The schema uses snake_case (`cognito_sub`, `created_by`, `geography_summary`). The TS surface is camelCase (`cognitoSub`, `createdBy`, `geographySummary`). Each row type has a row interface (`UserDbRow` with snake_case keys, matching `pool.query<UserDbRow>` results) and a mapper (`toUser(row)`) that converts to the camelCase `User` interface.
+The schema uses snake_case (`cognito_sub`, `created_by`, `geography_summary`). The TS surface is camelCase. Each row type has a `XxxDbRow` interface (matching `pool.query<XxxDbRow>` results) and a mapper function in `mappers.ts`.
 
 ```ts
 // types.ts
@@ -127,92 +127,106 @@ export interface User {
   readonly updatedAt: Date
 }
 
-// mappers.ts
-export interface UserDbRow {
-  id: string
-  cognito_sub: string
-  email: string
-  display_name: string
-  username: string
-  avatar_url: string | null
-  auth_provider: string
-  stripe_customer_id: string | null
-  free_trial_used: boolean
-  suspended_at: Date | null
-  created_at: Date
-  updated_at: Date
-}
-
-export function toUser(row: UserDbRow): User {
-  return {
-    id: row.id,
-    cognitoSub: row.cognito_sub,
-    email: row.email,
-    displayName: row.display_name,
-    username: row.username,
-    avatarUrl: row.avatar_url,
-    authProvider: row.auth_provider as 'google' | 'discord',
-    stripeCustomerId: row.stripe_customer_id,
-    freeTrialUsed: row.free_trial_used,
-    suspendedAt: row.suspended_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
+// Spelled-out, not Partial<Pick<User, ...>>, so exactOptionalPropertyTypes
+// semantics are intentional: callers either omit a key or pass null where
+// the field is nullable. Identity fields (cognitoSub/email/authProvider)
+// are NOT in this type — mutating them breaks Cognito linkage.
+export interface UserUpdate {
+  readonly displayName?: string
+  readonly username?: string
+  readonly avatarUrl?: string | null
+  readonly stripeCustomerId?: string | null
+  readonly freeTrialUsed?: boolean
 }
 ```
 
-One file (`mappers.ts`) holds all six mappers. Pure functions; tested in `mappers.test.ts` without a DB.
+### 4.2 Narrowing helpers for enum-like CHECK columns
 
-### 4.2 Create methods return the full row via `RETURNING *`
+`auth_provider` is `TEXT` with a CHECK constraint enforcing `('google', 'discord')`. The mapper does NOT bare-cast `as 'google' | 'discord'`. Instead, a small narrowing helper:
 
-Spec §5 example shows `Promise<string>` (returns the new ID). We deviate: every `create` returns the full record, populated with DB-generated `created_at`/`updated_at` via `INSERT ... RETURNING *`. Saves callers a refetch, costs marginal extra bandwidth, matches what almost every consumer wants.
+```ts
+// mappers.ts
+function toAuthProvider(v: string): 'google' | 'discord' {
+  if (v !== 'google' && v !== 'discord') {
+    throw new Error(`unexpected auth_provider value from DB: ${v}`)
+  }
+  return v
+}
+```
 
-The same pattern applies to `update` methods: `UPDATE ... SET ... WHERE id = $1 RETURNING *`. Caller gets the new row in one round-trip.
+Same pattern for any other enum-like field with a small fixed value set. The CHECK constraint guarantees the SQL invariant; the helper is defense in depth — if a future migration adds a new option but the TS interface is stale, the mapper fails loudly at the boundary rather than silently miscategorizing.
 
-### 4.3 `as` assertions for row typing
+### 4.3 Create methods return the full row via `RETURNING *`
 
-`pool.query<UserDbRow>(...)` types the rows; mappers convert. No runtime validation (zod) at the row boundary in v1 — the MYT-33 schema-parity test catches schema-vs-interface drift. If a real bug surfaces from this gap, layer in zod later.
+Spec §5 example shows `Promise<string>`. We deviate: every `create` returns the full record via `INSERT ... RETURNING *`. Saves callers a refetch, costs marginal extra bandwidth, matches what every consumer wants.
 
-The single `as` assertion that does runtime work is on enum-like CHECK columns: `auth_provider` is `TEXT` in SQL with a CHECK constraint, but TS types it as `'google' | 'discord'`. The mapper `as`-casts it. If a future migration adds a third option, the schema-parity test catches the CHECK clause change before code can read an unknown value.
+### 4.4 Update methods use fixed COALESCE; updated_at always bumped
 
-### 4.4 UUIDv7 in its own module
+Dynamic SQL is unnecessary for ~5 mutable columns. The fixed-form pattern:
+
+```ts
+update: async (id: string, patch: UserUpdate): Promise<User> => {
+  const result = await pool.query<UserDbRow>(
+    `UPDATE users
+        SET display_name       = COALESCE($2, display_name),
+            username           = COALESCE($3, username),
+            avatar_url         = COALESCE($4, avatar_url),
+            stripe_customer_id = COALESCE($5, stripe_customer_id),
+            free_trial_used    = COALESCE($6, free_trial_used),
+            updated_at         = now()
+      WHERE id = $1
+      RETURNING *`,
+    [id, patch.displayName ?? null, patch.username ?? null, patch.avatarUrl ?? null,
+     patch.stripeCustomerId ?? null, patch.freeTrialUsed ?? null],
+  )
+  const row = result.rows[0]
+  if (!row) throw new Error(`users.update: no user with id ${id}`)
+  return toUser(row)
+}
+```
+
+**`updated_at = now()` is mandatory on every UPDATE statement** in every namespace — the schema declares `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()` but does NOT have a `BEFORE UPDATE` trigger, so manual bumping is required. Forgetting leaves `updated_at` stale forever. Each test file asserts `updated_at` advances after `update`.
+
+The COALESCE form has nice properties: one stable SQL string (predictable EXPLAIN), no injection surface, fully parameterized, the column whitelist is in the SQL itself rather than a JS array.
+
+Caveat: with COALESCE, "set this nullable field to NULL" is impossible (`null` means "don't change"). For nullable fields where clearing is a legitimate operation (`avatarUrl`, `stripeCustomerId`), if a real consumer needs that capability, the API can grow a sentinel later or split into `clearAvatar` / etc. methods. Not in scope today.
+
+### 4.5 UUIDv7 in its own module
 
 `backend/src/repo/uuidv7.ts`:
 
 ```ts
 import { uuidv7 as uuidv7Pkg } from 'uuidv7'
 
-/**
- * UUIDv7 generator — time-ordered keys for B-tree locality on PK indexes.
- * Wraps the `uuidv7` package as a single-line module so:
- *   1. Tests can vi.mock('./uuidv7.js') if deterministic IDs are needed.
- *   2. A future migration to a different UUIDv7 lib is a one-file change.
- */
 export const uuidv7 = (): string => uuidv7Pkg()
 ```
 
-Every `create` method imports and calls this. UUIDs are generated app-side per Backend Core spec §5; the schema's `id UUID PRIMARY KEY` columns have no DB default.
+Used by every `create` in the repo. `backend/src/db/migrate.ts`'s CLI block (Task 12) currently imports `uuidv7` directly from the package; this ticket switches it to `import { uuidv7 } from '../repo/uuidv7.js'` so the wrapper is the single seam. One-line change in migrate.ts.
 
-### 4.5 Method-level decisions
+### 4.6 Method-level decisions per namespace
 
-- **`users.softDelete`**: `UPDATE users SET suspended_at = now() WHERE id = $1 AND suspended_at IS NULL`. The `suspended_at IS NULL` guard makes the operation idempotent (re-running on an already-suspended user is a no-op). The schema has no `deleted_at` column; `suspended_at` is the soft-delete signal.
-- **`users.update`**: accepts `UserUpdate = Partial<Pick<User, 'displayName' | 'username' | 'avatarUrl' | 'stripeCustomerId' | 'freeTrialUsed'>>`. Identity fields (`cognitoSub`, `email`, `authProvider`) are NOT in this type — mutating them breaks Cognito linkage and audit trails. The implementation uses dynamic SQL building (only updates supplied keys) but with a hard whitelist on the column names so no caller can inject column names through TypeScript-bypassed paths.
-- **`worlds.fork(sourceWorldId, input)`**: inserts a new world record with `source_world_id = sourceWorldId`, increments `source.fork_count` in the same transaction (`pool.connect()` + BEGIN/COMMIT). Does NOT deep-copy entities/facts/relationships — those namespaces are deferred to Prep Pipeline, where the prep engine's fork semantics determine what gets copied vs regenerated. This method just establishes the world-record lineage.
-- **`worlds.listByUser(userId)`**: `SELECT * FROM worlds WHERE created_by = $1 ORDER BY created_at DESC`. No JOIN needed; simple ownership filter.
-- **`campaigns.listByUser(userId)`**: `SELECT c.* FROM campaigns c JOIN campaign_members cm ON cm.campaign_id = c.id WHERE cm.user_id = $1 AND cm.invite_accepted = true ORDER BY c.created_at DESC`. The JOIN with `campaign_members` is fine even though that's a deferred namespace — we're using the table in SQL, not exposing a campaignMembers API surface.
-- **`campaigns.transferOwnership` is deferred** to MYT-39. It needs to update both `campaigns.created_by` AND swap the `campaign_members` role rows (current owner → player, target → owner) in one transaction. Since `campaign_members` is itself deferred, the cleaner path is to ship the whole transfer atomically when MYT-39 lands. Documented in `myth-ij6` (the MYT-39 deferral bead).
-- **`sessions.getActiveByCampaign(campaignId)`**: `SELECT * FROM sessions WHERE campaign_id = $1 AND status = 'active'`. The schema has `idx_sessions_one_active` (partial-unique on `(campaign_id) WHERE status = 'active'`), so this method returns either zero or one row. Type signature: `Promise<Session | null>`.
-- **`sessions.updateRunningSummary(sessionId, summary)`**: dedicated method instead of going through `update()`. Reason: this is called by the Slow Thinker on every turn, has a clear single-purpose contract, and surfaces in pipeline tracing as a distinct event.
-- **`characters.{addSkill,addFeature,addEquipment,addSpell}`** insert into `character_skills` / `character_features` / `character_equipment` / `character_spells` with the parent `character_id`. The matching `getSkills` / `getFeatures` / `getEquipment` / `getSpells` methods read all rows for a character.
-- **`credits.grant(input)` / `credits.debit(input)`**: both INSERT into `credit_ledger`. `grant` requires `amount > 0`; `debit` requires `amount > 0` and inserts `-amount`. Argument validation throws `Error('credits.grant: amount must be positive')` if violated — TS types alone can't enforce non-zero positive integers, so a runtime check at the boundary is justified. Both methods return the inserted ledger row.
-- **`credits.getBalance(userId, creditType)`**: `SELECT COALESCE(SUM(amount), 0) AS balance FROM credit_ledger WHERE user_id = $1 AND credit_type = $2 AND (expires_at IS NULL OR expires_at > now())`. Returns `Promise<number>`. The COALESCE handles the empty-ledger case (SUM returns NULL on no rows).
-- **`credits.getHistory(userId, opts?)`**: `SELECT * FROM credit_ledger WHERE user_id = $1 ORDER BY granted_at DESC LIMIT $2 OFFSET $3`. `opts.limit` defaults to 100, `opts.offset` to 0 — bounded by default to prevent unbounded result sets in dev/debug paths.
+**`users`**: `create`, `getById`, `getByCognitoSub`, `getByEmail`, `update`. All explicit (no implicit "and so on" — Auth will literally grep for these names).
 
-### 4.6 Transaction support
+**`worlds`**: `create`, `getById`, `listByUser`, `update`, `updateStatus`, `incrementForkCount`. `fork` deferred to Prep Pipeline. `listByUser` is `SELECT * FROM worlds WHERE created_by = $1 ORDER BY created_at DESC` — simple ownership filter, no JOIN needed. `updateStatus` is a one-purpose UPDATE on the `status` column (the prep pipeline calls this many times per run; dedicated method matches spec §5.2 + makes pipeline tracing cleaner).
 
-Single-statement methods don't need transactions. Multi-statement operations (`worlds.fork` increments + insert; `campaigns.transferOwnership` when it lands; future debit-and-record-purchase) use `pool.connect()` + manual `BEGIN`/`COMMIT`/`ROLLBACK`/`client.release()`. No higher-level abstraction (e.g., a `repo.transaction(callback)` helper) in this ticket — wait until a real consumer needs it.
+**`campaigns`**: `create`, `getById`, `listByUser`, `update`. `transferOwnership` deferred to MYT-39 (it's a two-table transaction touching campaign_members which is itself deferred). `listByUser` does the JOIN with `campaign_members` directly in SQL — fine even though that's a deferred namespace; we're using the table, not exposing an API surface for it:
 
-The migration runner (MYT-32) already has the `BEGIN/COMMIT/ROLLBACK + release(err)` pattern documented and tested; copy that shape inside repo methods that need it.
+```sql
+SELECT c.* FROM campaigns c
+  JOIN campaign_members cm ON cm.campaign_id = c.id
+ WHERE cm.user_id = $1 AND cm.invite_accepted = true
+ ORDER BY c.created_at DESC
+```
+
+**`sessions`**: `create`, `getById`, `getActiveByCampaign`, `update`, `listByCampaign`. `updateRunningSummary` deferred to Combat L1. `getActiveByCampaign` query uses `LIMIT 1` defensively — the partial-unique index `idx_sessions_one_active` guarantees at most one row, but `LIMIT 1` makes the contract self-documenting at the SQL site:
+
+```sql
+SELECT * FROM sessions
+ WHERE campaign_id = $1 AND status = 'active'
+ LIMIT 1
+```
+
+Returns `Promise<Session | null>`.
 
 ## 5. AppDeps + server integration
 
@@ -230,81 +244,102 @@ export interface AppDeps {
 }
 ```
 
-`server.ts` constructs the repo immediately after creating the pool, in the boot-gate path:
+Boot-gate-on path in `server.ts`:
 
 ```ts
-// server.ts inside main(), after createPgPool / createRedisClient and waitFor probes
 const repo = createRepo(pgRef)
 const app = buildApp({ pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo })
 ```
 
-The fallbackStart path (boot gate disabled) gets a stub repo that throws on any method call, since the dormant API doesn't actually use it:
+Boot-gate-off path (`fallbackStart`): the existing stub pool's `query` throws synchronously when called. We construct `createRepo(stubPool)` over it; any repo method invocation propagates that throw naturally:
 
 ```ts
-const stubRepo: Repo = new Proxy({} as Repo, {
-  get: () => () => { throw new Error('repo unavailable: BOOT_GATE_ENABLED is off') },
-})
+const stubDeps: AppDeps = {
+  pg: stubPool,
+  redisRealtime: stubRedisRealtime,
+  redisBatch: stubRedisBatch,
+  repo: createRepo(stubPool), // method calls hit stubPool.query, which throws
+}
 ```
 
-`buildApp` continues to accept the AppDeps and threads `deps.repo` to whatever future plugin needs it. v1 still has only the `/health` route, which doesn't touch the repo — the wiring is structural for future tickets.
+No Proxy needed. The stub pool is the single seam for "this dep isn't really wired"; the repo composes over it without special-casing.
+
+`ShutdownClients` is unchanged — the repo holds no resources of its own; the pool drain handles its lifecycle. Repo is a closure over the pool, no separate cleanup needed.
+
+`buildApp`'s body is unchanged for now (still just `/health`); it accepts the new dep type so future plugins (Auth, Billing) can decorate the Fastify instance with `app.repo = deps.repo` or thread it directly into route handlers.
 
 ## 6. Tests
 
-### 6.1 Per-namespace integration tests
+### 6.1 Per-namespace integration tests with TRUNCATE-based reset
 
-Same shape as MYT-33's `migrate-schema.test.ts`. One file per namespace:
+One file per namespace under `backend/src/repo/__tests__/`. Pattern:
 
 ```ts
-// users.test.ts
-beforeAll: guardTestDatabase, createPgPool({ max: 1 })
-beforeEach: drop+recreate public schema, run migrations 001+002+003 via runMigrations
+beforeAll: guardTestDatabase, createPgPool({ max: 1 }), run all 3 migrations once
+beforeEach: TRUNCATE users, worlds, campaigns, sessions, character_skills, character_features, character_equipment, character_spells, ... RESTART IDENTITY CASCADE
 afterAll: pool.end()
 ```
 
-Each test file covers ~5–10 tests:
-- create returns row with populated id, created_at, updated_at, all fields matching input
-- getById returns the inserted row
-- getById returns null for unknown id
-- relevant getter methods (getByCognitoSub, getByEmail, etc.) return correct row / null
-- update mutates only supplied fields, returns updated row, leaves untouched fields alone
-- soft-delete / archive methods set the correct timestamp column
-- per-namespace edge cases: `credits.getBalance` excludes expired credits; `worlds.fork` increments fork_count; `sessions.getActiveByCampaign` returns null when no active session; `characters.addSkill` allows duplicates (the schema does not have a unique constraint on `(character_id, skill_name)` — repo doesn't add one either; if duplicate skills become a real bug, add the constraint at the schema level in a future migration)
+The `beforeEach` TRUNCATE is ~5ms per call — much faster than re-running all 3 migrations. CASCADE handles FK relationships (truncating `users` cascades to all owned tables). Schema stays intact across tests; only data is reset.
 
-The `beforeEach` schema reset is expensive (~50ms per test) but correctness matters more than test speed; with `fileParallelism: false` from MYT-32, total test wall time is bounded.
+The test helper (`backend/src/repo/__tests__/_helpers/reset-data.ts`) lists every application table and TRUNCATEs in the right order. As future tickets add namespaces and tables, they extend this helper.
 
-Reuse `runMigrations` from MYT-32 to apply migrations in `beforeEach`. The schema-parity test from MYT-33 already verifies the migrations produce the expected schema; here we just trust them.
+Each namespace test covers ~5–8 tests:
+- `create` returns row with populated id, created_at, updated_at, all fields matching input
+- `getById` returns the inserted row
+- `getById` returns `null` for unknown id
+- relevant getter methods (`getByCognitoSub`, `getByEmail`) return correct row / null
+- `update` mutates supplied fields, leaves untouched fields alone, advances `updated_at`
+- `update` of a nullable field via the COALESCE pattern is no-op when `null` passed (this is the documented limitation; the test pins it as deliberate)
+- per-namespace edge cases: `worlds.listByUser` returns DESC by created_at; `campaigns.listByUser` filters out unaccepted invites; `sessions.getActiveByCampaign` returns null when no active session
+
+Total: ~25 integration tests across 4 namespaces.
 
 ### 6.2 Mappers unit test
 
-`mappers.test.ts` tests the six row mappers directly with hand-constructed DbRow objects. Pure functions, no DB. Covers:
+`mappers.test.ts` tests the row mappers + narrowing helpers directly with hand-constructed DbRow objects. Pure functions, no DB. Covers:
 - happy-path conversion for every field
 - `null` / `undefined` handling on optional columns
-- Date column round-trips (PG returns `Date` objects from `TIMESTAMPTZ` columns; mappers preserve)
-- Enum-as-string assertions: `authProvider as 'google' | 'discord'` is the only narrowing cast; verify it doesn't blow up on unexpected values (the CHECK constraint guarantees the SQL never produces them, but defensive verification is cheap)
+- Date column round-trips (PG returns `Date` from `TIMESTAMPTZ`; mappers preserve)
+- `toAuthProvider` throws on unexpected values
 
-### 6.3 What we're NOT testing here
+~12 unit tests.
 
-- Concurrent access to the same row (PG handles it; testing is overkill)
-- Transaction isolation levels (default `READ COMMITTED` is fine; no method depends on stricter)
-- Performance / index usage (the schema-parity test from MYT-33 pins indexes; this ticket trusts them)
+### 6.3 What we trust
+
+Schema-parity (MYT-33's test) pins tables, indexes, CHECK constraints, FK delete rules. Repo tests don't re-verify the schema — they trust it. If a future migration breaks the schema invariants, the schema-parity test fires before any repo test runs.
 
 ## 7. Definition of Done
 
-- 8 files in `backend/src/repo/` (index, uuidv7, types, mappers, 6 namespace files).
-- 7 test files in `backend/src/repo/__tests__/` (6 namespace tests + mappers).
+- 7 files in `backend/src/repo/` (index, uuidv7, types, mappers, 4 namespace files).
+- 5 test files in `backend/src/repo/__tests__/` (4 namespace tests + mappers).
+- 1 test helper in `backend/src/repo/__tests__/_helpers/reset-data.ts`.
 - `backend/src/app-deps.ts` extends to include `repo: Repo`.
-- `backend/src/server.ts` constructs the repo and threads it through `buildApp`. Fallback path (boot gate off) uses a throwing stub.
-- `backend/src/app.ts` accepts the new dep type but has no new consumer (still `/health` only).
-- All `repo.<namespace>.<method>` calls go through parameterized `pool.query` — no string interpolation anywhere.
+- `backend/src/server.ts` constructs the repo (real pool + stub pool) and threads it through `buildApp` in both boot paths.
+- `backend/src/db/migrate.ts` CLI block imports `uuidv7` from `../repo/uuidv7.js` (single seam).
+- All `pool.query` calls use parameterized SQL — no string interpolation.
+- All UPDATE statements include `updated_at = now()`.
 - UUIDs generated app-side via `uuidv7()` from the new module; no `gen_random_uuid()` in any SQL.
 - `pnpm typecheck` + `pnpm lint` + `pnpm test` all green locally and in CI.
-- ~50 integration tests + ~20 mapper unit tests passing.
-- The 7 deferred-namespace beads (`myth-ij6`, `myth-u7k`, `myth-0fi`, `myth-d1h`, `myth-cug`, `myth-5nb`, `myth-tx3`) tagged `repo-deferred` and discoverable via `bd list --label=repo-deferred`. (Already done as part of brainstorming; flagged in DoD for completeness.)
+- ~25 integration tests + ~12 mapper unit tests passing.
+- The `repo-deferred` bead label updated to include the new `characters` deferral bead. (Filed as part of this ticket's brainstorming, see §2.)
 
 ## 8. Out of scope / Follow-ups
 
-- 19 deferred namespaces (`campaignMembers`, `campaignInvites`, billing namespaces, world-content namespaces, pipeline+snapshot namespaces, session-runtime namespaces, srd, settings) — beads filed.
-- `transferOwnership` on campaigns — deferred to MYT-39.
+- 21 deferred namespaces — beads filed under `repo-deferred` label.
+- `characters` namespace + per-skill/feature/equipment/spell APIs — to file as new bead alongside this v2 spec.
+- `credits` namespace — explicitly part of MYT-40 (no new bead).
+- `worlds.fork`, `sessions.updateRunningSummary`, `users.softDelete`, `campaigns.transferOwnership`, `credits.getHistory` — deferred per the deferral table; documented inline above.
 - Higher-level transaction abstraction (`repo.transaction(cb)`) — wait for a real multi-method consumer.
-- Caching, read replicas, query observability — v2 concerns once Auth/Billing/Sessions land and we see real query patterns.
-- Runtime row validation (zod) — layer in if a real bug surfaces from `as`-cast drift.
+- Caching, read replicas, query observability — v2 concerns.
+- Runtime row validation (zod) — layer in if a real bug surfaces.
+
+## 9. Changes from v1
+
+A blind-review round (Orion/Cassiopeia/Lyra/Draco) found:
+
+- **2 BLOCKERs** (correctness): `credits.getBalance` returns string-from-bigint not number; `credits.{getBalance, debit}` is a TOCTOU race. Both resolved by deferring `credits` entirely to MYT-40.
+- **1 three-reviewer convergence** (Cassiopeia + Lyra + Draco): the Proxy-based stub Repo for the boot-gate-off path is broken at the namespace layer (`repo.users` returns a function, so `repo.users.create()` throws on the namespace access not the method call). Resolved by composing `createRepo(stubPool)` — the stub pool's existing throw covers the case.
+- **Scope cuts** (Orion, applying the project's own context-coherence rule): `characters` namespace, `worlds.fork`, `sessions.updateRunningSummary`, `users.softDelete`, `credits.getHistory` — each lacks a consumer in the next 1-2 tickets and gets deferred to the ticket where its consumer is designed. Net: 4 namespaces (was 6).
+- **SHOULD FIXes**: `users.update` rewritten as fixed COALESCE (not dynamic SQL); `updated_at = now()` mandate spelled out for all UPDATE methods; `UserUpdate` type spelled out (not `Partial<Pick<>>`) to make exactOptionalPropertyTypes semantics intentional; `authProvider` narrowed via helper not bare `as`; `getByCognitoSub` explicit in the method list (Auth will grep for it); test reset switched from full migration replay to TRUNCATE for ~50× speedup; `sessions.getActiveByCampaign` adds `LIMIT 1` for self-documenting contract.
+- **Padding cut**: §6.3 "What we're NOT testing" wall-of-text shortened to one paragraph; §10 from v1 dropped entirely.

@@ -843,6 +843,8 @@ Where each deferred namespace lands (tracked via beads labeled `repo-deferred` â
 | `entities`, `proseKernels`, `facts`, `relationships`, `entityHierarchy`, `randomTables` | Prep Pipeline milestone |
 | `pipelineRuns`, `snapshots`, `sessionPreps`, `statBlocks` | Prep Pipeline milestone |
 | `sessionMessages`, `sessionParticipants` | Session Runtime + Combat L1 milestone |
+| `characters` (incl. `addSkill`/`addFeature`/`addEquipment`/`addSpell`) | Prep Pipeline character-creation tickets |
+| `credits` | MYT-40 (atomic-debit pattern is MYT-40's design domain) |
 | `srd` | SRD content loader follow-up |
 | `settings` | First consumer (no trigger yet; lowest priority) |
 
