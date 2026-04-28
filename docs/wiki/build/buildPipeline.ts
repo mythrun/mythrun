@@ -9,6 +9,7 @@ import { renderShell } from './renderShell.ts'
 import { validateStructure } from './validate.ts'
 import { parsePageMeta, checkDrift, renderDriftBanner, rewriteSourceHash } from './drift.ts'
 import { extractRunbookEntries, type RunbookEntry } from './extractRunbooks.ts'
+import { buildSchemaFragment } from './schemaRef.ts'
 
 export type BuildMode = 'build' | 'check' | 'accept-drift'
 
@@ -123,15 +124,7 @@ const EXPAND_ICON_SVG =
   '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>'
 
 function wrapDiagramForExpand(svg: string): string {
-  return [
-    '<figure class="wiki-diagram">',
-    '  ',
-    svg,
-    '  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">',
-    `    ${EXPAND_ICON_SVG}`,
-    '  </button>',
-    '</figure>',
-  ].join('\n')
+  return `<figure class="wiki-diagram">\n  \n${svg}\n  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">\n    ${EXPAND_ICON_SVG}\n  </button>\n</figure>`
 }
 
 async function resolveDiagrams(
@@ -228,6 +221,14 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+async function detectSchemaReferenceNeed(pages: Page[]): Promise<boolean> {
+  for (const page of pages) {
+    const raw = await readFile(page.contentAbs, 'utf-8')
+    if (raw.includes('<!-- @schema-reference -->')) return true
+  }
+  return false
+}
+
 async function scanAllRunbooks(pages: Page[]): Promise<RunbookAggregateItem[]> {
   const aggregate: RunbookAggregateItem[] = []
   for (const page of pages) {
@@ -279,12 +280,7 @@ function resolveRunbookIndex(
 
 function resolveSchemaReference(content: string, fragment: string | null): string {
   if (!content.includes('<!-- @schema-reference -->')) return content
-  if (fragment === null) {
-    // No fragment provided (the orchestrator was not run for this build).
-    // Leave the marker so the page still renders, but the absent fragment
-    // surfaces as a build error elsewhere.
-    return content
-  }
+  if (fragment === null) return content
   return content.replace(/<!--\s*@schema-reference\s*-->/g, fragment)
 }
 
@@ -371,6 +367,18 @@ async function renderPage(
   return { diagramsRendered: diagrams.count, checkError, warning }
 }
 
+async function resolveSchemaFragment(pages: Page[], repoRoot: string): Promise<string | null> {
+  if (!(await detectSchemaReferenceNeed(pages))) return null
+  const databaseUrl = process.env.WIKI_DATABASE_URL ?? process.env.DATABASE_URL
+  if (databaseUrl === undefined) {
+    throw new Error(
+      'wiki:build needs DATABASE_URL (or WIKI_DATABASE_URL) set so the schema reference page can be generated. Run `pnpm db:up` and source backend/.env.development.',
+    )
+  }
+  const migrationsDir = join(repoRoot, 'backend', 'migrations')
+  return buildSchemaFragment({ databaseUrl, migrationsDir })
+}
+
 async function copyStatics(root: string, siteDir: string): Promise<void> {
   if (existsSync(join(root, 'layout/styles.css'))) {
     await cp(join(root, 'layout/styles.css'), join(siteDir, 'styles.css'))
@@ -409,6 +417,9 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
   const runbookAggregate = await scanAllRunbooks(pages)
   let diagramsRendered = 0
   let strictFailures = 0
+
+  const schemaFragment = await resolveSchemaFragment(pages, repoRoot)
+
   const ctx = {
     root,
     repoRoot,
@@ -419,8 +430,7 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
     shellSlotNames,
     siteDir,
     runbookAggregate,
-    schemaFragment:
-      '<p class="schema-fragment-stub">[schema fragment placeholder — replaced in Task 5]</p>',
+    schemaFragment,
   }
 
   for (const page of pages) {

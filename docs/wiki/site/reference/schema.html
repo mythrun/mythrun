@@ -54,7 +54,2861 @@
 </div>
 
 <div id="schema-tables-container">
-  <p class="schema-fragment-stub">[schema fragment placeholder — replaced in Task 5]</p>
+  <h2 class="schema-cluster" id="identity-amp-billing">Identity &amp; billing</h2>
+<details class="schema-table" data-table-name="credit_ledger" id="schema-table-credit_ledger">
+  <summary>
+    <span class="schema-table-name">credit_ledger</span>
+    <span class="schema-table-meta">8 columns · 1 index · 2 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="credit_type">
+        <td><code>credit_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="amount">
+        <td><code>amount</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="source_type">
+        <td><code>source_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="source_id">
+        <td><code>source_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="granted_at">
+        <td><code>granted_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="expires_at">
+        <td><code>expires_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_credit_ledger_user_type</code> — (user_id, credit_type, expires_at)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((credit_type = ANY (ARRAY['session'::text, 'world_gen'::text])))</code></li>
+    <li><code>CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="purchases" id="schema-table-purchases">
+  <summary>
+    <span class="schema-table-name">purchases</span>
+    <span class="schema-table-meta">8 columns · 1 index · 1 CHECK · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="stripe_payment_intent_id">
+        <td><code>stripe_payment_intent_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="session_pack_size">
+        <td><code>session_pack_size</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="amount_cents">
+        <td><code>amount_cents</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="currency">
+        <td><code>currency</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'usd'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'pending'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_purchases_user</code> — (user_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'failed'::text, 'refunded'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="session_packs" id="schema-table-session_packs">
+  <summary>
+    <span class="schema-table-name">session_packs</span>
+    <span class="schema-table-meta">9 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="session_credits">
+        <td><code>session_credits</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_gen_credits">
+        <td><code>world_gen_credits</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stripe_price_id">
+        <td><code>stripe_price_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="price_cents">
+        <td><code>price_cents</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="currency">
+        <td><code>currency</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'usd'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="is_active">
+        <td><code>is_active</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>true</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="stripe_events" id="schema-table-stripe_events">
+  <summary>
+    <span class="schema-table-name">stripe_events</span>
+    <span class="schema-table-meta">3 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="event_id">
+        <td><code>event_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="event_type">
+        <td><code>event_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="processed_at">
+        <td><code>processed_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="subscription_tiers" id="schema-table-subscription_tiers">
+  <summary>
+    <span class="schema-table-name">subscription_tiers</span>
+    <span class="schema-table-meta">9 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stripe_price_id">
+        <td><code>stripe_price_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="session_credits_per_month">
+        <td><code>session_credits_per_month</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_gen_credits_per_month">
+        <td><code>world_gen_credits_per_month</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="price_cents">
+        <td><code>price_cents</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="currency">
+        <td><code>currency</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'usd'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="is_active">
+        <td><code>is_active</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>true</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="user_subscriptions" id="schema-table-user_subscriptions">
+  <summary>
+    <span class="schema-table-name">user_subscriptions</span>
+    <span class="schema-table-meta">9 columns · 1 index · 1 CHECK · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="tier_id">
+        <td><code>tier_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>subscription_tiers(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="stripe_subscription_id">
+        <td><code>stripe_subscription_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="current_period_start">
+        <td><code>current_period_start</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="current_period_end">
+        <td><code>current_period_end</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_user_subscriptions_user</code> — (user_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="users" id="schema-table-users">
+  <summary>
+    <span class="schema-table-name">users</span>
+    <span class="schema-table-meta">12 columns · 0 indexes · 1 CHECK · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cognito_sub">
+        <td><code>cognito_sub</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="email">
+        <td><code>email</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="display_name">
+        <td><code>display_name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="username">
+        <td><code>username</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="avatar_url">
+        <td><code>avatar_url</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="auth_provider">
+        <td><code>auth_provider</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stripe_customer_id">
+        <td><code>stripe_customer_id</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="free_trial_used">
+        <td><code>free_trial_used</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="suspended_at">
+        <td><code>suspended_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((auth_provider = ANY (ARRAY['google'::text, 'discord'::text])))</code></li>
+  </ul>
+</details>
+<h2 class="schema-cluster" id="worlds-amp-entities">Worlds &amp; entities</h2>
+<details class="schema-table" data-table-name="entities" id="schema-table-entities">
+  <summary>
+    <span class="schema-table-name">entities</span>
+    <span class="schema-table-meta">9 columns · 2 indexes · 1 CHECK · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_id">
+        <td><code>world_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>worlds(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="entity_type">
+        <td><code>entity_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stat_block_id">
+        <td><code>stat_block_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>stat_blocks(id)</code> ON DELETE SET NULL</td>
+      </tr>
+      <tr data-column-name="encountered">
+        <td><code>encountered</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="modified_by_play">
+        <td><code>modified_by_play</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_entities_world</code> — (world_id)</li>
+    <li><code>idx_entities_world_type</code> — (world_id, entity_type)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="entity_hierarchy" id="schema-table-entity_hierarchy">
+  <summary>
+    <span class="schema-table-name">entity_hierarchy</span>
+    <span class="schema-table-meta">3 columns · 0 indexes · 0 CHECKs · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="parent_entity_id">
+        <td><code>parent_entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>entities(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="child_entity_id">
+        <td><code>child_entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>entities(id)</code> ON DELETE CASCADE</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="facts" id="schema-table-facts">
+  <summary>
+    <span class="schema-table-name">facts</span>
+    <span class="schema-table-meta">9 columns · 2 indexes · 2 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="entity_id">
+        <td><code>entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>entities(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="topic">
+        <td><code>topic</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="access_level">
+        <td><code>access_level</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="narrative_status">
+        <td><code>narrative_status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="content">
+        <td><code>content</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="source">
+        <td><code>source</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'prep'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_facts_entity</code> — (entity_id)</li>
+    <li><code>idx_facts_entity_access_status</code> — (entity_id, access_level, narrative_status)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((access_level = ANY (ARRAY['public'::text, 'private'::text, 'secret'::text])))</code></li>
+    <li><code>CHECK ((narrative_status = ANY (ARRAY['undelivered'::text, 'delivered'::text, 'developed'::text, 'resolved'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="prose_kernels" id="schema-table-prose_kernels">
+  <summary>
+    <span class="schema-table-name">prose_kernels</span>
+    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="entity_id">
+        <td><code>entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>entities(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="content">
+        <td><code>content</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="random_table_entries" id="schema-table-random_table_entries">
+  <summary>
+    <span class="schema-table-name">random_table_entries</span>
+    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="table_id">
+        <td><code>table_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>random_tables(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="roll_min">
+        <td><code>roll_min</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="roll_max">
+        <td><code>roll_max</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="content">
+        <td><code>content</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="random_tables" id="schema-table-random_tables">
+  <summary>
+    <span class="schema-table-name">random_tables</span>
+    <span class="schema-table-meta">5 columns · 1 index · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_id">
+        <td><code>world_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>worlds(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="category">
+        <td><code>category</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_random_tables_world</code> — (world_id)</li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="relationships" id="schema-table-relationships">
+  <summary>
+    <span class="schema-table-name">relationships</span>
+    <span class="schema-table-meta">6 columns · 2 indexes · 0 CHECKs · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="source_entity_id">
+        <td><code>source_entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>entities(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="target_entity_id">
+        <td><code>target_entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>entities(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="relationship_type">
+        <td><code>relationship_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="description">
+        <td><code>description</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_relationships_source</code> — (source_entity_id)</li>
+    <li><code>idx_relationships_target</code> — (target_entity_id)</li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="stat_block_actions" id="schema-table-stat_block_actions">
+  <summary>
+    <span class="schema-table-name">stat_block_actions</span>
+    <span class="schema-table-meta">5 columns · 0 indexes · 1 CHECK · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stat_block_id">
+        <td><code>stat_block_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>stat_blocks(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="action_type">
+        <td><code>action_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="description">
+        <td><code>description</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((action_type = ANY (ARRAY['action'::text, 'reaction'::text, 'bonus_action'::text, 'legendary'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="stat_blocks" id="schema-table-stat_blocks">
+  <summary>
+    <span class="schema-table-name">stat_blocks</span>
+    <span class="schema-table-meta">17 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cr">
+        <td><code>cr</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="armor_class">
+        <td><code>armor_class</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="hit_points">
+        <td><code>hit_points</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="hit_dice">
+        <td><code>hit_dice</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="speed">
+        <td><code>speed</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="str">
+        <td><code>str</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="dex">
+        <td><code>dex</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="con">
+        <td><code>con</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="int">
+        <td><code>int</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="wis">
+        <td><code>wis</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cha">
+        <td><code>cha</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="skills">
+        <td><code>skills</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="senses">
+        <td><code>senses</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="languages">
+        <td><code>languages</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="worlds" id="schema-table-worlds">
+  <summary>
+    <span class="schema-table-name">worlds</span>
+    <span class="schema-table-meta">21 columns · 0 indexes · 2 CHECKs · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_by">
+        <td><code>created_by</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="source_world_id">
+        <td><code>source_world_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>worlds(id)</code> ON DELETE SET NULL</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="concept">
+        <td><code>concept</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="tone">
+        <td><code>tone</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="themes">
+        <td><code>themes</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="geography_summary">
+        <td><code>geography_summary</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="political_summary">
+        <td><code>political_summary</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="era">
+        <td><code>era</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="key_tensions">
+        <td><code>key_tensions</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_overview">
+        <td><code>world_overview</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="follow_up_questions">
+        <td><code>follow_up_questions</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="starting_situations">
+        <td><code>starting_situations</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="is_public">
+        <td><code>is_public</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="fork_count">
+        <td><code>fork_count</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'generating'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="language">
+        <td><code>language</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'en'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="moderation_status">
+        <td><code>moderation_status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'unreviewed'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))</code></li>
+  </ul>
+</details>
+<h2 class="schema-cluster" id="campaigns-amp-play">Campaigns &amp; play</h2>
+<details class="schema-table" data-table-name="campaign_invites" id="schema-table-campaign_invites">
+  <summary>
+    <span class="schema-table-name">campaign_invites</span>
+    <span class="schema-table-meta">8 columns · 0 indexes · 0 CHECKs · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="created_by">
+        <td><code>created_by</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="invite_code">
+        <td><code>invite_code</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="max_uses">
+        <td><code>max_uses</code></td>
+        <td><code>integer</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="uses">
+        <td><code>uses</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="expires_at">
+        <td><code>expires_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="campaign_members" id="schema-table-campaign_members">
+  <summary>
+    <span class="schema-table-name">campaign_members</span>
+    <span class="schema-table-meta">6 columns · 2 indexes · 1 CHECK · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="role">
+        <td><code>role</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="invite_accepted">
+        <td><code>invite_accepted</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="joined_at">
+        <td><code>joined_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_campaign_members_campaign</code> — (campaign_id)</li>
+    <li><code>idx_campaign_members_user</code> — (user_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((role = ANY (ARRAY['owner'::text, 'player'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="campaigns" id="schema-table-campaigns">
+  <summary>
+    <span class="schema-table-name">campaigns</span>
+    <span class="schema-table-meta">9 columns · 1 index · 1 CHECK · 24 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_id">
+        <td><code>world_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>worlds(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="source_world_id">
+        <td><code>source_world_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>worlds(id)</code> ON DELETE SET NULL</td>
+      </tr>
+      <tr data-column-name="created_by">
+        <td><code>created_by</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'setup'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="language">
+        <td><code>language</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'en'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_campaigns_created_by</code> — (created_by)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="character_equipment" id="schema-table-character_equipment">
+  <summary>
+    <span class="schema-table-name">character_equipment</span>
+    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="item_name">
+        <td><code>item_name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="quantity">
+        <td><code>quantity</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>1</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="equipped">
+        <td><code>equipped</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="character_features" id="schema-table-character_features">
+  <summary>
+    <span class="schema-table-name">character_features</span>
+    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="feature_name">
+        <td><code>feature_name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="feature_source">
+        <td><code>feature_source</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="description">
+        <td><code>description</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="character_skills" id="schema-table-character_skills">
+  <summary>
+    <span class="schema-table-name">character_skills</span>
+    <span class="schema-table-meta">4 columns · 0 indexes · 1 CHECK · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="skill_name">
+        <td><code>skill_name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="proficiency_level">
+        <td><code>proficiency_level</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((proficiency_level = ANY (ARRAY['none'::text, 'proficient'::text, 'expertise'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="character_spells" id="schema-table-character_spells">
+  <summary>
+    <span class="schema-table-name">character_spells</span>
+    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="spell_name">
+        <td><code>spell_name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="spell_level">
+        <td><code>spell_level</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="prepared">
+        <td><code>prepared</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="characters" id="schema-table-characters">
+  <summary>
+    <span class="schema-table-name">characters</span>
+    <span class="schema-table-meta">21 columns · 2 indexes · 0 CHECKs · 24 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="entity_id">
+        <td><code>entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>entities(id)</code> ON DELETE SET NULL</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="level">
+        <td><code>level</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>1</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="class">
+        <td><code>class</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="species">
+        <td><code>species</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="background">
+        <td><code>background</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="str">
+        <td><code>str</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="dex">
+        <td><code>dex</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="con">
+        <td><code>con</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="int">
+        <td><code>int</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="wis">
+        <td><code>wis</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cha">
+        <td><code>cha</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="hit_points">
+        <td><code>hit_points</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="max_hit_points">
+        <td><code>max_hit_points</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="armor_class">
+        <td><code>armor_class</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="proficiency_bonus">
+        <td><code>proficiency_bonus</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_characters_campaign</code> — (campaign_id)</li>
+    <li><code>idx_characters_user</code> — (user_id)</li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="session_messages" id="schema-table-session_messages">
+  <summary>
+    <span class="schema-table-name">session_messages</span>
+    <span class="schema-table-meta">7 columns · 1 index · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="session_id">
+        <td><code>session_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>sessions(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="seq">
+        <td><code>seq</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="message_type">
+        <td><code>message_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="content">
+        <td><code>content</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_session_messages_session_seq</code> — (session_id, seq)</li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="session_participants" id="schema-table-session_participants">
+  <summary>
+    <span class="schema-table-name">session_participants</span>
+    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 24 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="session_id">
+        <td><code>session_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>sessions(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="joined_at">
+        <td><code>joined_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="session_preps" id="schema-table-session_preps">
+  <summary>
+    <span class="schema-table-name">session_preps</span>
+    <span class="schema-table-meta">7 columns · 1 index · 0 CHECKs · 16 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="session_number">
+        <td><code>session_number</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="ft_context">
+        <td><code>ft_context</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="sd_playbook">
+        <td><code>sd_playbook</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="snapshot_id">
+        <td><code>snapshot_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>world_snapshots(id)</code> ON DELETE SET NULL</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_session_preps_campaign</code> — (campaign_id)</li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="session_usage" id="schema-table-session_usage">
+  <summary>
+    <span class="schema-table-name">session_usage</span>
+    <span class="schema-table-meta">9 columns · 0 indexes · 0 CHECKs · 24 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="session_id">
+        <td><code>session_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>sessions(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="input_tokens">
+        <td><code>input_tokens</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="output_tokens">
+        <td><code>output_tokens</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="estimated_cost_usd">
+        <td><code>estimated_cost_usd</code></td>
+        <td><code>numeric(10,6)</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="budget_limit_tokens">
+        <td><code>budget_limit_tokens</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="sessions" id="schema-table-sessions">
+  <summary>
+    <span class="schema-table-name">sessions</span>
+    <span class="schema-table-meta">9 columns · 2 indexes · 1 CHECK · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="session_number">
+        <td><code>session_number</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'active'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="started_at">
+        <td><code>started_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="ended_at">
+        <td><code>ended_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="summary">
+        <td><code>summary</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="st_running_summary">
+        <td><code>st_running_summary</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="handoff">
+        <td><code>handoff</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_sessions_campaign</code> — (campaign_id)</li>
+    <li><code>idx_sessions_one_active</code> — UNIQUE (campaign_id) WHERE status = 'active'::text</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((status = ANY (ARRAY['active'::text, 'ended'::text, 'crashed'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="world_snapshots" id="schema-table-world_snapshots">
+  <summary>
+    <span class="schema-table-name">world_snapshots</span>
+    <span class="schema-table-meta">5 columns · 1 index · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="label">
+        <td><code>label</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="data">
+        <td><code>data</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_world_snapshots_campaign</code> — (campaign_id)</li>
+  </ul>
+</details>
+<h2 class="schema-cluster" id="pipeline-amp-ops">Pipeline &amp; ops</h2>
+<details class="schema-table" data-table-name="moderation_flags" id="schema-table-moderation_flags">
+  <summary>
+    <span class="schema-table-name">moderation_flags</span>
+    <span class="schema-table-meta">9 columns · 0 indexes · 3 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="target_type">
+        <td><code>target_type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="target_id">
+        <td><code>target_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="reporter_id">
+        <td><code>reporter_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="reason">
+        <td><code>reason</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="severity">
+        <td><code>severity</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'pending'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="resolved_at">
+        <td><code>resolved_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['pending'::text, 'reviewed'::text, 'actioned'::text, 'dismissed'::text])))</code></li>
+    <li><code>CHECK ((target_type = ANY (ARRAY['world'::text, 'session_message'::text, 'user'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="pipeline_runs" id="schema-table-pipeline_runs">
+  <summary>
+    <span class="schema-table-name">pipeline_runs</span>
+    <span class="schema-table-meta">12 columns · 3 indexes · 1 CHECK · 24 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_id">
+        <td><code>world_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>worlds(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="stage">
+        <td><code>stage</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="error">
+        <td><code>error</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="started_at">
+        <td><code>started_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="completed_at">
+        <td><code>completed_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="input_tokens">
+        <td><code>input_tokens</code></td>
+        <td><code>integer</code></td>
+        <td>YES</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="output_tokens">
+        <td><code>output_tokens</code></td>
+        <td><code>integer</code></td>
+        <td>YES</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cost_usd">
+        <td><code>cost_usd</code></td>
+        <td><code>numeric(10,6)</code></td>
+        <td>YES</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_pipeline_runs_campaign</code> — (campaign_id)</li>
+    <li><code>idx_pipeline_runs_unique</code> — <code>CREATE UNIQUE INDEX idx_pipeline_runs_unique ON wiki_schema_introspect_99539_i2oojp.pipeline_runs USING btree (COALESCE(world_id, campaign_id), stage, COALESCE(user_id, '00000000-0000-0000-0000-000000000000'::uuid))</code></li>
+    <li><code>idx_pipeline_runs_world</code> — (world_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="settings" id="schema-table-settings">
+  <summary>
+    <span class="schema-table-name">settings</span>
+    <span class="schema-table-meta">2 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="key">
+        <td><code>key</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="value">
+        <td><code>value</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="world_marketplace" id="schema-table-world_marketplace">
+  <summary>
+    <span class="schema-table-name">world_marketplace</span>
+    <span class="schema-table-meta">7 columns · 0 indexes · 0 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="world_id">
+        <td><code>world_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>worlds(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="listing_title">
+        <td><code>listing_title</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="listing_description">
+        <td><code>listing_description</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="tags">
+        <td><code>tags</code></td>
+        <td><code>text[]</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="creator_payout_cents">
+        <td><code>creator_payout_cents</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="listed_at">
+        <td><code>listed_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<h2 class="schema-cluster" id="srd-reference">SRD reference</h2>
+<details class="schema-table" data-table-name="srd_conditions" id="schema-table-srd_conditions">
+  <summary>
+    <span class="schema-table-name">srd_conditions</span>
+    <span class="schema-table-meta">4 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="description">
+        <td><code>description</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="mechanical_effects">
+        <td><code>mechanical_effects</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="srd_monsters" id="schema-table-srd_monsters">
+  <summary>
+    <span class="schema-table-name">srd_monsters</span>
+    <span class="schema-table-meta">31 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="size">
+        <td><code>size</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="type">
+        <td><code>type</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="alignment">
+        <td><code>alignment</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="ac">
+        <td><code>ac</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="ac_type">
+        <td><code>ac_type</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="hp">
+        <td><code>hp</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="hit_dice">
+        <td><code>hit_dice</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="speed">
+        <td><code>speed</code></td>
+        <td><code>jsonb</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="str">
+        <td><code>str</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="dex">
+        <td><code>dex</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="con">
+        <td><code>con</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="int">
+        <td><code>int</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="wis">
+        <td><code>wis</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cha">
+        <td><code>cha</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="saving_throws">
+        <td><code>saving_throws</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="skills">
+        <td><code>skills</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="damage_resistances">
+        <td><code>damage_resistances</code></td>
+        <td><code>text[]</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="damage_immunities">
+        <td><code>damage_immunities</code></td>
+        <td><code>text[]</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="damage_vulnerabilities">
+        <td><code>damage_vulnerabilities</code></td>
+        <td><code>text[]</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="condition_immunities">
+        <td><code>condition_immunities</code></td>
+        <td><code>text[]</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="senses">
+        <td><code>senses</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="languages">
+        <td><code>languages</code></td>
+        <td><code>text[]</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cr">
+        <td><code>cr</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="xp">
+        <td><code>xp</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="special_abilities">
+        <td><code>special_abilities</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="actions">
+        <td><code>actions</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="legendary_actions">
+        <td><code>legendary_actions</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="reactions">
+        <td><code>reactions</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="data">
+        <td><code>data</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
+<details class="schema-table" data-table-name="srd_spells" id="schema-table-srd_spells">
+  <summary>
+    <span class="schema-table-name">srd_spells</span>
+    <span class="schema-table-meta">16 columns · 0 indexes · 0 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="name">
+        <td><code>name</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="level">
+        <td><code>level</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="school">
+        <td><code>school</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="casting_time">
+        <td><code>casting_time</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="range">
+        <td><code>range</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="components">
+        <td><code>components</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="duration">
+        <td><code>duration</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="concentration">
+        <td><code>concentration</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="description">
+        <td><code>description</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="higher_levels">
+        <td><code>higher_levels</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="damage">
+        <td><code>damage</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="area_of_effect">
+        <td><code>area_of_effect</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="save">
+        <td><code>save</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="classes">
+        <td><code>classes</code></td>
+        <td><code>text[]</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="data">
+        <td><code>data</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</details>
 </div>
 
 <h2 id="integration-points">Integration points</h2>
@@ -69,7 +2923,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
