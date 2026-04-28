@@ -7,6 +7,7 @@ import { installSignalHandlers } from './boot/signal-handlers.js'
 import { waitFor } from './boot/wait-for.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
+import { createRepo } from './repo/index.js'
 
 async function closePartials(
   pg: Pool | undefined,
@@ -38,10 +39,17 @@ async function fallbackStart(): Promise<void> {
   // No env validation, no client creation, no data-layer probes.
   // /health works; everything else is dormant until the boot gate is
   // enabled.
+  const stubPool = {
+    end: () => Promise.resolve(),
+    query: () => {
+      throw new Error('repo unavailable: BOOT_GATE_ENABLED is off')
+    },
+  } as unknown as Pool
   const stubDeps: AppDeps = {
-    pg: { end: () => Promise.resolve() } as unknown as Pool,
+    pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
     redisBatch: { quit: () => Promise.resolve('OK') } as unknown as Redis,
+    repo: createRepo(stubPool),
   }
   const app = buildApp(stubDeps)
   const port = Number(process.env.PORT ?? 3000)
@@ -101,7 +109,8 @@ export async function main(): Promise<void> {
     })
     console.log('✓ Redis (batch) ready')
 
-    const app = buildApp({ pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef })
+    const repo = createRepo(pgRef)
+    const app = buildApp({ pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo })
     await app.listen({ port: env.port, host: '0.0.0.0' })
 
     const handleShutdown = createShutdown(app, {

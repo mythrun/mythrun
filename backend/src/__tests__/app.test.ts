@@ -3,11 +3,14 @@ import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
+import { createRepo } from '../repo/index.js'
 
+const mockPool = {} as Pool
 const mockDeps: AppDeps = {
-  pg: {} as Pool,
+  pg: mockPool,
   redisRealtime: {} as Redis,
   redisBatch: {} as Redis,
+  repo: createRepo(mockPool),
 }
 
 describe('buildApp', () => {
