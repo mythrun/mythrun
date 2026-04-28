@@ -280,7 +280,13 @@ function resolveRunbookIndex(
 
 function resolveSchemaReference(content: string, fragment: string | null): string {
   if (!content.includes('<!-- @schema-reference -->')) return content
-  if (fragment === null) return content
+  if (fragment === null) {
+    // No fragment provided (the orchestrator was not run for this build).
+    // Leave the marker in place so the page still renders; the absent
+    // fragment is a build-time misconfiguration that surfaces elsewhere
+    // (resolveSchemaFragment throws when DATABASE_URL is unset).
+    return content
+  }
   return content.replace(/<!--\s*@schema-reference\s*-->/g, fragment)
 }
 
