@@ -26,6 +26,7 @@ export const structure: Section[] = [
       { slug: 'schema', title: 'Schema' },
       { slug: 'migrations', title: 'Migrations' },
       { slug: 'repository', title: 'Repository layer' },
+      { slug: 'bootstrap-database', title: 'Bootstrap database' },
     ],
   },
   {
