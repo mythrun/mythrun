@@ -8,10 +8,10 @@ describe('renderSchema', () => {
   it('emits one <h2> per non-empty cluster, in display order', () => {
     const h2s = [...html.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map((m) => m[1])
     expect(h2s).toEqual([
-      'Identity & billing',
-      'Worlds & entities',
-      'Campaigns & play',
-      'Pipeline & ops',
+      'Identity &amp; billing',
+      'Worlds &amp; entities',
+      'Campaigns &amp; play',
+      'Pipeline &amp; ops',
       'SRD reference',
     ])
   })

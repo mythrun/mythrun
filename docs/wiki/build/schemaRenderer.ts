@@ -1,12 +1,8 @@
 import { CLUSTER_ORDER, type ClusterName, type IndexMeta, type SchemaMetadata, type TableMeta } from './schemaTypes.ts'
 
 function escapeHtml(s: string): string {
-  // Note: '&' is intentionally not escaped — cluster names like
-  // "Identity & billing" must render verbatim in the rendered HTML, and
-  // schema identifiers come from a controlled metadata pipeline (no user
-  // input). Escaping <, >, and " is sufficient defense against stray
-  // markup characters in identifiers (asserted by the renderer test).
   return s
+    .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
@@ -16,7 +12,7 @@ function pluralize(n: number, singular: string, plural?: string): string {
   return `${String(n)} ${n === 1 ? singular : (plural ?? `${singular}s`)}`
 }
 
-function renderColumnRow(table: TableMeta, col: TableMeta['columns'][number]): string {
+function renderColumnRow(col: TableMeta['columns'][number]): string {
   const nullable = col.nullable ? 'YES' : 'NO'
   const def = col.default === null ? '—' : `<code>${escapeHtml(col.default)}</code>`
   let ref = '—'
@@ -65,7 +61,7 @@ function renderTable(table: TableMeta): string {
   parts.push(`    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>`)
   parts.push(`    <tbody>`)
   for (const col of table.columns) {
-    parts.push(renderColumnRow(table, col))
+    parts.push(renderColumnRow(col))
   }
   parts.push(`    </tbody>`)
   parts.push(`  </table>`)
