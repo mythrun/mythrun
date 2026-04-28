@@ -202,3 +202,57 @@ resource "aws_lb_listener" "http_redirect" {
 
   tags = { Name = "mythrun-alb-http-redirect" }
 }
+
+# ======== Bootstrap-DB ECR Repository ========
+# Separate from `mythrun` because:
+#   - tag policy is IMMUTABLE here (one tag per <git-sha>-<run-attempt>)
+#   - lifecycle keeps 20 images instead of 50 (cadence is monthly, not per-PR)
+#   - access pattern is operator-pull, not service-pull
+# Tag-immutability + ${run_attempt} suffix means workflow re-runs always
+# succeed.
+
+resource "aws_ecr_repository" "bootstrap_db" {
+  name                 = "mythrun-bootstrap-db"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  tags = { Name = "mythrun-bootstrap-db" }
+}
+
+resource "aws_ecr_lifecycle_policy" "bootstrap_db" {
+  repository = aws_ecr_repository.bootstrap_db.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Expire untagged images after 1 day"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 1
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 2
+        description  = "Keep 20 most recent bootstrap-db-* tagged images"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["bootstrap-db-*"]
+          countType      = "imageCountMoreThan"
+          countNumber    = 20
+        }
+        action = { type = "expire" }
+      },
+    ]
+  })
+}

@@ -103,3 +103,8 @@ output "github_oidc_provider_arn" {
   value       = aws_iam_openid_connect_provider.github.arn
   description = "ARN of the GitHub OIDC provider (per-env GH Actions IAM roles trust this)."
 }
+
+output "bootstrap_db_ecr_repository_url" {
+  value       = aws_ecr_repository.bootstrap_db.repository_url
+  description = "ECR repo URL for the bootstrap-db image (consumed by per-env workspaces)."
+}
