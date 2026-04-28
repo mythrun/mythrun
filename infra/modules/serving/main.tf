@@ -122,7 +122,7 @@ resource "aws_iam_role_policy" "task_cloudwatch_metrics" {
 # MYT-28 per Duncan review.
 
 locals {
-  common_env = [
+  common_env = concat([
     { name = "NODE_ENV", value = var.environment },
     { name = "PORT", value = "3000" },
     { name = "AWS_REGION", value = "us-east-1" },
@@ -137,7 +137,7 @@ locals {
     # REDIS_* parallels DB_*.
     { name = "REDIS_HOST", value = var.redis_host },
     { name = "REDIS_PORT", value = tostring(var.redis_port) },
-  ]
+  ], var.extra_env)
 
   # rds-password secret holds a plain string (bootstrap-databases.sh writes
   # --secret-string "$pw" without wrapping in JSON). Read as-is, not via

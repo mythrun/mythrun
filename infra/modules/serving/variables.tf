@@ -161,3 +161,12 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "extra_env" {
+  description = "Additional environment variables to inject into both API and Worker task definitions, on top of common_env. Used for per-env switches (e.g., BOOT_GATE_ENABLED in staging) without polluting the shared module locals. Keys here override matching keys in common_env only insofar as Docker honors last-write semantics on duplicate names — extras should be additive, not redefining shared keys."
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  default = []
+}
