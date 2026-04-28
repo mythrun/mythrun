@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Repository layer · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="data" data-page="repository">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html" class="active">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html">Schema</a></li><li><a href="../data/migrations.html">Migrations</a></li><li><a href="../data/repository.html" class="active">Repository layer</a></li><li><a href="../data/bootstrap-database.html">Bootstrap database</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Data › Repository layer</div>
+        <article>
+<h1>Repository layer</h1>
+
+<p class="lead">
+  The single seam every read and write to Postgres flows through. A closure-based factory returns
+  one namespace object per table cluster; callers say <code>repo.users.create(...)</code>, never
+  <code>pool.query(...)</code> directly.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1367pt" height="653pt"
+ viewBox="14.00 14.00 1353.00 638.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 634.14)">
+<title>repository</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-619.74 1334.61,-619.74 1334.61,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_callers</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-243.1 8,-381.1 171.7,-381.1 171.7,-243.1 8,-243.1"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-367.2" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">callers (future)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_factory</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="329.72,-105.1 329.72,-507.1 642.77,-507.1 642.77,-105.1 329.72,-105.1"/>
+<text xml:space="preserve" text-anchor="middle" x="486.24" y="-493.2" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">createRepo(pool) &#160;(backend/src/repo/index.ts)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_seams</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="824.79,-270.1 824.79,-533.1 995.09,-533.1 995.09,-270.1 824.79,-270.1"/>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-519.2" font-family="Courier,monospace" font-size="11.00">shared seams</text>
+</g>
+<!-- routes -->
+<g id="node1" class="node">
+<title>routes</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="171.7,-359.94 8,-359.94 8,-316.26 171.7,-316.26 171.7,-359.94"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-341.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Fastify routes</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-328.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(Auth, Billing, …)</text>
+</g>
+<!-- users -->
+<g id="node3" class="node">
+<title>users</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="560.99,-486.14 410.49,-486.14 410.49,-416.06 560.99,-416.06 560.99,-486.14"/>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-467.6" font-family="Courier,monospace" font-size="11.00" fill="#231b12">users.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-454.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-441.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getByCognitoSub,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-428" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getByEmail, update</text>
+</g>
+<!-- routes&#45;&gt;users -->
+<g id="edge1" class="edge">
+<title>routes&#45;&gt;users</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M169.14,-360.56C236.41,-379.86 333.11,-407.6 401.72,-427.28"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="400.79,-429.56 408.19,-429.14 402.14,-424.85 400.79,-429.56"/>
+<text xml:space="preserve" text-anchor="middle" x="250.71" y="-400.99" font-family="Courier,monospace" font-size="10.00">repo.users.create</text>
+</g>
+<!-- worlds -->
+<g id="node4" class="node">
+<title>worlds</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="564.29,-386.74 407.19,-386.74 407.19,-303.46 564.29,-303.46 564.29,-386.74"/>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-368.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-355" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-341.8" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByUser, update,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-328.6" font-family="Courier,monospace" font-size="11.00" fill="#231b12">updateStatus,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-315.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">incrementForkCount</text>
+</g>
+<!-- routes&#45;&gt;worlds -->
+<g id="edge2" class="edge">
+<title>routes&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M171.99,-339.54C237.97,-340.71 330.84,-342.36 398.23,-343.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="397.87,-346 404.92,-343.68 397.96,-341.11 397.87,-346"/>
+<text xml:space="preserve" text-anchor="middle" x="250.71" y="-344.81" font-family="Courier,monospace" font-size="10.00">repo.worlds.…</text>
+</g>
+<!-- workers -->
+<g id="node2" class="node">
+<title>workers</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="151.9,-286.94 27.8,-286.94 27.8,-243.26 151.9,-243.26 151.9,-286.94"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-268.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BullMQ workers</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-255.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(prep, scribe)</text>
+</g>
+<!-- camps -->
+<g id="node5" class="node">
+<title>camps</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="560.99,-274.54 410.49,-274.54 410.49,-217.66 560.99,-217.66 560.99,-274.54"/>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-256" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-242.8" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-229.6" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByUser, update</text>
+</g>
+<!-- workers&#45;&gt;camps -->
+<g id="edge3" class="edge">
+<title>workers&#45;&gt;camps</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M152.4,-262.13C219.38,-258.9 326.86,-253.71 401.38,-250.12"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="401.16,-252.58 408.03,-249.8 400.92,-247.69 401.16,-252.58"/>
+<text xml:space="preserve" text-anchor="middle" x="250.71" y="-262.48" font-family="Courier,monospace" font-size="10.00">repo.campaigns.…</text>
+</g>
+<!-- sessions -->
+<g id="node6" class="node">
+<title>sessions</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="567.59,-188.74 403.89,-188.74 403.89,-105.46 567.59,-105.46 567.59,-188.74"/>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-170.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-157" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-143.8" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getActiveByCampaign,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-130.6" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByCampaign,</text>
+<text xml:space="preserve" text-anchor="middle" x="485.74" y="-117.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">update</text>
+</g>
+<!-- workers&#45;&gt;sessions -->
+<g id="edge4" class="edge">
+<title>workers&#45;&gt;sessions</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M152.4,-246.66C217.5,-227.16 320.87,-196.19 395.05,-173.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="395.74,-176.32 401.75,-171.96 394.34,-171.62 395.74,-176.32"/>
+<text xml:space="preserve" text-anchor="middle" x="250.71" y="-233.23" font-family="Courier,monospace" font-size="10.00">repo.sessions.…</text>
+</g>
+<!-- uuid -->
+<g id="node7" class="node">
+<title>uuid</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="978.59,-313.94 841.29,-313.94 841.29,-270.26 978.59,-270.26 978.59,-313.94"/>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-295.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">uuidv7.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-282.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">uuidv7(): string</text>
+</g>
+<!-- users&#45;&gt;uuid -->
+<g id="edge5" class="edge">
+<title>users&#45;&gt;uuid</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M561.7,-444.12C642.42,-435.22 764.12,-417.38 799.79,-388.1 822.12,-369.77 804.46,-348.62 824.79,-328.1 827.92,-324.93 831.38,-322.03 835.05,-319.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="836.35,-321.45 840.83,-315.55 833.64,-317.36 836.35,-321.45"/>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-431.2" font-family="Courier,monospace" font-size="10.00">id =</text>
+</g>
+<!-- mappers -->
+<g id="node9" class="node">
+<title>mappers</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="995.09,-413.14 824.79,-413.14 824.79,-343.06 995.09,-343.06 995.09,-413.14"/>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-394.6" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mappers.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-381.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">snake → camel</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-368.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">narrowing helpers</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-355" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(toAuthProvider, …)</text>
+</g>
+<!-- users&#45;&gt;mappers -->
+<g id="edge9" class="edge">
+<title>users&#45;&gt;mappers</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M561.63,-468.45C627.29,-479.87 723.84,-487.28 799.79,-454.1 814.78,-447.55 812.03,-437.32 824.79,-427.1 828.42,-424.19 832.24,-421.34 836.16,-418.57"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="837.43,-420.68 841.83,-414.71 834.67,-416.63 837.43,-420.68"/>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-481.02" font-family="Courier,monospace" font-size="10.00">toUser</text>
+</g>
+<!-- pool -->
+<g id="node10" class="node">
+<title>pool</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="978.59,-78.14 841.29,-78.14 841.29,-8.06 978.59,-8.06 978.59,-78.14"/>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-59.6" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pg.Pool</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-46.4" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(boot&#45;gate path)</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-33.2" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">or stub Pool</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-20" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(fallback path)</text>
+</g>
+<!-- users&#45;&gt;pool -->
+<g id="edge13" class="edge">
+<title>users&#45;&gt;pool</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M561.55,-444.31C591.1,-437.74 622.73,-425.13 642.77,-401.1 697.88,-335.01 619.56,-280.38 667.77,-209.1 705.45,-153.38 744.49,-173.39 799.79,-135.1 821.85,-119.82 844.77,-101.02 863.88,-84.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="865.19,-86.5 868.84,-80.04 861.96,-82.82 865.19,-86.5"/>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-248.1" font-family="Courier,monospace" font-size="10.00">pool.query</text>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-236.1" font-family="Courier,monospace" font-size="10.00">INSERT … RETURNING *</text>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-224.1" font-family="Courier,monospace" font-size="10.00">UPDATE … COALESCE</text>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-212.1" font-family="Courier,monospace" font-size="10.00">SELECT …</text>
+</g>
+<!-- worlds&#45;&gt;uuid -->
+<g id="edge6" class="edge">
+<title>worlds&#45;&gt;uuid</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M564.9,-333C593,-324.93 622.69,-311.49 642.77,-289.1 674.51,-253.71 630.43,-214.52 667.77,-185.1 713.85,-148.78 745.47,-162.91 799.79,-185.1 837.96,-200.69 870.01,-236.78 889.3,-262.73"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="887.24,-264.06 893.33,-268.29 891.21,-261.18 887.24,-264.06"/>
+</g>
+<!-- worlds&#45;&gt;mappers -->
+<g id="edge10" class="edge">
+<title>worlds&#45;&gt;mappers</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M564.67,-351.19C635.56,-356.73 740.32,-364.92 815.65,-370.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="815.24,-373.23 822.41,-371.33 815.62,-368.35 815.24,-373.23"/>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-372.25" font-family="Courier,monospace" font-size="10.00">toWorld</text>
+</g>
+<!-- worlds&#45;&gt;pool -->
+<g id="edge14" class="edge">
+<title>worlds&#45;&gt;pool</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M564.69,-333.75C593.11,-325.77 623.07,-312.2 642.77,-289.1 681.79,-243.33 630.93,-203.64 667.77,-156.1 708.11,-104.04 778.22,-74.93 832.48,-59.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="832.88,-61.78 838.96,-57.54 831.56,-57.06 832.88,-61.78"/>
+</g>
+<!-- camps&#45;&gt;uuid -->
+<g id="edge7" class="edge">
+<title>camps&#45;&gt;uuid</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M561.6,-238.78C589.6,-232.84 620.09,-222.18 642.77,-203.1 662.7,-186.33 645.77,-164.04 667.77,-150.1 717.32,-118.68 747.15,-124.17 799.79,-150.1 846.79,-173.25 879.2,-227.44 895.87,-261.78"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="893.6,-262.7 898.8,-267.99 898.03,-260.61 893.6,-262.7"/>
+</g>
+<!-- camps&#45;&gt;mappers -->
+<g id="edge11" class="edge">
+<title>camps&#45;&gt;mappers</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M561.44,-259.78C588.06,-266.42 617.65,-275.9 642.77,-289.1 655.61,-295.85 654.79,-303.6 667.77,-310.1 721.65,-337.11 741.84,-324.52 799.79,-341.1 805.15,-342.63 810.64,-344.27 816.17,-345.98"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="815.13,-348.22 822.54,-347.97 816.6,-343.54 815.13,-348.22"/>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-344.1" font-family="Courier,monospace" font-size="10.00">toCampaign</text>
+</g>
+<!-- camps&#45;&gt;pool -->
+<g id="edge15" class="edge">
+<title>camps&#45;&gt;pool</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M561.41,-242.51C590.75,-237.22 622.26,-226.04 642.77,-203.1 690.15,-150.09 613.9,-91.5 667.77,-45.1 712.02,-6.98 779.65,-9.81 832.04,-20.28"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="831.51,-22.67 838.86,-21.71 832.52,-17.87 831.51,-22.67"/>
+</g>
+<!-- sessions&#45;&gt;uuid -->
+<g id="edge8" class="edge">
+<title>sessions&#45;&gt;uuid</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M568.08,-116.7C634.49,-97.21 728.65,-82.11 799.79,-121.1 854.29,-150.97 885.51,-220.9 899.66,-261.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="897.28,-262.09 901.84,-267.94 901.92,-260.53 897.28,-262.09"/>
+</g>
+<!-- sessions&#45;&gt;mappers -->
+<g id="edge12" class="edge">
+<title>sessions&#45;&gt;mappers</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M567.99,-162.35C594.46,-170.7 622.28,-183.5 642.77,-203.1 663.94,-223.35 645.48,-245.08 667.77,-264.1 713.62,-303.21 749.26,-262.24 799.79,-295.1 815.21,-305.13 811.07,-315.84 824.79,-328.1 828.44,-331.36 832.34,-334.53 836.38,-337.57"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="834.72,-339.39 841.82,-341.51 837.59,-335.42 834.72,-339.39"/>
+<text xml:space="preserve" text-anchor="middle" x="733.78" y="-298.1" font-family="Courier,monospace" font-size="10.00">toSession</text>
+</g>
+<!-- sessions&#45;&gt;pool -->
+<g id="edge16" class="edge">
+<title>sessions&#45;&gt;pool</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M526.35,-104.77C560.26,-71.84 612.28,-28.73 667.77,-10.1 721.07,7.8 784.11,-1.82 832.37,-15.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="831.45,-17.47 838.85,-17.04 832.8,-12.76 831.45,-17.47"/>
+</g>
+<!-- types -->
+<g id="node8" class="node">
+<title>types</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="981.89,-512.14 837.99,-512.14 837.99,-442.06 981.89,-442.06 981.89,-512.14"/>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-493.6" font-family="Courier,monospace" font-size="11.00" fill="#231b12">types.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-480.4" font-family="Courier,monospace" font-size="11.00" fill="#231b12">User, World,</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-467.2" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Campaign, Session</text>
+<text xml:space="preserve" text-anchor="middle" x="909.94" y="-454" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ Update inputs</text>
+</g>
+<!-- types&#45;&gt;users -->
+<g id="edge18" class="edge">
+<title>types&#45;&gt;users</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M888.87,-512.7C870.11,-542.02 839.1,-581.52 799.79,-599.1 746.22,-623.05 723.03,-618.81 667.77,-599.1 608.85,-578.08 555.28,-528.75 521.96,-492.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="524.14,-491.55 517.61,-488.04 520.52,-494.86 524.14,-491.55"/>
+</g>
+<!-- types&#45;&gt;worlds -->
+<g id="edge19" class="edge">
+<title>types&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M844.88,-512.85C791.83,-537.13 717.38,-558.23 667.77,-518.1 626.43,-484.66 677.76,-441.13 642.77,-401.1 624.82,-380.57 598.79,-367.56 573.11,-359.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="573.95,-357.02 566.54,-357.34 572.53,-361.71 573.95,-357.02"/>
+</g>
+<!-- types&#45;&gt;camps -->
+<g id="edge20" class="edge">
+<title>types&#45;&gt;camps</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M837.41,-502.27C784.2,-516 713.21,-523.06 667.77,-483.1 602.48,-425.69 699.76,-354.74 642.77,-289.1 624.49,-268.04 596.93,-256.85 570.05,-251.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="570.86,-248.7 563.51,-249.75 569.91,-253.51 570.86,-248.7"/>
+</g>
+<!-- types&#45;&gt;sessions -->
+<g id="edge21" class="edge">
+<title>types&#45;&gt;sessions</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M837.53,-477.7C775.04,-476.6 690.75,-470.58 667.77,-447.1 629.65,-408.14 676.36,-246.02 642.77,-203.1 626.36,-182.14 601.44,-169.01 576.31,-160.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="577.29,-158.54 569.88,-158.83 575.86,-163.22 577.29,-158.54"/>
+</g>
+<!-- db -->
+<g id="node11" class="node">
+<title>db</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1330.61,-78.14 1147.11,-78.14 1147.11,-8.06 1330.61,-8.06 1330.61,-78.14"/>
+<text xml:space="preserve" text-anchor="middle" x="1238.86" y="-59.6" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Postgres</text>
+<text xml:space="preserve" text-anchor="middle" x="1238.86" y="-46.4" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">users, worlds,</text>
+<text xml:space="preserve" text-anchor="middle" x="1238.86" y="-33.2" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">campaigns, sessions</text>
+<text xml:space="preserve" text-anchor="middle" x="1238.86" y="-20" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ campaign_members JOIN</text>
+</g>
+<!-- pool&#45;&gt;db -->
+<g id="edge17" class="edge">
+<title>pool&#45;&gt;db</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M979.08,-43.1C1025.08,-43.1 1086.56,-43.1 1138.05,-43.1"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1137.74,-45.55 1144.74,-43.1 1137.74,-40.65 1137.74,-45.55"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.1" y="-46.1" font-family="Courier,monospace" font-size="10.00">parameterized SQL</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
+  takes a <code>pg.Pool</code> and returns <code>{ users, worlds, campaigns, sessions }</code> — one
+  namespace per top-level table cluster. Each namespace is built by a sibling factory
+  (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
+  pool and exposes the typed methods for that table. The return type is exported as
+  <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
+  <code>AppDeps</code> carries it alongside <code>pg</code> and the two Redis clients, and
+  <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
+  boot paths.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Closure factory, not a class</strong> — namespaces are bags of pure functions over a
+  shared pool. A class adds <code>this</code> binding hazards (a route handler that destructures
+  <code>const { create } = repo.users</code> and calls <code>create(input)</code> would lose
+  <code>this</code>) and gives nothing back: there's no inheritance story, no protected state, no
+  per-instance overrides. A closure is the smaller shape that solves the same problem.
+</aside>
+
+<p>
+  The CLAUDE.md mandate is concrete:
+  <em
+    >every TS file outside <code>backend/src/repo/</code> that reads or writes the database calls
+    <code>repo.&lt;namespace&gt;.&lt;method&gt;</code></em
+  >. No raw <code>pool.query(...)</code> in route handlers, services, or workers. The repo layer is
+  what makes that mandate enforceable — there's one place to grep for SQL changes, one place where
+  parameter binding is audited, one place where the <code>updated_at = now()</code> bump is
+  guaranteed on every UPDATE.
+</p>
+
+<h2 id="namespace-boundaries-4-today-21-deferred">Namespace boundaries: 4 today, 21 deferred</h2>
+
+<p>
+  Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
+  <strong>4</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code> — the foundations Auth, the prep pipeline, and the session runtime
+  immediately need. The remaining 21 are tracked as beads under the <code>repo-deferred</code> label
+  and ship batched with their consumers.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Producer batched with consumer</strong> — designing a <code>characters</code> namespace
+  with per-skill / feature / equipment / spell add APIs without the character-creation flow designed
+  produces guesses. The same goes for <code>credits</code>: the atomic-debit pattern belongs with
+  the consumer that needs it (MYT-40), not as a separate <code>grant</code>/<code>debit</code>/<code
+    >getBalance</code
+  >
+  trio that would invite a TOCTOU race. The deferral list is in the v2 design spec;
+  <code>bd list --label=repo-deferred</code> is the live view.
+</aside>
+
+<p>
+  Within the four shipped namespaces, the method set is similarly scope-cut.
+  <code>worlds.fork</code> is deferred to the prep pipeline — fork semantics involve entity copy and
+  fact deduplication that belong with the pipeline that owns them.
+  <code>sessions.updateRunningSummary</code> is deferred to the Slow Thinker work that consumes it.
+  <code>users.softDelete</code> and <code>campaigns.transferOwnership</code> follow the same rule:
+  no consumer in flight, no API design today.
+</p>
+
+<h2 id="camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</h2>
+
+<p>
+  The schema is snake_case (<code>cognito_sub</code>, <code>created_by</code>,
+  <code>geography_summary</code>); the TypeScript surface is camelCase. Each table has two
+  interfaces: a <code>XxxDbRow</code> in <code>mappers.ts</code> matching what
+  <code>pool.query</code> returns, and a <code>Xxx</code> in <code>types.ts</code> that callers see.
+  A <code>toXxx</code> function bridges them — invoked once per row at the repo boundary.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Explicit mappers, not a pg-types parser</strong> — node-postgres lets you register a type
+  parser that rewrites every result row globally. Tempting, but global: it would convert keys for
+  every query in the process, including future code paths that genuinely want raw
+  <code>pool.query</code> for diagnostics or one-off scripts. Keeping the conversion at the repo
+  boundary scopes it to where the API contract is camelCase and leaves the rest of the system alone.
+</aside>
+
+<p>
+  <code>Update</code> input types are spelled out (not
+  <code>Partial&lt;Pick&lt;User, …&gt;&gt;</code>) so
+  <code>exactOptionalPropertyTypes</code> semantics are intentional: each key is omitted to leave
+  the field unchanged, or supplied with a value to set it. Identity fields (<code>cognitoSub</code>,
+  <code>email</code>, <code>authProvider</code>) are <em>never</em> in the Update type — mutating
+  them would break Cognito linkage in ways the layer above doesn't want to think about.
+</p>
+
+<h2 id="narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</h2>
+
+<p>
+  <code>auth_provider</code> is <code>TEXT</code> with a CHECK constraint enforcing
+  <code>('google', 'discord')</code>. The schema guarantees the SQL invariant, but the mapper still
+  refuses to bare-cast <code>row.auth_provider as 'google' | 'discord'</code>. Instead, a small
+  helper validates and narrows:
+</p>
+
+<pre><code>function toAuthProvider(v: string): 'google' | 'discord' {
+  if (v !== 'google' && v !== 'discord') {
+    throw new Error(`unexpected auth_provider value from DB: ${v}`)
+  }
+  return v
+}</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>Defense in depth, not paranoia</strong> — if a future migration adds a
+  <code>'github'</code> option but the TS interface stays at <code>'google' | 'discord'</code>, a
+  bare cast would silently mistype every row. The helper fails loudly at the boundary and the test
+  suite or production logs flag it before the bug spreads. Same pattern for
+  <code>worlds.status</code>, <code>worlds.moderation_status</code>, <code>campaigns.status</code>,
+  <code>sessions.status</code> — every CHECK-constrained text column gets a narrowing function.
+</aside>
+
+<h2 id="uuidv7-in-its-own-seam">UUIDv7 in its own seam</h2>
+
+<p>
+  <code>backend/src/repo/uuidv7.ts</code> is a one-line wrapper:
+  <code>export const uuidv7 = (): string =&gt; uuidv7Pkg()</code>. Every <code>create</code> method
+  generates the id app-side via this function — <code>id UUID PRIMARY KEY</code> in the schema
+  declares no default. Time-ordered ids give clean B-tree locality on PK indexes, which matters for
+  the high-write-rate tables (<code>session_messages</code>, <code>credit_ledger</code>) the future
+  namespaces will land.
+</p>
+
+<p>
+  The wrapper exists so tests that need deterministic ids can <code>vi.mock('./uuidv7.js')</code>,
+  and so a future swap to a different UUIDv7 library is a one-file change. The
+  <a href="./migrations.html">migration runner</a>'s CLI block uses the same wrapper for its
+  <code>runId</code> — single seam, no second import path of the underlying package.
+</p>
+
+<h2 id="insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</h2>
+
+<p>
+  The Backend Core spec example shows <code>create</code> returning
+  <code>Promise&lt;string&gt;</code> (the new id). The repo deviates: every <code>create</code> uses
+  <code>INSERT ... RETURNING *</code> and returns the full mapped row.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>RETURNING *, not just the id</strong> — every consumer the next handful of tickets will
+  add (signup flow, prep-pipeline kickoff, session start) immediately needs the
+  <code>created_at</code>, the defaulted <code>status</code>, the database-side
+  <code>now()</code> for <code>updated_at</code>. Returning only the id forces a refetch round-trip.
+  Returning the full row costs marginal extra bandwidth and matches what callers want.
+</aside>
+
+<h2 id="update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</h2>
+
+<p>
+  Update methods take a partial patch and emit a single fixed SQL string. Each mutable column is
+  written as <code>col = COALESCE($n, col)</code> — the parameter is either the new value or
+  <code>null</code>, and <code>null</code> means "don't change this field."
+  <code>updated_at</code> is <em>always</em> set to <code>now()</code> in the same statement.
+</p>
+
+<pre><code>UPDATE users
+   SET display_name       = COALESCE($2, display_name),
+       username           = COALESCE($3, username),
+       avatar_url         = COALESCE($4, avatar_url),
+       stripe_customer_id = COALESCE($5, stripe_customer_id),
+       free_trial_used    = COALESCE($6, free_trial_used),
+       updated_at         = now()
+ WHERE id = $1
+ RETURNING *</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>Fixed COALESCE, not dynamic SQL</strong> — building a SQL string at runtime by walking the
+  patch object's keys is the alternative; it gives "only update what was supplied" without
+  COALESCE's NULL-as-sentinel weirdness. The cost is real: every dynamic builder is an injection
+  surface to audit, an unstable EXPLAIN plan to debug, and a typing puzzle (TypeScript can't tell
+  what columns are in <code>patch</code>). The fixed form has one stable plan, parameterized binding
+  for free, and the column whitelist is in the SQL itself.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Mandatory <code>updated_at = now()</code> on every UPDATE</strong> — the schema declares
+  <code>updated_at TIMESTAMPTZ NOT NULL DEFAULT now()</code> but has no
+  <code>BEFORE UPDATE</code> trigger. Forgetting the bump leaves the column stuck at insert time
+  forever, silently breaking any "what changed since" query downstream. Each namespace's integration
+  test asserts <code>updated_at</code> advances after <code>update</code>; the
+  <code>sessions</code> table is the lone exception (no <code>updated_at</code> column, only
+  <code>started_at</code> + <code>ended_at</code>).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>COALESCE caveat: nullable fields can't be cleared</strong> — passing
+  <code>{ avatarUrl: null }</code> to <code>users.update</code> is indistinguishable from omitting
+  the key entirely; both encode as a SQL <code>null</code> parameter and the COALESCE leaves the
+  column unchanged. This is a deliberate v1 trade-off, documented at the type site. When a real
+  consumer needs to clear an avatar or stripe id, the API grows a sentinel value or a dedicated
+  <code>clearAvatar()</code> method — not before.
+</aside>
+
+<h2 id="the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</h2>
+
+<p>
+  <a href="../runtime/index.html#the-boot-gate-and-its-opt-in-flag">The boot gate</a> has two paths.
+  With <code>BOOT_GATE_ENABLED=1</code>, <code>server.ts</code> opens a real pool and calls
+  <code>createRepo(pgRef)</code>. With the gate off, <code>fallbackStart</code> constructs a stub
+  pool whose <code>query</code> throws synchronously — and then calls
+  <code>createRepo(stubPool)</code> over it. Any repo method invoked on that stub repo propagates
+  the throw naturally, the same way it would for any other unreachable database.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Compose over the stub pool, don't Proxy the namespace layer</strong> — an earlier design
+  used a Proxy to fake the entire <code>{ users, worlds, … }</code> shape with throwing methods. The
+  bug: <code>repo.users.create()</code> would throw on <code>repo.users</code> (a function-shaped
+  Proxy trap), not on <code>create()</code>, and the error message would say "namespace not
+  available" instead of "repo unavailable: BOOT_GATE_ENABLED is off." Composing
+  <code>createRepo</code> over the stub pool inherits the pool's existing throw contract; no
+  special-casing in the repo factory.
+</aside>
+
+<h2 id="per-namespace-shape">Per-namespace shape</h2>
+
+<p>
+  <strong><code>users</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>. Auth will literally
+  grep for <code>getByCognitoSub</code> on first sign-in and <code>getByEmail</code> for
+  invite-resolution flows; the names are explicit, not factored out into a generic getter.
+</p>
+
+<p>
+  <strong><code>worlds</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>listByUser</code>, <code>update</code>, <code>updateStatus</code>,
+  <code>incrementForkCount</code>. <code>updateStatus</code> is a one-purpose UPDATE on
+  <code>status</code> alone; the prep pipeline calls it many times per run, and a dedicated method
+  keeps pipeline tracing legible. <code>listByUser</code> is the simple ownership filter
+  <code>WHERE created_by = $1 ORDER BY created_at DESC</code> — no JOIN.
+</p>
+
+<p>
+  <strong><code>campaigns</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>listByUser</code>, <code>update</code>. <code>listByUser</code> joins
+  <code>campaign_members</code> directly in SQL to filter to "campaigns I'm a member of with an
+  accepted invite." That's fine even though <code>campaign_members</code> is one of the deferred
+  namespaces — we're using the table, not exposing an API surface for it.
+</p>
+
+<p>
+  <strong><code>sessions</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>.
+  <code>getActiveByCampaign</code> uses <code>LIMIT 1</code> defensively — the partial-unique index
+  <code>idx_sessions_one_active</code> guarantees at most one active row per campaign, but the
+  <code>LIMIT 1</code> at the SQL site makes the contract self-documenting.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>sessions.update</code> doesn't bump <code>updated_at</code></strong> — the
+  <code>sessions</code> table doesn't have an <code>updated_at</code> column at all (only
+  <code>started_at</code> + <code>ended_at</code>, which carry the lifecycle a session row needs).
+  The "every UPDATE bumps <code>updated_at</code>" rule applies wherever the column exists; this one
+  is the documented exception.
+</aside>
+
+<h2 id="tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</h2>
+
+<p>
+  Each namespace has an integration test under
+  <code>backend/src/repo/__tests__/&lt;ns&gt;.test.ts</code> that runs against a real Postgres (the
+  docker-compose stack locally, the CI Postgres service in CI). <code>beforeAll</code> runs all
+  migrations once; <code>beforeEach</code> calls a helper that
+  <code>TRUNCATE … RESTART IDENTITY CASCADE</code>s every application table in dependency order. The
+  schema stays intact across tests; only data is reset, which is roughly 50× faster than re-running
+  migrations between every test.
+</p>
+
+<p>
+  <code>mappers.test.ts</code> is a pure unit test over the mapper functions and the narrowing
+  helpers — hand-constructed <code>XxxDbRow</code> objects, no DB. Schema-parity invariants (table
+  names, CHECK constraints, FK rules) live in
+  <a href="./schema.html#schema-parity-test">the schema-parity test</a> from MYT-33; the repo tests
+  trust that and exercise behavior, not structure.
+</p>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The <a href="./migrations.html">migrations</a> runner shares the
+  <a href="./repository.html#uuidv7-in-its-own-seam"><code>uuidv7()</code></a> wrapper — both the
+  CLI's <code>runId</code> and every repo <code>create</code> read from
+  <code>backend/src/repo/uuidv7.ts</code>. The
+  <a href="../runtime/index.html#the-app-factory-and-the-dependency-injection-shape"
+    >backend runtime</a
+  >'s <code>AppDeps</code> carries the <code>repo</code> alongside <code>pg</code>;
+  <code>buildApp</code> accepts it today as a no-op pass-through, and future Auth and Billing
+  plugins will decorate it onto the Fastify instance. The <a href="./schema.html">schema</a> is what
+  the repo's queries are typed against — every <code>XxxDbRow</code> matches a table the migration
+  files define.
+</p>
+
+<h2 id="appendix-source-layout">Appendix: source layout</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Exports</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/repo/index.ts</code></td>
+      <td><code>createRepo(pool)</code>, <code>type Repo</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/repo/uuidv7.ts</code></td>
+      <td><code>uuidv7(): string</code> — wrapper around the <code>uuidv7</code> package.</td>
+    </tr>
+    <tr>
+      <td><code>src/repo/types.ts</code></td>
+      <td>
+        <code>User</code>, <code>World</code>, <code>Campaign</code>, <code>Session</code>;
+        <code>CreateXxxInput</code> + <code>XxxUpdate</code> for each.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/mappers.ts</code></td>
+      <td>
+        <code>UserDbRow</code> / <code>WorldDbRow</code> / <code>CampaignDbRow</code> /
+        <code>SessionDbRow</code>; <code>toUser</code> / <code>toWorld</code> /
+        <code>toCampaign</code> / <code>toSession</code>; narrowing helpers.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/users.ts</code></td>
+      <td>
+        <code>createUsersRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/worlds.ts</code></td>
+      <td>
+        <code>createWorldsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>listByUser</code>, <code>update</code>, <code>updateStatus</code>,
+        <code>incrementForkCount</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/campaigns.ts</code></td>
+      <td>
+        <code>createCampaignsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/sessions.ts</code></td>
+      <td>
+        <code>createSessionsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/__tests__/_helpers/reset-data.ts</code></td>
+      <td>
+        TRUNCATE helper used by every <code>beforeEach</code>. Lists every application table in
+        dependency order; future namespaces extend it.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p><code>backend/src/repo/</code>, <code>backend/src/app-deps.ts</code>.</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#namespace-boundaries-4-today-21-deferred">Namespace boundaries: 4 today, 21 deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>
