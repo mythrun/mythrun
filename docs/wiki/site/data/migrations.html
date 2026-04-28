@@ -575,6 +575,8 @@ aws ecs execute-command \
     >CI/CD</a
   >) will pick up a one-off ECS task pattern as a follow-up bead — the runner already supports that
   mode by virtue of being a CLI; the bead is task- definition wiring and the migration-role secret.
+  The runner also assumes the per-env app password secret has been populated — see
+  <a href="./bootstrap-database.html">Bootstrap Database</a> for that one-time setup.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
