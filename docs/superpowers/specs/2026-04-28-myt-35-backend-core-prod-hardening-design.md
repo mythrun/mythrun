@@ -3,7 +3,7 @@
 **Date:** 2026-04-28
 **Linear:** MYT-35 (Platform milestone, due 2026-05-01)
 **Closes beads:** myth-nf3, myth-g6g, myth-ccf
-**Status:** v3 (post-Round-2 blind review by Europa / Titan; Round-2 surfaced 2 CRITICAL + 4 HIGH that v2 missed, including a structural deploy-sequence bug from `ignore_changes [task_definition]`)
+**Status:** v4 (post-Round-3 blind review by Coltrane / Mingus; Round 3 hit the diminishing-returns boundary — 2 CRITICAL test-correctness items + minor tightening; structural design is settled)
 **Author:** Claude (Miklos's instance)
 
 ## Goal
@@ -109,7 +109,7 @@ async function probe(name: string, fn: () => Promise<unknown>): Promise<ProbeRes
   try {
     await Promise.race([
       fn(),
-      new Promise((_, reject) =>
+      new Promise<never>((_resolve, reject) =>
         setTimeout(() => reject(new Error(`probe timeout after ${PROBE_TIMEOUT_MS}ms`)), PROBE_TIMEOUT_MS),
       ),
     ])
@@ -198,6 +198,13 @@ export async function main(): Promise<void> {
 // point. Tests import `main` and execute under their own control.
 // Use pathToFileURL for cross-platform correctness (handles spaces,
 // unicode, drive-letter casing on Windows). Europa Round-2 C2.
+//
+// PRODUCTION INVOCATION: this file is run ONLY via `node dist/worker.js`
+// in the worker container. It is not run via `tsx` (no `dev:worker`
+// script in package.json) and the entry-point guard would return false
+// under `tsx watch` because process.argv[1] points at the tsx loader,
+// not at this file (Coltrane Round-3 H4). If a future ticket adds a
+// `dev:worker` runner, the guard needs an extra branch.
 import { pathToFileURL } from 'node:url'
 const isEntryPoint =
   process.argv[1] !== undefined &&
@@ -214,24 +221,56 @@ Four cases against `buildApp(stubDeps)` with stub deps whose `query`/`ping` reso
 1. **all probes succeed** → 200 + `{ ready: true }`.
 2. **pg.query rejects** → 503 + `{ ready: false, failed: ['pg'] }`.
 3. **pg + redis-batch reject** → 503 + `failed` contains both names (order-insensitive — assert via `.sort()`).
-4. **a probe hangs > 1s** → with `vi.useFakeTimers()`, kick off the request, then `await vi.advanceTimersByTimeAsync(1001)` (NOT the synchronous `advanceTimersByTime` — Europa Round-2 H2: the async variant is required to drain microtasks between the timer firing and the handler returning), then `await` the inject promise → handler returns 503 with `failed` including the hung probe.
+4. **one probe hangs > 1s while the other two resolve** (Coltrane Round-3 H3: clarify only ONE probe never resolves; the other two return resolved stub promises so `Promise.all` settles after the timeout fires on the hung one). With `vi.useFakeTimers()`, kick off the request, then `await vi.advanceTimersByTimeAsync(1001)` (NOT the synchronous `advanceTimersByTime` — Europa Round-2 H2: the async variant is required to drain microtasks between the timer firing and the handler returning), then `await` the inject promise → handler returns 503 with `failed` containing only the hung probe's name.
 
 Test helper: `__tests__/helpers/stub-deps.ts` exports `makeStubDeps({ pgQuery?, ping1?, ping2? })` so future tests don't reinvent the mock surface (Andes Round-1 M2). The helper returns shape-only stubs; it does NOT import from `redis/client.ts` or `db/postgres.ts` — a real client at test-import time would hang CI on connect-refused (Titan Round-2 H1).
 
 ### `backend/src/__tests__/worker.test.ts`
 
-Imports `main` directly (not the whole module — the cross-platform entry-point guard is best-effort and tests should not rely on it being false). Mocks `loadEnv` + `createRedisClient` so `ping`/`quit` resolve. Asserts `console.log('worker started')` is called. Sends `process.emit('SIGTERM', 'SIGTERM')`, asserts `quit` is awaited and `process.exit(0)` is called (mock `process.exit` to throw a sentinel error so the test can catch it instead of actually exiting).
+Imports `main` directly (not the whole module — the cross-platform entry-point guard is best-effort and tests should not rely on it being false). Mocks `loadEnv` + `createRedisClient` so `ping`/`quit` resolve.
 
-**Listener hygiene** (Europa Round-2 H3): `main()` registers `process.on('SIGTERM', …)` + `process.on('SIGINT', …)` on the real Vitest worker process. Without cleanup these leak across tests. Each test that calls `main()` MUST register an `afterEach`:
+**Real timers are required** (Coltrane Round-3 C1): `vi.waitFor()` polls via real `setTimeout`. If `vi.useFakeTimers()` is enabled at file or global scope, `vi.waitFor` deadlocks because its internal poll loop never advances. Add `vi.useRealTimers()` at the top of `beforeEach` to defend against another file enabling fake timers globally.
+
+**`process.exit` mock pattern** (Coltrane Round-3 C2): use `vi.spyOn`, NOT a throw-sentinel. The SIGTERM handler is `() => void shutdown(signal)` — the `void` operator discards the promise, so a thrown sentinel inside `shutdown` has nowhere to be caught. Pattern (mirrors `server.test.ts`):
 
 ```ts
-afterEach(() => {
-  process.removeAllListeners('SIGTERM')
-  process.removeAllListeners('SIGINT')
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { main } from '../worker.js'
+
+describe('worker', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+  })
+
+  afterEach(() => {
+    process.removeAllListeners('SIGTERM')
+    process.removeAllListeners('SIGINT')
+    vi.restoreAllMocks()
+  })
+
+  it('logs "worker started" then exits cleanly on SIGTERM', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    // ... mock loadEnv + createRedisClient ...
+
+    void main() // never awaited — main blocks forever on Promise<never>
+
+    await vi.waitFor(() => {
+      expect(consoleSpy).toHaveBeenCalledWith('worker started')
+    })
+
+    process.emit('SIGTERM', 'SIGTERM')
+
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(0)
+    })
+  })
 })
 ```
 
-The `main()` invocation is itself non-awaitable (blocks forever on `Promise<never>`). Pattern: `void main()`, then `await vi.waitFor(() => expect(loggedStartup).toBe(true))` to confirm it reached the log line, then `process.emit('SIGTERM', 'SIGTERM')` with the `process.exit` mock catching the exit.
+`process.emit('SIGTERM', 'SIGTERM')` may need a cast under `@types/node` strict mode: `process.emit('SIGTERM', 'SIGTERM' as NodeJS.Signals)`.
+
+**Listener hygiene** (Europa Round-2 H3): `main()` registers `process.on('SIGTERM', …)` + `process.on('SIGINT', …)` on the real Vitest worker process. The `afterEach` `removeAllListeners` is required to prevent leakage across tests.
 
 ### `backend/Dockerfile` change
 
@@ -327,6 +366,14 @@ After this apply: new task-def revisions are registered. The live service is **s
 
 **Step 3 — Force the service onto the new revision.**
 
+**Pause concurrent CI deploys first** (Mingus Round-3 H1). The `$LATEST_REV` lookup returns the highest-numbered revision in the family. If a Deploy workflow is in flight between TF apply A (step 2) and the lookup below, it can register a NEWER revision without `BOOT_GATE_ENABLED=1`; the rollover then lands on a non-gated container and step 5 verification will incorrectly pass. Confirm no Deploy run is in flight before proceeding:
+
+```bash
+gh run list --workflow Deploy --status in_progress --limit 5
+# If any rows are returned: wait for them to finish (or `gh run cancel` if you
+# can re-trigger them later) before continuing.
+```
+
 ```bash
 # Get the latest registered revision number (the one TF just produced).
 LATEST_REV=$(aws ecs describe-task-definition \
@@ -400,11 +447,12 @@ Two surfaces to watch:
 
 ### Emergency rollback
 
-If the boot gate is genuinely failing for a reason that can't be quickly diagnosed:
+If the boot gate is genuinely failing for a reason that can't be quickly diagnosed AND the ALB path has already been flipped to `/health/ready` (i.e., we're past step 4 of the forward deploy), do these in order. **Step 1 of the rollback (flip ALB path back to `/health`) must come FIRST** (Mingus Round-3 M4: with the path on `/health/ready`, force-rollover to a `BOOT_GATE_ENABLED=0` revision yields a `fallbackStart` container whose `/health/ready` returns 503 — ALB stays unhealthy and the rollback prolongs the outage).
 
-1. **Edit `infra/environments/staging/main.tf`** — change the `extra_env` value `"1"` to `"0"`. (Avoid `sed -i` invocations in incident playbooks: BSD `sed -i ''` and GNU `sed -i` differ; copy-paste fails on whichever shell you don't usually use. Editor.)
-2. **Apply:** `terraform -chdir=infra/environments/staging apply`. Registers a new task-def revision with the gate disabled.
-3. **Force-rollover the service** (because of `ignore_changes [task_definition]`):
+1. **Flip the ALB path back to `/health`.** Edit `infra/modules/serving/main.tf`, change `health_check.path` from `/health/ready` back to `/health`. `terraform -chdir=infra/environments/staging apply`. ALB now polls `/health`, which the running container answers regardless of gate state.
+2. **Edit `infra/environments/staging/main.tf`** — change the `extra_env` value `"1"` to `"0"`. (Avoid `sed -i` invocations in incident playbooks: BSD `sed -i ''` and GNU `sed -i` differ; copy-paste fails on whichever shell you don't usually use. Editor.)
+3. **Apply:** `terraform -chdir=infra/environments/staging apply`. Registers a new task-def revision with the gate disabled.
+4. **Force-rollover the service** (because of `ignore_changes [task_definition]`):
    ```bash
    LATEST_REV=$(aws ecs describe-task-definition \
      --task-definition mythrun-staging-api \
@@ -416,9 +464,10 @@ If the boot gate is genuinely failing for a reason that can't be quickly diagnos
      --force-new-deployment
    aws ecs wait services-stable --cluster mythrun --services mythrun-staging-api
    ```
-4. **Optionally, flip the ALB path back** to `/health` (edit `modules/serving/main.tf`, apply). Required if `/health/ready` is the failure surface — without it, ALB stays unhealthy on the gate-off container too because `fallbackStart`'s stub Pool throws on `query`.
 
 This restores MYT-28 fallback behavior. Investigate, fix, re-engage with the 5-step deploy.
+
+If the failure happened BEFORE step 4 of the forward deploy (ALB path is still `/health`), skip rollback step 1; the service can be rolled back via steps 2–4 alone.
 
 ### What's NOT affected during a boot-gate-failure rollback
 
@@ -478,24 +527,37 @@ pnpm --filter @mythrun/backend lint
 # 2. Docker build succeeds with new HEALTHCHECK start-period.
 docker build -f backend/Dockerfile --target=runner -t mythrun-test .
 
-# 3. Code push to main triggers deploy → goes green at /health (no boot
-#    gate yet because tfvars hasn't applied). Verify the new route is
-#    served by the new image:
+# 3. Code push to main triggers deploy → goes green at /health.
+#    /health/ready returns 503 by design at this stage because BOOT_GATE_ENABLED
+#    is still unset → fallbackStart's stub Pool throws → probe fails → 503
+#    with failed:['pg']. ALB still polls /health, so this is harmless.
+#    DO NOT curl /health/ready here — wait until step 6.
 git push origin main
 # wait for the deploy workflow to land
 curl -fsS https://staging-api.mythrun.com/health        # expect: {"status":"ok"}
-curl -fsS https://staging-api.mythrun.com/health/ready  # expect: {"ready":true}
 
-# 4. Plan + review (NOT a grep — eyeball the diff):
+# 4–5. Two TF applies + a force-rollover in between (see Deploy sequence).
+#    A) TF apply A: env-var only (no ALB path change yet).
+#       Expected diff: +/- aws_ecs_task_definition.{api,worker} (replacement:
+#       BOOT_GATE_ENABLED added; ECS service ignore_changes [task_definition]
+#       means the service stays on its current revision until step B below).
+#    B) Force-rollover the API service onto the freshly registered revision:
+#         LATEST_REV=$(aws ecs describe-task-definition --task-definition mythrun-staging-api --query 'taskDefinition.revision' --output text)
+#         aws ecs update-service --cluster mythrun --service mythrun-staging-api --task-definition "mythrun-staging-api:$LATEST_REV" --force-new-deployment
+#         aws ecs wait services-stable --cluster mythrun --services mythrun-staging-api
+#       NOTE: pause concurrent deploys before this step (Mingus Round-3 H1):
+#         gh run list --workflow Deploy --status in_progress --limit 1
+#       (If a Deploy run is in flight, wait for it; otherwise it could land a
+#       newer revision without BOOT_GATE_ENABLED between TF apply A and the
+#       describe-task-definition lookup.)
+#    C) TF apply B: ALB path flip /health → /health/ready.
+#       Expected diff: ~ aws_lb_target_group.api (in-place: health_check.path).
 cd infra/environments/staging
-terraform plan
-# Expected resources to mutate:
-#   ~ aws_lb_target_group.api          (in-place: health_check.path → /health/ready)
-#   +/- aws_ecs_task_definition.api    (replacement: BOOT_GATE_ENABLED added)
-#   +/- aws_ecs_task_definition.worker (replacement: BOOT_GATE_ENABLED added; service desired_count=0 means no actual rollout)
-
-# 5. Apply.
-terraform apply
+# Apply A:
+terraform apply  # after editing staging/main.tf to add extra_env
+# (run the update-service block from B above)
+# Apply B:
+terraform apply  # after editing modules/serving/main.tf for the path flip
 
 # 6. Post-apply: ALB health-check path flipped, boot gate visible in logs.
 aws elbv2 describe-target-groups --names mythrun-staging-api \
@@ -512,6 +574,20 @@ curl -fsS https://staging-api.mythrun.com/health/ready | jq .
 # 7. Beads close.
 bd close myth-nf3 myth-g6g myth-ccf
 ```
+
+## Round-3 follow-ups (v4)
+
+| Round-3 finding | Resolution |
+|---|---|
+| Coltrane C1: `vi.waitFor` deadlocks under fake timers | `worker.test.ts` requires `vi.useRealTimers()` in `beforeEach`. |
+| Coltrane C2: `process.exit` mock pattern wrong (throw-sentinel can't be caught inside `void shutdown(...)`) | Switched to `vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)` + assertion via `await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0))`. Mirrors `server.test.ts`. |
+| Coltrane H3: case 4 ambiguity ("a probe hangs" — singular vs all-three) | Clarified: ONE probe hangs, the other two return resolved stub promises so `Promise.all` settles after the timeout fires on the hung one. |
+| Coltrane H4: tsx-watch entry-point guard mismatch | Comment in `worker.ts` documents production-only invocation via `node dist/worker.js`; no `dev:worker` script exists. |
+| Coltrane H1/H5/M1/M2/M3: typing/EOPT rationale drift, `Promise<never>` snippet missing the explicit generic | Snippet updated to `new Promise<never>((_resolve, reject) => …)`. Other rationale-wording items left as-is (cosmetic). |
+| Mingus H1: CI race on `$LATEST_REV` between TF apply A and `update-service` | Step 3 now requires `gh run list --workflow Deploy --status in_progress --limit 5` first. Operator must wait for any in-flight Deploy run before proceeding. |
+| Mingus M2: Acceptance criteria step 3 still curls `/health/ready` (returns 503 by design pre-rollover) | Acceptance step 3 now only curls `/health`; documents that `/health/ready` is verified at step 6 (after the ALB flip + rollover). |
+| Mingus M4: Emergency rollback ordering — flip ALB back FIRST, not "optionally" | Rollback section reordered. Step 1 of rollback is now ALB-path-flip-back (when forward step 4 has already happened); steps 2–4 are env flip + apply + force-rollover. Conditional "if you're pre-step-4 of forward deploy, skip rollback step 1" added. |
+| Mingus H2/M1/M3: minor wording (deps flow assumption, plan-output formatting, worker rollout justification) | Acknowledged; left as cosmetic. |
 
 ## Round-2 follow-ups (v3)
 
