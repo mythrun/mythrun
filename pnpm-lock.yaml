@@ -64,6 +64,9 @@ importers:
       '@hpcc-js/wasm':
         specifier: ^2.18.0
         version: 2.33.2
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
     devDependencies:
       '@types/browser-sync':
         specifier: ^2.29.0
@@ -71,6 +74,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.20.0
       browser-sync:
         specifier: ^3.0.0
         version: 3.0.4
