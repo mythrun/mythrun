@@ -3,7 +3,7 @@
 **Date:** 2026-04-28
 **Linear:** MYT-35 (Platform milestone, due 2026-05-01)
 **Closes beads:** myth-nf3, myth-g6g, myth-ccf
-**Status:** v2 (post-Round-1 blind review by Andes / Atlas / Karakoram)
+**Status:** v3 (post-Round-2 blind review by Europa / Titan; Round-2 surfaced 2 CRITICAL + 4 HIGH that v2 missed, including a structural deploy-sequence bug from `ignore_changes [task_definition]`)
 **Author:** Claude (Miklos's instance)
 
 ## Goal
@@ -58,7 +58,7 @@ All true. MYT-35 is the wire-up that engages the gate.
 | 5 | **ALB target-group health-check path swaps to `/health/ready`** in this PR. |
 | 6 | **`HEALTHCHECK --start-period = 30s`** in the Dockerfile (was 5s) — local-dev relevance only. The production Fargate `startPeriod = 60` (`infra/modules/serving/main.tf:196`) is the real knob and is already correct. The Dockerfile bump keeps `docker compose up --wait` from giving up too early on a local boot-gate-on cold start. (Atlas Round-1 M4.) |
 | 7 | **Staging-only `BOOT_GATE_ENABLED=1`** via per-env `extra_env`. The serving module's worker container also receives this env (since it shares `common_env`), but `worker.ts` doesn't read `BOOT_GATE_ENABLED` — harmless. (Atlas Round-1 H1: clarified intent.) |
-| 8 | **Deploy ordering: code push first, terraform apply second** (Karakoram Round-1 H1: critical). The reverse ordering creates a 5–15-minute staging outage because the running OLD image lacks the `/health/ready` route, so an ALB path flip at that moment 404s every health check. Push-first means the new image with the route lands while ALB still polls `/health`; once the new image is healthy, terraform apply flips the ALB path against an image that already serves the route. |
+| 8 | **Deploy ordering: 5-step sequence** (Titan Round-2 C1 + H2 + Karakoram Round-1 H1). The serving module's ECS services have `lifecycle.ignore_changes = [task_definition]` (`infra/modules/serving/main.tf:341–344, 377`) so terraform DOES NOT roll the service onto a new task-def revision when env vars change — terraform registers the new revision but the service keeps pointing at whatever CI last deployed. To engage the boot gate AND swap the ALB path safely, the sequence is: (1) push code → CI deploys; (2) TF apply A registers a new task-def with `BOOT_GATE_ENABLED=1` (no ALB path change yet); (3) `aws ecs update-service --force-new-deployment` rolls the service onto the latest revision (which is the gate-enabled one); (4) TF apply B flips ALB target-group path to `/health/ready` against an already-rolled gate-on container; (5) verify. See "Deploy sequence" section. |
 | 9 | **`error: string \| undefined`** on `ProbeResult` with explicit `error: undefined` on success — required under `tsconfig.exactOptionalPropertyTypes: true`. (Andes Round-1 C1.) |
 | 10 | **Acceptance criteria does NOT pattern-match a literal "Plan: 0 to add, 3 to change, 0 to destroy" line.** Task-def env-var changes against `lifecycle { create_before_destroy = true }` produce a replacement (`+/-`), NOT an in-place change (`~`). The actual plan is closer to **2 add + 1 change + 2 destroy**. Acceptance enumerates expected resources and the operator eyeballs the plan; we don't grep on the count line. (Atlas Round-1 C1.) |
 
@@ -196,7 +196,13 @@ export async function main(): Promise<void> {
 
 // Conditional invocation — only run main() when this file is the entry
 // point. Tests import `main` and execute under their own control.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Use pathToFileURL for cross-platform correctness (handles spaces,
+// unicode, drive-letter casing on Windows). Europa Round-2 C2.
+import { pathToFileURL } from 'node:url'
+const isEntryPoint =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+if (isEntryPoint) {
   await main()
 }
 ```
@@ -208,20 +214,33 @@ Four cases against `buildApp(stubDeps)` with stub deps whose `query`/`ping` reso
 1. **all probes succeed** → 200 + `{ ready: true }`.
 2. **pg.query rejects** → 503 + `{ ready: false, failed: ['pg'] }`.
 3. **pg + redis-batch reject** → 503 + `failed` contains both names (order-insensitive — assert via `.sort()`).
-4. **a probe hangs > 1s** → with `vi.useFakeTimers()`, advance to 1001ms → handler returns 503 with `failed` including the hung probe.
+4. **a probe hangs > 1s** → with `vi.useFakeTimers()`, kick off the request, then `await vi.advanceTimersByTimeAsync(1001)` (NOT the synchronous `advanceTimersByTime` — Europa Round-2 H2: the async variant is required to drain microtasks between the timer firing and the handler returning), then `await` the inject promise → handler returns 503 with `failed` including the hung probe.
 
-Test helper: `__tests__/helpers/stub-deps.ts` exports `makeStubDeps({ pgQuery?, ping1?, ping2? })` so future tests don't reinvent the mock surface (Andes Round-1 M2).
+Test helper: `__tests__/helpers/stub-deps.ts` exports `makeStubDeps({ pgQuery?, ping1?, ping2? })` so future tests don't reinvent the mock surface (Andes Round-1 M2). The helper returns shape-only stubs; it does NOT import from `redis/client.ts` or `db/postgres.ts` — a real client at test-import time would hang CI on connect-refused (Titan Round-2 H1).
 
 ### `backend/src/__tests__/worker.test.ts`
 
-Imports `main` directly (not the module — that would execute the conditional invocation in some test runners). Mocks `loadEnv` + `createRedisClient` so `ping`/`quit` resolve. Asserts `console.log('worker started')` is called. Sends `process.emit('SIGTERM', 'SIGTERM')`, asserts `quit` is awaited and `process.exit(0)` is called (mock `process.exit` to throw a sentinel error so the test can catch it instead of actually exiting).
+Imports `main` directly (not the whole module — the cross-platform entry-point guard is best-effort and tests should not rely on it being false). Mocks `loadEnv` + `createRedisClient` so `ping`/`quit` resolve. Asserts `console.log('worker started')` is called. Sends `process.emit('SIGTERM', 'SIGTERM')`, asserts `quit` is awaited and `process.exit(0)` is called (mock `process.exit` to throw a sentinel error so the test can catch it instead of actually exiting).
+
+**Listener hygiene** (Europa Round-2 H3): `main()` registers `process.on('SIGTERM', …)` + `process.on('SIGINT', …)` on the real Vitest worker process. Without cleanup these leak across tests. Each test that calls `main()` MUST register an `afterEach`:
+
+```ts
+afterEach(() => {
+  process.removeAllListeners('SIGTERM')
+  process.removeAllListeners('SIGINT')
+})
+```
+
+The `main()` invocation is itself non-awaitable (blocks forever on `Promise<never>`). Pattern: `void main()`, then `await vi.waitFor(() => expect(loggedStartup).toBe(true))` to confirm it reached the log line, then `process.emit('SIGTERM', 'SIGTERM')` with the `process.exit` mock catching the exit.
 
 ### `backend/Dockerfile` change
+
+The actual file uses `wget`, not `curl` (alpine ships wget by default; curl isn't installed). The diff preserves it (Titan Round-2 M2):
 
 ```diff
 -HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
 +HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
-   CMD curl -f http://localhost:3000/health || exit 1
+   CMD wget --quiet --tries=1 --spider http://localhost:3000/health || exit 1
 ```
 
 The HEALTHCHECK command stays at `/health` (liveness). **In Fargate this is overridden by the task-def `healthCheck` block** — the bump only matters for local `docker compose up --wait` waiting longer for the boot-gate-enabled cold start. Production is governed by `infra/modules/serving/main.tf:196` which is already at `startPeriod = 60`.
@@ -279,19 +298,81 @@ module "serving" {
 }
 ```
 
-## Deploy sequence (load-bearing — DO NOT REORDER)
+## Deploy sequence (load-bearing — 5 steps, DO NOT REORDER)
 
-1. **Code push to `main`.** `pnpm test` + lint + typecheck pass locally; push. The MYT-28 deploy workflow builds the new image (now containing `/health/ready` route + `worker.ts` + Dockerfile change) and deploys a new ECS task-def revision. **At this point: BOOT_GATE_ENABLED is still unset in the deployed task-def — gate stays default OFF, fallbackStart runs.** ALB still health-checks `/health` (terraform hasn't applied yet), the new container responds 200. ALB target stays healthy. Verify via:
-   ```bash
-   curl -fsS https://staging-api.mythrun.com/health           # expect: {"status":"ok"}
-   curl -fsS https://staging-api.mythrun.com/health/ready     # expect: {"ready":true}  -- new route works
-   ```
-2. **`terraform -chdir=infra/environments/staging plan`.** Review the diff: `aws_lb_target_group.api` in-place modify (`health_check.path`); `aws_ecs_task_definition.api` and `aws_ecs_task_definition.worker` BOTH show as `+/- replacement` (NOT `~ in-place`) because of `lifecycle { create_before_destroy = true }` + `essential = true` on both containers. Surface the plan to operator; do NOT pattern-match a literal change-count line.
-3. **`terraform apply`.** Two effects in one apply:
-   - ALB target-group `health_check.path: /health → /health/ready`. The currently-running container already has this route from step 1 → no health-check disruption.
-   - Both task-defs get a new revision with `BOOT_GATE_ENABLED=1`. ECS rolls API service to the new revision. New container starts with gate ON → `waitFor` runs → succeeds (DB exists from myth-ml8) → app.listen → ALB sees `/health/ready` 200 → traffic flows. `deployment_minimum_healthy_percent = 100` keeps the old task serving until the new one is healthy.
-   - Worker service gets a new task-def revision but `desired_count = 0` so nothing actually rolls (Karakoram Round-1 L2: scaffold ships, doesn't run yet — by design).
-4. **Verify boot gate engaged.** CloudWatch shows `✓ Postgres ready / ✓ Redis (realtime) ready / ✓ Redis (batch) ready` lines in the new task's logs. ALB target-group reports `Healthy` against the new task.
+This is more involved than v1/v2 implied because the serving module's ECS services have `lifecycle.ignore_changes = [task_definition]` — terraform registers task-def revisions but the live service stays on whatever CI last deployed. To engage the boot gate AND swap the ALB path without an outage, two TF applies sandwich an `aws ecs update-service` call.
+
+**Why not just one TF apply?** If the ALB path flip and the env-var change land together, terraform registers the new revision (with BOOT_GATE_ENABLED=1) but the service keeps running the old revision (`fallbackStart`). The old container's `/health/ready` returns 503 (the stub Pool throws synchronously by design — `repo unavailable: BOOT_GATE_ENABLED is off`). ALB now polls `/health/ready` against a 503 → unhealthy after 45s → outage. Two applies separated by an explicit service rollover avoids this.
+
+**Step 1 — Push code to `main`.** `pnpm test` + `pnpm typecheck` + `pnpm lint` pass locally. `git push origin main`. CI builds the new image (now containing `/health/ready` route + `worker.ts` + the Dockerfile change) and deploys a new ECS task-def revision. **BOOT_GATE_ENABLED is still unset → `fallbackStart` runs → `/health/ready` returns 503 in this state. That is expected and harmless because ALB is still polling `/health` (path hasn't flipped yet).** Verify only `/health`:
+
+```bash
+curl -fsS https://staging-api.mythrun.com/health   # expect: {"status":"ok"}
+# Do NOT curl /health/ready yet — fallbackStart's stub Pool throws by design.
+```
+
+**Step 2 — TF apply A (env-var only).** Edit `infra/environments/staging/main.tf` to add `extra_env = [{ name = "BOOT_GATE_ENABLED", value = "1" }]` on `module "serving"`. Do NOT yet edit `infra/modules/serving/main.tf`'s ALB `health_check.path`.
+
+```bash
+cd infra/environments/staging
+terraform plan
+# Expected:
+#   +/- aws_ecs_task_definition.api    (replacement: BOOT_GATE_ENABLED added; create_before_destroy)
+#   +/- aws_ecs_task_definition.worker (replacement: BOOT_GATE_ENABLED added; service desired_count=0 so no actual rollout)
+# (No aws_lb_target_group change yet — that's step 4.)
+terraform apply
+```
+
+After this apply: new task-def revisions are registered. The live service is **still running the old revision** because of `lifecycle.ignore_changes = [task_definition]`. Nothing observable changes yet.
+
+**Step 3 — Force the service onto the new revision.**
+
+```bash
+# Get the latest registered revision number (the one TF just produced).
+LATEST_REV=$(aws ecs describe-task-definition \
+  --task-definition mythrun-staging-api \
+  --query 'taskDefinition.revision' --output text)
+echo "Rolling onto revision $LATEST_REV"
+
+aws ecs update-service \
+  --cluster mythrun \
+  --service mythrun-staging-api \
+  --task-definition "mythrun-staging-api:$LATEST_REV" \
+  --force-new-deployment
+
+# Wait for the rollover to complete.
+aws ecs wait services-stable --cluster mythrun --services mythrun-staging-api
+```
+
+The new task starts with `BOOT_GATE_ENABLED=1`, runs the boot gate (`waitFor` against pg + redis-realtime + redis-batch), succeeds, calls `app.listen`. CloudWatch will now show:
+
+```
+✓ Postgres ready
+✓ Redis (realtime) ready
+✓ Redis (batch) ready
+```
+
+ALB is still polling `/health`, sees 200, target stays healthy. Now `/health/ready` also returns 200 because the boot gate succeeded and the deps are real.
+
+```bash
+# Confirm /health/ready is now answering 200 from the new container.
+curl -fsS https://staging-api.mythrun.com/health/ready | jq .
+# Expect: { "ready": true }
+```
+
+**Step 4 — TF apply B (ALB path flip).** Edit `infra/modules/serving/main.tf`: change `aws_lb_target_group.api.health_check.path` from `/health` to `/health/ready`. (And update the stale `bead myth-nf3` comment on the same line to cite MYT-35.)
+
+```bash
+cd infra/environments/staging
+terraform plan
+# Expected:
+#   ~ aws_lb_target_group.api  (in-place: health_check.path → /health/ready)
+terraform apply
+```
+
+ALB now polls `/health/ready` against a service that's already serving 200 there. No flap.
+
+**Step 5 — Verify.** See Acceptance criteria. Force a transient probe failure (point pg at a bogus host briefly via test) and confirm `aws logs filter-log-events --filter-pattern '"health-ready probe failed"'` returns the structured log line — proves the post-week false-positive review query actually works (Europa Round-2 H1).
 
 ## First-time operator runbook (Karakoram Round-1 H2)
 
@@ -321,18 +402,23 @@ Two surfaces to watch:
 
 If the boot gate is genuinely failing for a reason that can't be quickly diagnosed:
 
-```bash
-# 1. Flip BOOT_GATE_ENABLED back OFF in staging.
-sed -i '' 's/{ name = "BOOT_GATE_ENABLED", value = "1" }/{ name = "BOOT_GATE_ENABLED", value = "0" }/' infra/environments/staging/main.tf
+1. **Edit `infra/environments/staging/main.tf`** — change the `extra_env` value `"1"` to `"0"`. (Avoid `sed -i` invocations in incident playbooks: BSD `sed -i ''` and GNU `sed -i` differ; copy-paste fails on whichever shell you don't usually use. Editor.)
+2. **Apply:** `terraform -chdir=infra/environments/staging apply`. Registers a new task-def revision with the gate disabled.
+3. **Force-rollover the service** (because of `ignore_changes [task_definition]`):
+   ```bash
+   LATEST_REV=$(aws ecs describe-task-definition \
+     --task-definition mythrun-staging-api \
+     --query 'taskDefinition.revision' --output text)
+   aws ecs update-service \
+     --cluster mythrun \
+     --service mythrun-staging-api \
+     --task-definition "mythrun-staging-api:$LATEST_REV" \
+     --force-new-deployment
+   aws ecs wait services-stable --cluster mythrun --services mythrun-staging-api
+   ```
+4. **Optionally, flip the ALB path back** to `/health` (edit `modules/serving/main.tf`, apply). Required if `/health/ready` is the failure surface — without it, ALB stays unhealthy on the gate-off container too because `fallbackStart`'s stub Pool throws on `query`.
 
-# 2. Apply.
-terraform -chdir=infra/environments/staging apply
-
-# 3. Optionally, also flip ALB health-check path back to /health for the duration.
-#    (Manually edit modules/serving/main.tf or use a -target apply.)
-```
-
-This restores the MYT-28 fallback behavior. Investigate, fix, re-apply.
+This restores MYT-28 fallback behavior. Investigate, fix, re-engage with the 5-step deploy.
 
 ### What's NOT affected during a boot-gate-failure rollback
 
@@ -374,7 +460,7 @@ The cost of conflating them: a Redis blip → 30 seconds of unhealthy → ECS re
 
 | Risk | Mitigation |
 |---|---|
-| Boot gate fails on first staging deploy → ECS rolls back, alarm spam | `waitFor` retries with backoff; transient cold-start blips self-heal. Hard failure surfaces with a specific dep name in CloudWatch. **Recovery: emergency rollback** flips `BOOT_GATE_ENABLED=0` and re-applies (see runbook). Bad-deploy-detection window: container `HEALTHCHECK` `startPeriod=60` + `interval=30s` × `retries=3` = ~2.5 min, then ECS task replacement; circuit-breaker fires after ~10 failed task starts × ~30–60s each = **5–10 min total** before automatic rollback. Acceptable for staging — no real users. |
+| Boot gate fails on first staging deploy → ECS rolls back, alarm spam | `waitFor` retries with backoff; transient cold-start blips self-heal. Hard failure surfaces with a specific dep name in CloudWatch. **Recovery: emergency rollback** flips `BOOT_GATE_ENABLED=0` and re-applies (see runbook). Bad-deploy-detection window: container `HEALTHCHECK` `startPeriod=60` + `interval=15s` × `retries=3` = **~1.75 min** before ECS replaces the task (Titan Round-2 H3 corrected from prior `interval=30`); circuit-breaker fires after ~10 failed task starts × ~30–60s each = **~5–10 min total** before automatic rollback. CI's `wait-for-service-stability: true` + 15-min job timeout backstops this on the deploy-action side. Acceptable for staging — no real users. |
 | `/health/ready` 1s probe timeout is too tight under load | Worst-case healthy-DB probe time at <100 req/min is single-digit ms. If false-positive 503s appear, the `app.log.warn` lines are grep-able: `aws logs filter-log-events --log-group-name /ecs/mythrun-staging-api --filter-pattern '"health-ready probe failed"'`. Calendar reminder one week post-deploy to inspect. If non-trivial false-positive rate, bump to 2s and revisit. |
 | ALB swap to `/health/ready` causes brief unhealthy-flap during deploy | Decision §8 (deploy ordering) eliminates this: the new image with the route lands BEFORE the ALB path flip. Combined with `health_check_grace_period_seconds = 120` (NOT 60) and `--start-period=30s` local-dev / `startPeriod=60` Fargate, cold containers have ample time. |
 | Worker container exits silently and ECS doesn't notice | `essential = true` (verified at `infra/modules/serving/main.tf:219`) → container exit → task exit → service restart. With `desired_count = 0` today, scaffold doesn't run; mitigation engages when Prep Pipeline bumps the count. |
@@ -426,6 +512,24 @@ curl -fsS https://staging-api.mythrun.com/health/ready | jq .
 # 7. Beads close.
 bd close myth-nf3 myth-g6g myth-ccf
 ```
+
+## Round-2 follow-ups (v3)
+
+| Round-2 finding | Resolution |
+|---|---|
+| Titan C1: ECS service `lifecycle.ignore_changes = [task_definition]` means TF apply does NOT roll the service onto a new revision | Deploy sequence rewritten as 5 steps: push code → TF apply A (env var) → `update-service --force-new-deployment` → TF apply B (ALB path) → verify. Two TF applies sandwich an explicit service rollover. |
+| Titan H2: `/health/ready` returns 503 in step 1 because `fallbackStart`'s stub Pool throws synchronously by design | Step 1 verification dropped the `/health/ready` curl. Only `/health` is checked while gate is OFF. Documented that step-1 503 on `/health/ready` is expected and harmless (ALB still polls `/health`). |
+| Titan H3: Risks-table arithmetic uses `interval=30` but actual is `interval=15` | Corrected to `~1.75 min` (60+15×3) for the container watchdog. Also explicit about CI's `wait-for-service-stability` backstop. |
+| Titan M1: `sed -i ''` is BSD-only, breaks GNU sed | Emergency rollback restated as "edit the file" — no shell command for the substitution. The terraform + AWS CLI commands are portable. |
+| Titan M2: spec showed `curl` in HEALTHCHECK; actual file uses `wget` | Diff updated to preserve `wget`. |
+| Titan L4: Round-1-resolutions table was author-claimed before Round 2 verified | Round-1 follow-ups still listed below as the v2-author's resolutions; Round-2 then independently re-reviewed and the present (v3) section captures what actually held vs needed re-fixing. |
+| Europa C1: untyped `new Promise((_, reject) => …)` resolver | Use `new Promise<never>((_resolve, reject) => …)` with explicit `never` generic; the unused-arg rule's leading-underscore convention saves the `_resolve` lint. |
+| Europa C2: `import.meta.url === \`file://${process.argv[1]}\`` is platform-fragile | Use `pathToFileURL(process.argv[1]).href` from `node:url`. Updated in Components above. |
+| Europa H1: CloudWatch filter pattern unverified against rendered pino JSON | Step 5 of the deploy sequence forces a transient probe failure post-deploy and confirms the filter query returns. |
+| Europa H2: `vi.advanceTimersByTime` (sync) won't drain microtasks between timer-fire and handler-return | Test plan now explicitly requires `vi.advanceTimersByTimeAsync` (async). |
+| Europa H3: `process.on('SIGTERM', …)` registration leaks across Vitest tests | `afterEach` requirement spelled out; `main()` is invoked via `void main()` + `vi.waitFor(...)` rather than awaited (it blocks forever). |
+| Europa M1: double-iteration in handler (filter + log loop) | Acknowledged; trivial; left as-is for clarity. |
+| Europa M2: `probe()` swallows programming errors as if they're dep failures | Acknowledged in the Error handling section; trade-off accepted (probe-internal errors logged identically to dep failures; future work could split a "programming error" surface). |
 
 ## Round-1 follow-ups (v2)
 
