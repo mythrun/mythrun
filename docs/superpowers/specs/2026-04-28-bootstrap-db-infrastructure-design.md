@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-28
 **Bead:** myth-9qgb
-**Status:** v2 (post-Round-1 blind review by Lagavulin / Hibiki / Ardbeg)
+**Status:** v3 (post-Round-2 blind review by Obsidian / Tourmaline; severity-based stop — no CRITICAL remaining)
 **Author:** Claude (Miklos's instance)
 
 ## Goal
@@ -24,7 +24,7 @@ But that task definition was never provisioned. MYT-30 shipped the cluster, the 
 **In scope:**
 
 1. Container image `mythrun-bootstrap-db` (alpine + bash + aws-cli v2 + postgresql16-client + jq + ca-certificates + the bootstrap script as ENTRYPOINT).
-2. ECR repository `mythrun-bootstrap-db` (separate from `mythrun`) with a 5-image lifecycle policy.
+2. ECR repository `mythrun-bootstrap-db` (separate from `mythrun`) with a 20-image lifecycle policy. (Obsidian Round-2 M4: keep-5 risks expiring the currently-pinned `bootstrap_image_tag` after a few weeks of script edits, producing a future `CannotPullContainerError` on a task-def that hasn't changed. Bumped to 20; cost is trivial — alpine images are ~50MB.)
 3. Path-triggered GitHub Actions workflow that builds and pushes the image on changes to the script, the Dockerfile, or the workflow itself.
 4. Terraform module `infra/modules/bootstrap-db/`: ECS task definition (Fargate, 256/512), task-execution role, task role with explicit ARN-scoped IAM, dedicated egress-only security group, ingress rule on the RDS SG referencing the bootstrap SG, and a CloudWatch log group with 30-day retention.
 5. Wiring in `infra/environments/shared/main.tf` (ECR repo + lifecycle) and `infra/environments/staging/main.tf` (the bootstrap-db module instantiation, with the staging RDS-password secret ARN and master-secret ARN passed in).
@@ -49,7 +49,7 @@ These were settled during brainstorming and (for the items reviewers contested) 
 | # | Decision | Rationale |
 |---|----------|-----------|
 | 1 | **Build pipeline** is a dedicated path-triggered GitHub Actions workflow (`.github/workflows/bootstrap-db-build.yml`), separate from `deploy.yml`. | Bootstrap-image cadence is decoupled from app deploys. Path-triggered means it only fires when a relevant file changes. |
-| 2 | **ECR repo** is a new dedicated `mythrun-bootstrap-db` (IMMUTABLE), not a tag-prefix on `mythrun` (MUTABLE). | Different mutability + lifecycle policies; different access patterns. |
+| 2 | **ECR repo** is a new dedicated `mythrun-bootstrap-db` (IMMUTABLE), not a tag-prefix on `mythrun` (MUTABLE). Lifecycle keeps the last 20 images. | Different mutability + lifecycle policies; different access patterns. Keep-20 (vs keep-5) is sized so a few weeks of routine script edits cannot expire the currently-pinned `bootstrap_image_tag` out from under TF state (Obsidian Round-2 M4). |
 | 3 | **Terraform module** is a new `infra/modules/bootstrap-db/`. | `modules/data` is shared-singleton; `modules/serving` is the per-env app stack. Bootstrap is its own per-env operational concern. |
 | 4 | **Image base** is `alpine:3.20` pulled via the existing ECR pull-through cache (`ecr-public/docker/library/alpine:3.20`). | apk has the package set we need; pull-through cache avoids Docker Hub rate limits. |
 | 5 | **Image tagging** is `bootstrap-db-${git-sha}-${run-attempt}`, no `:latest`. Pinned via TF variable `bootstrap_image_tag`. | SHA + attempt: traceable to source; safe under workflow re-runs against an IMMUTABLE repo (Hibiki H1: same SHA + cancelled push had no escape hatch in v1). The `-1` suffix on the canonical first run is the spec'd expectation. |
@@ -108,20 +108,30 @@ ARG ECR_ACCOUNT_ID
 FROM ${ECR_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecr-public/docker/library/alpine:3.20
 
 # - bash: bootstrap-databases.sh uses bash-only syntax (set -uo pipefail, [[ ]])
-# - aws-cli: read RDS master secret + write app password secret
+# - aws-cli-v2: alpine 3.20 community ships v1 as `aws-cli` and v2 as
+#   `aws-cli-v2`. We want v2 (faster start, better defaults, current AWS
+#   stewardship) — `apk add aws-cli` would silently install v1 and the spec's
+#   v2 claim would be a lie. The smoke-check `RUN` below fails the build if
+#   the installed binary doesn't self-identify as aws-cli/2 (Obsidian M6 +
+#   Tourmaline M3 convergence).
 # - postgresql16-client: psql to RDS (matches RDS engine major)
 # - jq: parse master-secret JSON
 # - ca-certificates: TLS to AWS APIs and rds.force_ssl=1
-# Versions intentionally unpinned. Image lifecycle keeps the last 5; alpine
-# 3.20 minor security bumps are a feature, not a regression risk, on a
-# manually-invoked operator task that never runs unattended.
+# Versions intentionally unpinned beyond major. Image lifecycle keeps the
+# last 20; alpine 3.20 minor security bumps are a feature, not a regression
+# risk, on a manually-invoked operator task that never runs unattended.
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
       bash \
-      aws-cli \
+      aws-cli-v2 \
       postgresql16-client \
       jq \
       ca-certificates
+
+# Belt-and-suspenders: fail the build if the apk repo ever drifts and gives
+# us v1 under a different package name. Also prints the version into build
+# logs for forensic clarity.
+RUN aws --version 2>&1 | tee /dev/stderr | grep -q 'aws-cli/2'
 
 WORKDIR /app
 COPY infra/scripts/bootstrap-databases.sh /app/bootstrap-databases.sh
@@ -132,6 +142,8 @@ RUN chmod +x /app/bootstrap-databases.sh
 # ["--env","staging","--verify"].
 ENTRYPOINT ["/bin/bash", "/app/bootstrap-databases.sh"]
 ```
+
+> **Implementation note**: before merging the Dockerfile, verify the package name on alpine 3.20 with `docker run --rm alpine:3.20 apk search aws-cli` (expects to see `aws-cli-v2-2.x.y` in the output). If the package name has drifted, switch to `apk add aws-cli` and remove the v2 smoke check, OR install the static binary from `https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip` (heavier image, ~80MB add). The v2-or-v1 functional surface is the same for what this script uses (`secretsmanager get-secret-value` / `put-secret-value` / `get-random-password` / `describe-secret`).
 
 The `# hadolint ignore=DL3018` comment suppresses the apk-version-pin warning inline for this Dockerfile only — Hibiki H2's recommendation. Combined with `failure-threshold: error` in the workflow, hadolint warnings still surface but aren't blocking, and DL3018 specifically is muted on the line where it would otherwise red-light every build.
 
@@ -169,6 +181,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: staging
+    # IMAGE_TAG is computed once per job from contexts that don't mutate
+    # mid-run, so all steps reference the same value (Tourmaline M2: avoid
+    # three independent re-derivations of the same expression).
+    env:
+      IMAGE_TAG: bootstrap-db-${{ github.sha }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
@@ -203,7 +220,6 @@ jobs:
       - name: Build image
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          IMAGE_TAG: bootstrap-db-${{ github.sha }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           ACCOUNT_ID="${REGISTRY%%.*}"
@@ -221,12 +237,9 @@ jobs:
       - name: Push image
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          IMAGE_TAG: bootstrap-db-${{ github.sha }}-${{ github.run_attempt }}
         run: docker push "$REGISTRY/$ECR_REPO:$IMAGE_TAG"
 
       - name: Print operator bump command
-        env:
-          IMAGE_TAG: bootstrap-db-${{ github.sha }}-${{ github.run_attempt }}
         run: |
           # Print the literal one-line replacement the operator should put
           # into infra/environments/staging/terraform.tfvars. No <placeholders>.
@@ -253,7 +266,7 @@ Append after the existing `aws_ecr_repository.mythrun` block:
 # ======== Bootstrap-DB ECR Repository ========
 # Separate from `mythrun` because:
 #   - tag policy is IMMUTABLE here (one tag per <git-sha>-<run-attempt>)
-#   - lifecycle keeps 5 images instead of 50 (cadence is monthly, not per-PR)
+#   - lifecycle keeps 20 images instead of 50 (cadence is monthly, not per-PR)
 #   - access pattern is operator-pull, not service-pull
 # Tag-immutability + ${run_attempt} suffix means workflow re-runs always
 # succeed (Hibiki H1).
@@ -291,12 +304,12 @@ resource "aws_ecr_lifecycle_policy" "bootstrap_db" {
       },
       {
         rulePriority = 2
-        description  = "Keep 5 most recent bootstrap-db-* tagged images"
+        description  = "Keep 20 most recent bootstrap-db-* tagged images"
         selection = {
           tagStatus      = "tagged"
           tagPatternList = ["bootstrap-db-*"]
           countType      = "imageCountMoreThan"
-          countNumber    = 5
+          countNumber    = 20
         }
         action = { type = "expire" }
       },
@@ -305,7 +318,7 @@ resource "aws_ecr_lifecycle_policy" "bootstrap_db" {
 }
 ```
 
-(Lagavulin L3: narrowed pattern from `["*"]` to `["bootstrap-db-*"]` so a rogue tag-push doesn't bypass the keep-5 rule.)
+(Lagavulin L3: narrowed pattern from `["*"]` to `["bootstrap-db-*"]` so a rogue tag-push doesn't bypass the keep-20 rule.)
 
 Append to `infra/environments/shared/outputs.tf`:
 
@@ -527,14 +540,15 @@ resource "aws_ecs_task_definition" "bootstrap" {
     essential = true
 
     # No `command` here — the operator's run-task --overrides supplies it.
-    # Environment carries the wiring the script's required-env-var contract
-    # expects. APP_SECRET_ID passed for symmetry with RDS_MASTER_SECRET_ARN
-    # so a future env-prefix rename doesn't silently break the script's
-    # name-resolution → IAM-policy-ARN match.
+    # Environment carries only what the script's required-env-var contract
+    # actually reads. The script computes its own APP_SECRET_ID locally as
+    # `mythrun/${ENV}/rds-password`; passing it as an env var would be
+    # ignored (Tourmaline R2 H1: dead-code injection in v2 was a false
+    # symmetry argument). The IAM policy on the task role ARN-pins the same
+    # secret name → ARN that the script resolves to.
     environment = [
       { name = "AWS_REGION",            value = "us-east-1" },
       { name = "RDS_MASTER_SECRET_ARN", value = var.rds_master_secret_arn },
-      { name = "APP_SECRET_ID",         value = var.rds_password_secret_arn },
     ]
 
     logConfiguration = {
@@ -594,6 +608,13 @@ output "task_role_arn" {
 # -raw` is fragile (Ardbeg C1 — first-round spec had a literal MODE_FLAG
 # token that the operator hit "unknown arg" on). Each output is fully formed
 # and pasteable. The shared base composition lives in a local.
+#
+# Operators MUST invoke these via `eval` (or `bash -c`), not paste raw —
+# the `--overrides '{...}'` and `--network-configuration 'awsvpc...'`
+# segments are single-quote-wrapped inside the string, and the shell
+# re-parses those quotes only when the string passes through `eval`. The
+# output description on each output below repeats this requirement so the
+# wiki page renders it verbatim (Obsidian R2 M2).
 
 locals {
   _network_config = format(
@@ -622,7 +643,7 @@ output "run_task_verify" {
     local._network_config,
     format("'%s'", jsonencode({ containerOverrides = [{ name = "bootstrap", command = local._modes.verify }] })),
   )
-  description = "Read-only mode: prints OK / MISSING / DB_ONLY / SECRET_MISSING. Always safe."
+  description = "Read-only mode: prints OK / MISSING / DB_ONLY / SECRET_MISSING. Always safe. Invoke via `eval \"$(terraform output -raw bootstrap_db_run_task_verify)\"` — single-quote wrapping requires shell re-parse."
 }
 
 output "run_task_secret_only" {
@@ -633,7 +654,7 @@ output "run_task_secret_only" {
     local._network_config,
     format("'%s'", jsonencode({ containerOverrides = [{ name = "bootstrap", command = local._modes.secret_only }] })),
   )
-  description = "Rotates app password + writes to Secrets Manager. Use when --verify prints SECRET_MISSING."
+  description = "Rotates app password + writes to Secrets Manager. Use when --verify prints SECRET_MISSING. Invoke via `eval`."
 }
 
 output "run_task_reset_password" {
@@ -644,7 +665,7 @@ output "run_task_reset_password" {
     local._network_config,
     format("'%s'", jsonencode({ containerOverrides = [{ name = "bootstrap", command = local._modes.reset_password }] })),
   )
-  description = "Alias of --secret-only. Use when the stored secret is known-wrong (drift), not just missing."
+  description = "Alias of --secret-only. Use when the stored secret is known-wrong (drift), not just missing. Invoke via `eval`."
 }
 
 output "run_task_user_only" {
@@ -655,7 +676,7 @@ output "run_task_user_only" {
     local._network_config,
     format("'%s'", jsonencode({ containerOverrides = [{ name = "bootstrap", command = local._modes.user_only }] })),
   )
-  description = "DB exists, user doesn't: create user + write secret. Use when --verify prints DB_ONLY."
+  description = "DB exists, user doesn't: create user + write secret. Use when --verify prints DB_ONLY. Invoke via `eval`."
 }
 
 output "run_task_default" {
@@ -666,7 +687,7 @@ output "run_task_default" {
     local._network_config,
     format("'%s'", jsonencode({ containerOverrides = [{ name = "bootstrap", command = local._modes.default }] })),
   )
-  description = "Default mode: create DB + user + secret. Use when --verify prints MISSING."
+  description = "Default mode: create DB + user + secret. Use when --verify prints MISSING. Invoke via `eval`."
 }
 ```
 
@@ -796,16 +817,16 @@ Outline (full body authored at implementation, all reviewer-flagged sections exp
 | `SECRET_MISSING` | `bootstrap_db_run_task_secret_only` | DB + user exist; rotate password + write secret |
 
 - **First-time setup runbook** — steps 1–5 below.
-- **Failure-modes diagnostic table** (Ardbeg H2):
+- **Failure-modes diagnostic table** — two columns: ECS `stoppedReason` (from `describe-tasks`) and container-log evidence (from CloudWatch). Substrings drift across AWS releases; match by substring, not literal:
 
-| `stoppedReason` substring | Likely cause | First check |
-|---|---|---|
-| `CannotPullContainerError` | Image tag pinned in TF doesn't exist in ECR (stale `bootstrap_image_tag` or build hadn't completed) | `aws ecr describe-images --repository-name mythrun-bootstrap-db --image-ids imageTag="$TAG"` |
-| `ResourceInitializationError: ... secrets or registry auth` | Task-execution role missing ECR pull or KMS decrypt | Check `aws_iam_role.task_execution` policy attachments |
-| `Essential container ... exited with code 1` + log line `RDS master secret missing 'X'` | Master secret payload is malformed or rotated to an unexpected schema | `aws secretsmanager get-secret-value --secret-id <master-arn>` and inspect the JSON shape |
-| `Essential container ... exited with code 1` + log line `psql: could not connect` | RDS SG ingress rule didn't apply, or RDS endpoint changed | `aws ec2 describe-security-groups --group-ids $RDS_SG_ID` looking for an ingress from the bootstrap SG |
-| Task stays in `PROVISIONING` >2 min then stops | Subnets have no NAT route OR SG egress 443 missing | Check route table on the subnets; check `bootstrap_https` egress rule |
-| `Essential container exited with code 2` + `unknown arg` | The run-task command used a placeholder token instead of one of the five discrete outputs | Use `terraform output -raw bootstrap_db_run_task_verify` (or one of the four other discrete outputs), don't substitute strings |
+| ECS `stoppedReason` substring | Container log line | Likely cause | First check |
+|---|---|---|---|
+| `CannotPullContainerError` | (no container log — task never started) | Image tag pinned in TF doesn't exist in ECR (stale `bootstrap_image_tag` or build hadn't completed) | `aws ecr describe-images --repository-name mythrun-bootstrap-db --image-ids imageTag="$TAG"` |
+| `ResourceInitializationError: ... secrets or registry auth` | (no container log) | Task-execution role missing ECR pull or KMS decrypt | Check `aws_iam_role.task_execution` policy attachments |
+| `Essential container in task exited` (exit code 1) | `RDS master secret missing 'X'` | Master secret payload is malformed or rotated to an unexpected schema | `aws secretsmanager get-secret-value --secret-id <master-arn>` and inspect the JSON shape |
+| `Essential container in task exited` (exit code 1) | `psql: could not connect` | RDS SG ingress rule didn't apply, or RDS endpoint changed | `aws ec2 describe-security-groups --group-ids $RDS_SG_ID` looking for an ingress from the bootstrap SG |
+| Task stuck in `PROVISIONING` for >2 min then stops with `Network Configuration` error | (no container log) | Subnets have no NAT route OR SG egress 443 missing | Check route table on the subnets; check `bootstrap_https` egress rule |
+| `Essential container in task exited` (exit code 2) | `unknown arg: MODE_FLAG` (or any string starting with `unknown arg:`) | The run-task command had a placeholder token instead of one of the five discrete outputs | Use `terraform output -raw bootstrap_db_run_task_verify` (or one of the four other discrete outputs); don't string-substitute |
 
 - **Recovery from partial failure during `--secret-only`** (Ardbeg H3):
 
@@ -855,7 +876,14 @@ RUN_TASK_CMD=$(terraform output -raw bootstrap_db_run_task_verify)
 TASK_ARN=$(eval "$RUN_TASK_CMD" --query 'tasks[0].taskArn' --output text)
 echo "Task: $TASK_ARN"
 
-# Wait for the task to finish (cold-start can be 60–120s).
+# Wait for the task to finish (cold-start can be 60–120s; cold pull-through
+# cache plus first-pull alpine import can stretch this further).
+# `wait tasks-stopped` polls every 6s for up to 100 attempts = 10 min ceiling
+# (Tourmaline R2 H3). If you hit that ceiling, inspect lastStatus before
+# concluding failure:
+#   aws ecs describe-tasks --cluster mythrun --tasks "$TASK_ARN" \
+#     --query 'tasks[0].lastStatus'
+# PROVISIONING ⇒ network/IAM still resolving; STOPPING ⇒ already failed.
 aws ecs wait tasks-stopped --cluster mythrun --tasks "$TASK_ARN"
 
 # Check exit code.
@@ -906,6 +934,12 @@ If any step fails, consult the failure-modes table on the wiki page.
 ## Acceptance criteria (paste-runnable)
 
 ```bash
+# 0. Pinned action SHAs match upstream tags (Tourmaline H2 — implementer verifies pre-merge).
+gh api repos/hadolint/hadolint-action/git/refs/tags/v3.1.0 --jq '.object.sha'    # expect: 54c9adbab1582c2ef04b2016b760714a4bfde3cf
+gh api repos/actions/upload-artifact/git/refs/tags/v4.6.2 --jq '.object.sha'      # expect: ea165f8d65b6e75b540449e92b4886f43607fa02
+# (deploy.yml's pins — checkout@v6.0.2, configure-aws-credentials@v4.1.0,
+# amazon-ecr-login@v2.1.4 — are reused as-is; they're already in production.)
+
 # 1. hadolint passes (errors only — DL3018 muted inline).
 hadolint --failure-threshold error infra/bootstrap-db/Dockerfile
 
@@ -918,9 +952,11 @@ cd ../staging && terraform plan -no-color | grep -E '^(  #|Plan:)'
 # 4. ECR repo exists.
 aws ecr describe-repositories --repository-names mythrun-bootstrap-db --query 'repositories[0].repositoryName'
 
-# 5. The build workflow runs to completion on a no-op edit to infra/scripts/bootstrap-databases.sh.
-git commit --allow-empty -m "noop: trigger bootstrap-db-build" && git push
-# (gh run watch the resulting workflow run; expect success.)
+# 5. The build workflow runs to completion. Use workflow_dispatch — an empty
+#    commit will NOT trigger the path-filtered `on: push` (Tourmaline R2 M1).
+gh workflow run bootstrap-db-build.yml
+RUN_ID=$(gh run list --workflow=bootstrap-db-build.yml --limit=1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status
 
 # 6. Task definition is ACTIVE.
 aws ecs describe-task-definition --task-definition mythrun-staging-bootstrap-db --query 'taskDefinition.status'
@@ -947,6 +983,22 @@ grep 'bootstrap-database.html' docs/wiki/content/data/migrations.html
 # 10. Closing this bead unblocks myth-ml8.
 bd show myth-9qgb | grep -E 'BLOCKS.*myth-ml8'
 ```
+
+## Round-2 follow-ups (v3)
+
+| # | Finding | Resolution |
+|---|---|---|
+| Tourmaline H1 | `APP_SECRET_ID` env var passed to container is dead code (script computes its own) | Removed from `container_definitions.environment`. Comment updated to reflect that the script self-computes the name and the IAM ARN-pin is what matters. |
+| Tourmaline H2 | `hadolint-action` and `actions/upload-artifact` SHAs unverified against upstream tags | Implementer must run `gh api repos/<owner>/<repo>/git/refs/tags/<tag>` for each pinned action before merge and confirm the SHAs match. Added to acceptance criteria. |
+| Tourmaline H3 | `aws ecs wait tasks-stopped` 10-min ceiling not documented in the runbook | Inline comment added to the runbook's wait step describing the ceiling, the `lastStatus` query for diagnosis, and the `PROVISIONING` vs `STOPPING` interpretation. |
+| Tourmaline H4 | Failure-modes table conflated `stoppedReason` with container log lines | Split into two columns (ECS stoppedReason / Container log line); added "match by substring, not literal" header note. |
+| Tourmaline M1 | Acceptance criterion #5's empty commit doesn't trigger the path-filtered workflow | Replaced with `gh workflow run` (`workflow_dispatch`) + `gh run watch --exit-status`. |
+| Tourmaline M2 | `IMAGE_TAG` defined three times in the workflow (decoupled re-derivations) | Hoisted to job-level `env:`; per-step `env:` blocks now only carry `REGISTRY`. |
+| Obsidian M2 | Run-task outputs require `eval` but descriptions don't say so | All five output `description` strings now repeat the `eval` requirement. Module-level comment block also repeats it. |
+| Obsidian M4 | ECR keep-5 risks expiring the currently-pinned `bootstrap_image_tag` | Bumped to keep-20. Updated scope text + decision-2 row + lifecycle-policy HCL. |
+| Obsidian M6 + Tourmaline M3 | alpine `aws-cli` package is v1, not v2 | Switched to `aws-cli-v2` package + added a `RUN aws --version 2>&1 \| grep -q 'aws-cli/2'` smoke-check that fails the build if the apk repo ever drifts. Added implementer-time verification note. |
+
+Round-2 reviewers reported **zero CRITICAL findings** post-v2, with the highest remaining severity being the operability/correctness items captured above. Severity-based stopping rule (memory/feedback_blind_review_pendulum.md): we ship v3.
 
 ## Resolved open questions (post-Round-1)
 
