@@ -1,0 +1,15 @@
+# Per-Dockerfile dockerignore for the bootstrap-db image.
+#
+# BuildKit picks this up before falling back to the repo-root .dockerignore.
+# The build context is the repo root (the workflow runs `docker build -f
+# infra/bootstrap-db/Dockerfile .`), but this image only needs ONE file —
+# the bootstrap script — so we exclude everything by default and re-include
+# just that file. Faster build, smaller context, no risk of leaking
+# unrelated repo state into the image's build cache.
+#
+# The repo-root .dockerignore correctly excludes `infra/` because the
+# backend image doesn't need it; that exclusion would otherwise drop the
+# bootstrap script from this build context too.
+
+*
+!infra/scripts/bootstrap-databases.sh
