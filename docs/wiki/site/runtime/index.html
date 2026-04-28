@@ -310,11 +310,15 @@
   Fastify instance with <code>GET /health</code> registered — and
   <code>createShutdown(app, clients)</code>, a pure function that returns a signal handler.
   <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares the injection shape:
-  <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis }</code>. Nothing in
-  <code>app.ts</code> has side effects on import — no listener, no signal hooks, no connection
-  opens. The deps parameter is unused by the single <code>/health</code> route today; Backend Core's
-  first plugin will add <code>app.decorate('pg', deps.pg)</code> and the matching
-  <code>declare module 'fastify'</code> augmentation.
+  <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, repo: Repo }</code>.
+  <code>Repo</code> is the closure-factory bundle from
+  <a href="../data/repository.html">the repository layer</a> — composed over the same
+  <code>pg</code> by <code>server.ts</code> on both boot paths. Nothing in <code>app.ts</code> has
+  side effects on import — no listener, no signal hooks, no connection opens. The deps parameter is
+  currently a no-op pass-through behind the single <code>/health</code> route; the first
+  Auth/Billing plugin will <code>app.decorate('repo', deps.repo)</code> and add the matching
+  <code>declare module 'fastify'</code> augmentation so route handlers reach
+  <code>req.server.repo.users.getByCognitoSub(...)</code> directly.
 </p>
 
 <aside class="wiki-rationale">
@@ -352,12 +356,14 @@
 <p>
   <code>server.ts</code> has two startup paths. <code>BOOT_GATE_ENABLED=1</code> (or
   <code>true</code>) runs the full boot gate: load + validate env, open a pg <code>Pool</code> and
-  two <code>Redis</code> clients, probe each sequentially with retry-backoff, then
-  <code>app.listen</code>. Anything else — including the default when the var is unset — runs
-  <code>fallbackStart</code>: no env validation, no client creation, stub deps passed to
-  <code>buildApp</code>, listen immediately. The dev <code>.env.development</code> sets the flag to
-  <code>1</code>; the staging ECS task definition does not set it, so the deployed binary stays at
-  <code>/health</code>-only with the full data-layer code path dormant.
+  two <code>Redis</code> clients, probe each sequentially with retry-backoff, compose
+  <code>createRepo(pg)</code>, then <code>app.listen</code>. Anything else — including the default
+  when the var is unset — runs <code>fallbackStart</code>: no env validation, no client creation,
+  stub deps (including <code>createRepo(stubPool)</code> over a stub whose
+  <code>query</code> throws) passed to <code>buildApp</code>, listen immediately. The dev
+  <code>.env.development</code> sets the flag to <code>1</code>; the staging ECS task definition
+  does not set it, so the deployed binary stays at <code>/health</code>-only with the full
+  data-layer code path dormant.
 </p>
 
 <aside class="wiki-rationale">
@@ -708,8 +714,11 @@
   security group the container launches into. The
   <a href="../infra/serving.html">serving module</a> wires the prod env vars and secrets that
   <code>loadEnv</code>'s component-form branch consumes and that the boot gate — once enabled —
-  probes. Cognitive-tier code (Fast Thinker, Slow Thinker, Scribe, DM Trigger) lands as additional
-  modules under <code>backend/src/</code>; they'll share this server's lifecycle,
+  probes. The <a href="../data/repository.html">repository layer</a> is the <code>repo</code> dep on
+  <code>AppDeps</code> — composed over the same <code>pg</code> the boot gate opens, threaded into
+  <code>buildApp</code>, the seam every future route handler will reach the database through.
+  Cognitive-tier code (Fast Thinker, Slow Thinker, Scribe, DM Trigger) lands as additional modules
+  under <code>backend/src/</code>; they'll share this server's lifecycle,
   <code>AppDeps</code> shape, and Dockerfile.
 </p>
 
@@ -788,7 +797,7 @@
     <tr>
       <td><code>src/app-deps.ts</code></td>
       <td>
-        <code>AppDeps { pg, redisRealtime, redisBatch }</code>,
+        <code>AppDeps { pg, redisRealtime, redisBatch, repo }</code>,
         <code>ShutdownClients</code> (re-exported from <code>app.ts</code>).
       </td>
     </tr>

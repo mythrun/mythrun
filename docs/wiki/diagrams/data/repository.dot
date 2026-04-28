@@ -1,0 +1,71 @@
+digraph repository {
+  // The repository layer: a closure-based factory over a single pg.Pool that
+  // returns one namespace object per top-level table cluster. Routes, services,
+  // and workers call repo.<namespace>.<method>; the namespace functions own the
+  // SQL, the parameter binding, and the snake_case→camelCase mapping.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  subgraph cluster_callers {
+    label="callers (future)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    routes  [label="Fastify routes\n(Auth, Billing, …)"];
+    workers [label="BullMQ workers\n(prep, scribe)"];
+  }
+
+  subgraph cluster_factory {
+    label="createRepo(pool)  (backend/src/repo/index.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    users     [label="users.ts\ncreate, getById,\ngetByCognitoSub,\ngetByEmail, update"];
+    worlds    [label="worlds.ts\ncreate, getById,\nlistByUser, update,\nupdateStatus,\nincrementForkCount"];
+    camps     [label="campaigns.ts\ncreate, getById,\nlistByUser, update"];
+    sessions  [label="sessions.ts\ncreate, getById,\ngetActiveByCampaign,\nlistByCampaign,\nupdate"];
+  }
+
+  subgraph cluster_seams {
+    label="shared seams";
+    style="dotted";
+
+    uuid    [label="uuidv7.ts\nuuidv7(): string"];
+    types   [label="types.ts\nUser, World,\nCampaign, Session\n+ Update inputs"];
+    mappers [label="mappers.ts\nsnake → camel\nnarrowing helpers\n(toAuthProvider, …)"];
+  }
+
+  pool   [label="pg.Pool\n(boot-gate path)\nor stub Pool\n(fallback path)", color="ember", fontcolor="ember"];
+  db     [label="Postgres\nusers, worlds,\ncampaigns, sessions\n+ campaign_members JOIN", color="ember", fontcolor="ember"];
+
+  routes  -> users    [label="repo.users.create"];
+  routes  -> worlds   [label="repo.worlds.…"];
+  workers -> camps    [label="repo.campaigns.…"];
+  workers -> sessions [label="repo.sessions.…"];
+
+  users    -> uuid    [label="id =", style=dashed];
+  worlds   -> uuid    [label="", style=dashed];
+  camps    -> uuid    [label="", style=dashed];
+  sessions -> uuid    [label="", style=dashed];
+
+  users    -> mappers [label="toUser", style=dashed];
+  worlds   -> mappers [label="toWorld", style=dashed];
+  camps    -> mappers [label="toCampaign", style=dashed];
+  sessions -> mappers [label="toSession", style=dashed];
+
+  users    -> pool    [label="pool.query\nINSERT … RETURNING *\nUPDATE … COALESCE\nSELECT …"];
+  worlds   -> pool    [label=""];
+  camps    -> pool    [label=""];
+  sessions -> pool    [label=""];
+
+  pool    -> db       [label="parameterized SQL"];
+
+  types -> users    [label="", style=dotted];
+  types -> worlds   [label="", style=dotted];
+  types -> camps    [label="", style=dotted];
+  types -> sessions [label="", style=dotted];
+}

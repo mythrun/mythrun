@@ -1,0 +1,385 @@
+<!-- source: backend/src/repo/ -->
+<!-- source: backend/src/app-deps.ts -->
+<!-- source-hash: sha256:87b93ef42e16fcefa0d904e91ab18288b72f7fac190563e76470fdac2abcba8d -->
+<!-- last-ticket: MYT-34 -->
+
+<h1>Repository layer</h1>
+
+<p class="lead">
+  The single seam every read and write to Postgres flows through. A closure-based factory returns
+  one namespace object per table cluster; callers say <code>repo.users.create(...)</code>, never
+  <code>pool.query(...)</code> directly.
+</p>
+
+<!-- @diagram: data/repository -->
+
+<h2>How it fits together</h2>
+
+<p>
+  <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
+  takes a <code>pg.Pool</code> and returns <code>{ users, worlds, campaigns, sessions }</code> — one
+  namespace per top-level table cluster. Each namespace is built by a sibling factory
+  (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
+  pool and exposes the typed methods for that table. The return type is exported as
+  <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
+  <code>AppDeps</code> carries it alongside <code>pg</code> and the two Redis clients, and
+  <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
+  boot paths.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Closure factory, not a class</strong> — namespaces are bags of pure functions over a
+  shared pool. A class adds <code>this</code> binding hazards (a route handler that destructures
+  <code>const { create } = repo.users</code> and calls <code>create(input)</code> would lose
+  <code>this</code>) and gives nothing back: there's no inheritance story, no protected state, no
+  per-instance overrides. A closure is the smaller shape that solves the same problem.
+</aside>
+
+<p>
+  The CLAUDE.md mandate is concrete:
+  <em
+    >every TS file outside <code>backend/src/repo/</code> that reads or writes the database calls
+    <code>repo.&lt;namespace&gt;.&lt;method&gt;</code></em
+  >. No raw <code>pool.query(...)</code> in route handlers, services, or workers. The repo layer is
+  what makes that mandate enforceable — there's one place to grep for SQL changes, one place where
+  parameter binding is audited, one place where the <code>updated_at = now()</code> bump is
+  guaranteed on every UPDATE.
+</p>
+
+<h2>Namespace boundaries: 4 today, 21 deferred</h2>
+
+<p>
+  Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
+  <strong>4</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code> — the foundations Auth, the prep pipeline, and the session runtime
+  immediately need. The remaining 21 are tracked as beads under the <code>repo-deferred</code> label
+  and ship batched with their consumers.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Producer batched with consumer</strong> — designing a <code>characters</code> namespace
+  with per-skill / feature / equipment / spell add APIs without the character-creation flow designed
+  produces guesses. The same goes for <code>credits</code>: the atomic-debit pattern belongs with
+  the consumer that needs it (MYT-40), not as a separate <code>grant</code>/<code>debit</code>/<code
+    >getBalance</code
+  >
+  trio that would invite a TOCTOU race. The deferral list is in the v2 design spec;
+  <code>bd list --label=repo-deferred</code> is the live view.
+</aside>
+
+<p>
+  Within the four shipped namespaces, the method set is similarly scope-cut.
+  <code>worlds.fork</code> is deferred to the prep pipeline — fork semantics involve entity copy and
+  fact deduplication that belong with the pipeline that owns them.
+  <code>sessions.updateRunningSummary</code> is deferred to the Slow Thinker work that consumes it.
+  <code>users.softDelete</code> and <code>campaigns.transferOwnership</code> follow the same rule:
+  no consumer in flight, no API design today.
+</p>
+
+<h2>Camel out, snake in: mappers at the boundary</h2>
+
+<p>
+  The schema is snake_case (<code>cognito_sub</code>, <code>created_by</code>,
+  <code>geography_summary</code>); the TypeScript surface is camelCase. Each table has two
+  interfaces: a <code>XxxDbRow</code> in <code>mappers.ts</code> matching what
+  <code>pool.query</code> returns, and a <code>Xxx</code> in <code>types.ts</code> that callers see.
+  A <code>toXxx</code> function bridges them — invoked once per row at the repo boundary.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Explicit mappers, not a pg-types parser</strong> — node-postgres lets you register a type
+  parser that rewrites every result row globally. Tempting, but global: it would convert keys for
+  every query in the process, including future code paths that genuinely want raw
+  <code>pool.query</code> for diagnostics or one-off scripts. Keeping the conversion at the repo
+  boundary scopes it to where the API contract is camelCase and leaves the rest of the system alone.
+</aside>
+
+<p>
+  <code>Update</code> input types are spelled out (not
+  <code>Partial&lt;Pick&lt;User, …&gt;&gt;</code>) so
+  <code>exactOptionalPropertyTypes</code> semantics are intentional: each key is omitted to leave
+  the field unchanged, or supplied with a value to set it. Identity fields (<code>cognitoSub</code>,
+  <code>email</code>, <code>authProvider</code>) are <em>never</em> in the Update type — mutating
+  them would break Cognito linkage in ways the layer above doesn't want to think about.
+</p>
+
+<h2>Narrowing helpers for enum-like CHECK columns</h2>
+
+<p>
+  <code>auth_provider</code> is <code>TEXT</code> with a CHECK constraint enforcing
+  <code>('google', 'discord')</code>. The schema guarantees the SQL invariant, but the mapper still
+  refuses to bare-cast <code>row.auth_provider as 'google' | 'discord'</code>. Instead, a small
+  helper validates and narrows:
+</p>
+
+<pre><code>function toAuthProvider(v: string): 'google' | 'discord' {
+  if (v !== 'google' && v !== 'discord') {
+    throw new Error(`unexpected auth_provider value from DB: ${v}`)
+  }
+  return v
+}</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>Defense in depth, not paranoia</strong> — if a future migration adds a
+  <code>'github'</code> option but the TS interface stays at <code>'google' | 'discord'</code>, a
+  bare cast would silently mistype every row. The helper fails loudly at the boundary and the test
+  suite or production logs flag it before the bug spreads. Same pattern for
+  <code>worlds.status</code>, <code>worlds.moderation_status</code>, <code>campaigns.status</code>,
+  <code>sessions.status</code> — every CHECK-constrained text column gets a narrowing function.
+</aside>
+
+<h2>UUIDv7 in its own seam</h2>
+
+<p>
+  <code>backend/src/repo/uuidv7.ts</code> is a one-line wrapper:
+  <code>export const uuidv7 = (): string =&gt; uuidv7Pkg()</code>. Every <code>create</code> method
+  generates the id app-side via this function — <code>id UUID PRIMARY KEY</code> in the schema
+  declares no default. Time-ordered ids give clean B-tree locality on PK indexes, which matters for
+  the high-write-rate tables (<code>session_messages</code>, <code>credit_ledger</code>) the future
+  namespaces will land.
+</p>
+
+<p>
+  The wrapper exists so tests that need deterministic ids can <code>vi.mock('./uuidv7.js')</code>,
+  and so a future swap to a different UUIDv7 library is a one-file change. The
+  <a href="./migrations.html">migration runner</a>'s CLI block uses the same wrapper for its
+  <code>runId</code> — single seam, no second import path of the underlying package.
+</p>
+
+<h2>INSERT … RETURNING *: one round-trip, callers get the row</h2>
+
+<p>
+  The Backend Core spec example shows <code>create</code> returning
+  <code>Promise&lt;string&gt;</code> (the new id). The repo deviates: every <code>create</code> uses
+  <code>INSERT ... RETURNING *</code> and returns the full mapped row.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>RETURNING *, not just the id</strong> — every consumer the next handful of tickets will
+  add (signup flow, prep-pipeline kickoff, session start) immediately needs the
+  <code>created_at</code>, the defaulted <code>status</code>, the database-side
+  <code>now()</code> for <code>updated_at</code>. Returning only the id forces a refetch round-trip.
+  Returning the full row costs marginal extra bandwidth and matches what callers want.
+</aside>
+
+<h2>UPDATE … COALESCE($n, col): fixed-form patches</h2>
+
+<p>
+  Update methods take a partial patch and emit a single fixed SQL string. Each mutable column is
+  written as <code>col = COALESCE($n, col)</code> — the parameter is either the new value or
+  <code>null</code>, and <code>null</code> means "don't change this field."
+  <code>updated_at</code> is <em>always</em> set to <code>now()</code> in the same statement.
+</p>
+
+<pre><code>UPDATE users
+   SET display_name       = COALESCE($2, display_name),
+       username           = COALESCE($3, username),
+       avatar_url         = COALESCE($4, avatar_url),
+       stripe_customer_id = COALESCE($5, stripe_customer_id),
+       free_trial_used    = COALESCE($6, free_trial_used),
+       updated_at         = now()
+ WHERE id = $1
+ RETURNING *</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>Fixed COALESCE, not dynamic SQL</strong> — building a SQL string at runtime by walking the
+  patch object's keys is the alternative; it gives "only update what was supplied" without
+  COALESCE's NULL-as-sentinel weirdness. The cost is real: every dynamic builder is an injection
+  surface to audit, an unstable EXPLAIN plan to debug, and a typing puzzle (TypeScript can't tell
+  what columns are in <code>patch</code>). The fixed form has one stable plan, parameterized binding
+  for free, and the column whitelist is in the SQL itself.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Mandatory <code>updated_at = now()</code> on every UPDATE</strong> — the schema declares
+  <code>updated_at TIMESTAMPTZ NOT NULL DEFAULT now()</code> but has no
+  <code>BEFORE UPDATE</code> trigger. Forgetting the bump leaves the column stuck at insert time
+  forever, silently breaking any "what changed since" query downstream. Each namespace's integration
+  test asserts <code>updated_at</code> advances after <code>update</code>; the
+  <code>sessions</code> table is the lone exception (no <code>updated_at</code> column, only
+  <code>started_at</code> + <code>ended_at</code>).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>COALESCE caveat: nullable fields can't be cleared</strong> — passing
+  <code>{ avatarUrl: null }</code> to <code>users.update</code> is indistinguishable from omitting
+  the key entirely; both encode as a SQL <code>null</code> parameter and the COALESCE leaves the
+  column unchanged. This is a deliberate v1 trade-off, documented at the type site. When a real
+  consumer needs to clear an avatar or stripe id, the API grows a sentinel value or a dedicated
+  <code>clearAvatar()</code> method — not before.
+</aside>
+
+<h2>The boot gate's stub pool, composed</h2>
+
+<p>
+  <a href="../runtime/index.html#the-boot-gate-and-its-opt-in-flag">The boot gate</a> has two paths.
+  With <code>BOOT_GATE_ENABLED=1</code>, <code>server.ts</code> opens a real pool and calls
+  <code>createRepo(pgRef)</code>. With the gate off, <code>fallbackStart</code> constructs a stub
+  pool whose <code>query</code> throws synchronously — and then calls
+  <code>createRepo(stubPool)</code> over it. Any repo method invoked on that stub repo propagates
+  the throw naturally, the same way it would for any other unreachable database.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Compose over the stub pool, don't Proxy the namespace layer</strong> — an earlier design
+  used a Proxy to fake the entire <code>{ users, worlds, … }</code> shape with throwing methods. The
+  bug: <code>repo.users.create()</code> would throw on <code>repo.users</code> (a function-shaped
+  Proxy trap), not on <code>create()</code>, and the error message would say "namespace not
+  available" instead of "repo unavailable: BOOT_GATE_ENABLED is off." Composing
+  <code>createRepo</code> over the stub pool inherits the pool's existing throw contract; no
+  special-casing in the repo factory.
+</aside>
+
+<h2>Per-namespace shape</h2>
+
+<p>
+  <strong><code>users</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>. Auth will literally
+  grep for <code>getByCognitoSub</code> on first sign-in and <code>getByEmail</code> for
+  invite-resolution flows; the names are explicit, not factored out into a generic getter.
+</p>
+
+<p>
+  <strong><code>worlds</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>listByUser</code>, <code>update</code>, <code>updateStatus</code>,
+  <code>incrementForkCount</code>. <code>updateStatus</code> is a one-purpose UPDATE on
+  <code>status</code> alone; the prep pipeline calls it many times per run, and a dedicated method
+  keeps pipeline tracing legible. <code>listByUser</code> is the simple ownership filter
+  <code>WHERE created_by = $1 ORDER BY created_at DESC</code> — no JOIN.
+</p>
+
+<p>
+  <strong><code>campaigns</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>listByUser</code>, <code>update</code>. <code>listByUser</code> joins
+  <code>campaign_members</code> directly in SQL to filter to "campaigns I'm a member of with an
+  accepted invite." That's fine even though <code>campaign_members</code> is one of the deferred
+  namespaces — we're using the table, not exposing an API surface for it.
+</p>
+
+<p>
+  <strong><code>sessions</code></strong> — <code>create</code>, <code>getById</code>,
+  <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>.
+  <code>getActiveByCampaign</code> uses <code>LIMIT 1</code> defensively — the partial-unique index
+  <code>idx_sessions_one_active</code> guarantees at most one active row per campaign, but the
+  <code>LIMIT 1</code> at the SQL site makes the contract self-documenting.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>sessions.update</code> doesn't bump <code>updated_at</code></strong> — the
+  <code>sessions</code> table doesn't have an <code>updated_at</code> column at all (only
+  <code>started_at</code> + <code>ended_at</code>, which carry the lifecycle a session row needs).
+  The "every UPDATE bumps <code>updated_at</code>" rule applies wherever the column exists; this one
+  is the documented exception.
+</aside>
+
+<h2>Tests: real Postgres, TRUNCATE-based reset</h2>
+
+<p>
+  Each namespace has an integration test under
+  <code>backend/src/repo/__tests__/&lt;ns&gt;.test.ts</code> that runs against a real Postgres (the
+  docker-compose stack locally, the CI Postgres service in CI). <code>beforeAll</code> runs all
+  migrations once; <code>beforeEach</code> calls a helper that
+  <code>TRUNCATE … RESTART IDENTITY CASCADE</code>s every application table in dependency order. The
+  schema stays intact across tests; only data is reset, which is roughly 50× faster than re-running
+  migrations between every test.
+</p>
+
+<p>
+  <code>mappers.test.ts</code> is a pure unit test over the mapper functions and the narrowing
+  helpers — hand-constructed <code>XxxDbRow</code> objects, no DB. Schema-parity invariants (table
+  names, CHECK constraints, FK rules) live in
+  <a href="./schema.html#schema-parity-test">the schema-parity test</a> from MYT-33; the repo tests
+  trust that and exercise behavior, not structure.
+</p>
+
+<h2>Integration points</h2>
+
+<p>
+  The <a href="./migrations.html">migrations</a> runner shares the
+  <a href="./repository.html#uuidv7-in-its-own-seam"><code>uuidv7()</code></a> wrapper — both the
+  CLI's <code>runId</code> and every repo <code>create</code> read from
+  <code>backend/src/repo/uuidv7.ts</code>. The
+  <a href="../runtime/index.html#the-app-factory-and-the-dependency-injection-shape"
+    >backend runtime</a
+  >'s <code>AppDeps</code> carries the <code>repo</code> alongside <code>pg</code>;
+  <code>buildApp</code> accepts it today as a no-op pass-through, and future Auth and Billing
+  plugins will decorate it onto the Fastify instance. The <a href="./schema.html">schema</a> is what
+  the repo's queries are typed against — every <code>XxxDbRow</code> matches a table the migration
+  files define.
+</p>
+
+<h2>Appendix: source layout</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Exports</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/repo/index.ts</code></td>
+      <td><code>createRepo(pool)</code>, <code>type Repo</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/repo/uuidv7.ts</code></td>
+      <td><code>uuidv7(): string</code> — wrapper around the <code>uuidv7</code> package.</td>
+    </tr>
+    <tr>
+      <td><code>src/repo/types.ts</code></td>
+      <td>
+        <code>User</code>, <code>World</code>, <code>Campaign</code>, <code>Session</code>;
+        <code>CreateXxxInput</code> + <code>XxxUpdate</code> for each.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/mappers.ts</code></td>
+      <td>
+        <code>UserDbRow</code> / <code>WorldDbRow</code> / <code>CampaignDbRow</code> /
+        <code>SessionDbRow</code>; <code>toUser</code> / <code>toWorld</code> /
+        <code>toCampaign</code> / <code>toSession</code>; narrowing helpers.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/users.ts</code></td>
+      <td>
+        <code>createUsersRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/worlds.ts</code></td>
+      <td>
+        <code>createWorldsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>listByUser</code>, <code>update</code>, <code>updateStatus</code>,
+        <code>incrementForkCount</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/campaigns.ts</code></td>
+      <td>
+        <code>createCampaignsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/sessions.ts</code></td>
+      <td>
+        <code>createSessionsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/__tests__/_helpers/reset-data.ts</code></td>
+      <td>
+        TRUNCATE helper used by every <code>beforeEach</code>. Lists every application table in
+        dependency order; future namespaces extend it.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p><code>backend/src/repo/</code>, <code>backend/src/app-deps.ts</code>.</p>
