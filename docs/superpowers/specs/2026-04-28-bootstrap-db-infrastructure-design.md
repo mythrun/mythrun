@@ -516,6 +516,13 @@ data "aws_iam_policy_document" "task" {
     ]
     resources = [var.rds_password_secret_arn]
   }
+
+  # GetRandomPassword is an account-level API; resource MUST be "*".
+  statement {
+    sid       = "GenerateRandomPassword"
+    actions   = ["secretsmanager:GetRandomPassword"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "task" {

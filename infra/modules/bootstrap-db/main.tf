@@ -124,6 +124,15 @@ data "aws_iam_policy_document" "task" {
     ]
     resources = [var.rds_password_secret_arn]
   }
+
+  # GetRandomPassword is an account-level API (doesn't operate on a specific
+  # secret ARN), so resource MUST be `*` per AWS Secrets Manager API design.
+  # The script calls this once per bootstrap to generate the app password.
+  statement {
+    sid       = "GenerateRandomPassword"
+    actions   = ["secretsmanager:GetRandomPassword"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "task" {
