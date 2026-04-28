@@ -51,3 +51,45 @@ output "alerts_topic_arn" {
   value       = aws_sns_topic.alerts.arn
   description = "ARN of the mythrun-staging-alerts SNS topic (CloudWatch alarms will publish here at Observability milestone)."
 }
+
+# ======== MYT-9qgb bootstrap-db outputs ========
+
+output "bootstrap_db_task_definition_family" {
+  value       = module.bootstrap_db.task_definition_family
+  description = "ECS task family for staging bootstrap operations."
+}
+
+output "bootstrap_db_security_group_id" {
+  value       = module.bootstrap_db.security_group_id
+  description = "Bootstrap task security group (audit / debugging)."
+}
+
+output "bootstrap_db_log_group_name" {
+  value       = module.bootstrap_db.log_group_name
+  description = "CloudWatch log group for staging bootstrap runs."
+}
+
+output "bootstrap_db_run_task_verify" {
+  value       = module.bootstrap_db.run_task_verify
+  description = "Paste-ready: read-only verify. Invoke via `eval`."
+}
+
+output "bootstrap_db_run_task_secret_only" {
+  value       = module.bootstrap_db.run_task_secret_only
+  description = "Paste-ready: rotate password + write secret. Invoke via `eval`."
+}
+
+output "bootstrap_db_run_task_reset_password" {
+  value       = module.bootstrap_db.run_task_reset_password
+  description = "Paste-ready: alias of secret-only for drift-rotation. Invoke via `eval`."
+}
+
+output "bootstrap_db_run_task_user_only" {
+  value       = module.bootstrap_db.run_task_user_only
+  description = "Paste-ready: DB exists, create user + write secret. Invoke via `eval`."
+}
+
+output "bootstrap_db_run_task_default" {
+  value       = module.bootstrap_db.run_task_default
+  description = "Paste-ready: full bootstrap (create DB + user + secret). Invoke via `eval`."
+}

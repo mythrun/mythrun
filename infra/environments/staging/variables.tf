@@ -15,3 +15,8 @@ variable "alerts_email" {
   type        = string
   default     = "miklos@mythrun.com"
 }
+
+variable "bootstrap_image_tag" {
+  description = "Tag of the mythrun-bootstrap-db image to pin into the task definition. Format: bootstrap-db-<sha>-<run-attempt>. Bump after each script edit + image rebuild. No default — terraform.tfvars must supply, so a stale tag never silently sticks."
+  type        = string
+}
