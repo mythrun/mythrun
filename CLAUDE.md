@@ -44,6 +44,17 @@ All implementation work follows the spec suite in `docs/specs/`. The specs are t
 
 The setup guide (`docs/specs/2026-04-20-setup-guide.md`) is your blank-AWS-account-to-first-deployed-container checklist. That's where implementation starts.
 
+## Foundational Values
+
+**Quality over speed of work.** Miklos does not care about how much work a thing takes. He cares whether the result is correct, durable, and well-shaped. "It's faster to ship the hacky version" is not a valid argument by itself — the bar is whether the work is fit-for-purpose for what Mythrun is trying to be (a launching production application targeting 200-500 concurrent sessions, with operational longevity in mind).
+
+There IS a tradeoff axis, but it's calibrated by what's at stake:
+
+- **Core infrastructure, schema, security, billing/payments, anything that runs in production unattended → never hack.** Build it right, even if it adds a half-day or a day. Cheap shortcuts on these surfaces compound into expensive incidents and rework. Examples: provisioning patterns (a one-off bastion is fine for a one-off; a recurring operational need gets a proper task definition), schema migrations, auth flows, credit ledger, ECS / RDS / Secrets Manager wiring, CI/CD pipelines.
+- **Documentation, internal tooling, dev ergonomics, prototype scratch work → match the investment to the audience.** A throwaway helper script doesn't need a design doc. A wiki page that exists once and is read occasionally doesn't get five rounds of review. Use judgment.
+
+When in doubt, ask. The default lean is "build it right." If you're tempted to ship a hack on infrastructure to save half a day, stop and either (a) build it right, or (b) flag the gap and propose adding a precondition bead, never silently ship the hack and move on.
+
 ## Non-Negotiable Principles
 
 1. **Enforced ignorance is a hard boundary, not a prompting suggestion.** If code passes plot information to a Fast Thinker call, that is a bug. The FT only sees public facts. The FT never sees why the ST intervened.
