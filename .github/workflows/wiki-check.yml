@@ -17,6 +17,22 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mythrun
+          POSTGRES_PASSWORD: mythrun_dev
+          POSTGRES_DB: mythrun
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mythrun"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://mythrun:mythrun_dev@localhost:5432/mythrun
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
