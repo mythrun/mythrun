@@ -120,10 +120,21 @@ export async function extractSchema(opts: ExtractOptions): Promise<SchemaMetadat
       [schemaName],
     )
 
+    // The schema name is per-invocation random, but pg_indexes returns it
+    // qualified into the indexdef string (`CREATE INDEX ... ON <schema>.<table> ...`).
+    // Strip the schema qualifier so the rendered output is stable across builds —
+    // otherwise the committed site/ artifact diffs on every rebuild for no
+    // user-visible reason.
+    const schemaPrefix = new RegExp(`\\b${schemaName}\\.`, 'g')
+    const stableIndexRows = indexesQ.rows.map((row) => ({
+      ...row,
+      indexdef: row.indexdef.replace(schemaPrefix, ''),
+    }))
+
     const tables = buildSchemaMetadata(
       tablesQ.rows,
       columnsQ.rows,
-      indexesQ.rows,
+      stableIndexRows,
       checksQ.rows,
       fksQ.rows,
     )
