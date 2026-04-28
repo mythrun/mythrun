@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, cp, rm } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, cp, rm, rename } from 'node:fs/promises'
 import { join, dirname, relative, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import type { Section } from './types.ts'
@@ -402,7 +402,13 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
   const repoRoot = options.repoRoot ?? resolve(root, '..', '..')
   const errors: string[] = []
   const warnings: string[] = []
-  const siteDir = join(root, 'site')
+  // Build into a sibling temp dir, atomic-swap at the end. Prevents the
+  // failure mode where a crash between the wipe and copyStatics leaves
+  // site/ empty or partially-populated — which had been silently dropping
+  // the entire rendered tree on accept-drift runs that hit a transient
+  // ENOENT during static-asset copy.
+  const finalSiteDir = join(root, 'site')
+  const siteDir = `${finalSiteDir}.building`
 
   const validation = await validateStructure(structure, join(root, 'content'))
   errors.push(...validation.errors)
@@ -414,6 +420,7 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
   const dotHeader = await readFile(join(root, 'layout/dot-header.dot'), 'utf-8').catch(() => '')
   const shellSlotNames = collectShellSlotNames(shell)
 
+  // Clean any stale temp dir from a previous failed run.
   if (existsSync(siteDir)) await rm(siteDir, { recursive: true, force: true })
   await mkdir(siteDir, { recursive: true })
 
@@ -450,6 +457,11 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
   }
 
   await copyStatics(root, siteDir)
+
+  // All work succeeded; atomic-swap the temp dir into place. If any step
+  // above threw, we never reach here and the original site/ is untouched.
+  if (existsSync(finalSiteDir)) await rm(finalSiteDir, { recursive: true, force: true })
+  await rename(siteDir, finalSiteDir)
 
   const exitCode = mode === 'check' && strictFailures > 0 ? 1 : errors.length > 0 ? 1 : 0
   return { errors, warnings, exitCode, pagesRendered: pages.length, diagramsRendered }
