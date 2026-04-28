@@ -830,6 +830,24 @@ return id
 
 All queries use parameterized `$1, $2, ...` placeholders (never string interpolation). All methods return typed results using `as` assertions on the query result rows — same pattern as the prototype but with `pool.query()` instead of `db.prepare()`.
 
+### Namespace Deferral Policy
+
+MYT-34 ships only the **foundation set**: `users`, `worlds`, `campaigns`, `sessions`, `characters`, `credits`. The remaining 19 namespaces from §5.2 are deferred to the downstream tickets where their consumers are designed, on the principle that batching producer code with consumer context produces fewer wrong-shape APIs than designing in isolation. See `feedback_context_coherence.md` in agent memory for the rule.
+
+Where each deferred namespace lands (tracked via beads labeled `repo-deferred` — run `bd list --label=repo-deferred`):
+
+| Namespaces | Triggered by |
+|---|---|
+| `campaignMembers`, `campaignInvites` | MYT-39 (access control + invites) |
+| `purchases`, `userSubscriptions`, `subscriptionTiers`, `sessionPacks`, `stripeEvents` | MYT-42 (Stripe webhook + checkout) |
+| `entities`, `proseKernels`, `facts`, `relationships`, `entityHierarchy`, `randomTables` | Prep Pipeline milestone |
+| `pipelineRuns`, `snapshots`, `sessionPreps`, `statBlocks` | Prep Pipeline milestone |
+| `sessionMessages`, `sessionParticipants` | Session Runtime + Combat L1 milestone |
+| `srd` | SRD content loader follow-up |
+| `settings` | First consumer (no trigger yet; lowest priority) |
+
+A future agent picking up any of these tickets adds the namespace inline as part of that ticket's implementation. The spec §5.2 method lists are the contract.
+
 ---
 
 ## 6. Server Skeleton
