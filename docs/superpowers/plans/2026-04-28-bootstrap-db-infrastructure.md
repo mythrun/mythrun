@@ -867,7 +867,7 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
+      - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@19d944daaa35f0fa1d3f7f8af1d3f2e5de25c5b7  # v2.1.4
 
@@ -908,7 +908,9 @@ jobs:
           # into infra/environments/staging/terraform.tfvars. No <placeholders>.
           BUMP_LINE=$(printf 'bootstrap_image_tag = "%s"' "$IMAGE_TAG")
           echo "::notice title=Bootstrap-DB image pushed::$IMAGE_TAG"
-          echo "::notice title=To activate — paste this line into infra/environments/staging/terraform.tfvars (replace any existing bootstrap_image_tag line)::$BUMP_LINE"
+          # Title kept short so GitHub's Checks UI doesn't truncate it; the
+          # actionable line lives in the message body.
+          echo "::notice title=Operator: bump terraform.tfvars::Paste into infra/environments/staging/terraform.tfvars (replace existing bootstrap_image_tag line):%0A$BUMP_LINE"
           echo "$BUMP_LINE" > /tmp/bootstrap_image_tag.line
 
       - name: Upload bump line as artifact
