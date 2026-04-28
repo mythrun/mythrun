@@ -136,7 +136,7 @@ git commit -m "feat(myt-9qgb): add bootstrap-db module variables"
 
 resource "aws_security_group" "bootstrap" {
   name        = "mythrun-${var.environment}-bootstrap-db"
-  description = "Bootstrap-DB task: egress-only — 443 to AWS APIs, 5432 to RDS."
+  description = "Bootstrap-DB task: egress-only -- 443 to AWS APIs, 5432 to RDS."
   vpc_id      = var.vpc_id
 
   tags = { Name = "mythrun-${var.environment}-bootstrap-db" }
