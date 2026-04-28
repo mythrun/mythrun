@@ -79,8 +79,13 @@ MASTER_JSON=$(aws secretsmanager get-secret-value \
   --query SecretString --output text)
 MASTER_USER=$(echo "$MASTER_JSON" | jq -r .username)
 MASTER_PASS=$(echo "$MASTER_JSON" | jq -r .password)
-RDS_HOST=$(echo "$MASTER_JSON" | jq -r .host)
-RDS_PORT=$(echo "$MASTER_JSON" | jq -r .port)
+# Host + port: prefer env-supplied (RDS_HOST / RDS_PORT injected by the ECS
+# task definition from terraform_remote_state shared outputs). Fall back to
+# JSON fields for compatibility with hand-rolled secrets that include them.
+# AWS-managed RDS master secrets only carry username + password, so the env
+# path is the production path; the JSON fallback is for legacy fixtures.
+RDS_HOST="${RDS_HOST:-$(echo "$MASTER_JSON" | jq -r .host)}"
+RDS_PORT="${RDS_PORT:-$(echo "$MASTER_JSON" | jq -r .port)}"
 
 # Guard against a malformed master secret (e.g. a manually edited version that
 # dropped a field). jq emits the string "null" for missing keys.

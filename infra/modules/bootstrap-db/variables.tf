@@ -39,6 +39,16 @@ variable "image_tag" {
   type        = string
 }
 
+variable "rds_host" {
+  description = "RDS endpoint hostname. Injected into the task as RDS_HOST. The AWS-managed RDS master secret only carries username+password; host+port come from the shared workspace's rds_endpoint/rds_port outputs."
+  type        = string
+}
+
+variable "rds_port" {
+  description = "RDS port (typically 5432). Injected into the task as RDS_PORT."
+  type        = number
+}
+
 variable "rds_master_secret_arn" {
   description = "ARN of the RDS master user secret (read-only by the bootstrap task)."
   type        = string

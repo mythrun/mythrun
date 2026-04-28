@@ -158,6 +158,12 @@ resource "aws_ecs_task_definition" "bootstrap" {
     environment = [
       { name = "AWS_REGION", value = "us-east-1" },
       { name = "RDS_MASTER_SECRET_ARN", value = var.rds_master_secret_arn },
+      # The AWS-managed RDS master secret only carries username+password.
+      # Host+port come from the shared workspace's RDS data outputs. The
+      # script prefers env-supplied values over the JSON secret's host/port
+      # (which don't exist on AWS-managed secrets).
+      { name = "RDS_HOST", value = var.rds_host },
+      { name = "RDS_PORT", value = tostring(var.rds_port) },
     ]
 
     logConfiguration = {
