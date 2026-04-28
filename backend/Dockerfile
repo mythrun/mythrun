@@ -34,6 +34,8 @@ COPY --from=builder --chown=mythrun:mythrun /app/backend/migrations ./migrations
 USER mythrun
 ENV NODE_ENV=production
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
+# Local-dev only. Fargate overrides via the ECS task-def healthCheck block
+# (infra/modules/serving/main.tf:191-197 — startPeriod=60 is the prod knob).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
   CMD wget --quiet --tries=1 --spider http://localhost:3000/health || exit 1
 CMD ["dumb-init", "node", "dist/server.js"]
