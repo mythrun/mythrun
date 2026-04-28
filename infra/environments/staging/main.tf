@@ -104,6 +104,28 @@ module "serving" {
   # Staging uses module defaults (256/512, 14-day log retention) per Week 0 §7.2.
 }
 
+# ======== Bootstrap-DB Task Definition ========
+# Provisions the one-shot ECS task family `mythrun-staging-bootstrap-db` for
+# bootstrap / password-rotation / drift-recovery operations against the
+# staging RDS instance. See docs/wiki/content/data/bootstrap-database.html.
+
+module "bootstrap_db" {
+  source = "../../modules/bootstrap-db"
+
+  environment = var.environment
+
+  vpc_id             = data.terraform_remote_state.shared.outputs.vpc_id
+  private_subnet_ids = data.terraform_remote_state.shared.outputs.private_subnet_ids
+  rds_sg_id          = data.terraform_remote_state.shared.outputs.rds_sg_id
+  ecs_cluster_name   = data.terraform_remote_state.shared.outputs.ecs_cluster_name
+
+  ecr_repository_url = data.terraform_remote_state.shared.outputs.bootstrap_db_ecr_repository_url
+  image_tag          = var.bootstrap_image_tag
+
+  rds_master_secret_arn   = data.terraform_remote_state.shared.outputs.rds_master_user_secret_arn
+  rds_password_secret_arn = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn
+}
+
 # ======== GitHub Actions IAM Role (staging-scoped) ========
 # Trust policy hardens against:
 #   - missing audience (aud must be sts.amazonaws.com)
@@ -205,6 +227,7 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     ]
     resources = [
       "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun",
+      "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun-bootstrap-db",
       "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
     ]
   }
