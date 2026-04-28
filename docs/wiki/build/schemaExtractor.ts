@@ -14,8 +14,6 @@ import {
   type TableMeta,
 } from './schemaTypes.ts'
 
-const SCHEMA_NAME = 'wiki_schema_introspect'
-
 interface RawColumnRow {
   table_name: string
   column_name: string
@@ -57,53 +55,56 @@ export interface ExtractOptions {
 /**
  * Applies the migrations to a throwaway schema, introspects it, returns a
  * typed metadata object, drops the schema, closes the pool. The schema name
- * is constant — concurrent runs against the same DB will collide.
+ * is suffixed with the process pid and a random nonce, so concurrent runs
+ * against the same DB get isolated namespaces.
  */
 export async function extractSchema(opts: ExtractOptions): Promise<SchemaMetadata> {
+  const schemaName = `wiki_schema_introspect_${String(process.pid)}_${Math.random().toString(36).slice(2, 8)}`
   const pool = new Pool({ connectionString: opts.databaseUrl, max: 1 })
+  const client = await pool.connect()
   try {
-    await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA_NAME} CASCADE`)
-    await pool.query(`CREATE SCHEMA ${SCHEMA_NAME}`)
-    await pool.query(`SET search_path TO ${SCHEMA_NAME}, public`)
+    await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`)
+    await client.query(`CREATE SCHEMA ${schemaName}`)
+    await client.query(`SET search_path TO ${schemaName}, public`)
 
-    await applyMigrations(pool, opts.migrationsDir)
+    await applyMigrations(client, opts.migrationsDir)
 
-    const tablesQ = await pool.query<{ table_name: string }>(
+    const tablesQ = await client.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
          WHERE table_schema = $1 AND table_type = 'BASE TABLE'
          ORDER BY table_name`,
-      [SCHEMA_NAME],
+      [schemaName],
     )
 
-    const columnsQ = await pool.query<RawColumnRow>(
+    const columnsQ = await client.query<RawColumnRow>(
       `SELECT
          table_name, column_name, data_type, udt_name, is_nullable, column_default,
          ordinal_position, character_maximum_length, numeric_precision, numeric_scale
        FROM information_schema.columns
        WHERE table_schema = $1
        ORDER BY table_name, ordinal_position`,
-      [SCHEMA_NAME],
+      [schemaName],
     )
 
-    const indexesQ = await pool.query<RawIndexRow>(
+    const indexesQ = await client.query<RawIndexRow>(
       `SELECT tablename, indexname, indexdef
          FROM pg_indexes
         WHERE schemaname = $1 AND indexname LIKE 'idx_%'
         ORDER BY tablename, indexname`,
-      [SCHEMA_NAME],
+      [schemaName],
     )
 
-    const checksQ = await pool.query<RawCheckRow>(
+    const checksQ = await client.query<RawCheckRow>(
       `SELECT t.relname AS table_name, c.conname, pg_get_constraintdef(c.oid) AS clause
          FROM pg_constraint c
          JOIN pg_class t ON t.oid = c.conrelid
          JOIN pg_namespace n ON n.oid = t.relnamespace
         WHERE c.contype = 'c' AND n.nspname = $1
         ORDER BY t.relname, c.conname`,
-      [SCHEMA_NAME],
+      [schemaName],
     )
 
-    const fksQ = await pool.query<RawFkRow>(
+    const fksQ = await client.query<RawFkRow>(
       `SELECT
          tc.table_name,
          kcu.column_name,
@@ -116,7 +117,7 @@ export async function extractSchema(opts: ExtractOptions): Promise<SchemaMetadat
        JOIN information_schema.referential_constraints rc USING (constraint_name)
        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1
        ORDER BY tc.table_name, kcu.column_name`,
-      [SCHEMA_NAME],
+      [schemaName],
     )
 
     const tables = buildSchemaMetadata(
@@ -129,9 +130,10 @@ export async function extractSchema(opts: ExtractOptions): Promise<SchemaMetadat
 
     return { tables }
   } finally {
-    await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA_NAME} CASCADE`).catch(() => {
+    await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {
       // Swallow cleanup errors so the original failure surfaces.
     })
+    client.release()
     await pool.end()
   }
 }
@@ -145,8 +147,11 @@ function formatType(col: RawColumnRow): string {
   // information_schema.data_type collapses many types to broad labels
   // ("USER-DEFINED" for enums, "ARRAY" for any array). udt_name is the
   // underlying type name (uuid, jsonb, etc.). Prefer udt_name for the
-  // common cases where data_type is unhelpful.
-  if (col.data_type === 'USER-DEFINED' || col.data_type === 'ARRAY') return col.udt_name
+  // common cases where data_type is unhelpful. For arrays, udt_name is
+  // the element type prefixed with `_` (e.g. `_text`); strip the underscore
+  // and append `[]` for the conventional rendering.
+  if (col.data_type === 'ARRAY') return col.udt_name.replace(/^_/, '') + '[]'
+  if (col.data_type === 'USER-DEFINED') return col.udt_name
   if (col.data_type === 'character varying') {
     return col.character_maximum_length === null
       ? 'varchar'

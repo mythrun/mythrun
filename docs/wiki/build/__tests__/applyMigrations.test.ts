@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { Pool } from 'pg'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
+import { Pool, type PoolClient } from 'pg'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyMigrations } from '../applyMigrations.ts'
@@ -11,6 +11,7 @@ const migrationsDir = resolve(here, '../../../../backend/migrations')
 
 describe.skipIf(databaseUrl === undefined)('applyMigrations (integration)', () => {
   let pool: Pool
+  let client: PoolClient
 
   beforeAll(() => {
     pool = new Pool({ connectionString: databaseUrl, max: 1 })
@@ -21,15 +22,20 @@ describe.skipIf(databaseUrl === undefined)('applyMigrations (integration)', () =
   })
 
   beforeEach(async () => {
-    await pool.query('DROP SCHEMA IF EXISTS wiki_test CASCADE')
-    await pool.query('CREATE SCHEMA wiki_test')
-    await pool.query('SET search_path TO wiki_test, public')
+    client = await pool.connect()
+    await client.query('DROP SCHEMA IF EXISTS wiki_test CASCADE')
+    await client.query('CREATE SCHEMA wiki_test')
+    await client.query('SET search_path TO wiki_test, public')
+  })
+
+  afterEach(() => {
+    client.release()
   })
 
   it('applies every migration and yields a populated schema', async () => {
-    await applyMigrations(pool, migrationsDir)
+    await applyMigrations(client, migrationsDir)
 
-    const tables = await pool.query<{ table_name: string }>(
+    const tables = await client.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
          WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'`,
     )
@@ -37,6 +43,6 @@ describe.skipIf(databaseUrl === undefined)('applyMigrations (integration)', () =
   })
 
   it('throws when a migration file references a missing table', async () => {
-    await expect(applyMigrations(pool, '/nonexistent')).rejects.toThrow()
+    await expect(applyMigrations(client, '/nonexistent')).rejects.toThrow()
   })
 })
