@@ -1,3 +1,44 @@
+<!-- source: backend/migrations/001_initial_schema.sql -->
+<!-- source: backend/migrations/002_indexes.sql -->
+<!-- source: backend/migrations/003_srd_reference_data.sql -->
+<!-- source-hash: sha256:0bb4ce65441f9f3aa6b8aedfc4f999bf14c8a54106feea9026e2e218aa5c5c2d -->
+<!-- last-ticket: MYT-33 -->
+
 <h1>Schema reference</h1>
 
-<p class="lead">Coming in the next task.</p>
+<p class="lead">
+  Every table, column, constraint, and index in the Mythrun database — searchable. Generated from
+  <code>backend/migrations/</code>, regenerated on every wiki build.
+</p>
+
+<p>
+  This is the lookup view: type a table or column name into the filter, expand the matching tables,
+  read the columns and constraints. For the story — what these tables are <em>for</em>, why the
+  cascades flow the way they do, why the ledger is append-only — read the
+  <a href="../data/schema.html">narrative explainer</a>. This page is auto-generated and never
+  hand-edited; the explainer carries the rationale.
+</p>
+
+<div class="schema-controls">
+  <input
+    id="schema-search"
+    type="search"
+    placeholder="Filter by table or column name…"
+    autocomplete="off"
+  />
+  <span id="schema-counter" class="schema-counter">Showing all tables</span>
+  <button id="schema-expand-all" type="button">Expand all</button>
+  <button id="schema-collapse-all" type="button">Collapse all</button>
+</div>
+
+<div id="schema-tables-container">
+  <!-- @schema-reference -->
+</div>
+
+<h2>Integration points</h2>
+
+<p>
+  The narrative explainer at <a href="../data/schema.html">Data → Schema</a> walks through the
+  clusters and decisions; the <a href="../data/migrations.html">migrations runner</a> is what
+  applies these files to a real database.
+</p>

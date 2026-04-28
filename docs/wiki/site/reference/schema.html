@@ -25,15 +25,51 @@
       <aside class="wiki-sidebar"><ul><li><a href="../reference/index.html">Overview</a></li><li><a href="../reference/runbooks.html">Runbooks</a></li><li><a href="../reference/schema.html" class="active">Schema reference</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Reference › Schema reference</div>
-        <article><h1>Schema reference</h1>
+        <article>
+<h1>Schema reference</h1>
 
-<p class="lead">Coming in the next task.</p>
+<p class="lead">
+  Every table, column, constraint, and index in the Mythrun database — searchable. Generated from
+  <code>backend/migrations/</code>, regenerated on every wiki build.
+</p>
+
+<p>
+  This is the lookup view: type a table or column name into the filter, expand the matching tables,
+  read the columns and constraints. For the story — what these tables are <em>for</em>, why the
+  cascades flow the way they do, why the ledger is append-only — read the
+  <a href="../data/schema.html">narrative explainer</a>. This page is auto-generated and never
+  hand-edited; the explainer carries the rationale.
+</p>
+
+<div class="schema-controls">
+  <input
+    id="schema-search"
+    type="search"
+    placeholder="Filter by table or column name…"
+    autocomplete="off"
+  />
+  <span id="schema-counter" class="schema-counter">Showing all tables</span>
+  <button id="schema-expand-all" type="button">Expand all</button>
+  <button id="schema-collapse-all" type="button">Collapse all</button>
+</div>
+
+<div id="schema-tables-container">
+  <p class="schema-fragment-stub">[schema fragment placeholder — replaced in Task 5]</p>
+</div>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The narrative explainer at <a href="../data/schema.html">Data → Schema</a> walks through the
+  clusters and decisions; the <a href="../data/migrations.html">migrations runner</a> is what
+  applies these files to a real database.
+</p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <p class="wiki-toc-empty" style="font-size:11px;color:var(--paper-500);">—</p>
+        <ul><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

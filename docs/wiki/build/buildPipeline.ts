@@ -277,6 +277,17 @@ function resolveRunbookIndex(
   return content.replace(/<!--\s*@runbooks-index\s*-->/g, renderRunbookIndex(aggregate, rootPath))
 }
 
+function resolveSchemaReference(content: string, fragment: string | null): string {
+  if (!content.includes('<!-- @schema-reference -->')) return content
+  if (fragment === null) {
+    // No fragment provided (the orchestrator was not run for this build).
+    // Leave the marker so the page still renders, but the absent fragment
+    // surfaces as a build error elsewhere.
+    return content
+  }
+  return content.replace(/<!--\s*@schema-reference\s*-->/g, fragment)
+}
+
 interface DriftOutcome {
   warning: string | null
   checkError: string | null
@@ -319,6 +330,7 @@ async function renderPage(
     shellSlotNames: Set<string>
     siteDir: string
     runbookAggregate: RunbookAggregateItem[]
+    schemaFragment: string | null
   },
 ): Promise<PageOutcome> {
   const rawContent = await readFile(page.contentAbs, 'utf-8')
@@ -343,7 +355,8 @@ async function renderPage(
     ctx.runbookAggregate,
     rootPath,
   )
-  const diagrams = await resolveDiagrams(withRunbookIndex, ctx.root, ctx.dotHeader)
+  const withSchemaRef = resolveSchemaReference(withRunbookIndex, ctx.schemaFragment)
+  const diagrams = await resolveDiagrams(withSchemaRef, ctx.root, ctx.dotHeader)
   const withToc = extractToc(diagrams.html)
 
   const slots = filterSlots(
@@ -406,6 +419,8 @@ export async function runBuild(options: BuildOptions): Promise<BuildResult> {
     shellSlotNames,
     siteDir,
     runbookAggregate,
+    schemaFragment:
+      '<p class="schema-fragment-stub">[schema fragment placeholder — replaced in Task 5]</p>',
   }
 
   for (const page of pages) {
