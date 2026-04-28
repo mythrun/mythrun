@@ -1,0 +1,56 @@
+# infra/modules/bootstrap-db/variables.tf
+#
+# Inputs for the bootstrap-db module. Consumed from
+# infra/environments/{staging,production}/main.tf via terraform_remote_state
+# of the shared workspace + per-env secret ARNs.
+
+variable "environment" {
+  description = "Env name (e.g. \"staging\")."
+  type        = string
+}
+
+variable "vpc_id" {
+  description = "VPC ID — used as parent for the bootstrap security group."
+  type        = string
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet IDs for the bootstrap task to run in (must have RDS network reachability)."
+  type        = list(string)
+}
+
+variable "rds_sg_id" {
+  description = "RDS security group ID — receives an ingress rule from the bootstrap SG on 5432."
+  type        = string
+}
+
+variable "ecs_cluster_name" {
+  description = "ECS cluster name. Composed into the run-task command outputs."
+  type        = string
+}
+
+variable "ecr_repository_url" {
+  description = "ECR URL for mythrun-bootstrap-db (e.g. <acct>.dkr.ecr.us-east-1.amazonaws.com/mythrun-bootstrap-db)."
+  type        = string
+}
+
+variable "image_tag" {
+  description = "Image tag pinned into the task definition (e.g. \"bootstrap-db-abc1234-1\"). Bumped manually after each rebuild."
+  type        = string
+}
+
+variable "rds_master_secret_arn" {
+  description = "ARN of the RDS master user secret (read-only by the bootstrap task)."
+  type        = string
+}
+
+variable "rds_password_secret_arn" {
+  description = "ARN of the env-specific app password secret (read+write by the bootstrap task)."
+  type        = string
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch log group retention for bootstrap operations."
+  type        = number
+  default     = 30
+}
