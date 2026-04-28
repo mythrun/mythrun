@@ -6,7 +6,7 @@
 
 **Architecture:** A new env-agnostic Terraform module (`infra/modules/bootstrap-db/`) produces a Fargate task definition + ARN-scoped IAM roles + dedicated egress-only security group + CloudWatch log group, plus five paste-ready `aws ecs run-task` outputs (one per script mode). The module is instantiated from `infra/environments/staging/main.tf` against the existing shared workspace's network/RDS/cluster outputs. A separate dedicated ECR repo (`mythrun-bootstrap-db`, IMMUTABLE, keep-20) is added to the shared workspace. A path-triggered GitHub Actions workflow (`.github/workflows/bootstrap-db-build.yml`) builds + pushes the alpine-based image on changes to the script, the Dockerfile, or the workflow itself.
 
-**Tech Stack:** Terraform (AWS provider v6.x), Docker (alpine:3.20 + apk + aws-cli-v2), GitHub Actions (OIDC to AWS), pnpm wiki authoring.
+**Tech Stack:** Terraform (AWS provider v6.x), Docker (alpine:3.20 + apk; alpine 3.20's `aws-cli` package is v2), GitHub Actions (OIDC to AWS), pnpm wiki authoring.
 
 **Spec:** `docs/superpowers/specs/2026-04-28-bootstrap-db-infrastructure-design.md` (v3, post-Round-2 reviews).
 
@@ -724,11 +724,12 @@ ARG ECR_ACCOUNT_ID
 FROM ${ECR_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecr-public/docker/library/alpine:3.20
 
 # - bash: bootstrap-databases.sh uses bash-only syntax (set -uo pipefail, [[ ]])
-# - aws-cli-v2: alpine 3.20 community ships v1 as `aws-cli` and v2 as
-#   `aws-cli-v2`. We want v2 (faster start, better defaults, current AWS
-#   stewardship) — `apk add aws-cli` would silently install v1. The smoke-
-#   check `RUN` below fails the build if the installed binary doesn't
-#   self-identify as aws-cli/2.
+# - aws-cli: on alpine 3.20 community the `aws-cli` package IS v2 (verified
+#   2.15.57 at image build). There is NO separate `aws-cli-v2` package on
+#   this release — earlier spec drafts assumed there was. We want v2
+#   specifically (faster start, current AWS stewardship); the smoke-check
+#   `RUN` below fails the build if alpine ever shuffles `aws-cli` back
+#   to v1 — that's a regression we want to notice loudly.
 # - postgresql16-client: psql to RDS (matches RDS engine major)
 # - jq: parse master-secret JSON
 # - ca-certificates: TLS to AWS APIs and rds.force_ssl=1
@@ -738,14 +739,14 @@ FROM ${ECR_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecr-public/docker/library
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
       bash \
-      aws-cli-v2 \
+      aws-cli \
       postgresql16-client \
       jq \
       ca-certificates
 
 # Belt-and-suspenders: fail the build if the apk repo ever drifts and gives
-# us v1 under a different package name. Also prints the version into build
-# logs for forensic clarity.
+# us v1 under this package name. Also prints the version into build logs
+# for forensic clarity.
 RUN aws --version 2>&1 | tee /dev/stderr | grep -q 'aws-cli/2'
 
 WORKDIR /app
@@ -758,22 +759,17 @@ RUN chmod +x /app/bootstrap-databases.sh
 ENTRYPOINT ["/bin/bash", "/app/bootstrap-databases.sh"]
 ```
 
-- [ ] **Step 2: Implementer-time package-name verification**
+- [ ] **Step 2: Empirical package-name confirmation (already resolved)**
 
-Before relying on `aws-cli-v2` as the apk package name, confirm it exists on alpine 3.20:
+During the original T9 implementation pass, the implementer ran:
 
 ```bash
-docker run --rm alpine:3.20 sh -c 'apk update && apk search "aws-cli*" 2>&1' | head -20
+docker run --rm alpine:3.20 sh -c 'apk update >/dev/null 2>&1 && apk search "aws-cli*" 2>&1' | grep -i 'aws-cli'
 ```
 
-Expected: output includes a line `aws-cli-v2-2.x.y description...`.
+and confirmed alpine 3.20 community ships exactly ONE package named `aws-cli`, which is **v2** (verified `aws-cli/2.15.57` at image build). There is no separate `aws-cli-v2` package on this release. The Dockerfile above pins to `aws-cli` accordingly; the smoke-check `RUN` defends against a future apk-repo state where this name shifts back to v1.
 
-If `aws-cli-v2` is NOT listed but `aws-cli` is:
-- Inspect `aws-cli`'s version: `docker run --rm alpine:3.20 sh -c 'apk add --no-cache aws-cli && aws --version'`.
-- If it's already v2 (alpine renamed the package), edit the Dockerfile to use `aws-cli` and remove the smoke-check `RUN` (or weaken it to `grep -E 'aws-cli/(1|2)'`).
-- If it's v1, decide between (a) accept v1 (works for the script's API surface), or (b) install the static binary. Document the chosen path in a Dockerfile comment and update the spec's note accordingly.
-
-Stop and surface to Miklos before changing course.
+If you're re-implementing this task fresh (different alpine release, different ECR account, etc.), re-run the search above and reconcile if the empirical answer differs.
 
 - [ ] **Step 3: Lint locally**
 
@@ -787,7 +783,7 @@ Expected: no output, exit 0.
 
 ```bash
 git add infra/bootstrap-db/Dockerfile
-git commit -m "feat(myt-9qgb): bootstrap-db Dockerfile (alpine + aws-cli-v2 + smoke check)"
+git commit -m "feat(myt-9qgb): bootstrap-db Dockerfile (alpine + aws-cli v2 + smoke check)"
 ```
 
 ---

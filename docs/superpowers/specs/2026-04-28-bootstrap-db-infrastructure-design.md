@@ -108,12 +108,12 @@ ARG ECR_ACCOUNT_ID
 FROM ${ECR_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecr-public/docker/library/alpine:3.20
 
 # - bash: bootstrap-databases.sh uses bash-only syntax (set -uo pipefail, [[ ]])
-# - aws-cli-v2: alpine 3.20 community ships v1 as `aws-cli` and v2 as
-#   `aws-cli-v2`. We want v2 (faster start, better defaults, current AWS
-#   stewardship) — `apk add aws-cli` would silently install v1 and the spec's
-#   v2 claim would be a lie. The smoke-check `RUN` below fails the build if
-#   the installed binary doesn't self-identify as aws-cli/2 (Obsidian M6 +
-#   Tourmaline M3 convergence).
+# - aws-cli: on alpine 3.20 community the `aws-cli` package IS v2 (verified
+#   2.15.57 at image build). There is NO separate `aws-cli-v2` package on
+#   this release — earlier spec drafts assumed there was. We want v2
+#   specifically (faster start, current AWS stewardship); the smoke-check
+#   `RUN` below fails the build if alpine ever shuffles `aws-cli` back
+#   to v1 — that's a regression we want to notice loudly.
 # - postgresql16-client: psql to RDS (matches RDS engine major)
 # - jq: parse master-secret JSON
 # - ca-certificates: TLS to AWS APIs and rds.force_ssl=1
@@ -123,14 +123,14 @@ FROM ${ECR_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecr-public/docker/library
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
       bash \
-      aws-cli-v2 \
+      aws-cli \
       postgresql16-client \
       jq \
       ca-certificates
 
 # Belt-and-suspenders: fail the build if the apk repo ever drifts and gives
-# us v1 under a different package name. Also prints the version into build
-# logs for forensic clarity.
+# us v1 under this package name. Also prints the version into build logs
+# for forensic clarity.
 RUN aws --version 2>&1 | tee /dev/stderr | grep -q 'aws-cli/2'
 
 WORKDIR /app
@@ -143,7 +143,7 @@ RUN chmod +x /app/bootstrap-databases.sh
 ENTRYPOINT ["/bin/bash", "/app/bootstrap-databases.sh"]
 ```
 
-> **Implementation note**: before merging the Dockerfile, verify the package name on alpine 3.20 with `docker run --rm alpine:3.20 apk search aws-cli` (expects to see `aws-cli-v2-2.x.y` in the output). If the package name has drifted, switch to `apk add aws-cli` and remove the v2 smoke check, OR install the static binary from `https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip` (heavier image, ~80MB add). The v2-or-v1 functional surface is the same for what this script uses (`secretsmanager get-secret-value` / `put-secret-value` / `get-random-password` / `describe-secret`).
+> **Implementation note (resolved 2026-04-28 during T9)**: alpine 3.20 community publishes ONE `aws-cli` package, which is v2 (verified 2.15.57). There is no `aws-cli-v2` package — earlier drafts of this spec assumed a v1/v2 split that doesn't exist on this alpine release. The smoke-check `RUN` defends against a future alpine release that swaps `aws-cli` back to v1.
 
 The `# hadolint ignore=DL3018` comment suppresses the apk-version-pin warning inline for this Dockerfile only — Hibiki H2's recommendation. Combined with `failure-threshold: error` in the workflow, hadolint warnings still surface but aren't blocking, and DL3018 specifically is muted on the line where it would otherwise red-light every build.
 
