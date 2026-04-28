@@ -498,7 +498,7 @@ The cost of conflating them: a Redis blip → 30 seconds of unhealthy → ECS re
 | `/health/ready` happy | All three probes succeed → 200 `{ready:true}` | Case 1 in `health-ready.test.ts` |
 | `/health/ready` single fail | pg fails → 503 + `failed:['pg']` | Case 2 |
 | `/health/ready` multi-fail | pg + redis-batch fail → 503, `failed` order-insensitive | Case 3 |
-| `/health/ready` timeout | `vi.useFakeTimers()`; probe never resolves; `vi.advanceTimersByTime(1001)` | Case 4 |
+| `/health/ready` timeout | `vi.useFakeTimers()`; one probe never resolves (others resolve fast); `await vi.advanceTimersByTimeAsync(1001)` | Case 4 |
 | `worker.ts` startup | Mock `loadEnv` + `createRedisClient`; call `main()`; assert `console.log('worker started')` | `worker.test.ts` |
 | `worker.ts` shutdown | Mock `process.exit`; emit SIGTERM; assert `redis.quit` awaited + exit called | `worker.test.ts` |
 | Dockerfile sanity | `--start-period=30s` parses; image still builds | Existing CI build job |
