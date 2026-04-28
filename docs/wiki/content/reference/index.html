@@ -1,0 +1,27 @@
+<h1>Reference</h1>
+
+<p class="lead">
+  Derived views over the shipped system. For looking up specific things, not for learning how the
+  system fits together — the topical sections (Infra, Runtime, Data, Auth & Billing, World &
+  Campaign, Combat, Frontend) are where the system is explained.
+</p>
+
+<p>
+  Reference pages are auto-generated. The runbook index aggregates every runbook entry across the
+  narrative pages; the schema reference is regenerated from <code>backend/migrations/</code> on
+  every wiki build. They go stale only if the upstream source changes and the generator hasn't
+  been rerun — the source-hash drift check catches that case in CI.
+</p>
+
+<h2>Pages in this section</h2>
+
+<ul>
+  <li>
+    <a href="./runbooks.html">Runbooks</a> — every operational procedure for the shipped system, in
+    one scan-fast list.
+  </li>
+  <li>
+    <a href="./schema.html">Schema reference</a> — every table, column, constraint, and index in the
+    Mythrun database, searchable.
+  </li>
+</ul>
