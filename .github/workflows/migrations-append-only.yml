@@ -1,0 +1,46 @@
+name: Migrations Append-Only
+
+on:
+  pull_request:
+    paths:
+      - 'backend/migrations/**'
+      - '.github/workflows/migrations-append-only.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Reject edits/deletes/renames in backend/migrations/
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Only .sql files; __tests__/ and helpers under backend/migrations/ are out of scope.
+          # --diff-filter=acdmrtuxb would be the inverse approach; we list everything
+          # and reject anything not exactly "A".
+          changes=$(git diff --name-status --no-renames "$BASE_SHA"..."$HEAD_SHA" -- 'backend/migrations/*.sql' || true)
+          if [ -z "$changes" ]; then
+            echo "No changes under backend/migrations/*.sql — gate passes trivially."
+            exit 0
+          fi
+          echo "Changes under backend/migrations/*.sql:"
+          echo "$changes"
+          bad=$(echo "$changes" | awk '$1 != "A" { print }')
+          if [ -n "$bad" ]; then
+            echo ""
+            echo "::error::Migration files are append-only. Edits, deletes, and renames are not allowed."
+            echo "Offending entries (status not 'A'):"
+            echo "$bad"
+            echo ""
+            echo "If a migration is wrong, ship a new NNN_fix_*.sql that corrects it forward."
+            echo "See docs/wiki/content/data/migrations.html#run-migrations-locally."
+            exit 1
+          fi
+          echo "All changes are additions. Gate passes."

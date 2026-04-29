@@ -26,11 +26,14 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Append-only honor system, not file-checksum drift detection</strong> — v1 trusts authors
-  not to edit applied files. A checksum-drift follow-up upgrades the existing
-  <code>migrate.drift_missing_files</code> warning to error-on-content-changed; until that ships,
-  the convention is enforced by code review and the
-  <a href="#run-migrations-locally">never edit applied files</a> runbook discipline.
+  <strong>Append-only is enforced in CI, not on the honor system</strong> — the
+  <code>Migrations Append-Only</code> workflow
+  (<code>.github/workflows/migrations-append-only.yml</code>) runs on every pull request that
+  touches <code>backend/migrations/*.sql</code> and rejects any diff entry whose status isn't
+  <code>A</code> (added). Edits, deletes, and renames against files that already exist on
+  <code>main</code> fail the PR. The runtime <code>migrate.drift_missing_files</code> warning
+  remains as a backstop for the case where someone alters an applied file outside git (a restored
+  backup, a manual SSH'd-in edit) — operational accidents the CI gate can't see.
 </aside>
 
 <h3>The advisory lock and the session it lives in</h3>
@@ -167,9 +170,9 @@
     >pnpm db:reset && pnpm db:migrate</code
   >) so a contributor seeing the warning during the MYT-32 → MYT-33 transition knows what to do
   without grepping the design doc; if drift surfaces outside that transition the same hint says
-  "investigate before continuing." The run continues either way. The checksum-drift follow-up
-  upgrades this to error-on-content-changed once content hashes are stored; today it's a queryable
-  signal that someone deleted a migration file from the working tree.
+  "investigate before continuing." The run continues either way. The CI append-only gate prevents
+  this in the normal case — file disappears from the tree → PR fails. The runtime warning is the
+  out-of-band backstop for restored backups or manual edits on a live host.
 </p>
 
 <h3>Lock-wait heartbeat: visibility while blocked</h3>
