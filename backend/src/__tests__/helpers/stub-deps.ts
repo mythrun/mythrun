@@ -16,17 +16,20 @@ export interface StubDepsOverrides {
 }
 
 export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
+  // Promise.resolve / Promise.reject form (not `async () =>`) avoids the
+  // @typescript-eslint/require-await lint on stubs that don't internally
+  // await anything — same Promise<T> shape, lint-clean.
   const pg = {
-    query: overrides.pgQuery ?? (async () => ({ rows: [] })),
-    end: async () => undefined,
+    query: overrides.pgQuery ?? ((): Promise<{ rows: unknown[] }> => Promise.resolve({ rows: [] })),
+    end: (): Promise<void> => Promise.resolve(),
   } as unknown as Pool
   const redisRealtime = {
-    ping: overrides.pingRealtime ?? (async () => 'PONG'),
-    quit: async () => 'OK',
+    ping: overrides.pingRealtime ?? ((): Promise<string> => Promise.resolve('PONG')),
+    quit: (): Promise<string> => Promise.resolve('OK'),
   } as unknown as Redis
   const redisBatch = {
-    ping: overrides.pingBatch ?? (async () => 'PONG'),
-    quit: async () => 'OK',
+    ping: overrides.pingBatch ?? ((): Promise<string> => Promise.resolve('PONG')),
+    quit: (): Promise<string> => Promise.resolve('OK'),
   } as unknown as Redis
   return {
     pg,

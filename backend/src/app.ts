@@ -2,16 +2,12 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { AppDeps } from './app-deps.js'
+import { registerReadyRoute } from './routes/health-ready.js'
 
-// Deps held by server.ts for shutdown; Backend Core's first plugin will
-// add `app.decorate('pg', deps.pg)` and the FastifyInstance type
-// augmentation. This ticket only establishes the dependency-injection
-// shape via AppDeps. The `_` prefix marks the param as intentionally
-// unused this ticket.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export const buildApp = (_deps: AppDeps): FastifyInstance => {
+export const buildApp = (deps: AppDeps): FastifyInstance => {
   const app = Fastify({ logger: true })
-  app.get('/health', () => ({ status: 'ok' }))
+  app.get('/health', () => ({ status: 'ok' })) // liveness — ECS container check
+  registerReadyRoute(app, deps) // readiness — ALB target-group check
   return app
 }
 
