@@ -258,7 +258,7 @@ resource "aws_lb_target_group" "api" {
 
   health_check {
     enabled             = true
-    path                = "/health" # current backend endpoint; refactor to /health/ready when Backend Core lands (bead myth-nf3)
+    path                = "/health/ready" # MYT-35 closed myth-nf3; ALB gates on data-layer readiness
     protocol            = "HTTP"
     port                = "traffic-port"
     healthy_threshold   = 2 # AWS minimum — Infra §2.5 originally called for 1 but AWS rejects that (provider enforces range 2–10)
