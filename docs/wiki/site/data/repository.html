@@ -519,9 +519,15 @@
 
 <p>
   <strong><code>users</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>. Auth will literally
-  grep for <code>getByCognitoSub</code> on first sign-in and <code>getByEmail</code> for
-  invite-resolution flows; the names are explicit, not factored out into a generic getter.
+  <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>. Each
+  <code>getByX</code> maps 1:1 to a column with an index that supports it; adding a method is the
+  deliberate act of sanctioning a new lookup path. A generic <code>getBy(filter)</code> would
+  silently accept filters with no supporting index — a sequential-scan trap that wouldn't surface
+  until production load — and would force readers to inspect every call site to learn which lookup
+  shape was used. The explicit names also make consumer audits trivial: a <code>grep</code> for
+  <code>getByEmail</code> returns the complete set of invite-resolution callers, and
+  <code>getByCognitoSub</code> returns the first-sign-in path. We accept the small cost of "five
+  methods instead of one" to get index-as-API-surface and exact searchability.
 </p>
 
 <p>
