@@ -101,6 +101,14 @@ module "serving" {
   manual_secret_arns           = { for k, v in aws_secretsmanager_secret.manual_secrets : k => v.arn }
   rds_password_secret_arn      = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn
 
+  # MYT-35: flip the boot gate ON in staging. Production stays at default
+  # OFF until the prod stack is composed at the Launch milestone, at which
+  # point the prod environment workspace must explicitly set this — the
+  # default-[] extra_env IS a footgun if forgotten (follow-up bead filed).
+  extra_env = [
+    { name = "BOOT_GATE_ENABLED", value = "1" },
+  ]
+
   # Staging uses module defaults (256/512, 14-day log retention) per Week 0 §7.2.
 }
 
