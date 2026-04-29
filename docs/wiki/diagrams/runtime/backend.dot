@@ -18,13 +18,15 @@ digraph backend {
       label="backend/  (@mythrun/backend)";
       style="dotted";
 
-      appdeps [label="src/app-deps.ts\nAppDeps { pg, redisRealtime, redisBatch }"];
+      appdeps [label="src/app-deps.ts\nAppDeps { pg, redisRealtime, redisBatch, repo }"];
       app     [label="src/app.ts\nbuildApp(deps)\ncreateShutdown(app, deps)"];
       server  [label="src/server.ts\nboot gate | fallbackStart"];
+      worker  [label="src/worker.ts\nmain() — redis-batch ping\n+ signal handlers"];
       env     [label="src/config/env.ts\nURL form | component form"];
       boot    [label="src/boot/\nwait-for, signal-handlers"];
       db      [label="src/db/postgres.ts\nstrips ?sslmode, sets ssl"];
       redis   [label="src/redis/client.ts\nlazyConnect, no retry"];
+      ready   [label="src/routes/health-ready.ts\npg + redis × 2\nparallel, 1s timeout"];
     }
   }
 
@@ -49,15 +51,18 @@ digraph backend {
     runtime [label="runtime\nFROM $BASE/...:24-alpine\ndumb-init\nnon-root mythrun\nEXPOSE 3000", color="ember", fontcolor="ember"];
   }
 
-  port [label=":3000  /health", color="ember", fontcolor="ember"];
+  port [label=":3000\n/health (liveness)\n/health/ready (readiness)", color="ember", fontcolor="ember"];
 
   // Wiring within backend/
   appdeps -> app      [label="shape"];
+  ready   -> app      [label="registerReadyRoute"];
   env     -> server   [label="loadEnv"];
   db      -> server   [label="createPgPool"];
   redis   -> server   [label="createRedisClient"];
   boot    -> server   [label="waitFor\nsignal-handlers"];
   app     -> server   [label="buildApp\ncreateShutdown"];
+  env     -> worker   [label="loadEnv"];
+  redis   -> worker   [label="createRedisClient\n(redis-batch only)"];
 
   // Dev loop
   pg_local  -> server [label="SELECT 1", style=dashed];
@@ -67,6 +72,6 @@ digraph backend {
   // Image build
   root    -> builder  [label="docker build\n--build-arg\nBASE_IMAGE_REGISTRY"];
   builder -> runtime  [label="pnpm deploy\n/app/deploy"];
-  runtime -> port     [label="HEALTHCHECK"];
+  runtime -> port     [label="HEALTHCHECK\n→ /health"];
   server  -> port     [label="app.listen", style=dashed];
 }

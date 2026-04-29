@@ -25,13 +25,13 @@ digraph serving {
     color="ember";
     fontcolor="ember";
 
-    api_td     [label="API task def\nmythrun-staging-api\nimage :placeholder"];
+    api_td     [label="API task def\nmythrun-staging-api\n(TF: :placeholder,\nCI: real digest)"];
     worker_td  [label="Worker task def\nmythrun-staging-worker\nimage :placeholder"];
     exec_role  [label="task-execution\nrole"];
     task_role  [label="task role"];
-    api_svc    [label="ECS service\napi\ndesired=0"];
+    api_svc    [label="ECS service\napi\ndesired=1\nBOOT_GATE_ENABLED=1"];
     worker_svc [label="ECS service\nworker\ndesired=0"];
-    tg         [label="Target group\nmythrun-staging-api\nhealth /health"];
+    tg         [label="Target group\nmythrun-staging-api\nhealth /health/ready"];
     rule       [label="Listener rule\nhost =\nstaging-api.\nmythrun.com"];
     alias      [label="R53 A-alias\nstaging-api ."];
     gh_role    [label="GH Actions role\nmythrun-github-\nactions-staging"];

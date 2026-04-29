@@ -30,241 +30,283 @@
 
 <p class="lead">
   The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a
-  dependency-injected data layer, a retry-then-fail-loud boot gate gated behind
-  <code>BOOT_GATE_ENABLED</code>, and a local docker-compose stack (Postgres + two Redis instances)
-  the dev loop probes on start.
+  dependency-injected data layer, two health endpoints (a process-liveness one and a
+  data-layer-readiness one), a retry-then-fail-loud boot gate that's now ON in staging, a worker
+  entrypoint scaffold, and a local docker-compose stack (Postgres + two Redis instances) the dev
+  loop probes on start.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1285pt" height="788pt"
- viewBox="14.00 14.00 1271.00 773.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<svg width="1417pt" height="788pt"
+ viewBox="14.00 14.00 1402.00 773.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 769.4)">
 <title>backend</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-755 1252.41,-755 1252.41,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-755 1383.83,-755 1383.83,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_repo</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-327 8,-743 1022.3,-743 1022.3,-327 8,-327"/>
-<text xml:space="preserve" text-anchor="middle" x="515.15" y="-729.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pnpm workspace &#160;(repo root)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-327 8,-743 1081.11,-743 1081.11,-327 8,-327"/>
+<text xml:space="preserve" text-anchor="middle" x="544.56" y="-729.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pnpm workspace &#160;(repo root)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_backend</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="8,-397 8,-722 1022.3,-722 1022.3,-397 8,-397"/>
-<text xml:space="preserve" text-anchor="middle" x="515.15" y="-708.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/ &#160;(@mythrun/backend)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="8,-397 8,-722 1081.11,-722 1081.11,-397 8,-397"/>
+<text xml:space="preserve" text-anchor="middle" x="544.56" y="-708.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/ &#160;(@mythrun/backend)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_compose</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="460.34,-113 460.34,-327 687.58,-327 687.58,-113 460.34,-113"/>
-<text xml:space="preserve" text-anchor="middle" x="573.96" y="-313.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">docker&#45;compose &#160;(local dev only)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="499.95,-113 499.95,-327 727.18,-327 727.18,-113 499.95,-113"/>
+<text xml:space="preserve" text-anchor="middle" x="613.57" y="-313.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">docker&#45;compose &#160;(local dev only)</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_image</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="478.41,-8 478.41,-113 1019,-113 1019,-8 478.41,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="748.7" y="-99.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/Dockerfile &#160;(multi&#45;stage)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="518.01,-8 518.01,-113 1071.21,-113 1071.21,-8 518.01,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="794.61" y="-99.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/Dockerfile &#160;(multi&#45;stage)</text>
 </g>
 <!-- root -->
 <g id="node1" class="node">
 <title>root</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="254.21,-397.04 64.11,-397.04 64.11,-326.96 254.21,-326.96 254.21,-397.04"/>
-<text xml:space="preserve" text-anchor="middle" x="159.16" y="-378.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">package.json</text>
-<text xml:space="preserve" text-anchor="middle" x="159.16" y="-365.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm&#45;workspace.yaml</text>
-<text xml:space="preserve" text-anchor="middle" x="159.16" y="-352.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">docker&#45;compose.yml</text>
-<text xml:space="preserve" text-anchor="middle" x="159.16" y="-338.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.env.development.example</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="274.02,-397.04 83.91,-397.04 83.91,-326.96 274.02,-326.96 274.02,-397.04"/>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-378.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">package.json</text>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-365.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm&#45;workspace.yaml</text>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-352.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">docker&#45;compose.yml</text>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-338.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.env.development.example</text>
 </g>
 <!-- builder -->
-<g id="node12" class="node">
+<g id="node14" class="node">
 <title>builder</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="668.51,-91.64 478.41,-91.64 478.41,-8.36 668.51,-8.36 668.51,-91.64"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">builder</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FROM $BASE/...:24&#45;alpine</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm install</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm build</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm deploy &#45;&#45;prod</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="708.12,-91.64 518.01,-91.64 518.01,-8.36 708.12,-8.36 708.12,-91.64"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">builder</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FROM $BASE/...:24&#45;alpine</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm install</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm build</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pnpm deploy &#45;&#45;prod</text>
 </g>
 <!-- root&#45;&gt;builder -->
-<g id="edge10" class="edge">
+<g id="edge13" class="edge">
 <title>root&#45;&gt;builder</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M196.91,-326.46C251.51,-274.75 358.56,-177.5 460.34,-109 466.64,-104.76 473.28,-100.59 480.05,-96.55"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="481.07,-98.79 485.87,-93.14 478.6,-94.57 481.07,-98.79"/>
-<text xml:space="preserve" text-anchor="middle" x="385.33" y="-233.61" font-family="Courier,monospace" font-size="10.00">docker build</text>
-<text xml:space="preserve" text-anchor="middle" x="385.33" y="-221.61" font-family="Courier,monospace" font-size="10.00">&#45;&#45;build&#45;arg</text>
-<text xml:space="preserve" text-anchor="middle" x="385.33" y="-209.61" font-family="Courier,monospace" font-size="10.00">BASE_IMAGE_REGISTRY</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M220.06,-326.29C278.95,-274.81 393.39,-178.32 499.95,-109 506.38,-104.82 513.14,-100.68 520.02,-96.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="521.11,-98.85 525.95,-93.23 518.66,-94.6 521.11,-98.85"/>
+<text xml:space="preserve" text-anchor="middle" x="424.94" y="-227.45" font-family="Courier,monospace" font-size="10.00">docker build</text>
+<text xml:space="preserve" text-anchor="middle" x="424.94" y="-215.45" font-family="Courier,monospace" font-size="10.00">&#45;&#45;build&#45;arg</text>
+<text xml:space="preserve" text-anchor="middle" x="424.94" y="-203.45" font-family="Courier,monospace" font-size="10.00">BASE_IMAGE_REGISTRY</text>
 </g>
 <!-- appdeps -->
 <g id="node2" class="node">
 <title>appdeps</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="310.32,-458.84 8,-458.84 8,-415.16 310.32,-415.16 310.32,-458.84"/>
-<text xml:space="preserve" text-anchor="middle" x="159.16" y="-440.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/app&#45;deps.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="159.16" y="-427.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AppDeps { pg, redisRealtime, redisBatch }</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="349.93,-474.84 8,-474.84 8,-431.16 349.93,-431.16 349.93,-474.84"/>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-456.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/app&#45;deps.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-443.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AppDeps { pg, redisRealtime, redisBatch, repo }</text>
 </g>
 <!-- app -->
 <g id="node3" class="node">
 <title>app</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="671.81,-453.44 475.11,-453.44 475.11,-396.56 671.81,-396.56 671.81,-453.44"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-434.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/app.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-421.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildApp(deps)</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-408.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createShutdown(app, deps)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="711.42,-515.44 514.71,-515.44 514.71,-458.56 711.42,-458.56 711.42,-515.44"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-496.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/app.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-483.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildApp(deps)</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-470.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createShutdown(app, deps)</text>
 </g>
 <!-- appdeps&#45;&gt;app -->
 <g id="edge1" class="edge">
 <title>appdeps&#45;&gt;app</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M311.05,-432.61C362.35,-431.12 418.58,-429.48 465.7,-428.11"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="465.65,-430.56 472.58,-427.91 465.51,-425.66 465.65,-430.56"/>
-<text xml:space="preserve" text-anchor="middle" x="385.33" y="-435.07" font-family="Courier,monospace" font-size="10.00">shape</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M350.52,-463.96C393.44,-466.96 439.4,-470.4 481.95,-474 489.59,-474.65 497.48,-475.35 505.42,-476.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="505.04,-478.51 512.24,-476.72 505.5,-473.63 505.04,-478.51"/>
+<text xml:space="preserve" text-anchor="middle" x="424.94" y="-477" font-family="Courier,monospace" font-size="10.00">shape</text>
 </g>
 <!-- server -->
 <g id="node4" class="node">
 <title>server</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1022.3,-446.84 825.59,-446.84 825.59,-403.16 1022.3,-403.16 1022.3,-446.84"/>
-<text xml:space="preserve" text-anchor="middle" x="923.95" y="-428.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/server.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="923.95" y="-415.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">boot gate | fallbackStart</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1074.51,-440.84 877.8,-440.84 877.8,-397.16 1074.51,-397.16 1074.51,-440.84"/>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-422.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/server.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-409.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">boot gate | fallbackStart</text>
 </g>
 <!-- app&#45;&gt;server -->
-<g id="edge6" class="edge">
+<g id="edge7" class="edge">
 <title>app&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M672.46,-425C717.28,-425 770.49,-425 816.32,-425"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="816.26,-427.45 823.26,-425 816.26,-422.55 816.26,-427.45"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-440" font-family="Courier,monospace" font-size="10.00">buildApp</text>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-428" font-family="Courier,monospace" font-size="10.00">createShutdown</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M711.78,-468.6C760.35,-459.45 819.13,-448.38 868.83,-439.02"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.15,-441.46 875.58,-437.75 868.24,-436.64 869.15,-441.46"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-476.09" font-family="Courier,monospace" font-size="10.00">buildApp</text>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-464.09" font-family="Courier,monospace" font-size="10.00">createShutdown</text>
 </g>
 <!-- port -->
-<g id="node14" class="node">
+<g id="node16" class="node">
 <title>port</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1248.41,-298 1124.31,-298 1124.31,-262 1248.41,-262 1248.41,-298"/>
-<text xml:space="preserve" text-anchor="middle" x="1186.36" y="-276.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">:3000 &#160;/health</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1379.83,-302.44 1183.12,-302.44 1183.12,-245.56 1379.83,-245.56 1379.83,-302.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1281.47" y="-283.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">:3000</text>
+<text xml:space="preserve" text-anchor="middle" x="1281.47" y="-270.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">/health (liveness)</text>
+<text xml:space="preserve" text-anchor="middle" x="1281.47" y="-257.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">/health/ready (readiness)</text>
 </g>
 <!-- server&#45;&gt;port -->
-<g id="edge13" class="edge">
+<g id="edge16" class="edge">
 <title>server&#45;&gt;port</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M965.35,-402.5C1014.03,-375.4 1095.37,-330.11 1144.33,-302.84"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1145.39,-305.06 1150.31,-299.51 1143.01,-300.78 1145.39,-305.06"/>
-<text xml:space="preserve" text-anchor="middle" x="1073.31" y="-359.85" font-family="Courier,monospace" font-size="10.00">app.listen</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1024.22,-396.5C1074.44,-372.5 1154.49,-334.23 1211.76,-306.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1212.79,-309.07 1218.04,-303.84 1210.67,-304.65 1212.79,-309.07"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.12" y="-362.49" font-family="Courier,monospace" font-size="10.00">app.listen</text>
+</g>
+<!-- worker -->
+<g id="node5" class="node">
+<title>worker</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1081.11,-667.44 871.2,-667.44 871.2,-610.56 1081.11,-610.56 1081.11,-667.44"/>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-648.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/worker.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-635.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">main() — redis&#45;batch ping</text>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-622.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ signal handlers</text>
 </g>
 <!-- env -->
-<g id="node5" class="node">
+<g id="node6" class="node">
 <title>env</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="671.81,-514.84 475.11,-514.84 475.11,-471.16 671.81,-471.16 671.81,-514.84"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-496.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/config/env.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-483.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">URL form | component form</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="711.42,-700.84 514.71,-700.84 514.71,-657.16 711.42,-657.16 711.42,-700.84"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-682.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/config/env.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-669.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">URL form | component form</text>
 </g>
 <!-- env&#45;&gt;server -->
-<g id="edge2" class="edge">
+<g id="edge3" class="edge">
 <title>env&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M672.29,-477.74C714.09,-470.82 763.36,-462.15 807.59,-453 813.08,-451.86 818.71,-450.65 824.38,-449.4"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="824.65,-451.85 830.94,-447.92 823.58,-447.07 824.65,-451.85"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-474.03" font-family="Courier,monospace" font-size="10.00">loadEnv</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M703.49,-656.46C717.41,-653.16 731.67,-649.9 745.18,-647 792.92,-636.76 813.23,-655.04 853.2,-627 861.51,-621.17 927.18,-504.87 958.57,-448.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="960.59,-450.16 961.87,-442.86 956.32,-447.77 960.59,-450.16"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-650" font-family="Courier,monospace" font-size="10.00">loadEnv</text>
+</g>
+<!-- env&#45;&gt;worker -->
+<g id="edge8" class="edge">
+<title>env&#45;&gt;worker</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M712.05,-674.59C755.42,-671.98 806.97,-667.98 853.2,-662 856.03,-661.63 858.9,-661.24 861.78,-660.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="862.14,-663.26 868.71,-659.81 861.42,-658.41 862.14,-663.26"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-675.18" font-family="Courier,monospace" font-size="10.00">loadEnv</text>
 </g>
 <!-- boot -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>boot</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="671.81,-576.84 475.11,-576.84 475.11,-533.16 671.81,-533.16 671.81,-576.84"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-558.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/boot/</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-545.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wait&#45;for, signal&#45;handlers</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="711.42,-576.84 514.71,-576.84 514.71,-533.16 711.42,-533.16 711.42,-576.84"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-558.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/boot/</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-545.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wait&#45;for, signal&#45;handlers</text>
 </g>
 <!-- boot&#45;&gt;server -->
-<g id="edge5" class="edge">
+<g id="edge6" class="edge">
 <title>boot&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M657.94,-532.44C667.94,-529.65 678,-526.79 687.58,-524 741.17,-508.4 756.1,-508.54 807.59,-487 831.51,-477 857,-463.61 877.92,-451.83"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="878.95,-454.06 883.83,-448.48 876.53,-449.8 878.95,-454.06"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-533.27" font-family="Courier,monospace" font-size="10.00">waitFor</text>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-521.27" font-family="Courier,monospace" font-size="10.00">signal&#45;handlers</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M696.55,-532.43C706.87,-529.6 717.27,-526.74 727.18,-524 730.06,-523.21 852.97,-489.1 853.2,-489 881.35,-477.23 911.08,-460.27 934.14,-445.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="935.21,-448.21 939.84,-442.42 932.61,-444.06 935.21,-448.21"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-533.6" font-family="Courier,monospace" font-size="10.00">waitFor</text>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-521.6" font-family="Courier,monospace" font-size="10.00">signal&#45;handlers</text>
 </g>
 <!-- db -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>db</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="671.81,-638.84 475.11,-638.84 475.11,-595.16 671.81,-595.16 671.81,-638.84"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-620.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/db/postgres.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-607.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">strips ?sslmode, sets ssl</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="711.42,-440.84 514.71,-440.84 514.71,-397.16 711.42,-397.16 711.42,-440.84"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-422.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/db/postgres.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-409.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">strips ?sslmode, sets ssl</text>
 </g>
 <!-- db&#45;&gt;server -->
-<g id="edge3" class="edge">
+<g id="edge4" class="edge">
 <title>db&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M672.48,-599.55C716.18,-588.75 766.87,-571.85 807.59,-546 846.06,-521.59 880.72,-481.62 901.79,-454.35"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="903.71,-455.87 906,-448.81 899.81,-452.9 903.71,-455.87"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-591.92" font-family="Courier,monospace" font-size="10.00">createPgPool</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M711.78,-419C760.35,-419 819.13,-419 868.83,-419"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="868.55,-421.45 875.55,-419 868.55,-416.55 868.55,-421.45"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-422" font-family="Courier,monospace" font-size="10.00">createPgPool</text>
 </g>
 <!-- redis -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>redis</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="658.61,-700.84 488.31,-700.84 488.31,-657.16 658.61,-657.16 658.61,-700.84"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-682.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/redis/client.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-669.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lazyConnect, no retry</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="698.22,-638.84 527.91,-638.84 527.91,-595.16 698.22,-595.16 698.22,-638.84"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-620.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/redis/client.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-607.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lazyConnect, no retry</text>
 </g>
 <!-- redis&#45;&gt;server -->
-<g id="edge4" class="edge">
+<g id="edge5" class="edge">
 <title>redis&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M659.14,-667.39C706.79,-657.36 765.07,-638.86 807.59,-605 858.42,-564.53 893.67,-495.24 910.89,-455.47"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="913.1,-456.53 913.57,-449.13 908.59,-454.62 913.1,-456.53"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-657.93" font-family="Courier,monospace" font-size="10.00">createRedisClient</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M698.86,-595.74C756.61,-580.32 827.13,-559.39 853.2,-543 893.73,-517.52 930.84,-476.03 953.22,-448.14"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="955.03,-449.8 957.46,-442.79 951.19,-446.75 955.03,-449.8"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-584.84" font-family="Courier,monospace" font-size="10.00">createRedisClient</text>
+</g>
+<!-- redis&#45;&gt;worker -->
+<g id="edge9" class="edge">
+<title>redis&#45;&gt;worker</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M698.81,-603.76C744.69,-598.67 802.27,-595.64 853.2,-603 861.56,-604.21 870.14,-605.86 878.69,-607.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="878.09,-610.17 885.46,-609.4 879.22,-605.4 878.09,-610.17"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-618" font-family="Courier,monospace" font-size="10.00">createRedisClient</text>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-606" font-family="Courier,monospace" font-size="10.00">(redis&#45;batch only)</text>
+</g>
+<!-- ready -->
+<g id="node10" class="node">
+<title>ready</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="280.62,-549.44 77.31,-549.44 77.31,-492.56 280.62,-492.56 280.62,-549.44"/>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-530.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/routes/health&#45;ready.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-517.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pg + redis × 2</text>
+<text xml:space="preserve" text-anchor="middle" x="178.97" y="-504.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">parallel, 1s timeout</text>
+</g>
+<!-- ready&#45;&gt;app -->
+<g id="edge2" class="edge">
+<title>ready&#45;&gt;app</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M281.27,-513.03C348.61,-507.73 436.9,-500.78 505.33,-495.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="505.4,-497.85 512.19,-494.86 505.01,-492.97 505.4,-497.85"/>
+<text xml:space="preserve" text-anchor="middle" x="424.94" y="-509.04" font-family="Courier,monospace" font-size="10.00">registerReadyRoute</text>
 </g>
 <!-- pg_local -->
-<g id="node9" class="node">
+<g id="node11" class="node">
 <title>pg_local</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="635.51,-305.84 511.41,-305.84 511.41,-262.16 635.51,-262.16 635.51,-305.84"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-287.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">postgres:16</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-274.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">127.0.0.1:5432</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="675.11,-230.84 551.02,-230.84 551.02,-187.16 675.11,-187.16 675.11,-230.84"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-212.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">postgres:16</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-199.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">127.0.0.1:5432</text>
 </g>
 <!-- pg_local&#45;&gt;server -->
-<g id="edge7" class="edge">
+<g id="edge10" class="edge">
 <title>pg_local&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M630.06,-306.5C692.57,-331.79 793.87,-372.77 859.44,-399.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="858.16,-401.43 865.57,-401.78 860,-396.89 858.16,-401.43"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-378.37" font-family="Courier,monospace" font-size="10.00">SELECT 1</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M675.85,-222.71C692.81,-227.33 710.98,-233.11 727.18,-240 815.02,-277.36 901.77,-350.52 945.65,-390.78"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="943.93,-392.52 950.73,-395.47 947.26,-388.92 943.93,-392.52"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-314.64" font-family="Courier,monospace" font-size="10.00">SELECT 1</text>
 </g>
 <!-- rtr_local -->
-<g id="node10" class="node">
+<g id="node12" class="node">
 <title>rtr_local</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="635.51,-244.44 511.41,-244.44 511.41,-187.56 635.51,-187.56 635.51,-244.44"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-225.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redis:7.2</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-212.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">127.0.0.1:6379</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-199.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">realtime</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="675.11,-169.44 551.02,-169.44 551.02,-112.56 675.11,-112.56 675.11,-169.44"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-150.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redis:7.2</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-137.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">127.0.0.1:6379</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-124.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">realtime</text>
 </g>
 <!-- rtr_local&#45;&gt;server -->
-<g id="edge8" class="edge">
+<g id="edge11" class="edge">
 <title>rtr_local&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M636.09,-233.62C653.04,-239.15 671.25,-245.73 687.58,-253 743.78,-278.03 757.71,-285.98 807.59,-322 839.23,-344.84 872.12,-374.94 894.65,-396.7"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="892.69,-398.22 899.42,-401.34 896.11,-394.7 892.69,-398.22"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-325" font-family="Courier,monospace" font-size="10.00">PING</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M675.86,-153.15C727.91,-165.97 801.89,-190.51 853.2,-234 904.82,-277.75 943.07,-348.71 961.96,-388.84"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="959.66,-389.7 964.83,-395.02 964.11,-387.64 959.66,-389.7"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-237" font-family="Courier,monospace" font-size="10.00">PING</text>
 </g>
 <!-- rtb_local -->
-<g id="node11" class="node">
+<g id="node13" class="node">
 <title>rtb_local</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="635.51,-169.44 511.41,-169.44 511.41,-112.56 635.51,-112.56 635.51,-169.44"/>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-150.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redis:7.2</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-137.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">127.0.0.1:6380</text>
-<text xml:space="preserve" text-anchor="middle" x="573.46" y="-124.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">batch</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="675.11,-305.44 551.02,-305.44 551.02,-248.56 675.11,-248.56 675.11,-305.44"/>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-286.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redis:7.2</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-273.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">127.0.0.1:6380</text>
+<text xml:space="preserve" text-anchor="middle" x="613.07" y="-260.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">batch</text>
 </g>
 <!-- rtb_local&#45;&gt;server -->
-<g id="edge9" class="edge">
+<g id="edge12" class="edge">
 <title>rtb_local&#45;&gt;server</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M636.04,-156.3C687.1,-171.6 758.95,-199.52 807.59,-245 854.67,-289.02 890.96,-356.14 909.43,-394.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="907.13,-395.63 912.33,-400.92 911.56,-393.54 907.13,-395.63"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-248" font-family="Courier,monospace" font-size="10.00">PING</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M675.73,-301.25C740.96,-326.9 843.46,-367.21 909.99,-393.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="908.82,-395.54 916.23,-395.83 910.61,-390.98 908.82,-395.54"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-372.02" font-family="Courier,monospace" font-size="10.00">PING</text>
 </g>
 <!-- runtime -->
-<g id="node13" class="node">
+<g id="node15" class="node">
 <title>runtime</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1019,-91.64 828.89,-91.64 828.89,-8.36 1019,-8.36 1019,-91.64"/>
-<text xml:space="preserve" text-anchor="middle" x="923.95" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runtime</text>
-<text xml:space="preserve" text-anchor="middle" x="923.95" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FROM $BASE/...:24&#45;alpine</text>
-<text xml:space="preserve" text-anchor="middle" x="923.95" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dumb&#45;init</text>
-<text xml:space="preserve" text-anchor="middle" x="923.95" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">non&#45;root mythrun</text>
-<text xml:space="preserve" text-anchor="middle" x="923.95" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">EXPOSE 3000</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1071.21,-91.64 881.1,-91.64 881.1,-8.36 1071.21,-8.36 1071.21,-91.64"/>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-73.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runtime</text>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FROM $BASE/...:24&#45;alpine</text>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dumb&#45;init</text>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">non&#45;root mythrun</text>
+<text xml:space="preserve" text-anchor="middle" x="976.16" y="-20.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">EXPOSE 3000</text>
 </g>
 <!-- builder&#45;&gt;runtime -->
-<g id="edge11" class="edge">
+<g id="edge14" class="edge">
 <title>builder&#45;&gt;runtime</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M669.23,-50C715.71,-50 771.8,-50 819.41,-50"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="819.38,-52.45 826.38,-50 819.38,-47.55 819.38,-52.45"/>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-65" font-family="Courier,monospace" font-size="10.00">pnpm deploy</text>
-<text xml:space="preserve" text-anchor="middle" x="756.59" y="-53" font-family="Courier,monospace" font-size="10.00">/app/deploy</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M708.47,-50C758.54,-50 820.16,-50 871.55,-50"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="871.55,-52.45 878.55,-50 871.55,-47.55 871.55,-52.45"/>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-65" font-family="Courier,monospace" font-size="10.00">pnpm deploy</text>
+<text xml:space="preserve" text-anchor="middle" x="799.19" y="-53" font-family="Courier,monospace" font-size="10.00">/app/deploy</text>
 </g>
 <!-- runtime&#45;&gt;port -->
-<g id="edge12" class="edge">
+<g id="edge15" class="edge">
 <title>runtime&#45;&gt;port</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M972.71,-92.19C1027.04,-140.17 1113.9,-216.89 1157.9,-255.75"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1156.1,-257.42 1162.97,-260.22 1159.34,-253.75 1156.1,-257.42"/>
-<text xml:space="preserve" text-anchor="middle" x="1073.31" y="-208.61" font-family="Courier,monospace" font-size="10.00">HEALTHCHECK</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1034.21,-92.13C1092.02,-134.83 1180.37,-200.07 1234.04,-239.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1232.51,-241.62 1239.59,-243.81 1235.42,-237.68 1232.51,-241.62"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.12" y="-203.65" font-family="Courier,monospace" font-size="10.00">HEALTHCHECK</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.12" y="-191.65" font-family="Courier,monospace" font-size="10.00">→ /health</text>
 </g>
 </g>
 </svg>
@@ -298,28 +340,75 @@
   The <code>backend/</code> workspace is <code>@mythrun/backend</code>. Production dependencies are
   <code>fastify</code>, <code>pg</code>, and <code>ioredis</code>; dev dependencies are
   <code>tsx</code>, <code>typescript</code>, and <code>vitest</code>. The source tree is shallow but
-  no longer flat: <code>app.ts</code> / <code>server.ts</code> / <code>app-deps.ts</code> at the
-  root, with one-file subdirectories for <code>boot/</code>, <code>config/</code>, <code>db/</code>,
-  and <code>redis/</code>. Each subdirectory has a colocated <code>__tests__/</code>.
+  no longer flat: <code>app.ts</code> / <code>server.ts</code> / <code>app-deps.ts</code> /
+  <code>worker.ts</code> at the root, with subdirectories for <code>boot/</code>,
+  <code>config/</code>, <code>db/</code>, <code>redis/</code>, <code>repo/</code>, and
+  <code>routes/</code>. Each has a colocated <code>__tests__/</code>.
 </p>
 
 <h2 id="the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</h2>
 
 <p>
   <code>app.ts</code> exports <code>buildApp(deps: AppDeps)</code> — a pure factory that returns a
-  Fastify instance with <code>GET /health</code> registered — and
+  Fastify instance with two health routes registered — and
   <code>createShutdown(app, clients)</code>, a pure function that returns a signal handler.
   <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares the injection shape:
   <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, repo: Repo }</code>.
   <code>Repo</code> is the closure-factory bundle from
   <a href="../data/repository.html">the repository layer</a> — composed over the same
   <code>pg</code> by <code>server.ts</code> on both boot paths. Nothing in <code>app.ts</code> has
-  side effects on import — no listener, no signal hooks, no connection opens. The deps parameter is
-  currently a no-op pass-through behind the single <code>/health</code> route; the first
+  side effects on import — no listener, no signal hooks, no connection opens. The first
   Auth/Billing plugin will <code>app.decorate('repo', deps.repo)</code> and add the matching
   <code>declare module 'fastify'</code> augmentation so route handlers reach
   <code>req.server.repo.users.getByCognitoSub(...)</code> directly.
 </p>
+
+<h2 id="two-health-endpoints-two-different-consumers">Two health endpoints, two different consumers</h2>
+
+<p>
+  <code>GET /health</code> is the trivial liveness check — synchronous,
+  <code>{"status":"ok"}</code>, no deps touched. The container-level
+  <a href="../infra/serving.html">Fargate <code>HEALTHCHECK</code></a> uses it. If this endpoint
+  fails, ECS replaces the task: process-is-stuck or process-is-dead recovery.
+</p>
+
+<p>
+  <code>GET /health/ready</code> lives in <code>routes/health-ready.ts</code> and probes the data
+  layer. It runs three probes in parallel via <code>Promise.all</code> — pg <code>SELECT 1</code>,
+  redis-realtime <code>PING</code>, redis-batch <code>PING</code> — each wrapped in a 1-second
+  <code>Promise.race</code> timeout. All three pass → <code>200 {"ready":true}</code>; any fail →
+  <code>503 {"ready":false, "failed":[...]}</code> with one structured
+  <code>app.log.warn({ probe, err }, 'health-ready probe failed')</code> per failed probe so
+  CloudWatch can be filtered. The
+  <a href="../infra/serving.html">ALB target group</a> uses this endpoint. If it flaps, the ALB
+  stops routing while the container keeps running and may self-heal — Redis reconnects, pg pool
+  recovers — without an ECS task replacement.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Liveness vs readiness, two different recovery actions</strong> — both endpoints sit on the
+  same Fastify instance, so a true app crash fails both at once. The split exists for the partial
+  case: a Redis blip should trigger ALB de-registration (recoverable in seconds), not a container
+  restart (cold-start cost + 30 s of warmup for a dependency that was probably fine the whole time).
+  Conflating them is the cargo-cult version of this pattern.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>1 s per-probe timeout, fast HTTP response not resource cleanup</strong> — the ALB
+  health-check timeout is 5 s; three parallel 1 s probes worst-case is 1 s wall time. The
+  <code>Promise.race</code> guarantees the HTTP response returns fast, but does NOT cancel the
+  underlying <code>pg.query</code> / <code>ioredis.ping</code> — those run until the client's own
+  timeout. A wedged pg under load would deplete the pool; the container's
+  <code>HEALTHCHECK</code> watchdog is the recovery path for that scenario, not <code>/health/ready</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Data layer only — no Anthropic, no Stripe, no Cognito probes</strong> — vendor-side
+  outages should not gate ALB traffic. Migrations-table presence is a startup invariant that the
+  boot gate already enforces, not a per-request signal. The <code>/health/ready</code> contract is
+  "can this instance serve requests right now," and that's exactly what three data-layer pings tell
+  us.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Factory-with-deps before any plugin needs them</strong> — establishing the
@@ -351,7 +440,7 @@
   ECS sends SIGKILL.
 </aside>
 
-<h2 id="the-boot-gate-and-its-opt-in-flag">The boot gate and its opt-in flag</h2>
+<h2 id="the-boot-gate-on-in-staging">The boot gate, on in staging</h2>
 
 <p>
   <code>server.ts</code> has two startup paths. <code>BOOT_GATE_ENABLED=1</code> (or
@@ -360,20 +449,22 @@
   <code>createRepo(pg)</code>, then <code>app.listen</code>. Anything else — including the default
   when the var is unset — runs <code>fallbackStart</code>: no env validation, no client creation,
   stub deps (including <code>createRepo(stubPool)</code> over a stub whose
-  <code>query</code> throws) passed to <code>buildApp</code>, listen immediately. The dev
-  <code>.env.development</code> sets the flag to <code>1</code>; the staging ECS task definition
-  does not set it, so the deployed binary stays at <code>/health</code>-only with the full
-  data-layer code path dormant.
+  <code>query</code> throws) passed to <code>buildApp</code>, listen immediately. Today
+  <code>.env.development</code> sets the flag locally and the staging
+  <a href="../infra/serving.html">ECS task definition</a> sets it via the serving module's
+  <code>extra_env</code> input — staging deploys now exercise the full data-layer-aware boot path
+  against the real RDS. Production hasn't been composed yet (Launch milestone); when its workspace
+  lands it has to set the same flag explicitly, otherwise it inherits the default-OFF and silently
+  ships <code>fallbackStart</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Boot gate off by default in production</strong> — staging's RDS is bootstrapped with a
-  placeholder password until Backend Core lands schema + migrations and
-  <code>bootstrap-databases.sh</code> sets the real per-env password. A default-on boot gate would
-  crash the ECS task on every deploy with <code>password authentication failed</code> and trip the
-  deployment circuit breaker. Keeping the gate opt-in lets the data-layer code ship (exercised by
-  tests and by <code>pnpm dev</code>) while production remains on the MYT-28 entrypoint until a
-  single env-var flip enables it.
+  <strong>Per-env opt-in, not a default-on flag</strong> — keeping <code>BOOT_GATE_ENABLED</code>
+  unset by default let staging deploy green at <code>/health</code> while the data layer was being
+  built, and lets the MYT-28 entrypoint stay the safe fallback when an environment is misconfigured
+  (a missing secret, a dropped SG rule). The cost is that prod composition has to remember to flip
+  it on; a follow-up bead tracks a Terraform-side guard so prod can't silently launch with the gate
+  off.
 </aside>
 
 <p>
@@ -450,6 +541,28 @@
   loop (the client would keep trying to reconnect after <code>closePartials</code> and keep the
   event loop alive, blocking process exit). Disabling ioredis retry puts the whole retry policy in
   one place: <code>wait-for.ts</code>.
+</aside>
+
+<h2 id="the-worker-entrypoint-scaffold">The worker entrypoint scaffold</h2>
+
+<p>
+  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic
+  today, but in the build and on the task definition. It exports <code>main()</code> so tests can
+  import without executing, and runs <code>main()</code> only when invoked directly via
+  <code>node dist/worker.js</code> (the entry-point guard uses <code>pathToFileURL</code> to be
+  cross-platform). At startup it loads env, opens a redis-batch client, calls
+  <code>ping()</code> to surface connection failures synchronously, registers SIGTERM/SIGINT
+  handlers that <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
+  <code>Promise&lt;never&gt;</code> to keep the event loop alive.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Scaffold ships on a service running zero tasks</strong> — the worker's
+  <a href="../infra/serving.html">ECS service</a> is at <code>desired_count = 0</code> until the
+  Prep Pipeline / Session Runtime milestones bump it. Shipping the scaffold now means the task
+  definition, container image, secrets wiring, and signal-handling shape are all proven before the
+  first real BullMQ job lands; later tickets just replace the <code>Promise&lt;never&gt;</code>
+  with worker registrations whose own loops keep the event loop alive.
 </aside>
 
 <h2 id="the-env-loader-accepts-two-shapes">The env loader accepts two shapes</h2>
@@ -571,10 +684,15 @@
 
 <p>
   The image declares a container-level HEALTHCHECK that hits
-  <code>http://localhost:3000/health</code> every 30 s through Node's own <code>http</code> module.
-  Two <code>.dockerignore</code> files work together — the root one is authoritative for repo-root
-  build contexts, <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the
-  Dockerfile as a readable hint.
+  <code>http://localhost:3000/health</code> every 30 s with a 30-second
+  <code>start-period</code> grace. The HEALTHCHECK targets <code>/health</code> (liveness), not
+  <code>/health/ready</code>, on purpose — see "Two health endpoints" above. The
+  <code>start-period</code> bump matters only for local <code>docker compose up --wait</code>
+  cold-starts when the boot gate is on; in Fargate the
+  <a href="../infra/serving.html">task definition</a>'s own <code>healthCheck.startPeriod = 60</code>
+  is the binding knob. Two <code>.dockerignore</code> files work together — the root one is
+  authoritative for repo-root build contexts, <code>backend/.dockerignore</code> is a narrower
+  duplicate kept alongside the Dockerfile as a readable hint.
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -748,8 +866,9 @@
       <td><code>BOOT_GATE_ENABLED</code></td>
       <td>unset</td>
       <td>
-        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging/prod leave it unset so the
-        container runs the fallback start until Backend Core is ready.
+        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging passes
+        <code>1</code> via the serving module's <code>extra_env</code>; prod is unset until its
+        workspace is composed at Launch.
       </td>
     </tr>
     <tr>
@@ -821,6 +940,14 @@
       <td><code>src/redis/client.ts</code></td>
       <td><code>createRedisClient(url)</code>.</td>
     </tr>
+    <tr>
+      <td><code>src/routes/health-ready.ts</code></td>
+      <td><code>registerReadyRoute(app, deps)</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/worker.ts</code></td>
+      <td><code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -831,6 +958,7 @@
       <th>Method</th>
       <th>Path</th>
       <th>Response</th>
+      <th>Consumer</th>
     </tr>
   </thead>
   <tbody>
@@ -838,6 +966,16 @@
       <td><code>GET</code></td>
       <td><code>/health</code></td>
       <td><code>200 {"status":"ok"}</code></td>
+      <td>Container HEALTHCHECK (liveness).</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/health/ready</code></td>
+      <td>
+        <code>200 {"ready":true}</code> all probes pass; <code>503 {"ready":false,"failed":[…]}</code>
+        otherwise.
+      </td>
+      <td>ALB target group (readiness).</td>
     </tr>
   </tbody>
 </table>
@@ -938,7 +1076,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</a></li><li style="padding-left:0"><a href="#the-boot-gate-and-its-opt-in-flag">The boot gate and its opt-in flag</a></li><li style="padding-left:0"><a href="#the-pg-pool-and-its-sslmode-trick">The pg pool and its sslmode trick</a></li><li style="padding-left:0"><a href="#the-redis-client-and-its-retry-policy">The redis client and its retry policy</a></li><li style="padding-left:0"><a href="#the-env-loader-accepts-two-shapes">The env loader accepts two shapes</a></li><li style="padding-left:0"><a href="#the-local-dev-loop">The local dev loop</a></li><li style="padding-left:0"><a href="#typescript-lint-and-the-container-image">TypeScript, lint, and the container image</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#reset-the-local-data-stack">Reset the local data stack</a></li><li style="padding-left:12px"><a href="#remap-local-ports">Remap local ports when something on the host conflicts</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-boot-gate">Diagnose a failed boot gate</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image-locally">Build and run the container image locally</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#local-docker-compose-stack">Local docker-compose stack</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</a></li><li style="padding-left:0"><a href="#two-health-endpoints-two-different-consumers">Two health endpoints, two different consumers</a></li><li style="padding-left:0"><a href="#the-boot-gate-on-in-staging">The boot gate, on in staging</a></li><li style="padding-left:0"><a href="#the-pg-pool-and-its-sslmode-trick">The pg pool and its sslmode trick</a></li><li style="padding-left:0"><a href="#the-redis-client-and-its-retry-policy">The redis client and its retry policy</a></li><li style="padding-left:0"><a href="#the-worker-entrypoint-scaffold">The worker entrypoint scaffold</a></li><li style="padding-left:0"><a href="#the-env-loader-accepts-two-shapes">The env loader accepts two shapes</a></li><li style="padding-left:0"><a href="#the-local-dev-loop">The local dev loop</a></li><li style="padding-left:0"><a href="#typescript-lint-and-the-container-image">TypeScript, lint, and the container image</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#reset-the-local-data-stack">Reset the local data stack</a></li><li style="padding-left:12px"><a href="#remap-local-ports">Remap local ports when something on the host conflicts</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-boot-gate">Diagnose a failed boot gate</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image-locally">Build and run the container image locally</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#local-docker-compose-stack">Local docker-compose stack</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -5,7 +5,7 @@
 <!-- source: infra/environments/staging/outputs.tf -->
 <!-- source: infra/environments/staging/variables.tf -->
 <!-- source-hash: sha256:bd9a1b3e4088aeb25339969d73edf396fa6471cc30100bf044075bdfad81f9ca -->
-<!-- last-ticket: MYT-28 -->
+<!-- last-ticket: MYT-35 -->
 
 <h1>Serving</h1>
 
@@ -159,6 +159,16 @@
 </aside>
 
 <aside class="wiki-rationale">
+  <strong>The flip side: TF env-var changes don't roll the service</strong> — because of
+  <code>ignore_changes = [task_definition]</code>, a <code>terraform apply</code> that adds an
+  env var or rotates a secret reference REGISTERS a new task-def revision but the live service
+  keeps pointing at whatever CI last deployed. Engaging the new revision needs a CI run (which
+  re-renders the real ECR digest into a fresh revision and calls <code>update-service</code>).
+  See <a href="ci-cd.html">CI/CD</a> for why force-rolling onto the TF-registered revision directly
+  is the wrong move.
+</aside>
+
+<aside class="wiki-rationale">
   <strong><code>create_before_destroy</code> on task defs</strong> — Terraform-initiated
   destroy-and-replace fires on any task-def argument change that can't be modified in place. Without
   the lifecycle flag, that sequence deregisters the currently-live revision before the replacement
@@ -193,8 +203,20 @@
   <code>REDIS_AUTH_TOKEN</code> is the cross-env <code>mythrun/shared/redis-auth</code>. Environment
   variables (<code>DB_HOST</code>, <code>REDIS_HOST</code>, <code>NODE_ENV</code>,
   <code>PORT</code>, and friends) are plain values the app composes into a
-  <code>DATABASE_URL</code> at startup.
+  <code>DATABASE_URL</code> at startup. A per-env <code>extra_env</code> input on the module
+  appends additional name/value pairs onto <code>common_env</code> — staging passes
+  <code>BOOT_GATE_ENABLED=1</code> through it; production will set the same when its workspace
+  lands at Launch.
 </p>
+
+<aside class="wiki-rationale">
+  <strong><code>extra_env</code> is per-env, not a module-default</strong> — the boot gate is a
+  per-environment switch, not a module-shape decision. Threading it through a typed
+  <code>list(object({name,value}))</code> input keeps the module locals clean and forces every
+  consumer workspace to be explicit. The downside is the default-<code>[]</code> footgun: a future
+  env that forgets to set the flag silently launches with the gate OFF and all data-layer code
+  dormant. A follow-up bead tracks a guard.
+</aside>
 
 <aside class="wiki-rationale">
   <strong
@@ -211,12 +233,22 @@
 
 <p>
   The per-env target group is a Fargate-compatible (<code>target_type = "ip"</code>) group that
-  health-checks <code>/health</code> on <code>:3000</code>. <code>healthy_threshold</code> is
-  <code>2</code> (AWS rejects the spec's original value of <code>1</code>); the
-  <code>deregistration_delay</code> of <code>120</code> seconds matches the container
-  <code>stopTimeout</code> so in-flight LLM calls get grace during rolling deploys; stickiness is
-  off because session state lives in Redis; slow-start is explicitly disabled.
+  health-checks <code>/health/ready</code> on <code>:3000</code> — the
+  <a href="../runtime/index.html">backend's readiness route</a>, which probes the data layer (pg
+  + both Redis instances) on every check. <code>healthy_threshold</code> is <code>2</code> (AWS
+  rejects the spec's original value of <code>1</code>); the <code>deregistration_delay</code> of
+  <code>120</code> seconds matches the container <code>stopTimeout</code> so in-flight LLM calls
+  get grace during rolling deploys; stickiness is off because session state lives in Redis;
+  slow-start is explicitly disabled.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>ALB on <code>/health/ready</code>, container HEALTHCHECK on <code>/health</code></strong>
+  — a Redis blip should drop the task out of the ALB rotation while it self-heals, not trigger an
+  ECS task replacement and a cold start. Liveness (process is alive) and readiness (process can
+  serve right now) want different recovery paths, so they get different endpoints and different
+  watchers.
+</aside>
 
 <p>
   A single host-based listener rule routes
@@ -461,6 +493,15 @@
       <td><code>log_retention_days</code></td>
       <td><code>14</code></td>
       <td>Production should pass <code>30</code>.</td>
+    </tr>
+    <tr>
+      <td><code>extra_env</code></td>
+      <td><code>[]</code></td>
+      <td>
+        <code>list(object({ name, value }))</code> appended to the API and Worker
+        <code>common_env</code>. Staging sets
+        <code>[{ name = "BOOT_GATE_ENABLED", value = "1" }]</code>.
+      </td>
     </tr>
   </tbody>
 </table>

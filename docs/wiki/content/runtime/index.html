@@ -15,15 +15,16 @@
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
 <!-- source-hash: sha256:b012ec3618c3f928dd07fc09a6e062b28cc5ea47fa4f6bff8fc349fb69b156a6 -->
-<!-- last-ticket: MYT-34 -->
+<!-- last-ticket: MYT-35 -->
 
 <h1>Backend</h1>
 
 <p class="lead">
   The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a
-  dependency-injected data layer, a retry-then-fail-loud boot gate gated behind
-  <code>BOOT_GATE_ENABLED</code>, and a local docker-compose stack (Postgres + two Redis instances)
-  the dev loop probes on start.
+  dependency-injected data layer, two health endpoints (a process-liveness one and a
+  data-layer-readiness one), a retry-then-fail-loud boot gate that's now ON in staging, a worker
+  entrypoint scaffold, and a local docker-compose stack (Postgres + two Redis instances) the dev
+  loop probes on start.
 </p>
 
 <!-- @diagram: runtime/backend -->
@@ -52,28 +53,75 @@
   The <code>backend/</code> workspace is <code>@mythrun/backend</code>. Production dependencies are
   <code>fastify</code>, <code>pg</code>, and <code>ioredis</code>; dev dependencies are
   <code>tsx</code>, <code>typescript</code>, and <code>vitest</code>. The source tree is shallow but
-  no longer flat: <code>app.ts</code> / <code>server.ts</code> / <code>app-deps.ts</code> at the
-  root, with one-file subdirectories for <code>boot/</code>, <code>config/</code>, <code>db/</code>,
-  and <code>redis/</code>. Each subdirectory has a colocated <code>__tests__/</code>.
+  no longer flat: <code>app.ts</code> / <code>server.ts</code> / <code>app-deps.ts</code> /
+  <code>worker.ts</code> at the root, with subdirectories for <code>boot/</code>,
+  <code>config/</code>, <code>db/</code>, <code>redis/</code>, <code>repo/</code>, and
+  <code>routes/</code>. Each has a colocated <code>__tests__/</code>.
 </p>
 
 <h2>The app factory and the dependency-injection shape</h2>
 
 <p>
   <code>app.ts</code> exports <code>buildApp(deps: AppDeps)</code> — a pure factory that returns a
-  Fastify instance with <code>GET /health</code> registered — and
+  Fastify instance with two health routes registered — and
   <code>createShutdown(app, clients)</code>, a pure function that returns a signal handler.
   <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares the injection shape:
   <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, repo: Repo }</code>.
   <code>Repo</code> is the closure-factory bundle from
   <a href="../data/repository.html">the repository layer</a> — composed over the same
   <code>pg</code> by <code>server.ts</code> on both boot paths. Nothing in <code>app.ts</code> has
-  side effects on import — no listener, no signal hooks, no connection opens. The deps parameter is
-  currently a no-op pass-through behind the single <code>/health</code> route; the first
+  side effects on import — no listener, no signal hooks, no connection opens. The first
   Auth/Billing plugin will <code>app.decorate('repo', deps.repo)</code> and add the matching
   <code>declare module 'fastify'</code> augmentation so route handlers reach
   <code>req.server.repo.users.getByCognitoSub(...)</code> directly.
 </p>
+
+<h2>Two health endpoints, two different consumers</h2>
+
+<p>
+  <code>GET /health</code> is the trivial liveness check — synchronous,
+  <code>{"status":"ok"}</code>, no deps touched. The container-level
+  <a href="../infra/serving.html">Fargate <code>HEALTHCHECK</code></a> uses it. If this endpoint
+  fails, ECS replaces the task: process-is-stuck or process-is-dead recovery.
+</p>
+
+<p>
+  <code>GET /health/ready</code> lives in <code>routes/health-ready.ts</code> and probes the data
+  layer. It runs three probes in parallel via <code>Promise.all</code> — pg <code>SELECT 1</code>,
+  redis-realtime <code>PING</code>, redis-batch <code>PING</code> — each wrapped in a 1-second
+  <code>Promise.race</code> timeout. All three pass → <code>200 {"ready":true}</code>; any fail →
+  <code>503 {"ready":false, "failed":[...]}</code> with one structured
+  <code>app.log.warn({ probe, err }, 'health-ready probe failed')</code> per failed probe so
+  CloudWatch can be filtered. The
+  <a href="../infra/serving.html">ALB target group</a> uses this endpoint. If it flaps, the ALB
+  stops routing while the container keeps running and may self-heal — Redis reconnects, pg pool
+  recovers — without an ECS task replacement.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Liveness vs readiness, two different recovery actions</strong> — both endpoints sit on the
+  same Fastify instance, so a true app crash fails both at once. The split exists for the partial
+  case: a Redis blip should trigger ALB de-registration (recoverable in seconds), not a container
+  restart (cold-start cost + 30 s of warmup for a dependency that was probably fine the whole time).
+  Conflating them is the cargo-cult version of this pattern.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>1 s per-probe timeout, fast HTTP response not resource cleanup</strong> — the ALB
+  health-check timeout is 5 s; three parallel 1 s probes worst-case is 1 s wall time. The
+  <code>Promise.race</code> guarantees the HTTP response returns fast, but does NOT cancel the
+  underlying <code>pg.query</code> / <code>ioredis.ping</code> — those run until the client's own
+  timeout. A wedged pg under load would deplete the pool; the container's
+  <code>HEALTHCHECK</code> watchdog is the recovery path for that scenario, not <code>/health/ready</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Data layer only — no Anthropic, no Stripe, no Cognito probes</strong> — vendor-side
+  outages should not gate ALB traffic. Migrations-table presence is a startup invariant that the
+  boot gate already enforces, not a per-request signal. The <code>/health/ready</code> contract is
+  "can this instance serve requests right now," and that's exactly what three data-layer pings tell
+  us.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Factory-with-deps before any plugin needs them</strong> — establishing the
@@ -105,7 +153,7 @@
   ECS sends SIGKILL.
 </aside>
 
-<h2>The boot gate and its opt-in flag</h2>
+<h2>The boot gate, on in staging</h2>
 
 <p>
   <code>server.ts</code> has two startup paths. <code>BOOT_GATE_ENABLED=1</code> (or
@@ -114,20 +162,22 @@
   <code>createRepo(pg)</code>, then <code>app.listen</code>. Anything else — including the default
   when the var is unset — runs <code>fallbackStart</code>: no env validation, no client creation,
   stub deps (including <code>createRepo(stubPool)</code> over a stub whose
-  <code>query</code> throws) passed to <code>buildApp</code>, listen immediately. The dev
-  <code>.env.development</code> sets the flag to <code>1</code>; the staging ECS task definition
-  does not set it, so the deployed binary stays at <code>/health</code>-only with the full
-  data-layer code path dormant.
+  <code>query</code> throws) passed to <code>buildApp</code>, listen immediately. Today
+  <code>.env.development</code> sets the flag locally and the staging
+  <a href="../infra/serving.html">ECS task definition</a> sets it via the serving module's
+  <code>extra_env</code> input — staging deploys now exercise the full data-layer-aware boot path
+  against the real RDS. Production hasn't been composed yet (Launch milestone); when its workspace
+  lands it has to set the same flag explicitly, otherwise it inherits the default-OFF and silently
+  ships <code>fallbackStart</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Boot gate off by default in production</strong> — staging's RDS is bootstrapped with a
-  placeholder password until Backend Core lands schema + migrations and
-  <code>bootstrap-databases.sh</code> sets the real per-env password. A default-on boot gate would
-  crash the ECS task on every deploy with <code>password authentication failed</code> and trip the
-  deployment circuit breaker. Keeping the gate opt-in lets the data-layer code ship (exercised by
-  tests and by <code>pnpm dev</code>) while production remains on the MYT-28 entrypoint until a
-  single env-var flip enables it.
+  <strong>Per-env opt-in, not a default-on flag</strong> — keeping <code>BOOT_GATE_ENABLED</code>
+  unset by default let staging deploy green at <code>/health</code> while the data layer was being
+  built, and lets the MYT-28 entrypoint stay the safe fallback when an environment is misconfigured
+  (a missing secret, a dropped SG rule). The cost is that prod composition has to remember to flip
+  it on; a follow-up bead tracks a Terraform-side guard so prod can't silently launch with the gate
+  off.
 </aside>
 
 <p>
@@ -204,6 +254,28 @@
   loop (the client would keep trying to reconnect after <code>closePartials</code> and keep the
   event loop alive, blocking process exit). Disabling ioredis retry puts the whole retry policy in
   one place: <code>wait-for.ts</code>.
+</aside>
+
+<h2>The worker entrypoint scaffold</h2>
+
+<p>
+  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic
+  today, but in the build and on the task definition. It exports <code>main()</code> so tests can
+  import without executing, and runs <code>main()</code> only when invoked directly via
+  <code>node dist/worker.js</code> (the entry-point guard uses <code>pathToFileURL</code> to be
+  cross-platform). At startup it loads env, opens a redis-batch client, calls
+  <code>ping()</code> to surface connection failures synchronously, registers SIGTERM/SIGINT
+  handlers that <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
+  <code>Promise&lt;never&gt;</code> to keep the event loop alive.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Scaffold ships on a service running zero tasks</strong> — the worker's
+  <a href="../infra/serving.html">ECS service</a> is at <code>desired_count = 0</code> until the
+  Prep Pipeline / Session Runtime milestones bump it. Shipping the scaffold now means the task
+  definition, container image, secrets wiring, and signal-handling shape are all proven before the
+  first real BullMQ job lands; later tickets just replace the <code>Promise&lt;never&gt;</code>
+  with worker registrations whose own loops keep the event loop alive.
 </aside>
 
 <h2>The env loader accepts two shapes</h2>
@@ -325,10 +397,15 @@
 
 <p>
   The image declares a container-level HEALTHCHECK that hits
-  <code>http://localhost:3000/health</code> every 30 s through Node's own <code>http</code> module.
-  Two <code>.dockerignore</code> files work together — the root one is authoritative for repo-root
-  build contexts, <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the
-  Dockerfile as a readable hint.
+  <code>http://localhost:3000/health</code> every 30 s with a 30-second
+  <code>start-period</code> grace. The HEALTHCHECK targets <code>/health</code> (liveness), not
+  <code>/health/ready</code>, on purpose — see "Two health endpoints" above. The
+  <code>start-period</code> bump matters only for local <code>docker compose up --wait</code>
+  cold-starts when the boot gate is on; in Fargate the
+  <a href="../infra/serving.html">task definition</a>'s own <code>healthCheck.startPeriod = 60</code>
+  is the binding knob. Two <code>.dockerignore</code> files work together — the root one is
+  authoritative for repo-root build contexts, <code>backend/.dockerignore</code> is a narrower
+  duplicate kept alongside the Dockerfile as a readable hint.
 </p>
 
 <h2>Operating this piece</h2>
@@ -502,8 +579,9 @@
       <td><code>BOOT_GATE_ENABLED</code></td>
       <td>unset</td>
       <td>
-        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging/prod leave it unset so the
-        container runs the fallback start until Backend Core is ready.
+        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging passes
+        <code>1</code> via the serving module's <code>extra_env</code>; prod is unset until its
+        workspace is composed at Launch.
       </td>
     </tr>
     <tr>
@@ -575,6 +653,14 @@
       <td><code>src/redis/client.ts</code></td>
       <td><code>createRedisClient(url)</code>.</td>
     </tr>
+    <tr>
+      <td><code>src/routes/health-ready.ts</code></td>
+      <td><code>registerReadyRoute(app, deps)</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/worker.ts</code></td>
+      <td><code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -585,6 +671,7 @@
       <th>Method</th>
       <th>Path</th>
       <th>Response</th>
+      <th>Consumer</th>
     </tr>
   </thead>
   <tbody>
@@ -592,6 +679,16 @@
       <td><code>GET</code></td>
       <td><code>/health</code></td>
       <td><code>200 {"status":"ok"}</code></td>
+      <td>Container HEALTHCHECK (liveness).</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/health/ready</code></td>
+      <td>
+        <code>200 {"ready":true}</code> all probes pass; <code>503 {"ready":false,"failed":[…]}</code>
+        otherwise.
+      </td>
+      <td>ALB target group (readiness).</td>
     </tr>
   </tbody>
 </table>
