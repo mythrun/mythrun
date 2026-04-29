@@ -364,31 +364,32 @@ terraform apply
 
 After this apply: new task-def revisions are registered. The live service is **still running the old revision** because of `lifecycle.ignore_changes = [task_definition]`. Nothing observable changes yet.
 
-**Step 3 — Force the service onto the new revision.**
+**Step 3 — Trigger CI to roll the service onto the new env vars.**
 
-**Pause concurrent CI deploys first** (Mingus Round-3 H1). The `$LATEST_REV` lookup returns the highest-numbered revision in the family. If a Deploy workflow is in flight between TF apply A (step 2) and the lookup below, it can register a NEWER revision without `BOOT_GATE_ENABLED=1`; the rollover then lands on a non-gated container and step 5 verification will incorrectly pass. Confirm no Deploy run is in flight before proceeding:
+**DO NOT force-rollover via `aws ecs update-service --task-definition mythrun-staging-api:<TF-rev>`.** Earlier spec versions said to; that's wrong. The TF-registered revision pins the container image to `:placeholder` (see `infra/modules/serving/main.tf` task-def's `image = "<repo>:placeholder"`); CI's `aws-actions/amazon-ecs-render-task-definition` step is what swaps `:placeholder` for the real ECR digest at deploy-time. Force-rolling the service onto the TF-registered revision attempts to pull `:placeholder` and fails with `CannotPullContainerError` — the live service stays on the previous (real-image, no gate) revision while the new deployment loops endlessly retrying the pull.
+
+The correct path is to trigger a CI deploy. CI's `describe-task-definition` returns the LATEST ACTIVE revision in the family — i.e., the one TF just registered with `BOOT_GATE_ENABLED=1` and `:placeholder` image. CI renders the real image digest into a NEW revision (LATEST + 1 or higher) and `update-service` rolls the live service onto it. The rolled-onto task therefore inherits both the new env var AND the real image — which is what we want. (Discovered during the live MYT-35 deploy, 2026-04-28.)
 
 ```bash
+# Pause check: confirm no Deploy is already in flight (Mingus Round-3 H1).
+# Concurrent runs would race and one of them might land a revision that
+# bypasses TF's env-var change.
 gh run list --workflow Deploy --status in_progress --limit 5
-# If any rows are returned: wait for them to finish (or `gh run cancel` if you
-# can re-trigger them later) before continuing.
-```
+# If any rows are returned: wait for them to finish before proceeding.
 
-```bash
-# Get the latest registered revision number (the one TF just produced).
-LATEST_REV=$(aws ecs describe-task-definition \
-  --task-definition mythrun-staging-api \
-  --query 'taskDefinition.revision' --output text)
-echo "Rolling onto revision $LATEST_REV"
+# Trigger a fresh deploy. CI fetches the latest active task-def
+# (the one TF just registered with BOOT_GATE_ENABLED=1), renders the
+# real image into it, registers a new revision, and rolls the service.
+gh workflow run Deploy
+sleep 5
+RUN_ID=$(gh run list --workflow Deploy --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status
 
-aws ecs update-service \
-  --cluster mythrun \
-  --service mythrun-staging-api \
-  --task-definition "mythrun-staging-api:$LATEST_REV" \
-  --force-new-deployment
-
-# Wait for the rollover to complete.
-aws ecs wait services-stable --cluster mythrun --services mythrun-staging-api
+# Sanity-check the live service rolled onto a revision strictly greater
+# than the TF-registered one (i.e., CI did add a fresh revision rather
+# than reusing TF's :placeholder rev).
+aws ecs describe-services --cluster mythrun --services mythrun-staging-api \
+  --query 'services[0].taskDefinition' --output text
 ```
 
 The new task starts with `BOOT_GATE_ENABLED=1`, runs the boot gate (`waitFor` against pg + redis-realtime + redis-batch), succeeds, calls `app.listen`. CloudWatch will now show:
@@ -452,16 +453,12 @@ If the boot gate is genuinely failing for a reason that can't be quickly diagnos
 1. **Flip the ALB path back to `/health`.** Edit `infra/modules/serving/main.tf`, change `health_check.path` from `/health/ready` back to `/health`. `terraform -chdir=infra/environments/staging apply`. ALB now polls `/health`, which the running container answers regardless of gate state.
 2. **Edit `infra/environments/staging/main.tf`** — change the `extra_env` value `"1"` to `"0"`. (Avoid `sed -i` invocations in incident playbooks: BSD `sed -i ''` and GNU `sed -i` differ; copy-paste fails on whichever shell you don't usually use. Editor.)
 3. **Apply:** `terraform -chdir=infra/environments/staging apply`. Registers a new task-def revision with the gate disabled.
-4. **Force-rollover the service** (because of `ignore_changes [task_definition]`):
+4. **Trigger CI to roll the service onto the gate-off revision**. Same reason as forward step 3: the TF-registered revision has `:placeholder` image; only CI knows how to render the real ECR digest in. Manually force-rolling onto the TF rev would attempt to pull `:placeholder` and fail with `CannotPullContainerError`.
    ```bash
-   LATEST_REV=$(aws ecs describe-task-definition \
-     --task-definition mythrun-staging-api \
-     --query 'taskDefinition.revision' --output text)
-   aws ecs update-service \
-     --cluster mythrun \
-     --service mythrun-staging-api \
-     --task-definition "mythrun-staging-api:$LATEST_REV" \
-     --force-new-deployment
+   gh workflow run Deploy
+   sleep 5
+   RUN_ID=$(gh run list --workflow Deploy --limit 1 --json databaseId -q '.[0].databaseId')
+   gh run watch "$RUN_ID" --exit-status
    aws ecs wait services-stable --cluster mythrun --services mythrun-staging-api
    ```
 
@@ -574,6 +571,24 @@ curl -fsS https://staging-api.mythrun.com/health/ready | jq .
 # 7. Beads close.
 bd close myth-nf3 myth-g6g myth-ccf
 ```
+
+## Live-deploy correction (post-ship, 2026-04-28)
+
+A real-world snag surfaced during execution that all four blind reviewer rounds missed. Documenting the correction here so future deploys (prod composition, future env-var flips, rollbacks) don't re-trip on it.
+
+**The bug**: Step 3 of the deploy sequence said to run `aws ecs update-service --force-new-deployment --task-definition mythrun-staging-api:<TF-registered-rev>`. This fails with `CannotPullContainerError: not found ... mythrun:placeholder` because:
+
+- TF's task-def template (`infra/modules/serving/main.tf`) pins the container image to `<repo>:placeholder` — TF doesn't know the real image digest.
+- CI's deploy workflow (`.github/workflows/deploy.yml`) is what knows: its `aws-actions/amazon-ecs-render-task-definition` step fetches the latest task-def via `describe-task-definition`, swaps `:placeholder` for the real ECR digest, and registers a NEW revision before `update-service`.
+- TF apply A registers, say, rev N+1 with `BOOT_GATE_ENABLED=1` + `:placeholder`. The OLD live revision (rev N from CI's prior deploy) has the real image but no env var. Force-rolling onto rev N+1 attempts to pull `:placeholder` → tasks loop on pull-error.
+
+**The correct path** (already patched into the deploy-sequence section above): after TF apply A, trigger CI (`gh workflow run Deploy`). CI's `describe-task-definition` returns the latest ACTIVE rev (the TF-registered one with the env var), renders the real image into a fresh rev N+2, registers it, and rolls. The rolled-onto task has both the new env var AND the real image.
+
+**Recovery during the actual deploy** was: roll back to rev N (real image, no gate) to clear the failing rev N+1 deployment, then `gh workflow run Deploy`. CI rendered rev N+2 from rev N+1's env vars + the real image, deployed cleanly. The same pattern applies to future MYT-35-style env-var changes.
+
+This correction also propagated to:
+- The Emergency Rollback section (rollback step 4: trigger CI, don't force-rollover).
+- The plan's Task 10 (the same wrong invocation lived there until this commit).
 
 ## Round-3 follow-ups (v4)
 

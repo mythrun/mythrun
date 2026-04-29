@@ -710,53 +710,53 @@ After apply: new task-def revisions are registered. The live service is **still 
 
 ---
 
-## Task 10: Force ECS service rollover onto the new revision
+## Task 10: Trigger CI to roll the service onto the new env vars
 
 **Files:**
 - (None — operator action.)
 
 This is **step 3 of the 5-step deploy**.
 
-- [ ] **Step 1: Pause concurrent CI deploys**
+> **Important correction (2026-04-28 live deploy)**: earlier plan versions said to `aws ecs update-service --force-new-deployment --task-definition mythrun-staging-api:$LATEST_REV` here. **That's wrong.** The TF-registered revision pins the container image to `:placeholder` (per `infra/modules/serving/main.tf`'s task-def `image` line); CI's `aws-actions/amazon-ecs-render-task-definition` step is what swaps `:placeholder` for the real ECR digest. Force-rolling the service onto a TF-registered revision attempts to pull `:placeholder` and fails with `CannotPullContainerError`. The correct path is to trigger CI: CI's `describe-task-definition` fetches the LATEST active revision (the one TF just registered with `BOOT_GATE_ENABLED=1`), renders the real image digest into it (producing a new rev), and rolls the service onto that.
+
+- [ ] **Step 1: Pause concurrent CI deploys check**
 
 ```bash
 gh run list --workflow Deploy --status in_progress --limit 5
 ```
 
-Expected: empty list. If any rows: wait for them to finish (or `gh run cancel` if re-triggerable). A concurrent Deploy run could land a NEWER revision without `BOOT_GATE_ENABLED` between TF apply A and the describe-task-definition lookup below — the rollover would then land on a non-gated container.
+Expected: empty list. If any rows: wait for them to finish.
 
-- [ ] **Step 2: Capture the new revision number**
-
-```bash
-LATEST_REV=$(aws ecs describe-task-definition \
-  --task-definition mythrun-staging-api \
-  --query 'taskDefinition.revision' --output text)
-echo "Rolling onto revision $LATEST_REV"
-```
-
-Expected: a number, the new revision TF just registered.
-
-- [ ] **Step 3: Force the rollover**
+- [ ] **Step 2: Trigger a fresh CI deploy**
 
 ```bash
-aws ecs update-service \
-  --cluster mythrun \
-  --service mythrun-staging-api \
-  --task-definition "mythrun-staging-api:$LATEST_REV" \
-  --force-new-deployment
-aws ecs wait services-stable --cluster mythrun --services mythrun-staging-api
+gh workflow run Deploy
+sleep 5
+RUN_ID=$(gh run list --workflow Deploy --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status
 ```
 
-Expected: command returns when the new task is healthy. The new container starts with `BOOT_GATE_ENABLED=1` → `waitFor` runs → succeeds (DB exists from myth-ml8) → `app.listen` → `/health/ready` returns 200.
+Expected: deploy succeeds. CI fetches the TF-registered revision (with `BOOT_GATE_ENABLED=1` and `:placeholder` image), renders the real image digest into a new revision, and `update-service` rolls onto it. The new task runs the boot gate and `/health/ready` returns 200.
+
+- [ ] **Step 3: Confirm service is on a strictly-newer revision than TF registered**
+
+```bash
+aws ecs describe-services --cluster mythrun --services mythrun-staging-api \
+  --query 'services[0].taskDefinition' --output text
+```
+
+Expected: a revision number > whatever TF apply A registered (CI added one with the real image).
 
 - [ ] **Step 4: Confirm the boot gate engaged**
 
 ```bash
-aws logs tail /ecs/mythrun-staging-api --since 5m --format short \
+aws logs tail /mythrun/staging/api --since 10m \
   | grep -E '(Postgres|Redis) ready'
 ```
 
-Expected: three lines mentioning `Postgres ready`, `Redis (realtime) ready`, `Redis (batch) ready`. (The `✓` checkmark in the source code is UTF-8 — `grep` without locale issues handles it, but the pattern omits it for portability.)
+Expected: three lines mentioning `Postgres ready`, `Redis (realtime) ready`, `Redis (batch) ready`. (The `✓` checkmark in the source code is UTF-8; the pattern omits it for portability.)
+
+Log group note: it's `/mythrun/staging/api`, NOT `/ecs/mythrun-staging-api` (the bootstrap-db log group; different convention).
 
 - [ ] **Step 5: Confirm `/health/ready` answers 200**
 
