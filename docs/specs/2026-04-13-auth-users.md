@@ -77,15 +77,21 @@ Configured in Cognito with Google OAuth client credentials:
 
 Discord is not a native Cognito identity provider. Two approaches:
 
-**Option A: Cognito OIDC provider** — Discord supports OIDC. Configure as a custom OIDC provider in Cognito with Discord's authorization/token/userinfo endpoints. This keeps all auth in Cognito.
+**Option A: Cognito OIDC provider** — Discord supports OIDC. Configure as a custom OIDC provider in Cognito with Discord's OIDC endpoints. This keeps all auth in Cognito.
 
 **Option B: Custom Lambda trigger** — Use a Cognito Pre-Sign-Up Lambda that handles the Discord OAuth exchange. More control, more code.
 
-**Decision: Option A (OIDC provider).** Less code, fully managed. Discord's OIDC endpoints:
-- Authorization: `https://discord.com/oauth2/authorize`
+**Decision: Option A (OIDC provider).** Less code, fully managed. Discord publishes a working OIDC discovery document at `https://discord.com/.well-known/openid-configuration` and a spec-compliant userinfo endpoint:
+
+- Issuer: `https://discord.com`
+- Authorization: `https://discord.com/api/oauth2/authorize`
 - Token: `https://discord.com/api/oauth2/token`
-- Userinfo: `https://discord.com/api/users/@me`
-- Scopes: `identify`, `email`
+- Userinfo: `https://discord.com/api/oauth2/userinfo` (the OIDC-native endpoint, NOT the legacy `/api/users/@me`)
+- JWKS: `https://discord.com/api/oauth2/keys`
+- Scopes: `openid`, `identify`, `email` — `openid` gates the userinfo endpoint and returns `sub`; `identify` is required for `preferred_username` and `picture`; `email` adds `email` and `email_verified`. All three are required for the attribute mapping to populate fully.
+- Attribute mapping in Cognito uses OIDC standard claim names: `email` → `email`, `preferred_username` → Cognito `name`, `picture` → `picture`, `sub` → Cognito internal `username`.
+
+> **Spec correction (2026-04-30):** An earlier draft of this section cited Discord's legacy non-OIDC endpoint (`/api/users/@me`) and a `identify, email` scope set. That configuration predates Discord's native OIDC support and is incompatible with `provider_type = "OIDC"` in Cognito. The OIDC-native config above is what the MYT-36 implementation uses; see `docs/superpowers/specs/2026-04-30-myt-36-cognito-pool-and-idps-design.md` §5 for the validated TF resource shape.
 
 ---
 

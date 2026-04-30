@@ -1,10 +1,10 @@
 # MYT-36 — Cognito User Pool + Google + Discord IdPs (Design)
 
-> **Status**: Draft (pending user + blind-review approval)
+> **Status**: Draft v2 (post round-1 blind review)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-36](https://linear.app/mythrun/issue/MYT-36/auth-cognito-user-pool-google-discord-identity-providers)
-> **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §2
-> **Scope**: Provision the staging Cognito User Pool + App Client + Hosted UI domain, wire Google and Discord as federated identity providers, expose the IDs and URLs as backend env vars. Backend code that consumes these (JWT middleware, `/api/auth/refresh`) ships in MYT-37.
+> **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §2 (parent §2.4 corrected as part of this design — see §5 below)
+> **Scope**: Provision the staging Cognito User Pool + App Client + Hosted UI domain, wire Google and Discord as federated identity providers, expose the IDs and URLs as backend env vars, and remove the speculative `COGNITO_CLIENT_SECRET` wiring left over from MYT-25. Backend code that consumes the new env vars (JWT middleware, `/api/auth/refresh`) ships in MYT-37.
 
 ---
 
@@ -32,11 +32,12 @@
 **Done when:**
 
 - `infra/modules/auth/` exists and is composed in `infra/environments/staging/main.tf`.
-- `terraform apply` (apply 1, `idps_enabled=false`) creates: User Pool, App Client (PKCE public client), Hosted UI domain (default Cognito-managed `mythrun-staging.auth.us-east-1.amazoncognito.com`), Google + Discord OAuth Secrets Manager shells (PLACEHOLDER JSON values).
+- `terraform apply` (apply 1, `idps_enabled=false`) creates: User Pool (with `deletion_protection = "ACTIVE"`), App Client (PKCE public client, refresh-token rotation enabled, `explicit_auth_flows = ["ALLOW_REFRESH_TOKEN_AUTH"]`), Hosted UI domain (default Cognito-managed `mythrun-staging.auth.us-east-1.amazoncognito.com`), Google + Discord OAuth Secrets Manager shells (PLACEHOLDER JSON values).
+- The speculative `mythrun/staging/cognito-client-secret` shell from MYT-25 is removed: deleted from `infra/environments/staging/main.tf`'s `manual_secret_names` list, and its env-var wiring (`{ name = "COGNITO_CLIENT_SECRET", valueFrom = ... }` at `infra/modules/serving/main.tf:150`) is removed. PKCE public clients have no client secret; this MYT-25 leftover would otherwise inject the literal `"PLACEHOLDER — set via AWS Console / CLI"` string as `COGNITO_CLIENT_SECRET` on MYT-37's first deploy.
 - Human-action: register Google OAuth client + Discord OAuth client, paste each `{client_id, client_secret}` JSON via `aws secretsmanager put-secret-value`.
-- `terraform apply` (apply 2, `idps_enabled=true`) creates the two `aws_cognito_identity_provider` resources reading the secrets, and updates the App Client's `supported_identity_providers` from `["COGNITO"]` to `["Google", "Discord"]`.
+- `terraform apply` (apply 2, `idps_enabled=true`) creates the two `aws_cognito_identity_provider` resources reading the secrets, and updates the App Client's `supported_identity_providers` from `["COGNITO"]` to `["Google", "Discord"]`. Apply ordering is enforced by an explicit `depends_on` on the App Client.
 - Click-through verification: opening the Hosted UI's `/login` URL with `identity_provider=Google` (and again with `=Discord`) redirects through the provider and lands back at `localhost:5173/auth/callback?code=...` (the page won't render — there's no frontend yet — but the URL bar's `code=...` proves the OAuth round-trip succeeded).
-- `aws cognito-idp list-users --user-pool-id <id>` shows two user records with populated `email` and (Google only) `picture` attributes.
+- `aws cognito-idp list-users --user-pool-id <id>` shows two user records with populated `email`, `name`, and `picture` attributes.
 - The four env vars `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID`, `COGNITO_HOSTED_UI_DOMAIN`, `COGNITO_ISSUER_URL` are wired into the staging serving module's `extra_env` list. **The ECS service is NOT rolled in this ticket** — backend code that reads these env vars ships in MYT-37, which triggers the first deploy that consumes them.
 
 **Out of MYT-36's done-when:** JWT middleware, `/api/auth/refresh`, onboarding endpoints, ticket exchange, suspended-user enforcement, custom Hosted UI styling, production composition.
@@ -101,8 +102,8 @@ infra/modules/auth/
 |--------|-------|-------------|
 | `user_pool_id` | `aws_cognito_user_pool.main.id` | Backend env var `COGNITO_USER_POOL_ID`; `aws cognito-idp` CLI commands. |
 | `app_client_id` | `aws_cognito_user_pool_client.main.id` | Backend env var `COGNITO_APP_CLIENT_ID`; OAuth flow URLs. |
-| `hosted_ui_domain` | `"${aws_cognito_user_pool_domain.main.domain}.auth.us-east-1.amazoncognito.com"` | Backend env var `COGNITO_HOSTED_UI_DOMAIN`; constructs `/oauth2/*` paths. The fully-qualified host is built in `outputs.tf` so the backend gets a usable URL without knowing the AWS region. |
-| `issuer_url` | `"https://cognito-idp.us-east-1.amazonaws.com/${aws_cognito_user_pool.main.id}"` | Backend env var `COGNITO_ISSUER_URL`. JWT middleware (MYT-37) verifies the `iss` claim against this exact string. Constructing it here means the backend never has to know the region. |
+| `hosted_ui_domain` | `"${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"` | Backend env var `COGNITO_HOSTED_UI_DOMAIN`; constructs `/oauth2/*` paths. The fully-qualified host is built in `outputs.tf` using the `aws_region` data source so the module is provider-region-portable. |
+| `issuer_url` | `"https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.main.id}"` | Backend env var `COGNITO_ISSUER_URL`. JWT middleware (MYT-37) verifies the `iss` claim against this exact string, and derives the JWKS URL as `${issuer_url}/.well-known/jwks.json`. Constructed here from `data.aws_region.current.name` so a future prod composition in a different region (or a migration) doesn't silently produce a wrong URL. |
 
 ### No external dependencies
 
@@ -124,19 +125,23 @@ resource "aws_cognito_user_pool" "main" {
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
 
-  schema {
-    name                = "email"
-    attribute_data_type = "String"
-    required            = true
-    mutable             = true
-  }
+  # `email` is a Cognito built-in standard attribute — do NOT redeclare it
+  # via a `schema {}` block, which can produce InvalidParameterException on
+  # apply for some provider versions. Cognito treats it as required when it
+  # appears in `username_attributes`.
+
+  # Protect against `terraform destroy` and accidental state-detach. Removing
+  # the pool destroys every user record and invalidates every JWT. Disable
+  # this only for an intentional teardown, then re-enable.
+  deletion_protection = "ACTIVE"
 
   # MFA off for staging per MYT-36 + Auth spec §2.1. Revisit at Launch.
   mfa_configuration = "OFF"
 
   # Cognito requires *some* recovery mechanism even for federated-only pools.
-  # email-only is vestigial here (OAuth users never had a Cognito password to
-  # lose), but it's the cheapest way to satisfy Cognito's API contract.
+  # `verified_email` is the only mechanism that doesn't require SMS posture;
+  # for OAuth-only sign-in it never actually fires (users have no Cognito
+  # password to recover) but the API contract demands it.
   account_recovery_setting {
     recovery_mechanism {
       name     = "verified_email"
@@ -156,6 +161,8 @@ resource "aws_cognito_user_pool_client" "main" {
   user_pool_id = aws_cognito_user_pool.main.id
 
   # Public client — PKCE proves browser identity, no secret to leak in JS.
+  # PKCE is enforced automatically by Cognito for public clients using the
+  # code grant; there's no separate "require PKCE" toggle.
   generate_secret = false
 
   # Authorization code grant + PKCE (SPA flow per Auth spec §3).
@@ -163,14 +170,28 @@ resource "aws_cognito_user_pool_client" "main" {
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
 
+  # Federated sign-in produces tokens via the OAuth flow; once the SPA has a
+  # refresh token, only the REFRESH_TOKEN_AUTH flow is needed for renewal.
+  # Set explicitly so a Cognito provider upgrade can't silently re-introduce
+  # ALLOW_USER_PASSWORD_AUTH and defeat the federated-only intent.
+  explicit_auth_flows = ["ALLOW_REFRESH_TOKEN_AUTH"]
+
   callback_urls = var.callback_urls
   logout_urls   = var.logout_urls
 
   # Apply 1: ["COGNITO"] (Cognito rejects an empty list).
-  # Apply 2: ["Google", "Discord"] after IdPs are created.
+  # Apply 2: ["Google", "Discord"] after IdPs are created. The `depends_on`
+  # below enforces the apply-2 ordering — without it, TF can plan the IdP
+  # create and the client update in parallel and Cognito rejects the update
+  # with "InvalidParameterException: Identity provider Google does not exist".
   supported_identity_providers = var.idps_enabled ? ["Google", "Discord"] : ["COGNITO"]
 
-  # Token expirations per Auth spec §2.1. Refresh-token rotation per spec §6.3.
+  depends_on = [
+    aws_cognito_identity_provider.google,
+    aws_cognito_identity_provider.discord,
+  ]
+
+  # Token expirations per Auth spec §2.1.
   access_token_validity  = 60                 # minutes (1 hour)
   id_token_validity      = 60                 # minutes (1 hour)
   refresh_token_validity = 30 * 24 * 60       # minutes (30 days)
@@ -180,16 +201,25 @@ resource "aws_cognito_user_pool_client" "main" {
     refresh_token = "minutes"
   }
 
+  # Refresh-token rotation per Auth spec §6.3 — each use mints a new refresh
+  # token and invalidates the previous one. `enable_token_revocation` is a
+  # *different* feature (logout-side revocation, spec §6.4); both are needed.
+  refresh_token_rotation {
+    feature = "ENABLED"
+  }
+
   enable_token_revocation       = true
   prevent_user_existence_errors = "ENABLED"
 }
 ```
 
-### Two non-obvious choices worth flagging
+### Three non-obvious choices worth flagging
 
-1. **`supported_identity_providers` flips between applies.** Cognito won't accept an empty list and won't accept a list referencing IdPs that don't exist on the pool. Apply 1 sets `["COGNITO"]` (a built-in placeholder); apply 2 sets `["Google", "Discord"]`. The App Client is updated in-place across the flip — no recreate, no token invalidation.
+1. **`supported_identity_providers` flips between applies, gated by `depends_on`.** Cognito won't accept an empty list and won't accept a list referencing IdPs that don't exist on the pool. Apply 1 sets `["COGNITO"]` (a built-in placeholder); apply 2 sets `["Google", "Discord"]`. The App Client is updated in-place across the flip — no recreate, no token invalidation. The explicit `depends_on` on both IdP resources is what guarantees TF runs the IdP create before the App Client update; without it, parallel planning produces a "provider does not exist" failure mid-apply.
 
-2. **`prevent_user_existence_errors = "ENABLED"`.** Without this, certain Cognito error responses leak whether an email is registered (via response-shape differences). Standard hardening; free; not flagged in the parent spec but worth keeping.
+2. **`refresh_token_rotation { feature = "ENABLED" }` is the parent §6.3 requirement.** Easy to confuse with `enable_token_revocation` (which handles logout, parent §6.4). Both are set; both are needed. Rotation invalidates a refresh token on first use and issues a new one — limits the damage window if a refresh token is somehow exfiltrated.
+
+3. **`prevent_user_existence_errors = "ENABLED"`.** Without this, certain Cognito error responses leak whether an email is registered (via response-shape differences). Standard hardening; free; not flagged in the parent spec but worth keeping.
 
 ---
 
@@ -280,8 +310,31 @@ resource "aws_cognito_identity_provider" "google" {
     picture  = "picture"
     username = "sub"  # Cognito requires "username" mapping; Google's sub is stable + unique.
   }
+
+  # Reserved as a forward-compat anchor: if Cognito's URL normalization
+  # produces drift on a specific provider_details key in the future, list
+  # it here. Empty means "the AWS provider's default behavior" — present so
+  # operators don't have to reinvent the block under load.
+  lifecycle {
+    ignore_changes = []
+  }
 }
 
+# Discord is configured as a generic OIDC provider, NOT via the legacy
+# /api/users/@me OAuth-only path that the parent Auth & Users spec §2.4
+# originally cited. Discord publishes a working OIDC discovery document at
+# https://discord.com/.well-known/openid-configuration and a spec-compliant
+# userinfo endpoint at https://discord.com/api/oauth2/userinfo. Using OIDC
+# means Cognito mints an id_token from Discord's claims and the attribute
+# mapping references OIDC standard names (sub, preferred_username, email,
+# picture), not Discord's native field names (id, username, avatar).
+#
+# Scope rules are non-obvious: `openid` gates the userinfo endpoint and
+# returns `sub`; `identify` is required to get `preferred_username` and
+# `picture`; `email` adds `email` and `email_verified`. All three are
+# needed for the attribute mapping below to populate. Dropping `identify`
+# leaves `name` and `picture` empty — and parent §4 onboarding reads
+# `display_name` from `name`, so dropping it breaks user creation.
 resource "aws_cognito_identity_provider" "discord" {
   count         = var.idps_enabled ? 1 : 0
   user_pool_id  = aws_cognito_user_pool.main.id
@@ -293,29 +346,38 @@ resource "aws_cognito_identity_provider" "discord" {
     client_secret             = local.discord_oauth.client_secret
     attributes_request_method = "GET"
     oidc_issuer               = "https://discord.com"
-    authorize_scopes          = "identify email"
-    authorize_url             = "https://discord.com/oauth2/authorize"
-    token_url                 = "https://discord.com/api/oauth2/token"
-    attributes_url            = "https://discord.com/api/users/@me"
-    jwks_uri                  = "https://discord.com/api/oauth2/keys"
+    authorize_scopes          = "openid identify email"
+    # Cognito CAN autodiscover these from the issuer's well-known doc, but
+    # pinning them removes a runtime dependency on Discord's discovery
+    # doc availability and makes the contract auditable from the TF.
+    authorize_url  = "https://discord.com/api/oauth2/authorize"
+    token_url      = "https://discord.com/api/oauth2/token"
+    attributes_url = "https://discord.com/api/oauth2/userinfo"
+    jwks_uri       = "https://discord.com/api/oauth2/keys"
   }
 
   attribute_mapping = {
     email    = "email"
-    name     = "username"  # Discord's username field; Cognito's `name` is the display-name standard attr.
-    username = "id"        # Discord's snowflake user id is stable.
-    # No `picture` — Discord returns an avatar hash, not a URL. See Section 11.
+    name     = "preferred_username"  # Discord's chosen display name (OIDC claim).
+    picture  = "picture"             # Discord's OIDC userinfo returns a CDN URL directly.
+    username = "sub"                 # Stable Discord user id (snowflake) exposed as OIDC sub.
+  }
+
+  lifecycle {
+    ignore_changes = []
   }
 }
 ```
 
-### Three things worth flagging
+### Four things worth flagging
 
-1. **Discord's `picture` claim is lossy.** Discord returns `avatar` as a hash, not a URL — the fully-qualified URL is `https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png`. Cognito's attribute mapping doesn't support string interpolation, so we **don't map `picture`** for Discord. The Auth spec §4 reads `picture` from the JWT claim; for Discord users that field is absent and `users.avatar_url` ends up null. Acceptable v1 trade-off — a Pre-Token-Generation Lambda could compose the URL later if it bothers anyone.
+1. **Parent spec §2.4 had it wrong.** The original Auth & Users spec cited Discord's legacy `/api/users/@me` endpoint and `identify, email` scopes — that path predates Discord's OIDC support and isn't compatible with `provider_type = "OIDC"` in Cognito. The parent spec is being updated alongside this design (see commit history for `docs/specs/2026-04-13-auth-users.md`). Future readers: the OIDC-native config above is correct; if you find the legacy endpoint in any other doc, that doc is stale.
 
-2. **`username` mapping is internal to Cognito.** Cognito's User Pool requires that *some* IdP attribute map to its internal `username` (the unique key inside the pool). For Google we use the OAuth `sub` (stable, never reused); for Discord we use the snowflake `id`. This is invisible to application code — we still key on Cognito's own `sub` claim, which is generated by Cognito and unrelated to either provider's IDs. **Do not confuse this with the Mythrun `users.username` we manage in our DB** (chosen by the user during onboarding in MYT-38).
+2. **`username` mapping is internal to Cognito.** Cognito's User Pool requires that *some* IdP attribute map to its internal `username` (the unique key inside the pool). For both providers we use the OAuth `sub` (stable, never reused, OIDC standard). This is invisible to application code — we still key on Cognito's own `sub` claim, which is generated by Cognito and unrelated to either provider's IDs. **Do not confuse this with the Mythrun `users.username` we manage in our DB** (chosen by the user during onboarding in MYT-38).
 
-3. **Secret rotation is clean.** When Discord (or Google) forces a client-secret rotation later, the operator pastes new JSON into the Secrets Manager entry and runs `terraform apply`. The data source re-reads, the IdP gets updated in-place, no resource recreate, zero downtime.
+3. **Discord's `picture` is now a real URL.** Earlier this design assumed we'd lose Discord avatars because the legacy API returned an avatar hash. The OIDC `userinfo` endpoint returns a fully-qualified CDN URL in the `picture` claim, so the attribute mapping populates `users.avatar_url` cleanly for Discord users — same as Google.
+
+4. **Secret rotation is clean.** When Discord (or Google) forces a client-secret rotation later, the operator pastes new JSON into the Secrets Manager entry and runs `terraform apply`. The data source re-reads, the IdP gets updated in-place, no resource recreate, zero downtime. **Important caveat**: `data.aws_secretsmanager_secret_version` reads during the *refresh* phase, before resources reconcile. If you paste a new value between `terraform plan` and `terraform apply`, the apply uses the stale value from the plan's refresh. Always re-run `plan` after pasting.
 
 ---
 
@@ -374,7 +436,9 @@ Three explicit notes:
 
 2. **TF/CI task-def split applies but is deferred.** Per the rule from MYT-35 (`reference_tf_ci_taskdef_split.md`): when TF registers a new task-def revision with these env vars, the live ECS service does NOT roll automatically — `:placeholder` image pinning means a force-rollover onto the TF rev would fail with `CannotPullContainerError`. CI's render-task-def step is what swaps in the real image. **For MYT-36 we do not roll the service** because the backend doesn't yet consume any of these env vars (JWT middleware lives in MYT-37). The first deploy that consumes them happens at the start of MYT-37.
 
-3. **The unused `cognito-client-secret` shell stays.** MYT-25 created `mythrun/staging/cognito-client-secret` speculatively. We use a public app client (no secret), so this shell is unused. Removing it is unrelated cleanup; we leave it untouched to keep MYT-36's diff focused. A one-line follow-up can sweep it up later.
+3. **`cognito-client-secret` shell is removed in this ticket** (corrected from earlier draft). MYT-25 created `mythrun/staging/cognito-client-secret` speculatively *and* `infra/modules/serving/main.tf:150` already wires it as a `COGNITO_CLIENT_SECRET` env var on the API container. Leaving the shell untouched would mean MYT-37's first deploy injects the literal string `"PLACEHOLDER — set via AWS Console / CLI"` as `COGNITO_CLIENT_SECRET` — a real footgun. Two changes ride with MYT-36:
+   - `infra/modules/serving/main.tf` — remove the `{ name = "COGNITO_CLIENT_SECRET", valueFrom = ... }` line from `common_secrets`.
+   - `infra/environments/staging/main.tf` — remove `"cognito-client-secret"` from `manual_secret_names`. The secret resource itself gets destroyed on apply; the 7-day recovery window absorbs any "wait, do we need it?" reversal.
 
 ---
 
@@ -444,11 +508,12 @@ A premature CI run during MYT-36 would also work (CI would render the current ba
      --secret-string '{"client_id":"<paste>","client_secret":"<paste>"}'
    ```
 
-### Three flags
+### Four flags
 
 1. **The Google OAuth consent screen is per-Google-Cloud-project, not per-OAuth-client.** If `mythrun.com` is already verified in this project, you skip step 2 of Sequence 1.
 2. **No Google verification queue.** The `email` and `profile` scopes don't trigger Google's manual app-verification process (which can take weeks). If we ever add Google sensitive scopes (Calendar, Drive), that's a different process — not relevant now.
-3. **Discord's redirect URI is the same string as Google's.** Both providers redirect to Cognito's idpresponse endpoint, then Cognito redirects to our app's `callback_urls`. Common source of confusion.
+3. **Discord's redirect URI is the same string as Google's.** Both providers redirect to Cognito's idpresponse endpoint, then Cognito redirects to our app's `callback_urls`. Common source of confusion. Discord's portal accepts multiple redirect URIs — set the Cognito idpresponse URL as the **only** one for the staging app, so a future operator can't introduce a second redirect that bypasses Cognito.
+4. **After pasting secrets, re-run `terraform plan` before `terraform apply`.** `data.aws_secretsmanager_secret_version` reads during refresh; if you skip from paste → apply 2 directly, you may get the stale PLACEHOLDER value. The plan output will show the secret values being read; if it's still PLACEHOLDER, the paste didn't land or the data source needs a fresh refresh (`terraform plan` triggers it).
 
 ---
 
@@ -504,6 +569,9 @@ We don't currently wire `tflint`, `terraform-compliance`, or `terratest` for `in
 | `idps_enabled=true` applied before secrets pasted | TF apply succeeds; IdPs get created with PLACEHOLDER values; click-through fails at provider with "invalid_client" | Paste real values into Secrets Manager, `terraform apply` again. The IdP resources update in-place; no recreate. |
 | Drift on `provider_details` after Cognito-side normalization | `terraform plan` shows changes on every run, can't reach "no changes" | Add the specific normalized field to `lifecycle.ignore_changes` on the IdP resource. The auth module's IdP resource blocks reserve a `lifecycle.ignore_changes = []` we can extend if drift surfaces. |
 | User exists in pool but `email` attribute is empty | IdP attribute mapping references a claim the provider doesn't return | Check the provider's userinfo response shape (Sequence 3 of runbook can dump it via `aws cognito-idp admin-get-user`). Update the `attribute_mapping` block in TF, re-apply. |
+| Discord users have empty `name` or `picture` | Discord's OIDC userinfo only returns `preferred_username` and `picture` when the `identify` scope is granted | Verify `authorize_scopes = "openid identify email"` in the Discord IdP block — all three scopes are required. Re-apply if changed. |
+| `aws_cognito_user_pool_domain` apply fails with "Domain already associated with another user pool" | The Hosted UI domain prefix `mythrun-{env}` is globally unique within the AWS region across all accounts; another tenant has claimed it | Pick a new prefix in `infra/modules/auth/main.tf` (e.g. add a short suffix). Update the prefix everywhere downstream: Google + Discord developer-portal redirect URIs (`https://<new-prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`), the click-through verification URL, and any wiki references. The TF outputs auto-pick up the new value. |
+| Apply 1 succeeds, apply 2 hasn't been run yet | Normal stable state — secret shells exist with PLACEHOLDER, no IdPs, App Client lists `["COGNITO"]` only | Not a failure. Continue to the human-action steps. The system is fine to leave in this state indefinitely. |
 
 ### What WON'T break the staging environment
 
@@ -532,8 +600,8 @@ We don't currently wire `tflint`, `terraform-compliance`, or `terratest` for `in
 | Custom domain `auth.mythrun.com` | Production-only; not needed for staging |
 | Recovery email | Post-launch follow-up if account-loss complaints surface |
 | Multiple linked OAuth providers per account | Post-launch follow-up |
-| Discord avatar URL composition (Pre-Token Lambda) | Roadmap; null `avatar_url` for Discord users is acceptable v1 |
-| Cleanup of unused `cognito-client-secret` Secrets Manager shell | Out-of-scope churn for MYT-36; sweep as a one-line PR later |
+| CloudWatch alarms on Cognito sign-in throttles, IdP availability, secret age | `myth-cognito-monitoring` follow-up bead — not load-bearing for staging click-through; required before prod composition |
+| Nightly user-record export to S3 (DR for User Pool corruption/deletion) | `myth-cognito-user-export` follow-up bead — Cognito has no native PITR or cross-region replication; staging has no users to export today, but prod needs this before launch |
 
 ---
 
@@ -543,8 +611,10 @@ To file after the design lands (don't block MYT-36 closure on these):
 
 - **`myth-prod-auth-compose`** — Compose the auth module in `infra/environments/production/main.tf` once production composition is ready. Includes the custom `auth.mythrun.com` Hosted UI domain via `var.custom_domain`, a separate set of OAuth client_secrets for prod (Google and Discord both require distinct OAuth clients per env to keep redirect URIs separate), and prod callback URLs once the prod frontend domain is decided.
 
-- **`myth-cognito-client-secret-cleanup`** — Remove the unused `mythrun/{env}/cognito-client-secret` Secrets Manager shell from `infra/environments/staging/main.tf`'s `manual_secret_names` list. One-line PR.
+- **`myth-cognito-monitoring`** — Wire CloudWatch alarms on Cognito metrics (`SignInSuccesses` rate-of-change, `SignInThrottles > 0`, `FederationThrottles > 0`) and Secrets Manager secret-age alarms on the two OAuth secrets (alert at 150 days, hard at 180). Compose the alarm targets onto the existing `aws_sns_topic.alerts` topic that staging already provisions. Required before prod composition; staging click-through verification works without it.
 
-- **`myth-discord-avatar-url`** — If real users complain about missing Discord avatars, add a Cognito Pre-Token-Generation Lambda that composes `https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png` and injects it as a `picture` claim. Skip until a complaint surfaces.
+- **`myth-cognito-user-export`** — Nightly Lambda or scheduled task that runs `aws cognito-idp list-users` and writes the result to an S3 prefix with 90-day retention. The recovery procedure is documented but presumes export data exists; this bead produces the data. Cognito has no native PITR or cross-region replication, so a corrupted/deleted User Pool is recoverable only to user-record granularity from these exports. Staging has no users today; prod needs this active before users are onboarded.
 
 - **`myth-recovery-email`** — Add a post-signup recovery-email flow (magic-link reset) if real users surface OAuth-account-loss complaints.
+
+- **Parent spec correction** (no bead — done inline with this design): `docs/specs/2026-04-13-auth-users.md` §2.4 is updated to reflect the OIDC-native Discord configuration (the legacy `/api/users/@me` + `identify, email` configuration cited there is incompatible with `provider_type = "OIDC"`).
