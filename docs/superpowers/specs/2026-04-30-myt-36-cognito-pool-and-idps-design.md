@@ -106,8 +106,8 @@ infra/modules/auth/
 |--------|-------|-------------|
 | `user_pool_id` | `aws_cognito_user_pool.main.id` | Backend env var `COGNITO_USER_POOL_ID`; `aws cognito-idp` CLI commands. |
 | `app_client_id` | `aws_cognito_user_pool_client.main.id` | Backend env var `COGNITO_APP_CLIENT_ID`; OAuth flow URLs. |
-| `hosted_ui_domain` | `"${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"` | Backend env var `COGNITO_HOSTED_UI_DOMAIN`; constructs `/oauth2/*` paths. The fully-qualified host is built in `outputs.tf` using the `aws_region` data source so the module is provider-region-portable. |
-| `issuer_url` | `"https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.main.id}"` | Backend env var `COGNITO_ISSUER_URL`. JWT middleware (MYT-37) verifies the `iss` claim against this exact string, and derives the JWKS URL as `${issuer_url}/.well-known/jwks.json`. Constructed here from `data.aws_region.current.name` so a future prod composition in a different region (or a migration) doesn't silently produce a wrong URL. |
+| `hosted_ui_domain` | `"${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"` | Backend env var `COGNITO_HOSTED_UI_DOMAIN`; constructs `/oauth2/*` paths. The fully-qualified host is built in `outputs.tf` using the `aws_region` data source so the module is provider-region-portable. |
+| `issuer_url` | `"https://cognito-idp.${data.aws_region.current.region}.amazonaws.com/${aws_cognito_user_pool.main.id}"` | Backend env var `COGNITO_ISSUER_URL`. JWT middleware (MYT-37) verifies the `iss` claim against this exact string, and derives the JWKS URL as `${issuer_url}/.well-known/jwks.json`. Constructed here from `data.aws_region.current.region` so a future prod composition in a different region (or a migration) doesn't silently produce a wrong URL. |
 
 ### No external dependencies
 
