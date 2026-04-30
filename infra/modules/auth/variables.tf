@@ -3,6 +3,11 @@
 variable "environment" {
   description = "Environment name, used in resource names and the Hosted UI domain prefix (e.g. \"staging\" → mythrun-staging-users / mythrun-staging.auth.us-east-1.amazoncognito.com)."
   type        = string
+
+  validation {
+    condition     = contains(["staging", "production"], var.environment)
+    error_message = "environment must be 'staging' or 'production'."
+  }
 }
 
 variable "idps_enabled" {
@@ -12,11 +17,21 @@ variable "idps_enabled" {
 }
 
 variable "callback_urls" {
-  description = "OAuth callback URL allowlist for the App Client. Staging uses [\"http://localhost:5173/auth/callback\"] only — staging is intentionally local-frontend-only per MYT-36 spec §6."
+  description = "OAuth callback URL allowlist for the App Client. Cognito redirects here with `?code=...` after a successful sign-in. Must be a non-empty list of fully-qualified URLs. Example: [\"http://localhost:5173/auth/callback\"] for staging's local-frontend-only setup."
   type        = list(string)
+
+  validation {
+    condition     = length(var.callback_urls) > 0
+    error_message = "callback_urls must contain at least one URL — Cognito's App Client requires a non-empty allowlist."
+  }
 }
 
 variable "logout_urls" {
-  description = "OAuth logout-redirect URL allowlist. Staging uses [\"http://localhost:5173\"]."
+  description = "OAuth logout-redirect URL allowlist. Cognito redirects here after a `/logout` call. Must be a non-empty list of fully-qualified URLs. Example: [\"http://localhost:5173\"] for staging."
   type        = list(string)
+
+  validation {
+    condition     = length(var.logout_urls) > 0
+    error_message = "logout_urls must contain at least one URL — Cognito's App Client requires a non-empty allowlist."
+  }
 }
