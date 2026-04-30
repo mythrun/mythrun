@@ -1,6 +1,6 @@
 # MYT-37 — JWT Middleware + Bypass Mode + Public-Route Allowlist (Design)
 
-> **Status**: Draft v4 (post round-3 blind review — constellation cohort: Orion / Cassiopeia / Lyra; first round with identical-to-round-1 prompts after a process correction)
+> **Status**: Draft v5 (post round-4 blind review — composer cohort: Bach / Mozart / Beethoven; identical-to-round-1 prompts)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-37](https://linear.app/mythrun/issue/MYT-37/auth-jwt-middleware-bypass-mode-public-route-allowlist)
 > **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §5 (with deferral to MYT-39 for the DB-lookup + suspended-user path — see §1 below)
@@ -93,9 +93,11 @@ A forgotten opt-out is the safer failure mode — a 401 is loud; a silently-publ
 Fastify's `onRequest` hook fires AFTER route matching (per the official lifecycle). For matched routes, the hook sees `request.routeOptions.config` and applies the rules above. For UNMATCHED paths, behavior depends on whether `setNotFoundHandler` is registered:
 
 - **No custom 404 handler (Fastify default):** unmatched paths skip `onRequest` entirely; the framework returns 404 directly.
-- **With `setNotFoundHandler`:** unmatched paths flow through `onRequest`, but `request.routeOptions` is `undefined`. Without explicit handling, the auth check would proceed and an unauthenticated request to a nonexistent path would get 401 instead of 404 — a route-existence info-leak.
+- **With `setNotFoundHandler`:** unmatched paths flow through `onRequest`, and `request.routeOptions` is set to the not-found handler's options (potentially with empty config). Without explicit handling, the auth check would proceed and an unauthenticated request to a nonexistent path would get 401 instead of 404 — a route-existence info-leak.
 
-Both auth plugins guard with `if (!request.routeOptions) return` at the top of the hook, so unmatched paths fall through to the 404 handler regardless of whether one is registered. Tests verify both unauth-on-unmatched (404) and authenticated-on-unmatched (404) cases.
+`buildApp` registers a custom `setNotFoundHandler` with `config: { auth: 'public' }` so unmatched paths flow through the auth hook, which sees `'public'` and skips validation, then reaches the 404 handler. This makes the 404 path testable (under the default 404 handler, the auth hook never runs and the test gives false confidence about the guard).
+
+The plugins ALSO retain the secondary `if (!request.routeOptions) return` guard as defense-in-depth — covering the edge case where some future Fastify version or composition removes the `setNotFoundHandler` and reverts to the default behavior. Tests verify both unauth-on-unmatched (404) and authenticated-on-unmatched (404) cases under the `setNotFoundHandler`-registered configuration.
 
 ---
 
@@ -105,10 +107,12 @@ Both auth plugins guard with `if (!request.routeOptions) return` at the top of t
 
 ```
 backend/src/auth/
-  index.ts          # registerAuth(app, opts) — dispatches based on mode
+  index.ts          # registerAuth(app, opts) — dispatches based on mode; re-exports requireUser
   jwt-plugin.ts     # real JWT validation
-  bypass-plugin.ts  # fixed dev user, six safety layers
-  types.ts          # AuthUser + Fastify module augmentation
+  bypass-plugin.ts  # fixed dev user, multi-layer safety defense
+  types.ts          # AuthUser + JwtVerifier + Fastify module augmentation
+  require-user.ts   # requireUser(request) helper — runtime, kept separate from types.ts
+  constants.ts      # REGISTERED_DECORATOR shared between jwt-plugin.ts and bypass-plugin.ts
   __tests__/
     jwt-plugin.test.ts
     bypass-plugin.test.ts
@@ -389,6 +393,12 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
   // circuit-breaker rolls back to the previous revision (which keeps serving
   // with its already-warm cache, no impact). The right failure mode for a
   // service that can't authenticate users.
+  //
+  // Jitter (0-2s random delay before hydrate) spreads JWKS fetches across
+  // simultaneous container starts during a rolling deploy, avoiding a
+  // thundering-herd that could trip Cognito's JWKS rate limiting on
+  // desired_count > 2 services.
+  await new Promise((resolve) => setTimeout(resolve, Math.random() * 2000))
   await Promise.race([
     verifier.hydrate(),
     new Promise<never>((_, reject) =>
@@ -541,12 +551,23 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
     )
   }
 
-  // Defense layer 3: ALL parsed Cognito config must be empty. Checking all
-  // four values (not just userPoolId) defends against a partial-migration
-  // window where one moved to Secrets Manager before the others.
-  // Reads from opts (plumbed in from loadEnv), not process.env directly —
-  // refactor-proof against future Secrets Manager / SSM moves.
-  const populatedCognitoKeys = (
+  // Defense layer 3: ALL Cognito config must be empty in BOTH the parsed env
+  // (plumbed via opts) AND the raw process.env. Belt-and-suspenders:
+  //   - Plumbed check is refactor-proof against future Secrets Manager / SSM
+  //     moves (loadEnv evolves; the plumbed value reflects whatever loadEnv
+  //     produced).
+  //   - Raw process.env check defends against the case where loadEnv ran in
+  //     a degraded mode and skipped the Cognito vars (e.g., AUTH_MODE=bypass
+  //     told it to skip them) but the underlying environment WAS provisioned
+  //     with Cognito wiring (the operator just told loadEnv to ignore it).
+  // The two together fail closed under every realistic misconfig pattern.
+  const COGNITO_KEYS = [
+    'COGNITO_USER_POOL_ID',
+    'COGNITO_APP_CLIENT_ID',
+    'COGNITO_ISSUER_URL',
+    'COGNITO_HOSTED_UI_DOMAIN',
+  ] as const
+  const populatedFromOpts = (
     [
       ['cognitoUserPoolId', opts.cognitoUserPoolId],
       ['cognitoAppClientId', opts.cognitoAppClientId],
@@ -556,9 +577,10 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
   )
     .filter(([, v]) => Boolean(v))
     .map(([k]) => k)
-  if (populatedCognitoKeys.length > 0) {
+  const populatedFromEnv = COGNITO_KEYS.filter((k) => Boolean(process.env[k]))
+  if (populatedFromOpts.length > 0 || populatedFromEnv.length > 0) {
     throw new Error(
-      `auth bypass plugin: bypass mode forbidden — Cognito config present (${populatedCognitoKeys.join(', ')})`,
+      `auth bypass plugin: bypass mode forbidden — Cognito config present (opts: ${populatedFromOpts.join(', ') || 'none'}; env: ${populatedFromEnv.join(', ') || 'none'})`,
     )
   }
 
@@ -591,7 +613,11 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
       opts.cognitoUserPoolId ||
       opts.cognitoAppClientId ||
       opts.cognitoIssuerUrl ||
-      opts.cognitoHostedUiDomain
+      opts.cognitoHostedUiDomain ||
+      process.env.COGNITO_USER_POOL_ID ||
+      process.env.COGNITO_APP_CLIENT_ID ||
+      process.env.COGNITO_ISSUER_URL ||
+      process.env.COGNITO_HOSTED_UI_DOMAIN
     ) {
       throw new Error('auth bypass plugin: Cognito config observed at request time')
     }
@@ -640,6 +666,19 @@ export const buildApp = async (
   const app = Fastify({ logger: true })
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' }))
   registerReadyRoute(app, deps) // /health/ready opts out via config: { auth: 'public' }
+
+  // Custom 404 handler so the auth hook's `if (!request.routeOptions) return`
+  // guard ACTUALLY runs against unmatched paths. Without setNotFoundHandler,
+  // Fastify's default 404 path bypasses onRequest entirely, leaving the
+  // route-existence info-leak guard as forward-looking dead code that no
+  // test could exercise. With this handler, unmatched paths flow through
+  // the auth hook (which falls through cleanly because routeOptions is
+  // undefined) and reach this handler, which returns 404. The guard's
+  // behavior is now testable + observable.
+  app.setNotFoundHandler({ config: { auth: 'public' } }, (_request, reply) => {
+    reply.code(404).send({ error: 'Not Found' })
+  })
+
   await registerAuth(app, authOpts)
   return app
 }
@@ -649,18 +688,37 @@ export const buildApp = async (
 
 ### `server.ts` wiring
 
+`server.ts` has two boot paths from MYT-29:
+1. **Gated path** (`BOOT_GATE_ENABLED=1`): runs `loadEnv`, opens real pg/redis clients, runs `waitFor` probes, calls `buildApp`, listens.
+2. **`fallbackStart`** (`BOOT_GATE_ENABLED=0` or unset): originally skipped `loadEnv` entirely and used stub deps that throw on use; intended for a transition period before the boot gate became standard.
+
+MYT-37 requires both paths to call `loadEnv` at minimum (auth needs `AUTH_MODE` + `COGNITO_*`), which changes the contract from MYT-29's purely-degraded-fallback. The reconciliation:
+
+- **Both paths run `loadEnv` and pass `authOpts` through `buildApp`.** This is not optional; auth is now part of every boot.
+- **fallbackStart still uses stub deps** for pg/redis — that's its only remaining purpose. Auth is wired identically.
+- **fallbackStart in real mode (`AUTH_MODE=real`) still hydrates JWKS** at registration. If Cognito is unreachable, the boot fails — same as the gated path.
+- **fallbackStart's net behavior under real mode** is "no DB/Redis but auth works." That's a degenerate state useful only for verifying the auth path in isolation; never used in production. The boot gate is `BOOT_GATE_ENABLED=1` in staging and will be in production.
+
 ```typescript
-// ... after loadEnv ...
+// server.ts top:
 const env = loadEnv()
 const authOpts: RegisterAuthOptions = {
   mode: env.AUTH_MODE,
   userPoolId: env.COGNITO_USER_POOL_ID,
   appClientId: env.COGNITO_APP_CLIENT_ID,
+  issuerUrl: env.COGNITO_ISSUER_URL,
+  hostedUiDomain: env.COGNITO_HOSTED_UI_DOMAIN,
 }
 
-// In both the gated path AND fallbackStart:
-const app = await buildApp(deps, authOpts)
-await app.listen(...)
+if (env.BOOT_GATE_ENABLED === '1') {
+  // gated path: real deps + waitFor + buildApp + listen
+  const app = await buildApp(realDeps, authOpts)
+  await app.listen(...)
+} else {
+  // fallbackStart: stub deps + buildApp + listen (auth still wired)
+  const app = await buildApp(stubDeps, authOpts)
+  await app.listen(...)
+}
 ```
 
 JWKS hydrate (in real mode) happens before `app.listen`. The container reports healthy only after the verifier is warmed.
@@ -684,9 +742,9 @@ await Promise.race([
 
 Already sets `AUTH_MODE=bypass`. No change needed.
 
-### Infra change: `AUTH_MODE` becomes a serving-module variable
+### Infra change: `AUTH_MODE` AND `NODE_ENV` become serving-module variables
 
-Defense Layer 5 lands as a structural property of the serving module, not per-environment vigilance.
+Defense Layers 2 and 5 BOTH land as structural properties of the serving module, not per-environment vigilance. (v4 claimed this for NODE_ENV but only delivered for AUTH_MODE — v5 corrects.)
 
 `infra/modules/serving/variables.tf` adds:
 
@@ -701,19 +759,31 @@ variable "auth_mode" {
     error_message = "auth_mode must be 'real' or 'bypass'."
   }
 }
+
+variable "node_env" {
+  description = "Node.js NODE_ENV value. Defaults to 'production' so a real environment can't lose Layer 2 of the bypass-mode defense by forgetting to set it. The bypass plugin demands NODE_ENV ∈ {'development','test'} at registration; the production default ensures real environments fail-closed even on extra_env override attempts (the dedicated variable's value gets injected directly into common_env, not via extra_env, so an extra_env override with the same name would be appended later and could shadow it — see hardening note below)."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["development", "test", "production"], var.node_env)
+    error_message = "node_env must be 'development', 'test', or 'production'."
+  }
+}
 ```
 
-`infra/modules/serving/main.tf` injects it into the API task definition's environment via the `common_env` local (alongside the existing wiring), NOT through `extra_env`. Using a dedicated variable keeps the structural defense independent of `extra_env` shape:
+`infra/modules/serving/main.tf` injects BOTH into the API task definition's environment via the `common_env` local. Critically, the AUTH_MODE and NODE_ENV entries appear AFTER `var.extra_env` in the concat call so they cannot be silently shadowed by an extra_env override (later entries in an ECS task-def `environment` array win on duplicate name):
 
 ```hcl
-common_env = concat([
+common_env = concat(var.extra_env, [
   { name = "ENVIRONMENT", value = var.environment },
   # ... existing entries ...
   { name = "AUTH_MODE", value = var.auth_mode },
-], var.extra_env)
+  { name = "NODE_ENV",  value = var.node_env },
+])
 ```
 
-`infra/environments/staging/main.tf` does NOT add `AUTH_MODE` to `extra_env` (this is the v3 walk-back from earlier drafts; staging gets `auth_mode = "real"` via the module's default). Production composition (the `myth-prod-auth-compose` follow-up) gets `real` automatically without remembering. Switching to bypass requires an explicit `auth_mode = "bypass"` line in the composition, which a reviewer catches.
+`infra/environments/staging/main.tf` does NOT add `AUTH_MODE` or `NODE_ENV` to `extra_env`. Staging gets `auth_mode = "real"` and `node_env = "production"` via the module defaults. Production composition (the `myth-prod-auth-compose` follow-up) inherits the same defaults automatically. Switching to bypass in staging for local-debug experimentation requires an explicit `auth_mode = "bypass"` AND `node_env = "development"` line pair in the composition — two coordinated changes a reviewer catches.
 
 ---
 
@@ -725,6 +795,10 @@ For MYT-37, the public routes are exactly the ones that exist today:
 |--------|------|--------|
 | GET | `/health` | ECS container liveness probe |
 | GET | `/health/ready` | ALB target-group readiness probe |
+
+Plus the not-found handler registered in `buildApp` (set `auth: 'public'` so unmatched paths skip auth and reach a clean 404 — see §2 "404 fall-through").
+
+Parent §5.3 also lists `/health/live` as a public route. **MYT-37 does NOT add `/health/live`** because no consumer needs it: `/health` already serves as the ECS container liveness probe (per the comment in `app.ts:9`), and `/health/ready` serves as the ALB readiness probe. A separate `/health/live` would be redundant. If a future consumer (a different load balancer, a different orchestrator) needs the distinct path, it adds the route + opt-out as part of that ticket.
 
 Both opt out via `config: { auth: 'public' }` on their route registration. No path-based allowlist in the plugin; the opt-out is a per-route property visible at the route's definition site.
 
@@ -834,8 +908,8 @@ Push the working branch to `main` (or merge the PR). `Deploy` workflow auto-trig
       echo "::error::AUTH_MODE not set in mythrun-staging-api task-def. Phase A (terraform apply) must run before this deploy."
       exit 1
     fi
-    if [[ "$LATEST" != "real" && "$LATEST" != "bypass" ]]; then
-      echo "::error::AUTH_MODE has unexpected value '$LATEST'."
+    if [[ "$LATEST" != "real" ]]; then
+      echo "::error::AUTH_MODE in mythrun-staging-api task-def is '$LATEST', not 'real'. Bypass mode in staging/production is rejected by this gate."
       exit 1
     fi
     echo "AUTH_MODE=$LATEST verified."
