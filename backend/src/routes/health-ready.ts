@@ -26,7 +26,7 @@ async function probe(name: string, fn: () => Promise<unknown>): Promise<ProbeRes
 }
 
 export function registerReadyRoute(app: FastifyInstance, deps: AppDeps): void {
-  app.get('/health/ready', async (_req, reply) => {
+  app.get('/health/ready', { config: { auth: 'public' } }, async (_req, reply) => {
     const results = await Promise.all([
       probe('pg', () => deps.pg.query('SELECT 1')),
       probe('redis-realtime', () => deps.redisRealtime.ping()),
