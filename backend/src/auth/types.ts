@@ -65,7 +65,3 @@ declare module 'fastify' {
     jwtVerifier?: JwtVerifier
   }
 }
-
-// Side-effect import marker so build tools don't tree-shake the
-// `declare module` block.
-export const __AUTH_TYPES_LOADED = true as const

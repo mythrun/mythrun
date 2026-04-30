@@ -15,8 +15,4 @@ describe('requireUser', () => {
   it('throws when user is undefined', () => {
     expect(() => requireUser({})).toThrow(/was this route marked public/)
   })
-
-  it('throws when user is null (defensive)', () => {
-    expect(() => requireUser({ user: undefined })).toThrow(/was this route marked public/)
-  })
 })
