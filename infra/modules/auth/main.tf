@@ -73,11 +73,6 @@ resource "aws_cognito_user_pool_client" "main" {
   # with "InvalidParameterException: Identity provider Google does not exist".
   supported_identity_providers = var.idps_enabled ? ["Google", "Discord"] : ["COGNITO"]
 
-  depends_on = [
-    aws_cognito_identity_provider.google,
-    aws_cognito_identity_provider.discord,
-  ]
-
   # Token expirations per Auth spec §2.1.
   access_token_validity  = 60           # minutes (1 hour)
   id_token_validity      = 60           # minutes (1 hour)
