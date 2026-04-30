@@ -1,8 +1,16 @@
+export type AuthMode = 'real' | 'bypass'
+
 export interface Env {
   readonly databaseUrl: string
   readonly redisRealtimeUrl: string
   readonly redisBatchUrl: string
   readonly port: number
+  readonly authMode: AuthMode
+  /** Defined when authMode === 'real'; undefined in bypass. */
+  readonly cognitoUserPoolId?: string
+  readonly cognitoAppClientId?: string
+  readonly cognitoIssuerUrl?: string
+  readonly cognitoHostedUiDomain?: string
 }
 
 // Dev (.env.development) sets DATABASE_URL / REDIS_REALTIME_URL /
@@ -69,6 +77,58 @@ function buildRedisUrl(role: 'realtime' | 'batch'): string {
   return `${scheme}://${authPart}${host}:${port}`
 }
 
+function loadAuthConfig(): Pick<
+  Env,
+  'authMode' | 'cognitoUserPoolId' | 'cognitoAppClientId' | 'cognitoIssuerUrl' | 'cognitoHostedUiDomain'
+> {
+  const authModeRaw = process.env.AUTH_MODE
+  if (authModeRaw !== 'real' && authModeRaw !== 'bypass') {
+    throw new Error(
+      `AUTH_MODE must be exactly 'real' or 'bypass' (got ${JSON.stringify(authModeRaw)})`,
+    )
+  }
+  const authMode: AuthMode = authModeRaw
+
+  // Cross-check 1: bypass requires non-production NODE_ENV.
+  const nodeEnvRaw = process.env.NODE_ENV
+  if (authMode === 'bypass' && nodeEnvRaw !== 'development' && nodeEnvRaw !== 'test') {
+    throw new Error(
+      `loadEnv: AUTH_MODE=bypass requires NODE_ENV in {'development','test'}, got NODE_ENV=${JSON.stringify(nodeEnvRaw)}`,
+    )
+  }
+
+  // Cross-check 2: real + production requires the boot gate on.
+  if (authMode === 'real' && nodeEnvRaw === 'production' && process.env.BOOT_GATE_ENABLED !== '1') {
+    throw new Error(
+      'loadEnv: AUTH_MODE=real with NODE_ENV=production requires BOOT_GATE_ENABLED=1',
+    )
+  }
+
+  if (authMode === 'real') {
+    const userPoolId = process.env.COGNITO_USER_POOL_ID
+    const appClientId = process.env.COGNITO_APP_CLIENT_ID
+    const issuerUrl = process.env.COGNITO_ISSUER_URL
+    const hostedUiDomain = process.env.COGNITO_HOSTED_UI_DOMAIN
+    if (!userPoolId || !appClientId || !issuerUrl || !hostedUiDomain) {
+      throw new Error(
+        'AUTH_MODE=real requires all of COGNITO_USER_POOL_ID, COGNITO_APP_CLIENT_ID, COGNITO_ISSUER_URL, COGNITO_HOSTED_UI_DOMAIN',
+      )
+    }
+    return {
+      authMode,
+      cognitoUserPoolId: userPoolId,
+      cognitoAppClientId: appClientId,
+      cognitoIssuerUrl: issuerUrl,
+      cognitoHostedUiDomain: hostedUiDomain,
+    }
+  }
+
+  // bypass mode — omit Cognito fields so they remain `undefined` on Env
+  // without violating exactOptionalPropertyTypes (which forbids assigning
+  // `undefined` to a `?: string` property explicitly).
+  return { authMode }
+}
+
 export function loadEnv(): Env {
   const portRaw = process.env.PORT
   if (!portRaw) {
@@ -83,5 +143,6 @@ export function loadEnv(): Env {
     redisRealtimeUrl: buildRedisUrl('realtime'),
     redisBatchUrl: buildRedisUrl('batch'),
     port,
+    ...loadAuthConfig(),
   })
 }

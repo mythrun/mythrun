@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { loadEnv } from '../env.js'
 
 const URL_FORM = {
@@ -203,5 +203,81 @@ describe('loadEnv (MIGRATE_DATABASE_URL precedence)', () => {
     Object.assign(process.env, COMPONENT_FORM)
     process.env.MIGRATE_DATABASE_URL = 'postgresql://m:m@m:5432/migrate'
     expect(loadEnv().databaseUrl).toBe('postgresql://m:m@m:5432/migrate')
+  })
+})
+
+const SAFE_BASE = (): void => {
+  vi.stubEnv('PORT', '3000')
+  vi.stubEnv('DATABASE_URL', 'postgresql://x:y@localhost:5432/test')
+  vi.stubEnv('REDIS_REALTIME_URL', 'redis://localhost:6379')
+  vi.stubEnv('REDIS_BATCH_URL', 'redis://localhost:6380')
+}
+
+describe('loadEnv auth-mode parsing', () => {
+  beforeEach(() => {
+    SAFE_BASE()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('throws when AUTH_MODE is unset', () => {
+    vi.stubEnv('AUTH_MODE', '')
+    expect(() => loadEnv()).toThrow(/AUTH_MODE must be exactly/)
+  })
+
+  it("throws on AUTH_MODE='Real' (case-mismatch)", () => {
+    vi.stubEnv('AUTH_MODE', 'Real')
+    vi.stubEnv('NODE_ENV', 'development')
+    expect(() => loadEnv()).toThrow(/AUTH_MODE must be exactly/)
+  })
+
+  it('parses bypass mode in NODE_ENV=development', () => {
+    vi.stubEnv('AUTH_MODE', 'bypass')
+    vi.stubEnv('NODE_ENV', 'development')
+    const env = loadEnv()
+    expect(env.authMode).toBe('bypass')
+    expect(env.cognitoUserPoolId).toBeUndefined()
+  })
+
+  it('throws bypass + NODE_ENV=production', () => {
+    vi.stubEnv('AUTH_MODE', 'bypass')
+    vi.stubEnv('NODE_ENV', 'production')
+    expect(() => loadEnv()).toThrow(/AUTH_MODE=bypass requires NODE_ENV/)
+  })
+
+  it('throws real + production without BOOT_GATE_ENABLED', () => {
+    vi.stubEnv('AUTH_MODE', 'real')
+    vi.stubEnv('NODE_ENV', 'production')
+    // .env.development sets BOOT_GATE_ENABLED=1 — clear it so this test
+    // can exercise the missing-boot-gate path.
+    vi.stubEnv('BOOT_GATE_ENABLED', '')
+    vi.stubEnv('COGNITO_USER_POOL_ID', 'x')
+    vi.stubEnv('COGNITO_APP_CLIENT_ID', 'y')
+    vi.stubEnv('COGNITO_ISSUER_URL', 'https://cognito-idp.us-east-1.amazonaws.com/x')
+    vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', 'x.auth.us-east-1.amazoncognito.com')
+    expect(() => loadEnv()).toThrow(/BOOT_GATE_ENABLED=1/)
+  })
+
+  it('parses real mode with all Cognito vars', () => {
+    vi.stubEnv('AUTH_MODE', 'real')
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('BOOT_GATE_ENABLED', '1')
+    vi.stubEnv('COGNITO_USER_POOL_ID', 'us-east-1_test')
+    vi.stubEnv('COGNITO_APP_CLIENT_ID', 'cli')
+    vi.stubEnv('COGNITO_ISSUER_URL', 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test')
+    vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', 'mythrun.auth.us-east-1.amazoncognito.com')
+    const env = loadEnv()
+    expect(env.authMode).toBe('real')
+    expect(env.cognitoUserPoolId).toBe('us-east-1_test')
+  })
+
+  it('throws real mode missing COGNITO_USER_POOL_ID', () => {
+    vi.stubEnv('AUTH_MODE', 'real')
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('COGNITO_APP_CLIENT_ID', 'c')
+    vi.stubEnv('COGNITO_ISSUER_URL', 'https://x.example.com')
+    vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', 'd.example.com')
+    expect(() => loadEnv()).toThrow(/AUTH_MODE=real requires/)
   })
 })
