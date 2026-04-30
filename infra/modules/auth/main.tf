@@ -102,3 +102,40 @@ resource "aws_cognito_user_pool_domain" "main" {
   domain       = "mythrun-${var.environment}"
   user_pool_id = aws_cognito_user_pool.main.id
 }
+
+# Google OAuth client_id + client_secret JSON. Populated out-of-band by
+# `aws secretsmanager put-secret-value` after registering the Google OAuth
+# app. recovery_window_in_days = 0 because staging values are reproducible
+# from the provider portals; production composition should override this
+# to 30 days.
+resource "aws_secretsmanager_secret" "google_oauth" {
+  name                    = "mythrun/${var.environment}/google-oauth"
+  description             = "Google OAuth client_id + client_secret JSON for Cognito IdP"
+  recovery_window_in_days = 0
+  tags                    = { Name = "mythrun-${var.environment}-google-oauth" }
+}
+
+resource "aws_secretsmanager_secret_version" "google_oauth_placeholder" {
+  secret_id     = aws_secretsmanager_secret.google_oauth.id
+  secret_string = jsonencode({ client_id = "PLACEHOLDER", client_secret = "PLACEHOLDER" })
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+resource "aws_secretsmanager_secret" "discord_oauth" {
+  name                    = "mythrun/${var.environment}/discord-oauth"
+  description             = "Discord OAuth client_id + client_secret JSON for Cognito IdP"
+  recovery_window_in_days = 0
+  tags                    = { Name = "mythrun-${var.environment}-discord-oauth" }
+}
+
+resource "aws_secretsmanager_secret_version" "discord_oauth_placeholder" {
+  secret_id     = aws_secretsmanager_secret.discord_oauth.id
+  secret_string = jsonencode({ client_id = "PLACEHOLDER", client_secret = "PLACEHOLDER" })
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
