@@ -1,3 +1,12 @@
 <h1>Auth &amp; Billing</h1>
-<p class="lead">Cognito integration, JWT handling, invites, Stripe, credits.</p>
-<p>Nothing built here yet. Will be populated as auth and billing ship.</p>
+<p class="lead">
+  How a player becomes a signed-in user, how that identity travels with their requests, how their
+  session credit is metered, and how Stripe fits in.
+</p>
+<p>
+  One page in this section so far: <a href="./identity.html">Identity</a> — the Cognito User Pool,
+  the PKCE public App Client, the Hosted UI domain, and the Google + Discord OIDC providers that
+  back federated sign-in. JWT validation, the <code>/api/auth/refresh</code> route, the
+  user-bootstrap-on-first-login flow, the credits ledger, and Stripe webhooks all land as those
+  layers ship.
+</p>

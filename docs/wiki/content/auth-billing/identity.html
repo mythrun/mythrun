@@ -1,0 +1,476 @@
+<!-- source: infra/modules/auth/ -->
+<!-- source: infra/modules/auth/main.tf -->
+<!-- source: infra/modules/auth/variables.tf -->
+<!-- source: infra/modules/auth/outputs.tf -->
+<!-- source: infra/environments/staging/main.tf -->
+<!-- source-hash: sha256:190959a8edfd1d2a4a73bf210ba683ab951ba675ec3b64fd026d4a73e525d60b -->
+<!-- last-ticket: MYT-36 -->
+
+<h1>Identity</h1>
+
+<p class="lead">
+  The Cognito User Pool every player signs in to, fronted by the Hosted UI, federated to Google and
+  Discord, and consumed by the API container as four env vars. Federated only — no email/password,
+  no client secret, no Cognito-managed credentials anywhere.
+</p>
+
+<!-- @diagram: auth-billing/identity -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Identity lives in <code>infra/modules/auth/</code> and composes into the per-env workspace
+  alongside <a href="../infra/serving.html">serving</a>. The module ships one User Pool, one App
+  Client, one Hosted UI domain, two IdPs (Google + Discord), and two Secrets Manager shells the IdPs
+  read on apply. Outputs are wired straight into the API task definition's environment, where MYT-37
+  will pick them up to validate JWTs.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Federated only — no email + password</strong> — Mythrun's audience overlaps near-totally
+  with people who already hold Google or Discord accounts. Adding email + password would inherit a
+  tail of operational and security work — password storage and rotation, reset flows, brute-force
+  defense, MFA implementation, breach-narrative blast radius — for a marginal pool of users who
+  can't sign in with one of the two big OAuth providers. That trade is wrong for a TTRPG product;
+  recovery-email and provider-linking are post-launch follow-ups (see <code>myth-geri</code>) if
+  real users surface account-loss complaints.
+</aside>
+
+<h2>The User Pool itself</h2>
+
+<p>
+  <code>aws_cognito_user_pool.main</code> is named <code>mythrun-&lt;env&gt;-users</code>, sets
+  <code>username_attributes = ["email"]</code> so OAuth's email claim is the natural sign-in key,
+  and carries <code>deletion_protection = "ACTIVE"</code>. <code>mfa_configuration</code> is
+  <code>OFF</code> for staging — federated providers handle their own second factor — and is on the
+  Launch checklist to revisit. The recovery setting is <code>verified_email</code> with priority 1,
+  which never actually fires (no Cognito-stored password to recover) but the API contract demands a
+  recovery mechanism be set even on a federated-only pool.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Region-pinned, no auth-DR posture</strong> — Cognito User Pools are region resources. The
+  Pool, the App Client, the IdPs, the Hosted UI domain, and the issuer URL all bake
+  <code>us-east-1</code> in, and Cognito has no native cross-region replication or PITR. A us-east-1
+  outage means staging auth is down for the duration. The <code>myth-fhri</code> follow-up — a
+  nightly user-record export to S3 — gives us user-record-granularity recovery for the corruption
+  case (someone fat-fingers a pool delete), which is the failure mode worth defending against. A
+  region outage simply waits.
+</aside>
+
+<h2>The App Client and PKCE</h2>
+
+<p>
+  <code>aws_cognito_user_pool_client.main</code> is the App Client the SPA talks to. Three settings
+  decide its security shape: <code>generate_secret = false</code> makes it a public client,
+  <code>allowed_oauth_flows = ["code"]</code> with
+  <code>allowed_oauth_scopes = ["openid", "email", "profile"]</code> pins it to Authorization Code
+  grant, and Cognito enforces PKCE automatically on any public client doing the code grant — there
+  is no separate "require PKCE" toggle. The browser generates a <code>code_verifier</code> per
+  sign-in, sends a hash up with the <code>/oauth2/authorize</code> request, and proves possession by
+  sending the verifier back with the token exchange. No secret in the JS bundle, no secret to leak.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Public client, not confidential</strong> — a confidential client (with
+  <code>generate_secret = true</code>) would force the SPA to either embed the secret in JavaScript
+  (defeats the point) or proxy every token exchange through the backend (an extra round trip per
+  sign-in for nothing better than PKCE already gives us). The PKCE-public-client pattern is the
+  industry default for SPA + OAuth; we follow it.
+</aside>
+
+<p>
+  <code>explicit_auth_flows = ["ALLOW_USER_AUTH"]</code> pins the InitiateAuth/AdminInitiateAuth
+  surface closed. The SPA never calls those — it goes through Hosted UI's
+  <code>/oauth2/token</code> exchange — so this list is effectively a deny-everything narrow pin
+  against future provider drift. <code>ALLOW_USER_AUTH</code> is the only value AWS accepts here
+  while <code>refresh_token_rotation</code> is enabled, which it is: each refresh-token use mints a
+  new token and invalidates the prior one (Auth spec §6.3).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>ALLOW_REFRESH_TOKEN_AUTH</code> is not in the list</strong> — Cognito rejects
+  <code>ALLOW_REFRESH_TOKEN_AUTH</code> alongside <code>refresh_token_rotation = ENABLED</code> with
+  an <code>InvalidParameterException</code>. The two settings describe the same refresh path and
+  Cognito won't let both be set. <code>ALLOW_USER_AUTH</code> is the modern selection-based flow
+  that is rotation-compatible. Without an explicit list at all, Cognito's omitted-default would
+  re-introduce <code>ALLOW_USER_SRP_AUTH</code> + <code>ALLOW_CUSTOM_AUTH</code>, defeating the
+  federated-only intent.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>retry_grace_period_seconds</code> is set to <code>0</code> explicitly</strong>
+  — AWS provider 6.41.0 has a plan/apply consistency bug where Terraform plans
+  <code>null</code> for the field but Cognito returns <code>0</code> on read. Pinning the value
+  matches the AWS default and stops <code>terraform plan</code> from reporting perpetual drift.
+</aside>
+
+<p>
+  <code>callback_urls</code> and <code>logout_urls</code> are non-empty allowlists Cognito enforces
+  at the <code>/oauth2/authorize</code> redirect. Staging carries
+  <code>http://localhost:5173/auth/callback</code> only — the production composition (see
+  <code>myth-8pcx</code>) will add the real <code>mythrun.com</code> URLs onto a separate prod App
+  Client. <code>prevent_user_existence_errors = "ENABLED"</code> stops Cognito's default
+  error-response shapes from leaking whether a given email is registered.
+</p>
+
+<h2>The Hosted UI domain and the /login vs /oauth2/authorize choice</h2>
+
+<p>
+  <code>aws_cognito_user_pool_domain.main</code> reserves the
+  <code>mythrun-&lt;env&gt;</code> prefix on AWS's free Cognito-managed domain — the resolved name
+  is <code>mythrun-staging.auth.us-east-1.amazoncognito.com</code> (built in
+  <code>outputs.tf</code> from a <code>data.aws_region.current</code> data source so the module is
+  region-portable). No DNS work, no certificate hand-off from the
+  <a href="../infra/dns.html">DNS module</a>, no CloudFront distribution to maintain. Production
+  gets a custom <code>auth.mythrun.com</code> in a follow-up; the module reserves a future
+  <code>var.custom_domain</code> for that.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the SPA hits <code>/oauth2/authorize</code>, not <code>/login</code></strong> — Hosted
+  UI's <code>/login</code> endpoint always renders the IdP picker (Google / Discord / email password
+  placeholder) regardless of whether <code>identity_provider=Google</code> is on the query string —
+  that parameter is a hint, not a directive. The production frontend instead hits
+  <code>/oauth2/authorize</code> directly with the provider name pinned, which bypasses the picker
+  entirely and routes the user straight to the chosen IdP. The Auth &amp; Users spec §3 has the full
+  URL shape; this is just the infrastructure side of the handshake.
+</aside>
+
+<h2>Two-pass apply, gated by <code>idps_enabled</code></h2>
+
+<p>
+  The module has a chicken-and-egg problem: the IdP resources read OAuth credentials from Secrets
+  Manager, but those credentials don't exist until a human registers an OAuth app at Google's and
+  Discord's developer portals — and the human can't register the OAuth app until they have the
+  Hosted UI's redirect URI to paste into the registration form. We solve it the same way
+  <a href="../data/bootstrap-database.html">bootstrap-database</a> and
+  <a href="../infra/data.html">RDS provisioning</a> do: a Boolean flag that gates the IdP-creation
+  half of the module, with a manual handoff in the middle.
+</p>
+
+<p>
+  Apply 1 runs with <code>idps_enabled = false</code>. It creates the User Pool, App Client (with
+  <code>supported_identity_providers = ["COGNITO"]</code> — Cognito rejects an empty list), Hosted
+  UI domain, and the two Secrets Manager shells with placeholder JSON (<code
+    >{ "client_id": "PLACEHOLDER", "client_secret": "PLACEHOLDER" }</code
+  >). The operator then registers the OAuth apps at Google Cloud Console and the Discord Developer
+  Portal — pasting the Hosted UI redirect URI in each one — copies back the
+  <code>client_id</code> and <code>client_secret</code>, and writes them into Secrets Manager:
+</p>
+
+<pre><code>aws secretsmanager put-secret-value \
+  --secret-id mythrun/staging/google-oauth \
+  --secret-string '{"client_id":"…","client_secret":"…"}'</code></pre>
+
+<p>
+  Apply 2 flips <code>idps_enabled = true</code>. The two
+  <code>data.aws_secretsmanager_secret_version</code> data sources resolve, the IdP resources are
+  created reading those values, and the App Client's
+  <code>supported_identity_providers</code> updates to <code>["Google", "Discord"]</code>. A
+  <code>depends_on</code> from the App Client to both IdP resources prevents Terraform from running
+  the IdP-create and the App-Client-update in parallel — without it, Cognito rejects the App Client
+  update with <code>InvalidParameterException: Identity provider Google does not exist</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Don't pin <code>version_id</code> on the secrets data source</strong> — leaving
+  <code>version_stage</code> at its default (<code>AWSCURRENT</code>) means each
+  <code>put-secret-value</code> rotation is picked up on the next plan with no Terraform code
+  change. Pinning a specific <code>version_id</code> would freeze the data source and turn every
+  rotation into a code-edit-and-PR cycle, which is exactly the friction the runbook below avoids.
+</aside>
+
+<h2>Discord as an OIDC provider</h2>
+
+<p>
+  Discord is configured with <code>provider_type = "OIDC"</code>, not the legacy OAuth-only path the
+  parent Auth &amp; Users spec §2.4 originally cited. Discord publishes a working OIDC discovery
+  document at <code>https://discord.com/.well-known/openid-configuration</code> and a spec-compliant
+  userinfo endpoint at <code>https://discord.com/api/oauth2/userinfo</code> (note: <em>not</em> the
+  legacy <code>/api/users/@me</code> path — that's the Discord-bot/non-OIDC API). Going OIDC means
+  Cognito mints an <code>id_token</code> from Discord's claims and attribute mapping references OIDC
+  standard names (<code>sub</code>, <code>preferred_username</code>, <code>email</code>,
+  <code>picture</code>).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>OIDC over the legacy OAuth-only path</strong> — the OAuth-only configuration would have
+  meant a custom claim-mapping shim (Cognito → Discord-shape JSON), a runtime dependency on
+  Discord's non-standard <code>/api/users/@me</code> endpoint, and a different attribute-mapping
+  vocabulary than the Google IdP uses. OIDC gives us discovery, standard claim names, and a single
+  attribute-mapping idiom across both providers. The parent Auth &amp; Users spec §2.4 has been
+  corrected to match.
+</aside>
+
+<p>
+  The OIDC scope list is <code>openid identify email</code>: <code>openid</code> gates the userinfo
+  endpoint and returns <code>sub</code>, <code>identify</code> is required to receive
+  <code>preferred_username</code> and <code>picture</code>, and <code>email</code> adds
+  <code>email</code> + <code>email_verified</code>. All three are needed for the attribute mapping
+  to populate. The OIDC endpoints are pinned in HCL — Cognito can autodiscover from the issuer's
+  well-known doc, but pinning removes a runtime dependency on Discord's discovery-doc availability
+  and makes the contract auditable from Terraform.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Why <code>lifecycle.ignore_changes</code> on specific
+    <code>provider_details</code> keys</strong
+  >
+  — Cognito server-side populates keys we don't set in HCL. Google's IdP fills in standard endpoints
+  (<code>authorize_url</code>, <code>token_url</code>, <code>oidc_issuer</code>,
+  <code>attributes_url</code>, <code>token_request_method</code>) because
+  <code>provider_type = "Google"</code> implies them. Discord's IdP fills in
+  <code>attributes_url_add_attributes</code>. Without the targeted
+  <code>ignore_changes</code> blocks, every <code>terraform plan</code> after apply would surface
+  perpetual diff on those keys. Ignoring a specific list (not the whole map) keeps real drift on
+  <code>client_id</code>/<code>client_secret</code>/<code>authorize_scopes</code> visible.
+</aside>
+
+<h2>The four env vars wired into the API task</h2>
+
+<p>
+  The module's outputs — <code>user_pool_id</code>, <code>app_client_id</code>,
+  <code>hosted_ui_domain</code>, <code>issuer_url</code> — flow into the
+  <a href="../infra/serving.html">serving module</a>'s <code>extra_env</code> input as
+  <code>COGNITO_USER_POOL_ID</code>, <code>COGNITO_APP_CLIENT_ID</code>,
+  <code>COGNITO_HOSTED_UI_DOMAIN</code>, and <code>COGNITO_ISSUER_URL</code>. They land on every
+  registered task-definition revision; no ECS roll happened in this ticket because the backend code
+  that consumes them ships in MYT-37. The <code>issuer_url</code> output is the key one for that
+  next ticket — JWT middleware will verify the <code>iss</code> claim against this exact string and
+  derive the JWKS URL as <code>${issuer_url}/.well-known/jwks.json</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>No <code>COGNITO_CLIENT_SECRET</code> env var, deliberately</strong> — MYT-25 had
+  speculatively wired a <code>cognito-client-secret</code> Secrets Manager shell and a matching
+  <code>COGNITO_CLIENT_SECRET</code> entry on the API task definition. Public clients have no client
+  secret; both were removed in MYT-36 to prevent MYT-37's first deploy from injecting the literal
+  "PLACEHOLDER" string into <code>process.env</code> and producing a confusing failure later in the
+  auth flow.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="rotate-an-oauth-client-secret">Rotate an OAuth client secret</h3>
+<ol>
+  <li>
+    At the provider — Google Cloud Console (APIs &amp; Services → Credentials → the Mythrun OAuth
+    2.0 Client ID) or Discord Developer Portal (Applications → Mythrun → OAuth2 → Reset Secret) —
+    generate a new <code>client_secret</code>. Copy both the (unchanged) <code>client_id</code> and
+    the new <code>client_secret</code>.
+  </li>
+  <li>
+    Push the new pair into Secrets Manager:
+    <pre><code>aws secretsmanager put-secret-value \
+  --secret-id mythrun/&lt;env&gt;/&lt;google|discord&gt;-oauth \
+  --secret-string '{"client_id":"&lt;same&gt;","client_secret":"&lt;new&gt;"}'</code></pre>
+  </li>
+  <li>
+    Run <code>terraform apply</code> in the env workspace. The
+    <code>data.aws_secretsmanager_secret_version</code> data source picks up
+    <code>AWSCURRENT</code> (no <code>version_id</code> pin), and the IdP resource updates its
+    <code>provider_details.client_secret</code> in place. No Cognito downtime, no user-side action.
+  </li>
+  <li>
+    Click through a sign-in (see the verification runbook below) to confirm the new secret is live
+    on Cognito's side.
+  </li>
+</ol>
+
+<h3 id="recover-from-an-accidental-user-pool-deletion">
+  Recover from an accidental User Pool deletion
+</h3>
+<ol>
+  <li>
+    Don't panic — <code>deletion_protection = "ACTIVE"</code> means the only ways the Pool can
+    actually disappear are (a) someone disabled the protection in console first, or (b) the
+    Terraform state was edited out-of-band. Either way the resource is gone, every existing JWT is
+    invalid, and every user record is lost.
+  </li>
+  <li>
+    Restore from the most recent <code>myth-fhri</code> nightly export in S3 if it exists (this
+    follow-up ships post-launch). Without it, accept the user-record loss — federated sign-in still
+    works for every player from a fresh "first login" record.
+  </li>
+  <li>
+    <code>terraform apply</code> in the env workspace recreates the Pool, App Client, and Hosted UI
+    domain. Pool and App Client IDs will be different — the four <code>COGNITO_*</code> env vars
+    change.
+  </li>
+  <li>
+    Update the OAuth redirect URI lists at Google Cloud Console and the Discord Developer Portal —
+    they reference the Hosted UI domain, which has changed. The
+    <code>mythrun-&lt;env&gt;</code> domain prefix should be the same; verify the resolved
+    <code>mythrun-&lt;env&gt;.auth.us-east-1.amazoncognito.com</code> is unchanged.
+  </li>
+  <li>
+    Run a <a href="../infra/ci-cd.html">CI deploy</a> so the API service rolls onto the new
+    task-definition revision (the one carrying the new <code>COGNITO_*</code> values).
+  </li>
+  <li>Click through the verification runbook below to confirm both providers work end-to-end.</li>
+</ol>
+
+<h3 id="verify-a-sign-in-flow-click-through">Verify a sign-in flow click-through</h3>
+<ol>
+  <li>
+    Construct the authorize URL by hand (the SPA does this in production):
+    <pre><code>https://mythrun-staging.auth.us-east-1.amazoncognito.com/oauth2/authorize
+  ?client_id=&lt;COGNITO_APP_CLIENT_ID&gt;
+  &amp;response_type=code
+  &amp;scope=openid+email+profile
+  &amp;identity_provider=Google
+  &amp;redirect_uri=http://localhost:5173/auth/callback
+  &amp;code_challenge=&lt;sha256(code_verifier), base64url&gt;
+  &amp;code_challenge_method=S256</code></pre>
+  </li>
+  <li>
+    Open it in a browser. Expect a direct redirect to Google's sign-in page (no Cognito IdP picker —
+    that's the difference between <code>/oauth2/authorize</code> and <code>/login</code>).
+  </li>
+  <li>
+    Sign in with a Google account. Expect a redirect back to
+    <code>http://localhost:5173/auth/callback?code=…&amp;state=…</code>. The local frontend (running
+    on Vite) doesn't have to handle the code yet — copy the <code>code</code> parameter from the URL
+    bar.
+  </li>
+  <li>
+    Exchange the code for tokens manually:
+    <pre><code>curl -X POST https://mythrun-staging.auth.us-east-1.amazoncognito.com/oauth2/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code" \
+  -d "client_id=&lt;COGNITO_APP_CLIENT_ID&gt;" \
+  -d "code=&lt;code from the redirect&gt;" \
+  -d "code_verifier=&lt;the verifier from step 1&gt;" \
+  -d "redirect_uri=http://localhost:5173/auth/callback"</code></pre>
+    Expect a JSON response with <code>id_token</code>, <code>access_token</code>, and
+    <code>refresh_token</code>. Decode the <code>id_token</code> at jwt.io and check that
+    <code>iss</code> matches <code>COGNITO_ISSUER_URL</code> and that the
+    <code>identities[0].providerName</code> is <code>Google</code>.
+  </li>
+  <li>Repeat with <code>identity_provider=Discord</code> to verify the second IdP.</li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The four <code>COGNITO_*</code> env vars land on the API task definition via
+  <a href="../infra/serving.html">serving</a>'s <code>extra_env</code> input — the same plumbing
+  staging uses for <code>BOOT_GATE_ENABLED</code>. The
+  <a href="../runtime/index.html">backend runtime</a> doesn't consume them yet; that wiring ships in
+  MYT-37 (JWT middleware against <code>issuer_url</code>'s JWKS, the
+  <code>/api/auth/refresh</code> route, the user-bootstrap-on-first-login flow). The OAuth client
+  credentials live in <a href="../infra/data.html#secrets">Secrets Manager</a> alongside the other
+  per-env secrets the platform owns. Discord's OIDC userinfo endpoint and Google's OAuth flow are
+  the two external integration points; both are pinned in <code>provider_details</code> rather than
+  autodiscovered, so a Discord <code>/.well-known/openid-configuration</code> outage doesn't stop
+  sign-ins on a cold <code>terraform apply</code>.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Module inputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Default</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>environment</code></td>
+      <td>—</td>
+      <td>One of <code>staging</code>, <code>production</code>. Validated.</td>
+    </tr>
+    <tr>
+      <td><code>idps_enabled</code></td>
+      <td><code>false</code></td>
+      <td>
+        Two-pass apply gate. <code>false</code>: pool + app client + secret shells only.
+        <code>true</code>: Google + Discord IdPs created reading the secrets, App Client's
+        <code>supported_identity_providers</code> updated.
+      </td>
+    </tr>
+    <tr>
+      <td><code>callback_urls</code></td>
+      <td>—</td>
+      <td>Non-empty allowlist. Staging: <code>http://localhost:5173/auth/callback</code>.</td>
+    </tr>
+    <tr>
+      <td><code>logout_urls</code></td>
+      <td>—</td>
+      <td>Non-empty allowlist. Staging: <code>http://localhost:5173</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Module outputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Output</th>
+      <th>Shape</th>
+      <th>Wired into</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>user_pool_id</code></td>
+      <td>string</td>
+      <td><code>COGNITO_USER_POOL_ID</code></td>
+    </tr>
+    <tr>
+      <td><code>app_client_id</code></td>
+      <td>string</td>
+      <td><code>COGNITO_APP_CLIENT_ID</code></td>
+    </tr>
+    <tr>
+      <td><code>hosted_ui_domain</code></td>
+      <td>string (e.g. <code>mythrun-staging.auth.us-east-1.amazoncognito.com</code>)</td>
+      <td><code>COGNITO_HOSTED_UI_DOMAIN</code></td>
+    </tr>
+    <tr>
+      <td><code>issuer_url</code></td>
+      <td>string (e.g. <code>https://cognito-idp.us-east-1.amazonaws.com/&lt;pool&gt;</code>)</td>
+      <td><code>COGNITO_ISSUER_URL</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Secrets Manager entries owned by this module</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Shape</th>
+      <th>Populated by</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>mythrun/&lt;env&gt;/google-oauth</code></td>
+      <td>JSON <code>{ client_id, client_secret }</code></td>
+      <td>
+        Operator via <code>aws secretsmanager put-secret-value</code> after registering at Google
+        Cloud Console.
+      </td>
+    </tr>
+    <tr>
+      <td><code>mythrun/&lt;env&gt;/discord-oauth</code></td>
+      <td>JSON <code>{ client_id, client_secret }</code></td>
+      <td>
+        Operator via <code>aws secretsmanager put-secret-value</code> after registering at the
+        Discord Developer Portal.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>infra/modules/auth/</code>, composed at <code>infra/environments/staging/main.tf</code>.
+</p>

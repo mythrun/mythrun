@@ -1,0 +1,77 @@
+digraph identity {
+  // The identity layer: a Cognito User Pool with two federated IdPs (Google
+  // OIDC, Discord OIDC). The SPA goes through Hosted UI's /oauth2/authorize
+  // path (NOT /login — which would surface the IdP picker) and lands back at
+  // the callback URL with a one-shot code. OAuth client_id+client_secret JSON
+  // for each IdP lives in Secrets Manager; Cognito reads them via a TF data
+  // source on apply 2 of the two-pass.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_browser {
+    label="browser  (SPA)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    spa [label="SPA\nlocalhost:5173\n+ PKCE code_verifier"];
+  }
+
+  subgraph cluster_cognito {
+    label="auth module  (Cognito)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    pool      [label="User Pool\nmythrun-staging-users\nfederated only\ndeletion_protection=ACTIVE"];
+    client    [label="App Client\nmythrun-staging-web\npublic (no secret)\nPKCE + refresh rotation\nALLOW_USER_AUTH only"];
+    domain    [label="Hosted UI domain\nmythrun-staging.auth.\nus-east-1.\namazoncognito.com"];
+    idp_g     [label="IdP: Google\nprovider_type=Google", color="ember", fontcolor="ember"];
+    idp_d     [label="IdP: Discord\nprovider_type=OIDC\nuserinfo /api/oauth2/userinfo", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_secrets {
+    label="Secrets Manager  (per env)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    sec_g [label="mythrun/staging/\ngoogle-oauth\n{ client_id,\nclient_secret }"];
+    sec_d [label="mythrun/staging/\ndiscord-oauth\n{ client_id,\nclient_secret }"];
+  }
+
+  subgraph cluster_providers {
+    label="external OAuth providers";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    google  [label="Google\naccounts.google.com"];
+    discord [label="Discord\ndiscord.com\n.well-known/\nopenid-configuration"];
+  }
+
+  ecs [label="ECS task def\nCOGNITO_USER_POOL_ID\nCOGNITO_APP_CLIENT_ID\nCOGNITO_HOSTED_UI_DOMAIN\nCOGNITO_ISSUER_URL", color="ember", fontcolor="ember"];
+
+  // Sign-in flow
+  spa    -> domain  [label="GET /oauth2/authorize\n?identity_provider=Google\n+ code_challenge"];
+  domain -> idp_g   [label="federate"];
+  domain -> idp_d   [label="federate"];
+  idp_g  -> google  [label="OAuth2"];
+  idp_d  -> discord [label="OIDC"];
+  domain -> spa     [label="redirect ?code=…\nto callback_urls"];
+  spa    -> domain  [label="POST /oauth2/token\n+ code_verifier"];
+  domain -> spa     [label="id+access+refresh"];
+
+  // Wiring
+  client -> pool   [label="belongs to"];
+  domain -> pool   [label="fronts"];
+  idp_g  -> pool   [label="attached"];
+  idp_d  -> pool   [label="attached"];
+  idp_g  -> sec_g  [label="reads on apply 2", style=dashed];
+  idp_d  -> sec_d  [label="reads on apply 2", style=dashed];
+
+  // Outputs to the rest of the platform
+  pool   -> ecs    [label="user_pool_id\nissuer_url", style=dashed];
+  client -> ecs    [label="app_client_id", style=dashed];
+  domain -> ecs    [label="hosted_ui_domain", style=dashed];
+}

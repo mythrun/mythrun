@@ -32,7 +32,10 @@ export const structure: Section[] = [
   {
     slug: 'auth-billing',
     title: 'Auth & Billing',
-    pages: [{ slug: 'index', title: 'Overview' }],
+    pages: [
+      { slug: 'index', title: 'Overview' },
+      { slug: 'identity', title: 'Identity' },
+    ],
   },
   {
     slug: 'world-campaign',
