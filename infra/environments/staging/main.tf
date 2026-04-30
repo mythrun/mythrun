@@ -18,7 +18,6 @@ locals {
     "anthropic-api-key",
     "stripe-secret-key",
     "stripe-webhook-secret",
-    "cognito-client-secret",
   ]
 
   # Secrets populated by bootstrap-databases.sh (post-MYT-30). NO Terraform-
@@ -106,10 +105,34 @@ module "serving" {
   # point the prod environment workspace must explicitly set this — the
   # default-[] extra_env IS a footgun if forgotten (follow-up bead filed).
   extra_env = [
-    { name = "BOOT_GATE_ENABLED", value = "1" },
+    { name = "BOOT_GATE_ENABLED", value = "1" },                                 # MYT-35
+    { name = "COGNITO_USER_POOL_ID", value = module.auth.user_pool_id },         # MYT-36
+    { name = "COGNITO_APP_CLIENT_ID", value = module.auth.app_client_id },       # MYT-36
+    { name = "COGNITO_HOSTED_UI_DOMAIN", value = module.auth.hosted_ui_domain }, # MYT-36
+    { name = "COGNITO_ISSUER_URL", value = module.auth.issuer_url },             # MYT-36
   ]
 
   # Staging uses module defaults (256/512, 14-day log retention) per Week 0 §7.2.
+}
+
+# ======== Auth Module (Cognito User Pool + Google + Discord IdPs) ========
+# MYT-36. Two-pass apply: cognito_idps_enabled=false initially creates the
+# Pool, App Client, Hosted UI domain, and OAuth secret shells with PLACEHOLDER
+# values. Human-action registers OAuth apps and pastes {client_id, client_secret}
+# JSON via aws secretsmanager put-secret-value. Flipping cognito_idps_enabled=true
+# in terraform.tfvars and re-applying creates the IdPs reading the secrets.
+
+module "auth" {
+  source = "../../modules/auth"
+
+  environment  = var.environment
+  idps_enabled = var.cognito_idps_enabled
+
+  # Staging is intentionally local-frontend-only per MYT-36 spec §6.
+  # Production composition (myth-prod-auth-compose follow-up bead) adds the
+  # production mythrun.com URLs onto a separate prod App Client.
+  callback_urls = ["http://localhost:5173/auth/callback"]
+  logout_urls   = ["http://localhost:5173"]
 }
 
 # ======== Bootstrap-DB Task Definition ========

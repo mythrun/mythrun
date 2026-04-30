@@ -20,3 +20,9 @@ variable "bootstrap_image_tag" {
   description = "Tag of the mythrun-bootstrap-db image to pin into the task definition. Format: bootstrap-db-<sha>-<run-attempt>. Bump after each script edit + image rebuild. No default — terraform.tfvars must supply, so a stale tag never silently sticks."
   type        = string
 }
+
+variable "cognito_idps_enabled" {
+  description = "MYT-36 two-pass apply gate. Apply 1: false (creates Cognito User Pool, App Client, Hosted UI domain, OAuth secret shells, no IdPs). Human-action: register Google + Discord OAuth apps and paste {client_id, client_secret} JSON via aws secretsmanager put-secret-value. Apply 2: flip to true to create the IdPs reading the secrets and update the App Client's supported_identity_providers list."
+  type        = bool
+  default     = false
+}

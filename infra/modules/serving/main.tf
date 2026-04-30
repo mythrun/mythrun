@@ -147,7 +147,6 @@ locals {
     { name = "ANTHROPIC_API_KEY", valueFrom = var.manual_secret_arns["anthropic-api-key"] },
     { name = "STRIPE_SECRET_KEY", valueFrom = var.manual_secret_arns["stripe-secret-key"] },
     { name = "STRIPE_WEBHOOK_SECRET", valueFrom = var.manual_secret_arns["stripe-webhook-secret"] },
-    { name = "COGNITO_CLIENT_SECRET", valueFrom = var.manual_secret_arns["cognito-client-secret"] },
     { name = "DB_PASSWORD", valueFrom = var.rds_password_secret_arn },
     { name = "REDIS_AUTH_TOKEN", valueFrom = var.shared_redis_auth_secret_arn },
   ]
