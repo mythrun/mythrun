@@ -50,6 +50,10 @@
 
 The audience for Mythrun overlaps near-totally with Discord and Google account holders. The Auth & Users spec (§2.1) and this design intentionally skip email+password to avoid a class of operational and security work — password storage and rotation, reset flows, brute-force defense, MFA implementation, the breach-narrative blast radius — that a TTRPG-audience product doesn't need to take on. Recovery-email and multi-provider-linking are roadmapped as post-launch follow-ups if real users surface account-loss complaints.
 
+### Region-pinned, no auth-DR posture
+
+Cognito User Pools are region-resources; the User Pool, App Client, IdPs, Hosted UI domain, and the issuer URL all bake `us-east-1` in. A us-east-1 outage means staging (and prod, post-launch) auth is down for the duration of the outage, with no cross-region failover available. Cognito has no native cross-region replication or PITR. This is an accepted risk for staging and for the launch window; the `myth-cognito-user-export` follow-up bead (§12) provides user-record-granularity recovery for the corruption case, but a region outage simply waits.
+
 ### Public client + PKCE for the SPA
 
 The App Client uses Authorization Code grant with PKCE and **`generate_secret = false`** ("public client"). The browser SPA proves identity via PKCE's `code_verifier`, with no client secret to leak in JavaScript. The backend's `/api/auth/refresh` endpoint (MYT-37) uses the public-client refresh-token grant — also no client secret needed.
@@ -171,9 +175,14 @@ resource "aws_cognito_user_pool_client" "main" {
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
 
   # Federated sign-in produces tokens via the OAuth flow; once the SPA has a
-  # refresh token, only the REFRESH_TOKEN_AUTH flow is needed for renewal.
+  # refresh token, only the REFRESH_TOKEN_AUTH flow is needed for renewal
+  # (which is what the parent §6.1 `/api/auth/refresh` endpoint exercises).
   # Set explicitly so a Cognito provider upgrade can't silently re-introduce
-  # ALLOW_USER_PASSWORD_AUTH and defeat the federated-only intent.
+  # ALLOW_USER_PASSWORD_AUTH (or ALLOW_USER_SRP_AUTH or ALLOW_ADMIN_USER_PASSWORD_AUTH)
+  # and defeat the federated-only intent — `explicit_auth_flows` is the
+  # allowlist for `InitiateAuth`/`AdminInitiateAuth`. The OAuth Authorization
+  # Code grant via Hosted UI doesn't go through `InitiateAuth`, so this list
+  # doesn't need to enumerate the Hosted UI flow itself.
   explicit_auth_flows = ["ALLOW_REFRESH_TOKEN_AUTH"]
 
   callback_urls = var.callback_urls
@@ -202,13 +211,21 @@ resource "aws_cognito_user_pool_client" "main" {
   }
 
   # Refresh-token rotation per Auth spec §6.3 — each use mints a new refresh
-  # token and invalidates the previous one. `enable_token_revocation` is a
-  # *different* feature (logout-side revocation, spec §6.4); both are needed.
+  # token and invalidates the previous one. Distinct from `enable_token_revocation`
+  # below, which powers the parent §10 `/api/auth/logout` route's "revoke Cognito
+  # tokens" line, NOT the parent §6.4 suspended-user enforcement (that lives in
+  # MYT-39 as an app-side `suspended_at` DB column check). Both Cognito features
+  # are independently required.
   refresh_token_rotation {
     feature = "ENABLED"
   }
 
-  enable_token_revocation       = true
+  enable_token_revocation = true
+
+  # Hardening default — without this, Cognito's error-response shapes leak
+  # whether a given email is registered. Not called for in the parent spec but
+  # consistent with its overall posture; ENABLED is the AWS-recommended default
+  # for any pool that handles real users.
   prevent_user_existence_errors = "ENABLED"
 }
 ```
@@ -242,7 +259,11 @@ That single resource produces `mythrun-staging.auth.us-east-1.amazoncognito.com`
 resource "aws_secretsmanager_secret" "google_oauth" {
   name                    = "mythrun/${var.environment}/google-oauth"
   description             = "Google OAuth client_id + client_secret JSON for Cognito IdP"
-  recovery_window_in_days = 7
+  # Staging cleanup posture: 0-day window means a `terraform destroy` and
+  # immediate re-apply works. The 7-day default would block the same name
+  # for a week, which is wrong for staging where partial-apply recovery is
+  # routine. Production composition should override this to 30 days.
+  recovery_window_in_days = 0
   tags                    = { Name = "mythrun-${var.environment}-google-oauth" }
 }
 
@@ -258,7 +279,11 @@ resource "aws_secretsmanager_secret_version" "google_oauth_placeholder" {
 resource "aws_secretsmanager_secret" "discord_oauth" {
   name                    = "mythrun/${var.environment}/discord-oauth"
   description             = "Discord OAuth client_id + client_secret JSON for Cognito IdP"
-  recovery_window_in_days = 7
+  # Staging cleanup posture: 0-day window means a `terraform destroy` and
+  # immediate re-apply works. The 7-day default would block the same name
+  # for a week, which is wrong for staging where partial-apply recovery is
+  # routine. Production composition should override this to 30 days.
+  recovery_window_in_days = 0
   tags                    = { Name = "mythrun-${var.environment}-discord-oauth" }
 }
 
@@ -280,6 +305,11 @@ The PLACEHOLDER contents are valid JSON so `jsondecode()` doesn't error during a
 data "aws_secretsmanager_secret_version" "google_oauth" {
   count     = var.idps_enabled ? 1 : 0
   secret_id = aws_secretsmanager_secret.google_oauth.id
+  # `version_stage` defaults to AWSCURRENT — what `aws secretsmanager
+  # put-secret-value` advances on every paste. DO NOT pin `version_id`;
+  # that would freeze the data source on a historical version and break
+  # the rotation runbook (each rotation would require a TF code change
+  # to update the pinned version).
 }
 
 data "aws_secretsmanager_secret_version" "discord_oauth" {
@@ -311,13 +341,6 @@ resource "aws_cognito_identity_provider" "google" {
     username = "sub"  # Cognito requires "username" mapping; Google's sub is stable + unique.
   }
 
-  # Reserved as a forward-compat anchor: if Cognito's URL normalization
-  # produces drift on a specific provider_details key in the future, list
-  # it here. Empty means "the AWS provider's default behavior" — present so
-  # operators don't have to reinvent the block under load.
-  lifecycle {
-    ignore_changes = []
-  }
 }
 
 # Discord is configured as a generic OIDC provider, NOT via the legacy
@@ -363,9 +386,6 @@ resource "aws_cognito_identity_provider" "discord" {
     username = "sub"                 # Stable Discord user id (snowflake) exposed as OIDC sub.
   }
 
-  lifecycle {
-    ignore_changes = []
-  }
 }
 ```
 
@@ -377,7 +397,7 @@ resource "aws_cognito_identity_provider" "discord" {
 
 3. **Discord's `picture` is now a real URL.** Earlier this design assumed we'd lose Discord avatars because the legacy API returned an avatar hash. The OIDC `userinfo` endpoint returns a fully-qualified CDN URL in the `picture` claim, so the attribute mapping populates `users.avatar_url` cleanly for Discord users — same as Google.
 
-4. **Secret rotation is clean.** When Discord (or Google) forces a client-secret rotation later, the operator pastes new JSON into the Secrets Manager entry and runs `terraform apply`. The data source re-reads, the IdP gets updated in-place, no resource recreate, zero downtime. **Important caveat**: `data.aws_secretsmanager_secret_version` reads during the *refresh* phase, before resources reconcile. If you paste a new value between `terraform plan` and `terraform apply`, the apply uses the stale value from the plan's refresh. Always re-run `plan` after pasting.
+4. **Secret rotation is clean.** When Discord (or Google) forces a client-secret rotation later, the operator pastes new JSON into the Secrets Manager entry and runs `terraform plan && terraform apply`. The data source has no `version_id` pin (per the inline comment) and `version_stage` defaults to `AWSCURRENT`, so each plan re-reads whatever `put-secret-value` last advanced. The plan diff will show the IdP `client_secret` changing; apply consumes the freshly-read value. No `-refresh-only` pre-step is required. Same pattern for Google's secret. The IdP gets updated in-place — no resource recreate, no downtime.
 
 ---
 
@@ -440,6 +460,10 @@ Three explicit notes:
    - `infra/modules/serving/main.tf` — remove the `{ name = "COGNITO_CLIENT_SECRET", valueFrom = ... }` line from `common_secrets`.
    - `infra/environments/staging/main.tf` — remove `"cognito-client-secret"` from `manual_secret_names`. The secret resource itself gets destroyed on apply; the 7-day recovery window absorbs any "wait, do we need it?" reversal.
 
+4. **The new `mythrun/{env}/google-oauth` and `mythrun/{env}/discord-oauth` secrets are read by Cognito only.** They are NOT wired into `module "serving"`'s `manual_secret_arns` map, NOT injected into the API container's `secrets` block, and NOT consumed by any backend code. Cognito's `aws_cognito_identity_provider` resource reads them at TF apply time via the data source above and embeds them into the IdP `provider_details`. An SRE finding these secrets and assuming they need ECS wiring would waste a debug session — they don't.
+
+5. **Staging serves only the localhost frontend.** The `callback_urls = ["http://localhost:5173/auth/callback"]` set is intentionally local-only. Production composition (the `myth-prod-auth-compose` follow-up bead in §12) adds the production `mythrun.com/auth/callback` URL onto a separate prod App Client, with separate Google + Discord OAuth clients pointed at the prod Hosted UI. There is no plan to host a deployed staging frontend on `staging.mythrun.com` before launch; if that changes, a one-line addition to `callback_urls` is the entire change.
+
 ---
 
 ## 7. Deploy Sequence
@@ -448,11 +472,17 @@ Three phases. **No CI run in any of them.** No ECS roll.
 
 ### Phase A — TF apply 1 (creates infra without IdPs)
 
-1. `cd infra/environments/staging`
-2. Confirm `terraform.tfvars` has `cognito_idps_enabled = false` (or unset; default is false).
-3. `terraform plan` — should show: 1 user pool, 1 app client, 1 user pool domain, 2 secrets, 2 secret versions (PLACEHOLDER), 0 IdPs. Plus the addition of 4 env vars on the API task definition.
-4. `terraform apply`.
-5. Capture outputs: `terraform output` — record `user_pool_id`, `app_client_id`, `hosted_ui_domain`. They'll be needed in human-action.
+1. **Pre-check Hosted UI domain availability.** The prefix `mythrun-staging` is globally unique within `us-east-1` across all AWS accounts, so a different tenant could have claimed it. Confirm it's free before apply 1:
+   ```bash
+   aws cognito-idp describe-user-pool-domain --domain mythrun-staging --region us-east-1
+   ```
+   Expected: `ResourceNotFoundException` (the prefix is free). If the call succeeds and returns a `UserPoolId` belonging to a pool you don't own, change the prefix in `infra/modules/auth/main.tf` before apply 1 — re-running after a partial apply means rolling back the User Pool (which has `deletion_protection = "ACTIVE"` — you must `aws cognito-idp update-user-pool --deletion-protection INACTIVE` first) and recreating, and updating the prefix in any IdP redirect URIs already configured in human-action.
+2. `cd infra/environments/staging`
+3. Confirm `terraform.tfvars` has `cognito_idps_enabled = false` (or unset; default is false).
+4. `terraform plan` — should show: 1 user pool, 1 app client, 1 user pool domain, 2 secrets, 2 secret versions (PLACEHOLDER), 0 IdPs. Plus the addition of 4 env vars on the API task definition. Also: the removal of the speculative `cognito-client-secret` shell and its `COGNITO_CLIENT_SECRET` env-var wiring (see §6).
+5. `terraform apply`.
+6. Capture outputs: `terraform output` — record `user_pool_id`, `app_client_id`, `hosted_ui_domain`. They'll be needed in human-action.
+7. **Hosted UI domain DNS propagation.** Cognito's `aws_cognito_user_pool_domain` creates a CloudFront distribution behind the scenes; the new subdomain takes ~30–90 seconds to resolve in DNS after apply succeeds. If the click-through verification in Phase C returns NXDOMAIN immediately after apply 2, wait 60 seconds and retry before treating it as a config error.
 
 ### Phase B — Human action (register OAuth apps + paste secrets)
 
@@ -550,7 +580,7 @@ Repeat with `identity_provider=Discord`.
 aws cognito-idp list-users --user-pool-id $(terraform output -raw user_pool_id)
 ```
 
-Expected: 2 user records (one per IdP click-through), each with populated `email` and `name` attributes. Google's record additionally has `picture`. If a record exists but attributes are empty, the IdP attribute mapping is wrong — see Section 10.
+Expected: 2 user records (one per IdP click-through), each with populated `email`, `name`, and `picture` attributes. **Even if both click-throughs use the same email address**, Cognito creates 2 distinct user records — one keyed `Google_<sub>`, one keyed `Discord_<sub>`. This is intentional Cognito behavior for federated-only pools (the parent §4 onboarding flow keys on Cognito's `sub`, so two records means two app users; merging them is the "multiple linked OAuth providers per account" follow-up in §11). If a record exists but attributes are empty, the IdP attribute mapping is wrong — see Section 10.
 
 ### Why no Terraform test framework
 
@@ -572,6 +602,10 @@ We don't currently wire `tflint`, `terraform-compliance`, or `terratest` for `in
 | Discord users have empty `name` or `picture` | Discord's OIDC userinfo only returns `preferred_username` and `picture` when the `identify` scope is granted | Verify `authorize_scopes = "openid identify email"` in the Discord IdP block — all three scopes are required. Re-apply if changed. |
 | `aws_cognito_user_pool_domain` apply fails with "Domain already associated with another user pool" | The Hosted UI domain prefix `mythrun-{env}` is globally unique within the AWS region across all accounts; another tenant has claimed it | Pick a new prefix in `infra/modules/auth/main.tf` (e.g. add a short suffix). Update the prefix everywhere downstream: Google + Discord developer-portal redirect URIs (`https://<new-prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`), the click-through verification URL, and any wiki references. The TF outputs auto-pick up the new value. |
 | Apply 1 succeeds, apply 2 hasn't been run yet | Normal stable state — secret shells exist with PLACEHOLDER, no IdPs, App Client lists `["COGNITO"]` only | Not a failure. Continue to the human-action steps. The system is fine to leave in this state indefinitely. |
+| Apply 2 fails on Cognito's IdP-creation step with "Unable to contact well-known endpoint" | Discord's OIDC discovery doc (`https://discord.com/.well-known/openid-configuration`) was unreachable at apply time; Cognito validates the `oidc_issuer` URL synchronously when creating an OIDC IdP | Wait and retry the apply — Discord's discovery doc availability is generally good but transients happen. If persistent (>30 min), check Discord's status page and only then escalate. |
+| User Pool config drifts (e.g. someone toggles MFA via AWS Console out-of-band, attribute mapping cascades break sign-in) | `terraform plan` shows changes against a previously-stable apply | Roll back via `terraform apply` from a previous git SHA — the User Pool resource itself isn't recreated, so user records survive. Only resources whose recreate-trigger is touched (typically App Client name/family changes) would invalidate tokens. |
+| Apply 1 partially fails (User Pool created, App Client failed) and you need to clean up | `terraform destroy` fails with "User pool deletion protection is active" | Run `aws cognito-idp update-user-pool --user-pool-id <id> --deletion-protection INACTIVE` first, then `terraform destroy` to remove the orphaned pool. After re-running apply 1, `deletion_protection = "ACTIVE"` is re-asserted by TF. |
+| User Pool accidentally deleted in production | All issued JWTs immediately invalidated; all federated `sub` claims for existing users are orphaned (Cognito generates new `sub` values on a fresh pool) | The `myth-cognito-user-export` follow-up bead (§12) provides nightly user-record exports. Recovery: recreate the pool via `terraform apply`; restore user records from the latest S3 export. JWTs cannot be recovered — all users sign in fresh. Do not attempt this in staging without explicit reason; in prod, treat as a major incident. |
 
 ### What WON'T break the staging environment
 
