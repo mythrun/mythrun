@@ -1,6 +1,6 @@
 # MYT-37 — JWT Middleware + Bypass Mode + Public-Route Allowlist (Design)
 
-> **Status**: Draft v3 (post round-2 blind review — bird-of-prey cohort: Falcon / Hawk / Kestrel)
+> **Status**: Draft v4 (post round-3 blind review — constellation cohort: Orion / Cassiopeia / Lyra; first round with identical-to-round-1 prompts after a process correction)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-37](https://linear.app/mythrun/issue/MYT-37/auth-jwt-middleware-bypass-mode-public-route-allowlist)
 > **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §5 (with deferral to MYT-39 for the DB-lookup + suspended-user path — see §1 below)
@@ -202,6 +202,10 @@ export interface RegisterAuthOptions {
   userPoolId?: string
   /** Cognito App Client ID. REQUIRED when mode === 'real'. */
   appClientId?: string
+  /** Cognito issuer URL (passed through to Layer 3's all-cognito-vars check). */
+  issuerUrl?: string
+  /** Cognito Hosted UI domain (passed through to Layer 3's check). */
+  hostedUiDomain?: string
 }
 
 export const registerAuth = async (
@@ -209,10 +213,14 @@ export const registerAuth = async (
   opts: RegisterAuthOptions,
 ): Promise<void> => {
   if (opts.mode === 'bypass') {
-    // Plumb the (presumed-empty) userPoolId through to bypassPlugin's Layer 3
-    // check. If a misconfig has it set, the plugin throws at registration.
+    // Plumb ALL four Cognito values (presumed-empty) through to bypassPlugin's
+    // Layer 3 check. If any are populated (real or partial-migration), the
+    // plugin throws at registration.
     const bypassOpts: BypassPluginOptions = {
       cognitoUserPoolId: opts.userPoolId,
+      cognitoAppClientId: opts.appClientId,
+      cognitoIssuerUrl: opts.issuerUrl,
+      cognitoHostedUiDomain: opts.hostedUiDomain,
     }
     await app.register(bypassPlugin, bypassOpts)
     return
@@ -246,6 +254,35 @@ export function requireUser(request: { user?: AuthUser }): AuthUser {
 
 Re-exported from `backend/src/auth/index.ts` for convenience: `export { requireUser } from './require-user.js'`.
 
+### Protected handler convention (worked example)
+
+Every protected route handler that needs the user calls `requireUser(request)` once at the top to narrow `request.user` from optional to required. This is the project's mandatory convention; `!` non-null assertions on `request.user` are forbidden by the strict-TS rule in CLAUDE.md.
+
+```typescript
+import { requireUser } from '../auth/index.js'
+
+// MYT-39 example: a future protected route
+app.get('/api/me', async (request) => {
+  const user = requireUser(request) // throws if accidentally hit a public-marked route
+  return { sub: user.sub, username: user.username }
+})
+
+// MYT-38 example: /api/users/register uses jwt-no-db mode but still has a user
+app.post('/api/users/register', { config: { auth: 'jwt-no-db' } }, async (request, reply) => {
+  const user = requireUser(request) // claims-only user; no DB row yet
+  // ... create users row from claims ...
+})
+```
+
+Public routes don't call `requireUser` because there's no user to require:
+
+```typescript
+app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' }))
+// No requireUser call. request.user is undefined here, by design.
+```
+
+A lint rule (or grep-based CI check) is roadmapped to block `request.user!.sub` and `request.user?.sub` patterns in handler files — `requireUser` is the only sanctioned narrowing path.
+
 ### Module-augmentation import path
 
 `types.ts` augments the global `FastifyRequest`, `FastifyContextConfig`, and `FastifyInstance` interfaces. Any file using `request.user` or `app.jwtVerifier` needs `types.ts` transitively in its import graph. The natural path: `app.ts` (or whichever file calls `buildApp`) imports `registerAuth` from `./auth/index.js`, which imports both plugins, both of which import `types.ts`. Routes don't need to import `types.ts` directly — the augmentation is global once any file in the project loads it.
@@ -260,19 +297,23 @@ The bypass plugin is the single most dangerous piece of code in MYT-37. If it ev
 
 `loadEnv` validates `process.env.AUTH_MODE` is exactly `'real'` or `'bypass'`. Anything else — unset, empty, `'true'`, `'1'`, `'Real'` (case mismatch) — throws at boot with a clear error. **No silent default to either mode.** Forces every environment to make the decision explicitly. `.env.development.example` sets `bypass`; staging Terraform sets `real`; production Terraform sets `real`. The boot fails loudly if any environment forgot.
 
-### Layer 2 — Bypass requires `NODE_ENV` to be exactly `'development'` or `'test'`
+### Layer 2 — Bypass requires `NODE_ENV` to be exactly `'development'` or `'test'`, AND the serving module force-injects `NODE_ENV=production`
 
 `bypass-plugin.ts`'s `register` function checks `process.env.NODE_ENV` at registration time. **Allow-list, not block-list:** the value MUST be exactly `'development'` or `'test'`. Any other value — `'production'`, `'staging'`, an empty string, undefined, a typo — throws `Error('bypass mode requires NODE_ENV=development or test')`.
 
 The block-list shape (`!== 'production'`) is rejected because it fails-open on misconfig: an environment that forgets to set `NODE_ENV` defaults to undefined, which is `!== 'production'`, which historically allowed bypass. The allow-list shape requires explicit dev-or-test marker — the safer failure mode for a security-tier check.
 
-The Dockerfile's production runtime stage sets `ENV NODE_ENV=production`. The check runs **at registration time AND inside the `onRequest` hook** — defense-in-depth, even if it's mostly ceremony beyond the registration check.
+**Structural reinforcement:** The serving Terraform module force-injects `NODE_ENV=production` into the API task definition's environment, the same way it injects `AUTH_MODE=real` (Layer 5). Without this, an operator who set `AUTH_MODE=bypass` in `extra_env` could ALSO override `NODE_ENV=development` in `extra_env` and defeat both layers — the runtime check would see `NODE_ENV=development`, allow bypass, and the bypass user would be attached for every request in production. With the serving module force-injecting both values, defeating Layer 2 requires explicitly removing the module's hardcoded NODE_ENV, which is a code change that a reviewer catches.
 
-### Layer 3 — Bypass requires Cognito config to be ABSENT (read from parsed env, not process.env directly)
+The Dockerfile's production runtime stage also sets `ENV NODE_ENV=production`. The check runs **at registration time AND inside the `onRequest` hook** — defense-in-depth across registration, runtime, build, and infra layers.
 
-The bypass plugin receives the parsed `cognitoUserPoolId: string | undefined` value as a registration option (set by `registerAuth` based on `loadEnv` output). If the value is non-empty, bypass mode registration throws `Error('bypass mode is forbidden when cognitoUserPoolId is set')`. Catches the case where someone added `AUTH_MODE=bypass` to a real environment's task-def — that environment, by definition, has the Cognito config set.
+### Layer 3 — Bypass requires ALL Cognito config to be ABSENT (read from parsed env, not process.env directly)
 
-**Critical detail:** Layer 3 reads from the parsed env object (the result of `loadEnv`), NOT `process.env.COGNITO_USER_POOL_ID` directly. This makes the layer refactor-proof: if a future PR moves Cognito config to Secrets Manager (loaded into `env.COGNITO_USER_POOL_ID` by `loadEnv` from a runtime fetch instead of an ECS task-def env var), Layer 3 still fires because it reads the parsed value, not the raw env var. Same dual-check (registration AND per-request) — both checks read the same plumbed-in value.
+The bypass plugin receives the four Cognito config values as registration options: `cognitoUserPoolId`, `cognitoAppClientId`, `cognitoIssuerUrl`, `cognitoHostedUiDomain` (all `string | undefined`, set by `registerAuth` based on `loadEnv` output). If ANY of them is non-empty, bypass mode registration throws `Error('bypass mode is forbidden when any Cognito config is set: <list of populated keys>')`.
+
+Catches the case where someone added `AUTH_MODE=bypass` to a real environment's task-def — that environment, by definition, has Cognito config set. **Checking all four values, not just `cognitoUserPoolId`,** defends against a partial Secrets Manager migration where one of the four moved before the others — leaving (say) `cognitoAppClientId` set while `cognitoUserPoolId` was temporarily fetched from elsewhere.
+
+**Critical detail:** Layer 3 reads from the parsed env object (the result of `loadEnv`), NOT `process.env.COGNITO_*` directly. This makes the layer refactor-proof: if a future PR moves Cognito config to Secrets Manager (loaded into `env.COGNITO_*` by `loadEnv` from a runtime fetch), Layer 3 still fires because it reads the parsed value, not the raw env var. Same dual-check (registration AND per-request) — both checks read the same plumbed-in values.
 
 ### Layer 4 — Loud structured-log warning at registration
 
@@ -432,6 +473,8 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
 
 2. **JWKS caching: `aws-jwt-verify`'s actual model.** The library fetches the JWKS lazily on the first `verify()` call (which is why we call `hydrate()` at registration to warm it). It caches keys per-`kid` indefinitely; refetches happen only when a JWT arrives with an unknown `kid` (i.e., key rotation). The library enforces a 10-second per-URI rate limit on JWKS fetches to prevent abuse. **Parent §5.2 step 4 specified "10-minute refresh cadence with rate-limited fallback on cache miss" — that exact cadence does not exist in the library; the kid-miss model is functionally equivalent for our use case** (Cognito rotates keys rarely, kid-miss invalidates instantly when it happens, the 10-second rate limit covers the abuse case). The deviation is acknowledged here rather than re-implemented.
 
+   **Key-compromise incident response:** if Cognito (AWS) ever revokes a key without rotating it (signaling compromise rather than scheduled rotation), `aws-jwt-verify` keeps the compromised key in cache until the container restarts. The library does NOT expose a TTL knob on the JWKS cache. Mitigation: an ECS service rollover during incident response. Documented as a known operational limit in §11; acceptable for staging, must be cross-referenced with the security incident-response runbook before public launch. If we ever observe this gap mattering, a follow-up bead implements a `customJwksFetcher` wrapping the library's default with a max-age TTL.
+
 3. **Constructor at registration + hydrate at registration.** Without `hydrate()`, the FIRST request after every container start would pay the JWKS fetch latency (~100ms-3s depending on Cognito's response). With `hydrate()` awaited at registration, every request benefits from a warm cache. Hydrate failure throws — the boot fails loudly, which is the right behavior for "this service can't authenticate anyone."
 
 4. **Error-class logging without PII.** The token itself, the payload, and the user's identity NEVER appear in logs. Only the error class name (`JwtExpiredError`, `JwtInvalidSignatureError`, etc.) goes to CloudWatch. Lets operators triage patterns without leaking auth material. We catch the parent `Error` class (not specific subclasses), so future library versions introducing new error classes still get turned into 401s.
@@ -468,10 +511,15 @@ const BYPASS_USER: AuthUser = {
 
 export interface BypassPluginOptions {
   /** Plumbed in from loadEnv (parsed env), NOT read from process.env directly.
-   *  Layer 3 of the bypass-mode defense reads this. If it's a non-empty
-   *  string, registration throws. Refactor-proof: future moves of Cognito
-   *  config to Secrets Manager / SSM still flow through loadEnv → here. */
+   *  Layer 3 of the bypass-mode defense rejects if ANY of these is non-empty.
+   *  Refactor-proof: future moves of Cognito config to Secrets Manager / SSM
+   *  still flow through loadEnv → here. Checking all four (not just
+   *  userPoolId) defends against a partial-migration window where one moved
+   *  before the others. */
   cognitoUserPoolId?: string
+  cognitoAppClientId?: string
+  cognitoIssuerUrl?: string
+  cognitoHostedUiDomain?: string
 }
 
 export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app, opts) => {
@@ -493,12 +541,24 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
     )
   }
 
-  // Defense layer 3: parsed Cognito config must be empty.
+  // Defense layer 3: ALL parsed Cognito config must be empty. Checking all
+  // four values (not just userPoolId) defends against a partial-migration
+  // window where one moved to Secrets Manager before the others.
   // Reads from opts (plumbed in from loadEnv), not process.env directly —
   // refactor-proof against future Secrets Manager / SSM moves.
-  if (opts.cognitoUserPoolId) {
+  const populatedCognitoKeys = (
+    [
+      ['cognitoUserPoolId', opts.cognitoUserPoolId],
+      ['cognitoAppClientId', opts.cognitoAppClientId],
+      ['cognitoIssuerUrl', opts.cognitoIssuerUrl],
+      ['cognitoHostedUiDomain', opts.cognitoHostedUiDomain],
+    ] as const
+  )
+    .filter(([, v]) => Boolean(v))
+    .map(([k]) => k)
+  if (populatedCognitoKeys.length > 0) {
     throw new Error(
-      'auth bypass plugin: cognitoUserPoolId is set — bypass mode is forbidden in any environment with real Cognito wiring',
+      `auth bypass plugin: bypass mode forbidden — Cognito config present (${populatedCognitoKeys.join(', ')})`,
     )
   }
 
@@ -527,8 +587,13 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
         `auth bypass plugin: NODE_ENV must be 'development' or 'test' at request time (got ${JSON.stringify(requestNodeEnv)})`,
       )
     }
-    if (opts.cognitoUserPoolId) {
-      throw new Error('auth bypass plugin: cognitoUserPoolId observed at request time')
+    if (
+      opts.cognitoUserPoolId ||
+      opts.cognitoAppClientId ||
+      opts.cognitoIssuerUrl ||
+      opts.cognitoHostedUiDomain
+    ) {
+      throw new Error('auth bypass plugin: Cognito config observed at request time')
     }
 
     request.user = BYPASS_USER
@@ -685,7 +750,7 @@ Tests use `vi.mock('aws-jwt-verify')` to stub `CognitoJwtVerifier.create()` retu
 | `hydrate()` succeeds at registration | plugin registers cleanly |
 | `hydrate()` rejects | registration throws; boot fails loudly |
 | `app.register(jwtPlugin)` called twice | second call throws `auth is already registered` |
-| Valid access token | 200; `request.user = { sub, username, scope, tokenUse: 'access' }` |
+| Valid access token | 200; `request.user = { sub, username, scope }` (no `tokenUse` per v3) |
 | Missing `Authorization` header on protected route | 401; body `{ error: 'Missing Bearer token' }` |
 | `Authorization: Basic abc` (wrong scheme) | 401; same body (the prefix check rejects) |
 | `Authorization: Bearer ` (empty after prefix) | 401; body `{ error: 'Empty Bearer token' }` |
@@ -754,9 +819,31 @@ The `auth_mode` variable is structural in the serving module (defaults to `"real
 3. `terraform apply apply.tfplan`. The TF-registered task-def now has `AUTH_MODE=real`, but the ECS service is still on the old CI-deployed revision — old code doesn't read `AUTH_MODE`, so no failure.
 4. Re-plan to verify drift-free (`terraform plan` shows `No changes`).
 
-### Phase B — Code lands on `main` and auto-deploys
+### Phase B — Code lands on `main` and auto-deploys, with a CI precondition gate
 
-Push the working branch to `main` (or merge the PR). `Deploy` workflow auto-triggers. CI's `aws-actions/amazon-ecs-render-task-definition` step takes the latest TF-registered task-def (which now has all 5 env vars + `AUTH_MODE`), renders the real ECR image with the new JWT plugin code, registers a new revision, calls `update-service`. Service rolls onto the new revision: JWT plugin loaded, `AUTH_MODE=real` set, JWKS hydrated at boot via `verifier.hydrate()` (with 10s timeout).
+Push the working branch to `main` (or merge the PR). `Deploy` workflow auto-triggers. **A new precondition step in `.github/workflows/deploy.yml`** runs before `aws-actions/amazon-ecs-render-task-definition`:
+
+```bash
+- name: Verify AUTH_MODE is set in the latest task-def
+  run: |
+    set -euo pipefail
+    LATEST=$(aws ecs describe-task-definition --task-definition mythrun-staging-api \
+      --query 'taskDefinition.containerDefinitions[0].environment[?name==`AUTH_MODE`].value' \
+      --output text)
+    if [[ -z "$LATEST" ]]; then
+      echo "::error::AUTH_MODE not set in mythrun-staging-api task-def. Phase A (terraform apply) must run before this deploy."
+      exit 1
+    fi
+    if [[ "$LATEST" != "real" && "$LATEST" != "bypass" ]]; then
+      echo "::error::AUTH_MODE has unexpected value '$LATEST'."
+      exit 1
+    fi
+    echo "AUTH_MODE=$LATEST verified."
+```
+
+If a merger forgets Phase A, the Deploy workflow fails fast at this step instead of booting a container that throws on `loadEnv`. The error message names the missing prerequisite, so the operator's recovery is obvious: run Phase A's TF apply, then re-trigger Deploy.
+
+Once the gate passes: CI's `aws-actions/amazon-ecs-render-task-definition` step takes the latest TF-registered task-def (which now has all 5 env vars + `AUTH_MODE`), renders the real ECR image with the new JWT plugin code, registers a new revision, calls `update-service`. Service rolls onto the new revision: JWT plugin loaded, `AUTH_MODE=real` set, JWKS hydrated at boot via `verifier.hydrate()` (with 10s timeout).
 
 ### Phase C — Verify in staging
 
