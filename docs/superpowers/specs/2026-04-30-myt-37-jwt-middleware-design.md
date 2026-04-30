@@ -1,6 +1,6 @@
 # MYT-37 — JWT Middleware + Bypass Mode + Public-Route Allowlist (Design)
 
-> **Status**: Draft v5 (post round-4 blind review — composer cohort: Bach / Mozart / Beethoven; identical-to-round-1 prompts)
+> **Status**: Draft v6 (post round-5 blind review — chess cohort: King / Queen / Knight; identical-to-round-1 prompts; iterating until reviewers find only praise per the auth-security-no-shortcuts rule)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-37](https://linear.app/mythrun/issue/MYT-37/auth-jwt-middleware-bypass-mode-public-route-allowlist)
 > **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §5 (with deferral to MYT-39 for the DB-lookup + suspended-user path — see §1 below)
@@ -285,7 +285,23 @@ app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' }))
 // No requireUser call. request.user is undefined here, by design.
 ```
 
-A lint rule (or grep-based CI check) is roadmapped to block `request.user!.sub` and `request.user?.sub` patterns in handler files — `requireUser` is the only sanctioned narrowing path.
+**A grep-based CI check ships AS PART OF MYT-37** (not roadmapped to a future ticket — the convention is enforceable from day one to prevent the wrong pattern from accreting in MYT-38 and later tickets):
+
+`.github/workflows/lint.yml` adds:
+
+```yaml
+- name: Forbid `request.user!` / `request.user?` outside auth/__tests__
+  run: |
+    set -euo pipefail
+    if grep -rEn 'request\.user[!?]\.\b|request\.user as ' \
+        backend/src/ --include='*.ts' \
+        --exclude-dir=__tests__ --exclude-dir=auth; then
+      echo "::error::Use `requireUser(request)` instead of `request.user!` or `request.user?` in handler files."
+      exit 1
+    fi
+```
+
+Test files and the `auth/` module itself are excluded; everywhere else, `requireUser` is the only sanctioned narrowing path.
 
 ### Module-augmentation import path
 
@@ -387,28 +403,63 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
 
   // Pre-fetch the JWKS at registration so the FIRST protected request after
   // every container start doesn't pay the ~100-3000ms JWKS fetch latency.
-  // aws-jwt-verify's `hydrate()` always fetches the latest JWKS; bounded with
-  // an explicit 10s timeout so a slow Cognito JWKS endpoint doesn't hang
-  // boot indefinitely. On failure, throw → boot fails → deployment
-  // circuit-breaker rolls back to the previous revision (which keeps serving
-  // with its already-warm cache, no impact). The right failure mode for a
-  // service that can't authenticate users.
+  // Bounded with an explicit 10s timeout so a slow Cognito JWKS endpoint
+  // doesn't hang boot indefinitely. On failure, throw → boot fails →
+  // deployment circuit-breaker rolls back to the previous revision (which
+  // keeps serving with its already-warm cache, no impact). The right failure
+  // mode for a service that can't authenticate users.
   //
-  // Jitter (0-2s random delay before hydrate) spreads JWKS fetches across
+  // Jitter (0-1s random delay before hydrate) spreads JWKS fetches across
   // simultaneous container starts during a rolling deploy, avoiding a
   // thundering-herd that could trip Cognito's JWKS rate limiting on
-  // desired_count > 2 services.
-  await new Promise((resolve) => setTimeout(resolve, Math.random() * 2000))
-  await Promise.race([
-    verifier.hydrate(),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('verifier.hydrate() timed out after 10s')), 10_000),
-    ),
-  ])
+  // desired_count > 2 services. Capped at 1s so the wall-clock budget
+  // stays bounded at 11s (1s jitter + 10s hydrate timeout) for the ECS
+  // health-check grace period to accommodate.
+  //
+  // Promise.race leak avoidance: if hydrate() loses to the timer, hydrate
+  // may still reject later (network finally errors). With Node 24's
+  // default unhandled-rejections=throw, that crashes the running container.
+  // We attach a no-op .catch() to the loser promise AND clearTimeout the
+  // timer in finally(). Pattern: capture both promises, race them, swallow
+  // the loser's rejection, clean up the timer.
+  await new Promise((resolve) => setTimeout(resolve, Math.random() * 1000))
+  let hydrateTimer: NodeJS.Timeout | undefined
+  const hydratePromise = verifier.hydrate()
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    hydrateTimer = setTimeout(
+      () => reject(new Error('verifier.hydrate() timed out after 10s — Cognito JWKS unreachable')),
+      10_000,
+    )
+  })
+  try {
+    await Promise.race([hydratePromise, timeoutPromise])
+  } catch (err) {
+    // Surface enough detail for an operator to distinguish reachability
+    // (timeout) from misconfig (wrong userPoolId / wrong region) without
+    // leaking secrets. The pool ID is not a secret; the JWKS URL isn't either.
+    const issuer = `https://cognito-idp.${process.env.AWS_REGION ?? 'us-east-1'}.amazonaws.com/${opts.userPoolId}`
+    app.log.error(
+      { event: 'auth.jwks_hydrate_failed', issuer, errorClass: err instanceof Error ? err.constructor.name : 'Unknown' },
+      'JWKS hydrate failed at boot',
+    )
+    throw err
+  } finally {
+    if (hydrateTimer) clearTimeout(hydrateTimer)
+    // Swallow any later rejection from the loser path so it doesn't become
+    // an unhandled rejection that crashes the process.
+    hydratePromise.catch(() => {})
+  }
 
   // Decorate the app with the verifier so MYT-38's /api/users/register handler
-  // (which uses `auth: 'jwt-no-db'` mode, identical to default in MYT-37) can
-  // reuse the same verifier instance without constructing its own.
+  // can reuse the same instance without constructing its own. Guarded with
+  // hasDecorator: a double-registration of jwtPlugin already throws via the
+  // sentinel above, but if some future path invokes app.decorate('jwtVerifier')
+  // independently (test harness leak, dev fixture), Fastify throws
+  // FST_ERR_DEC_ALREADY_PRESENT with a generic message — the guard surfaces
+  // a clearer error first.
+  if (app.hasDecorator('jwtVerifier')) {
+    throw new Error('jwtPlugin: app.jwtVerifier is already decorated — likely double-registration')
+  }
   app.decorate('jwtVerifier', verifier)
 
   app.addHook('onRequest', async (request, reply) => {
@@ -645,25 +696,68 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
 
 ### `loadEnv` additions
 
-The existing `loadEnv` (from MYT-29) gains:
+The existing `loadEnv` (from MYT-29) gains a **conditional requirement**: in `real` mode the Cognito vars are required at the env-loader level, with friendly error messages (not pushed downstream into `registerAuth`).
 
-- **`AUTH_MODE`** — required, validated to `'real' | 'bypass'` (Zod enum or equivalent). Throws on unset, empty string, or any value other than the two literals (case-sensitive).
-- **`COGNITO_USER_POOL_ID`** — optional `string | undefined`. Required if `AUTH_MODE='real'`, validated downstream in `registerAuth`.
-- **`COGNITO_APP_CLIENT_ID`** — same shape as `COGNITO_USER_POOL_ID`.
-- (`COGNITO_HOSTED_UI_DOMAIN` and `COGNITO_ISSUER_URL` are wired as env vars by MYT-36 but the JWT plugin doesn't need them; loadEnv may parse them for completeness or skip them.)
+```typescript
+// Pseudo-Zod / discriminated-union shape:
+const AuthEnv = z.discriminatedUnion('AUTH_MODE', [
+  z.object({
+    AUTH_MODE: z.literal('real'),
+    COGNITO_USER_POOL_ID: z.string().min(1),
+    COGNITO_APP_CLIENT_ID: z.string().min(1),
+    COGNITO_ISSUER_URL: z.string().url(),
+    COGNITO_HOSTED_UI_DOMAIN: z.string().min(1),
+  }),
+  z.object({
+    AUTH_MODE: z.literal('bypass'),
+    // In bypass mode, COGNITO_* MUST be absent (Layer 3 of the defense).
+    // Zod's strict() at the schema level catches accidentally-set values.
+    COGNITO_USER_POOL_ID: z.undefined(),
+    COGNITO_APP_CLIENT_ID: z.undefined(),
+    COGNITO_ISSUER_URL: z.undefined(),
+    COGNITO_HOSTED_UI_DOMAIN: z.undefined(),
+  }),
+])
+```
+
+The discriminated union gives type-level enforcement: a TypeScript consumer of the parsed env object cannot read `env.COGNITO_USER_POOL_ID` without first narrowing on `env.AUTH_MODE === 'real'`. The Layer 3 plumbing in `bypassPlugin` is then naturally typed because the bypass branch has the Cognito vars as `undefined` at the type level — no string-name matching, no array of magic keys to keep in sync if config is renamed.
+
+`loadEnv` throws with mode-specific error messages: in real mode, "missing COGNITO_USER_POOL_ID — required when AUTH_MODE=real" rather than the generic "missing COGNITO_USER_POOL_ID."
 
 ### `buildApp` is now async and registers auth (CRITICAL: closes the `fallbackStart` gap)
 
 `backend/src/server.ts` has two boot paths: the `BOOT_GATE_ENABLED=1` gated path (waitFor + listen) and `fallbackStart()` (used when the gate is off). To eliminate the risk that `fallbackStart` boots a Fastify instance with no auth wiring at all, `registerAuth` moves INTO `buildApp` so every code path that constructs a Fastify instance gets auth:
 
 ```typescript
+import { randomUUID } from 'node:crypto'
 import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
 
 export const buildApp = async (
   deps: AppDeps,
   authOpts: RegisterAuthOptions,
 ): Promise<FastifyInstance> => {
-  const app = Fastify({ logger: true })
+  const app = Fastify({
+    // Cross-task correlation IDs: Fastify's default genReqId is an
+    // in-process counter that resets on container restart, so two ECS
+    // tasks would emit overlapping req-ids and CloudWatch log queries
+    // collide. UUIDs are unique across tasks, restarts, and time. Trace
+    // header (ALB-injected X-Amzn-Trace-Id) is preferred when present so
+    // ALB → ECS → backend logs share an id.
+    genReqId: (req) => {
+      const trace = req.headers['x-amzn-trace-id']
+      return typeof trace === 'string' ? trace : randomUUID()
+    },
+    logger: {
+      // Redact auth material from structured log fields. Without this, a
+      // future serializer change or an unrelated err.request log line
+      // could spill the Authorization header into CloudWatch.
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+        censor: '[REDACTED]',
+      },
+    },
+  })
+
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' }))
   registerReadyRoute(app, deps) // /health/ready opts out via config: { auth: 'public' }
 
@@ -672,9 +766,9 @@ export const buildApp = async (
   // Fastify's default 404 path bypasses onRequest entirely, leaving the
   // route-existence info-leak guard as forward-looking dead code that no
   // test could exercise. With this handler, unmatched paths flow through
-  // the auth hook (which falls through cleanly because routeOptions is
-  // undefined) and reach this handler, which returns 404. The guard's
-  // behavior is now testable + observable.
+  // the auth hook (which sees the public opt-out and falls through) and
+  // reach this handler, which returns 404. The guard's behavior is now
+  // testable + observable.
   app.setNotFoundHandler({ config: { auth: 'public' } }, (_request, reply) => {
     reply.code(404).send({ error: 'Not Found' })
   })
@@ -725,18 +819,15 @@ JWKS hydrate (in real mode) happens before `app.listen`. The container reports h
 
 ### Hydrate timeout
 
-`verifier.hydrate()` is wrapped in an explicit timeout to bound the boot-failure mode against a slow Cognito JWKS endpoint:
+`verifier.hydrate()` is wrapped in an explicit timeout to bound the boot-failure mode against a slow Cognito JWKS endpoint. The full implementation is in §5; the budget breakdown:
 
-```typescript
-await Promise.race([
-  verifier.hydrate(),
-  new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('verifier.hydrate() timed out after 10s')), 10_000),
-  ),
-])
-```
+- 0–1 s random jitter (anti-thundering-herd)
+- 10 s hydrate timeout
+- **Total wall-clock boot budget for the auth plugin: 11 s.**
 
-10-second budget. A sustained Cognito JWKS outage during a deploy hard-fails the boot of every new task — the deployment circuit-breaker rolls back to the previous revision (which keeps serving with its already-warm cache, no impact). This is the right failure mode: a service that can't authenticate users should not report healthy. Operator runbook covers JWKS unreachability as a known incident; mitigation is "wait for Cognito to recover; the previous revision keeps serving."
+The ECS task health-check `startPeriod` must accommodate this 11s plus the rest of `buildApp` (Fastify + boot gate + listen). The Dockerfile's `HEALTHCHECK --start-period=30s` and the Fargate task-def's `healthCheck.startPeriod=60` both leave generous room.
+
+A sustained Cognito JWKS outage hard-fails the boot of every new task — the deployment circuit-breaker rolls back to the previous revision (which keeps serving with its already-warm cache, no impact). The right failure mode: a service that can't authenticate users should not report healthy. Operator runbook covers JWKS unreachability as a known incident; mitigation is "wait for Cognito to recover; the previous revision keeps serving."
 
 ### `.env.development.example`
 
@@ -772,7 +863,30 @@ variable "node_env" {
 }
 ```
 
-`infra/modules/serving/main.tf` injects BOTH into the API task definition's environment via the `common_env` local. Critically, the AUTH_MODE and NODE_ENV entries appear AFTER `var.extra_env` in the concat call so they cannot be silently shadowed by an extra_env override (later entries in an ECS task-def `environment` array win on duplicate name):
+`infra/modules/serving/main.tf` injects BOTH into the API task definition's environment via the `common_env` local. Two layers of defense against an `extra_env` override silently shadowing them:
+
+**Layer A (input validation, rejects at `terraform plan`):** `infra/modules/serving/variables.tf` adds a `validation` block on `var.extra_env` that fails the plan if any entry's `name` is in the reserved list:
+
+```hcl
+variable "extra_env" {
+  description = "Per-environment additional env vars to inject into the API task. May NOT contain AUTH_MODE, NODE_ENV, or any COGNITO_* — those are owned by the module's dedicated variables (auth_mode, node_env) or by the auth module's outputs (COGNITO_USER_POOL_ID, etc.). Override attempts fail at terraform plan."
+  type        = list(object({ name = string, value = string }))
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for e in var.extra_env : !contains([
+        "AUTH_MODE", "NODE_ENV",
+        "COGNITO_USER_POOL_ID", "COGNITO_APP_CLIENT_ID",
+        "COGNITO_ISSUER_URL", "COGNITO_HOSTED_UI_DOMAIN",
+      ], e.name)
+    ])
+    error_message = "extra_env must not contain reserved auth/Cognito names (AUTH_MODE, NODE_ENV, COGNITO_*). Use the module's dedicated variables instead."
+  }
+}
+```
+
+**Layer B (positional ordering as backup):** the AUTH_MODE and NODE_ENV entries appear AFTER `var.extra_env` in the `concat` call. ECS task-def `environment` semantics on duplicate names are not formally documented as "last wins" — the validation block in Layer A is the load-bearing defense — but the positional ordering is defense-in-depth in case AWS provider behavior shifts:
 
 ```hcl
 common_env = concat(var.extra_env, [
@@ -836,6 +950,9 @@ Tests use `vi.mock('aws-jwt-verify')` to stub `CognitoJwtVerifier.create()` retu
 | Wrong audience | 401; log includes the corresponding error class |
 | Future unknown error class | 401; log includes the actual class name (whatever it is) |
 | `id_token` sent (mock throws on `tokenUse: 'access'` config) | 401 |
+| Token signed by the SAME User Pool but issued for a DIFFERENT app client | 401 (verifier rejects on `client_id` mismatch with `clientId` config). Sanity-check: `aws-jwt-verify` enforces this; if a future library version drops the check, this test surfaces immediately. |
+| `verifier.hydrate()` rejects with timeout | registration throws → boot fails; log includes `event: auth.jwks_hydrate_failed` + `issuer` URL (no token, no secrets) |
+| `Promise.race` loser-rejection | the unhandled-rejection handler sees zero `auth.*` events from the timer-loser path (the `.catch(() => {})` on hydratePromise prevents the spill) |
 | Public route (`auth: 'public'`), no `Authorization` header | 200; opt-out hits before token parsing; `request.user` not attached |
 | `jwt-no-db` route, valid token | 200; `request.user` attached (identical behavior to default route in MYT-37) |
 | Unmatched path, no `Authorization` header | 404 (404 fall-through guard) |
@@ -844,6 +961,33 @@ Tests use `vi.mock('aws-jwt-verify')` to stub `CognitoJwtVerifier.create()` retu
 ### `backend/src/auth/__tests__/bypass-plugin.test.ts`
 
 **Test harness note:** per-request env-mutation tests use `vi.stubEnv('NODE_ENV', 'production')` + `vi.unstubAllEnvs()` in `afterEach` to avoid cross-test contamination across Vitest's parallel workers. Plain `process.env.NODE_ENV = 'production'` mutation would leak between tests.
+
+`backend/src/__tests__/setup-env.ts` is extended with a global `afterEach(() => vi.unstubAllEnvs())` so individual test files don't have to repeat the cleanup; missing it is a foot-gun across parallel workers.
+
+Worked example for the per-request env-mutation case:
+
+```typescript
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+
+describe('bypass plugin per-request safety re-checks', () => {
+  let app: FastifyInstance
+  beforeEach(async () => {
+    // Register in safe env (NODE_ENV=development, no Cognito vars).
+    vi.stubEnv('NODE_ENV', 'development')
+    app = await buildApp(stubDeps, { mode: 'bypass' })
+  })
+  afterEach(async () => {
+    await app.close()
+    vi.unstubAllEnvs()
+  })
+
+  it('rejects requests if NODE_ENV becomes "production" between registration and request', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const res = await app.inject({ method: 'GET', url: '/api/some-protected-route' })
+    expect(res.statusCode).toBe(500) // Fastify wraps the thrown error
+  })
+})
+```
 
 | Case | Expected |
 |------|----------|
@@ -967,7 +1111,9 @@ The new container boots, `loadEnv` throws on missing `AUTH_MODE`, ECS health che
 
 To file after MYT-37 lands:
 
-- **`myth-bypass-user-db-constraint`** (P3) — Add `CHECK (cognito_sub NOT LIKE 'bypass:%')` to the `users` table whenever a future migration touches it. Defense-in-depth: even if bypass mode somehow ran against a real DB, the row insert fails. Skip until a schema-related ticket creates a natural home for the constraint.
+- **`myth-bypass-user-db-constraint`** (P2-before-launch, was P3) — Add `CHECK (cognito_sub NOT LIKE 'bypass:%')` to the `users` table whenever a future migration touches it. Defense-in-depth: even if bypass mode somehow ran against a real DB, the row insert fails. Promoted from P3 because the DB constraint is the only layer that survives a "bypass mode somehow ran against a real DB" event — every other layer is process-level.
+
+- **`myth-jwks-periodic-refresh`** (P2-before-launch) — Wrap `aws-jwt-verify` with a `customJwksFetcher` that bounds the JWKS cache age to 6 hours. Closes the key-compromise window: today, an AWS-revoked compromised key remains verifiable from cache until the container restarts. The library doesn't expose a TTL knob natively; we wrap the default `SimpleJwksCache` with a max-age. Required before public launch; staging is acceptable without it because no real users yet.
 - **`myth-suspended-token-revocation`** (P2 before launch, P3 today) — Close the up-to-1-hour gap between `users.suspended_at = now()` being set and an active access token expiring. MYT-39 adds the DB lookup that makes this enforceable, so this bead is partially handled there; remaining work is deciding whether to also add a Redis-pub/sub revocation path (as parent §6.4 suggests for active WebSockets). Must close before public launch.
 - **`myth-auth-jwks-probe`** (P4) — Optionally extend the boot gate (`backend/src/boot/wait-for.ts`) to probe Cognito's JWKS endpoint as part of readiness. `verifier.hydrate()` at plugin registration already covers cold-start; this would add ongoing reachability monitoring. Skip until the failure is observed in the wild.
 - **`myth-auth-multi-dev-user`** (P4) — Add `X-Dev-User: <N>` header support to bypass plugin when multiplayer testing needs distinct dev users. Likely concurrent with MYT-39's WebSocket work.
