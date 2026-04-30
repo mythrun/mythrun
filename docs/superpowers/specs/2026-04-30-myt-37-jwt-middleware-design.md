@@ -1,6 +1,6 @@
 # MYT-37 — JWT Middleware + Bypass Mode + Public-Route Allowlist (Design)
 
-> **Status**: Draft v8 (post round-7 blind review — weather cohort: Storm / Fog / Aurora; identical-to-round-1 prompts)
+> **Status**: Draft v9 (post round-8 blind review — gem cohort: Diamond / Emerald / Sapphire; identical-to-round-1 prompts)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-37](https://linear.app/mythrun/issue/MYT-37/auth-jwt-middleware-bypass-mode-public-route-allowlist)
 > **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §5 (with deferral to MYT-39 for the DB-lookup + suspended-user path — see §1 below)
@@ -343,9 +343,9 @@ The bypass plugin is the single most dangerous piece of code in MYT-37. If it ev
 
 **Layer 2a — `NODE_ENV` allow-list.** The value MUST be exactly `'development'` or `'test'`. Any other value — `'production'`, `'staging'`, an empty string, undefined, a typo — throws. The block-list shape (`!== 'production'`) is rejected because it fails-open on misconfig: an environment that forgets to set `NODE_ENV` defaults to undefined, which is `!== 'production'`, which historically allowed bypass. The allow-list shape requires an explicit dev-or-test marker.
 
-**Layer 2b — `ECS_CONTAINER_METADATA_URI_V4` must be unset.** The ECS container agent injects `ECS_CONTAINER_METADATA_URI_V4` directly into each container's process environment at task launch — NOT through the task-def `environment` list. An operator cannot override it via `extra_env` because `extra_env` flows through the task-def array which is materialized before the agent's metadata-URI injection happens. This decouples bypass-mode rejection from any operator-controllable env var: even if someone sets `NODE_ENV=development` AND `AUTH_MODE=bypass` in extra_env, bypass still fails at registration because `ECS_CONTAINER_METADATA_URI_V4` is set in any ECS task. Local dev (no ECS agent → no metadata URI) is unaffected.
+**Layer 2b — HTTP probe to the ECS task-metadata endpoint must fail.** The bypass plugin makes a 1-second-timeout HTTP request to `http://169.254.170.2/v2/metadata`. This endpoint is served by the ECS container agent on a link-local IP that ONLY exists inside ECS tasks; the IP isn't routable from local dev or from any non-ECS environment. If the probe succeeds (any HTTP response), we're running inside ECS → bypass is forbidden → throw. If the probe fails (connection refused, timeout, no route to host), we're not on ECS → proceed with bypass. This is the only genuinely-independent layer: no env var, no Terraform, no Dockerfile, no operator-controllable input — just a network test against an IP an attacker can't simulate.
 
-**(Note on `AWS_EXECUTION_ENV`):** A previous draft used `AWS_EXECUTION_ENV` as the Layer 2b signal. That var IS settable from the task-def `environment` list with no documented immutability guarantee — an operator could override it to empty string. Round 7's Storm reviewer caught this. `ECS_CONTAINER_METADATA_URI_V4` is the agent-injected, post-task-def-array signal; `AWS_EXECUTION_ENV` is still in the `extra_env` reserved-name list as belt-and-suspenders, but the load-bearing check is the metadata URI.
+**(Why not env-var-based detection?)** Earlier drafts used `AWS_EXECUTION_ENV` (v7) and then `ECS_CONTAINER_METADATA_URI_V4` (v8) as Layer 2b signals. Both turned out to be settable from the task-def `environment` list — AWS doesn't document immutability for ANY env var. Round 7 caught the first; Round 8 caught the second. The HTTP probe avoids the entire env-var-overridability problem. Both env vars are still on the `extra_env` reserved-name list as belt-and-suspenders, but the load-bearing check is the network probe.
 
 **Structural reinforcement:** The serving Terraform module ALSO force-injects `NODE_ENV=production` and `AUTH_MODE=real` into the API task definition's environment. Without these defaults, the runtime check would see whatever extra_env supplied (or `undefined` if nothing). With both module-level defaults plus the AWS_EXECUTION_ENV check, the bypass-defense layers are genuinely orthogonal:
 
@@ -403,6 +403,7 @@ Staging composition does NOT need to add `AUTH_MODE` to `extra_env` — the modu
 
 ```typescript
 import { type FastifyPluginAsync } from 'fastify'
+import fastifyPlugin from 'fastify-plugin'
 import { CognitoJwtVerifier } from 'aws-jwt-verify'
 import type { AuthUser } from './types.js'
 
@@ -413,7 +414,15 @@ export interface JwtPluginOptions {
 
 const REGISTERED_DECORATOR = 'mythAuthRegistered'
 
-export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts) => {
+// CRITICAL: declare with FastifyPluginAsync, then wrap with fastifyPlugin()
+// at export. Without the wrapper, Fastify creates an encapsulated child
+// scope when this plugin is registered; addHook + decorate calls inside
+// would apply ONLY to that child scope and its descendants, NOT the parent
+// `app`. Every route registered on `app` directly (including all of MYT-38+)
+// would silently bypass the auth hook — the entire "default-require auth"
+// guarantee evaporates. fastify-plugin's skip-override behavior makes the
+// hook + decorator apply at the parent scope. Sapphire round-8 catch.
+const jwtPluginImpl: FastifyPluginAsync<JwtPluginOptions> = async (app, opts) => {
   // Sentinel: refuse double-registration. A misconfigured test harness or
   // a code path that calls registerAuth twice would otherwise stack two
   // onRequest hooks (verifying every request twice + the second hook
@@ -566,6 +575,14 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
     request.user = user
   })
 }
+
+// fastify-plugin wrapper: tells Fastify to skip the encapsulation wrapping
+// so the hook + decorator apply at the parent app's scope (where
+// /health, /health/ready, and all future protected routes live).
+export const jwtPlugin = fastifyPlugin(jwtPluginImpl, {
+  fastify: '5.x',
+  name: 'mythrun-auth-jwt',
+})
 ```
 
 ### Seven things worth flagging
@@ -592,6 +609,7 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
 
 ```typescript
 import { type FastifyPluginAsync } from 'fastify'
+import fastifyPlugin from 'fastify-plugin'
 import type { AuthUser } from './types.js'
 
 const REGISTERED_DECORATOR = 'mythAuthRegistered'
@@ -628,7 +646,11 @@ export interface BypassPluginOptions {
   cognitoHostedUiDomain?: string
 }
 
-export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app, opts) => {
+// CRITICAL: same fastify-plugin wrapper rationale as jwtPlugin (above).
+// Without it, the bypass hook applies only to the plugin's child scope and
+// every route registered on the parent `app` boots without any auth wiring
+// at all — silently public, the worst possible failure mode.
+const bypassPluginImpl: FastifyPluginAsync<BypassPluginOptions> = async (app, opts) => {
   // Sentinel: refuse double-registration (same as jwtPlugin).
   if (app.hasDecorator(REGISTERED_DECORATOR)) {
     throw new Error('bypassPlugin: auth is already registered on this Fastify instance')
@@ -647,24 +669,52 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
     )
   }
 
-  // Defense layer 2b (independent of Layer 2a): ECS_CONTAINER_METADATA_URI_V4
-  // is set by the ECS container agent at task launch INDEPENDENTLY of the
-  // task-def `environment` list. The agent injects it directly into the
-  // container's process environment; it does NOT pass through the task-def
-  // env array, so an operator cannot override it via `extra_env`. If we
-  // observe this var, we're running inside ECS (Fargate or EC2-launch-type)
-  // and bypass is forbidden, regardless of NODE_ENV / AUTH_MODE / cognito-config.
+  // Defense layer 2b (genuinely independent of all env-var-based layers):
+  // HTTP probe to the ECS task-metadata endpoint at the link-local IP
+  // 169.254.170.2/v2/metadata. The endpoint is served by the ECS container
+  // agent on a network address that ONLY exists inside ECS tasks. An
+  // operator cannot fake this from a task-def — the IP is not addressable
+  // from local dev, and the response only comes from the agent itself.
   //
-  // (We do NOT use AWS_EXECUTION_ENV for this layer — that var IS settable
-  // from the task-def `environment` list, has no documented immutability
-  // guarantee, and an operator could override it to empty string from
-  // `extra_env`. Round-7 Storm caught this in the v7 design. AWS_EXECUTION_ENV
-  // is still in the extra_env reserved-name list as belt-and-suspenders, but
-  // ECS_CONTAINER_METADATA_URI_V4 is the load-bearing signal.)
-  if (process.env.ECS_CONTAINER_METADATA_URI_V4) {
-    throw new Error(
-      `auth bypass plugin: ECS_CONTAINER_METADATA_URI_V4 is set — bypass mode is forbidden in any ECS-managed runtime`,
-    )
+  // Logic: probe with a short timeout (1s). If the probe SUCCEEDS, we're
+  // running inside ECS → bypass is forbidden → throw. If the probe FAILS
+  // (connection refused, timeout, no route to host), we're not on ECS →
+  // proceed with bypass.
+  //
+  // We do NOT use ECS_CONTAINER_METADATA_URI_V4 or AWS_EXECUTION_ENV env
+  // vars — Round 8 Diamond confirmed AWS doesn't document immutability for
+  // ANY env var via the task-def `environment` list; an operator could
+  // override either. Both are still on the extra_env reserved-name list as
+  // belt-and-suspenders, but the HTTP probe is the load-bearing layer.
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 1000)
+    try {
+      const response = await fetch('http://169.254.170.2/v2/metadata', {
+        signal: controller.signal,
+      })
+      if (response.ok) {
+        throw new Error(
+          'auth bypass plugin: ECS task-metadata endpoint reachable — bypass mode is forbidden in any ECS runtime',
+        )
+      }
+      // Non-ok response from a server at 169.254.170.2 still means we're on
+      // ECS (the agent is responding, just oddly). Reject.
+      throw new Error(
+        `auth bypass plugin: ECS task-metadata endpoint responded (status ${response.status}) — bypass forbidden`,
+      )
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch (err) {
+    // The expected case in local dev: connect timeout / refused / abort.
+    // We re-throw if the error is OUR security throw (its message starts
+    // with the plugin prefix), and swallow everything else (which means
+    // we're not on ECS, which is what we want).
+    if (err instanceof Error && err.message.startsWith('auth bypass plugin:')) {
+      throw err
+    }
+    // Probe failed — not on ECS, proceed with bypass.
   }
 
   // Defense layer 3: ALL Cognito config must be empty in BOTH the parsed env
@@ -746,6 +796,12 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
     request.user = BYPASS_USER
   })
 }
+
+// fastify-plugin wrapper (see jwtPlugin for the encapsulation rationale).
+export const bypassPlugin = fastifyPlugin(bypassPluginImpl, {
+  fastify: '5.x',
+  name: 'mythrun-auth-bypass',
+})
 ```
 
 ### Five things worth flagging
@@ -802,14 +858,27 @@ The discriminated union gives mode-narrowed types: a TypeScript consumer reading
 
 `loadEnv` throws with mode-specific error messages: in real mode, "missing COGNITO_USER_POOL_ID — required when AUTH_MODE=real" rather than the generic "missing COGNITO_USER_POOL_ID."
 
-**Layer 1b cross-check** (defense at the env-loader level, independent of bypassPlugin's runtime layers): `loadEnv` enforces that `AUTH_MODE='bypass'` REQUIRES `NODE_ENV ∈ {'development', 'test'}`. The check runs at boot, before the plugin is constructed:
+**Layer 1b cross-check** (defense at the env-loader level, independent of bypassPlugin's runtime layers): `loadEnv` enforces TWO cross-mode constraints. The check runs at boot, before the plugin is constructed:
 
 ```typescript
 const env = AuthEnv.parse(process.env)
 const nodeEnv = z.enum(['development', 'test', 'production']).parse(process.env.NODE_ENV)
+
+// Constraint 1: bypass mode requires non-production NODE_ENV.
 if (env.AUTH_MODE === 'bypass' && nodeEnv !== 'development' && nodeEnv !== 'test') {
   throw new Error(
     `loadEnv: AUTH_MODE=bypass requires NODE_ENV in {'development','test'}, got NODE_ENV=${JSON.stringify(nodeEnv)}`,
+  )
+}
+
+// Constraint 2: real mode in production requires BOOT_GATE_ENABLED=1.
+// fallbackStart in production is a degenerate "no-DB-but-auth-works" state
+// that's useful only for testing the auth path in isolation; it should
+// never serve real traffic. Forcing the boot gate on in production prevents
+// fallbackStart from booting a production-shaped container.
+if (env.AUTH_MODE === 'real' && nodeEnv === 'production' && process.env.BOOT_GATE_ENABLED !== '1') {
+  throw new Error(
+    'loadEnv: AUTH_MODE=real with NODE_ENV=production requires BOOT_GATE_ENABLED=1',
   )
 }
 ```
@@ -844,8 +913,29 @@ export const buildApp = async (
       // future serializer change or an unrelated err.request log line
       // could spill the Authorization header into CloudWatch.
       redact: {
-        paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+        paths: [
+          'req.headers.authorization',
+          'req.headers.cookie',
+          'res.headers["set-cookie"]',
+        ],
         censor: '[REDACTED]',
+      },
+      serializers: {
+        // Strip query strings from logged URLs so future routes that take
+        // tokens via query (notably the WebSocket ticket-exchange endpoint
+        // MYT-39 ships with ?ticket=<nonce>) don't leak the ticket into
+        // CloudWatch. Path is preserved so operators can still tell which
+        // route a request hit.
+        req(request) {
+          const url = typeof request.url === 'string' ? request.url.split('?')[0] : request.url
+          return {
+            method: request.method,
+            url,
+            hostname: request.hostname,
+            remoteAddress: request.ip,
+            remotePort: request.socket?.remotePort,
+          }
+        },
       },
     },
   })
@@ -1045,6 +1135,7 @@ Tests use `vi.mock('aws-jwt-verify')` to stub `CognitoJwtVerifier.create()` retu
 | `hydrate()` succeeds at registration | plugin registers cleanly |
 | `hydrate()` rejects | registration throws; boot fails loudly |
 | `app.register(jwtPlugin)` called twice | second call throws `auth is already registered` |
+| **Encapsulation contract (Sapphire BLOCKER)**: register `jwtPlugin` on `app`, then register a NEW route on `app` directly (not via a sub-plugin), then hit that route without an Authorization header | 401 (proves the `fastifyPlugin` wrapper successfully exposes the auth hook to parent-scope routes; without the wrapper, the new route would silently bypass the hook and return 200) |
 | Valid access token | 200; `request.user = { sub, username, scope }` (no `tokenUse` per v3) |
 | Missing `Authorization` header on protected route | 401; body `{ error: 'Missing Bearer token' }` |
 | `Authorization: Basic abc` (wrong scheme) | 401; same body (the prefix check rejects) |
@@ -1059,7 +1150,7 @@ Tests use `vi.mock('aws-jwt-verify')` to stub `CognitoJwtVerifier.create()` retu
 | `id_token` sent (mock throws on `tokenUse: 'access'` config) | 401 |
 | Token signed by the SAME User Pool but issued for a DIFFERENT app client | 401 (verifier rejects on `client_id` mismatch with `clientId` config). Sanity-check: `aws-jwt-verify` enforces this; if a future library version drops the check, this test surfaces immediately. |
 | `verifier.hydrate()` rejects with timeout | registration throws → boot fails; log includes `event: auth.jwks_hydrate_failed` + `issuer` URL (no token, no secrets) |
-| `Promise.race` loser-rejection | the unhandled-rejection handler sees zero `auth.*` events from the timer-loser path (the `.catch(() => {})` on hydratePromise prevents the spill) |
+| `Promise.race` loser-rejection | the test forces the timeout to win (mock `verifier.hydrate` returning a never-resolving promise) and asserts (a) the boot throws `auth.jwks_hydrate_failed` exactly once (logged from the catch block, expected), AND (b) zero `unhandledRejection` events fire on the Node process EventEmitter when the eventually-rejecting hydratePromise lands. The `.catch(() => {})` attached BEFORE Promise.race prevents the unhandled-rejection regardless of when the underlying hydrate finally rejects. |
 | Public route (`auth: 'public'`), no `Authorization` header | 200; opt-out hits before token parsing; `request.user` not attached |
 | `jwt-no-db` route, valid token | 200; `request.user` attached (identical behavior to default route in MYT-37) |
 | Unmatched path, no `Authorization` header | 404 (404 fall-through guard) |
