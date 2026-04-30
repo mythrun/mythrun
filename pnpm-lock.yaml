@@ -24,9 +24,15 @@ importers:
 
   backend:
     dependencies:
+      aws-jwt-verify:
+        specifier: ^5.1.1
+        version: 5.1.1
       fastify:
         specifier: ^5.1.0
         version: 5.8.5
+      fastify-plugin:
+        specifier: ^5.1.0
+        version: 5.1.0
       ioredis:
         specifier: ^5.4.0
         version: 5.10.1
@@ -677,6 +683,10 @@ packages:
   avvio@9.2.0:
     resolution: {integrity: sha512-2t/sy01ArdHHE0vRH5Hsay+RtCZt3dLPji7W7/MMOCEgze5b7SNDC4j5H6FnVgPkI1MTNFGzHdHrVXDDl7QSSQ==}
 
+  aws-jwt-verify@5.1.1:
+    resolution: {integrity: sha512-j6whGdGJmQ27agk4ijY8RPv6itb8JLb7SCJ86fEnneTcSBrpxuwL8kLq6y5WVH95aIknyAloEqAsaOLS1J8ITQ==}
+    engines: {node: '>=18.0.0'}
+
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
 
@@ -992,6 +1002,9 @@ packages:
 
   fast-uri@3.1.0:
     resolution: {integrity: sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==}
+
+  fastify-plugin@5.1.0:
+    resolution: {integrity: sha512-FAIDA8eovSt5qcDgcBvDuX/v0Cjz0ohGhENZ/wpc3y+oZCY2afZ9Baqql3g/lC+OHRnciQol4ww7tuthOb9idw==}
 
   fastify@5.8.5:
     resolution: {integrity: sha512-Yqptv59pQzPgQUSIm87hMqHJmdkb1+GPxdE6vW6FRyVE9G86mt7rOghitiU4JHRaTyDUk9pfeKmDeu70lAwM4Q==}
@@ -2357,6 +2370,8 @@ snapshots:
       '@fastify/error': 4.2.0
       fastq: 1.20.1
 
+  aws-jwt-verify@5.1.1: {}
+
   balanced-match@1.0.2: {}
 
   balanced-match@4.0.4: {}
@@ -2737,6 +2752,8 @@ snapshots:
       fast-decode-uri-component: 1.0.1
 
   fast-uri@3.1.0: {}
+
+  fastify-plugin@5.1.0: {}
 
   fastify@5.8.5:
     dependencies:
