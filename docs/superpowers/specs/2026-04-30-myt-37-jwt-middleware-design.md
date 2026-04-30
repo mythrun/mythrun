@@ -1,6 +1,6 @@
 # MYT-37 — JWT Middleware + Bypass Mode + Public-Route Allowlist (Design)
 
-> **Status**: Draft v2 (post round-1 blind review — reptile cohort: Komodo / Cobra / Gecko)
+> **Status**: Draft v3 (post round-2 blind review — bird-of-prey cohort: Falcon / Hawk / Kestrel)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-37](https://linear.app/mythrun/issue/MYT-37/auth-jwt-middleware-bypass-mode-public-route-allowlist)
 > **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §5 (with deferral to MYT-39 for the DB-lookup + suspended-user path — see §1 below)
@@ -32,16 +32,18 @@
 
 **Done when:**
 
-- `backend/src/auth/jwt-plugin.ts` — Fastify plugin verifying access_tokens via `aws-jwt-verify`, attaching `request.user = { sub, username, scope, tokenUse: 'access' }` from the verified claims. NO database lookup; suspended-user enforcement deferred to MYT-39.
-- `backend/src/auth/bypass-plugin.ts` — when `AUTH_MODE=bypass`, attaches a fixed dev user `{ sub: 'dev-sub-1', username: 'Dev_User', scope: 'openid email profile', tokenUse: 'bypass' }`. Six safety layers prevent activation in production environments.
+- `backend/src/auth/jwt-plugin.ts` — Fastify plugin verifying access_tokens via `aws-jwt-verify`, hydrating JWKS at registration with a 10s timeout, attaching `request.user = { sub, username, scope }` from the verified claims (no `tokenUse` discriminator). NO database lookup; suspended-user enforcement deferred to MYT-39. Decorates the app with `app.jwtVerifier` for MYT-38's `/api/users/register` to reuse.
+- `backend/src/auth/bypass-plugin.ts` — when `AUTH_MODE=bypass`, attaches a fixed dev user `{ sub: 'bypass:dev-1', username: 'bypass_dev_1', scope: 'openid email profile' }`. Multi-layer defense prevents activation outside `NODE_ENV=development|test`.
 - `backend/src/auth/index.ts` — `registerAuth(app, { mode, userPoolId, appClientId })` dispatches to one of the two plugins based on mode.
-- `backend/src/auth/types.ts` — `AuthUser` interface + Fastify module augmentation for `request.user` and `FastifyContextConfig.auth`.
+- `backend/src/auth/types.ts` — `AuthUser` interface + Fastify module augmentation for `request.user`, `FastifyContextConfig.auth`, and `FastifyInstance.jwtVerifier`.
+- `backend/src/auth/require-user.ts` — `requireUser(request)` helper that narrows `request.user` from optional to required (throws if absent).
 - `loadEnv` validates `AUTH_MODE` is exactly `'real' | 'bypass'`. Throws on unset, typo, or any other value. No silent default.
-- Default-require auth enforcement: routes that should be public set `config: { auth: 'public' }`; everything else 401s without a valid Bearer token.
+- `buildApp` becomes async and registers auth as part of every boot path (eliminates the `fallbackStart` bypass risk).
+- Default-require auth enforcement: routes that should be public set `config: { auth: 'public' }`; routes that need JWT verification but no DB row set `config: { auth: 'jwt-no-db' }`; everything else 401s without a valid Bearer token.
 - The two existing public routes (`GET /health`, `GET /health/ready`) opt out via `config: { auth: 'public' }`.
-- `infra/environments/staging/main.tf` adds `{ name = "AUTH_MODE", value = "real" }` to `module.serving.extra_env` (defense layer 5).
-- Tests cover all the gates: valid token → user attached; expired/wrong-issuer/wrong-audience tokens → 401; bypass mode → fixed user; bypass + `NODE_ENV=production` → throws; bypass + `COGNITO_USER_POOL_ID` set → throws; `AUTH_MODE` unset → throws; `AUTH_MODE='bogus'` → throws; public routes always 200 in both modes; protected routes 401 without auth.
-- ECS service rolls onto a CI-rendered task-def revision that has all of MYT-36's `COGNITO_*` env vars + the new `AUTH_MODE=real` + the JWT plugin code. `staging-api.mythrun.com/health` still 200; arbitrary other paths return 401 (proves auth is now required by default).
+- `infra/modules/serving/variables.tf` adds an `auth_mode` variable (default `"real"`, validated to `'real' | 'bypass'`); `infra/modules/serving/main.tf` injects `{ name = "AUTH_MODE", value = var.auth_mode }` into `common_env`. Staging composition gets `real` via the module default — no `extra_env` line needed (defense layer 5 is now structural at the module).
+- Tests cover all the gates: valid token → user attached; expired/wrong-issuer/wrong-audience/missing-claim tokens → 401; bypass mode → fixed user; bypass + `NODE_ENV=production` (or unset, or any non-dev/test value) → throws; bypass + `cognitoUserPoolId` set → throws; `AUTH_MODE` unset → throws; public routes always 200 in both modes; protected routes 401 without auth; unmatched paths return 404 with or without auth header (404 fall-through guard).
+- ECS service rolls onto a CI-rendered task-def revision that has all of MYT-36's `COGNITO_*` env vars + the new `AUTH_MODE=real` + the JWT plugin code. `staging-api.mythrun.com/health` still 200; arbitrary nonexistent paths return 404 (404 fall-through working).
 
 **Out of MYT-37's done-when:** `/api/auth/refresh` endpoint, `/api/users/register`, DB lookup of internal user UUID, `suspended_at` enforcement, WebSocket ticket exchange, WebSocket re-validation, multi-dev-user header switching, end-to-end test through real Cognito JWKS (no protected routes exist yet).
 
@@ -116,6 +118,8 @@ backend/src/auth/
 ### `types.ts`
 
 ```typescript
+import type { CognitoAccessTokenPayload } from 'aws-jwt-verify/jwt-model'
+
 export interface AuthUser {
   /** Cognito sub claim — stable per-user identifier across token refreshes. */
   readonly sub: string
@@ -131,15 +135,25 @@ export interface AuthUser {
   /** Space-separated OAuth scopes granted to this token. */
   readonly scope: string
 
-  /** Always 'access' for real tokens; 'bypass' for bypass mode.
-   *  Routes that need to differentiate (rare) can switch on this. */
-  readonly tokenUse: 'access' | 'bypass'
-
   // Note: `email`, `name`, and `picture` are deliberately absent. The Linear
   // ticket and parent §5.1 list them, but Cognito access tokens don't carry
   // them — they're id_token claims, and we use access tokens (per §2). The
   // backend gets email/name/picture from the users row after MYT-38
   // onboarding (which calls /oauth2/userInfo once at user creation).
+  //
+  // No `tokenUse` discriminator either: routes branching on whether auth
+  // came from real-Cognito vs bypass would be a footgun. Either-or trust
+  // is the wrong shape; either every protected route trusts the auth layer
+  // or it doesn't. We removed the field in v3 after the bird-of-prey review.
+}
+
+/** Minimal verifier interface decorated onto FastifyInstance.
+ *  Pinned to a method shape (rather than the parameterized
+ *  CognitoJwtVerifier<...> generic) so consumers like MYT-38's
+ *  /api/users/register handler can use it without depending on the
+ *  library's internal type variance. */
+export interface JwtVerifier {
+  verify(token: string): Promise<CognitoAccessTokenPayload>
 }
 
 declare module 'fastify' {
@@ -160,18 +174,15 @@ declare module 'fastify' {
      *    After MYT-39: also DB lookup + suspended_at check. */
     auth?: 'public' | 'jwt-no-db'
   }
-}
 
-/** Helper for protected handlers — narrows request.user from optional to
- *  required. Throws if called from a public-route handler (which would
- *  indicate a route misconfigured `config.auth = 'public'` and then tried
- *  to use the user).
- */
-export function requireUser(request: { user?: AuthUser }): AuthUser {
-  if (!request.user) {
-    throw new Error('requireUser: request.user is undefined — was this route marked public?')
+  interface FastifyInstance {
+    /** Decorated by jwtPlugin in real mode; absent in bypass mode. MYT-38's
+     *  /api/users/register handler reads this to verify a JWT for a route
+     *  that doesn't need a DB row. Public routes don't use it; protected
+     *  routes don't need it either (the plugin's onRequest hook already
+     *  populated request.user). */
+    jwtVerifier?: JwtVerifier
   }
-  return request.user
 }
 ```
 
@@ -217,9 +228,27 @@ export const registerAuth = async (
 }
 ```
 
+### `requireUser` helper (lives in its own file, not types.ts)
+
+Protected handlers need a typed way to assert `request.user` is present without dereferencing `.sub` and crashing at runtime. The helper lives in `backend/src/auth/require-user.ts` (not in `types.ts`, which is augmentation-only — runtime helpers and pure type augmentations don't share a file):
+
+```typescript
+// backend/src/auth/require-user.ts
+import type { AuthUser } from './types.js'
+
+export function requireUser(request: { user?: AuthUser }): AuthUser {
+  if (!request.user) {
+    throw new Error('requireUser: request.user is undefined — was this route marked public?')
+  }
+  return request.user
+}
+```
+
+Re-exported from `backend/src/auth/index.ts` for convenience: `export { requireUser } from './require-user.js'`.
+
 ### Module-augmentation import path
 
-`types.ts` augments the global `FastifyRequest` interface, which means any file using `request.user` needs `types.ts` transitively in its import graph. The natural path: `app.ts` (or whichever file calls `buildApp`) imports `registerAuth` from `./auth/index.js`, which imports both plugins, both of which import `types.ts`. Routes don't need to import `types.ts` directly — the augmentation is global once any file in the project loads it.
+`types.ts` augments the global `FastifyRequest`, `FastifyContextConfig`, and `FastifyInstance` interfaces. Any file using `request.user` or `app.jwtVerifier` needs `types.ts` transitively in its import graph. The natural path: `app.ts` (or whichever file calls `buildApp`) imports `registerAuth` from `./auth/index.js`, which imports both plugins, both of which import `types.ts`. Routes don't need to import `types.ts` directly — the augmentation is global once any file in the project loads it.
 
 ---
 
@@ -231,11 +260,13 @@ The bypass plugin is the single most dangerous piece of code in MYT-37. If it ev
 
 `loadEnv` validates `process.env.AUTH_MODE` is exactly `'real'` or `'bypass'`. Anything else — unset, empty, `'true'`, `'1'`, `'Real'` (case mismatch) — throws at boot with a clear error. **No silent default to either mode.** Forces every environment to make the decision explicitly. `.env.development.example` sets `bypass`; staging Terraform sets `real`; production Terraform sets `real`. The boot fails loudly if any environment forgot.
 
-### Layer 2 — Bypass requires `NODE_ENV !== 'production'`
+### Layer 2 — Bypass requires `NODE_ENV` to be exactly `'development'` or `'test'`
 
-`bypass-plugin.ts`'s `register` function checks `process.env.NODE_ENV` at registration time. If `'production'` → throw `Error('bypass mode is forbidden when NODE_ENV=production')`. The Dockerfile's production runtime stage sets `ENV NODE_ENV=production`. This catches "staging accidentally got `AUTH_MODE=bypass`."
+`bypass-plugin.ts`'s `register` function checks `process.env.NODE_ENV` at registration time. **Allow-list, not block-list:** the value MUST be exactly `'development'` or `'test'`. Any other value — `'production'`, `'staging'`, an empty string, undefined, a typo — throws `Error('bypass mode requires NODE_ENV=development or test')`.
 
-The check runs **at registration time AND inside the `onRequest` hook** — defense-in-depth. The runtime check costs ~1ns per request and means even if registration somehow succeeded (cosmic ray, library bug, hot-reload glitch), no individual request can leak.
+The block-list shape (`!== 'production'`) is rejected because it fails-open on misconfig: an environment that forgets to set `NODE_ENV` defaults to undefined, which is `!== 'production'`, which historically allowed bypass. The allow-list shape requires explicit dev-or-test marker — the safer failure mode for a security-tier check.
+
+The Dockerfile's production runtime stage sets `ENV NODE_ENV=production`. The check runs **at registration time AND inside the `onRequest` hook** — defense-in-depth, even if it's mostly ceremony beyond the registration check.
 
 ### Layer 3 — Bypass requires Cognito config to be ABSENT (read from parsed env, not process.env directly)
 
@@ -254,9 +285,13 @@ app.log.warn(
 
 Logged once at registration. Visible in any dev log tail, any CI run, any local `pnpm dev` startup. If bypass somehow gets to a production environment despite layers 2 + 3 + 5, the log line is the loud canary.
 
-### Layer 5 — Terraform sets `AUTH_MODE=real` explicitly in staging
+### Layer 5 — `AUTH_MODE` is a forced default at the serving-module layer
 
-`infra/environments/staging/main.tf` adds `{ name = "AUTH_MODE", value = "real" }` to `module.serving.extra_env`. Same shape as the MYT-36 `BOOT_GATE_ENABLED` and `COGNITO_*` additions. Production composition (the `myth-prod-auth-compose` follow-up) does the same. No silent defaults at the infra layer either.
+`infra/modules/serving/variables.tf` gains a new variable `auth_mode` with type `string`, default `"real"`, and a `validation` block that rejects any value other than `"real"` or `"bypass"`. The serving module injects `{ name = "AUTH_MODE", value = var.auth_mode }` into the API task definition's environment automatically — no per-environment opt-in required.
+
+Production composition (the `myth-prod-auth-compose` follow-up) gets `AUTH_MODE=real` for free without remembering. A new environment that copies an older `module "serving"` call still gets `real` by default; the only path to bypass is an explicit `auth_mode = "bypass"` override in the composition, which a human reviewer would catch immediately.
+
+Staging composition does NOT need to add `AUTH_MODE` to `extra_env` — the module supplies it via the dedicated variable. (Staging keeps `auth_mode = "real"` either explicitly or via the default; for clarity the design recommends explicit.) Defense at the structural layer rather than per-environment vigilance.
 
 ### Layer 6 — Tests verify every gate
 
@@ -307,11 +342,18 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
 
   // Pre-fetch the JWKS at registration so the FIRST protected request after
   // every container start doesn't pay the ~100-3000ms JWKS fetch latency.
-  // aws-jwt-verify's `hydrate()` always fetches the latest JWKS; if it fails
-  // (Cognito unreachable, network down), we fail boot loudly — a service
-  // that can't fetch the JWKS can't authenticate anyone, so refusing to
-  // come up healthy is the correct behavior.
-  await verifier.hydrate()
+  // aws-jwt-verify's `hydrate()` always fetches the latest JWKS; bounded with
+  // an explicit 10s timeout so a slow Cognito JWKS endpoint doesn't hang
+  // boot indefinitely. On failure, throw → boot fails → deployment
+  // circuit-breaker rolls back to the previous revision (which keeps serving
+  // with its already-warm cache, no impact). The right failure mode for a
+  // service that can't authenticate users.
+  await Promise.race([
+    verifier.hydrate(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('verifier.hydrate() timed out after 10s')), 10_000),
+    ),
+  ])
 
   // Decorate the app with the verifier so MYT-38's /api/users/register handler
   // (which uses `auth: 'jwt-no-db'` mode, identical to default in MYT-37) can
@@ -362,11 +404,22 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
       return reply.code(401).send({ error: 'Invalid token' })
     }
 
+    // Validate the claims we depend on. Cognito access tokens for federated
+    // users always carry sub + username, but defensive coding guards against
+    // future provider types or library version changes.
+    if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
+      request.log.warn({ event: 'auth.jwt_missing_sub' }, 'JWT missing sub claim')
+      return reply.code(401).send({ error: 'Invalid token' })
+    }
+    if (typeof payload.username !== 'string' || payload.username.length === 0) {
+      request.log.warn({ event: 'auth.jwt_missing_username' }, 'JWT missing username claim')
+      return reply.code(401).send({ error: 'Invalid token' })
+    }
+
     const user: AuthUser = {
       sub: payload.sub,
       username: payload.username,
-      scope: payload.scope ?? '',
-      tokenUse: 'access',
+      scope: typeof payload.scope === 'string' ? payload.scope : '',
     }
     request.user = user
   })
@@ -402,12 +455,15 @@ const REGISTERED_DECORATOR = 'mythAuthRegistered'
 // Bypass user. The `sub` deliberately uses the form `bypass:dev-1` (with a
 // colon) which is not a valid Cognito sub UUID — eliminates collision risk
 // with any real federated user's sub. Username matches parent §4 username
-// format (lowercase, alphanumeric + underscores).
+// format (lowercase, alphanumeric + underscores). Parent §5.6 originally
+// specified `username: 'dev_user'`; we use `'bypass_dev_1'` to encode the
+// bypass-origin in the username for forensic traceability — if any code path
+// ever accidentally writes this into `users.username`, the bypass-origin
+// marker is visible in the row, complementing the colon-prefixed sub.
 const BYPASS_USER: AuthUser = {
   sub: 'bypass:dev-1',
   username: 'bypass_dev_1',
   scope: 'openid email profile',
-  tokenUse: 'bypass',
 }
 
 export interface BypassPluginOptions {
@@ -425,13 +481,15 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
   }
   app.decorate(REGISTERED_DECORATOR, 'bypass' as const)
 
-  // Defense layer 2: NODE_ENV=production must reject bypass at registration.
-  // Reading process.env.NODE_ENV is correct here because Node's runtime
-  // exposes its own environment via this property; there's no "parsed"
-  // alternative.
-  if (process.env.NODE_ENV === 'production') {
+  // Defense layer 2: NODE_ENV must be exactly 'development' or 'test'.
+  // Allow-list, not block-list: a misconfigured environment that forgets to
+  // set NODE_ENV defaults to undefined, which is !== 'production', which
+  // would have fail-opened under a block-list. The allow-list shape requires
+  // an explicit dev-or-test marker.
+  const nodeEnv = process.env.NODE_ENV
+  if (nodeEnv !== 'development' && nodeEnv !== 'test') {
     throw new Error(
-      'auth bypass plugin: NODE_ENV=production — bypass mode is forbidden in production builds',
+      `auth bypass plugin: NODE_ENV must be 'development' or 'test' (got ${JSON.stringify(nodeEnv)})`,
     )
   }
 
@@ -463,8 +521,11 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
     // ceremony that signals the seriousness of bypass mode rather than
     // providing genuinely new defense beyond the registration check. Cost
     // is trivial (one boolean compare); we keep it.
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('auth bypass plugin: NODE_ENV=production observed at request time')
+    const requestNodeEnv = process.env.NODE_ENV
+    if (requestNodeEnv !== 'development' && requestNodeEnv !== 'test') {
+      throw new Error(
+        `auth bypass plugin: NODE_ENV must be 'development' or 'test' at request time (got ${JSON.stringify(requestNodeEnv)})`,
+      )
     }
     if (opts.cognitoUserPoolId) {
       throw new Error('auth bypass plugin: cognitoUserPoolId observed at request time')
@@ -500,48 +561,94 @@ The existing `loadEnv` (from MYT-29) gains:
 - **`COGNITO_APP_CLIENT_ID`** — same shape as `COGNITO_USER_POOL_ID`.
 - (`COGNITO_HOSTED_UI_DOMAIN` and `COGNITO_ISSUER_URL` are wired as env vars by MYT-36 but the JWT plugin doesn't need them; loadEnv may parse them for completeness or skip them.)
 
-### `server.ts` wiring
+### `buildApp` is now async and registers auth (CRITICAL: closes the `fallbackStart` gap)
 
-In the existing boot sequence (after `loadEnv`, after the boot gate's pg/redis probes succeed, before `app.listen`):
+`backend/src/server.ts` has two boot paths: the `BOOT_GATE_ENABLED=1` gated path (waitFor + listen) and `fallbackStart()` (used when the gate is off). To eliminate the risk that `fallbackStart` boots a Fastify instance with no auth wiring at all, `registerAuth` moves INTO `buildApp` so every code path that constructs a Fastify instance gets auth:
 
 ```typescript
-import { registerAuth } from './auth/index.js'
+import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
 
+export const buildApp = async (
+  deps: AppDeps,
+  authOpts: RegisterAuthOptions,
+): Promise<FastifyInstance> => {
+  const app = Fastify({ logger: true })
+  app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' }))
+  registerReadyRoute(app, deps) // /health/ready opts out via config: { auth: 'public' }
+  await registerAuth(app, authOpts)
+  return app
+}
+```
+
+`buildApp` is now async (the existing tests + callers must be updated to `await buildApp(...)`). Auth registration becomes part of every boot path — gated and fallback alike.
+
+### `server.ts` wiring
+
+```typescript
 // ... after loadEnv ...
 const env = loadEnv()
-
-// ... after the boot gate ...
-const app = buildApp(deps)
-
-await registerAuth(app, {
+const authOpts: RegisterAuthOptions = {
   mode: env.AUTH_MODE,
   userPoolId: env.COGNITO_USER_POOL_ID,
   appClientId: env.COGNITO_APP_CLIENT_ID,
-})
+}
 
+// In both the gated path AND fallbackStart:
+const app = await buildApp(deps, authOpts)
 await app.listen(...)
 ```
 
-The plugin registers AFTER `buildApp` constructs the Fastify instance and registers the existing health routes. Hooks added later run on subsequent requests; the existing health route handlers don't see the auth hook for already-mounted-but-still-incoming requests. (Not a real concern — registration happens at boot before `listen`.)
+JWKS hydrate (in real mode) happens before `app.listen`. The container reports healthy only after the verifier is warmed.
+
+### Hydrate timeout
+
+`verifier.hydrate()` is wrapped in an explicit timeout to bound the boot-failure mode against a slow Cognito JWKS endpoint:
+
+```typescript
+await Promise.race([
+  verifier.hydrate(),
+  new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('verifier.hydrate() timed out after 10s')), 10_000),
+  ),
+])
+```
+
+10-second budget. A sustained Cognito JWKS outage during a deploy hard-fails the boot of every new task — the deployment circuit-breaker rolls back to the previous revision (which keeps serving with its already-warm cache, no impact). This is the right failure mode: a service that can't authenticate users should not report healthy. Operator runbook covers JWKS unreachability as a known incident; mitigation is "wait for Cognito to recover; the previous revision keeps serving."
 
 ### `.env.development.example`
 
-Already sets `AUTH_MODE=bypass`. No change needed beyond confirming it's the correct value for local dev.
+Already sets `AUTH_MODE=bypass`. No change needed.
 
-### Infra change: `AUTH_MODE=real` in staging
+### Infra change: `AUTH_MODE` becomes a serving-module variable
 
-`infra/environments/staging/main.tf` — extend `module.serving.extra_env`:
+Defense Layer 5 lands as a structural property of the serving module, not per-environment vigilance.
+
+`infra/modules/serving/variables.tf` adds:
 
 ```hcl
-extra_env = [
-  { name = "BOOT_GATE_ENABLED",        value = "1" },                            # MYT-35
-  { name = "COGNITO_USER_POOL_ID",     value = module.auth.user_pool_id },       # MYT-36
-  { name = "COGNITO_APP_CLIENT_ID",    value = module.auth.app_client_id },      # MYT-36
-  { name = "COGNITO_HOSTED_UI_DOMAIN", value = module.auth.hosted_ui_domain },   # MYT-36
-  { name = "COGNITO_ISSUER_URL",       value = module.auth.issuer_url },         # MYT-36
-  { name = "AUTH_MODE",                value = "real" },                          # MYT-37
-]
+variable "auth_mode" {
+  description = "Mythrun auth-plugin mode. Defaults to 'real' so a new environment can't accidentally launch with bypass mode just by forgetting to set this. Override to 'bypass' is structurally possible but requires an explicit composition-level opt-in, which a code reviewer would catch immediately."
+  type        = string
+  default     = "real"
+
+  validation {
+    condition     = contains(["real", "bypass"], var.auth_mode)
+    error_message = "auth_mode must be 'real' or 'bypass'."
+  }
+}
 ```
+
+`infra/modules/serving/main.tf` injects it into the API task definition's environment via the `common_env` local (alongside the existing wiring), NOT through `extra_env`. Using a dedicated variable keeps the structural defense independent of `extra_env` shape:
+
+```hcl
+common_env = concat([
+  { name = "ENVIRONMENT", value = var.environment },
+  # ... existing entries ...
+  { name = "AUTH_MODE", value = var.auth_mode },
+], var.extra_env)
+```
+
+`infra/environments/staging/main.tf` does NOT add `AUTH_MODE` to `extra_env` (this is the v3 walk-back from earlier drafts; staging gets `auth_mode = "real"` via the module's default). Production composition (the `myth-prod-auth-compose` follow-up) gets `real` automatically without remembering. Switching to bypass requires an explicit `auth_mode = "bypass"` line in the composition, which a reviewer catches.
 
 ---
 
@@ -636,19 +743,20 @@ Tests use `vi.mock('aws-jwt-verify')` to stub `CognitoJwtVerifier.create()` retu
 
 ## 10. Deploy Sequence
 
-This is the **first ticket that consumes MYT-36's `COGNITO_*` env vars**. Per `reference_tf_ci_taskdef_split.md`, the live ECS service is currently on the last CI-deployed revision (no `COGNITO_*`, no `AUTH_MODE`). Three phases. **Order matters: TF apply MUST land before code reaches `main`**, otherwise the auto-Deploy fires against a task-def that lacks `AUTH_MODE`, the new container's `loadEnv` throws on the missing env var, ECS health-check fails, and the deployment circuit-breaker rolls back.
+This is the **first ticket that consumes MYT-36's `COGNITO_*` env vars**. Per `reference_tf_ci_taskdef_split.md`, the live ECS service is currently on the last CI-deployed revision (no `COGNITO_*`, no `AUTH_MODE`). Two phases. **Order matters: TF apply MUST land before code reaches `main`**, otherwise the auto-Deploy fires against a task-def that lacks `AUTH_MODE`, the new container's `loadEnv` throws on the missing env var, ECS health-check fails, and the deployment circuit-breaker rolls back.
 
-### Phase A — TF apply for the `AUTH_MODE` env var (BEFORE any code ships)
+### Phase A — TF apply for the new serving-module `auth_mode` variable (BEFORE any code ships)
 
-1. On a working branch (NOT yet merged to `main`), add `{ name = "AUTH_MODE", value = "real" }` to staging composition's `extra_env` list (one-line change).
-2. From the working branch, `cd infra/environments/staging && terraform plan -out=apply.tfplan` — expect 1 task-def revision change (api task-def picks up `AUTH_MODE` in addition to MYT-36's 4 `COGNITO_*` vars + `BOOT_GATE_ENABLED`).
-3. `terraform apply apply.tfplan`. The TF-registered task-def now has `AUTH_MODE=real`, but the ECS service is still on the old CI-deployed revision (which lacks `AUTH_MODE` AND lacks the new JWT plugin code) — and crucially, the old running code doesn't read `AUTH_MODE`, so no failure.
+The `auth_mode` variable is structural in the serving module (defaults to `"real"`), so the staging composition doesn't need an `extra_env` line — applying the module change is sufficient.
+
+1. On a working branch (NOT yet merged to `main`), add the `auth_mode` variable + validation to `infra/modules/serving/variables.tf` and the `AUTH_MODE` injection into `infra/modules/serving/main.tf`'s `common_env`. No staging composition change required.
+2. From the working branch, `cd infra/environments/staging && terraform plan -out=apply.tfplan` — expect 1 task-def revision change (api task-def picks up `AUTH_MODE=real` from the serving module's default in addition to MYT-36's 4 `COGNITO_*` vars + `BOOT_GATE_ENABLED`).
+3. `terraform apply apply.tfplan`. The TF-registered task-def now has `AUTH_MODE=real`, but the ECS service is still on the old CI-deployed revision — old code doesn't read `AUTH_MODE`, so no failure.
 4. Re-plan to verify drift-free (`terraform plan` shows `No changes`).
-5. **Now** the TF state is ready for code that depends on `AUTH_MODE`.
 
 ### Phase B — Code lands on `main` and auto-deploys
 
-Push the working branch to `main` (or merge the PR). `Deploy` workflow auto-triggers. CI's `aws-actions/amazon-ecs-render-task-definition` step takes the latest TF-registered task-def (which now has all 5 env vars + `AUTH_MODE`), renders the real ECR image with the new JWT plugin code, registers a new revision, calls `update-service`. Service rolls onto the new revision: JWT plugin loaded, `AUTH_MODE=real` set, JWKS hydrated at boot via `verifier.hydrate()`.
+Push the working branch to `main` (or merge the PR). `Deploy` workflow auto-triggers. CI's `aws-actions/amazon-ecs-render-task-definition` step takes the latest TF-registered task-def (which now has all 5 env vars + `AUTH_MODE`), renders the real ECR image with the new JWT plugin code, registers a new revision, calls `update-service`. Service rolls onto the new revision: JWT plugin loaded, `AUTH_MODE=real` set, JWKS hydrated at boot via `verifier.hydrate()` (with 10s timeout).
 
 ### Phase C — Verify in staging
 
@@ -656,7 +764,8 @@ Push the working branch to `main` (or merge the PR). `Deploy` workflow auto-trig
 - `curl https://staging-api.mythrun.com/health` returns `{ status: 'ok' }` (public route, no auth).
 - `curl https://staging-api.mythrun.com/some-nonexistent-path` returns **404** (404 fall-through guard works — the `if (!request.routeOptions) return` lets unmatched paths skip auth and reach the 404 handler).
 - `curl -H "Authorization: Bearer invalidtoken123" https://staging-api.mythrun.com/some-nonexistent-path` returns 404 (authenticated request to a nonexistent path; auth hook still falls through; `routeOptions` is undefined for unmatched paths).
-- `curl -X POST https://staging-api.mythrun.com/some-nonexistent-protected-path` returns 401 with `{ error: 'Missing Bearer token' }` — wait, this is wrong: a POST to a nonexistent path is also unmatched, so it should 404 too. The actual proof of "auth is enforced" comes from MYT-38 when the first protected route ships. **Today we can verify the negative case (public routes still work without auth, JWKS hydrate succeeds at boot per logs) but we cannot verify the positive case (a protected route 401s without auth, 200s with valid auth) — that test is deferred to MYT-38.**
+- **Negative case verifiable today**: public routes still respond without auth, JWKS hydrate succeeds at boot (per CloudWatch logs).
+- **Positive case (protected route returns 401 without token, 200 with valid token) deferred to MYT-38** — no protected routes exist in MYT-37 to test against.
 - CloudWatch logs show `verifier.hydrate()` succeeded: look for absence of `auth.bypass_mode_active` (correct — staging is real mode), and a successful boot completion log line.
 - CloudWatch logs do NOT show `auth.bypass_mode_active` — bypass mode is correctly NOT active in staging.
 
@@ -680,15 +789,15 @@ The new container boots, `loadEnv` throws on missing `AUTH_MODE`, ECS health che
 | `suspended_at` enforcement | MYT-39 |
 | WebSocket ticket exchange | MYT-39 |
 | WebSocket re-validation (every 30 min ping/pong with fresh token) | MYT-39 |
-| Multi-dev-user testing via `X-Dev-User` header | Defer until multiplayer code exists (MYT-39 territory) |
+| Multi-dev-user testing via `X-Dev-User` header (parent §5.6 specifies this) | Defer until multiplayer code exists (MYT-39 territory) |
 | End-to-end test through real Cognito JWKS | MYT-38 (first protected route) |
 | Boot-gate probe for Cognito JWKS reachability beyond hydrate | `verifier.hydrate()` at registration covers cold-start; deferred for ongoing reachability |
 | Custom claim validation (custom scopes, group membership) | Future, when access-control needs it |
 | Rate-limited fallback JWKS refresh on cache miss (parent spec §5.2 step 4) | The parent's exact 10-minute cadence isn't what `aws-jwt-verify` does; see §5 flag #2 |
 | `userPoolId` rotation without process restart | Out of scope; DR rotation requires a redeploy |
 | `users.cognito_sub` CHECK constraint rejecting `'bypass:%'` | `myth-bypass-user-db-constraint` follow-up bead, deferred to whichever schema-related ticket lands the constraint |
-| Module-level `AUTH_MODE` default in `infra/modules/serving` | `myth-serving-auth-mode-default` follow-up bead — Komodo's round-1 finding; deferred because it's a serving-module change beyond MYT-37's scope |
-| Window between `suspended_at = now()` being set and an active access token expiring (up to 1 hour) | `myth-suspended-token-revocation` follow-up bead — banned users can keep API access until token TTL until MYT-39 ships the DB-lookup. Acceptable for pre-launch staging; must close before public launch |
+| Window between `suspended_at = now()` being set and an active access token expiring (up to 1 hour) + the parent §6.4 Redis pub/sub `user:{userId}:suspend` channel for active WebSocket termination | `myth-suspended-token-revocation` follow-up bead — banned users can keep API access until token TTL until MYT-39 ships the DB-lookup, and active WebSockets need the Redis-pubsub kill-switch. Acceptable for pre-launch staging; must close before public launch |
+| JWKS rotation on key compromise (vs scheduled rotation) | `aws-jwt-verify` caches keys per-`kid` indefinitely; an old compromised key remains verifiable from cache until the container restarts. Industry-standard limitation for JWKS-cached verifiers; mitigation is "ECS service rollover during incident response" — documented here as a known operational limit, not a Mythrun gap |
 | CloudWatch metric on `auth.bypass_mode_active` for proactive alerting | `myth-cognito-monitoring` (already filed in MYT-36 as the broader Cognito monitoring bead) |
 
 ---
@@ -697,7 +806,6 @@ The new container boots, `loadEnv` throws on missing `AUTH_MODE`, ECS health che
 
 To file after MYT-37 lands:
 
-- **`myth-serving-auth-mode-default`** (P2) — Bake `AUTH_MODE` into the serving Terraform module as a forced default with validation that rejects `'bypass'` unless an explicit `allow_bypass = true` flag is also passed. Today, MYT-37 sets `AUTH_MODE=real` per-environment in staging's `extra_env`; production composition has to remember the same. The module-level default makes the constraint structural rather than per-env-vigilance. (Komodo round-1 finding; deferred because it's a serving-module change beyond MYT-37's scope.)
 - **`myth-bypass-user-db-constraint`** (P3) — Add `CHECK (cognito_sub NOT LIKE 'bypass:%')` to the `users` table whenever a future migration touches it. Defense-in-depth: even if bypass mode somehow ran against a real DB, the row insert fails. Skip until a schema-related ticket creates a natural home for the constraint.
 - **`myth-suspended-token-revocation`** (P2 before launch, P3 today) — Close the up-to-1-hour gap between `users.suspended_at = now()` being set and an active access token expiring. MYT-39 adds the DB lookup that makes this enforceable, so this bead is partially handled there; remaining work is deciding whether to also add a Redis-pub/sub revocation path (as parent §6.4 suggests for active WebSockets). Must close before public launch.
 - **`myth-auth-jwks-probe`** (P4) — Optionally extend the boot gate (`backend/src/boot/wait-for.ts`) to probe Cognito's JWKS endpoint as part of readiness. `verifier.hydrate()` at plugin registration already covers cold-start; this would add ongoing reachability monitoring. Skip until the failure is observed in the wild.

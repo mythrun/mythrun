@@ -186,6 +186,8 @@ This will be added to the initial schema migration (001), not as a separate migr
 
 ## 5. JWT Middleware
 
+> **Spec correction (2026-04-30):** This section originally described a single Fastify plugin that combined JWT verification with a per-request DB lookup of the user row. The MYT-37 implementation splits this into two layers: (1) a claims-only JWT plugin that verifies the access token and attaches `{ sub, username, scope }` to `request.user`, and (2) a future `loadCurrentUser` plugin (MYT-39) that performs the DB lookup, attaches the internal UUID, and enforces `suspended_at`. The `AuthUser` interface below describes what handlers see AFTER both plugins have run, NOT what the JWT plugin alone attaches. See `docs/superpowers/specs/2026-04-30-myt-37-jwt-middleware-design.md` for the validated separation, and `docs/superpowers/specs/2026-04-30-myt-37-jwt-middleware-design.md` §1 + §2 for the rationale (claims-only is the industry pattern; DB lookup adds latency to every authenticated request and couples auth to DB availability).
+
 ### Fastify Plugin
 
 A Fastify plugin registered on the server instance that runs on every request:
@@ -212,7 +214,7 @@ declare module 'fastify' {
 1. Extract `Authorization: Bearer <token>` header
 2. If missing, return 401
 3. Decode the JWT header (no verification yet) to get the `kid` (key ID)
-4. Look up the signing key from Cognito's JWKS endpoint (cached in memory, refreshed every 10 minutes, with rate-limited fallback refresh on cache miss)
+4. Look up the signing key from Cognito's JWKS endpoint (cached in memory, refreshed every 10 minutes, with rate-limited fallback refresh on cache miss) [**Spec correction 2026-04-30:** `aws-jwt-verify` actually does lazy fetch + kid-miss invalidation + 10-second per-URI rate limit, NOT a 10-minute proactive refresh. Functionally equivalent — Cognito rotates keys rarely, kid-miss invalidates instantly when it happens, the rate limit covers abuse. See MYT-37 design §5.]
 5. Verify the JWT signature, expiration, issuer (`https://cognito-idp.us-east-1.amazonaws.com/{poolId}`), and audience (app client ID)
 6. Extract `sub`, `email`, `name` from claims
 7. Look up the user in our database by `cognito_sub`
@@ -235,6 +237,8 @@ When `AUTH_MODE=bypass` (from Week 0 spec):
 - Middleware skips all JWT validation
 - Injects a fake user: `{ id: 'dev-user-1', cognitoSub: 'dev-sub-1', email: 'dev@mythrun.com', displayName: 'Dev User', username: 'dev_user' }`
 - A second dev user is available via `X-Dev-User: 2` header for testing multiplayer locally
+
+> **Spec correction (2026-04-30):** MYT-37 implements bypass mode with a claims-only shape — `{ sub: 'bypass:dev-1', username: 'bypass_dev_1', scope: 'openid email profile' }` — matching the JWT plugin's claims-only architecture (see correction note at the top of §5). The `'bypass:'` prefix on `sub` makes collision with a real Cognito UUID structurally impossible; `username` follows the §4 username format (lowercase + alphanumeric + underscores). The `X-Dev-User` multi-user-switching is deferred to a follow-up bead (`myth-auth-multi-dev-user`) — single fixed user is sufficient for MYT-37/MYT-38 since no multiplayer code exists yet. MYT-37 also adds defense layers preventing bypass activation outside `NODE_ENV=development|test`; see MYT-37 design §4.
 
 ---
 
@@ -274,6 +278,8 @@ JWTs are stateless — once issued, they can't be revoked until expiry. For imme
 4. Active WebSocket connections for the suspended user are terminated immediately via a Redis pub/sub message on a `user:{userId}:suspend` channel
 
 This means a banned user's existing access token still "works" cryptographically, but our middleware rejects it. Latency: one database query (which we're already doing).
+
+> **Spec correction (2026-04-30):** This section's "we're already doing a DB lookup" reasoning is invalidated by MYT-37's claims-only JWT plugin architecture. The JWT plugin does NOT do a per-request DB lookup. `suspended_at` enforcement runs in the future `loadCurrentUser` plugin (MYT-39), which is a separate Fastify hook that runs after the JWT plugin on protected routes. The end-result for handlers is the same — a banned user's request returns 403 — but the latency story changes: the DB lookup is opt-in per route (via the absence of `config.auth = 'jwt-no-db'` or `'public'`), not unconditional. See MYT-37 design §2 for the architectural rationale and `myth-suspended-token-revocation` for the up-to-1-hour ban-lag window before MYT-39 ships.
 
 ### WebSocket Token Re-validation
 
