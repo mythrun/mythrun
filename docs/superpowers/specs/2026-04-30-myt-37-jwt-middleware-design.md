@@ -1,6 +1,6 @@
 # MYT-37 — JWT Middleware + Bypass Mode + Public-Route Allowlist (Design)
 
-> **Status**: Draft v6 (post round-5 blind review — chess cohort: King / Queen / Knight; identical-to-round-1 prompts; iterating until reviewers find only praise per the auth-security-no-shortcuts rule)
+> **Status**: Draft v7 (post round-6 blind review — D&D cohort: Wizard / Rogue / Bard; identical-to-round-1 prompts)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-37](https://linear.app/mythrun/issue/MYT-37/auth-jwt-middleware-bypass-mode-public-route-allowlist)
 > **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §5 (with deferral to MYT-39 for the DB-lookup + suspended-user path — see §1 below)
@@ -93,11 +93,20 @@ A forgotten opt-out is the safer failure mode — a 401 is loud; a silently-publ
 Fastify's `onRequest` hook fires AFTER route matching (per the official lifecycle). For matched routes, the hook sees `request.routeOptions.config` and applies the rules above. For UNMATCHED paths, behavior depends on whether `setNotFoundHandler` is registered:
 
 - **No custom 404 handler (Fastify default):** unmatched paths skip `onRequest` entirely; the framework returns 404 directly.
-- **With `setNotFoundHandler`:** unmatched paths flow through `onRequest`, and `request.routeOptions` is set to the not-found handler's options (potentially with empty config). Without explicit handling, the auth check would proceed and an unauthenticated request to a nonexistent path would get 401 instead of 404 — a route-existence info-leak.
+- **With `setNotFoundHandler`:** unmatched paths flow through `onRequest`. **CRITICAL Fastify behavior** (per the official Server docs): inside the not-found-handler context, `request.routeOptions` is an OBJECT but its `.url`, `.method`, and `.config` are `undefined` — `request.routeOptions` is NOT undefined wholesale. So a guard like `if (!request.routeOptions) return` does NOT fire, and the hook proceeds. Reading `request.routeOptions.config?.auth` returns `undefined !== 'public'`, the hook continues, and an unauthenticated request to a nonexistent path returns 401 instead of 404 — the exact info-leak the design is trying to prevent.
 
-`buildApp` registers a custom `setNotFoundHandler` with `config: { auth: 'public' }` so unmatched paths flow through the auth hook, which sees `'public'` and skips validation, then reaches the 404 handler. This makes the 404 path testable (under the default 404 handler, the auth hook never runs and the test gives false confidence about the guard).
+The fix is a guard that checks for the undefined-PROPS shape:
 
-The plugins ALSO retain the secondary `if (!request.routeOptions) return` guard as defense-in-depth — covering the edge case where some future Fastify version or composition removes the `setNotFoundHandler` and reverts to the default behavior. Tests verify both unauth-on-unmatched (404) and authenticated-on-unmatched (404) cases under the `setNotFoundHandler`-registered configuration.
+```typescript
+// At the top of the auth hook, BEFORE config-based opt-out:
+if (request.routeOptions === undefined || request.routeOptions.url === undefined) {
+  return // unmatched route, even with setNotFoundHandler registered
+}
+```
+
+`request.routeOptions.url === undefined` is the documented Fastify signal for "this is a not-found-handler invocation, no route matched." The guard fires for both the default-404 case (routeOptions undefined wholesale) and the setNotFoundHandler-registered case (routeOptions object with undefined props).
+
+`buildApp` registers a custom `setNotFoundHandler` so the auth hook is exercised for unmatched paths (a test that hits an unmatched path actually runs the guard, rather than relying on Fastify's default 404 to short-circuit before the hook fires). The handler returns 404 cleanly. Tests verify both unauth-on-unmatched (404) and authenticated-on-unmatched (404) cases under this configuration.
 
 ---
 
@@ -125,30 +134,36 @@ backend/src/auth/
 import type { CognitoAccessTokenPayload } from 'aws-jwt-verify/jwt-model'
 
 export interface AuthUser {
-  /** Cognito sub claim — stable per-user identifier across token refreshes. */
+  /** Cognito sub claim — stable per-user identifier across token refreshes.
+   *  This is the canonical identifier for cross-system reference (e.g.,
+   *  matching to `users.cognito_sub` after MYT-38 onboarding creates the row).
+   *  Treat as immutable; do NOT use Cognito's `username` claim for identity. */
   readonly sub: string
 
   /** Cognito's internal username for the federated user.
    *  For Google sign-in: 'Google_<google-sub>'
    *  For Discord sign-in: 'Discord_<discord-snowflake>'
-   *  For bypass mode: 'bypass_dev_1' (lowercase + underscores per parent §4 username format)
-   *  This is the cognito-internal username, NOT the user-chosen username
-   *  Mythrun adds in MYT-38 onboarding (which lives on `users.username`). */
-  readonly username: string
+   *  For bypass mode: 'bypass_dev_1'
+   *
+   *  **DO NOT confuse this with `users.username`** — the user-chosen username
+   *  Mythrun adds in MYT-38 onboarding. This field is the cognito-internal
+   *  identifier. Renamed from `username` (which was a footgun: handlers
+   *  reading `request.user.username` could plausibly think it was the
+   *  user-chosen name and authorize/log/display the wrong value). */
+  readonly cognitoUsername: string
 
   /** Space-separated OAuth scopes granted to this token. */
   readonly scope: string
 
   // Note: `email`, `name`, and `picture` are deliberately absent. The Linear
-  // ticket and parent §5.1 list them, but Cognito access tokens don't carry
+  // ticket and parent §5.1 listed them, but Cognito access tokens don't carry
   // them — they're id_token claims, and we use access tokens (per §2). The
   // backend gets email/name/picture from the users row after MYT-38
   // onboarding (which calls /oauth2/userInfo once at user creation).
   //
   // No `tokenUse` discriminator either: routes branching on whether auth
-  // came from real-Cognito vs bypass would be a footgun. Either-or trust
-  // is the wrong shape; either every protected route trusts the auth layer
-  // or it doesn't. We removed the field in v3 after the bird-of-prey review.
+  // came from real-Cognito vs bypass would be a footgun. Either every
+  // protected route trusts the auth layer or it doesn't.
 }
 
 /** Minimal verifier interface decorated onto FastifyInstance.
@@ -317,15 +332,21 @@ The bypass plugin is the single most dangerous piece of code in MYT-37. If it ev
 
 `loadEnv` validates `process.env.AUTH_MODE` is exactly `'real'` or `'bypass'`. Anything else — unset, empty, `'true'`, `'1'`, `'Real'` (case mismatch) — throws at boot with a clear error. **No silent default to either mode.** Forces every environment to make the decision explicitly. `.env.development.example` sets `bypass`; staging Terraform sets `real`; production Terraform sets `real`. The boot fails loudly if any environment forgot.
 
-### Layer 2 — Bypass requires `NODE_ENV` to be exactly `'development'` or `'test'`, AND the serving module force-injects `NODE_ENV=production`
+### Layer 2 — Bypass requires `NODE_ENV ∈ {development, test}` AND `AWS_EXECUTION_ENV` to be unset
 
-`bypass-plugin.ts`'s `register` function checks `process.env.NODE_ENV` at registration time. **Allow-list, not block-list:** the value MUST be exactly `'development'` or `'test'`. Any other value — `'production'`, `'staging'`, an empty string, undefined, a typo — throws `Error('bypass mode requires NODE_ENV=development or test')`.
+`bypass-plugin.ts`'s `register` function performs TWO independent runtime-environment checks:
 
-The block-list shape (`!== 'production'`) is rejected because it fails-open on misconfig: an environment that forgets to set `NODE_ENV` defaults to undefined, which is `!== 'production'`, which historically allowed bypass. The allow-list shape requires explicit dev-or-test marker — the safer failure mode for a security-tier check.
+**Layer 2a — `NODE_ENV` allow-list.** The value MUST be exactly `'development'` or `'test'`. Any other value — `'production'`, `'staging'`, an empty string, undefined, a typo — throws. The block-list shape (`!== 'production'`) is rejected because it fails-open on misconfig: an environment that forgets to set `NODE_ENV` defaults to undefined, which is `!== 'production'`, which historically allowed bypass. The allow-list shape requires an explicit dev-or-test marker.
 
-**Structural reinforcement:** The serving Terraform module force-injects `NODE_ENV=production` into the API task definition's environment, the same way it injects `AUTH_MODE=real` (Layer 5). Without this, an operator who set `AUTH_MODE=bypass` in `extra_env` could ALSO override `NODE_ENV=development` in `extra_env` and defeat both layers — the runtime check would see `NODE_ENV=development`, allow bypass, and the bypass user would be attached for every request in production. With the serving module force-injecting both values, defeating Layer 2 requires explicitly removing the module's hardcoded NODE_ENV, which is a code change that a reviewer catches.
+**Layer 2b — `AWS_EXECUTION_ENV` must be unset.** ECS Fargate (and Lambda, Beanstalk, etc.) automatically set `AWS_EXECUTION_ENV=AWS_ECS_FARGATE` (or similar) at runtime, BEFORE the container's task-def `environment` array is materialized. **An operator cannot override `AWS_EXECUTION_ENV` from a task-def env entry** — the AWS runtime injects it after the task-def env is read. This decouples bypass-mode rejection from any operator-controllable env var: even if someone sets `NODE_ENV=development` AND `AUTH_MODE=bypass` in extra_env, bypass still fails at registration because `AWS_EXECUTION_ENV` is set in any ECS task. Local dev (no AWS runtime → no `AWS_EXECUTION_ENV`) is unaffected.
 
-The Dockerfile's production runtime stage also sets `ENV NODE_ENV=production`. The check runs **at registration time AND inside the `onRequest` hook** — defense-in-depth across registration, runtime, build, and infra layers.
+**Structural reinforcement:** The serving Terraform module ALSO force-injects `NODE_ENV=production` and `AUTH_MODE=real` into the API task definition's environment. Without these defaults, the runtime check would see whatever extra_env supplied (or `undefined` if nothing). With both module-level defaults plus the AWS_EXECUTION_ENV check, the bypass-defense layers are genuinely orthogonal:
+
+- Defeating Layer 2a requires overriding NODE_ENV in extra_env (caught by the reserved-name validation in `var.extra_env`)
+- Defeating Layer 2b requires NOT running on AWS — impossible from a task-def
+- Defeating Layer 5 requires overriding AUTH_MODE in extra_env (also caught by the validation)
+
+Three coordinated misconfigs are required, each catchable by a different mechanism. The Dockerfile's production runtime stage also sets `ENV NODE_ENV=production`. All checks run **at registration time AND inside the `onRequest` hook**.
 
 ### Layer 3 — Bypass requires ALL Cognito config to be ABSENT (read from parsed env, not process.env directly)
 
@@ -425,6 +446,14 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
   await new Promise((resolve) => setTimeout(resolve, Math.random() * 1000))
   let hydrateTimer: NodeJS.Timeout | undefined
   const hydratePromise = verifier.hydrate()
+  // Attach the no-op .catch BEFORE Promise.race so that if the timeout
+  // wins and Race rejects synchronously, the still-pending hydratePromise
+  // already has a rejection handler queued — no microtask-queue window where
+  // a late hydrate rejection could surface as unhandled (which would crash
+  // the process under Node 24's default --unhandled-rejections=throw). This
+  // ordering matters: attaching .catch inside finally{} after Race resolution
+  // is too late.
+  hydratePromise.catch(() => {})
   const timeoutPromise = new Promise<never>((_, reject) => {
     hydrateTimer = setTimeout(
       () => reject(new Error('verifier.hydrate() timed out after 10s — Cognito JWKS unreachable')),
@@ -445,9 +474,6 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
     throw err
   } finally {
     if (hydrateTimer) clearTimeout(hydrateTimer)
-    // Swallow any later rejection from the loser path so it doesn't become
-    // an unhandled rejection that crashes the process.
-    hydratePromise.catch(() => {})
   }
 
   // Decorate the app with the verifier so MYT-38's /api/users/register handler
@@ -463,12 +489,13 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
   app.decorate('jwtVerifier', verifier)
 
   app.addHook('onRequest', async (request, reply) => {
-    // 404 fall-through: unmatched routes have undefined routeOptions when a
-    // setNotFoundHandler is registered. Without this guard, the auth check
-    // would proceed and an unauthenticated request to a nonexistent path
-    // would return 401 instead of 404 — leaking auth-state info about route
-    // existence.
-    if (!request.routeOptions) return
+    // 404 fall-through: unmatched routes have routeOptions either undefined
+    // (default Fastify 404) OR an object with undefined .url/.method/.config
+    // (with setNotFoundHandler registered, per the Fastify Server docs).
+    // The guard checks BOTH shapes — without checking .url, the
+    // setNotFoundHandler case slips through and the hook returns 401 for
+    // unauthenticated requests to nonexistent paths, leaking route-existence.
+    if (request.routeOptions === undefined || request.routeOptions.url === undefined) return
 
     const authMode = request.routeOptions.config?.auth
     // Public-route opt-out: skip ALL validation, no request.user attached.
@@ -520,7 +547,7 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
 
     const user: AuthUser = {
       sub: payload.sub,
-      username: payload.username,
+      cognitoUsername: payload.username,
       scope: typeof payload.scope === 'string' ? payload.scope : '',
     }
     request.user = user
@@ -566,7 +593,7 @@ const REGISTERED_DECORATOR = 'mythAuthRegistered'
 // marker is visible in the row, complementing the colon-prefixed sub.
 const BYPASS_USER: AuthUser = {
   sub: 'bypass:dev-1',
-  username: 'bypass_dev_1',
+  cognitoUsername: 'bypass_dev_1',
   scope: 'openid email profile',
 }
 
@@ -599,6 +626,21 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
   if (nodeEnv !== 'development' && nodeEnv !== 'test') {
     throw new Error(
       `auth bypass plugin: NODE_ENV must be 'development' or 'test' (got ${JSON.stringify(nodeEnv)})`,
+    )
+  }
+
+  // Defense layer 2b (independent of Layer 2): AWS_EXECUTION_ENV is set by
+  // ECS Fargate at runtime to "AWS_ECS_FARGATE" — and by Lambda, Beanstalk,
+  // etc. — and CANNOT be overridden by an operator's task-def env section
+  // (it's set by the AWS runtime itself before the container's environment
+  // array is materialized). If we observe ANY AWS_EXECUTION_ENV value, we're
+  // in an AWS-managed runtime and bypass is forbidden, regardless of NODE_ENV
+  // / AUTH_MODE / cognito-config. This decouples Layer 2 from the chained
+  // dependency where {NODE_ENV=development AUTH_MODE=bypass} would otherwise
+  // collapse both layers in one operator action.
+  if (process.env.AWS_EXECUTION_ENV) {
+    throw new Error(
+      `auth bypass plugin: AWS_EXECUTION_ENV is set (${JSON.stringify(process.env.AWS_EXECUTION_ENV)}) — bypass mode is forbidden in any AWS-managed runtime`,
     )
   }
 
@@ -660,6 +702,9 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
         `auth bypass plugin: NODE_ENV must be 'development' or 'test' at request time (got ${JSON.stringify(requestNodeEnv)})`,
       )
     }
+    if (process.env.AWS_EXECUTION_ENV) {
+      throw new Error('auth bypass plugin: AWS_EXECUTION_ENV observed at request time')
+    }
     if (
       opts.cognitoUserPoolId ||
       opts.cognitoAppClientId ||
@@ -710,17 +755,25 @@ const AuthEnv = z.discriminatedUnion('AUTH_MODE', [
   }),
   z.object({
     AUTH_MODE: z.literal('bypass'),
-    // In bypass mode, COGNITO_* MUST be absent (Layer 3 of the defense).
-    // Zod's strict() at the schema level catches accidentally-set values.
-    COGNITO_USER_POOL_ID: z.undefined(),
-    COGNITO_APP_CLIENT_ID: z.undefined(),
-    COGNITO_ISSUER_URL: z.undefined(),
-    COGNITO_HOSTED_UI_DOMAIN: z.undefined(),
+    // In bypass mode, COGNITO_* are TYPED as optional, NOT forbidden at the
+    // Zod layer. The plumbed Layer 3 check in bypassPlugin runs against
+    // these values and rejects if any are populated. We do NOT use
+    // z.undefined() here because that would make Zod throw on parse — the
+    // plumbed Layer 3 check would then be unreachable dead code (the
+    // architectural bug v6 introduced). With optional(), values flow through
+    // and the runtime check fires.
+    COGNITO_USER_POOL_ID: z.string().optional(),
+    COGNITO_APP_CLIENT_ID: z.string().optional(),
+    COGNITO_ISSUER_URL: z.string().optional(),
+    COGNITO_HOSTED_UI_DOMAIN: z.string().optional(),
   }),
 ])
 ```
 
-The discriminated union gives type-level enforcement: a TypeScript consumer of the parsed env object cannot read `env.COGNITO_USER_POOL_ID` without first narrowing on `env.AUTH_MODE === 'real'`. The Layer 3 plumbing in `bypassPlugin` is then naturally typed because the bypass branch has the Cognito vars as `undefined` at the type level — no string-name matching, no array of magic keys to keep in sync if config is renamed.
+The discriminated union gives mode-narrowed types: a TypeScript consumer reading `env.COGNITO_USER_POOL_ID` after narrowing on `env.AUTH_MODE === 'real'` gets a non-nullable string; in the bypass branch it's `string | undefined`. The Layer 3 plumbing in `bypassPlugin` then has real values to check (or `undefined`s, which is the safe path). Two layers of defense:
+
+1. **loadEnv-level (preferred):** if a real environment somehow gets `AUTH_MODE=bypass` AND has populated Cognito vars, loadEnv parses the bypass branch with the populated values flowing through; the plumbed Layer 3 in bypassPlugin then rejects at registration. (No bypass user attached to any request.)
+2. **process.env-level (defense-in-depth):** bypassPlugin's hook ALSO reads `process.env.COGNITO_*` directly, defending against the case where loadEnv was somehow shimmed or the parsed env was bypassed.
 
 `loadEnv` throws with mode-specific error messages: in real mode, "missing COGNITO_USER_POOL_ID — required when AUTH_MODE=real" rather than the generic "missing COGNITO_USER_POOL_ID."
 
@@ -876,12 +929,12 @@ variable "extra_env" {
   validation {
     condition = alltrue([
       for e in var.extra_env : !contains([
-        "AUTH_MODE", "NODE_ENV",
+        "AUTH_MODE", "NODE_ENV", "BOOT_GATE_ENABLED",
         "COGNITO_USER_POOL_ID", "COGNITO_APP_CLIENT_ID",
         "COGNITO_ISSUER_URL", "COGNITO_HOSTED_UI_DOMAIN",
       ], e.name)
     ])
-    error_message = "extra_env must not contain reserved auth/Cognito names (AUTH_MODE, NODE_ENV, COGNITO_*). Use the module's dedicated variables instead."
+    error_message = "extra_env must not contain reserved auth/Cognito/boot-gate names. Use the module's dedicated variables (auth_mode, node_env, boot_gate_enabled) instead."
   }
 }
 ```
@@ -913,6 +966,8 @@ For MYT-37, the public routes are exactly the ones that exist today:
 Plus the not-found handler registered in `buildApp` (set `auth: 'public'` so unmatched paths skip auth and reach a clean 404 — see §2 "404 fall-through").
 
 Parent §5.3 also lists `/health/live` as a public route. **MYT-37 does NOT add `/health/live`** because no consumer needs it: `/health` already serves as the ECS container liveness probe (per the comment in `app.ts:9`), and `/health/ready` serves as the ALB readiness probe. A separate `/health/live` would be redundant. If a future consumer (a different load balancer, a different orchestrator) needs the distinct path, it adds the route + opt-out as part of that ticket.
+
+The Linear ticket's "Done when" list mentions `/auth/callback` as a public route. **`/auth/callback` is a frontend SPA route, NOT a backend route** — it's the page the browser lands on after Cognito redirects back from the OAuth flow. Per parent §3 ("Frontend exchanges the authorization code for tokens" + "Frontend stores tokens"), the SPA POSTs directly to Cognito's `/oauth2/token` endpoint to exchange the code; no backend `/auth/callback` route exists or will exist. The Linear ticket text is mistaken; no public-allowlist entry is needed.
 
 Both opt out via `config: { auth: 'public' }` on their route registration. No path-based allowlist in the plugin; the opt-out is a per-route property visible at the route's definition site.
 
