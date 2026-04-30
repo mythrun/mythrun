@@ -189,6 +189,21 @@ resource "aws_cognito_identity_provider" "google" {
     picture  = "picture"
     username = "sub" # Cognito requires "username" mapping; Google's sub is stable + unique.
   }
+
+  # Cognito server-side populates these provider_details keys for
+  # provider_type = "Google" because it knows the standard endpoints. We don't
+  # set them in HCL because they're invariants of the provider type; we tell
+  # TF to ignore the resulting drift.
+  lifecycle {
+    ignore_changes = [
+      provider_details["attributes_url"],
+      provider_details["attributes_url_add_attributes"],
+      provider_details["authorize_url"],
+      provider_details["oidc_issuer"],
+      provider_details["token_request_method"],
+      provider_details["token_url"],
+    ]
+  }
 }
 
 # Discord is configured as a generic OIDC provider, NOT via the legacy
@@ -230,5 +245,13 @@ resource "aws_cognito_identity_provider" "discord" {
     name     = "preferred_username" # Discord's chosen display name (OIDC claim).
     picture  = "picture"            # Discord's OIDC userinfo returns a CDN URL directly.
     username = "sub"                # Stable Discord user id (snowflake) exposed as OIDC sub.
+  }
+
+  # Cognito server-side adds attributes_url_add_attributes for OIDC providers;
+  # we don't set it in HCL. Ignore the resulting drift.
+  lifecycle {
+    ignore_changes = [
+      provider_details["attributes_url_add_attributes"],
+    ]
   }
 }
