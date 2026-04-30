@@ -94,9 +94,12 @@ resource "aws_cognito_user_pool_client" "main" {
   # Refresh-token rotation per Auth spec §6.3 — each use mints a new refresh
   # token and invalidates the previous one. Distinct from enable_token_revocation
   # below, which powers the parent §10 `/api/auth/logout` route's "revoke Cognito
-  # tokens" line.
+  # tokens" line. retry_grace_period_seconds = 0 matches AWS's default and is
+  # set explicitly to avoid a provider-side plan/apply consistency bug where TF
+  # plans null but AWS returns 0.
   refresh_token_rotation {
-    feature = "ENABLED"
+    feature                    = "ENABLED"
+    retry_grace_period_seconds = 0
   }
 
   enable_token_revocation = true
