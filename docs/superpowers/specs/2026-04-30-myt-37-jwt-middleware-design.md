@@ -1,6 +1,6 @@
 # MYT-37 — JWT Middleware + Bypass Mode + Public-Route Allowlist (Design)
 
-> **Status**: Draft v7 (post round-6 blind review — D&D cohort: Wizard / Rogue / Bard; identical-to-round-1 prompts)
+> **Status**: Draft v8 (post round-7 blind review — weather cohort: Storm / Fog / Aurora; identical-to-round-1 prompts)
 > **Date**: 2026-04-30
 > **Linear**: [MYT-37](https://linear.app/mythrun/issue/MYT-37/auth-jwt-middleware-bypass-mode-public-route-allowlist)
 > **Parent spec**: `docs/specs/2026-04-13-auth-users.md` §5 (with deferral to MYT-39 for the DB-lookup + suspended-user path — see §1 below)
@@ -152,8 +152,13 @@ export interface AuthUser {
    *  user-chosen name and authorize/log/display the wrong value). */
   readonly cognitoUsername: string
 
-  /** Space-separated OAuth scopes granted to this token. */
-  readonly scope: string
+  /** OAuth scopes granted to this token, parsed into an array at the
+   *  boundary. The plugin splits the JWT's space-separated `scope` claim
+   *  into this array so consumers can do `scopes.includes('admin')` instead
+   *  of `scope.includes('admin')` — the latter would substring-match
+   *  `'administrator'` and any other token-containing-substring, a real
+   *  authorization bug class. Treat as a set; order is not significant. */
+  readonly scopes: readonly string[]
 
   // Note: `email`, `name`, and `picture` are deliberately absent. The Linear
   // ticket and parent §5.1 listed them, but Cognito access tokens don't carry
@@ -338,7 +343,9 @@ The bypass plugin is the single most dangerous piece of code in MYT-37. If it ev
 
 **Layer 2a — `NODE_ENV` allow-list.** The value MUST be exactly `'development'` or `'test'`. Any other value — `'production'`, `'staging'`, an empty string, undefined, a typo — throws. The block-list shape (`!== 'production'`) is rejected because it fails-open on misconfig: an environment that forgets to set `NODE_ENV` defaults to undefined, which is `!== 'production'`, which historically allowed bypass. The allow-list shape requires an explicit dev-or-test marker.
 
-**Layer 2b — `AWS_EXECUTION_ENV` must be unset.** ECS Fargate (and Lambda, Beanstalk, etc.) automatically set `AWS_EXECUTION_ENV=AWS_ECS_FARGATE` (or similar) at runtime, BEFORE the container's task-def `environment` array is materialized. **An operator cannot override `AWS_EXECUTION_ENV` from a task-def env entry** — the AWS runtime injects it after the task-def env is read. This decouples bypass-mode rejection from any operator-controllable env var: even if someone sets `NODE_ENV=development` AND `AUTH_MODE=bypass` in extra_env, bypass still fails at registration because `AWS_EXECUTION_ENV` is set in any ECS task. Local dev (no AWS runtime → no `AWS_EXECUTION_ENV`) is unaffected.
+**Layer 2b — `ECS_CONTAINER_METADATA_URI_V4` must be unset.** The ECS container agent injects `ECS_CONTAINER_METADATA_URI_V4` directly into each container's process environment at task launch — NOT through the task-def `environment` list. An operator cannot override it via `extra_env` because `extra_env` flows through the task-def array which is materialized before the agent's metadata-URI injection happens. This decouples bypass-mode rejection from any operator-controllable env var: even if someone sets `NODE_ENV=development` AND `AUTH_MODE=bypass` in extra_env, bypass still fails at registration because `ECS_CONTAINER_METADATA_URI_V4` is set in any ECS task. Local dev (no ECS agent → no metadata URI) is unaffected.
+
+**(Note on `AWS_EXECUTION_ENV`):** A previous draft used `AWS_EXECUTION_ENV` as the Layer 2b signal. That var IS settable from the task-def `environment` list with no documented immutability guarantee — an operator could override it to empty string. Round 7's Storm reviewer caught this. `ECS_CONTAINER_METADATA_URI_V4` is the agent-injected, post-task-def-array signal; `AWS_EXECUTION_ENV` is still in the `extra_env` reserved-name list as belt-and-suspenders, but the load-bearing check is the metadata URI.
 
 **Structural reinforcement:** The serving Terraform module ALSO force-injects `NODE_ENV=production` and `AUTH_MODE=real` into the API task definition's environment. Without these defaults, the runtime check would see whatever extra_env supplied (or `undefined` if nothing). With both module-level defaults plus the AWS_EXECUTION_ENV check, the bypass-defense layers are genuinely orthogonal:
 
@@ -548,7 +555,13 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
     const user: AuthUser = {
       sub: payload.sub,
       cognitoUsername: payload.username,
-      scope: typeof payload.scope === 'string' ? payload.scope : '',
+      // Split the JWT's space-separated scope claim into an array. Empty
+      // string → empty array (split(' ') returns ['']). Non-string claim
+      // (defensive against future library shape changes) → empty array.
+      scopes:
+        typeof payload.scope === 'string' && payload.scope.length > 0
+          ? Object.freeze(payload.scope.split(' '))
+          : Object.freeze([]),
     }
     request.user = user
   })
@@ -567,7 +580,7 @@ export const jwtPlugin: FastifyPluginAsync<JwtPluginOptions> = async (app, opts)
 
 4. **Error-class logging without PII.** The token itself, the payload, and the user's identity NEVER appear in logs. Only the error class name (`JwtExpiredError`, `JwtInvalidSignatureError`, etc.) goes to CloudWatch. Lets operators triage patterns without leaking auth material. We catch the parent `Error` class (not specific subclasses), so future library versions introducing new error classes still get turned into 401s.
 
-5. **404 fall-through guard is FIRST.** `if (!request.routeOptions) return` ensures unmatched paths skip the hook entirely, letting Fastify's 404 handler (default or custom) respond cleanly. Without this, an authenticated request to a nonexistent path would return 401 instead of 404, leaking route-existence info.
+5. **404 fall-through guard is FIRST.** The dual check `if (request.routeOptions === undefined || request.routeOptions.url === undefined) return` ensures unmatched paths skip the hook regardless of whether a custom `setNotFoundHandler` is registered (per the documented Fastify behavior — see §2 "404 fall-through"). Without it, an authenticated request to a nonexistent path under `setNotFoundHandler` would return 401 instead of 404, leaking route-existence info.
 
 6. **Public-route check is SECOND.** Before any token parsing, before any verifier call. Cheaper for public routes and avoids spurious "no Bearer token" warnings on health probes.
 
@@ -591,10 +604,15 @@ const REGISTERED_DECORATOR = 'mythAuthRegistered'
 // bypass-origin in the username for forensic traceability — if any code path
 // ever accidentally writes this into `users.username`, the bypass-origin
 // marker is visible in the row, complementing the colon-prefixed sub.
+// Bypass user. Note `scopes: ['bypass']` — NOT the realistic-looking
+// 'openid email profile' set. If any future authz check reads scopes (e.g.
+// "if user.scopes.includes('admin')"), the bypass user must be visibly
+// distinct so the check fails closed in dev rather than masquerading as a
+// fully-authorized real user.
 const BYPASS_USER: AuthUser = {
   sub: 'bypass:dev-1',
   cognitoUsername: 'bypass_dev_1',
-  scope: 'openid email profile',
+  scopes: Object.freeze(['bypass']),
 }
 
 export interface BypassPluginOptions {
@@ -629,18 +647,23 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
     )
   }
 
-  // Defense layer 2b (independent of Layer 2): AWS_EXECUTION_ENV is set by
-  // ECS Fargate at runtime to "AWS_ECS_FARGATE" — and by Lambda, Beanstalk,
-  // etc. — and CANNOT be overridden by an operator's task-def env section
-  // (it's set by the AWS runtime itself before the container's environment
-  // array is materialized). If we observe ANY AWS_EXECUTION_ENV value, we're
-  // in an AWS-managed runtime and bypass is forbidden, regardless of NODE_ENV
-  // / AUTH_MODE / cognito-config. This decouples Layer 2 from the chained
-  // dependency where {NODE_ENV=development AUTH_MODE=bypass} would otherwise
-  // collapse both layers in one operator action.
-  if (process.env.AWS_EXECUTION_ENV) {
+  // Defense layer 2b (independent of Layer 2a): ECS_CONTAINER_METADATA_URI_V4
+  // is set by the ECS container agent at task launch INDEPENDENTLY of the
+  // task-def `environment` list. The agent injects it directly into the
+  // container's process environment; it does NOT pass through the task-def
+  // env array, so an operator cannot override it via `extra_env`. If we
+  // observe this var, we're running inside ECS (Fargate or EC2-launch-type)
+  // and bypass is forbidden, regardless of NODE_ENV / AUTH_MODE / cognito-config.
+  //
+  // (We do NOT use AWS_EXECUTION_ENV for this layer — that var IS settable
+  // from the task-def `environment` list, has no documented immutability
+  // guarantee, and an operator could override it to empty string from
+  // `extra_env`. Round-7 Storm caught this in the v7 design. AWS_EXECUTION_ENV
+  // is still in the extra_env reserved-name list as belt-and-suspenders, but
+  // ECS_CONTAINER_METADATA_URI_V4 is the load-bearing signal.)
+  if (process.env.ECS_CONTAINER_METADATA_URI_V4) {
     throw new Error(
-      `auth bypass plugin: AWS_EXECUTION_ENV is set (${JSON.stringify(process.env.AWS_EXECUTION_ENV)}) — bypass mode is forbidden in any AWS-managed runtime`,
+      `auth bypass plugin: ECS_CONTAINER_METADATA_URI_V4 is set — bypass mode is forbidden in any ECS-managed runtime`,
     )
   }
 
@@ -684,8 +707,10 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
   )
 
   app.addHook('onRequest', async (request) => {
-    // 404 fall-through (same as jwtPlugin).
-    if (!request.routeOptions) return
+    // 404 fall-through (same dual-check as jwtPlugin: routeOptions can be
+    // undefined wholesale OR an object with undefined .url under
+    // setNotFoundHandler).
+    if (request.routeOptions === undefined || request.routeOptions.url === undefined) return
 
     // Public routes opt out the same way they do under real auth.
     if (request.routeOptions.config?.auth === 'public') return
@@ -702,8 +727,8 @@ export const bypassPlugin: FastifyPluginAsync<BypassPluginOptions> = async (app,
         `auth bypass plugin: NODE_ENV must be 'development' or 'test' at request time (got ${JSON.stringify(requestNodeEnv)})`,
       )
     }
-    if (process.env.AWS_EXECUTION_ENV) {
-      throw new Error('auth bypass plugin: AWS_EXECUTION_ENV observed at request time')
+    if (process.env.ECS_CONTAINER_METADATA_URI_V4) {
+      throw new Error('auth bypass plugin: ECS_CONTAINER_METADATA_URI_V4 observed at request time')
     }
     if (
       opts.cognitoUserPoolId ||
@@ -777,6 +802,20 @@ The discriminated union gives mode-narrowed types: a TypeScript consumer reading
 
 `loadEnv` throws with mode-specific error messages: in real mode, "missing COGNITO_USER_POOL_ID — required when AUTH_MODE=real" rather than the generic "missing COGNITO_USER_POOL_ID."
 
+**Layer 1b cross-check** (defense at the env-loader level, independent of bypassPlugin's runtime layers): `loadEnv` enforces that `AUTH_MODE='bypass'` REQUIRES `NODE_ENV ∈ {'development', 'test'}`. The check runs at boot, before the plugin is constructed:
+
+```typescript
+const env = AuthEnv.parse(process.env)
+const nodeEnv = z.enum(['development', 'test', 'production']).parse(process.env.NODE_ENV)
+if (env.AUTH_MODE === 'bypass' && nodeEnv !== 'development' && nodeEnv !== 'test') {
+  throw new Error(
+    `loadEnv: AUTH_MODE=bypass requires NODE_ENV in {'development','test'}, got NODE_ENV=${JSON.stringify(nodeEnv)}`,
+  )
+}
+```
+
+This collapses the multi-layer "two coordinated misconfigs" path into a single env-loader check that fires before any plugin code runs. Any future code path that constructs `buildApp` (test harnesses, sidecars, alternative server bootstraps) inherits the same gate by virtue of calling `loadEnv` first.
+
 ### `buildApp` is now async and registers auth (CRITICAL: closes the `fallbackStart` gap)
 
 `backend/src/server.ts` has two boot paths: the `BOOT_GATE_ENABLED=1` gated path (waitFor + listen) and `fallbackStart()` (used when the gate is off). To eliminate the risk that `fallbackStart` boots a Fastify instance with no auth wiring at all, `registerAuth` moves INTO `buildApp` so every code path that constructs a Fastify instance gets auth:
@@ -814,14 +853,16 @@ export const buildApp = async (
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' }))
   registerReadyRoute(app, deps) // /health/ready opts out via config: { auth: 'public' }
 
-  // Custom 404 handler so the auth hook's `if (!request.routeOptions) return`
-  // guard ACTUALLY runs against unmatched paths. Without setNotFoundHandler,
-  // Fastify's default 404 path bypasses onRequest entirely, leaving the
-  // route-existence info-leak guard as forward-looking dead code that no
-  // test could exercise. With this handler, unmatched paths flow through
-  // the auth hook (which sees the public opt-out and falls through) and
-  // reach this handler, which returns 404. The guard's behavior is now
-  // testable + observable.
+  // Custom 404 handler so the auth hook's dual routeOptions guard ACTUALLY
+  // runs against unmatched paths. Without setNotFoundHandler, Fastify's
+  // default 404 path bypasses onRequest entirely, leaving the route-existence
+  // info-leak guard as forward-looking dead code that no test could exercise.
+  // With this handler, unmatched paths flow through the auth hook (which
+  // sees routeOptions.url === undefined and falls through) and reach this
+  // handler, which returns 404. The guard's behavior is now testable +
+  // observable. The handler itself is marked auth: 'public' as belt-and-
+  // suspenders — if the dual guard ever regresses, the public opt-out kicks
+  // in to keep the 404 path clean.
   app.setNotFoundHandler({ config: { auth: 'public' } }, (_request, reply) => {
     reply.code(404).send({ error: 'Not Found' })
   })
@@ -839,7 +880,18 @@ export const buildApp = async (
 1. **Gated path** (`BOOT_GATE_ENABLED=1`): runs `loadEnv`, opens real pg/redis clients, runs `waitFor` probes, calls `buildApp`, listens.
 2. **`fallbackStart`** (`BOOT_GATE_ENABLED=0` or unset): originally skipped `loadEnv` entirely and used stub deps that throw on use; intended for a transition period before the boot gate became standard.
 
-MYT-37 requires both paths to call `loadEnv` at minimum (auth needs `AUTH_MODE` + `COGNITO_*`), which changes the contract from MYT-29's purely-degraded-fallback. The reconciliation:
+MYT-37 requires both paths to call `loadEnv` at minimum (auth needs `AUTH_MODE` + `COGNITO_*`), which changes the contract from MYT-29's purely-degraded-fallback.
+
+**Migration impact — environments that currently lack `AUTH_MODE`:**
+
+| Environment | `BOOT_GATE_ENABLED` today | Has `AUTH_MODE`? | Action required before MYT-37 ships |
+|-------------|---------------------------|-------------------|-------------------------------------|
+| Local dev (`backend/.env.development`) | `1` (per `.env.development.example`) | Yes (`bypass`) | None — already set |
+| Staging ECS task | `1` (set by serving module via MYT-35) | No (today) | Phase A: serving module's `auth_mode` variable defaults to `"real"` and injects `AUTH_MODE`; nothing to do at composition |
+| CI test run | varies | No | `backend/src/__tests__/setup-env.ts` adds `AUTH_MODE=bypass` + `NODE_ENV=test` |
+| Production ECS task (when composed) | `1` | N/A — not yet composed | The serving module's default `auth_mode = "real"` provides it automatically |
+
+The reconciliation:
 
 - **Both paths run `loadEnv` and pass `authOpts` through `buildApp`.** This is not optional; auth is now part of every boot.
 - **fallbackStart still uses stub deps** for pg/redis — that's its only remaining purpose. Auth is wired identically.
@@ -1122,7 +1174,7 @@ Once the gate passes: CI's `aws-actions/amazon-ecs-render-task-definition` step 
 
 - `aws ecs describe-services --cluster mythrun --services mythrun-staging-api` shows desired = running on the new revision.
 - `curl https://staging-api.mythrun.com/health` returns `{ status: 'ok' }` (public route, no auth).
-- `curl https://staging-api.mythrun.com/some-nonexistent-path` returns **404** (404 fall-through guard works — the `if (!request.routeOptions) return` lets unmatched paths skip auth and reach the 404 handler).
+- `curl https://staging-api.mythrun.com/some-nonexistent-path` returns **404** (404 fall-through guard works — the dual check `if (request.routeOptions === undefined || request.routeOptions.url === undefined) return` lets unmatched paths skip auth and reach the 404 handler).
 - `curl -H "Authorization: Bearer invalidtoken123" https://staging-api.mythrun.com/some-nonexistent-path` returns 404 (authenticated request to a nonexistent path; auth hook still falls through; `routeOptions` is undefined for unmatched paths).
 - **Negative case verifiable today**: public routes still respond without auth, JWKS hydrate succeeds at boot (per CloudWatch logs).
 - **Positive case (protected route returns 401 without token, 200 with valid token) deferred to MYT-38** — no protected routes exist in MYT-37 to test against.
