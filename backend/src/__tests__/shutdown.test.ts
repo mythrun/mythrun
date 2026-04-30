@@ -27,13 +27,22 @@ describe('createShutdown', () => {
   beforeEach(() => {
     exitSpy = vi.fn<ExitFn>(() => undefined as never)
     process.exit = exitSpy
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('COGNITO_USER_POOL_ID', '')
+    vi.stubEnv('COGNITO_APP_CLIENT_ID', '')
+    vi.stubEnv('COGNITO_ISSUER_URL', '')
+    vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', '')
+    // Force the bypass plugin's Layer 2b ECS task-metadata probe to fail
+    // (i.e. "we are not on ECS"), so registration proceeds.
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.reject(new Error('ECONNREFUSED'))) as typeof globalThis.fetch
   })
   afterEach(() => {
     process.exit = originalExit
   })
 
   it('drains in order: app.close → pg.end → redis.quit (both), then exit(0)', async () => {
-    const app = buildApp({} as AppDeps)
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' })
     const clients = makeMockClients()
     const callOrder: string[] = []
 
@@ -77,7 +86,7 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if app.close throws', async () => {
-    const app = buildApp({} as AppDeps)
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' })
     const clients = makeMockClients()
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.reject(new Error('boom'))) as unknown as typeof app.close,
@@ -94,7 +103,7 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if pg.end throws (after app.close succeeded)', async () => {
-    const app = buildApp({} as AppDeps)
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' })
     const clients = makeMockClients()
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.resolve()) as unknown as typeof app.close,
