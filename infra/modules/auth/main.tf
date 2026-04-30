@@ -55,13 +55,16 @@ resource "aws_cognito_user_pool_client" "main" {
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
 
-  # Federated sign-in produces tokens via the OAuth flow; once the SPA has a
-  # refresh token, only the REFRESH_TOKEN_AUTH flow is needed for renewal
-  # (which is what the parent §6.1 `/api/auth/refresh` endpoint exercises).
-  # Set explicitly so a Cognito provider upgrade can't silently re-introduce
-  # ALLOW_USER_PASSWORD_AUTH (or ALLOW_USER_SRP_AUTH or
-  # ALLOW_ADMIN_USER_PASSWORD_AUTH) and defeat the federated-only intent.
-  explicit_auth_flows = ["ALLOW_REFRESH_TOKEN_AUTH"]
+  # Pin the InitiateAuth/AdminInitiateAuth SDK surface closed. The SPA goes
+  # through the Hosted UI + /oauth2/token (PKCE Authorization Code) flow and
+  # never calls InitiateAuth, so this list is effectively a deny-everything
+  # narrow pin. ALLOW_USER_AUTH is the modern selection-based flow that's
+  # rotation-compatible (Cognito rejects ALLOW_REFRESH_TOKEN_AUTH alongside
+  # refresh_token_rotation = ENABLED — they describe the same refresh path
+  # and Cognito won't allow both). Without an explicit list, Cognito's
+  # omitted-default would re-introduce ALLOW_USER_SRP_AUTH + ALLOW_CUSTOM_AUTH,
+  # defeating the federated-only intent.
+  explicit_auth_flows = ["ALLOW_USER_AUTH"]
 
   callback_urls = var.callback_urls
   logout_urls   = var.logout_urls
