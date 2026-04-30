@@ -73,6 +73,11 @@ resource "aws_cognito_user_pool_client" "main" {
   # with "InvalidParameterException: Identity provider Google does not exist".
   supported_identity_providers = var.idps_enabled ? ["Google", "Discord"] : ["COGNITO"]
 
+  depends_on = [
+    aws_cognito_identity_provider.google,
+    aws_cognito_identity_provider.discord,
+  ]
+
   # Token expirations per Auth spec §2.1.
   access_token_validity  = 60           # minutes (1 hour)
   id_token_validity      = 60           # minutes (1 hour)
@@ -137,5 +142,87 @@ resource "aws_secretsmanager_secret_version" "discord_oauth_placeholder" {
 
   lifecycle {
     ignore_changes = [secret_string]
+  }
+}
+
+data "aws_secretsmanager_secret_version" "google_oauth" {
+  count     = var.idps_enabled ? 1 : 0
+  secret_id = aws_secretsmanager_secret.google_oauth.id
+  # `version_stage` defaults to AWSCURRENT — what `aws secretsmanager
+  # put-secret-value` advances on every paste. DO NOT pin `version_id`;
+  # that would freeze the data source on a historical version and break
+  # the rotation runbook (each rotation would require a TF code change
+  # to update the pinned version).
+}
+
+data "aws_secretsmanager_secret_version" "discord_oauth" {
+  count     = var.idps_enabled ? 1 : 0
+  secret_id = aws_secretsmanager_secret.discord_oauth.id
+}
+
+locals {
+  google_oauth  = var.idps_enabled ? jsondecode(data.aws_secretsmanager_secret_version.google_oauth[0].secret_string) : null
+  discord_oauth = var.idps_enabled ? jsondecode(data.aws_secretsmanager_secret_version.discord_oauth[0].secret_string) : null
+}
+
+resource "aws_cognito_identity_provider" "google" {
+  count         = var.idps_enabled ? 1 : 0
+  user_pool_id  = aws_cognito_user_pool.main.id
+  provider_name = "Google"
+  provider_type = "Google"
+
+  provider_details = {
+    client_id        = local.google_oauth.client_id
+    client_secret    = local.google_oauth.client_secret
+    authorize_scopes = "openid email profile"
+  }
+
+  attribute_mapping = {
+    email    = "email"
+    name     = "name"
+    picture  = "picture"
+    username = "sub" # Cognito requires "username" mapping; Google's sub is stable + unique.
+  }
+}
+
+# Discord is configured as a generic OIDC provider, NOT via the legacy
+# /api/users/@me OAuth-only path that the parent Auth & Users spec §2.4
+# originally cited. Discord publishes a working OIDC discovery document at
+# https://discord.com/.well-known/openid-configuration and a spec-compliant
+# userinfo endpoint at https://discord.com/api/oauth2/userinfo. Using OIDC
+# means Cognito mints an id_token from Discord's claims and the attribute
+# mapping references OIDC standard names (sub, preferred_username, email,
+# picture).
+#
+# Scope rules: `openid` gates the userinfo endpoint and returns `sub`;
+# `identify` is required to get `preferred_username` and `picture`; `email`
+# adds `email` and `email_verified`. All three are needed for the attribute
+# mapping below to populate.
+resource "aws_cognito_identity_provider" "discord" {
+  count         = var.idps_enabled ? 1 : 0
+  user_pool_id  = aws_cognito_user_pool.main.id
+  provider_name = "Discord"
+  provider_type = "OIDC"
+
+  provider_details = {
+    client_id                 = local.discord_oauth.client_id
+    client_secret             = local.discord_oauth.client_secret
+    attributes_request_method = "GET"
+    oidc_issuer               = "https://discord.com"
+    authorize_scopes          = "openid identify email"
+    # Cognito CAN autodiscover these from the issuer's well-known doc, but
+    # pinning them removes a runtime dependency on Discord's discovery doc
+    # availability and makes the contract auditable from the TF.
+    authorize_url  = "https://discord.com/api/oauth2/authorize"
+    token_url      = "https://discord.com/api/oauth2/token"
+    attributes_url = "https://discord.com/api/oauth2/userinfo"
+    jwks_uri       = "https://discord.com/api/oauth2/keys"
+  }
+
+  attribute_mapping = {
+    email    = "email"
+    name     = "preferred_username" # Discord's chosen display name (OIDC claim).
+    picture  = "picture"            # Discord's OIDC userinfo returns a CDN URL directly.
+    username = "sub"                # Stable Discord user id (snowflake) exposed as OIDC sub.
   }
 }
