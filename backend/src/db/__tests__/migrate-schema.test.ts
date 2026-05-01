@@ -88,6 +88,9 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   { table_name: 'campaigns', check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))` },
   { table_name: 'character_skills', check_clause: `CHECK ((proficiency_level = ANY (ARRAY['none'::text, 'proficient'::text, 'expertise'::text])))` },
   { table_name: 'credit_ledger', check_clause: `CHECK ((credit_type = ANY (ARRAY['session'::text, 'world_gen'::text])))` },
+  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type <> 'debit'::text) OR (source_id IS NOT NULL)))` },
+  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type <> 'debit'::text) OR (expires_at IS NULL)))` },
+  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type = 'debit'::text) = (amount < 0)))` },
   { table_name: 'credit_ledger', check_clause: `CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))` },
   { table_name: 'entities', check_clause: `CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))` },
   { table_name: 'facts', check_clause: `CHECK ((access_level = ANY (ARRAY['public'::text, 'private'::text, 'secret'::text])))` },
@@ -125,7 +128,7 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   { table_name: 'characters', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
   { table_name: 'characters', column_name: 'entity_id', foreign_table_name: 'entities', delete_rule: 'SET NULL' },
   { table_name: 'characters', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'credit_ledger', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
+  { table_name: 'credit_ledger', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'RESTRICT' },
   { table_name: 'entities', column_name: 'stat_block_id', foreign_table_name: 'stat_blocks', delete_rule: 'SET NULL' },
   { table_name: 'entities', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
   { table_name: 'entity_hierarchy', column_name: 'child_entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
@@ -200,6 +203,7 @@ describe('schema-parity (integration)', () => {
       '001_initial_schema.sql',
       '002_indexes.sql',
       '003_srd_reference_data.sql',
+      '004_credit_ledger_invariants.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
