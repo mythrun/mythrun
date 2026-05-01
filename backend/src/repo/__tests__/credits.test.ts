@@ -397,6 +397,114 @@ describe('credits repo (integration)', () => {
       expect(await credits.balance(u.id, 'session')).toBe(0)
     })
   })
+
+  describe('schema invariants (migration 004)', () => {
+    it('polarity CHECK rejects positive amount with source_type=debit', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(baseUserInput)
+      await expect(
+        pool.query(
+          `INSERT INTO credit_ledger
+             (id, user_id, credit_type, amount, source_type, source_id)
+           VALUES (gen_random_uuid(), $1, 'session', 1, 'debit', $2)`,
+          [u.id, uuidv7()],
+        ),
+      ).rejects.toThrow(/credit_ledger_polarity_chk/)
+    })
+
+    it('polarity CHECK rejects negative amount with source_type=subscription', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(baseUserInput)
+      await expect(
+        pool.query(
+          `INSERT INTO credit_ledger
+             (id, user_id, credit_type, amount, source_type)
+           VALUES (gen_random_uuid(), $1, 'session', -1, 'subscription')`,
+          [u.id],
+        ),
+      ).rejects.toThrow(/credit_ledger_polarity_chk/)
+    })
+
+    it('debit_has_source_chk rejects NULL source_id with source_type=debit', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(baseUserInput)
+      await expect(
+        pool.query(
+          `INSERT INTO credit_ledger
+             (id, user_id, credit_type, amount, source_type, source_id)
+           VALUES (gen_random_uuid(), $1, 'session', -1, 'debit', NULL)`,
+          [u.id],
+        ),
+      ).rejects.toThrow(/credit_ledger_debit_has_source_chk/)
+    })
+
+    it('debit_no_expiry_chk rejects expires_at on a debit row', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(baseUserInput)
+      await expect(
+        pool.query(
+          `INSERT INTO credit_ledger
+             (id, user_id, credit_type, amount, source_type, source_id, expires_at)
+           VALUES (gen_random_uuid(), $1, 'session', -1, 'debit', $2, now() + interval '1 day')`,
+          [u.id, uuidv7()],
+        ),
+      ).rejects.toThrow(/credit_ledger_debit_no_expiry_chk/)
+    })
+
+    it('idempotency partial unique index rejects duplicate (user_id, credit_type, source_id) for debits', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(baseUserInput)
+      const sharedSourceId = uuidv7()
+      await pool.query(
+        `INSERT INTO credit_ledger
+           (id, user_id, credit_type, amount, source_type, source_id)
+         VALUES (gen_random_uuid(), $1, 'session', -1, 'debit', $2)`,
+        [u.id, sharedSourceId],
+      )
+      await expect(
+        pool.query(
+          `INSERT INTO credit_ledger
+             (id, user_id, credit_type, amount, source_type, source_id)
+           VALUES (gen_random_uuid(), $1, 'session', -1, 'debit', $2)`,
+          [u.id, sharedSourceId],
+        ),
+      ).rejects.toThrow(/uniq_credit_ledger_debit_idempotency/)
+    })
+
+    it('FK ON DELETE RESTRICT rejects user deletion when ledger rows exist', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift',
+      })
+      await expect(
+        pool.query('DELETE FROM users WHERE id = $1', [u.id]),
+      ).rejects.toThrow(/credit_ledger_user_id_fkey/)
+    })
+
+    it('idempotency SELECT plan uses the partial unique index (EXPLAIN)', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(baseUserInput)
+      // Insert one debit so the planner has stats to work with.
+      await pool.query(
+        `INSERT INTO credit_ledger
+           (id, user_id, credit_type, amount, source_type, source_id)
+         VALUES (gen_random_uuid(), $1, 'session', -1, 'debit', $2)`,
+        [u.id, uuidv7()],
+      )
+
+      const result = await pool.query<{ 'QUERY PLAN': unknown[] }>(
+        `EXPLAIN (FORMAT JSON)
+         SELECT * FROM credit_ledger
+          WHERE user_id = $1 AND credit_type = $2
+            AND source_type = 'debit' AND source_id = $3`,
+        [u.id, 'session', uuidv7()],
+      )
+      const plan = JSON.stringify(result.rows[0])
+      expect(plan).toMatch(/uniq_credit_ledger_debit_idempotency/)
+    })
+  })
 })
 
 const RACE_ITERATIONS_CRITICAL = 100
