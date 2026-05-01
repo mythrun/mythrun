@@ -8,6 +8,7 @@ import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
 import { createCreditsRepo } from '../credits.js'
+import { uuidv7 } from '../uuidv7.js'
 import { resetData } from './_helpers/reset-data.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -159,6 +160,105 @@ describe('credits repo (integration)', () => {
       const { UserNotFoundError } = await import('../credits-errors.js')
       await expect(
         credits.grant({ userId: fakeId, creditType: 'session', amount: 1, sourceType: 'gift' }),
+      ).rejects.toBeInstanceOf(UserNotFoundError)
+    })
+  })
+
+  describe('atomicDebit()', () => {
+    it('debits and returns the new entry; balance reflects it', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+
+      const sourceId = uuidv7()
+      const entry = await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId,
+      })
+
+      expect(entry.amount).toBe(-1)
+      expect(entry.sourceType).toBe('debit')
+      expect(entry.sourceId).toBe(sourceId)
+      expect(await credits.balance(u.id, 'session')).toBe(4)
+    })
+
+    it('throws InsufficientCreditsError when balance is too low', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+
+      const { InsufficientCreditsError } = await import('../credits-errors.js')
+      await expect(
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 2, sourceId: uuidv7(),
+        }),
+      ).rejects.toBeInstanceOf(InsufficientCreditsError)
+
+      const after = await credits.balance(u.id, 'session')
+      expect(after).toBe(1)
+    })
+
+    it('throws InsufficientCreditsError on empty ledger', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+
+      const { InsufficientCreditsError } = await import('../credits-errors.js')
+      await expect(
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        }),
+      ).rejects.toBeInstanceOf(InsufficientCreditsError)
+      expect(await credits.balance(u.id, 'session')).toBe(0)
+    })
+
+    it('debit on world_gen does not see session credits', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+
+      const { InsufficientCreditsError } = await import('../credits-errors.js')
+      await expect(
+        credits.atomicDebit({
+          userId: u.id, creditType: 'world_gen', amount: 1, sourceId: uuidv7(),
+        }),
+      ).rejects.toBeInstanceOf(InsufficientCreditsError)
+      expect(await credits.balance(u.id, 'session')).toBe(5)
+    })
+
+    it('throws on amount <= 0', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await expect(
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 0, sourceId: uuidv7(),
+        }),
+      ).rejects.toThrow(/amount must be > 0/)
+    })
+
+    it('throws on empty sourceId', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await expect(
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId: '',
+        }),
+      ).rejects.toThrow(/sourceId required/)
+    })
+
+    it('throws UserNotFoundError when user does not exist', async () => {
+      const credits = createCreditsRepo(pool)
+      const fakeId = '019dccef-0000-7000-8000-000000000001'
+
+      const { UserNotFoundError } = await import('../credits-errors.js')
+      await expect(
+        credits.atomicDebit({
+          userId: fakeId, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        }),
       ).rejects.toBeInstanceOf(UserNotFoundError)
     })
   })

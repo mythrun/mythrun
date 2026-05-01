@@ -1,10 +1,12 @@
 import { type Pool, type PoolClient } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import { toCreditEntry, type CreditEntryDbRow } from './mappers.js'
-import type { CreditEntry, CreditType, GrantInput } from './types.js'
+import type { CreditEntry, CreditType, DebitInput, GrantInput } from './types.js'
 import {
   DEBIT_LOCK_TIMEOUT_MS,
   DEBIT_STATEMENT_TIMEOUT_MS,
+  IdempotencyConflictError,
+  InsufficientCreditsError,
   UserNotFoundError,
 } from './credits-errors.js'
 
@@ -98,6 +100,114 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
             await client.query('ROLLBACK')
           } catch {
             // Ignore — connection may already be in failed state.
+          }
+        }
+        throw err
+      } finally {
+        client.release()
+      }
+    },
+
+    atomicDebit: async (input: DebitInput): Promise<CreditEntry> => {
+      if (input.amount <= 0) {
+        throw new Error('atomicDebit: amount must be > 0')
+      }
+      if (!input.sourceId || input.sourceId.length === 0) {
+        throw new Error('atomicDebit: sourceId required (use the per-user idempotency key)')
+      }
+
+      const client = await pool.connect()
+      let inTransaction = false
+      try {
+        await beginAndConfigure(client)
+        inTransaction = true
+
+        // Lock anchor — serializes all concurrent debits + grants for this user.
+        const userCheck = await client.query<{ id: string }>(
+          'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+          [input.userId],
+        )
+        if (userCheck.rowCount === 0) {
+          await client.query('ROLLBACK')
+          inTransaction = false
+          throw new UserNotFoundError(input.userId)
+        }
+
+        // Idempotency check — return prior row if same (user, credit_type, source_id).
+        const priorResult = await client.query<CreditEntryDbRow>(
+          `SELECT * FROM credit_ledger
+            WHERE user_id = $1 AND credit_type = $2
+              AND source_type = 'debit' AND source_id = $3`,
+          [input.userId, input.creditType, input.sourceId],
+        )
+        const priorRow = priorResult.rows[0]
+        if (priorRow) {
+          const priorAmount = Math.abs(priorRow.amount)
+          if (priorAmount !== input.amount) {
+            await client.query('ROLLBACK')
+            inTransaction = false
+            throw new IdempotencyConflictError(
+              input.userId,
+              input.sourceId,
+              priorAmount,
+              input.amount,
+            )
+          }
+          await client.query('COMMIT')
+          inTransaction = false
+          return toCreditEntry(priorRow)
+        }
+
+        // Balance check — only spendable (unexpired) credits count.
+        const balanceResult = await client.query<{ balance: string }>(
+          `SELECT COALESCE(SUM(amount), 0)::text AS balance
+             FROM credit_ledger
+            WHERE user_id = $1 AND credit_type = $2
+              AND (expires_at IS NULL OR expires_at > now())`,
+          [input.userId, input.creditType],
+        )
+        const balanceRow = balanceResult.rows[0]
+        const available = balanceRow ? Number(balanceRow.balance) : 0
+        if (available < input.amount) {
+          await client.query('ROLLBACK')
+          inTransaction = false
+          throw new InsufficientCreditsError(
+            input.userId,
+            input.creditType,
+            available,
+            input.amount,
+          )
+        }
+
+        // Insert the debit row.
+        const id = uuidv7()
+        const insertResult = await client.query<CreditEntryDbRow>(
+          `INSERT INTO credit_ledger
+             (id, user_id, credit_type, amount, source_type, source_id)
+           VALUES ($1, $2, $3, $4, 'debit', $5)
+           RETURNING *`,
+          [id, input.userId, input.creditType, -input.amount, input.sourceId],
+        )
+        await client.query('COMMIT')
+        inTransaction = false
+
+        const row = insertResult.rows[0]
+        if (!row) throw new Error('atomicDebit: INSERT returned no row')
+        return toCreditEntry(row)
+      } catch (err) {
+        if (inTransaction) {
+          try {
+            await client.query('ROLLBACK')
+          } catch {
+            // Ignore — connection may already be in failed state.
+          }
+        }
+        // Map pg timeout errors to DebitTimeoutError.
+        if (typeof err === 'object' && err !== null && 'code' in err) {
+          const pgCode = (err as { code?: string }).code
+          if (pgCode === '55P03' || pgCode === '57014') {
+            const { DebitTimeoutError } = await import('./credits-errors.js')
+            throw new DebitTimeoutError(input.userId, pgCode)
           }
         }
         throw err
