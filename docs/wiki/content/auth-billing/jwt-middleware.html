@@ -1,0 +1,653 @@
+<!-- source: backend/src/auth/ -->
+<!-- source: backend/src/auth/jwt-plugin.ts -->
+<!-- source: backend/src/auth/bypass-plugin.ts -->
+<!-- source: backend/src/auth/index.ts -->
+<!-- source: backend/src/auth/types.ts -->
+<!-- source: backend/src/auth/require-user.ts -->
+<!-- source: backend/src/auth/constants.ts -->
+<!-- source: backend/src/config/env.ts -->
+<!-- source: backend/src/app.ts -->
+<!-- source: backend/src/server.ts -->
+<!-- source: infra/modules/serving/variables.tf -->
+<!-- source: infra/modules/serving/main.tf -->
+<!-- source: .github/workflows/deploy.yml -->
+<!-- source: .github/workflows/lint-auth.yml -->
+<!-- source-hash: sha256:8251f49217d4aa0b9584e58be17bf49ec426ace5451fc183a60ec13ed151b99b -->
+<!-- last-ticket: MYT-37 -->
+
+<h1>JWT middleware</h1>
+
+<p class="lead">
+  How an inbound <code>Authorization: Bearer &lt;jwt&gt;</code> turns into a claims-only
+  <code>request.user</code> on every protected route — a two-plugin family (real Cognito validation
+  and a development bypass), a six-layer defense that keeps bypass mode out of any AWS-managed
+  runtime, and the deploy gate that re-checks the boot env before rolling tasks.
+</p>
+
+<!-- @diagram: auth-billing/jwt-middleware -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Auth lives in <code>backend/src/auth/</code> and is composed by <code>buildApp</code> via
+  <code>registerAuth(app, authOpts)</code>. The dispatcher inspects <code>opts.mode</code> and
+  registers exactly one of two siblings: <code>jwtPlugin</code> for real Cognito validation, or
+  <code>bypassPlugin</code> for local development. Both are <code>fastify-plugin</code>-wrapped
+  Fastify plugins; both decorate the app with a single sentinel and install one
+  <code>onRequest</code> hook; both attach the same <code>AuthUser</code> shape to
+  <code>request.user</code>. The split is deliberate — there is no "if (env.bypass) skip validation"
+  branch inside a single plugin. Two named plugins make grep-for-the-bypass-codepath work, and the
+  dispatcher refuses to cross-wire opts (real mode requires
+  <code>userPoolId</code>+<code>appClientId</code>; bypass mode forwards Cognito vars only so its
+  Layer 3 check can scream if any are populated).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two plugins, not one with a flag</strong> — a single plugin with
+  <code>if (mode === 'bypass') return DEV_USER</code> is one accidental refactor away from a
+  catastrophe: a future contributor flips a tristate, a config bug picks bypass in production, no
+  reviewer notices because the diff is small. Two named plugins, two file paths, one dispatcher
+  whose only job is to pick — every layer of defense in this page is conditioned on
+  <em>which file</em> is loaded, not on a runtime flag.
+</aside>
+
+<p>
+  The plugin family wraps with <code>fastify-plugin</code> for one reason: Fastify's default
+  behavior is to encapsulate a registered plugin in a child scope, so a hook installed inside that
+  child applies <em>only</em> to routes registered under the same scope. The
+  <code>fastify-plugin</code> wrapper opts out of encapsulation, which is exactly what we need — the
+  auth hook has to apply at the parent app's scope so it covers <code>/health</code>,
+  <code>/health/ready</code>, and every future route landed onto the same instance. Without the
+  wrapper, the hook would attach to a child scope nobody ever registers routes under, and every
+  inbound request would silently bypass auth.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Forgetting <code>fastify-plugin</code> here is a silent failure, not a loud one</strong>
+  — Fastify won't warn that your hook attached to a scope without routes. Tests would still pass
+  (the unit suite registers the plugin and asserts the hook fires); production would 200 on every
+  protected route. The wrapper is also why both plugins refuse double-registration via a shared
+  <code>mythAuthRegistered</code> decorator: opting out of encapsulation means a second
+  <code>app.register(jwtPlugin)</code> would silently double-install the hook.
+</aside>
+
+<h2>The claims-only AuthUser</h2>
+
+<p>
+  <code>request.user</code> is <code>{ sub, cognitoUsername, scopes }</code> — three fields, all
+  derived from the verified access-token payload, all frozen. <code>sub</code> is Cognito's stable
+  per-user identifier (the canonical key for cross-system reference once MYT-38's onboarding creates
+  the matching <code>users</code> row). <code>cognitoUsername</code> is the federated identity's
+  internal username (<code>Google_&lt;sub&gt;</code> / <code>Discord_&lt;snowflake&gt;</code>) and
+  is treated as opaque — never substring-parsed for provider routing. <code>scopes</code> is the
+  OAuth scope string parsed once at the boundary into a frozen array, so handlers do
+  <code>scopes.includes('admin')</code> rather than <code>scope.includes('admin')</code> — the
+  latter would substring-match <code>'administrator'</code>, which is a real authorization bug
+  class.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>No <code>email</code>, no <code>name</code>, no internal user UUID</strong> — those live
+  in the <code>users</code> table that MYT-39's <code>loadCurrentUser</code> plugin will lift onto
+  <code>request.dbUser</code>. Today's middleware is the first half of a two-stage attach: validate
+  the token and surface its claims; defer the DB lookup. A protected handler that needs the email or
+  the internal id is wrong about its layer, not blocked on a missing field.
+</aside>
+
+<p>
+  Routes default-require auth and opt out per-route via <code>config.auth</code> on the route
+  config:
+</p>
+
+<ul>
+  <li>
+    <code>config: { auth: 'public' }</code> — skip validation entirely; no
+    <code>request.user</code> attached. Used by <code>/health</code> and <code>/health/ready</code>.
+  </li>
+  <li>
+    <code>config: { auth: 'jwt-no-db' }</code> — verify the JWT, attach the claims, do not look up
+    the <code>users</code> row. Reserved for MYT-38's <code>POST /api/users/register</code>: the row
+    doesn't exist yet at first call.
+  </li>
+  <li>
+    <code>auth</code> unset (the default) — verify and attach. After MYT-39 lands, this case will
+    also lift the DB row and run the <code>suspended_at</code> gate.
+  </li>
+</ul>
+
+<p>
+  Protected handlers narrow <code>request.user</code> from optional to required via
+  <code>requireUser(request)</code>. The helper throws if the user is missing — a runtime guard
+  against a route that accidentally shipped with <code>config.auth: 'public'</code> and then tried
+  to read <code>request.user.sub</code>. <code>request.user!</code>, <code>request.user?.sub</code>,
+  and <code>request.user as AuthUser</code> are all forbidden by a CI grep gate (the
+  <code>lint-auth</code> workflow at <code>.github/workflows/lint-auth.yml</code>) — narrowing
+  helpers force a single, auditable place where "what if no user?" gets answered.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Grep-gate, not an ESLint rule</strong> — an ESLint rule for "no non-null assertions on
+  <code>request.user</code>" would need a custom plugin to scope the check to that one identifier
+  and would silently break if the property got renamed. A six-line workflow that greps for the three
+  forbidden patterns and exits 1 is auditable in one screen, runs on every PR touching
+  <code>backend/src/</code>, and excludes <code>auth/__tests__/</code> by directory rather than by
+  comment annotation.
+</aside>
+
+<h2>Hydrate-at-boot in the JWT plugin</h2>
+
+<p>
+  <code>jwtPlugin</code> creates a <code>CognitoJwtVerifier</code> at registration and immediately
+  calls <code>verifier.hydrate()</code> — fetching the User Pool's JWKS (the JSON Web Key Set used
+  to verify token signatures) once, so the first protected request after a cold start doesn't pay
+  the JWKS fetch latency on top of its own work. Three details around the hydrate matter:
+</p>
+
+<ul>
+  <li>
+    <strong>0–1 s jitter before the fetch.</strong> A rolling deploy starts every API task within
+    seconds of each other, and a herd of containers all hitting Cognito's JWKS endpoint at the same
+    moment is exactly the thundering-herd shape worth defusing for the cost of one
+    <code>setTimeout</code>.
+  </li>
+  <li>
+    <strong>10-second <code>Promise.race</code> timeout.</strong> A wedged Cognito (or DNS, or a
+    misrouted egress) would otherwise hang the plugin indefinitely. Bounding the wait gives the boot
+    a deterministic failure mode: log <code>auth.jwks_hydrate_failed</code> with the issuer + error
+    class, throw, let the container crash-loop into operator visibility.
+  </li>
+  <li>
+    <strong>Late-rejection guard before the race.</strong> The hydrate promise has a
+    <code>.catch(() =&gt; {})</code> attached <em>before</em> <code>Promise.race</code>. If the
+    timer wins and the underlying hydrate later rejects, that rejection has nowhere to go. Node 24's
+    default policy is to terminate the process on an unhandled rejection — the boot would pass, the
+    listener would come up, then a moment later the process would die with a stack trace pointing at
+    no obvious cause.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Bumping <code>pluginTimeout</code> to 30 s</strong> — Fastify's default plugin-load
+  timeout is 10 s, which is exactly our hydrate budget plus jitter. Without the bump, a slow Cognito
+  would trip Fastify's generic timeout first and the operator would see
+  <code>FST_ERR_PLUGIN_TIMEOUT</code> instead of our specific
+  <code>auth.jwks_hydrate_failed</code> log line. The 30 s bump leaves headroom for the boot gate's
+  <code>waitFor</code> retries on adjacent dependencies without changing the auth contract.
+</aside>
+
+<h2>The bypass-mode multi-layer defense</h2>
+
+<p>
+  Bypass mode exists for one workflow: a developer running <code>pnpm dev</code> against the local
+  docker-compose stack, pre-Cognito, wanting <code>request.user</code> to be a fixed
+  <code>{ sub: 'bypass:dev-1', ... }</code> value so route handlers can be exercised. It is the one
+  piece of code in the system whose accidental activation in production would give every request the
+  same all-permissions identity. Six independent layers stand between the bypass plugin and an
+  AWS-managed runtime:
+</p>
+
+<h3>Layer 1 — <code>loadEnv</code> refuses ambiguity</h3>
+<p>
+  <code>config/env.ts</code>'s <code>loadAuthConfig</code> requires <code>AUTH_MODE</code> to be
+  exactly <code>'real'</code> or <code>'bypass'</code>. Two cross-checks gate the value: bypass +
+  any <code>NODE_ENV</code> other than <code>development</code> or <code>test</code> throws; real +
+  <code>NODE_ENV=production</code> + <code>BOOT_GATE_ENABLED</code> not set to <code>'1'</code> also
+  throws. Real mode requires all four
+  <code>COGNITO_USER_POOL_ID</code
+  >/<code>COGNITO_APP_CLIENT_ID</code>/<code>COGNITO_ISSUER_URL</code>/<code
+    >COGNITO_HOSTED_UI_DOMAIN</code
+  >
+  to be present.
+</p>
+
+<h3>Layer 2a — bypass plugin's <code>NODE_ENV</code> allow-list</h3>
+<p>
+  At registration, <code>bypassPlugin</code> reads <code>process.env.NODE_ENV</code> directly and
+  refuses to install if the value is anything other than <code>'development'</code> or
+  <code>'test'</code>. This is duplicated, on purpose, with <code>loadEnv</code>'s check —
+  defense-in-depth against a future code path that constructs <code>BypassPluginOptions</code> by
+  hand and skips the env loader. The hook also re-runs the same check per request, so a runtime
+  mutation of <code>NODE_ENV</code> (a stray test-helper, a vendor-instrumentation library) gets
+  caught the next time the hook fires rather than only at boot.
+</p>
+
+<h3>Layer 2b — the ECS task-metadata HTTP probe</h3>
+<p>
+  This is the load-bearing layer. ECS tasks (Fargate or EC2) have a link-local IP at
+  <code>169.254.170.2</code> serving the task-metadata API at <code>/v2/metadata</code>. That
+  address is unroutable from anywhere except inside an ECS task's network namespace. At
+  registration, the bypass plugin issues a 1-second <code>fetch</code> to that URL: if the request
+  succeeds (any HTTP status, including non-2xx — the responder being reachable is the signal), the
+  plugin throws "ECS task-metadata endpoint reachable — bypass forbidden in any ECS runtime." If the
+  request fails (refused, timeout, DNS) — the local-dev case — the plugin proceeds.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why a probe, not just an env var like <code>BYPASS_FORBIDDEN_IN_PROD=1</code></strong> —
+  every env-var-based gate I considered had the same failure mode: an operator with permission to
+  set the env can also unset it. Bypass exists to be loadable, by definition. The HTTP probe is
+  independent of any value an operator can override: the only way to make it return "not on ECS" is
+  to actually not be on ECS, or to compromise the task-metadata responder, which is a much harder
+  problem than fat-fingering an env var. 169.254.170.2 is reachable only from inside an ECS task;
+  AWS Lambda has its own metadata at 169.254.169.254, and the probe will refuse there too if a
+  future deploy ever lands the API on Lambda.
+</aside>
+
+<h3>Layer 3 — Cognito vars must be empty in opts <em>and</em> raw env</h3>
+<p>
+  The bypass plugin checks both its plumbed <code>BypassPluginOptions</code> (the loader-derived
+  copy) and <code>process.env</code> directly for any of the four <code>COGNITO_*</code> names.
+  Either populated → throw. The dispatcher in <code>auth/index.ts</code> always forwards Cognito
+  vars to bypass mode for exactly this reason: a misconfigured boot that sets
+  <code>AUTH_MODE=bypass</code> alongside a real <code>COGNITO_USER_POOL_ID</code> trips here rather
+  than silently running with bypass identity against an otherwise-real environment. The per-request
+  hook re-runs this check too, narrowing the same window <code>NODE_ENV</code> is re-checked in.
+</p>
+
+<h3>Layer 4 — loud structured-log warning at registration</h3>
+<p>
+  Whenever the bypass plugin successfully installs, it emits a single
+  <code>warn</code>-level structured event: <code>{ event: "auth.bypass_mode_active" }</code>,
+  message
+  <code
+    >"AUTH BYPASS MODE: all requests authenticated as dev user. NEVER run in
+    staging/production."</code
+  >
+  This is the canary an operator searches for at incident time — zero occurrences in CloudWatch is
+  the contract for staging and production. The query lives in the runbook below.
+</p>
+
+<h3>Layer 5 — Terraform serving module force-pins the env</h3>
+<p>
+  The serving module's <code>main.tf</code> builds the API task definition's environment from
+  <code>concat(var.extra_env, [...module-owned values])</code>. Module-owned position-last is
+  deliberate: Terraform's <code>concat</code> + the ECS schema's last-write-wins on duplicate names
+  means a malicious-or-mistaken duplicate from <code>extra_env</code> gets shadowed. The
+  module-owned entries include <code>AUTH_MODE = var.auth_mode</code> (defaulted to
+  <code>"real"</code>) and <code>NODE_ENV = var.node_env</code> (defaulted to
+  <code>"production"</code>). <code>extra_env</code> additionally has a
+  <code>validation</code> block at the variable level that fails <code>terraform plan</code> if any
+  element's name is <code>AUTH_MODE</code>, <code>NODE_ENV</code>, <code>BOOT_GATE_ENABLED</code>,
+  or any of the four <code>COGNITO_*</code> names — so the shadowing doesn't even get a chance to be
+  exercised; the plan refuses outright.
+</p>
+
+<h3>Layer 6 — tests verify every gate</h3>
+<p>
+  <code>backend/src/auth/__tests__/</code> covers each of the layers above with a per-gate negative
+  test: a test that flips <code>NODE_ENV</code> to <code>production</code> and asserts the throw, a
+  test that mocks <code>fetch</code> to resolve the metadata probe and asserts the throw, a test
+  that injects a Cognito var into <code>process.env</code> and asserts the throw, and so on. Around
+  twenty-four cases between the JWT and bypass plugins. The tests are the one place the bypass
+  plugin's pessimism is in fact exercised on every CI run; they are the operational-correctness
+  audit trail.
+</p>
+
+<h2>The 404 fall-through guard</h2>
+
+<p>
+  Fastify v5 supports a custom <code>setNotFoundHandler</code>, which <code>buildApp</code> uses to
+  return a stable JSON 404 instead of the default HTML-ish error. The interaction with the
+  <code>onRequest</code> hook is subtle: under the not-found path, Fastify still invokes
+  application-level <code>onRequest</code> hooks, and <code>request.routeOptions</code> is a
+  non-nullable object — but its <code>.url</code>, <code>.method</code>, and
+  <code>.config</code> are all <code>undefined</code> for unmatched paths. Without a guard, the auth
+  hook would read <code>request.routeOptions.config.auth</code>, see it as <code>undefined</code>,
+  treat the unmatched path as a default-protected route, and answer 401 to a request that should
+  answer 404.
+</p>
+
+<p>
+  Both plugins start their hook with one line:
+  <code>if (request.routeOptions.url === undefined) return</code>. The unmatched path falls through
+  cleanly to the not-found handler; the matched path proceeds through the rest of the hook. The
+  check is on <code>.url</code> rather than on <code>.config</code> because <code>.config</code>'s
+  undefined-ness is also the shape of a route registered without a config block — two cases the
+  inner check would have to disambiguate. The url is undefined exactly when the path is unmatched.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the guard sits in both plugins, not in the dispatcher</strong> — the dispatcher only
+  picks; it doesn't install the hook. The hook is per-plugin (one hook per registered plugin) and
+  the guard is per-hook. Hoisting it to a "wrap every onRequest hook" abstraction would mean
+  rewriting Fastify's hook-registration internals; one-line guards in the two known callers are
+  cheaper and survive the next refactor.
+</aside>
+
+<h2>Boot wiring across both startup paths</h2>
+
+<p>
+  <code>buildApp</code> is now async, takes <code>(deps, authOpts)</code>, and is awaited from both
+  startup paths in <code>server.ts</code>. The boot-gate path (<code>BOOT_GATE_ENABLED=1</code>)
+  loads env, opens real pg + redis, runs the <code>waitFor</code> probes, calls
+  <code>createRepo(pg)</code>, then <code>await buildApp(realDeps, authOpts)</code>. The
+  fallback-start path (boot gate off) skips the data-layer probes but still calls
+  <code>loadEnv</code> and <code>buildApp(stubDeps, authOpts)</code> — the auth plugin registers in
+  both cases, so a misconfigured boot fails fast in either mode rather than silently shipping a
+  health-only listener with no auth.
+</p>
+
+<p>
+  The custom logger configured at <code>buildApp</code> time matters for the auth surface: pino's
+  <code>redact</code> is set to mask <code>req.headers.authorization</code>,
+  <code>req.headers.cookie</code>, and <code>res.headers["set-cookie"]</code> with a censor token,
+  and a custom <code>req</code> serializer strips the query string from logged URLs. The
+  query-string strip is a forward defense against MYT-39's WebSocket
+  <code>?ticket=&lt;nonce&gt;</code> handshake — without it, a one-shot ticket would land in
+  CloudWatch the first time a connection upgrade got logged. The path is preserved so an operator
+  can still tell which route was hit.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="enable-bypass-mode-locally">Enable bypass mode locally</h3>
+<ol>
+  <li>
+    In <code>backend/.env.development</code>, set <code>AUTH_MODE=bypass</code> and
+    <code>NODE_ENV=development</code>. Leave the four <code>COGNITO_*</code> values <em>unset</em> —
+    Layer 3 throws if any of them are populated even by an empty assignment that survives shell
+    quoting.
+  </li>
+  <li>
+    Start the backend with <code>pnpm dev</code>. Expect a single <code>warn</code>-level log line
+    carrying <code>{ event: "auth.bypass_mode_active" }</code>
+    and the "NEVER run in staging/production" message. If you see
+    <code>auth.jwks_hydrate_failed</code> instead, the dispatcher picked the JWT plugin —
+    <code>AUTH_MODE</code> isn't <code>bypass</code> in the running process.
+  </li>
+  <li>
+    Hit any protected route without an <code>Authorization</code> header. Expect a 200 with the
+    handler reading <code>requireUser(request)</code> as
+    <code>{ sub: "bypass:dev-1", cognitoUsername: "bypass_dev_1", scopes: ["bypass"] }</code>.
+  </li>
+  <li>
+    Switch back by setting <code>AUTH_MODE=real</code> (and providing the four
+    <code>COGNITO_*</code> values). The boot gate will refuse to start with mismatched config —
+    that's the contract.
+  </li>
+</ol>
+
+<h3 id="read-the-auth-events-at-incident-time">Read the auth events at incident time</h3>
+<ol>
+  <li>
+    Open CloudWatch Logs Insights against the API task's log group (per
+    <a href="../infra/serving.html">serving</a>). Auth events all carry an <code>event</code> field
+    on the structured log line.
+  </li>
+  <li>
+    Verify bypass mode never activated in staging/prod:
+    <pre><code>filter event = "auth.bypass_mode_active"
+| sort @timestamp desc
+| limit 50</code></pre>
+    Zero results is the contract. Any result is a P0: a task is running with bypass auth.
+  </li>
+  <li>
+    Catch JWKS hydrate failures (boot won't complete; tasks crash-loop):
+    <pre><code>filter event = "auth.jwks_hydrate_failed"
+| fields @timestamp, issuer, errorClass
+| sort @timestamp desc
+| limit 50</code></pre>
+    Common causes: a Cognito us-east-1 partial outage, a misrouted egress (ECS task can't reach the
+    public Cognito endpoint), or a stale <code>COGNITO_ISSUER_URL</code> after a User Pool recreate
+    (see
+    <a href="./identity.html#recover-from-an-accidental-user-pool-deletion"
+      >the Identity recovery runbook</a
+    >).
+  </li>
+  <li>
+    Investigate per-request verify failures by client / route:
+    <pre><code>filter event = "auth.jwt_verify_failed"
+   or event = "auth.jwt_missing_sub"
+   or event = "auth.jwt_missing_username"
+| fields @timestamp, req.method, req.url, errorClass
+| sort @timestamp desc
+| limit 200</code></pre>
+    Spikes correlate with token-rotation events at the SPA, expired-token retry storms, or — if
+    <code>req.url</code> is consistently a single path — a frontend bug pinning a stale token.
+  </li>
+</ol>
+
+<h3 id="verify-the-deploy-gate-rejects-bypass">Verify the deploy gate rejects bypass</h3>
+<ol>
+  <li>
+    The gate lives in <code>.github/workflows/deploy.yml</code> as the "Verify AUTH_MODE is set in
+    the latest task-def" step before <code>Render new task definition</code>. It calls
+    <code>aws ecs describe-task-definition</code> against <code>mythrun-staging-api</code> and reads
+    the <code>AUTH_MODE</code> env entry from the container.
+  </li>
+  <li>
+    Local dry-run, with an AWS profile that can describe the staging task-def:
+    <pre><code>aws ecs describe-task-definition \
+  --task-definition mythrun-staging-api \
+  --query 'taskDefinition.containerDefinitions[0].environment[?name==`AUTH_MODE`].value' \
+  --output text</code></pre>
+    Expected output: <code>real</code>. Empty (Phase A skipped — Terraform never registered a
+    revision with AUTH_MODE) or anything other than <code>real</code> (somebody slipped bypass into
+    the env) fails the deploy.
+  </li>
+  <li>
+    To smoke-test the gate's negative path without putting bypass into staging: stand up a temp
+    task-def family in the dev account, register a revision with
+    <code>AUTH_MODE=bypass</code>, and rerun the workflow against it. The check exits 1 with the
+    "rejected by this gate" message. Tear the temp family down after.
+  </li>
+</ol>
+
+<h3 id="rotate-after-a-cognito-pool-recreate">Roll the API after a Cognito User Pool recreate</h3>
+<ol>
+  <li>
+    A User Pool recreate (<a href="./identity.html#recover-from-an-accidental-user-pool-deletion"
+      >recovery runbook</a
+    >) changes <code>COGNITO_USER_POOL_ID</code>, <code>COGNITO_APP_CLIENT_ID</code>, and
+    <code>COGNITO_ISSUER_URL</code>. Every existing JWT becomes invalid; existing tasks will
+    crash-loop on <code>auth.jwks_hydrate_failed</code> when they next restart, because the JWKS at
+    the old issuer no longer exists.
+  </li>
+  <li>
+    <code>terraform apply</code> in the env workspace registers a new task-definition revision with
+    the updated <code>COGNITO_*</code> values.
+  </li>
+  <li>
+    Run the <a href="../infra/ci-cd.html">deploy workflow</a> manually (<code
+      >gh workflow run Deploy</code
+    >). The workflow's task-def-render step swaps in the real ECR digest; the deploy gate above
+    re-checks <code>AUTH_MODE</code> stays <code>real</code>; the service rolls onto the new
+    revision.
+  </li>
+  <li>
+    Watch CloudWatch for <code>auth.jwks_hydrate_failed</code> to stop and a fresh batch of
+    <code>auth.jwt_verify_failed</code> appearing as old client tokens get rejected. The latter
+    fades as clients re-authenticate; the former should hit zero within one task-replacement cycle.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The <a href="./identity.html">Identity</a> page covers the upstream — the User Pool, the App
+  Client, the Hosted UI, and the IdPs that mint the access tokens this middleware verifies. The four
+  <code>COGNITO_*</code> env vars travel from <code>infra/modules/auth/</code> outputs through the
+  <a href="../infra/serving.html">serving</a> module's task-definition shape and into
+  <code>loadAuthConfig</code>. The <a href="../runtime/index.html">backend runtime</a> page
+  describes the <code>buildApp</code> + <code>server.ts</code> wiring that <code>registerAuth</code>
+  composes against; this page is the auth-specific deepening of that surface.
+  <code>requireUser</code> is the seam every protected handler MYT-38 onwards reaches through;
+  MYT-39's <code>loadCurrentUser</code> plugin will layer a second request property
+  (<code>request.dbUser</code>) on top of <code>request.user</code> without changing this
+  middleware's contract.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Environment variables read by <code>loadAuthConfig</code></h3>
+<table>
+  <thead>
+    <tr>
+      <th>Var</th>
+      <th>When required</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>AUTH_MODE</code></td>
+      <td>always</td>
+      <td>
+        Exactly <code>real</code> or <code>bypass</code>. Anything else fails <code>loadEnv</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>NODE_ENV</code></td>
+      <td>cross-checked</td>
+      <td>
+        Must be <code>development</code> or <code>test</code> when bypass; must NOT be
+        <code>production</code> with real unless <code>BOOT_GATE_ENABLED=1</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>BOOT_GATE_ENABLED</code></td>
+      <td>cross-checked</td>
+      <td>Required to be <code>1</code> when real + production.</td>
+    </tr>
+    <tr>
+      <td>
+        <code>COGNITO_USER_POOL_ID</code> / <code>COGNITO_APP_CLIENT_ID</code> /
+        <code>COGNITO_ISSUER_URL</code> / <code>COGNITO_HOSTED_UI_DOMAIN</code>
+      </td>
+      <td>real mode</td>
+      <td>All four required when real. All four must be empty when bypass (Layer 3).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Per-route <code>config.auth</code> values</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Value</th>
+      <th>Behavior</th>
+      <th>Today's consumers</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>'public'</code></td>
+      <td>Skip the hook entirely. <code>request.user</code> stays undefined.</td>
+      <td><code>/health</code>, <code>/health/ready</code></td>
+    </tr>
+    <tr>
+      <td><code>'jwt-no-db'</code></td>
+      <td>Verify token, attach claims, no DB lookup.</td>
+      <td>(reserved for MYT-38 <code>POST /api/users/register</code>)</td>
+    </tr>
+    <tr>
+      <td>unset (default)</td>
+      <td>Verify and attach. Today identical to <code>'jwt-no-db'</code>.</td>
+      <td>every other route</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Structured log events</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>Level</th>
+      <th>Where</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>auth.jwks_hydrate_failed</code></td>
+      <td>error</td>
+      <td>JWT plugin boot, with <code>issuer</code> + <code>errorClass</code></td>
+    </tr>
+    <tr>
+      <td><code>auth.jwt_verify_failed</code></td>
+      <td>warn</td>
+      <td>Per-request, on signature/claim verification failure</td>
+    </tr>
+    <tr>
+      <td><code>auth.jwt_missing_sub</code></td>
+      <td>warn</td>
+      <td>Per-request, JWT verified but <code>sub</code> claim absent or empty</td>
+    </tr>
+    <tr>
+      <td><code>auth.jwt_missing_username</code></td>
+      <td>warn</td>
+      <td>Per-request, JWT verified but <code>username</code> claim absent or empty</td>
+    </tr>
+    <tr>
+      <td><code>auth.bypass_mode_active</code></td>
+      <td>warn</td>
+      <td>Bypass plugin registration. Zero in staging/prod is the contract.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Source files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>backend/src/auth/index.ts</code></td>
+      <td>
+        <code>registerAuth(app, opts)</code> dispatcher; re-exports <code>requireUser</code> +
+        types.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/auth/jwt-plugin.ts</code></td>
+      <td>Real Cognito JWT validation; hydrate-at-boot; per-request hook.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/auth/bypass-plugin.ts</code></td>
+      <td>Development bypass; six layers of activation defense.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/auth/types.ts</code></td>
+      <td><code>AuthUser</code> + Fastify module augmentation.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/auth/require-user.ts</code></td>
+      <td><code>requireUser(request)</code> narrowing helper.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/auth/constants.ts</code></td>
+      <td>Shared <code>REGISTERED_DECORATOR</code> sentinel.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/config/env.ts</code></td>
+      <td><code>loadAuthConfig</code> portion: <code>AUTH_MODE</code> + cross-checks.</td>
+    </tr>
+    <tr>
+      <td><code>infra/modules/serving/{variables,main}.tf</code></td>
+      <td><code>auth_mode</code>, <code>node_env</code>, <code>extra_env</code> validation.</td>
+    </tr>
+    <tr>
+      <td><code>.github/workflows/deploy.yml</code></td>
+      <td>Pre-rollout gate that reads <code>AUTH_MODE</code> from the staging task-def.</td>
+    </tr>
+    <tr>
+      <td><code>.github/workflows/lint-auth.yml</code></td>
+      <td>
+        PR-time grep gate against <code>request.user!</code> / <code>request.user?.</code> /
+        <code>request.user as</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/auth/</code>, <code>backend/src/config/env.ts</code>,
+  <code>backend/src/app.ts</code>, <code>infra/modules/serving/</code>,
+  <code>.github/workflows/deploy.yml</code>, <code>.github/workflows/lint-auth.yml</code>.
+</p>

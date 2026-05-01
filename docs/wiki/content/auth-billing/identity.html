@@ -3,7 +3,7 @@
 <!-- source: infra/modules/auth/variables.tf -->
 <!-- source: infra/modules/auth/outputs.tf -->
 <!-- source: infra/environments/staging/main.tf -->
-<!-- source-hash: sha256:190959a8edfd1d2a4a73bf210ba683ab951ba675ec3b64fd026d4a73e525d60b -->
+<!-- source-hash: sha256:012049dec1a5bd714e24596d1fdbbbf7a1152f25f277a8dd837547614010fef3 -->
 <!-- last-ticket: MYT-36 -->
 
 <h1>Identity</h1>
@@ -22,8 +22,8 @@
   Identity lives in <code>infra/modules/auth/</code> and composes into the per-env workspace
   alongside <a href="../infra/serving.html">serving</a>. The module ships one User Pool, one App
   Client, one Hosted UI domain, two IdPs (Google + Discord), and two Secrets Manager shells the IdPs
-  read on apply. Outputs are wired straight into the API task definition's environment, where MYT-37
-  will pick them up to validate JWTs.
+  read on apply. Outputs are wired straight into the API task definition's environment, where the
+  <a href="./jwt-middleware.html">JWT middleware</a> picks them up to validate access tokens.
 </p>
 
 <aside class="wiki-rationale">
@@ -236,10 +236,12 @@
   <a href="../infra/serving.html">serving module</a>'s <code>extra_env</code> input as
   <code>COGNITO_USER_POOL_ID</code>, <code>COGNITO_APP_CLIENT_ID</code>,
   <code>COGNITO_HOSTED_UI_DOMAIN</code>, and <code>COGNITO_ISSUER_URL</code>. They land on every
-  registered task-definition revision; no ECS roll happened in this ticket because the backend code
-  that consumes them ships in MYT-37. The <code>issuer_url</code> output is the key one for that
-  next ticket — JWT middleware will verify the <code>iss</code> claim against this exact string and
-  derive the JWKS URL as <code>${issuer_url}/.well-known/jwks.json</code>.
+  registered task-definition revision and are now consumed by the
+  <a href="./jwt-middleware.html">JWT middleware</a>: <code>userPoolId</code> +
+  <code>appClientId</code> drive Cognito access-token verification, the
+  <code>issuer_url</code> output's JWKS at <code>${issuer_url}/.well-known/jwks.json</code> is what
+  the verifier hydrates at boot, and the four are also re-checked in bypass mode to refuse
+  activation if any are populated.
 </p>
 
 <aside class="wiki-rationale">
@@ -358,14 +360,15 @@
   The four <code>COGNITO_*</code> env vars land on the API task definition via
   <a href="../infra/serving.html">serving</a>'s <code>extra_env</code> input — the same plumbing
   staging uses for <code>BOOT_GATE_ENABLED</code>. The
-  <a href="../runtime/index.html">backend runtime</a> doesn't consume them yet; that wiring ships in
-  MYT-37 (JWT middleware against <code>issuer_url</code>'s JWKS, the
-  <code>/api/auth/refresh</code> route, the user-bootstrap-on-first-login flow). The OAuth client
-  credentials live in <a href="../infra/data.html#secrets">Secrets Manager</a> alongside the other
-  per-env secrets the platform owns. Discord's OIDC userinfo endpoint and Google's OAuth flow are
-  the two external integration points; both are pinned in <code>provider_details</code> rather than
-  autodiscovered, so a Discord <code>/.well-known/openid-configuration</code> outage doesn't stop
-  sign-ins on a cold <code>terraform apply</code>.
+  <a href="./jwt-middleware.html">JWT middleware</a> consumes them on every API boot — verifying
+  tokens against <code>issuer_url</code>'s JWKS and refusing to start in bypass mode if any of the
+  four are populated. The <code>/api/auth/refresh</code> route and the user-bootstrap-on-first-login
+  flow are the next layers that build on this surface. The OAuth client credentials live in
+  <a href="../infra/data.html#secrets">Secrets Manager</a> alongside the other per-env secrets the
+  platform owns. Discord's OIDC userinfo endpoint and Google's OAuth flow are the two external
+  integration points; both are pinned in <code>provider_details</code> rather than autodiscovered,
+  so a Discord <code>/.well-known/openid-configuration</code> outage doesn't stop sign-ins on a cold
+  <code>terraform apply</code>.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>

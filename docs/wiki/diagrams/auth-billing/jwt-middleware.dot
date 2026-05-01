@@ -1,0 +1,87 @@
+digraph jwt_middleware {
+  // The auth runtime: an env-driven plugin family (real | bypass) wraps every
+  // request landing on the Fastify app. Real mode hydrates JWKS once at boot,
+  // verifies access tokens, attaches a claims-only AuthUser. Bypass mode is
+  // walled off behind a six-layer defense and only ever loads in local dev.
+  // The serving module force-pins AUTH_MODE/NODE_ENV in the prod task-def;
+  // the deploy workflow re-checks before each rollout.
+  rankdir=LR;
+  compound=true;
+
+  client [label="HTTP client\nAuthorization: Bearer <jwt>", color="ember", fontcolor="ember"];
+
+  subgraph cluster_app {
+    label="buildApp  (backend/src/app.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    notfound [label="setNotFoundHandler\nstable JSON 404"];
+    routes   [label="routes\nconfig.auth: 'public' | 'jwt-no-db' | (default)"];
+    hook     [label="onRequest hook\n404 fall-through guard\npublic-route opt-out\nattach request.user"];
+
+    subgraph cluster_dispatcher {
+      label="registerAuth  (auth/index.ts)";
+      style="dotted";
+
+      jwt    [label="jwtPlugin\nfastify-plugin wrapper\nhydrate-at-boot"];
+      bypass [label="bypassPlugin\nfastify-plugin wrapper\nLayers 2a..4 at register\nLayers 2a, 3 per request", color="ember", fontcolor="ember"];
+    }
+  }
+
+  subgraph cluster_env {
+    label="loadEnv  (config/env.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    loadenv [label="AUTH_MODE: real | bypass\nNODE_ENV cross-check\nBOOT_GATE cross-check\n4 × COGNITO_* required (real)"];
+  }
+
+  subgraph cluster_terraform {
+    label="serving module  (force-pinned env)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    tf [label="AUTH_MODE = 'real'\nNODE_ENV = 'production'\nextra_env validation:\nrejects 9 reserved names"];
+  }
+
+  subgraph cluster_deploy {
+    label="deploy.yml  (gate before rollout)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    gate [label="describe-task-def\nfail if AUTH_MODE\nunset or != real"];
+  }
+
+  subgraph cluster_ecs_probe {
+    label="Layer 2b probe target";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    metadata [label="169.254.170.2/v2/metadata\nECS task-metadata endpoint\nlink-local; unreachable\nfrom local dev"];
+  }
+
+  cognito [label="Cognito JWKS\n${issuer_url}/.well-known/jwks.json", color="ember", fontcolor="ember"];
+
+  // Boot
+  loadenv -> jwt    [label="userPoolId\nappClientId"];
+  loadenv -> bypass [label="all four\nCognito vars\n(must be empty)"];
+  jwt     -> cognito [label="hydrate()\n0-1s jitter\n10s timeout", style=dashed];
+  bypass  -> metadata [label="HTTP probe\n1s timeout\nsuccess → throw", style=dashed];
+
+  // Per-request
+  client  -> notfound [label="unmatched path"];
+  client  -> routes   [label="matched path\n+ Bearer token"];
+  routes  -> hook     [label="onRequest"];
+  hook    -> jwt      [label="real mode\nverify(token)"];
+  hook    -> bypass   [label="bypass mode\nfixed dev user"];
+  jwt     -> cognito  [label="JWKS cached", style=dashed];
+
+  // Multi-layer defense plumbing
+  tf      -> loadenv  [label="ECS task env\n(production)", style=dashed];
+  gate    -> tf       [label="re-checks before\nimage swap", style=dashed];
+}

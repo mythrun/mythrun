@@ -35,6 +35,7 @@ export const structure: Section[] = [
     pages: [
       { slug: 'index', title: 'Overview' },
       { slug: 'identity', title: 'Identity' },
+      { slug: 'jwt-middleware', title: 'JWT middleware' },
     ],
   },
   {
