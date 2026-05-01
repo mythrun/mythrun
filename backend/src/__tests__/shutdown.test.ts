@@ -34,8 +34,7 @@ describe('createShutdown', () => {
     vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', '')
     // Force the bypass plugin's Layer 2b ECS task-metadata probe to fail
     // (i.e. "we are not on ECS"), so registration proceeds.
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.reject(new Error('ECONNREFUSED'))) as typeof globalThis.fetch
+    globalThis.fetch = (): Promise<Response> => Promise.reject(new Error('ECONNREFUSED'))
   })
   afterEach(() => {
     process.exit = originalExit
