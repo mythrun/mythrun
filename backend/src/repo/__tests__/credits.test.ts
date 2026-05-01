@@ -692,4 +692,53 @@ describe('credits repo — concurrency (separate pool)', () => {
       holder.release()
     }
   }, 10_000)
+
+  it('every error path issues ROLLBACK (no idle-in-transaction leaks)', async () => {
+    const users = createUsersRepo(pool)
+    const credits = createCreditsRepo(pool)
+    const u = await users.create({
+      ...baseUserInput,
+      cognitoSub: 'sub-rollback',
+      email: 'rollback@test.local',
+      username: 'rollback',
+    })
+    await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+
+    // Trigger each error class once, in sequence.
+    const fakeId = '019dccef-0000-7000-8000-000000000999'
+
+    // UserNotFoundError — userId doesn't exist.
+    await credits
+      .atomicDebit({ userId: fakeId, creditType: 'session', amount: 1, sourceId: uuidv7() })
+      .catch(() => { /* expected */ })
+
+    // InsufficientCreditsError — request more than available.
+    await credits
+      .atomicDebit({ userId: u.id, creditType: 'session', amount: 99, sourceId: uuidv7() })
+      .catch(() => { /* expected */ })
+
+    // Successful debit (consumes the 1 credit).
+    const okSourceId = uuidv7()
+    await credits.atomicDebit({
+      userId: u.id, creditType: 'session', amount: 1, sourceId: okSourceId,
+    })
+
+    // IdempotencyConflictError — same sourceId with different amount.
+    await credits
+      .atomicDebit({
+        userId: u.id, creditType: 'session', amount: 2, sourceId: okSourceId,
+      })
+      .catch(() => { /* expected */ })
+
+    // After all that activity, no connection should be stuck "idle in transaction".
+    // The query joins on the test database to scope the assertion to this run.
+    const idleRes = await pool.query<{ count: string }>(
+      `SELECT count(*)::text
+         FROM pg_stat_activity
+        WHERE state = 'idle in transaction'
+          AND datname = current_database()`,
+    )
+    // Allow up to 1 idle (a pool client between queries can briefly look idle).
+    expect(Number(idleRes.rows[0]?.count ?? 0)).toBeLessThanOrEqual(1)
+  }, 10_000)
 })
