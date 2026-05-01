@@ -87,28 +87,46 @@ This query is fast: indexed scan scoped to one user's ledger entries for one cre
 To consume a credit (e.g., starting a session):
 
 ```sql
--- In a transaction:
--- 1. Calculate current balance
--- 2. If balance > 0, insert a debit row
--- 3. Re-check that balance is still positive after insert
+-- atomic-debit recipe — see MYT-40 design spec
+-- (docs/superpowers/specs/2026-05-01-myt-40-credit-ledger-design.md) for the
+-- full rationale and the empty-ledger-race history.
 
 BEGIN;
+SET LOCAL transaction_isolation = 'read committed';
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
 
+-- Lock anchor on the users row (always exists; FK guarantees). Locking
+-- on credit_ledger rows would race when no rows exist — see "the bug"
+-- below.
+SELECT id FROM users WHERE id = $userId FOR UPDATE;
+-- rowCount = 0 → throw UserNotFoundError (404), NOT InsufficientCreditsError.
+
+-- Idempotency check: a retry of the same logical debit returns the prior row.
+SELECT * FROM credit_ledger
+  WHERE user_id = $userId
+    AND credit_type = $type
+    AND source_type = 'debit'
+    AND source_id = $sourceId;
+-- If found: assert amount matches; COMMIT and return prior row.
+
+-- Balance check: only spendable (unexpired) credits count.
 SELECT COALESCE(SUM(amount), 0) AS balance
-FROM credit_ledger
-WHERE user_id = $1
-  AND credit_type = 'session'
-  AND (expires_at IS NULL OR expires_at > now())
-FOR UPDATE;  -- locks the user's ledger rows
+  FROM credit_ledger
+  WHERE user_id = $userId
+    AND credit_type = $type
+    AND (expires_at IS NULL OR expires_at > now());
 
--- If balance > 0:
-INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, source_id, granted_at)
-VALUES ($id, $1, 'session', -1, 'debit', $sessionId, now());
+-- If balance >= amount: insert debit, COMMIT.
+-- Else: ROLLBACK and throw InsufficientCreditsError.
+INSERT INTO credit_ledger
+  (id, user_id, credit_type, amount, source_type, source_id)
+  VALUES ($id, $userId, $type, -$amount, 'debit', $sourceId);
 
 COMMIT;
 ```
 
-The `FOR UPDATE` lock prevents concurrent transactions from double-spending. If balance is 0, the transaction rolls back and returns a 402 error.
+**The bug in the original recipe:** A previous draft of this section anchored the lock on `credit_ledger` rows (`SELECT SUM(amount) FROM credit_ledger ... FOR UPDATE`). This is incorrect when the user has zero ledger rows yet — `FOR UPDATE` locks zero tuples (PostgreSQL row locks are physical, not predicate, outside SERIALIZABLE), so two concurrent debits both see balance=0 and both insert. The fix is to anchor on the `users` row, which always exists by FK. The MYT-40 design (`docs/superpowers/specs/2026-05-01-myt-40-credit-ledger-design.md`) covers the full reasoning, including why this works under READ COMMITTED but would break under REPEATABLE READ.
 
 ---
 
