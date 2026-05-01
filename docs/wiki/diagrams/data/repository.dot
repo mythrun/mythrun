@@ -28,6 +28,7 @@ digraph repository {
     worlds    [label="worlds.ts\ncreate, getById,\nlistByUser, update,\nupdateStatus,\nincrementForkCount"];
     camps     [label="campaigns.ts\ncreate, getById,\nlistByUser, update"];
     sessions  [label="sessions.ts\ncreate, getById,\ngetActiveByCampaign,\nlistByCampaign,\nupdate"];
+    credits   [label="credits.ts\nbalance, grant,\natomicDebit,\nlistEntries\n(users-row lock)"];
   }
 
   subgraph cluster_seams {
@@ -44,6 +45,7 @@ digraph repository {
 
   routes  -> users    [label="repo.users.create"];
   routes  -> worlds   [label="repo.worlds.…"];
+  routes  -> credits  [label="repo.credits.atomicDebit"];
   workers -> camps    [label="repo.campaigns.…"];
   workers -> sessions [label="repo.sessions.…"];
 
@@ -51,16 +53,19 @@ digraph repository {
   worlds   -> uuid    [label="", style=dashed];
   camps    -> uuid    [label="", style=dashed];
   sessions -> uuid    [label="", style=dashed];
+  credits  -> uuid    [label="", style=dashed];
 
   users    -> mappers [label="toUser", style=dashed];
   worlds   -> mappers [label="toWorld", style=dashed];
   camps    -> mappers [label="toCampaign", style=dashed];
   sessions -> mappers [label="toSession", style=dashed];
+  credits  -> mappers [label="toCreditEntry", style=dashed];
 
   users    -> pool    [label="pool.query\nINSERT … RETURNING *\nUPDATE … COALESCE\nSELECT …"];
   worlds   -> pool    [label=""];
   camps    -> pool    [label=""];
   sessions -> pool    [label=""];
+  credits  -> pool    [label="BEGIN; SET LOCAL …\nSELECT … FOR UPDATE\nINSERT;  COMMIT"];
 
   pool    -> db       [label="parameterized SQL"];
 
@@ -68,4 +73,5 @@ digraph repository {
   types -> worlds   [label="", style=dotted];
   types -> camps    [label="", style=dotted];
   types -> sessions [label="", style=dotted];
+  types -> credits  [label="", style=dotted];
 }

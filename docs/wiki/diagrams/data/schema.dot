@@ -81,7 +81,7 @@ digraph schema {
   }
 
   // Identity edges
-  users -> ledger    [label="CASCADE"];
+  users -> ledger    [label="RESTRICT\n(revenue ledger,\nmigration 004)"];
   users -> subs      [label="CASCADE"];
   tiers -> subs      [label=""];
   users -> purch     [label=""];

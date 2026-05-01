@@ -467,8 +467,8 @@
   <li>
     From the repo root: <code>pnpm db:migrate</code>. On a fresh DB, the runner applies
     <code>001_initial_schema.sql</code>, <code>002_indexes.sql</code>,
-    <code>003_srd_reference_data.sql</code> in order — the
-    <a href="./schema.html">initial schema</a>. A second run is a no-op that logs
+    <code>003_srd_reference_data.sql</code>, <code>004_credit_ledger_invariants.sql</code> in order
+    — the <a href="./schema.html">initial schema</a>. A second run is a no-op that logs
     <code>migrate.no_pending</code> and exits 0.
   </li>
   <li>

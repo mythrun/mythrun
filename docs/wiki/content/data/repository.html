@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:87b93ef42e16fcefa0d904e91ab18288b72f7fac190563e76470fdac2abcba8d -->
-<!-- last-ticket: MYT-34 -->
+<!-- source-hash: sha256:c63a58cb5ddec3e0120b7714655c21e13e7ee7cea28158c72c677b8ab9703b3a -->
+<!-- last-ticket: MYT-40 -->
 
 <h1>Repository layer</h1>
 
@@ -17,14 +17,14 @@
 
 <p>
   <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
-  takes a <code>pg.Pool</code> and returns <code>{ users, worlds, campaigns, sessions }</code> — one
-  namespace per top-level table cluster. Each namespace is built by a sibling factory
-  (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
-  pool and exposes the typed methods for that table. The return type is exported as
-  <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
-  <code>AppDeps</code> carries it alongside <code>pg</code> and the two Redis clients, and
-  <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
-  boot paths.
+  takes a <code>pg.Pool</code> and returns
+  <code>{ users, worlds, campaigns, sessions, credits }</code> — one namespace per top-level table
+  cluster. Each namespace is built by a sibling factory (<code>createUsersRepo(pool)</code>,
+  <code>createWorldsRepo(pool)</code>, …) that closes over the pool and exposes the typed methods
+  for that table. The return type is exported as <code>type Repo</code>; the
+  <a href="../runtime/index.html">backend runtime</a>'s <code>AppDeps</code> carries it alongside
+  <code>pg</code> and the two Redis clients, and <code>server.ts</code> threads
+  <code>createRepo(pgRef)</code> into <code>buildApp</code> on both boot paths.
 </p>
 
 <aside class="wiki-rationale">
@@ -46,25 +46,24 @@
   guaranteed on every UPDATE.
 </p>
 
-<h2>Namespace boundaries: 4 today, 21 deferred</h2>
+<h2>Namespace boundaries: 5 today, 20 deferred</h2>
 
 <p>
   Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
-  <strong>4</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
-  <code>sessions</code> — the foundations Auth, the prep pipeline, and the session runtime
-  immediately need. The remaining 21 are tracked as beads under the <code>repo-deferred</code> label
-  and ship batched with their consumers.
+  <strong>5</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code>, <code>credits</code> — the foundations Auth, the prep pipeline, the session
+  runtime, and Billing immediately need. The remaining 20 are tracked as beads under the
+  <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Producer batched with consumer</strong> — designing a <code>characters</code> namespace
   with per-skill / feature / equipment / spell add APIs without the character-creation flow designed
-  produces guesses. The same goes for <code>credits</code>: the atomic-debit pattern belongs with
-  the consumer that needs it (MYT-40), not as a separate <code>grant</code>/<code>debit</code>/<code
-    >getBalance</code
-  >
-  trio that would invite a TOCTOU race. The deferral list is in the v2 design spec;
-  <code>bd list --label=repo-deferred</code> is the live view.
+  produces guesses. <code>credits</code> shipped on the same principle: the atomic-debit pattern was
+  held back from the v1 repo until MYT-40 picked up Billing's first consumer-facing surface, because
+  designing <code>grant</code> / <code>debit</code> / <code>getBalance</code> as separate primitives
+  without the spend path in mind is exactly how a TOCTOU race ships. The deferral list is in the v2
+  design spec; <code>bd list --label=repo-deferred</code> is the live view.
 </aside>
 
 <p>
@@ -278,6 +277,102 @@
   is the documented exception.
 </aside>
 
+<p>
+  <strong><code>credits</code></strong> — <code>balance</code>, <code>grant</code>,
+  <code>atomicDebit</code>, <code>listEntries</code>. The full credit-ledger story has its own
+  section below; the short version is "balance is a SUM over an append-only ledger; debits go
+  through a transaction-scoped lock anchored on the user row, not on the ledger."
+</p>
+
+<h2>The credits namespace: append-only ledger with an atomic spend</h2>
+
+<p>
+  <code>credit_ledger</code> is the only place credit balance lives — the
+  <a href="./schema.html">schema</a>
+  page covers the table shape and migration 004's defense-in-depth invariants. The repo surface the
+  rest of the system sees is four methods.
+</p>
+
+<p>
+  <code>balance(userId, type)</code> is a single read:
+  <code>SELECT COALESCE(SUM(amount), 0)</code> filtered by <code>user_id</code>,
+  <code>credit_type</code>, and <code>expires_at IS NULL OR expires_at &gt; now()</code>. Expired
+  grants drop out; debits stay in (they're immutable consumption). Two credit types live on the same
+  table — <code>session</code> and <code>world_gen</code> — and they're isolated: a session debit
+  never sees world-gen grants.
+</p>
+
+<p>
+  <code>grant(input)</code> writes a positive-amount entry with <code>source_type</code> in
+  <code>purchase | subscription | gift | trial | refund</code>.
+  <code>atomicDebit(input)</code> writes a negative-amount entry with
+  <code>source_type = 'debit'</code>; the amount is a positive integer in the input, recorded as
+  <code>-amount</code> in the row so polarity invariants hold at the DB layer. Both methods take the
+  per-user transaction lock described next.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Lock the users row, not the ledger</strong> — the natural-feeling design is
+  <code>SELECT … FROM credit_ledger … FOR UPDATE</code>, then read the balance, then INSERT. It
+  doesn't work: PostgreSQL row locks are physical, not predicate. <code>FOR UPDATE</code> on a query
+  that returns zero rows locks zero tuples, so two concurrent debits on a fresh user both see
+  <code>balance = 0</code> and both succeed. The fix is anchoring on a row that always exists —
+  <code>SELECT id FROM users WHERE id = $1 FOR UPDATE</code> — which serializes every concurrent
+  <code>atomicDebit</code> and <code>grant</code> for that user. The first transaction takes the
+  lock, reads the balance, inserts the debit, commits; the second one waits, then sees the new
+  balance. <code>grant</code> takes the same lock for symmetry: any operation that could decrease
+  available balance (today: <code>atomicDebit</code>; future: refund clawbacks) goes through the
+  same gate.
+</aside>
+
+<p>
+  Each transaction starts with three <code>SET LOCAL</code>s:
+  <code>transaction_isolation = 'read committed'</code> (defense in depth — the pool default already
+  provides this; the <code>SET LOCAL</code> makes it per-transaction explicit so a future
+  pool-config drift can't silently change the contract); <code>lock_timeout = 1s</code> (cap on how
+  long the <code>FOR UPDATE</code> waits before giving up — bounds pool exhaustion under load); and
+  <code>statement_timeout = 5s</code> (cap on the whole transaction, the second of two distinct
+  failure modes). Both timeouts surface as the same error subclass to callers; the SQLSTATE
+  distinguishes them in logs.
+</p>
+
+<p>
+  <code>atomicDebit</code> requires a <code>sourceId</code> — the per-user idempotency key. The
+  method does the idempotency check first, before the balance check: a retry of the same
+  <code>(userId, creditType, sourceId)</code> returns the prior entry without inserting a second
+  row. A different amount with the same key throws <code>IdempotencyConflictError</code>; the same
+  amount returns the original. The DB-level
+  <code>uniq_credit_ledger_debit_idempotency</code> partial-unique index from migration 004 is the
+  safety net for any future caller that bypasses the repo.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Don't gate on <code>balance()</code>; <code>atomicDebit</code> IS the gate</strong> — the
+  tempting consumer pattern is "check balance, decide whether to act, then debit." That's a TOCTOU
+  race regardless of how the lock is implemented: the balance read and the spend decision happen
+  outside any transaction. The repo's contract is that <code>atomicDebit</code> either succeeds and
+  returns the new entry, or throws <code>InsufficientCreditsError</code> with the actual available
+  balance — callers branch on the result, not on a prior <code>balance()</code> call. The error
+  class is exported from <code>credits-errors.ts</code> for HTTP-layer mapping.
+</aside>
+
+<p>
+  Errors callers narrow on: <code>InsufficientCreditsError</code> (balance check failed — available
+  + requested in the error), <code>IdempotencyConflictError</code> (same sourceId, different
+  amount), <code>UserNotFoundError</code> (the user-row anchor came up empty — the spec's required
+  invariant before any other check), and <code>DebitTimeoutError</code> (lock or statement timeout
+  fired — sqlstate <code>55P03</code> or <code>57014</code> mapped to one error class). Every error
+  path <code>ROLLBACK</code>s the transaction explicitly so connections never leak in
+  <code>idle in transaction</code> state; the integration test asserts this on every error class.
+</p>
+
+<p>
+  <code>listEntries(userId, opts)</code> is the audit view — DESC by <code>(granted_at, id)</code>,
+  default limit 100 (overridable; <code>null</code> means no LIMIT). It includes expired entries,
+  unlike <code>balance()</code>, because the audit story is "what happened to this user's credits
+  over time," not "what can they spend right now."
+</p>
+
 <h2>Tests: real Postgres, TRUNCATE-based reset</h2>
 
 <p>
@@ -296,6 +391,17 @@
   names, CHECK constraints, FK rules) live in
   <a href="./schema.html#schema-parity-test">the schema-parity test</a> from MYT-33; the repo tests
   trust that and exercise behavior, not structure.
+</p>
+
+<p>
+  <code>credits.test.ts</code> adds two test groups beyond the per-namespace shape: a
+  <strong>schema-invariants</strong> block that asserts each migration-004 CHECK rejects the row
+  it's supposed to (and includes an <code>EXPLAIN</code> assertion that the idempotency
+  <code>SELECT</code> uses the partial-unique index, not a sequential scan), and a
+  <strong>concurrency</strong> block run against a separate small pool that exercises parallel
+  debits. The race tests cover the empty-ledger case (the bug the user-row lock fixes), the
+  exactly-one-succeeds case, the parallel-same-sourceId idempotency case, the lock-timeout case, and
+  a "every error path issues ROLLBACK" sweep that catches idle-in-transaction leaks.
 </p>
 
 <h2>Integration points</h2>
@@ -374,6 +480,22 @@
       <td>
         <code>createSessionsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
         <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/credits.ts</code></td>
+      <td>
+        <code>createCreditsRepo(pool, opts?)</code> — <code>balance</code>, <code>grant</code>,
+        <code>atomicDebit</code>, <code>listEntries</code>. Lock and statement timeouts are
+        overridable via <code>opts</code> for tests that exercise the timeout paths.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/credits-errors.ts</code></td>
+      <td>
+        <code>InsufficientCreditsError</code>, <code>IdempotencyConflictError</code>,
+        <code>UserNotFoundError</code>, <code>DebitTimeoutError</code>; the
+        <code>DEBIT_LOCK_TIMEOUT_MS</code> / <code>DEBIT_STATEMENT_TIMEOUT_MS</code> constants.
       </td>
     </tr>
     <tr>

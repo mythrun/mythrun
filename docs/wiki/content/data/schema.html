@@ -1,8 +1,9 @@
 <!-- source: backend/migrations/001_initial_schema.sql -->
 <!-- source: backend/migrations/002_indexes.sql -->
 <!-- source: backend/migrations/003_srd_reference_data.sql -->
-<!-- source-hash: sha256:0bb4ce65441f9f3aa6b8aedfc4f999bf14c8a54106feea9026e2e218aa5c5c2d -->
-<!-- last-ticket: MYT-33 -->
+<!-- source: backend/migrations/004_credit_ledger_invariants.sql -->
+<!-- source-hash: sha256:d75cfae0343b507283ddd8dca17d84a437d782bcedc820548c35feff11ef57dd -->
+<!-- last-ticket: MYT-40 -->
 
 <h1>Schema</h1>
 
@@ -18,12 +19,14 @@
 <h2>How it fits together</h2>
 
 <p>
-  The schema is the union of three migration files in <code>backend/migrations/</code>:
+  The schema is the union of four migration files in <code>backend/migrations/</code>:
   <code>001_initial_schema.sql</code> ships every <code>CREATE TABLE</code> in topological FK order,
   <code>002_indexes.sql</code> adds the named performance and uniqueness indexes,
-  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables. The
-  <a href="./migrations.html">migrations runner</a> applies all three end-to-end on a fresh
-  database. The diagram clusters tables by the story they tell — read it left to right.
+  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables, and
+  <code>004_credit_ledger_invariants.sql</code> tightens the <code>credit_ledger</code> with
+  defense-in-depth CHECKs, an idempotency partial-unique index, and a CASCADE→RESTRICT swap on the
+  user FK. The <a href="./migrations.html">migrations runner</a> applies all four end-to-end on a
+  fresh database. The diagram clusters tables by the story they tell — read it left to right.
 </p>
 
 <h3>Identity and billing</h3>
@@ -53,6 +56,41 @@
   not in-place edits we'd have to reconstruct from Stripe webhooks. The Billing & Cost Controls spec
   picks this up; the schema commits to it now so we don't ship a mutable balance and then try to
   unship it.
+</aside>
+
+<p>
+  Migration 004 adds three CHECK constraints and a partial-unique index that pin the ledger's
+  invariants at the database layer:
+  <code>(source_type = 'debit') = (amount &lt; 0)</code> — debits are negative and only debits are
+  negative; <code>source_type &lt;&gt; 'debit' OR source_id IS NOT NULL</code> — debits must carry
+  the per-user idempotency key; <code>source_type &lt;&gt; 'debit' OR expires_at IS NULL</code> —
+  debits represent consumption and never expire; and
+  <code
+    >uniq_credit_ledger_debit_idempotency ON (user_id, credit_type, source_id) WHERE source_type =
+    'debit'</code
+  >
+  — the same debit cannot land twice. The same migration also swaps the <code>user_id</code> FK from
+  <code>ON DELETE CASCADE</code> to <code>ON DELETE RESTRICT</code>
+  for the same reason a bank ledger isn't garbage-collected when an account closes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>RESTRICT on a financial table, not CASCADE</strong> — the original migration declared the
+  FK as CASCADE alongside the rest of the per-user data. For a revenue ledger that's wrong: a hard
+  delete (admin error, GDPR erasure path) would silently erase every purchase, refund, and debit
+  belonging to that user, breaking Stripe reconciliation and any audit downstream. RESTRICT forces
+  the deletion to fail loudly until the rows are dealt with explicitly. GDPR erasure becomes a
+  soft-delete / pseudonymize flow tracked separately. The same shape will apply to other revenue
+  tables (<code>purchases</code>, <code>stripe_events</code>) when their consumers ship.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Application-layer enforcement <em>and</em> DB-layer CHECKs</strong> — the repo layer
+  already guarantees these invariants in the happy path (only <code>atomicDebit</code> writes
+  negative amounts; only <code>grant</code> writes positive). The CHECKs are belt-and-suspenders for
+  everything that doesn't go through the repo: a future admin tool, a Stripe webhook backfill, a
+  one-off corrective migration. A bug in any of those gets a clear constraint violation at insert
+  time instead of a silently mis-shaped balance the team discovers months later.
 </aside>
 
 <h3>Worlds and entities</h3>
@@ -174,7 +212,8 @@
 
 <p>
   The FK cascade rules encode the cleanup paths. Deleting a <code>user</code> CASCADEs through
-  <code>credit_ledger</code> and <code>user_subscriptions</code> but leaves <code>worlds</code> and
+  <code>user_subscriptions</code>, RESTRICTs on <code>credit_ledger</code> (a revenue ledger is
+  never garbage-collected; see migration 004 above), and leaves <code>worlds</code> and
   <code>campaigns</code> orphaned (the FK is <code>NO ACTION</code> on <code>created_by</code>) —
   user deletion is a billing-team operation, not a content-delete operation. Deleting a
   <code>world</code> CASCADEs through <code>entities</code> → <code>facts</code> +
@@ -182,8 +221,9 @@
   through <code>campaigns</code> → <code>sessions</code> → <code>session_messages</code>: a world
   delete is a tear-everything-down operation. Stat blocks detach to <code>SET NULL</code> on entity
   deletion; characters detach to <code>SET NULL</code> on entity deletion. The schema-parity test in
-  <code>migrate-schema.test.ts</code> pins each of these rules so a future migration can't silently
-  flip a CASCADE to a NO ACTION (or vice versa).
+  <code>migrate-schema.test.ts</code> pins each of these rules — including the
+  <code>credit_ledger</code> RESTRICT and the four migration-004 invariants — so a future migration
+  can't silently flip a CASCADE to a NO ACTION (or vice versa).
 </p>
 
 <h3>What's not in the schema yet</h3>
@@ -195,9 +235,12 @@
 </p>
 
 <p>
-  Repository layer. The <code>backend/src/db/</code> directory ships only <code>migrate.ts</code>,
-  <code>lock-key.ts</code>, and <code>postgres.ts</code> right now. Per-table query helpers, Zod
-  result schemas, and transaction wrappers come in MYT-34.
+  Repository layer. <code>backend/src/db/</code> ships <code>migrate.ts</code>,
+  <code>lock-key.ts</code>, and <code>postgres.ts</code>; the typed namespaces over these tables
+  live next door at <a href="./repository.html"><code>backend/src/repo/</code></a> and ship five
+  namespaces today (<code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code>, <code>credits</code>). The remaining 20 namespaces ship batched with their
+  consumers.
 </p>
 
 <h2>Operating this piece</h2>
@@ -217,8 +260,9 @@
     Verify the shape:
     <pre><code>docker compose exec postgres psql -U mythrun -d mythrun -c "\dt"
 docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
-    You should see 39 tables (1 <code>_migrations</code> + 35 application + 3 SRD) and the
-    <code>idx_*</code> index set.
+    You should see 39 tables (1 <code>_migrations</code> + 35 application + 3 SRD), the
+    <code>idx_*</code> index set, and the <code>uniq_credit_ledger_debit_idempotency</code>
+    partial-unique index from migration 004.
   </li>
 </ol>
 
@@ -328,6 +372,14 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
       <td><code>(user_id, credit_type, expires_at)</code> — balance-sum hot path</td>
     </tr>
     <tr>
+      <td><code>uniq_credit_ledger_debit_idempotency</code></td>
+      <td>
+        UNIQUE PARTIAL INDEX
+        <code>(user_id, credit_type, source_id) WHERE source_type = 'debit'</code> (NULLS NOT
+        DISTINCT) — DB-level idempotency for <code>atomicDebit</code>
+      </td>
+    </tr>
+    <tr>
       <td><code>idx_user_subscriptions_user</code></td>
       <td><code>(user_id)</code></td>
     </tr>
@@ -385,5 +437,6 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
   <code>backend/migrations/001_initial_schema.sql</code>,
   <code>backend/migrations/002_indexes.sql</code>,
   <code>backend/migrations/003_srd_reference_data.sql</code>,
+  <code>backend/migrations/004_credit_ledger_invariants.sql</code>,
   <code>backend/src/db/__tests__/migrate-schema.test.ts</code>.
 </p>

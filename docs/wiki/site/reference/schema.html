@@ -58,7 +58,7 @@
 <details class="schema-table" data-table-name="credit_ledger" id="schema-table-credit_ledger">
   <summary>
     <span class="schema-table-name">credit_ledger</span>
-    <span class="schema-table-meta">8 columns · 1 index · 2 CHECKs · 8 FKs</span>
+    <span class="schema-table-meta">8 columns · 1 index · 5 CHECKs · 8 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -75,7 +75,7 @@
         <td><code>uuid</code></td>
         <td>NO</td>
         <td>—</td>
-        <td><code>users(id)</code> ON DELETE CASCADE</td>
+        <td><code>users(id)</code> ON DELETE RESTRICT</td>
       </tr>
       <tr data-column-name="credit_type">
         <td><code>credit_type</code></td>
@@ -128,6 +128,9 @@
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
     <li><code>CHECK ((credit_type = ANY (ARRAY['session'::text, 'world_gen'::text])))</code></li>
+    <li><code>CHECK (((source_type &lt;&gt; 'debit'::text) OR (source_id IS NOT NULL)))</code></li>
+    <li><code>CHECK (((source_type &lt;&gt; 'debit'::text) OR (expires_at IS NULL)))</code></li>
+    <li><code>CHECK (((source_type = 'debit'::text) = (amount &lt; 0)))</code></li>
     <li><code>CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))</code></li>
   </ul>
 </details>
