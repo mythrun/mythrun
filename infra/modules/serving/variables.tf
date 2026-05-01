@@ -163,10 +163,81 @@ variable "log_retention_days" {
 }
 
 variable "extra_env" {
-  description = "Additional environment variables to inject into both API and Worker task definitions, on top of common_env. Used for per-env switches (e.g., BOOT_GATE_ENABLED in staging) without polluting the shared module locals. Keys here override matching keys in common_env only insofar as Docker honors last-write semantics on duplicate names — extras should be additive, not redefining shared keys."
-  type = list(object({
-    name  = string
-    value = string
-  }))
-  default = []
+  description = "Per-environment additional env vars to inject into the API task. May NOT contain AUTH_MODE, NODE_ENV, BOOT_GATE_ENABLED, or any COGNITO_* — those are owned by the module's dedicated variables (auth_mode, node_env) or by the auth module's outputs. Override attempts fail at terraform plan."
+  type        = list(object({ name = string, value = string }))
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for e in var.extra_env : !contains([
+        "AUTH_MODE", "NODE_ENV", "BOOT_GATE_ENABLED",
+        "COGNITO_USER_POOL_ID", "COGNITO_APP_CLIENT_ID",
+        "COGNITO_ISSUER_URL", "COGNITO_HOSTED_UI_DOMAIN",
+        "AWS_EXECUTION_ENV", "ECS_CONTAINER_METADATA_URI_V4",
+      ], e.name)
+    ])
+    error_message = "extra_env must not contain reserved auth/Cognito/boot-gate/AWS-runtime names. Use the module's dedicated variables (auth_mode, node_env) instead."
+  }
+}
+
+variable "auth_mode" {
+  description = "Mythrun auth-plugin mode. Defaults to 'real' so a new environment can't accidentally launch with bypass mode just by forgetting to set this. Override to 'bypass' is structurally possible but requires an explicit composition-level opt-in, which a code reviewer would catch immediately."
+  type        = string
+  default     = "real"
+
+  validation {
+    condition     = contains(["real", "bypass"], var.auth_mode)
+    error_message = "auth_mode must be 'real' or 'bypass'."
+  }
+}
+
+variable "node_env" {
+  description = "Node.js NODE_ENV value. Defaults to 'production' so a real environment can't lose Layer 2 of the bypass-mode defense by forgetting to set it. The bypass plugin demands NODE_ENV in {'development','test'} at registration."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["development", "test", "production"], var.node_env)
+    error_message = "node_env must be 'development', 'test', or 'production'."
+  }
+}
+
+variable "boot_gate_enabled" {
+  description = "MYT-29 boot gate flag. '1' = wait for pg+redis at boot before app.listen; '0' (or unset) = fallbackStart with stub deps. Defaults to '1' for production safety."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = contains(["0", "1"], var.boot_gate_enabled)
+    error_message = "boot_gate_enabled must be '0' or '1'."
+  }
+}
+
+# ======== MYT-36 / MYT-37: Cognito wiring ========
+# Promoted from free-form extra_env entries (which now reject these names per
+# MYT-37 reserved-name validation). The composition wires these from the auth
+# module's outputs.
+
+variable "cognito_user_pool_id" {
+  description = "Cognito User Pool ID (from auth module). Injected as COGNITO_USER_POOL_ID. Empty default keeps two-pass-apply / pre-auth-module bring-up paths working."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_app_client_id" {
+  description = "Cognito App Client ID (from auth module). Injected as COGNITO_APP_CLIENT_ID."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_issuer_url" {
+  description = "Cognito OIDC issuer URL (from auth module). Injected as COGNITO_ISSUER_URL. The MYT-37 JWT middleware verifies the iss claim against this exact string and derives the JWKS URL as $${issuer_url}/.well-known/jwks.json."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_hosted_ui_domain" {
+  description = "Cognito Hosted UI domain (from auth module). Injected as COGNITO_HOSTED_UI_DOMAIN."
+  type        = string
+  default     = ""
 }

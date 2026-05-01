@@ -100,17 +100,20 @@ module "serving" {
   manual_secret_arns           = { for k, v in aws_secretsmanager_secret.manual_secrets : k => v.arn }
   rds_password_secret_arn      = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn
 
-  # MYT-35: flip the boot gate ON in staging. Production stays at default
-  # OFF until the prod stack is composed at the Launch milestone, at which
-  # point the prod environment workspace must explicitly set this — the
-  # default-[] extra_env IS a footgun if forgotten (follow-up bead filed).
-  extra_env = [
-    { name = "BOOT_GATE_ENABLED", value = "1" },                                 # MYT-35
-    { name = "COGNITO_USER_POOL_ID", value = module.auth.user_pool_id },         # MYT-36
-    { name = "COGNITO_APP_CLIENT_ID", value = module.auth.app_client_id },       # MYT-36
-    { name = "COGNITO_HOSTED_UI_DOMAIN", value = module.auth.hosted_ui_domain }, # MYT-36
-    { name = "COGNITO_ISSUER_URL", value = module.auth.issuer_url },             # MYT-36
-  ]
+  # MYT-35: flip the boot gate ON in staging. MYT-37 promoted BOOT_GATE_ENABLED
+  # from a free-form extra_env entry to a dedicated module variable
+  # (boot_gate_enabled) — the module default is "1" so this is technically
+  # redundant, but stating it explicitly here makes the staging contract
+  # legible at the composition layer.
+  boot_gate_enabled = "1"
+
+  # MYT-36 / MYT-37: Cognito values, promoted from free-form extra_env entries
+  # (now rejected by serving module's reserved-name validation) to dedicated
+  # module inputs wired from the auth module's outputs.
+  cognito_user_pool_id     = module.auth.user_pool_id
+  cognito_app_client_id    = module.auth.app_client_id
+  cognito_issuer_url       = module.auth.issuer_url
+  cognito_hosted_ui_domain = module.auth.hosted_ui_domain
 
   # Staging uses module defaults (256/512, 14-day log retention) per Week 0 §7.2.
 }

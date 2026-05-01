@@ -122,12 +122,10 @@ resource "aws_iam_role_policy" "task_cloudwatch_metrics" {
 # MYT-28 per Duncan review.
 
 locals {
-  common_env = concat([
-    { name = "NODE_ENV", value = var.environment },
+  common_env = concat(var.extra_env, [
     { name = "PORT", value = "3000" },
     { name = "AWS_REGION", value = "us-east-1" },
     { name = "REGION_PREFIX", value = "use1" },
-    { name = "AUTH_MODE", value = "real" },
     # DB_* consistent across HOST/PORT/USER/NAME/PASSWORD. App constructs
     # DATABASE_URL at startup per Infra §2.3.
     { name = "DB_HOST", value = var.rds_host },
@@ -137,7 +135,20 @@ locals {
     # REDIS_* parallels DB_*.
     { name = "REDIS_HOST", value = var.redis_host },
     { name = "REDIS_PORT", value = tostring(var.redis_port) },
-  ], var.extra_env)
+    # MYT-37: AUTH_MODE / NODE_ENV / BOOT_GATE_ENABLED are owned by the
+    # module's dedicated variables, not extra_env. Position-last means
+    # they'd shadow any duplicate from extra_env even if the validation
+    # in variables.tf were bypassed (defense in depth).
+    { name = "AUTH_MODE", value = var.auth_mode },
+    { name = "NODE_ENV", value = var.node_env },
+    { name = "BOOT_GATE_ENABLED", value = var.boot_gate_enabled },
+    # MYT-36 / MYT-37: Cognito values, also reserved-from-extra_env so they
+    # land here via dedicated module variables wired from auth module outputs.
+    { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
+    { name = "COGNITO_APP_CLIENT_ID", value = var.cognito_app_client_id },
+    { name = "COGNITO_ISSUER_URL", value = var.cognito_issuer_url },
+    { name = "COGNITO_HOSTED_UI_DOMAIN", value = var.cognito_hosted_ui_domain },
+  ])
 
   # rds-password secret holds a plain string (bootstrap-databases.sh writes
   # --secret-string "$pw" without wrapping in JSON). Read as-is, not via
