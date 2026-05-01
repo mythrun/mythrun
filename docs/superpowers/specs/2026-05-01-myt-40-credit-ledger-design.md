@@ -154,13 +154,23 @@ BEGIN;
 --    here is cheaper than asserting and removes a TOCTOU hole.
 --  - lock_timeout (1s): caps how long FOR UPDATE waits for a lock.
 --    Fires SQLSTATE 55P03 (lock_not_available). Bounded contention queue.
---  - statement_timeout (5s): caps total work after lock acquisition,
---    including the SUM, idempotency SELECT, and INSERT. Fires SQLSTATE
---    57014 (query_canceled). Insurance against autovacuum stalls or
---    replica blips on the actual queries.
+--  - statement_timeout (5s): per-statement cap. Note this includes
+--    the FOR UPDATE statement itself (lock_timeout runs WITHIN the
+--    per-statement budget — they're nested, not sequential). In
+--    practice the SUM, idempotency SELECT, and INSERT are each
+--    sub-millisecond on healthy DBs, so 5s is overwhelmingly the
+--    insurance cap against autovacuum stalls or replica blips on
+--    those statements rather than a "post-lock" budget. Fires
+--    SQLSTATE 57014 (query_canceled).
 -- Single statement_timeout would conflate the two failure modes —
 -- a slow autovacuum on the unique index would surface as a debit
 -- failure even with no lock contention.
+--
+-- Implementation MUST issue these as a single multi-statement string
+-- (`BEGIN; SET LOCAL ...; SET LOCAL ...; SET LOCAL ...;`) to
+-- guarantee ordering. Do NOT use a "transaction wrapper" abstraction
+-- that hoists BEGIN/COMMIT — those can subtly invert the SET LOCAL
+-- ordering and silently break the isolation pin.
 SET LOCAL transaction_isolation = 'read committed';
 SET LOCAL lock_timeout = '1s';        -- DEBIT_LOCK_TIMEOUT_MS
 SET LOCAL statement_timeout = '5s';   -- DEBIT_STATEMENT_TIMEOUT_MS
@@ -209,13 +219,15 @@ Why this works:
 - All concurrent atomic debits + (lock-taking) grants for that user serialize on the same `users` row.
 - Each statement under READ COMMITTED takes a fresh snapshot, so the SUM after lock acquisition sees any concurrent grant that committed before we got the lock.
 - The idempotency SELECT runs *under* the lock, so a retry blocked behind a first-attempt's lock will see the inserted row when it unblocks. (This depends on READ COMMITTED's per-statement snapshot — under REPEATABLE READ the second tx's snapshot would predate the first commit and the SELECT would miss. Do not change isolation level without revisiting this.) The DB-level `uniq_credit_ledger_debit_idempotency` unique index is the safety net for any future caller that bypasses this function.
+- **Idempotency wins over current-state checks.** If a debit was previously granted at `amount=1` against a balance that has since been depleted by other debits or expirations, retrying the same `(userId, creditType, sourceId)` with `amount=1` succeeds-as-no-op even when current balance is below 1. This is the entire point of idempotent retries surviving partial commits, network blips, or replica delays — the operation already succeeded, and the retry must surface that. The implementation order is load-bearing: idempotency SELECT runs BEFORE the balance check, never after, never as a fast-path before the lock.
+- **Order invariant (no fast-path):** `users`-row lock acquisition → idempotency SELECT → balance SELECT → INSERT. No fast-path return is allowed before the lock. A lock-free probe optimization "if we can find an existing debit row without taking the lock, skip" sounds appealing but reintroduces a TOCTOU window — a concurrent debit could be mid-INSERT when the probe runs and the probe would miss it.
 - `SET LOCAL transaction_isolation = 'read committed'` enforces per-transaction what the pool defaults to anyway. This pins the correctness invariant *into the transaction itself* — no future contributor can break idempotency-on-retry by adding a wrapper that flips isolation, since the wrapper's `SET LOCAL` would simply re-set to the same value. Cheaper to enforce than to assert.
 - `SET LOCAL lock_timeout = '1s'` + `SET LOCAL statement_timeout = '5s'` (both sourced from `DEBIT_LOCK_TIMEOUT_MS` / `DEBIT_STATEMENT_TIMEOUT_MS` constants; both overridable via the repo factory's optional config for tests). Two distinct failure modes, two distinct caps: the lock_timeout bounds contention queues, the statement_timeout bounds genuinely-stuck queries (autovacuum stall, replica issue). Both manifest as `pg` errors with distinguishable SQLSTATEs (55P03 for lock, 57014 for statement). `atomicDebit` catches both and rethrows as a typed `DebitTimeoutError` (the caller doesn't need to know which timeout fired — both indicate "the debit couldn't complete in time, retry is appropriate"). HTTP layer maps to 503 Service Unavailable with a jittered Retry-After hint (jitter in the HTTP layer ticket).
 - Runs under default isolation (READ COMMITTED). No SERIALIZABLE retry logic needed.
 
-### Grant takes the same lock — defense-in-depth for the future clawback path
+### Grant takes the same lock — required, full stop
 
-`grant()` also acquires the `users`-row lock. Today, with migration 004's polarity CHECK in place, a `grant()` insert *cannot* be a negative row (the CHECK rejects `source_type IN ('purchase', 'subscription', 'gift', 'trial', 'refund')` with `amount < 0`), so a lock-free grant cannot drive balance negative under the current constraint set. The lock is therefore not load-bearing for correctness *today*. It IS load-bearing the moment any future code path sidesteps the polarity CHECK (e.g., a clawback that uses `source_type='debit'` from outside `atomicDebit`, or a migration that loosens polarity to support a new negative-grant kind):
+`grant()` MUST acquire the `users`-row lock for parity with `atomicDebit`'s read-modify-write contract. **Do not remove this lock under any circumstance.** Migration 004's polarity CHECK currently makes a lock-free `grant()` *appear* safe (it can't insert negative rows directly), but that's a brittle accident: the moment any future code path inserts a negative row through `grant()` (a relaxed polarity to support a new grant kind), uses a clawback path that bypasses `atomicDebit`, or another writer reads balance for a decision, the SUM-after-lock argument requires every concurrent writer for that user to serialize on the same lock. The cost (one row lock per Stripe webhook, rare and rate-limited) is genuinely zero. Removing the lock to "save" that cost trades a free row lock for a class of latent revenue bugs.
 
 ```sql
 BEGIN;
@@ -299,8 +311,11 @@ export class IdempotencyConflictError extends Error {
 
 export class DebitTimeoutError extends Error {
   readonly code = 'DEBIT_TIMEOUT'
-  constructor(readonly userId: string) {
-    super(`Debit timed out for user=${userId} (lock contention or post-lock query stall)`)
+  constructor(
+    readonly userId: string,
+    readonly sqlstate: '55P03' | '57014',   // 55P03 = lock_timeout, 57014 = statement_timeout
+  ) {
+    super(`Debit timed out for user=${userId} (sqlstate=${sqlstate})`)
   }
 }
 
@@ -315,7 +330,7 @@ export function createCreditsRepo(pool: Pool): {
   balance(userId: string, type: CreditType): Promise<number>
   grant(input: GrantInput): Promise<CreditEntry>
   atomicDebit(input: DebitInput): Promise<CreditEntry>
-  listEntries(userId: string, opts?: { limit?: number; type?: CreditType }): Promise<CreditEntry[]>
+  listEntries(userId: string, opts?: { limit?: number | null; type?: CreditType }): Promise<CreditEntry[]>
 }
 ```
 
@@ -331,7 +346,7 @@ export function createCreditsRepo(pool: Pool): {
 
 - **`atomicDebit(input)`**: validates `amount > 0` and `sourceId` non-empty, opens a transaction, sets transaction isolation + lock_timeout + statement_timeout, takes the users-row lock, throws `UserNotFoundError` if `rowCount === 0` from the users SELECT (the userId doesn't exist — distinct condition from "user has no credits"), runs the idempotency check (returns the prior row if `(user_id, credit_type, source_id)` matches, or throws `IdempotencyConflictError` on amount mismatch), runs the balance check, inserts the debit row OR throws `InsufficientCreditsError`. Catches `pg` errors with SQLSTATE `55P03` (lock_timeout) and `57014` (statement_timeout / query_canceled) and rethrows as `DebitTimeoutError`. **Idempotent retry caveat**: a `DebitTimeoutError` does NOT guarantee the debit didn't land — under contention, the original attempt may have committed before the retry's lock timed out. The retry's `IdempotencyConflictError`-or-existing-row-return is the source of truth; observability dashboards should treat "timeout followed by success on the same sourceId" as one logical operation, not two. **Every non-success path — `UserNotFoundError`, `InsufficientCreditsError`, `IdempotencyConflictError`, `DebitTimeoutError`, validation errors thrown after `BEGIN`, any unexpected `pg` error — issues a `ROLLBACK` before releasing the client to the pool**, in the `finally` block. A pooled client returned without rollback would poison the next checkout.
 
-- **`listEntries(userId, opts)`**: ordered `DESC` by `(granted_at, id)`. Note that Postgres `now()` (the column default) is an alias for `transaction_timestamp()` — every row inserted in a single transaction shares a `granted_at`, regardless of how the rows were spaced in code. The `id` tiebreaker provides a stable, deterministic sort across those tied rows; under load with rows committed in different transactions but the same wall-clock millisecond, `id` is again the only deterministic component. The order does NOT necessarily reflect insertion order (UUIDv7 ms-bucket ties use random tail bits) — that's fine for audit display but should not be assumed by callers. `limit` accepts an optional number; omit (or pass `null`) to disable. Default 100. Optional credit-type filter. Returns ALL entries including expired ones — this is an audit view, not a balance view.
+- **`listEntries(userId, opts)`**: ordered `DESC` by `(granted_at, id)`. Note that Postgres `now()` (the column default) is an alias for `transaction_timestamp()` — every row inserted in a single transaction shares a `granted_at`, regardless of how the rows were spaced in code. The `id` tiebreaker provides a stable, deterministic sort across those tied rows; under load with rows committed in different transactions but the same wall-clock millisecond, `id` is again the only deterministic component. The order does NOT necessarily reflect insertion order (UUIDv7 ms-bucket ties use random tail bits) — that's fine for audit display but should not be assumed by callers. `limit` accepts an optional `number | null`; omit or pass `null` to disable. Default `DEFAULT_LIST_LIMIT = 100` (exported constant so tests don't hard-code the value). Optional credit-type filter. Returns ALL entries including expired ones — this is an audit view, not a balance view.
 
 `grant()` and `listEntries()` are technically beyond the ticket's literal scope ("balance + atomicDebit"), but every test needs to put credits in, the next ticket (Stripe webhooks) needs `grant()`, and `listEntries` is trivial + audit-useful. Worth including.
 
@@ -361,7 +376,7 @@ The repo enforces correctness for what it owns; certain invariants depend on cal
 - `UserNotFoundError` (custom subclass) — thrown by `atomicDebit` and `grant` when the userId does not exist. HTTP layer maps to **404 Not Found**. Distinguishes "this user doesn't exist" from "this user has no credits" (the latter is `InsufficientCreditsError`); without this, a typo in caller code would surface as a 402, misleading the consumer into a "buy more credits" UI flow for a user that doesn't exist at all.
 - `InsufficientCreditsError` (custom subclass) — thrown by `atomicDebit`. Carries `userId`, `creditType`, `available`, `requested`. HTTP layer maps to **402 Payment Required** per spec §2.4.
 - `IdempotencyConflictError` (custom subclass) — thrown by `atomicDebit` when the same `(user_id, credit_type, source_id)` is reused with a different `amount`. HTTP layer maps to **409 Conflict** (Stripe / GitHub / AWS convention for idempotency-key reuse with mismatched payload). **Logged at `error` level** — today, sourceId is always server-controlled (the sessionId), so an `IdempotencyConflictError` always indicates an internal bug (replay or amount-changed-mid-flight) and deserves an alert. The 409 status is the right *shape* for the response (the request is in conflict with state), but the log severity reflects "this should never happen." If a future caller derives sourceId from a client-supplied `Idempotency-Key` header, downgrade to `warn` since legitimate client mistakes become possible.
-- `DebitTimeoutError` (custom subclass) — thrown by `atomicDebit` when either `lock_timeout` (SQLSTATE 55P03 — lock contention) or `statement_timeout` (SQLSTATE 57014 — query stall after lock) fires. The class is intentionally one type for both: from the caller's perspective both mean "the debit couldn't complete, retry is appropriate." HTTP layer maps to **503 Service Unavailable** with a short jittered `Retry-After` (e.g., 1s + random 0-500ms). Lock contention spikes show up as a clean retry signal in dashboards instead of opaque 500s.
+- `DebitTimeoutError` (custom subclass) — thrown by `atomicDebit` when either `lock_timeout` (SQLSTATE 55P03 — lock contention) or `statement_timeout` (SQLSTATE 57014 — query stall) fires. The class carries the originating SQLSTATE as a readonly field so dashboards can distinguish contention from query stalls without parsing logs. From the caller's perspective both indicate "the debit couldn't complete, retry is appropriate" — one error class is the right shape. HTTP layer maps to **503 Service Unavailable** with a short jittered `Retry-After` (e.g., 1s + random 0-500ms).
 - Validation errors (`amount <= 0`, `grant with sourceType='debit'`, missing/empty `sourceId`) — throw plain `Error` at the application layer before any SQL runs. Programmer errors; should never reach production callers.
 - DB CHECK violations from migration 004 (polarity mismatch, missing source_id on debit) — propagate as `pg`-emitted errors. Should never reach production callers; if they do, that's a bug to fix.
 - DB connection lost / FK violations — propagate as `pg`-emitted errors; caller's responsibility (typically the request handler's error boundary).
@@ -402,6 +417,8 @@ All tests run against a real Postgres test database via the existing repo integr
 
 **Test pool:** the default repo test pattern uses `createPgPool(url, { max: 1 })`. The concurrency tests need a separate pool with `max >= 4` for the racer connections + the test orchestrator. Open in `beforeAll`, close in `afterAll`.
 
+**Race iteration counts:** correctness-critical races (18, 18b) repeat 100 times to surface flakes. Idempotency-paired races (19, 19c) repeat 50 times — the contention is the same shape, just observing a different outcome. Pick a single `RACE_ITERATIONS` constant per group rather than scattering literals.
+
 **Throughput floor:** assert each 100-iteration race completes in under 10 seconds. A regression that introduces accidental serial waits (e.g., a future contributor hoists a connection acquire outside the transaction) gets caught by the timing assertion, not just the correctness one.
 
 18. **Two parallel atomicDebit attempts on a user with 1 credit, distinct sourceIds → exactly one succeeds.** One resolves, one throws `InsufficientCreditsError`. Final balance === 0. Ledger has the original grant + exactly one debit row. Run under default isolation (READ COMMITTED) — proves the users-row lock works without SERIALIZABLE retries. Repeat 100 times.
@@ -419,13 +436,22 @@ All tests run against a real Postgres test database via the existing repo integr
 
 20. **DB-level idempotency safety net.** Bypass the application layer: directly INSERT a debit row, then INSERT a *second* debit row with the same `(user_id, credit_type, source_id)` → the unique partial index rejects with a unique-violation error. Proves the safety net catches a future caller that bypasses the lock discipline.
 
-20b. **Lock-timeout error mapping.** Open a third dedicated connection (NOT the test pool's general clients), `BEGIN`, `SELECT id FROM users WHERE id=$1 FOR UPDATE` to take the lock, then `pg_sleep(3)`. The holder MUST NOT set `lock_timeout` or `statement_timeout` on its own connection — otherwise it times itself out before the test can race against it. Concurrently, call `atomicDebit` from the main test pool. After ~1 second the second call throws `DebitTimeoutError` (lock_timeout fired with SQLSTATE 55P03). Verifies the catch-and-rethrow path.
+20b. **Lock-timeout error mapping.** Open a third dedicated connection (NOT the test pool's general clients), `BEGIN`, `SELECT id FROM users WHERE id=$1 FOR UPDATE` to take the lock, then `pg_sleep(3)`. The holder MUST NOT set `lock_timeout` or `statement_timeout` on its own connection — otherwise it times itself out before the test can race against it (this MUST appear as a code comment in the test file, since pool defaults could silently re-enable these). Concurrently, call `atomicDebit` from the main test pool. The racer's call throws `DebitTimeoutError`. **Assertions:**
+    - Caught error is `instanceof DebitTimeoutError`.
+    - The underlying SQLSTATE is exactly `'55P03'` (not `'57014'`) — `DebitTimeoutError` covers both timeout types, so without the SQLSTATE assertion this test could pass via `statement_timeout` firing on a slow CI runner instead of the lock_timeout we're trying to verify. Expose `DebitTimeoutError.sqlstate` as a readonly field carrying the originating code so the test (and dashboards) can distinguish.
+    - Elapsed time is `>= 0.9 * DEBIT_LOCK_TIMEOUT_MS` AND `< holderSleepMs - 200ms` (proves it actually waited the lock-timeout budget AND didn't wait the full holder sleep, which would mean it didn't time out).
+    - `pg_sleep(3)` is NOT a literal — bind it to a `HOLDER_SLEEP_MS` constant tied to `DEBIT_LOCK_TIMEOUT_MS` (e.g., `3 * DEBIT_LOCK_TIMEOUT_MS`) so a future tuning of timeouts doesn't silently break the test.
 
    **Use a fresh `userId` per iteration of this test** (UUIDv7 makes this trivial). A leaked holder pins the users-row lock for that user; if the test reused a userId, a leak would cascade across iterations. With per-iteration userIds, a leak self-isolates.
 
-   **Cleanup discipline:** the holder connection must be released or `ROLLBACK`ed in `afterEach` even on test failure. Wrap the holder in `try/finally` AND register an `afterEach` belt-and-suspenders `ROLLBACK` + release. Additionally, the suite's `afterAll` runs `SELECT count(*) FROM pg_locks WHERE locktype='tuple'` and asserts zero — catches leaked holders escaping per-test cleanup.
+   **Cleanup discipline:** the holder connection must be released or `ROLLBACK`ed in `afterEach` even on test failure. Wrap the holder in `try/finally` AND register an `afterEach` belt-and-suspenders `ROLLBACK` + release. Additionally, the suite's `afterAll` runs:
+    - `SELECT count(*) FROM pg_locks WHERE locktype='tuple'` — assert zero (catches leaked tuple locks).
+    - `SELECT count(*) FROM pg_stat_activity WHERE state='idle in transaction' AND application_name LIKE 'mythrun-test%'` — assert zero (catches the broader class of leaks: a `BEGIN` without `ROLLBACK` poisons the client even if no row lock is held, e.g., if the test failed before reaching the `FOR UPDATE`).
 
-20c. **Statement-timeout error mapping (post-lock work stall).** Use a fresh userId, grant 1 credit. Mock or otherwise stage a long-running `pg_sleep(6)` between lock acquisition and the SUM/INSERT (e.g., a `BEFORE INSERT` test trigger that calls `pg_sleep(6)`, dropped in `afterAll`). Call `atomicDebit` → after ~5 seconds throws `DebitTimeoutError` (statement_timeout fired with SQLSTATE 57014). Verifies that statement_timeout coverage of post-lock work also surfaces as the typed error.
+20c. **Statement-timeout error mapping (post-lock work stall).** Use a fresh userId, grant 1 credit. Stage a long-running `pg_sleep(6)` between lock acquisition and the INSERT via a `BEFORE INSERT` trigger on `credit_ledger`. Trigger lifecycle: `beforeAll` runs `DROP TRIGGER IF EXISTS test_pg_sleep_trigger ON credit_ledger` (self-healing in case a prior `afterAll` failed) followed by `CREATE TRIGGER test_pg_sleep_trigger BEFORE INSERT ON credit_ledger FOR EACH ROW EXECUTE FUNCTION test_pg_sleep_for_timeout()`. `afterAll` drops the trigger. Call `atomicDebit` → throws `DebitTimeoutError`. **Assertions:**
+    - SQLSTATE is exactly `'57014'`.
+    - Elapsed time is `>= 0.9 * DEBIT_STATEMENT_TIMEOUT_MS`.
+    - Sleep duration MUST be `> DEBIT_STATEMENT_TIMEOUT_MS + buffer` and bound to a constant (e.g., `2 * DEBIT_STATEMENT_TIMEOUT_MS`).
 
 ### Schema invariant tests
 
