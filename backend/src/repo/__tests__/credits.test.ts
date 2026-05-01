@@ -398,3 +398,139 @@ describe('credits repo (integration)', () => {
     })
   })
 })
+
+const RACE_ITERATIONS_CRITICAL = 100
+const RACE_ITERATIONS_PAIRED = 50
+
+describe('credits repo — concurrency (separate pool)', () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createPgPool(databaseUrl, { max: 4 })
+    // Schema already prepared by the main suite's beforeAll. We only need a
+    // fresh pool with concurrent-connection capacity.
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  beforeEach(async () => {
+    await resetData(pool)
+  })
+
+  it('two parallel debits on user with 1 credit — exactly one succeeds', async () => {
+    const users = createUsersRepo(pool)
+    const credits = createCreditsRepo(pool)
+
+    for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
+      await resetData(pool)
+      const u = await users.create({
+        ...baseUserInput,
+        cognitoSub: `sub-race-${String(i)}`,
+        email: `race-${String(i)}@test.local`,
+        username: `race${String(i)}`,
+      })
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift',
+      })
+
+      const { InsufficientCreditsError } = await import('../credits-errors.js')
+
+      const results = await Promise.allSettled([
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        }),
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        }),
+      ])
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled')
+      const rejected = results.filter((r) => r.status === 'rejected')
+      expect(fulfilled.length).toBe(1)
+      expect(rejected.length).toBe(1)
+      expect(rejected[0]?.reason).toBeInstanceOf(InsufficientCreditsError)
+      expect(await credits.balance(u.id, 'session')).toBe(0)
+    }
+  }, 60_000)
+
+  it('empty-ledger race — both throw InsufficientCreditsError, ledger empty', async () => {
+    const users = createUsersRepo(pool)
+    const credits = createCreditsRepo(pool)
+
+    for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
+      await resetData(pool)
+      const u = await users.create({
+        ...baseUserInput,
+        cognitoSub: `sub-empty-${String(i)}`,
+        email: `empty-${String(i)}@test.local`,
+        username: `empty${String(i)}`,
+      })
+
+      const { InsufficientCreditsError } = await import('../credits-errors.js')
+
+      const results = await Promise.allSettled([
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        }),
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        }),
+      ])
+
+      expect(results.every((r) => r.status === 'rejected')).toBe(true)
+      expect(
+        results.every(
+          (r): boolean =>
+            r.status === 'rejected' && r.reason instanceof InsufficientCreditsError,
+        ),
+      ).toBe(true)
+
+      const ledger = await pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM credit_ledger WHERE user_id = $1`,
+        [u.id],
+      )
+      expect(Number(ledger.rows[0]?.count)).toBe(0)
+    }
+  }, 60_000)
+
+  it('parallel same-sourceId debits — exactly one inserts, other returns same entry', async () => {
+    const users = createUsersRepo(pool)
+    const credits = createCreditsRepo(pool)
+
+    for (let i = 0; i < RACE_ITERATIONS_PAIRED; i++) {
+      await resetData(pool)
+      const u = await users.create({
+        ...baseUserInput,
+        cognitoSub: `sub-same-${String(i)}`,
+        email: `same-${String(i)}@test.local`,
+        username: `same${String(i)}`,
+      })
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+      })
+
+      const sourceId = uuidv7()
+      const [r1, r2] = await Promise.all([
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId,
+        }),
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId,
+        }),
+      ])
+
+      expect(r1.id).toBe(r2.id)
+      expect(await credits.balance(u.id, 'session')).toBe(4)
+
+      const debitCount = await pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM credit_ledger
+          WHERE user_id = $1 AND source_type = 'debit'`,
+        [u.id],
+      )
+      expect(Number(debitCount.rows[0]?.count)).toBe(1)
+    }
+  }, 60_000)
+})
