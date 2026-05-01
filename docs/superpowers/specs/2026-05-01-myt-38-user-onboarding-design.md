@@ -85,6 +85,8 @@ Migration is forward-only; no down migration. The `users` table currently has ze
 - **Per-request `getByCognitoSub` (no caching today).** `requireOnboarded` runs one indexed `SELECT` per protected request, with a `statement_timeout` of 200ms. MYT-39's `loadCurrentUser` will own per-request caching.
 - **`POST /api/invites/:code/accept` returns `200 {campaignId}` even on already-member.** Anyone holding a valid invite code (intentionally shareable) can map code → campaignId. That's a property of the reusable-invite-link UX, not a bug.
 - **Username existence is publicly enumerable** via `GET /api/users/check-username`. Mitigated with per-IP (10/min) + per-cognito-sub (1/min) rate limiting. Accept the leak; future tickets can add CAPTCHA.
+- **Per-recipient invite tracking is impossible** with the reusable-link model. An owner who shares one link with 4 friends and sees 2 acceptances cannot tell *which 2*. That's a product cost of choosing Discord-style reusable links over single-use email-token invites. Future tickets could add an opt-in "name your invitee" hint at create time, but it's not part of MYT-38.
+- **Rate limits ship with `@fastify/rate-limit`'s default in-memory store** as a known gap. In-memory limits scale per task, not per fleet — staging is typically one task, so the limit is correct there; production will run multiple tasks and the effective limit becomes (per-task limit × task count). MYT-45 lands a Redis-backed store before production traffic.
 - **Owner-as-character ambiguity.** Owners may also play characters in their own campaigns (not in MYT-38's scope to ship character creation). MYT-39 / character-creation ticket handles.
 
 ## Load-bearing invariants
@@ -109,7 +111,7 @@ Three independent concerns with thin interfaces:
 | File | Status | Responsibility |
 |---|---|---|
 | `backend/migrations/005_drop_profile_columns_users.sql` | Create | Drops `email`, `display_name`, `avatar_url`, `auth_provider`. Replaces case-sensitive UNIQUE on `username` with `UNIQUE LOWER(username)`. |
-| `backend/src/config/env.ts` | Modify | Add `frontendBaseUrl?: string`. Boot validator: if set, parses as URL; in `staging`/`production`, host MUST be in `{mythrun.com, staging.mythrun.com}`; in `development`, also accepts `localhost`/`127.0.0.1`. Required (non-empty) in `staging`/`production`. |
+| `backend/src/config/env.ts` | Modify | Add `frontendBaseUrl?: string`. Boot validator: if set, parses as URL; in `staging`/`production`, host MUST be in `{mythrun.com, staging.mythrun.com}`; in `development`, also accepts `localhost`/`127.0.0.1`. **Pathname must be `/`, search must be empty, hash must be empty** — otherwise loadEnv throws (closes the open-redirect-via-misconfig surface where a value like `https://staging.mythrun.com/redirect?next=` could compose into a phishing URL). Required (non-empty) in `staging`/`production`. |
 | `backend/src/auth/require-onboarded.ts` | Create | `fastify-plugin` wrapped pre-handler hook + boot-time route enumerator. Skips `public`/`jwt-no-db` routes and 404 fall-throughs; returns 403 if no users row. Throws at boot if any route uses `jwt-no-db` outside the allowlist. |
 | `backend/src/auth/onboarding-errors.ts` | Create | `UsernameInvalidError`, `UsernameTakenError`, `NotCampaignOwnerError`, `NotCampaignMemberError`, `CampaignNotFoundError`, `RateLimitedError`. |
 | `backend/src/llm/profanity.ts` | Create | Stub `classifyProfanity(text): Promise<{profane: boolean; reason?: 'reserved' \| 'profane'}>`. Static deny list of impersonation roots. MYT-44 keeps the deny list as a fast-path. |
@@ -136,7 +138,7 @@ Three independent concerns with thin interfaces:
 - Body: `{username: string}` validated by Zod.
 - Per-IP rate limit: 5 req/min. Per-`cognito_sub` rate limit: 1 req/min. (Username squatting protection.)
 - Statement timeout: 200ms on the connection used for register's read+write.
-- Pipeline: format-check → profanity-check (stub today; deny-list-protected) → INSERT.
+- Pipeline: format-check → profanity-check (stub today; deny-list-protected) → INSERT. **There is NO uniqueness check before the INSERT.** Doing one would be classic check-then-act TOCTOU; the DB-level UNIQUE constraints are the actual line of defense, the implementation catches `23505`. The `check-username` endpoint exists for UX-debounce probing only; it's advisory, not a reservation.
 - The INSERT relies on the DB-level `UNIQUE(cognito_sub)` and `UNIQUE LOWER(username)` constraints as the line of defense. Implementation MUST catch SQLSTATE `23505` and inspect `constraint_name`:
 
   - `users_cognito_sub_key` → caller is already onboarded. Return `200 {user, created: false}` with the existing user row. Idempotent self-call.
@@ -156,7 +158,7 @@ Three independent concerns with thin interfaces:
 - `config.auth = 'jwt-no-db'`.
 - Username via QUERY PARAM (not path).
 - Per-IP rate limit: 10 req/min. Per-`cognito_sub`: 60 req/min (allows debounced typing UX).
-- Returns `200 {available: true} | {available: false, reason: 'invalid' | 'taken' | 'reserved'}`. Discriminated union (no optional `reason`).
+- Returns `200 {available: true} | {available: false, reason: 'invalid' | 'taken' | 'reserved' | 'profane'}`. Discriminated union (no optional `reason`). The `reason` vocabulary matches the `400` body's `reason` from `register` (`'invalid'` here corresponds to `'format'` there — both flag a value that fails the regex; `'taken'` is unique to check-username since register collapses it into a 409 path).
 - `429 {code: 'rate_limited', retryAfterSec: N}` + `Retry-After` header.
 
 ### `GET /api/users/me`
@@ -183,7 +185,7 @@ interface User {
 
 - Default auth.
 - Owner-only: `repo.campaigns.getMembership(:id, currentUserId)` → role must be `'owner'` else 403 `{code: 'not_campaign_owner'}`. If campaign doesn't exist → 404 `{code: 'campaign_not_found'}`.
-- **Cap with proper locking**: open a transaction, `SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE`, count active invites under the lock, INSERT if `count < 25`. Closes the cap-TOCTOU race. Same dual-timeout discipline (lock_timeout 500ms, statement_timeout 2000ms).
+- **Cap with proper locking**: open a transaction with the same MYT-40 triple (`BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '500ms'; SET LOCAL statement_timeout = '2000ms';`), then `SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE`, count active invites under the lock, INSERT if `count < 25`. Closes the cap-TOCTOU race.
 - Past the cap → `409 {code: 'invite_cap_reached', activeInvites: 25}`.
 - Returns `201 {inviteCode, inviteUrl, uses, expiresAt, createdAt}` with `Location: /api/invites/<code>/preview` header.
 
@@ -202,8 +204,8 @@ interface User {
 
 - **`config.auth = 'public'`** — pre-OAuth lookup so the SPA can show "Join Alice's campaign" before sign-in.
 - Per-IP rate limit: 10 req/min (tightened from earlier 30/min after security review flagged code-enumeration risk).
-- `repo.invites.getCodePreview(:inviteCode)` joins `campaign_invites` → `campaigns` → `users`, filtered by `users.suspended_at IS NULL`. Returns minimal payload:
-  - `200 {campaignName: string, ownerUsername: string, valid: boolean}` — `valid: false` if revoked.
+- `repo.invites.getCodePreview(:inviteCode)` joins `campaign_invites` → `campaigns` → `users`, filtered by `users.suspended_at IS NULL`. Per-statement timeout 200ms (matches `requireOnboarded` discipline). Returns minimal payload:
+  - `200 {campaignName: string, ownerUsername: string, valid: boolean}` — `valid: false` if revoked. **Always 200 for codes that exist** (whether revoked or not). The status-code language differs from `accept` deliberately: preview is a lookup that reports state; accept is an action that fails. SPA renders "this invite is no longer active" from `valid: false` without an HTTP-error branch.
   - `404 {code: 'invite_not_found'}` if no such code OR owner is suspended.
   - `429 {code: 'rate_limited', retryAfterSec: N}`.
 - **No campaignId, no inviteId, no createdBy uuid in the response.** Limits the public attack surface.
@@ -264,7 +266,14 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
     for (const route of app.routes()) {
       const cfg = route.config as { auth?: string } | undefined
       if (cfg?.auth === 'jwt-no-db') {
-        const key = `${route.method}::${route.url}`
+        // Normalize: uppercase method, strip trailing slash from URL.
+        // Without normalization, a typo like '/api/users/register/' or
+        // a method-case mismatch would silently slip past the allowlist
+        // (the route would still register, the allowlist key wouldn't
+        // match, fail-closed kicks in — but the diagnostic gets confusing).
+        const method = route.method.toUpperCase()
+        const url = route.url.replace(/\/$/, '') || '/'
+        const key = `${method}::${url}`
         if (!JWT_NO_DB_ALLOWLIST.has(key)) {
           offenders.push(key)
         }
@@ -386,6 +395,8 @@ createInvitesRepo(pool, opts?: { lockTimeoutMs?: number; statementTimeoutMs?: nu
 
 The order of operations matters: a user who is already a member sees `alreadyMember: true` even if the invite was later revoked. Membership trumps revoke.
 
+**Implementation MUST issue BEGIN + the three SET LOCALs as a single multi-statement query string** (`BEGIN; SET LOCAL transaction_isolation='read committed'; SET LOCAL lock_timeout='500ms'; SET LOCAL statement_timeout='2000ms';`) — matches MYT-40 discipline. Do NOT wrap in a transaction-helper that hoists BEGIN/COMMIT; ordering of the SET LOCAL statements relative to BEGIN is load-bearing (they're transaction-scoped).
+
 ```sql
 BEGIN;
 SET LOCAL transaction_isolation = 'read committed';
@@ -401,6 +412,8 @@ SELECT * FROM campaign_invites WHERE invite_code = $1 FOR NO KEY UPDATE;
 SELECT 1 FROM campaign_members
   WHERE campaign_id = <invite.campaign_id> AND user_id = $userId;
 -- found → COMMIT; return {campaignId, alreadyMember: true}
+-- (Skip step 3-5 entirely on this path; uses is NOT incremented because
+--  this user didn't join via this invite — they were already a member.)
 
 -- 3. Expiry check, with the lock held. Only reached for non-members.
 -- expires_at IS NOT NULL AND expires_at <= now() → ROLLBACK; return {revoked: true}
@@ -411,14 +424,23 @@ INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
 VALUES ($id, $campaignId, $userId, 'player', true)
 ON CONFLICT (campaign_id, user_id) DO NOTHING
 RETURNING *;
--- rowCount === 0 (a concurrent accept just landed the row) → COMMIT; return {alreadyMember: true}.
+-- ┌── rowCount === 1 (we inserted): proceed to step 5.
+-- │
+-- └── rowCount === 0 (a concurrent accept by THIS user via a DIFFERENT
+--     invite landed the row a moment ago): COMMIT; return
+--     {campaignId, alreadyMember: true}. Do NOT proceed to step 5;
+--     uses on THIS invite must not be incremented because the user did
+--     not actually join via this invite. This is the load-bearing fix
+--     for the same-user-different-code race.
 
--- 5. Increment uses.
+-- 5. Increment uses — ONLY on the rowCount === 1 path above.
 UPDATE campaign_invites SET uses = uses + 1 WHERE id = $inviteId;
 
 COMMIT;
 -- return {campaignId, alreadyMember: false}
 ```
+
+**Invariant**: `uses` on `campaign_invites` reflects the count of successful joins **via that specific invite**. Equivalently: `uses` increments iff the rowCount-=== 1 branch was taken in step 4 of THIS invite's transaction. A user who joins a campaign via invite A and then visits invite B's URL gets `alreadyMember: true` from step 2; B's `uses` stays unchanged.
 
 Catches:
 - SQLSTATE `55P03` (lock_timeout) → throw `InviteTimeoutError(sqlstate)`.
@@ -446,6 +468,7 @@ listMembers(campaignId: string): Promise<Array<{
   userId: string
   role: CampaignMemberRole
   username: string
+  characterId: string | null   // always null in MYT-38; populated by character-creation ticket. Forward-compat shape.
   joinedAt: Date
 }>>  // join campaign_members → users; filters out users.suspended_at IS NOT NULL
 ```
@@ -509,11 +532,16 @@ All custom subclasses with `readonly code` discriminator + readonly fields.
 // The deny list IS NOT a stub — it's the fast-path that MYT-44 keeps in
 // place before the Haiku call. Independent of MYT-44 progress.
 
+// Hard impersonation roots only. Common D&D / community handles like
+// 'dm', 'owner', 'mod', 'staff', 'team' are intentionally NOT reserved —
+// review found they're plausible legitimate usernames in the Mythrun
+// audience. The list grows when we discover specific impersonation
+// patterns, NOT to cover broad role-words.
 const RESERVED_USERNAMES = new Set([
-  'admin', 'administrator', 'support', 'help', 'system', 'staff',
-  'moderator', 'mod', 'mythrun', 'mythrun_team', 'mythrunhq',
-  'official', 'team', 'anthropic', 'stripe', 'aws', 'cognito',
-  'security', 'root', 'owner', 'dm',
+  'admin', 'administrator', 'support', 'help', 'system', 'security',
+  'mythrun', 'mythrun_team', 'mythrunhq', 'official',
+  'anthropic', 'anthropic_team', 'stripe', 'aws', 'cognito',
+  'root', 'noreply', 'no_reply', 'me', 'null', 'undefined',
 ])
 
 export interface ProfanityResult {
@@ -554,7 +582,9 @@ export async function classifyProfanity(text: string): Promise<ProfanityResult> 
 - `acceptInvite` campaign deleted between invite-create and accept → `{campaignGone: true}` (test inserts an invite, deletes the campaign with `CASCADE` skipped via raw SQL, calls accept, asserts).
 - **Concurrent same-user double-accept** → exactly one membership row, exactly one uses increment.
 - **Concurrent different-user accept** → both succeed; `uses === 2` exactly; the FOR NO KEY UPDATE serializes them.
-- **Concurrent accept-vs-revoke** → if `alreadyMember: false` was returned, `uses ≥ 1` AND member row exists AND any subsequent revoke leaves both intact.
+- **Concurrent accept-vs-revoke (accept wins)** → accept returns `{alreadyMember: false}`, member row exists, `uses === 1`, subsequent revoke succeeds and leaves both intact.
+- **Concurrent accept-vs-revoke (revoke wins)** → accept returns `{revoked: true}`, no member row, `uses === 0`. The FOR NO KEY UPDATE serializes the two: whichever commits first wins.
+- **Concurrent same-user accept on TWO different invites for SAME campaign** → exactly one member row, **uses on each invite is at most 1, and `uses_invite_a + uses_invite_b === 1`** (one join via one of them; the other observes alreadyMember=true at step 2 OR rowCount=0 at step 4 and skips the uses bump). Run 100 iterations.
 - **`lock_timeout` mapping** → hold the invite-row lock on a separate connection, race acceptInvite with `{lockTimeoutMs: 200}`, assert `InviteTimeoutError` with SQLSTATE `55P03`, elapsed in `[150ms, 2000ms]`.
 
 `repo/campaigns.test.ts` extensions:
@@ -592,7 +622,7 @@ export async function classifyProfanity(text: string): Promise<ProfanityResult> 
 - Member calls listMembers → 200 with self in list (only `username` + role + joinedAt fields).
 - Non-member calls listMembers → 403.
 - Public preview valid → 200 with `campaignName, ownerUsername, valid: true`. NO campaignId, NO inviteId.
-- Public preview revoked → 410 (status aligned with accept).
+- Public preview revoked → **200 with `valid: false`** (preview is a lookup; aligns with the spec body, NOT 410. Earlier draft inconsistency caught in round-3 review.)
 - Public preview suspended-owner campaign → 404.
 - Public preview rate limit → 429 after 11th call/min.
 - Bypass-mode dev hits protected route before register → 403 `username_required`.
@@ -623,6 +653,9 @@ export async function classifyProfanity(text: string): Promise<ProfanityResult> 
 - `frontendBaseUrl=http://localhost:5173` in development → loadEnv passes.
 - `frontendBaseUrl=http://localhost:5173` in staging or production → loadEnv throws.
 - `frontendBaseUrl` unset in staging or production → loadEnv throws.
+- `frontendBaseUrl=https://staging.mythrun.com/redirect` (path component) → loadEnv throws.
+- `frontendBaseUrl=https://staging.mythrun.com/?next=foo` (query) → loadEnv throws.
+- `frontendBaseUrl=https://staging.mythrun.com/#bar` (hash) → loadEnv throws.
 
 ## Spec deviations
 
