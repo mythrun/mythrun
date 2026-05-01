@@ -261,5 +261,92 @@ describe('credits repo (integration)', () => {
         }),
       ).rejects.toBeInstanceOf(UserNotFoundError)
     })
+
+    it('idempotent retry returns the prior entry, no second insert', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+
+      const sourceId = uuidv7()
+      const first = await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId,
+      })
+      const second = await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId,
+      })
+
+      expect(second.id).toBe(first.id)
+      expect(await credits.balance(u.id, 'session')).toBe(4)
+
+      // Verify only one debit row exists.
+      const count = await pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM credit_ledger
+          WHERE user_id = $1 AND source_type = 'debit'`,
+        [u.id],
+      )
+      expect(Number(count.rows[0]?.count)).toBe(1)
+    })
+
+    it('idempotency conflict on amount mismatch throws IdempotencyConflictError', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+
+      const sourceId = uuidv7()
+      await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId,
+      })
+
+      const { IdempotencyConflictError } = await import('../credits-errors.js')
+      await expect(
+        credits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 2, sourceId,
+        }),
+      ).rejects.toBeInstanceOf(IdempotencyConflictError)
+
+      // Ledger unchanged: still one debit row of -1.
+      const result = await pool.query<{ amount: number }>(
+        `SELECT amount FROM credit_ledger WHERE user_id = $1 AND source_type = 'debit'`,
+        [u.id],
+      )
+      expect(result.rows.map((r) => r.amount)).toEqual([-1])
+    })
+
+    it('different sourceIds stay distinct', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+
+      await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+      })
+      await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+      })
+
+      expect(await credits.balance(u.id, 'session')).toBe(3)
+    })
+
+    it('cross-credit-type same sourceId both succeed (sequential)', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 2, sourceType: 'gift' })
+
+      const sharedSourceId = uuidv7()
+      await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId: sharedSourceId,
+      })
+      await credits.atomicDebit({
+        userId: u.id, creditType: 'world_gen', amount: 1, sourceId: sharedSourceId,
+      })
+
+      expect(await credits.balance(u.id, 'session')).toBe(4)
+      expect(await credits.balance(u.id, 'world_gen')).toBe(1)
+    })
   })
 })
