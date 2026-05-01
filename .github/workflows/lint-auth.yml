@@ -1,0 +1,29 @@
+name: Auth Lint
+
+on:
+  pull_request:
+    paths:
+      - 'backend/src/**'
+      - '.github/workflows/lint-auth.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/src/**'
+
+jobs:
+  forbid-unsafe-user-access:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Forbid `request.user!` and `request.user?` outside auth/__tests__
+        run: |
+          set -euo pipefail
+          # Search backend/src/, exclude the auth/ module itself and any __tests__/.
+          if grep -rEn 'request\.user[!?]\.|request\.user as ' \
+              backend/src/ --include='*.ts' \
+              --exclude-dir=__tests__ --exclude-dir=auth; then
+            echo ""
+            echo "::error::Found request.user! / request.user?. / (request.user as) usage. Use requireUser(request) instead."
+            exit 1
+          fi
+          echo "Auth-narrowing pattern check passed."

@@ -147,6 +147,23 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AUTH_MODE is set in the latest task-def
+        run: |
+          set -euo pipefail
+          LATEST=$(aws ecs describe-task-definition \
+            --task-definition mythrun-staging-api \
+            --query 'taskDefinition.containerDefinitions[0].environment[?name==`AUTH_MODE`].value' \
+            --output text)
+          if [[ -z "$LATEST" ]]; then
+            echo "::error::AUTH_MODE not set in mythrun-staging-api task-def. Phase A (terraform apply) must run before this deploy."
+            exit 1
+          fi
+          if [[ "$LATEST" != "real" ]]; then
+            echo "::error::AUTH_MODE in mythrun-staging-api task-def is '$LATEST', not 'real'. Bypass mode in staging/production is rejected by this gate."
+            exit 1
+          fi
+          echo "AUTH_MODE=$LATEST verified."
+
       - name: Fetch current task definition
         # The render-task-definition action strips read-only fields itself;
         # no jq 'del(...)' pre-strip needed.
