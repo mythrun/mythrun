@@ -15,7 +15,7 @@ export class InsufficientCreditsError extends Error {
     readonly requested: number,
   ) {
     super(
-      `Insufficient ${creditType} credits: have ${available}, need ${requested}`,
+      `Insufficient ${creditType} credits: have ${String(available)}, need ${String(requested)}`,
     )
     this.name = 'InsufficientCreditsError'
   }
@@ -30,8 +30,8 @@ export class IdempotencyConflictError extends Error {
     readonly requestedAmount: number,
   ) {
     super(
-      `Debit with sourceId=${sourceId} already exists for amount ${existingAmount}, ` +
-        `but caller requested amount ${requestedAmount}. Same idempotency key cannot ` +
+      `Debit with sourceId=${sourceId} already exists for amount ${String(existingAmount)}, ` +
+        `but caller requested amount ${String(requestedAmount)}. Same idempotency key cannot ` +
         `be reused for different debits.`,
     )
     this.name = 'IdempotencyConflictError'
