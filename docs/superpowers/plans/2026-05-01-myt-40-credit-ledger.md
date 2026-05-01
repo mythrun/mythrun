@@ -13,6 +13,27 @@
 
 ---
 
+## ⚠️ Plan correction (2026-05-01, after T7 implementation)
+
+**`source_id` is `UUID`-typed** (per spec §137 and `001_initial_schema.sql:30`). All test-fixture sourceId values in the plan below that show as literal strings (`'session-1'`, `'s-1'`, `'shared-id'`, `'lock-test'`, etc.) are illustrative placeholders — **implementers must substitute valid UUIDs**. The canonical pattern is:
+
+```typescript
+import { uuidv7 } from '../uuidv7.js'
+
+// Inside a test:
+const sourceId = uuidv7()
+const entry = await credits.atomicDebit({ ..., sourceId })
+expect(entry.sourceId).toBe(sourceId)
+```
+
+For tests that need distinct sourceIds, generate each via a separate `uuidv7()` call. For race tests with per-iteration sourceIds, generate inside the loop (`const sourceId = uuidv7()`). For tests that only need a UUID for validation (the call must fail before the SQL even sees the sourceId), an inline `sourceId: uuidv7()` is sufficient.
+
+This applies to T8, T9, T11, T13, T14 fixtures throughout the plan below.
+
+Also note: the `INSERT INTO credit_ledger ... VALUES (..., -$4, ...)` form in T7's atomicDebit failed at runtime because Postgres can't resolve the `-` operator over an unknown-typed parameter. Fix is to compute the negative amount in JS (`-input.amount`) and pass as a normal parameter (`VALUES (..., $4, ...)` with `[..., -input.amount, ...]`). This was applied during T7 commit.
+
+---
+
 ## File Structure
 
 | File | Status | Responsibility |
