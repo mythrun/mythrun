@@ -1,4 +1,12 @@
-import type { Campaign, Session, User, World } from './types.js'
+import type {
+  Campaign,
+  CreditEntry,
+  CreditSourceType,
+  CreditType,
+  Session,
+  User,
+  World,
+} from './types.js'
 
 // ─── DB row interfaces (snake_case, exactly as Postgres returns) ─────────────
 
@@ -176,5 +184,52 @@ export function toSession(row: SessionDbRow): Session {
     summary: row.summary,
     stRunningSummary: row.st_running_summary,
     handoff: row.handoff,
+  }
+}
+
+// ─── Credits ─────────────────────────────────────────────────────────────────
+
+export interface CreditEntryDbRow {
+  readonly id: string
+  readonly user_id: string
+  readonly credit_type: string
+  readonly amount: number
+  readonly source_type: string
+  readonly source_id: string | null
+  readonly granted_at: Date
+  readonly expires_at: Date | null
+}
+
+function toCreditType(v: string): CreditType {
+  if (v !== 'session' && v !== 'world_gen') {
+    throw new Error(`unexpected credit_type value from DB: ${v}`)
+  }
+  return v
+}
+
+function toCreditSourceType(v: string): CreditSourceType {
+  if (
+    v !== 'purchase' &&
+    v !== 'subscription' &&
+    v !== 'gift' &&
+    v !== 'trial' &&
+    v !== 'refund' &&
+    v !== 'debit'
+  ) {
+    throw new Error(`unexpected source_type value from DB: ${v}`)
+  }
+  return v
+}
+
+export function toCreditEntry(row: CreditEntryDbRow): CreditEntry {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    creditType: toCreditType(row.credit_type),
+    amount: row.amount,
+    sourceType: toCreditSourceType(row.source_type),
+    sourceId: row.source_id,
+    grantedAt: row.granted_at,
+    expiresAt: row.expires_at,
   }
 }
