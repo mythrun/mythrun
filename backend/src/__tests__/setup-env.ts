@@ -15,8 +15,8 @@ config({ path: resolve(here, '../../../.env.development') })
 // baseline. Plain assignment (not vi.stubEnv) so the values survive
 // vi.unstubAllEnvs() between tests. Tests that override via vi.stubEnv
 // still work; vi.unstubAllEnvs restores TO this baseline, not to undefined.
-if (!process.env.AUTH_MODE) process.env.AUTH_MODE = 'bypass'
-if (!process.env.NODE_ENV) process.env.NODE_ENV = 'development'
+process.env.AUTH_MODE ??= 'bypass'
+process.env.NODE_ENV ??= 'development'
 
 // Global teardown: any test that uses `vi.stubEnv(...)` to mutate process.env
 // gets cleanup automatically so env-mutations don't leak to sibling tests
