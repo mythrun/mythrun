@@ -86,6 +86,7 @@ Migration is forward-only; no down migration. The `users` table currently has ze
 - **`POST /api/invites/:code/accept` returns `200 {campaignId}` even on already-member.** Anyone holding a valid invite code (intentionally shareable) can map code → campaignId. That's a property of the reusable-invite-link UX, not a bug.
 - **Username existence is publicly enumerable** via `GET /api/users/check-username`. Mitigated with per-IP (10/min) + per-cognito-sub (1/min) rate limiting. Accept the leak; future tickets can add CAPTCHA.
 - **Per-recipient invite tracking is impossible** with the reusable-link model. An owner who shares one link with 4 friends and sees 2 acceptances cannot tell *which 2*. That's a product cost of choosing Discord-style reusable links over single-use email-token invites. Future tickets could add an opt-in "name your invitee" hint at create time, but it's not part of MYT-38.
+- **OAuth round-trip carrier for the invite code is the SPA's responsibility, not this ticket's.** When an unsigned-in user clicks `mythrun.com/join/<code>`, the SPA needs to preserve the code through Cognito's OAuth redirect dance and resume `POST /api/invites/:code/accept` after onboarding completes. Recommended carrier: encode `redirect=/join/<code>` in Cognito's OAuth `state` parameter (survives all provider redirects, including cross-tab and mobile contexts; sessionStorage does not). Backend's contribution to this flow is the `/preview` endpoint (public, lets SPA render campaign name pre-OAuth) + the OAuth-app config (Cognito Hosted UI accepts `state` round-trip out of the box). The frontend ticket owns the actual implementation; this design declares the contract so it doesn't fall on the floor.
 - **Rate limits ship with `@fastify/rate-limit`'s default in-memory store** as a known gap. In-memory limits scale per task, not per fleet — staging is typically one task, so the limit is correct there; production will run multiple tasks and the effective limit becomes (per-task limit × task count). MYT-45 lands a Redis-backed store before production traffic.
 - **Owner-as-character ambiguity.** Owners may also play characters in their own campaigns (not in MYT-38's scope to ship character creation). MYT-39 / character-creation ticket handles.
 
@@ -111,7 +112,7 @@ Three independent concerns with thin interfaces:
 | File | Status | Responsibility |
 |---|---|---|
 | `backend/migrations/005_drop_profile_columns_users.sql` | Create | Drops `email`, `display_name`, `avatar_url`, `auth_provider`. Replaces case-sensitive UNIQUE on `username` with `UNIQUE LOWER(username)`. |
-| `backend/src/config/env.ts` | Modify | Add `frontendBaseUrl?: string`. Boot validator: if set, parses as URL; in `staging`/`production`, host MUST be in `{mythrun.com, staging.mythrun.com}`; in `development`, also accepts `localhost`/`127.0.0.1`. **Pathname must be `/`, search must be empty, hash must be empty** — otherwise loadEnv throws (closes the open-redirect-via-misconfig surface where a value like `https://staging.mythrun.com/redirect?next=` could compose into a phishing URL). Required (non-empty) in `staging`/`production`. |
+| `backend/src/config/env.ts` | Modify | Add `frontendBaseUrl: string` (REQUIRED in every env; default `http://localhost:5173` for `development`). Boot validator: parses as URL; in `staging`/`production`, host MUST be in `{mythrun.com, staging.mythrun.com}`; in `development`, also accepts `localhost`/`127.0.0.1`. **Pathname must be `/`, search must be empty, hash must be empty** — otherwise loadEnv throws (closes the open-redirect-via-misconfig surface where a value like `https://staging.mythrun.com/redirect?next=` could compose into a phishing URL). The value is used ONLY for composing `inviteUrl` in `POST /api/campaigns/:id/invites` responses; never concatenated with user-controlled suffix into any redirect target. |
 | `backend/src/auth/require-onboarded.ts` | Create | `fastify-plugin` wrapped pre-handler hook + boot-time route enumerator. Skips `public`/`jwt-no-db` routes and 404 fall-throughs; returns 403 if no users row. Throws at boot if any route uses `jwt-no-db` outside the allowlist. |
 | `backend/src/auth/onboarding-errors.ts` | Create | `UsernameInvalidError`, `UsernameTakenError`, `NotCampaignOwnerError`, `NotCampaignMemberError`, `CampaignNotFoundError`, `RateLimitedError`. |
 | `backend/src/llm/profanity.ts` | Create | Stub `classifyProfanity(text): Promise<{profane: boolean; reason?: 'reserved' \| 'profane'}>`. Static deny list of impersonation roots. MYT-44 keeps the deny list as a fast-path. |
@@ -141,16 +142,19 @@ Three independent concerns with thin interfaces:
 - Pipeline: format-check → profanity-check (stub today; deny-list-protected) → INSERT. **There is NO uniqueness check before the INSERT.** Doing one would be classic check-then-act TOCTOU; the DB-level UNIQUE constraints are the actual line of defense, the implementation catches `23505`. The `check-username` endpoint exists for UX-debounce probing only; it's advisory, not a reservation.
 - The INSERT relies on the DB-level `UNIQUE(cognito_sub)` and `UNIQUE LOWER(username)` constraints as the line of defense. Implementation MUST catch SQLSTATE `23505` and inspect `constraint_name`:
 
-  - `users_cognito_sub_key` → caller is already onboarded. Return `200 {user, created: false}` with the existing user row. Idempotent self-call.
-  - `users_username_lower_key` → username taken. Return `409 {code: 'username_taken', suggestion: '<original><2-3 random digits>'}`. The suggestion is itself piped through profanity/format checks before being returned (so we don't suggest `admin42`).
+  - `users_cognito_sub_key` → caller is already onboarded. Read the existing row (fresh single-statement SELECT, NOT inside any transaction — avoids snapshot-isolation surprises if a future refactor wraps register in a tx) and branch:
+     - **If the existing row's `LOWER(username) === LOWER(req.body.username)`** → caller is replaying the same request. Return `200 {user, created: false}` with `Content-Location: /api/users/me`. (NOT `Location` — RFC 7231 says `Content-Location` is the right header on 200 to point at the canonical URL of the response body.)
+     - **If the usernames differ** → caller is already onboarded as someone else; the request body would otherwise be silently discarded. Return `409 {code: 'already_onboarded', user, requestedUsername}` with the existing user row + the username from the request so the SPA can show "you're already signed in as @bob; log out to register a new account." NEVER 200 on a body-mismatched replay.
+  - `users_username_lower_key` → username taken. Return `409 {code: 'username_taken', suggestion: '<original><2-3 random digits>'}`. The suggestion is itself piped through profanity/format checks before being returned (so we don't suggest `admin42`). The suggestion is best-effort, not a reservation; the SPA must call check-username on the suggestion before final submit.
 
   Any other 23505 (or other error) → propagate as 500.
 
 **Responses:**
 - `201 {user, created: true}` — new row created. `Location: /api/users/me` header.
-- `200 {user, created: false}` — caller's `cognito_sub` already has a row. `Location: /api/users/me` header.
+- `200 {user, created: false}` — caller's `cognito_sub` already has a row AND the requested username matches. Idempotent replay. `Content-Location: /api/users/me` header.
 - `400 {code: 'username_invalid', reason: 'format' | 'profane' | 'reserved'}`.
 - `409 {code: 'username_taken', suggestion: 'gandalf42'}`.
+- `409 {code: 'already_onboarded', user, requestedUsername}` — caller is onboarded as a DIFFERENT username than the one they posted. SPA shows "log out to register a new account."
 - `429 {code: 'rate_limited', retryAfterSec: N}` + `Retry-After` header.
 
 ### `GET /api/users/check-username?username=<value>`
@@ -158,7 +162,7 @@ Three independent concerns with thin interfaces:
 - `config.auth = 'jwt-no-db'`.
 - Username via QUERY PARAM (not path).
 - Per-IP rate limit: 10 req/min. Per-`cognito_sub`: 60 req/min (allows debounced typing UX).
-- Returns `200 {available: true} | {available: false, reason: 'invalid' | 'taken' | 'reserved' | 'profane'}`. Discriminated union (no optional `reason`). The `reason` vocabulary matches the `400` body's `reason` from `register` (`'invalid'` here corresponds to `'format'` there — both flag a value that fails the regex; `'taken'` is unique to check-username since register collapses it into a 409 path).
+- Returns `200 {available: true} | {available: false, reason: 'format' | 'taken' | 'reserved' | 'profane'}`. Discriminated union (no optional `reason`). **The `reason` vocabulary is identical to `register`'s** (`'format' | 'profane' | 'reserved'`) plus `'taken'` which is unique to this lookup endpoint. SPA can use one Zod schema for both endpoints' reason fields.
 - `429 {code: 'rate_limited', retryAfterSec: N}` + `Retry-After` header.
 
 ### `GET /api/users/me`
@@ -187,12 +191,12 @@ interface User {
 - Owner-only: `repo.campaigns.getMembership(:id, currentUserId)` → role must be `'owner'` else 403 `{code: 'not_campaign_owner'}`. If campaign doesn't exist → 404 `{code: 'campaign_not_found'}`.
 - **Cap with proper locking**: open a transaction with the same MYT-40 triple (`BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '500ms'; SET LOCAL statement_timeout = '2000ms';`), then `SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE`, count active invites under the lock, INSERT if `count < 25`. Closes the cap-TOCTOU race.
 - Past the cap → `409 {code: 'invite_cap_reached', activeInvites: 25}`.
-- Returns `201 {inviteCode, inviteUrl, uses, expiresAt, createdAt}` with `Location: /api/invites/<code>/preview` header.
+- Returns `201 {inviteCode, inviteUrl, uses, expiresAt, createdAt}` with `Location: /api/invites/<code>/preview` header. **`inviteUrl` is always present** (`${env.frontendBaseUrl}/join/${inviteCode}`); `frontendBaseUrl` is required in every env per the env validator above. The frontend never has to compose the URL itself.
 
 ### `GET /api/campaigns/:id/invites`
 
 - Default auth, owner-only.
-- Returns `200 {invites: [{inviteCode, inviteUrl, uses, expiresAt, createdAt, primary}, ...]}`. The `primary: boolean` field marks the first (oldest, non-revoked) invite — surfaces the canonical "share this" link for the SPA's "Copy Link" affordance. Owners can choose to ignore it; the field is informational.
+- Returns `200 {invites: [{inviteCode, inviteUrl, uses, expiresAt, createdAt, primary}, ...], cursor: null}`. The `primary: boolean` field marks the first (oldest, non-revoked) invite — surfaces the canonical "share this" link. Recomputed per-request: if the owner revokes the current primary, the next-oldest non-revoked becomes primary on the next list call. SPAs caching the value should refetch after any mutation. The `cursor: null` is reserved for future pagination (cap is 25 active so unused at launch).
 
 ### `DELETE /api/campaigns/:id/invites/:inviteId`
 
@@ -221,7 +225,7 @@ interface User {
   - `200 {campaignId, alreadyMember: false}` — happy path; new membership.
   - `200 {campaignId, alreadyMember: true}` — user is already in the campaign; idempotent. **Returned even for codes that are now revoked** — being a member trumps the revoke flag (you're already in, who cares the link expired).
   - `404 {code: 'invite_not_found'}`.
-  - `410 {code: 'invite_revoked'}` + `Retry-After: never` semantic (no auto-retry).
+  - `410 {code: 'invite_revoked'}` (no `Retry-After`; the SPA must not auto-retry).
   - `410 {code: 'campaign_gone'}` if the campaign was deleted between invite-create and accept (catches FK violation `23503`).
   - `503 {code: 'invite_timeout', retryAfterSec: 1}` + `Retry-After: 1` — `lock_timeout` (55P03) or `statement_timeout` (57014) fired.
   - `429 {code: 'rate_limited', retryAfterSec: N}` + `Retry-After` header.
@@ -230,7 +234,7 @@ interface User {
 
 - Default auth, ANY MEMBER.
 - `repo.campaigns.listMembers(:id)` returns `[{userId, role, username, joinedAt}, ...]`. **No display name, no email, no avatar URL** — those columns no longer exist. Frontend renders `@{username}` for each.
-- `200 {members: [...]}`.
+- `200 {members: [...], cursor: null}`. The `cursor` is always `null` in MYT-38 (no pagination needed at launch scale — campaigns have ≤ ~10 players). Field exists for future-compat: when pagination ships, the response shape stays the same and `cursor` becomes a paging token.
 - `403 {code: 'not_campaign_member'}` if caller isn't a member.
 - `404 {code: 'campaign_not_found'}`.
 
@@ -257,26 +261,40 @@ const JWT_NO_DB_ALLOWLIST = new Set<string>([
 const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
   const users = createUsersRepo(opts.pool)
 
-  // Boot-time enumeration: enforce the jwt-no-db allowlist by walking
-  // every registered route. Fails app.ready() if any route uses
-  // 'jwt-no-db' outside the allowlist. Runtime check sees the actual
-  // config value regardless of how the source spelled it.
+  // Boot-time enumeration: enforce the jwt-no-db allowlist by collecting
+  // every route's config at registration via Fastify's onRoute hook
+  // (Fastify v5 has no stable public app.routes() API; the canonical
+  // pattern is onRoute → collect → validate in onReady). Fails
+  // app.ready() if any route uses 'jwt-no-db' outside the allowlist.
+  // Runtime check sees the actual config value regardless of how the
+  // source spelled it.
+  const observedJwtNoDbRoutes: Array<{ method: string; url: string }> = []
+  app.addHook('onRoute', (routeOptions) => {
+    const cfg = routeOptions.config as { auth?: string } | undefined
+    if (cfg?.auth === 'jwt-no-db') {
+      // routeOptions.method may be a string OR string[] (multi-method route).
+      const methods = Array.isArray(routeOptions.method)
+        ? routeOptions.method
+        : [routeOptions.method]
+      for (const m of methods) {
+        observedJwtNoDbRoutes.push({ method: m, url: routeOptions.url })
+      }
+    }
+  })
+
   app.addHook('onReady', async () => {
     const offenders: string[] = []
-    for (const route of app.routes()) {
-      const cfg = route.config as { auth?: string } | undefined
-      if (cfg?.auth === 'jwt-no-db') {
-        // Normalize: uppercase method, strip trailing slash from URL.
-        // Without normalization, a typo like '/api/users/register/' or
-        // a method-case mismatch would silently slip past the allowlist
-        // (the route would still register, the allowlist key wouldn't
-        // match, fail-closed kicks in — but the diagnostic gets confusing).
-        const method = route.method.toUpperCase()
-        const url = route.url.replace(/\/$/, '') || '/'
-        const key = `${method}::${url}`
-        if (!JWT_NO_DB_ALLOWLIST.has(key)) {
-          offenders.push(key)
-        }
+    for (const { method, url } of observedJwtNoDbRoutes) {
+      // Normalize: uppercase method, strip trailing slash from URL.
+      // Without normalization, a typo like '/api/users/register/' or a
+      // method-case mismatch would silently slip past the allowlist
+      // (the route would still register, the allowlist key wouldn't
+      // match, fail-closed kicks in — but the diagnostic gets confusing).
+      const normalizedMethod = method.toUpperCase()
+      const normalizedUrl = url.replace(/\/$/, '') || '/'
+      const key = `${normalizedMethod}::${normalizedUrl}`
+      if (!JWT_NO_DB_ALLOWLIST.has(key)) {
+        offenders.push(key)
       }
     }
     if (offenders.length > 0) {
@@ -409,6 +427,14 @@ SELECT * FROM campaign_invites WHERE invite_code = $1 FOR NO KEY UPDATE;
 
 -- 2. Membership check FIRST. If the caller is already a member of the
 --    invite's campaign, they short-circuit success regardless of expiry.
+--    NOTE for future authors: this SELECT does NOT take a row lock today.
+--    That's safe in MYT-38 because there is no removeMember endpoint —
+--    `campaign_members` rows are append-only. WHEN removeMember ships
+--    (campaign-membership ticket), this SELECT must either become
+--    `SELECT … FOR SHARE` (block concurrent removes) OR the entire
+--    membership-check path must be replaced by an INSERT-first pattern
+--    (let step 4's ON CONFLICT do the membership detection). Filed as
+--    a forward-compat concern in the campaign-membership ticket.
 SELECT 1 FROM campaign_members
   WHERE campaign_id = <invite.campaign_id> AND user_id = $userId;
 -- found → COMMIT; return {campaignId, alreadyMember: true}
@@ -506,9 +532,11 @@ function generateInviteCode(): string {
 | `InviteCapReachedError` | invite create | 409 | `{code: 'invite_cap_reached', activeInvites: 25}` |
 | `InviteNotFoundError` | accept, revoke (combined w/ wrong-campaign), preview | 404 | `{code: 'invite_not_found'}` |
 | `InviteRevokedError` | accept (non-member only) | 410 | `{code: 'invite_revoked'}` |
-| `InviteTimeoutError` | accept | 503 | `{code: 'invite_timeout', retryAfterSec: 1}` + `Retry-After: 1` header |
+| `InviteTimeoutError` | accept | 503 | `{code: 'invite_timeout', retryAfterSec: 1, cause: 'lock' \| 'statement'}` + `Retry-After: 1` header. The `cause` discriminator splits SQLSTATE 55P03 (lock_timeout — contention) from 57014 (statement_timeout — slow query); dashboards can graph them separately. |
 | `LookupTimeoutError` | hook (rare) | 503 | `{code: 'lookup_timeout', retryAfterSec: 1}` + `Retry-After: 1` header |
 | `RateLimitedError` | every endpoint with a rate limit | 429 | `{code: 'rate_limited', retryAfterSec: N}` + `Retry-After: N` header |
+
+**Error-body shape contract**: every error body has `{code: string}` + an optional `message?: string` for human-readable display + zero-or-more error-specific fields. SPAs branch on `code`, render `message` if present (fallback to a localized string keyed off `code` if absent).
 
 All custom subclasses with `readonly code` discriminator + readonly fields.
 
@@ -583,7 +611,7 @@ export async function classifyProfanity(text: string): Promise<ProfanityResult> 
 - **Concurrent same-user double-accept** → exactly one membership row, exactly one uses increment.
 - **Concurrent different-user accept** → both succeed; `uses === 2` exactly; the FOR NO KEY UPDATE serializes them.
 - **Concurrent accept-vs-revoke (accept wins)** → accept returns `{alreadyMember: false}`, member row exists, `uses === 1`, subsequent revoke succeeds and leaves both intact.
-- **Concurrent accept-vs-revoke (revoke wins)** → accept returns `{revoked: true}`, no member row, `uses === 0`. The FOR NO KEY UPDATE serializes the two: whichever commits first wins.
+- **Concurrent accept-vs-revoke (revoke wins)** → accept returns either `{revoked: true}` (revoke commits before accept's lock acquisition) OR `503 InviteTimeoutError` (revoke holds the row long enough that accept's `lock_timeout = 500ms` fires with SQLSTATE 55P03). Both outcomes are correct; the test asserts one OR the other, not just `{revoked: true}`.
 - **Concurrent same-user accept on TWO different invites for SAME campaign** → exactly one member row, **uses on each invite is at most 1, and `uses_invite_a + uses_invite_b === 1`** (one join via one of them; the other observes alreadyMember=true at step 2 OR rowCount=0 at step 4 and skips the uses bump). Run 100 iterations.
 - **`lock_timeout` mapping** → hold the invite-row lock on a separate connection, race acceptInvite with `{lockTimeoutMs: 200}`, assert `InviteTimeoutError` with SQLSTATE `55P03`, elapsed in `[150ms, 2000ms]`.
 
