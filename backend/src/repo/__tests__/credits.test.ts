@@ -349,4 +349,52 @@ describe('credits repo (integration)', () => {
       expect(await credits.balance(u.id, 'world_gen')).toBe(1)
     })
   })
+
+  describe('listEntries()', () => {
+    it('returns DESC by (granted_at, id), default limit 100', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+
+      const a = await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+      const b = await credits.grant({ userId: u.id, creditType: 'session', amount: 3, sourceType: 'gift' })
+      const c = await credits.atomicDebit({
+        userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+      })
+
+      const entries = await credits.listEntries(u.id)
+      const ids = entries.map((e) => e.id)
+      expect(entries.length).toBe(3)
+      // Most recent first.
+      expect(ids[0]).toBe(c.id)
+      expect(ids).toContain(a.id)
+      expect(ids).toContain(b.id)
+    })
+
+    it('credit-type filter narrows', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 1, sourceType: 'gift' })
+
+      const sessionOnly = await credits.listEntries(u.id, { type: 'session' })
+      expect(sessionOnly.length).toBe(1)
+      expect(sessionOnly[0]?.creditType).toBe('session')
+    })
+
+    it('includes expired entries (audit view, not balance view)', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+        expiresAt: new Date(Date.now() - 86_400_000),
+      })
+      const all = await credits.listEntries(u.id)
+      expect(all.length).toBe(1)
+      // Balance excludes expired.
+      expect(await credits.balance(u.id, 'session')).toBe(0)
+    })
+  })
 })

@@ -1,10 +1,11 @@
 import { type Pool, type PoolClient } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import { toCreditEntry, type CreditEntryDbRow } from './mappers.js'
-import type { CreditEntry, CreditType, DebitInput, GrantInput } from './types.js'
+import type { CreditEntry, CreditType, DebitInput, GrantInput, ListEntriesOpts } from './types.js'
 import {
   DEBIT_LOCK_TIMEOUT_MS,
   DEBIT_STATEMENT_TIMEOUT_MS,
+  DEFAULT_LIST_LIMIT,
   IdempotencyConflictError,
   InsufficientCreditsError,
   UserNotFoundError,
@@ -214,6 +215,31 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
       } finally {
         client.release()
       }
+    },
+
+    listEntries: async (
+      userId: string,
+      opts: ListEntriesOpts = {},
+    ): Promise<CreditEntry[]> => {
+      const limit = opts.limit === null ? null : opts.limit ?? DEFAULT_LIST_LIMIT
+      const params: unknown[] = [userId]
+      let typeClause = ''
+      if (opts.type) {
+        params.push(opts.type)
+        typeClause = ` AND credit_type = $${String(params.length)}`
+      }
+      let limitClause = ''
+      if (limit !== null) {
+        params.push(limit)
+        limitClause = ` LIMIT $${String(params.length)}`
+      }
+      const result = await pool.query<CreditEntryDbRow>(
+        `SELECT * FROM credit_ledger
+          WHERE user_id = $1${typeClause}
+          ORDER BY granted_at DESC, id DESC${limitClause}`,
+        params,
+      )
+      return result.rows.map(toCreditEntry)
     },
   }
 }
