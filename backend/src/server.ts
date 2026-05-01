@@ -2,12 +2,25 @@ import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { AppDeps } from './app-deps.js'
 import { buildApp, createShutdown } from './app.js'
-import { loadEnv } from './config/env.js'
+import type { RegisterAuthOptions } from './auth/index.js'
+import { loadEnv, type Env } from './config/env.js'
 import { installSignalHandlers } from './boot/signal-handlers.js'
 import { waitFor } from './boot/wait-for.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
 import { createRepo } from './repo/index.js'
+
+// Build a RegisterAuthOptions from a loaded Env without emitting `undefined`
+// fields explicitly — exactOptionalPropertyTypes forbids `userPoolId: undefined`
+// against a `userPoolId?: string` signature.
+function buildAuthOpts(env: Env): RegisterAuthOptions {
+  const opts: RegisterAuthOptions = { mode: env.authMode }
+  if (env.cognitoUserPoolId !== undefined) opts.userPoolId = env.cognitoUserPoolId
+  if (env.cognitoAppClientId !== undefined) opts.appClientId = env.cognitoAppClientId
+  if (env.cognitoIssuerUrl !== undefined) opts.issuerUrl = env.cognitoIssuerUrl
+  if (env.cognitoHostedUiDomain !== undefined) opts.hostedUiDomain = env.cognitoHostedUiDomain
+  return opts
+}
 
 async function closePartials(
   pg: Pool | undefined,
@@ -35,10 +48,18 @@ function bootGateEnabled(): boolean {
 }
 
 async function fallbackStart(): Promise<void> {
-  // Boot-gate-disabled path: equivalent to the MYT-28 entrypoint.
-  // No env validation, no client creation, no data-layer probes.
-  // /health works; everything else is dormant until the boot gate is
-  // enabled.
+  // Boot-gate-disabled path: equivalent to the MYT-28 entrypoint with
+  // auth wiring layered on top (MYT-37). No client creation, no
+  // data-layer probes — /health works, the auth plugin is registered so
+  // future protected routes report 401 instead of 500, and everything
+  // else is dormant until the boot gate is enabled.
+  //
+  // loadEnv() is still called: AUTH_MODE + Cognito vars are required to
+  // build authOpts. The DB/Redis URLs it constructs go unused on this
+  // path (the stub pool/redis below ignore them) but the env contract
+  // remains a single source of truth.
+  const env = loadEnv()
+  const authOpts = buildAuthOpts(env)
   const stubPool = {
     end: () => Promise.resolve(),
     query: () => {
@@ -51,9 +72,8 @@ async function fallbackStart(): Promise<void> {
     redisBatch: { quit: () => Promise.resolve('OK') } as unknown as Redis,
     repo: createRepo(stubPool),
   }
-  const app = buildApp(stubDeps)
-  const port = Number(process.env.PORT ?? 3000)
-  await app.listen({ port, host: '0.0.0.0' })
+  const app = await buildApp(stubDeps, authOpts)
+  await app.listen({ port: env.port, host: '0.0.0.0' })
   const handleShutdown = createShutdown(app, stubDeps)
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, () => void handleShutdown(signal))
@@ -110,7 +130,11 @@ export async function main(): Promise<void> {
     console.log('✓ Redis (batch) ready')
 
     const repo = createRepo(pgRef)
-    const app = buildApp({ pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo })
+    const authOpts = buildAuthOpts(env)
+    const app = await buildApp(
+      { pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo },
+      authOpts,
+    )
     await app.listen({ port: env.port, host: '0.0.0.0' })
 
     const handleShutdown = createShutdown(app, {
