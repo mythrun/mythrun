@@ -641,4 +641,55 @@ describe('credits repo — concurrency (separate pool)', () => {
       expect(Number(debitCount.rows[0]?.count)).toBe(1)
     }
   }, 60_000)
+
+  it('lock_timeout fires DebitTimeoutError with sqlstate=55P03', async () => {
+    const users = createUsersRepo(pool)
+    const credits = createCreditsRepo(pool)
+    // Tighten the lock timeout for this test so we don't wait the full 1s default.
+    const fastCredits = createCreditsRepo(pool, { debitLockTimeoutMs: 200 })
+
+    const u = await users.create({
+      ...baseUserInput,
+      cognitoSub: 'sub-lock-timeout',
+      email: 'lock-timeout@test.local',
+      username: 'locktimeout',
+    })
+    await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+
+    // Hold the users-row lock on a separate connection. Holder MUST NOT set
+    // lock_timeout/statement_timeout — otherwise it self-cancels before the
+    // racer can experience contention. (Pool defaults could re-enable them
+    // implicitly; explicit unset on this connection.)
+    const holder = await pool.connect()
+    try {
+      await holder.query('BEGIN')
+      await holder.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [u.id])
+
+      const { DebitTimeoutError } = await import('../credits-errors.js')
+      let caught: unknown
+      const start = Date.now()
+      try {
+        await fastCredits.atomicDebit({
+          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        })
+      } catch (e) {
+        caught = e
+      }
+      const elapsed = Date.now() - start
+
+      expect(caught).toBeInstanceOf(DebitTimeoutError)
+      expect((caught as InstanceType<typeof DebitTimeoutError>).sqlstate).toBe('55P03')
+      // Should have waited approximately the lock timeout (200ms), not the
+      // full holder-held duration. Tight upper bound to catch a regression
+      // where the lock_timeout doesn't fire and we wait until something else.
+      expect(elapsed).toBeGreaterThanOrEqual(150)
+      expect(elapsed).toBeLessThan(2000)
+    } finally {
+      // Release the holder cleanly even if the test failed.
+      await holder.query('ROLLBACK').catch(() => {
+        // Ignore — connection may already be in failed state.
+      })
+      holder.release()
+    }
+  }, 10_000)
 })
