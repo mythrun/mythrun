@@ -68,6 +68,15 @@ ALTER TABLE credit_ledger
   ADD CONSTRAINT credit_ledger_debit_has_source_chk
   CHECK (source_type <> 'debit' OR source_id IS NOT NULL);
 
+-- Debit rows must NOT carry expires_at — debits represent consumption
+-- and are immutable; expiry is a grant-side concept. Without this CHECK,
+-- a future caller could insert a debit row with expires_at and make the
+-- balance SUM non-monotonic (the row's contribution would disappear from
+-- balance after expiry, effectively refunding the user).
+ALTER TABLE credit_ledger
+  ADD CONSTRAINT credit_ledger_debit_no_expiry_chk
+  CHECK (source_type <> 'debit' OR expires_at IS NULL);
+
 -- Idempotent debit: a retry of the same logical operation collides on
 -- (user_id, credit_type, source_id) within source_type='debit' and is a
 -- no-op. The credit_type column is part of the key so a sourceId that
@@ -76,8 +85,15 @@ ALTER TABLE credit_ledger
 -- usage with the same id) doesn't collide. The application's
 -- atomicDebit() detects the collision pre-INSERT under the users-row
 -- lock; this index is the DB-level safety net.
+--
+-- NULLS NOT DISTINCT: defense-in-depth — the credit_ledger_debit_has_source_chk
+-- already prevents NULL source_id on debits, but if anyone weakens that
+-- CHECK in the future, NULL handling here would silently regress to the
+-- default (NULLs are distinct), and idempotency would break for whatever
+-- path produced NULLs. Requires Postgres 15+; we run 16.
 CREATE UNIQUE INDEX uniq_credit_ledger_debit_idempotency
   ON credit_ledger (user_id, credit_type, source_id)
+  NULLS NOT DISTINCT
   WHERE source_type = 'debit';
 
 -- Revenue ledgers must NOT cascade-delete. The base table from migration
@@ -100,9 +116,10 @@ ALTER TABLE credit_ledger
 - **Balance is computed via `SUM(amount)`, not stored as a snapshot column.** A snapshot column would denormalize the same fact and risk drift if a migration ever rewrites historical rows. Balance queries scan the `(user_id, credit_type, expires_at)` index for the equality prefix and filter on `expires_at` in-heap; the disjunction `expires_at IS NULL OR expires_at > now()` does not produce a clean range scan, but at expected per-user row counts (low tens) the filter cost is negligible. Out of scope for MYT-40, in scope for the rollover/sweep ticket: a periodic deletion of long-expired rows to keep the per-user scan bounded.
 - **`expires_at` is kept**, even though MYT-40 itself never uses it. Spec §3's rollover toggle (no-rollover vs rollover-with-cap) is built on this column. Dropping it forecloses §3.
 - **`source_type` is a category, not a polarity.** Sign of `amount` says debit/credit; `source_type` says where the entry originated. The string `'debit'` doubles as both an origin tag and a polarity tag, which is a small wart — acknowledged, not migrated. Migration 004's polarity CHECK enforces consistency.
+- **Refund vs clawback semantics.** A `'refund'` row is a *positive* grant — the user got their credits back after a Stripe charge reversal or a goodwill grant. The polarity CHECK enforces `'refund'` rows have positive amounts. A *clawback* (admin removes wrongly-granted credits, charge dispute, fraud reversal) uses `source_type='debit'` with `source_id` pointing to the original grant being clawed back — the debit semantics still hold (negative amount, source_id traceability, idempotent). This means migration 004's polarity CHECK does NOT need to be relaxed for any future refund/clawback path; both semantics fit cleanly into the existing types.
 - **`source_id` shape contract**: for `source_type='debit'` the `source_id` is the session id being charged AND functions as the per-user idempotency key (it is NOT a globally-unique key — only unique within `(user_id, credit_type)` for debits). It is server-controlled — derived from sessionId today; if any future caller derives sourceId from a client-supplied `Idempotency-Key` header, the error mapping must be revisited (see Errors). For `'purchase'`, the `purchases.id`. For `'subscription'`, the `user_subscriptions.id`. For `'trial'`/`'gift'`, may be `NULL` (admin operations). Migration 004's `credit_ledger_debit_has_source_chk` enforces non-null for debits.
 - **`source_id` is `UUID`-typed.** Constrains future debit sources (per-turn metering, world-gen invocation, batch jobs) to UUID-keyed entities. All foreseeable sources are UUIDv7 entities (sessions, purchases, subscriptions). If a non-UUID-keyed source ever appears, a follow-up migration changes the column type. Acceptable.
-- **Idempotency keys are globally unique forever, per user.** UUIDv7 sessionIds are never reused across the database lifetime — that's the underlying assumption that makes the unbounded idempotency window safe. Future debit sources MUST also use never-reused identifiers.
+- **Idempotency keys must be globally unique forever, per user — discipline, not just generator guarantee.** UUIDv7 sessionIds will never *collide* (the generator's time-ordering guarantees uniqueness), but the load-bearing property here is that the *application code* never *reuses* a sourceId for two different debits. A buggy or malicious caller can hand-craft a reused UUID; our defense is the polarity-and-amount idempotency check (returns prior row, throws on amount mismatch). Future debit sources MUST also use never-reused identifiers AND callsites must never reuse one. A debit retry that succeeds-as-no-op more than ~24 hours after the original is suspicious and should be logged for investigation (not enforced — too many legitimate edge cases like archive replays — but worth observability).
 - **`ON DELETE RESTRICT`** on the FK to `users`. A revenue ledger is never CASCADE-deleted. User-deletion paths (GDPR erasure, account closure) become soft-delete + pseudonymize flows that retain ledger rows. Migration 004 fixes the inherited-from-001 CASCADE.
 
 ## Atomic debit — locking strategy
@@ -123,14 +140,21 @@ PostgreSQL row locks are physical (per-tuple). There is no predicate-locking und
 
 ```sql
 BEGIN;
-SET LOCAL statement_timeout = '2s';
+-- SET LOCAL must follow BEGIN — it's transaction-scoped. If reordered
+-- to before BEGIN, the timeout becomes session-wide and survives the
+-- transaction, which would silently affect subsequent queries on the
+-- same connection. The repo implementation must keep this ordering.
+SET LOCAL statement_timeout = '2s';   -- DEBIT_STATEMENT_TIMEOUT_MS constant
 
 -- Always locks exactly one row, whether or not credit_ledger has entries.
 SELECT id FROM users WHERE id = $userId FOR UPDATE;
 
 -- Idempotency check: if a debit with this (user_id, credit_type, source_id)
--- already exists, return it without further work. Caller-supplied source_id
--- is the per-user idempotency key (typically the session id).
+-- already exists, return it without further work. The credit_type filter
+-- is intentional — same sourceId across credit_types is allowed by the
+-- partial unique index design (e.g., a session that bills both a session
+-- credit and a world_gen credit using the same sourceId is two distinct
+-- debit rows, not a collision).
 SELECT * FROM credit_ledger
   WHERE user_id = $userId
     AND credit_type = $type
@@ -162,7 +186,7 @@ Why this works:
 - All concurrent atomic debits + (lock-taking) grants for that user serialize on the same `users` row.
 - Each statement under READ COMMITTED takes a fresh snapshot, so the SUM after lock acquisition sees any concurrent grant that committed before we got the lock.
 - The idempotency SELECT runs *under* the lock, so a retry blocked behind a first-attempt's lock will see the inserted row when it unblocks. (This depends on READ COMMITTED's per-statement snapshot — under REPEATABLE READ the second tx's snapshot would predate the first commit and the SELECT would miss. Do not change isolation level without revisiting this.) The DB-level `uniq_credit_ledger_debit_idempotency` unique index is the safety net for any future caller that bypasses this function.
-- `SET LOCAL statement_timeout = '2s'` caps how long a stuck client can hold the lock. Connection-pool exhaustion under load becomes a 2-second-bounded queue, not a hang. When a transaction hits this timeout, `pg` emits SQLSTATE 57014 (`query_canceled`) — `atomicDebit` catches this and rethrows as a typed `DebitTimeoutError` (mapped by the HTTP layer to 503 Service Unavailable with a Retry-After hint), so contention spikes don't surface as raw 500s in dashboards.
+- `SET LOCAL statement_timeout = '2s'` (sourced from a `DEBIT_STATEMENT_TIMEOUT_MS` constant; can be overridden via the repo factory's optional config for tests) caps how long a stuck client can hold the lock. Connection-pool exhaustion under load becomes a 2-second-bounded queue, not a hang. When a transaction hits this timeout, `pg` emits SQLSTATE 57014 (`query_canceled`) — `atomicDebit` catches this and rethrows as a typed `DebitTimeoutError` (mapped by the HTTP layer to 503 Service Unavailable with a jittered Retry-After hint, jitter implementation in the HTTP layer ticket), so contention spikes don't surface as raw 500s in dashboards.
 - Runs under default isolation (READ COMMITTED). No SERIALIZABLE retry logic needed.
 
 ### Grant takes the same lock — required, not symmetric
@@ -268,7 +292,7 @@ export function createCreditsRepo(pool: Pool): {
 
 - **`balance(userId, type)`**: single SELECT, returns 0 for an empty ledger. No transaction required (read-only, single-statement consistency is sufficient for display).
 
-  **Do not gate on `balance()`.** A caller that does `if (await balance(u, 'session') > 0) { /* allow */ }` reintroduces a TOCTOU race. The `atomicDebit` call IS the gate — let it throw `InsufficientCreditsError` and translate to a 402. This warning lives in the function's TSDoc.
+  **Treat `balance()` as display-only.** ANY decision-with-side-effects path — gating session start, gating world-gen, deciding to grant a refund, deciding to expire — MUST go through `atomicDebit` (or a future analogous transactional call) that holds the users-row lock. A caller that does `if (await balance(u, 'session') > 0) { /* allow */ }` reintroduces a TOCTOU race; let `atomicDebit` throw `InsufficientCreditsError` and translate to a 402 instead.
 
   **Do not use `balance()` for retention or sweep logic.** The expiry filter `expires_at > now()` shifts as time advances; two consecutive calls a millisecond apart can disagree across a row's expiry boundary. That's fine for display; not fine for "delete rows where balance contribution is zero." The future expiry-sweep ticket reads `expires_at` directly.
 
@@ -276,7 +300,7 @@ export function createCreditsRepo(pool: Pool): {
 
 - **`atomicDebit(input)`**: validates `amount > 0` and `sourceId` non-empty, opens a transaction, sets `statement_timeout = '2s'`, takes the users-row lock, runs the idempotency check (returns the prior row if `(user_id, credit_type, source_id)` matches, or throws `IdempotencyConflictError` on amount mismatch), runs the balance check, inserts the debit row OR throws `InsufficientCreditsError`. Catches `pg` errors with SQLSTATE `57014` (`query_canceled` from the statement timeout) and rethrows as `DebitTimeoutError`. **Every non-success path — `InsufficientCreditsError`, `IdempotencyConflictError`, `DebitTimeoutError`, validation errors thrown after `BEGIN`, any unexpected `pg` error — issues a `ROLLBACK` before releasing the client to the pool**, in the `finally` block. A pooled client returned without rollback would poison the next checkout.
 
-- **`listEntries(userId, opts)`**: ordered `DESC` by `(granted_at, id)` — UUIDv7 IDs are time-ordered, so the `id` tiebreaker keeps ordering deterministic across rows that share a `granted_at` timestamp (matters for tests and audit reproducibility). `limit` defaults to 100; pass an explicit `Infinity` (or just a very large number) to disable. Optional credit-type filter. Returns ALL entries including expired ones — this is an audit view, not a balance view.
+- **`listEntries(userId, opts)`**: ordered `DESC` by `(granted_at, id)` — UUIDv7 IDs are time-ordered, so the `id` tiebreaker keeps ordering deterministic across rows that share a `granted_at` timestamp (matters for tests and audit reproducibility). `limit` defaults to 100; pass an explicitly very large number (e.g., `Number.MAX_SAFE_INTEGER`) to disable. (`Infinity` is NOT acceptable — node-postgres stringifies it to `"Infinity"` which Postgres rejects.) Optional credit-type filter. Returns ALL entries including expired ones — this is an audit view, not a balance view.
 
 `grant()` and `listEntries()` are technically beyond the ticket's literal scope ("balance + atomicDebit"), but every test needs to put credits in, the next ticket (Stripe webhooks) needs `grant()`, and `listEntries` is trivial + audit-useful. Worth including.
 
@@ -288,7 +312,7 @@ export function createCreditsRepo(pool: Pool): {
 ## Errors
 
 - `InsufficientCreditsError` (custom subclass) — thrown by `atomicDebit`. Carries `userId`, `creditType`, `available`, `requested`. HTTP layer maps to **402 Payment Required** per spec §2.4.
-- `IdempotencyConflictError` (custom subclass) — thrown by `atomicDebit` when the same `(user_id, credit_type, source_id)` is reused with a different `amount`. HTTP layer maps to **409 Conflict** (Stripe / GitHub / AWS convention for idempotency-key reuse with mismatched payload). Logged at `warn`, not `error` — it's a contract violation worth investigating, not an internal failure that should page anyone. *Note*: today, sourceId is always server-controlled (the sessionId), so 409 is unusual but possible if a bug or replay produces it. If a future caller derives sourceId from a client-supplied `Idempotency-Key` header, this becomes the standard client-error path.
+- `IdempotencyConflictError` (custom subclass) — thrown by `atomicDebit` when the same `(user_id, credit_type, source_id)` is reused with a different `amount`. HTTP layer maps to **409 Conflict** (Stripe / GitHub / AWS convention for idempotency-key reuse with mismatched payload). **Logged at `error` level** — today, sourceId is always server-controlled (the sessionId), so an `IdempotencyConflictError` always indicates an internal bug (replay or amount-changed-mid-flight) and deserves an alert. The 409 status is the right *shape* for the response (the request is in conflict with state), but the log severity reflects "this should never happen." If a future caller derives sourceId from a client-supplied `Idempotency-Key` header, downgrade to `warn` since legitimate client mistakes become possible.
 - `DebitTimeoutError` (custom subclass) — thrown by `atomicDebit` when the `statement_timeout` cancels a query (typically while waiting for the users-row lock under contention). HTTP layer maps to **503 Service Unavailable** with a short `Retry-After` (e.g., 1 second). Lock contention spikes show up as a clean retry signal in dashboards instead of opaque 500s.
 - Validation errors (`amount <= 0`, `grant with sourceType='debit'`, missing/empty `sourceId`) — throw plain `Error` at the application layer before any SQL runs. Programmer errors; should never reach production callers.
 - DB CHECK violations from migration 004 (polarity mismatch, missing source_id on debit) — propagate as `pg`-emitted errors. Should never reach production callers; if they do, that's a bug to fix.
@@ -326,22 +350,23 @@ All tests run against a real Postgres test database via the existing repo integr
 
 ### Concurrency tests
 
-**Barrier mechanism (used by tests 18–19b):** Each racer transaction issues `pg_advisory_xact_lock(987654321)` immediately after `BEGIN`, then proceeds. The test harness, on a separate (third) connection, holds an exclusive session-level `pg_advisory_lock(987654321)` until both racers have entered their transactions, then releases it — both racers acquire-and-release the xact-level advisory lock in quick succession, putting them in a true race for the users-row `FOR UPDATE`. Advisory lock id `987654321` is reserved for credit-ledger concurrency tests; do not reuse elsewhere.
+**Race mechanism:** the goal is to land both racer transactions at the `SELECT id FROM users ... FOR UPDATE` line within a tight window so the lock contention is real. Spawn both via `Promise.all` from the test harness. **Repeat each race in a loop of 100 iterations** (not a single `Promise.all` of 200 calls — the loop preserves visibility into which iteration failed). Iteration count + concurrent execution is what makes these tests reliable; an advisory-lock barrier is intentionally NOT used because `pg_advisory_xact_lock` is exclusive (would serialize the racers and defeat the test) and the shared variant adds complexity without improving signal at this iteration count.
 
-18. **Two parallel atomicDebit attempts on a user with 1 credit, distinct sourceIds → exactly one succeeds.** Spawn via `Promise.all`. One resolves, one throws `InsufficientCreditsError`. Final balance === 0. Ledger has the original grant + exactly one debit row. **Repeat the race 50 times** in the test (loop body, not a single Promise.all of 50) to exercise the lock under repeated contention.
+**Test pool:** the default repo test pattern uses `createPgPool(url, { max: 1 })`. The concurrency tests need a separate pool with `max >= 4` for the racer connections + the test orchestrator. Open in `beforeAll`, close in `afterAll`.
 
-    - The default repo test pattern uses `createPgPool(url, { max: 1 })`. The concurrency test needs a separate pool with `max >= 4` so both racers plus the barrier-release client can run in parallel. Open in `beforeAll`, close in `afterAll`.
-    - Run under default isolation (READ COMMITTED) — proves the users-row lock works without SERIALIZABLE retries.
+**Throughput floor:** assert each 100-iteration race completes in under 10 seconds. A regression that introduces accidental serial waits (e.g., a future contributor hoists a connection acquire outside the transaction) gets caught by the timing assertion, not just the correctness one.
 
-18b. **Empty-ledger race.** No grants at all. Two parallel atomicDebit attempts → both throw `InsufficientCreditsError` (each reports `available=0, requested=1`). Ledger remains empty. This is the test that *actually* validates the spec §2 patch — it is the case that fails under the buggy `FOR UPDATE on credit_ledger rows` recipe and must succeed under the users-row anchor. Repeat 50 times.
+18. **Two parallel atomicDebit attempts on a user with 1 credit, distinct sourceIds → exactly one succeeds.** One resolves, one throws `InsufficientCreditsError`. Final balance === 0. Ledger has the original grant + exactly one debit row. Run under default isolation (READ COMMITTED) — proves the users-row lock works without SERIALIZABLE retries. Repeat 100 times.
 
-19. **Two parallel atomicDebit attempts with the SAME sourceId → exactly one inserts; the other returns the same entry.** Same race shape as 18. One transaction wins the insert; the other's idempotency SELECT, blocked behind the lock, sees the inserted row when it unblocks and returns it. Ledger has exactly one debit row. Repeat 20 times.
+18b. **Empty-ledger race.** No grants at all. Two parallel atomicDebit attempts → both throw `InsufficientCreditsError` (each reports `available=0, requested=1`). Ledger remains empty. **This is the test that actually validates the spec §2 patch** — it is the case that fails under the buggy `FOR UPDATE on credit_ledger rows` recipe and must succeed under the users-row anchor. Repeat 100 times.
+
+19. **Two parallel atomicDebit attempts with the SAME sourceId → exactly one inserts; the other returns the same entry.** Same race shape as 18. One transaction wins the insert; the other's idempotency SELECT, blocked behind the lock, sees the inserted row when it unblocks and returns it. Ledger has exactly one debit row. Repeat 50 times.
 
 19b. **Idempotency cross-credit-type isolation.** Same sourceId used for one `'session'` debit and one `'world_gen'` debit (sequential, not racing). Both succeed; ledger has two distinct debit rows. Demonstrates the unique partial index keys on `(user_id, credit_type, source_id)`, not just `(user_id, source_id)`.
 
 20. **DB-level idempotency safety net.** Bypass the application layer: directly INSERT a debit row, then INSERT a *second* debit row with the same `(user_id, credit_type, source_id)` → the unique partial index rejects with a unique-violation error. Proves the safety net catches a future caller that bypasses the lock discipline.
 
-20b. **Statement-timeout error mapping.** With one connection holding the users-row lock indefinitely (a transaction that BEGINs, takes the lock, and intentionally sleeps), call `atomicDebit` from a second connection. After ~2 seconds the second call throws `DebitTimeoutError` (not a raw `pg` error). Verifies the SQLSTATE 57014 catch-and-rethrow.
+20b. **Statement-timeout error mapping.** Open a third dedicated connection (NOT the test pool's general clients), `BEGIN`, `SELECT id FROM users WHERE id=$1 FOR UPDATE` to take the lock, then `pg_sleep(5)`. The holder MUST NOT set `statement_timeout` on its own connection — otherwise the holder times itself out before the test can race against it. Concurrently, call `atomicDebit` from the main test pool. After ~2 seconds the second call throws `DebitTimeoutError` (not a raw `pg` error). Verifies the SQLSTATE 57014 catch-and-rethrow. **Cleanup discipline:** the holder connection must be released or `ROLLBACK`ed in `afterEach` even on test failure — a leaked holder pins the users-row lock and poisons every subsequent test for that user. Wrap the holder in a `try/finally` (or use a `afterEach` hook with explicit `ROLLBACK`).
 
 ### Schema invariant tests
 
@@ -349,6 +374,7 @@ All tests run against a real Postgres test database via the existing repo integr
 22. **Polarity CHECK rejects negative `amount` with `source_type='subscription'`.** Direct INSERT → DB rejects.
 23. **`debit_has_source_chk` rejects NULL `source_id` with `source_type='debit'`.** Direct INSERT → DB rejects.
 23b. **FK ON DELETE RESTRICT rejects user deletion when ledger rows exist.** Insert a user, grant 5 credits, attempt `DELETE FROM users WHERE id = $userId` → rejected with foreign_key_violation. Verifies the migration 004 change.
+23c. **Debit rows cannot carry expires_at.** Direct INSERT of a debit row with non-null `expires_at` → DB rejects via `credit_ledger_debit_no_expiry_chk`. Verifies the immutability invariant.
 
 ### `listEntries`
 
@@ -359,7 +385,7 @@ All tests run against a real Postgres test database via the existing repo integr
 ## Out of scope (deferred to future tickets)
 
 - HTTP route exposing `balance()` (`GET /me/credits`) — auth/billing routes ticket.
-- Stripe webhook handler that calls `grant()` — Stripe ticket.
+- Stripe webhook handler that calls `grant()` — Stripe ticket. **Note:** `grant()` is NOT idempotent at the repo layer — it does not enforce uniqueness on `(user_id, source_type, source_id)` (that constraint is debit-only by design, since grants legitimately come in pairs for subscription tiers that grant both `'session'` and `'world_gen'` credits with the same source event). Webhook idempotency is the Stripe ticket's responsibility via the `stripe_events` table — the handler MUST check `stripe_events` for the event id before calling `grant()`. A duplicate webhook delivery that bypasses this check WILL double-grant.
 - Session-start gate that calls `atomicDebit()` — session runtime ticket.
 - Rollover scheduler / `'rollover'` source_type value — rollover ticket.
 - FIFO-by-expiry consumption ordering ("subscription credits drain before pack credits") asserted by parent §10 — current `atomicDebit` SUMs all unexpired credits and inserts one negative row, which is correct for balance math but loses per-row attribution. Not needed today (no expiry across credit types yet); revisit when subscription rollover ticket lands.
