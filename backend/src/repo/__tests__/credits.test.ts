@@ -70,12 +70,12 @@ describe('credits repo (integration)', () => {
       const credits = createCreditsRepo(pool)
       const u = await users.create(baseUserInput)
 
-      // Direct INSERT bypassing grant() because grant() lands in Task 6.
-      await pool.query(
-        `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, source_id)
-         VALUES (gen_random_uuid(), $1, 'session', 5, 'gift', NULL)`,
-        [u.id],
-      )
+      await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
+      })
 
       expect(await credits.balance(u.id, 'session')).toBe(5)
       expect(await credits.balance(u.id, 'world_gen')).toBe(0)
@@ -85,13 +85,8 @@ describe('credits repo (integration)', () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
       const u = await users.create(baseUserInput)
-      await pool.query(
-        `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type)
-         VALUES
-           (gen_random_uuid(), $1, 'session', 3, 'gift'),
-           (gen_random_uuid(), $1, 'session', 2, 'gift')`,
-        [u.id],
-      )
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 3, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 2, sourceType: 'gift' })
       expect(await credits.balance(u.id, 'session')).toBe(5)
     })
 
@@ -99,14 +94,14 @@ describe('credits repo (integration)', () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
       const u = await users.create(baseUserInput)
-      await pool.query(
-        `INSERT INTO credit_ledger
-           (id, user_id, credit_type, amount, source_type, expires_at)
-         VALUES
-           (gen_random_uuid(), $1, 'session', 5, 'gift', now() - interval '1 day'),
-           (gen_random_uuid(), $1, 'session', 3, 'gift', now() + interval '1 day')`,
-        [u.id],
-      )
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+        expiresAt: new Date(Date.now() - 86_400_000),
+      })
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 3, sourceType: 'gift',
+        expiresAt: new Date(Date.now() + 86_400_000),
+      })
       expect(await credits.balance(u.id, 'session')).toBe(3)
     })
 
@@ -114,15 +109,57 @@ describe('credits repo (integration)', () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
       const u = await users.create(baseUserInput)
-      await pool.query(
-        `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type)
-         VALUES
-           (gen_random_uuid(), $1, 'session', 5, 'gift'),
-           (gen_random_uuid(), $1, 'world_gen', 2, 'gift')`,
-        [u.id],
-      )
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 2, sourceType: 'gift' })
       expect(await credits.balance(u.id, 'session')).toBe(5)
       expect(await credits.balance(u.id, 'world_gen')).toBe(2)
+    })
+  })
+
+  describe('grant()', () => {
+    it('inserts a positive credit entry and balance reflects it', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+
+      const entry = await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
+      })
+
+      expect(entry.amount).toBe(5)
+      expect(entry.sourceType).toBe('gift')
+      expect(entry.creditType).toBe('session')
+      expect(entry.userId).toBe(u.id)
+      expect(entry.id).toMatch(/^[0-9a-f-]{36}$/)
+      expect(entry.expiresAt).toBeNull()
+      expect(await credits.balance(u.id, 'session')).toBe(5)
+    })
+
+    it('throws on amount <= 0', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(baseUserInput)
+
+      await expect(
+        credits.grant({ userId: u.id, creditType: 'session', amount: 0, sourceType: 'gift' }),
+      ).rejects.toThrow(/amount must be > 0/)
+
+      await expect(
+        credits.grant({ userId: u.id, creditType: 'session', amount: -1, sourceType: 'gift' }),
+      ).rejects.toThrow(/amount must be > 0/)
+    })
+
+    it('throws UserNotFoundError when user does not exist', async () => {
+      const credits = createCreditsRepo(pool)
+      const fakeId = '019dccef-0000-7000-8000-000000000000'
+
+      const { UserNotFoundError } = await import('../credits-errors.js')
+      await expect(
+        credits.grant({ userId: fakeId, creditType: 'session', amount: 1, sourceType: 'gift' }),
+      ).rejects.toBeInstanceOf(UserNotFoundError)
     })
   })
 })
