@@ -12,6 +12,8 @@ import {
   INVITE_CODE_RETRIES,
   InviteCapReachedError,
   InviteCreationError,
+  InviteTimeoutError,
+  PARTY_SIZE_CAP,
 } from './invites-errors.js'
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -177,6 +179,128 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
       )
       if (result.rowCount === 1) return { revoked: true }
       return { notFoundOrWrongCampaign: true }
+    },
+
+    acceptInvite: async (input: { code: string; userId: string }): Promise<
+      | { campaignId: string; alreadyMember: boolean }
+      | { notFound: true }
+      | { revoked: true }
+      | { campaignGone: true }
+      | { campaignFull: true; activeMembers: number }
+    > => {
+      const client = await pool.connect()
+      let inTransaction = false
+      try {
+        await beginAndConfigure(client)
+        inTransaction = true
+
+        // Step 1: Lock the invite row.
+        const inviteResult = await client.query<CampaignInviteDbRow>(
+          `SELECT * FROM campaign_invites WHERE invite_code = $1 FOR NO KEY UPDATE`,
+          [input.code],
+        )
+        const invite = inviteResult.rows[0]
+        if (!invite) {
+          await client.query('ROLLBACK')
+          inTransaction = false
+          return { notFound: true }
+        }
+
+        const campaignId = invite.campaign_id
+
+        // Step 2: Membership check FIRST. If the caller is already a member,
+        // they short-circuit success regardless of expiry (membership trumps revoke).
+        const memberResult = await client.query<{ id: string }>(
+          `SELECT id FROM campaign_members WHERE campaign_id = $1 AND user_id = $2`,
+          [campaignId, input.userId],
+        )
+        if (memberResult.rowCount === 1) {
+          await client.query('COMMIT')
+          inTransaction = false
+          return { campaignId, alreadyMember: true }
+        }
+
+        // Step 3: Expiry check, only for non-members.
+        if (invite.expires_at !== null && invite.expires_at <= new Date()) {
+          await client.query('ROLLBACK')
+          inTransaction = false
+          return { revoked: true }
+        }
+
+        // Step 4: Cap check before INSERT.
+        const memberCount = await client.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM campaign_members WHERE campaign_id = $1`,
+          [campaignId],
+        )
+        const active = Number(memberCount.rows[0]?.count ?? '0')
+        if (active >= PARTY_SIZE_CAP) {
+          await client.query('ROLLBACK')
+          inTransaction = false
+          return { campaignFull: true, activeMembers: active }
+        }
+
+        // Step 5: Insert membership; ON CONFLICT means a concurrent accept
+        // by the same user via a DIFFERENT code just landed the row.
+        let insertedRowCount = 0
+        try {
+          const insertResult = await client.query(
+            `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+             VALUES ($1, $2, $3, 'player', true)
+             ON CONFLICT (campaign_id, user_id) DO NOTHING
+             RETURNING *`,
+            [uuidv7(), campaignId, input.userId],
+          )
+          insertedRowCount = insertResult.rowCount ?? 0
+        } catch (err) {
+          // FK violation 23503 → campaign was deleted between step 1 and step 5.
+          if (
+            typeof err === 'object' &&
+            err !== null &&
+            'code' in err &&
+            (err as { code?: string }).code === '23503'
+          ) {
+            await client.query('ROLLBACK')
+            inTransaction = false
+            return { campaignGone: true }
+          }
+          throw err
+        }
+
+        if (insertedRowCount === 0) {
+          // A concurrent accept (different invite, same user) just landed the row.
+          // Do NOT increment uses on this invite — the user joined via the other.
+          await client.query('COMMIT')
+          inTransaction = false
+          return { campaignId, alreadyMember: true }
+        }
+
+        // Step 6: Increment uses ONLY on the rowCount === 1 path.
+        await client.query(
+          `UPDATE campaign_invites SET uses = uses + 1 WHERE id = $1`,
+          [invite.id],
+        )
+
+        await client.query('COMMIT')
+        inTransaction = false
+        return { campaignId, alreadyMember: false }
+      } catch (err) {
+        if (inTransaction) {
+          try { await client.query('ROLLBACK') } catch { /* ignore */ }
+        }
+        // Map pg timeout errors to InviteTimeoutError.
+        if (typeof err === 'object' && err !== null && 'code' in err) {
+          const sqlstate = (err as { code?: string }).code
+          if (sqlstate === '55P03') {
+            throw new InviteTimeoutError(input.code, 'lock', '55P03')
+          }
+          if (sqlstate === '57014') {
+            throw new InviteTimeoutError(input.code, 'statement', '57014')
+          }
+        }
+        throw err
+      } finally {
+        client.release()
+      }
     },
   }
 }
