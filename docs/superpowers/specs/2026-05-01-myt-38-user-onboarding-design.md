@@ -15,33 +15,40 @@ Three things, scoped tightly:
 2. **First-login gate** — `requireOnboarded` Fastify pre-handler hook + a runtime route enumerator enforcing the `'jwt-no-db'` opt-out allowlist at boot. Returns 403 `{code: 'username_required'}` on protected routes when no Mythrun user row exists for `request.user.sub`.
 3. **Invite system** — reusable Discord-style invite links per campaign. Owner-only create/list/revoke + member list; any onboarded user accepts; **public preview** so unsigned-in users can see the campaign name before going through OAuth. Multi-row write paths follow MYT-40's discipline (BEGIN + isolation + dual timeouts + row anchor + ROLLBACK on every error path).
 
-## Identity model — minimal-claims posture
+## Identity model — minimal-claims posture (with display name)
 
-**Mythrun stores `cognito_sub` and `username`. Nothing else from Cognito.**
+**Mythrun stores `cognito_sub`, `username`, and `display_name`. Nothing else from Cognito.**
 
-Cognito OAuth is the authentication layer. After sign-in, the only identity field that matters to the product is the user-chosen username. We do NOT store email, display name, profile picture, or auth-provider derivation. The schema columns for those (`email`, `display_name`, `avatar_url`, `auth_provider` from migration 001) are dropped in **migration 005** as part of this ticket.
+Cognito OAuth is the authentication layer. After sign-in, the user picks two pieces of identity:
+
+1. **`username`** — the stable, unique handle. Lowercase-unique (case preserved for display), 3-20 chars, alphanumeric + underscores. Used in URLs (`@gandalf`), in member lists' permanent identifier, in invites. Cannot collide with another user.
+2. **`display_name`** — the friendly social-recognition label. Free-form, 1-40 chars, profanity-gated, NOT unique. Two users can both be "Alice." Used in campaign chrome and member-list rendering ("Alice (@gandalf)") so an owner inviting their D&D group recognizes the humans, not just the handles.
+
+We do NOT store email, profile picture, or auth-provider derivation. The schema columns for those (`email`, `avatar_url`, `auth_provider` from migration 001) are dropped in **migration 005** as part of this ticket. **`display_name` is RETAINED** (round-5 review caught the UX-spec contradiction).
 
 Implications:
-- The register endpoint body is just `{username}`. No claim extraction from JWT or ID token.
+- The register endpoint body is `{username, displayName}`. The SPA pre-fills `displayName` client-side from whatever it has (typically Cognito's `name` claim from the ID token, which the SPA holds from the OAuth flow); the backend doesn't see the ID token.
 - Cognito access tokens don't carry profile claims (only `sub`, `cognito:username`, `scope`); we don't need them. The `tokenUse: 'access'` configuration in MYT-37's jwt-plugin is exactly right.
-- Display surfaces use `@{username}` everywhere (campaign cards, invite previews, member list). No "display name" surface.
+- Display surfaces use `@{username}` for stable references (URLs, mentions) and `{display_name}` (with `@{username}` parenthetical) for human-rendered surfaces (campaign chrome, member lists, invite previews).
 - Future profile customization (avatar upload, bio, etc.) is post-launch and ships as user-uploadable fields, not Cognito-claim-derived.
+- Future `PATCH /api/users/me` (out of MYT-38 scope) will let users change `display_name` (no rate limit) and `username` (rate-limited per parent spec §4.5).
 
 ## Migration 005
 
 ```sql
 -- 005_drop_profile_columns_users.sql
--- Mythrun's identity model is minimal-claims: we store cognito_sub and
--- username. Email / display_name / avatar_url / auth_provider were carved
--- out of OAuth claims by the original migration 001, but they are not
--- product-load-bearing — Cognito is the authentication layer, the user
--- picks a username, and that is the entire identity surface. Drop the
--- four columns here. Future profile fields (avatar upload, etc.) ship
+-- Mythrun's identity model is minimal-claims: we store cognito_sub,
+-- username, and display_name. Email / avatar_url / auth_provider were
+-- carved out of OAuth claims by the original migration 001 but are
+-- not product-load-bearing — Cognito is the authentication layer, the
+-- user picks their identity surface (username + display_name). Drop
+-- the three claim-derived columns here. Display_name is RETAINED for
+-- social-recognition UX (member lists, campaign chrome) per UX spec
+-- §3-§4. Future profile fields (avatar upload, bio, etc.) ship
 -- post-launch as user-uploadable.
 
 ALTER TABLE users
   DROP COLUMN email,
-  DROP COLUMN display_name,
   DROP COLUMN avatar_url,
   DROP COLUMN auth_provider;
 
@@ -88,6 +95,7 @@ Migration is forward-only; no down migration. The `users` table currently has ze
 - **Per-recipient invite tracking is impossible** with the reusable-link model. An owner who shares one link with 4 friends and sees 2 acceptances cannot tell *which 2*. That's a product cost of choosing Discord-style reusable links over single-use email-token invites. Future tickets could add an opt-in "name your invitee" hint at create time, but it's not part of MYT-38.
 - **OAuth round-trip carrier for the invite code is the SPA's responsibility, not this ticket's.** When an unsigned-in user clicks `mythrun.com/join/<code>`, the SPA needs to preserve the code through Cognito's OAuth redirect dance and resume `POST /api/invites/:code/accept` after onboarding completes. Recommended carrier: encode `redirect=/join/<code>` in Cognito's OAuth `state` parameter (survives all provider redirects, including cross-tab and mobile contexts; sessionStorage does not). Backend's contribution to this flow is the `/preview` endpoint (public, lets SPA render campaign name pre-OAuth) + the OAuth-app config (Cognito Hosted UI accepts `state` round-trip out of the box). The frontend ticket owns the actual implementation; this design declares the contract so it doesn't fall on the floor.
 - **Rate limits ship with `@fastify/rate-limit`'s default in-memory store** as a known gap. In-memory limits scale per task, not per fleet — staging is typically one task, so the limit is correct there; production will run multiple tasks and the effective limit becomes (per-task limit × task count). MYT-45 lands a Redis-backed store before production traffic.
+- **`trustProxy` configuration is required** on the Fastify root instance with the AWS-ALB hop count (1). IP-keyed rate limiters read `request.ips[0]` (the real client) not `req.ip` (which without trustProxy would be the ALB's private IP, collapsing all traffic into one bucket). The MYT-37 jwt-plugin already assumes this; MYT-38's rate limiters depend on it. Verified by the `loadEnv` boot test that asserts trustProxy is set.
 - **Owner-as-character ambiguity.** Owners may also play characters in their own campaigns (not in MYT-38's scope to ship character creation). MYT-39 / character-creation ticket handles.
 
 ## Load-bearing invariants
@@ -96,8 +104,9 @@ Migration is forward-only; no down migration. The `users` table currently has ze
 2. **`request.user.cognitoUsername` is the federated id (`Google_xyz` / `Discord_<snowflake>`), NOT the user-chosen `users.username`.** Never compare. The user-chosen value lives in `users.username` and is reachable only via `getByCognitoSub`.
 3. **`config.auth = 'jwt-no-db'` is allowlisted at boot, NOT honor-system.** The `requireOnboarded` plugin enumerates registered routes during `app.ready()` and throws if any route's `config.auth === 'jwt-no-db'` is outside an explicit allowlist (`POST /api/users/register`, `GET /api/users/check-username`). New uses require an explicit allowlist update + security review.
 4. **`repo.users.getByCognitoSub(req.user.sub)` is the canonical "is this user fully onboarded?" probe.**
-5. **MYT-40's discipline applies to every multi-step DB write.** `pool.connect()` checkout, `BEGIN; SET LOCAL transaction_isolation='read committed'; SET LOCAL lock_timeout; SET LOCAL statement_timeout;`, anchor lock on a row that always exists, `ROLLBACK` on every non-success path in `try/catch/finally` with the `inTransaction` flag pattern. Single-statement reads on critical paths get a `statement_timeout` (200ms baseline) but no transaction.
+5. **MYT-40's discipline applies to every multi-step DB write.** `pool.connect()` checkout, `BEGIN; SET LOCAL transaction_isolation='read committed'; SET LOCAL lock_timeout; SET LOCAL statement_timeout;`, anchor lock on a row that always exists, `ROLLBACK` on every non-success path in `try/catch/finally` with the `inTransaction` flag pattern. **`SET LOCAL` requires a transaction** — even for single-statement reads with a per-call `statement_timeout` (the `requireOnboarded` lookup), wrap in `BEGIN ... COMMIT` because `SET LOCAL` outside a transaction is a silent no-op that leaks state to the next pool checkout.
 6. **Username comparisons are case-insensitive (LOWER) at storage and query time.** Display preserves user-chosen casing.
+7. **Lock-order convention (load-bearing for deadlock avoidance):** `users` row → `campaigns` row → `campaign_invites` row → `campaign_members` row. Every multi-row write transaction acquires locks in this order. The current paths comply: `acceptInvite` locks invite then inserts member (skipping users + campaigns); `create-invite` locks campaigns then inserts invite (skipping users); `revoke` updates a single invite row. New code paths must respect this order or document why they can't.
 
 ## Architecture
 
@@ -136,15 +145,15 @@ Three independent concerns with thin interfaces:
 ### `POST /api/users/register`
 
 - `config.auth = 'jwt-no-db'` (no users row required).
-- Body: `{username: string}` validated by Zod.
+- Body: `{username: string, displayName: string}` validated by Zod. `displayName` is 1-40 chars, profanity-gated (same stub deny list as username), trimmed of leading/trailing whitespace, no uniqueness check (two users can both be "Alice").
 - Per-IP rate limit: 5 req/min. Per-`cognito_sub` rate limit: 1 req/min. (Username squatting protection.)
 - Statement timeout: 200ms on the connection used for register's read+write.
 - Pipeline: format-check → profanity-check (stub today; deny-list-protected) → INSERT. **There is NO uniqueness check before the INSERT.** Doing one would be classic check-then-act TOCTOU; the DB-level UNIQUE constraints are the actual line of defense, the implementation catches `23505`. The `check-username` endpoint exists for UX-debounce probing only; it's advisory, not a reservation.
 - The INSERT relies on the DB-level `UNIQUE(cognito_sub)` and `UNIQUE LOWER(username)` constraints as the line of defense. Implementation MUST catch SQLSTATE `23505` and inspect `constraint_name`:
 
-  - `users_cognito_sub_key` → caller is already onboarded. Read the existing row (fresh single-statement SELECT, NOT inside any transaction — avoids snapshot-isolation surprises if a future refactor wraps register in a tx) and branch:
+  - `users_cognito_sub_key` → caller is already onboarded. Read the existing row (single-statement SELECT inside a same-connection transaction or via repeatable-read so a future `PATCH /me` doesn't race the post-failure probe) and branch:
      - **If the existing row's `LOWER(username) === LOWER(req.body.username)`** → caller is replaying the same request. Return `200 {user, created: false}` with `Content-Location: /api/users/me`. (NOT `Location` — RFC 7231 says `Content-Location` is the right header on 200 to point at the canonical URL of the response body.)
-     - **If the usernames differ** → caller is already onboarded as someone else; the request body would otherwise be silently discarded. Return `409 {code: 'already_onboarded', user, requestedUsername}` with the existing user row + the username from the request so the SPA can show "you're already signed in as @bob; log out to register a new account." NEVER 200 on a body-mismatched replay.
+     - **If the usernames differ** → caller is already onboarded as someone else; the request body would otherwise be silently discarded. Return `409 {code: 'already_onboarded', currentUsername, requestedUsername}` with just the username string from the existing row + the username from the request. Do NOT include the full `User` object in an error body — the SPA can call `GET /api/users/me` to hydrate if it actually needs the full row. Smaller error payload, cleaner schema separation.
   - `users_username_lower_key` → username taken. Return `409 {code: 'username_taken', suggestion: '<original><2-3 random digits>'}`. The suggestion is itself piped through profanity/format checks before being returned (so we don't suggest `admin42`). The suggestion is best-effort, not a reservation; the SPA must call check-username on the suggestion before final submit.
 
   Any other 23505 (or other error) → propagate as 500.
@@ -153,8 +162,9 @@ Three independent concerns with thin interfaces:
 - `201 {user, created: true}` — new row created. `Location: /api/users/me` header.
 - `200 {user, created: false}` — caller's `cognito_sub` already has a row AND the requested username matches. Idempotent replay. `Content-Location: /api/users/me` header.
 - `400 {code: 'username_invalid', reason: 'format' | 'profane' | 'reserved'}`.
+- `400 {code: 'display_name_invalid', reason: 'length' | 'profane'}`.
 - `409 {code: 'username_taken', suggestion: 'gandalf42'}`.
-- `409 {code: 'already_onboarded', user, requestedUsername}` — caller is onboarded as a DIFFERENT username than the one they posted. SPA shows "log out to register a new account."
+- `409 {code: 'already_onboarded', currentUsername, requestedUsername}` — caller is onboarded as a different username. SPA hydrates user via /me if needed.
 - `429 {code: 'rate_limited', retryAfterSec: N}` + `Retry-After` header.
 
 ### `GET /api/users/check-username?username=<value>`
@@ -176,7 +186,8 @@ The `User` shape (matching repo types after migration 005):
 interface User {
   id: string                         // UUIDv7
   cognitoSub: string                 // opaque
-  username: string                   // user-chosen, case preserved for display
+  username: string                   // user-chosen handle, case preserved
+  displayName: string                // user-chosen friendly name, free-form
   stripeCustomerId: string | null
   freeTrialUsed: boolean
   suspendedAt: Date | null
@@ -189,14 +200,14 @@ interface User {
 
 - Default auth.
 - Owner-only: `repo.campaigns.getMembership(:id, currentUserId)` → role must be `'owner'` else 403 `{code: 'not_campaign_owner'}`. If campaign doesn't exist → 404 `{code: 'campaign_not_found'}`.
-- **Cap with proper locking**: open a transaction with the same MYT-40 triple (`BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '500ms'; SET LOCAL statement_timeout = '2000ms';`), then `SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE`, count active invites under the lock, INSERT if `count < 25`. Closes the cap-TOCTOU race.
+- **Cap with proper locking**: open a transaction with the same MYT-40 triple (`BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '500ms'; SET LOCAL statement_timeout = '2000ms';`), then `SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE`, count active invites under the lock, INSERT if `count < 25`. Closes the cap-TOCTOU race. The campaigns-row lock follows the load-bearing lock-order convention (campaigns → invites → members).
 - Past the cap → `409 {code: 'invite_cap_reached', activeInvites: 25}`.
 - Returns `201 {inviteCode, inviteUrl, uses, expiresAt, createdAt}` with `Location: /api/invites/<code>/preview` header. **`inviteUrl` is always present** (`${env.frontendBaseUrl}/join/${inviteCode}`); `frontendBaseUrl` is required in every env per the env validator above. The frontend never has to compose the URL itself.
 
 ### `GET /api/campaigns/:id/invites`
 
 - Default auth, owner-only.
-- Returns `200 {invites: [{inviteCode, inviteUrl, uses, expiresAt, createdAt, primary}, ...], cursor: null}`. The `primary: boolean` field marks the first (oldest, non-revoked) invite — surfaces the canonical "share this" link. Recomputed per-request: if the owner revokes the current primary, the next-oldest non-revoked becomes primary on the next list call. SPAs caching the value should refetch after any mutation. The `cursor: null` is reserved for future pagination (cap is 25 active so unused at launch).
+- Returns `200 {invites: [{inviteCode, inviteUrl, uses, expiresAt, createdAt, primary}, ...]}`. The `primary: boolean` field marks the first (oldest, non-revoked) invite — surfaces the canonical "share this" link. Recomputed per-request: if the owner revokes the current primary, the next-oldest non-revoked becomes primary on the next list call. SPAs caching the value should refetch after any mutation.
 
 ### `DELETE /api/campaigns/:id/invites/:inviteId`
 
@@ -209,7 +220,7 @@ interface User {
 - **`config.auth = 'public'`** — pre-OAuth lookup so the SPA can show "Join Alice's campaign" before sign-in.
 - Per-IP rate limit: 10 req/min (tightened from earlier 30/min after security review flagged code-enumeration risk).
 - `repo.invites.getCodePreview(:inviteCode)` joins `campaign_invites` → `campaigns` → `users`, filtered by `users.suspended_at IS NULL`. Per-statement timeout 200ms (matches `requireOnboarded` discipline). Returns minimal payload:
-  - `200 {campaignName: string, ownerUsername: string, valid: boolean}` — `valid: false` if revoked. **Always 200 for codes that exist** (whether revoked or not). The status-code language differs from `accept` deliberately: preview is a lookup that reports state; accept is an action that fails. SPA renders "this invite is no longer active" from `valid: false` without an HTTP-error branch.
+  - `200 {campaignName: string, ownerUsername: string, ownerDisplayName: string, valid: boolean}` — `valid: false` if revoked. **Always 200 for codes that exist** (whether revoked or not). The SPA renders "Join Alice's campaign" using `ownerDisplayName` with `(@gandalf)` parenthetical. The status-code language differs from `accept` deliberately: preview is a lookup that reports state; accept is an action that fails. SPA renders "this invite is no longer active" from `valid: false` without an HTTP-error branch.
   - `404 {code: 'invite_not_found'}` if no such code OR owner is suspended.
   - `429 {code: 'rate_limited', retryAfterSec: N}`.
 - **No campaignId, no inviteId, no createdBy uuid in the response.** Limits the public attack surface.
@@ -222,11 +233,12 @@ interface User {
 - Per-`user_id` rate limit: 30 req/min (DB-load protection).
 - `repo.invites.acceptInvite({code, userId: currentUserId})` runs in a transaction (see §"acceptInvite transaction" below).
 - Outcomes:
-  - `200 {campaignId, alreadyMember: false}` — happy path; new membership.
-  - `200 {campaignId, alreadyMember: true}` — user is already in the campaign; idempotent. **Returned even for codes that are now revoked** — being a member trumps the revoke flag (you're already in, who cares the link expired).
+  - `201 {campaignId, alreadyMember: false}` — happy path; **new membership row created**. `Location: /api/campaigns/:id` header. (201 vs 200 distinguishes "I just joined" from "I was already in" at the HTTP-status level, in addition to `alreadyMember`.)
+  - `200 {campaignId, alreadyMember: true}` — user is already in the campaign; idempotent. **Returned even for codes that are now revoked** — being a member trumps the revoke flag (you're already in, who cares the link expired). The membership-leak-oracle concern from round-5 review was scrutinized and dismissed: the only information disclosed is the caller's own membership in their own campaign, which they can already learn from `/me/campaigns`.
   - `404 {code: 'invite_not_found'}`.
   - `410 {code: 'invite_revoked'}` (no `Retry-After`; the SPA must not auto-retry).
   - `410 {code: 'campaign_gone'}` if the campaign was deleted between invite-create and accept (catches FK violation `23503`).
+  - `409 {code: 'campaign_full', activeMembers: 6}` — campaign is at the max-party cap. Owner needs to remove a member (future endpoint) for any new accepts to succeed.
   - `503 {code: 'invite_timeout', retryAfterSec: 1}` + `Retry-After: 1` — `lock_timeout` (55P03) or `statement_timeout` (57014) fired.
   - `429 {code: 'rate_limited', retryAfterSec: N}` + `Retry-After` header.
 
@@ -234,7 +246,7 @@ interface User {
 
 - Default auth, ANY MEMBER.
 - `repo.campaigns.listMembers(:id)` returns `[{userId, role, username, joinedAt}, ...]`. **No display name, no email, no avatar URL** — those columns no longer exist. Frontend renders `@{username}` for each.
-- `200 {members: [...], cursor: null}`. The `cursor` is always `null` in MYT-38 (no pagination needed at launch scale — campaigns have ≤ ~10 players). Field exists for future-compat: when pagination ships, the response shape stays the same and `cursor` becomes a paging token.
+- `200 {members: [...]}`. Bare-array-in-object shape (cursor field omitted; the 6-member cap makes pagination irrelevant for the foreseeable future, and additive evolution is allowed by the versioning posture if pagination ever ships).
 - `403 {code: 'not_campaign_member'}` if caller isn't a member.
 - `404 {code: 'campaign_not_found'}`.
 
@@ -331,7 +343,7 @@ export const requireOnboarded = fp(impl, {
 })
 ```
 
-`getByCognitoSubWithTimeout(sub, ms)` is a new repo method that wraps the existing query with a `SET LOCAL statement_timeout` on a checked-out client. Translates SQLSTATE `57014` to a typed `LookupTimeoutError` → 503.
+`getByCognitoSubWithTimeout(sub, ms)` is a new repo method that **wraps the SELECT inside a short transaction** (`BEGIN; SET LOCAL statement_timeout='200ms'; SELECT ...; COMMIT;`) — `SET LOCAL` is a silent no-op outside a transaction. The transaction is read-only and trivially small. Translates SQLSTATE `57014` to a typed `LookupTimeoutError` → 503.
 
 ## Repo additions
 
@@ -342,6 +354,7 @@ interface User {
   readonly id: string
   readonly cognitoSub: string
   readonly username: string
+  readonly displayName: string
   readonly stripeCustomerId: string | null
   readonly freeTrialUsed: boolean
   readonly suspendedAt: Date | null
@@ -352,6 +365,7 @@ interface User {
 interface CreateUserInput {
   readonly cognitoSub: string
   readonly username: string
+  readonly displayName: string
 }
 
 createUsersRepo(pool: Pool): {
@@ -414,6 +428,16 @@ createInvitesRepo(pool, opts?: { lockTimeoutMs?: number; statementTimeoutMs?: nu
 The order of operations matters: a user who is already a member sees `alreadyMember: true` even if the invite was later revoked. Membership trumps revoke.
 
 **Implementation MUST issue BEGIN + the three SET LOCALs as a single multi-statement query string** (`BEGIN; SET LOCAL transaction_isolation='read committed'; SET LOCAL lock_timeout='500ms'; SET LOCAL statement_timeout='2000ms';`) — matches MYT-40 discipline. Do NOT wrap in a transaction-helper that hoists BEGIN/COMMIT; ordering of the SET LOCAL statements relative to BEGIN is load-bearing (they're transaction-scoped).
+
+**Party cap check** (added to step 4): before the membership INSERT, also verify the campaign is not at the max-party cap. Default cap is **6 members** (D&D party convention). The check is under the same transaction (the invite-row lock indirectly serializes accepts, but the cap requires its own count):
+
+```sql
+-- 4a. Cap check before INSERT.
+SELECT count(*) FROM campaign_members WHERE campaign_id = <invite.campaign_id>;
+-- if count >= 6 → ROLLBACK; return {campaignFull: true}
+```
+
+The campaign-full path returns `409 {code: 'campaign_full', activeMembers: 6}` to the caller. Note: this cap is per-campaign, not per-invite. A future ticket can make the cap owner-configurable; for MYT-38 it's a hardcoded constant.
 
 ```sql
 BEGIN;
@@ -494,6 +518,7 @@ listMembers(campaignId: string): Promise<Array<{
   userId: string
   role: CampaignMemberRole
   username: string
+  displayName: string
   characterId: string | null   // always null in MYT-38; populated by character-creation ticket. Forward-compat shape.
   joinedAt: Date
 }>>  // join campaign_members → users; filters out users.suspended_at IS NOT NULL
@@ -515,7 +540,7 @@ function generateInviteCode(): string {
 }
 ```
 
-`repo.invites.create` retries up to 3 times on SQLSTATE `23505`; rethrows on other errors. After 3 retries, throws `InviteCreationError` (~unrecoverable; expected never to happen).
+`repo.invites.create` retries up to 3 times on SQLSTATE `23505` **only when `constraint_name === 'campaign_invites_invite_code_key'`**; any other 23505 (future unique constraints on the table) rethrows immediately rather than masking a real bug. Other errors rethrow. After 3 invite-code-collision retries, throws `InviteCreationError` (genuine schema corruption; never expected at our scale).
 
 ## Errors
 
@@ -530,6 +555,7 @@ function generateInviteCode(): string {
 | `CampaignNotFoundError` | invite create, listMembers | 404 | `{code: 'campaign_not_found'}` |
 | `CampaignGoneError` | accept (FK race) | 410 | `{code: 'campaign_gone'}` |
 | `InviteCapReachedError` | invite create | 409 | `{code: 'invite_cap_reached', activeInvites: 25}` |
+| `CampaignFullError` | accept | 409 | `{code: 'campaign_full', activeMembers: 6}` |
 | `InviteNotFoundError` | accept, revoke (combined w/ wrong-campaign), preview | 404 | `{code: 'invite_not_found'}` |
 | `InviteRevokedError` | accept (non-member only) | 410 | `{code: 'invite_revoked'}` |
 | `InviteTimeoutError` | accept | 503 | `{code: 'invite_timeout', retryAfterSec: 1, cause: 'lock' \| 'statement'}` + `Retry-After: 1` header. The `cause` discriminator splits SQLSTATE 55P03 (lock_timeout — contention) from 57014 (statement_timeout — slow query); dashboards can graph them separately. |
@@ -571,6 +597,15 @@ const RESERVED_USERNAMES = new Set([
   'anthropic', 'anthropic_team', 'stripe', 'aws', 'cognito',
   'root', 'noreply', 'no_reply', 'me', 'null', 'undefined',
 ])
+
+// Open-source profanity seed list. The launch-gap (between MYT-38 ship
+// and MYT-44's Haiku call) needs more than impersonation-root protection
+// — usernames like 'gandalf69_h1tler' would otherwise register cleanly.
+// We bundle the Shutterstock List-of-Dirty-Naughty-Obscene-and-Otherwise-
+// Bad-Words English seed list at backend/src/llm/profanity-seed-en.txt
+// (~2k entries, MIT-licensed). Match is case-insensitive substring AND
+// edit-distance ≤ 1 to catch trivial obfuscations. MYT-44 keeps this as
+// a fast-path before calling Haiku.
 
 export interface ProfanityResult {
   readonly profane: boolean
