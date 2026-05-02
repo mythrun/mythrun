@@ -103,7 +103,6 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   { table_name: 'sessions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'ended'::text, 'crashed'::text])))` },
   { table_name: 'stat_block_actions', check_clause: `CHECK ((action_type = ANY (ARRAY['action'::text, 'reaction'::text, 'bonus_action'::text, 'legendary'::text])))` },
   { table_name: 'user_subscriptions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text])))` },
-  { table_name: 'users', check_clause: `CHECK ((auth_provider = ANY (ARRAY['google'::text, 'discord'::text])))` },
   { table_name: 'worlds', check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))` },
   { table_name: 'worlds', check_clause: `CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))` },
 ]
@@ -196,7 +195,7 @@ describe('schema-parity (integration)', () => {
     await resetSchema(pool)
   })
 
-  it('applies all three migrations and pins the schema contract', async () => {
+  it('applies all migrations and pins the schema contract', async () => {
     const applied = await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })
 
     expect(applied.map((m) => m.version)).toEqual([
@@ -204,6 +203,7 @@ describe('schema-parity (integration)', () => {
       '002_indexes.sql',
       '003_srd_reference_data.sql',
       '004_credit_ledger_invariants.sql',
+      '005_drop_profile_columns_users.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -252,6 +252,29 @@ describe('schema-parity (integration)', () => {
         ORDER BY tc.table_name, kcu.column_name`,
     )
     expect(fks.rows).toEqual(EXPECTED_FK_DELETE_RULES)
+
+    // Migration 005: minimal-claims users — email/avatar_url/auth_provider dropped,
+    // case-sensitive UNIQUE on users.username replaced with UNIQUE LOWER(username).
+    const userColumns = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'users'
+         ORDER BY column_name`,
+    )
+    const userColumnNames = userColumns.rows.map((r) => r.column_name)
+    expect(userColumnNames).not.toContain('email')
+    expect(userColumnNames).not.toContain('avatar_url')
+    expect(userColumnNames).not.toContain('auth_provider')
+    expect(userColumnNames).toContain('display_name')
+    expect(userColumnNames).toContain('username')
+
+    const userIndexes = await pool.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+         WHERE schemaname = 'public' AND tablename = 'users'
+         ORDER BY indexname`,
+    )
+    const userIndexNames = userIndexes.rows.map((r) => r.indexname)
+    expect(userIndexNames).toContain('users_username_lower_key')
+    expect(userIndexNames).not.toContain('users_username_key')
 
     // Idempotency — second run is a no-op.
     const second = await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })
