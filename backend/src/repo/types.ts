@@ -1,16 +1,12 @@
 // Row types match the camelCase TS surface. snake_case DbRow types live in
-// mappers.ts where the conversion happens. Identity fields (cognitoSub,
-// email, authProvider on User; etc.) are never part of Update types — see
-// the spec §4.4.
+// mappers.ts where the conversion happens. Identity fields (cognitoSub on
+// User; etc.) are never part of Update types — see the spec §4.4.
 
 export interface User {
   readonly id: string
   readonly cognitoSub: string
-  readonly email: string
-  readonly displayName: string
   readonly username: string
-  readonly avatarUrl: string | null
-  readonly authProvider: 'google' | 'discord'
+  readonly displayName: string
   readonly stripeCustomerId: string | null
   readonly freeTrialUsed: boolean
   readonly suspendedAt: Date | null
@@ -20,11 +16,8 @@ export interface User {
 
 export interface CreateUserInput {
   readonly cognitoSub: string
-  readonly email: string
-  readonly displayName: string
   readonly username: string
-  readonly avatarUrl?: string | null
-  readonly authProvider: 'google' | 'discord'
+  readonly displayName: string
 }
 
 // Spelled-out (not Partial<Pick<...>>) so exactOptionalPropertyTypes
@@ -34,9 +27,8 @@ export interface CreateUserInput {
 // Clearing nullable fields is out of scope; spec §4.4 documents the
 // limitation.
 export interface UserUpdate {
-  readonly displayName?: string
   readonly username?: string
-  readonly avatarUrl?: string | null
+  readonly displayName?: string
   readonly stripeCustomerId?: string | null
   readonly freeTrialUsed?: boolean
 }
@@ -196,4 +188,43 @@ export interface DebitInput {
 export interface ListEntriesOpts {
   readonly limit?: number | null       // null/omit → no LIMIT clause
   readonly type?: CreditType
+}
+
+// ─── Campaign Members ─────────────────────────────────────────────────────────
+
+export type CampaignMemberRole = 'owner' | 'player'
+
+export interface CampaignMember {
+  readonly id: string
+  readonly campaignId: string
+  readonly userId: string
+  readonly role: CampaignMemberRole
+  readonly inviteAccepted: boolean
+  readonly joinedAt: Date
+}
+
+// ─── Campaign Invites ─────────────────────────────────────────────────────────
+
+export interface CampaignInvite {
+  readonly id: string
+  readonly campaignId: string
+  readonly createdBy: string
+  readonly inviteCode: string
+  readonly maxUses: number | null
+  readonly uses: number
+  readonly expiresAt: Date | null
+  readonly createdAt: Date
+  readonly primary: boolean
+}
+
+export interface CampaignInvitePreview {
+  readonly campaignName: string
+  readonly ownerUsername: string
+  readonly ownerDisplayName: string
+  readonly valid: boolean
+}
+
+export interface CreateInviteInput {
+  readonly campaignId: string
+  readonly createdBy: string
 }
