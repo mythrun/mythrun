@@ -27,10 +27,8 @@ function silentLogger(): ReturnType<typeof pino> {
 
 const baseUserInput = {
   cognitoSub: 'g_owner',
-  email: 'owner@x.com',
   displayName: 'Owner',
   username: 'owner',
-  authProvider: 'google' as const,
 }
 
 async function addCampaignMember(
@@ -94,7 +92,7 @@ describe('campaigns repo (integration)', () => {
     const campaigns = createCampaignsRepo(pool)
 
     const owner = await users.create(baseUserInput)
-    const player = await users.create({ ...baseUserInput, cognitoSub: 'g_p', email: 'p@x.com', username: 'player' })
+    const player = await users.create({ ...baseUserInput, cognitoSub: 'g_p', username: 'player' })
     const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
 
     const c1 = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'C1' })

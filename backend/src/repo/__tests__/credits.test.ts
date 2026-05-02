@@ -29,10 +29,8 @@ function silentLogger(): ReturnType<typeof pino> {
 
 const baseUserInput = {
   cognitoSub: 'google_credits_test',
-  email: 'credits@test.local',
   displayName: 'Credits Tester',
   username: 'creditstester',
-  authProvider: 'google' as const,
 }
 
 describe('credits repo (integration)', () => {
@@ -537,7 +535,6 @@ describe('credits repo — concurrency (separate pool)', () => {
       const u = await users.create({
         ...baseUserInput,
         cognitoSub: `sub-race-${String(i)}`,
-        email: `race-${String(i)}@test.local`,
         username: `race${String(i)}`,
       })
       await credits.grant({
@@ -573,7 +570,6 @@ describe('credits repo — concurrency (separate pool)', () => {
       const u = await users.create({
         ...baseUserInput,
         cognitoSub: `sub-empty-${String(i)}`,
-        email: `empty-${String(i)}@test.local`,
         username: `empty${String(i)}`,
       })
 
@@ -613,7 +609,6 @@ describe('credits repo — concurrency (separate pool)', () => {
       const u = await users.create({
         ...baseUserInput,
         cognitoSub: `sub-same-${String(i)}`,
-        email: `same-${String(i)}@test.local`,
         username: `same${String(i)}`,
       })
       await credits.grant({
@@ -651,7 +646,6 @@ describe('credits repo — concurrency (separate pool)', () => {
     const u = await users.create({
       ...baseUserInput,
       cognitoSub: 'sub-lock-timeout',
-      email: 'lock-timeout@test.local',
       username: 'locktimeout',
     })
     await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
@@ -699,7 +693,6 @@ describe('credits repo — concurrency (separate pool)', () => {
     const u = await users.create({
       ...baseUserInput,
       cognitoSub: 'sub-rollback',
-      email: 'rollback@test.local',
       username: 'rollback',
     })
     await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })

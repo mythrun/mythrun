@@ -46,10 +46,8 @@ describe('users repo (integration)', () => {
 
   const baseInput = {
     cognitoSub: 'google_12345',
-    email: 'a@b.com',
-    displayName: 'Alice',
     username: 'alice',
-    authProvider: 'google' as const,
+    displayName: 'Alice',
   }
 
   it('create returns a fully-populated user row', async () => {
@@ -57,11 +55,8 @@ describe('users repo (integration)', () => {
     const u = await repo.create(baseInput)
     expect(u.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(u.cognitoSub).toBe('google_12345')
-    expect(u.email).toBe('a@b.com')
     expect(u.displayName).toBe('Alice')
     expect(u.username).toBe('alice')
-    expect(u.avatarUrl).toBeNull()
-    expect(u.authProvider).toBe('google')
     expect(u.stripeCustomerId).toBeNull()
     expect(u.freeTrialUsed).toBe(false)
     expect(u.suspendedAt).toBeNull()
@@ -88,20 +83,13 @@ describe('users repo (integration)', () => {
     await repo.create(baseInput)
     const u = await repo.getByCognitoSub('google_12345')
     expect(u).not.toBeNull()
-    expect(u?.email).toBe('a@b.com')
+    expect(u?.username).toBe('alice')
   })
 
   it('getByCognitoSub returns null for unknown sub', async () => {
     const repo = createUsersRepo(pool)
     const u = await repo.getByCognitoSub('nope')
     expect(u).toBeNull()
-  })
-
-  it('getByEmail returns the user when present', async () => {
-    const repo = createUsersRepo(pool)
-    await repo.create(baseInput)
-    const u = await repo.getByEmail('a@b.com')
-    expect(u?.username).toBe('alice')
   })
 
   it('update mutates supplied fields and bumps updatedAt', async () => {
@@ -129,5 +117,34 @@ describe('users repo (integration)', () => {
     await expect(repo.update('019dccef-0000-7000-8000-000000000000', { displayName: 'X' })).rejects.toThrow(
       /no user with id/,
     )
+  })
+
+  it('getByUsername is case-insensitive', async () => {
+    const repo = createUsersRepo(pool)
+    await repo.create({ ...baseInput, username: 'Gandalf' })
+    expect(await repo.getByUsername('GANDALF')).not.toBeNull()
+    expect(await repo.getByUsername('gandalf')).not.toBeNull()
+    expect((await repo.getByUsername('gandalf'))?.username).toBe('Gandalf')
+  })
+
+  it('UNIQUE LOWER(username) rejects case-variant duplicates', async () => {
+    const repo = createUsersRepo(pool)
+    await repo.create({ ...baseInput, username: 'Admin' })
+    await expect(
+      repo.create({ ...baseInput, cognitoSub: 'google_xyz', username: 'admin' }),
+    ).rejects.toThrow(/users_username_lower_key|duplicate key/)
+  })
+
+  it('getByCognitoSubWithTimeout returns the user under normal load', async () => {
+    const repo = createUsersRepo(pool)
+    const u = await repo.create(baseInput)
+    const found = await repo.getByCognitoSubWithTimeout(u.cognitoSub, 200)
+    expect(found?.id).toBe(u.id)
+  })
+
+  it('getByCognitoSubWithTimeout returns null for unknown sub', async () => {
+    const repo = createUsersRepo(pool)
+    const u = await repo.getByCognitoSubWithTimeout('nope', 200)
+    expect(u).toBeNull()
   })
 })
