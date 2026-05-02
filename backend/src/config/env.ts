@@ -11,6 +11,7 @@ export interface Env {
   readonly cognitoAppClientId?: string
   readonly cognitoIssuerUrl?: string
   readonly cognitoHostedUiDomain?: string
+  readonly frontendBaseUrl: string
 }
 
 // Dev (.env.development) sets DATABASE_URL / REDIS_REALTIME_URL /
@@ -77,6 +78,52 @@ function buildRedisUrl(role: 'realtime' | 'batch'): string {
   return `${scheme}://${authPart}${host}:${port}`
 }
 
+// Closes an open-redirect-via-misconfig surface: the frontend base URL is
+// used to construct OAuth redirect targets and post-auth landing URLs, so a
+// permissive value (or an attacker-controlled override) would let a misrouted
+// redirect carry tokens off-origin. Allowlist by host, forbid path/query/hash
+// components so a typo can't accidentally pin redirects to a sub-route.
+function validateFrontendBaseUrl(raw: string | undefined, nodeEnv: string | undefined): string {
+  if (!raw || raw.trim() === '') {
+    throw new Error('FRONTEND_BASE_URL is required')
+  }
+
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error(`FRONTEND_BASE_URL is not a valid URL: ${raw}`)
+  }
+
+  const prodHosts = new Set(['mythrun.com', 'staging.mythrun.com'])
+  const devHosts = new Set(['localhost', '127.0.0.1'])
+
+  const allowedHosts =
+    nodeEnv === 'development' || nodeEnv === 'test'
+      ? new Set([...prodHosts, ...devHosts])
+      : prodHosts
+
+  if (!allowedHosts.has(url.hostname)) {
+    throw new Error(
+      `frontendBaseUrl host '${url.hostname}' is not in the allowlist for NODE_ENV=${nodeEnv}`,
+    )
+  }
+
+  if (url.pathname !== '/') {
+    throw new Error(`frontendBaseUrl pathname must be '/', got '${url.pathname}'`)
+  }
+
+  if (url.search !== '') {
+    throw new Error('frontendBaseUrl must not contain a query string')
+  }
+
+  if (url.hash !== '') {
+    throw new Error('frontendBaseUrl must not contain a hash fragment')
+  }
+
+  return url.origin
+}
+
 function loadAuthConfig(): Pick<
   Env,
   'authMode' | 'cognitoUserPoolId' | 'cognitoAppClientId' | 'cognitoIssuerUrl' | 'cognitoHostedUiDomain'
@@ -138,11 +185,20 @@ export function loadEnv(): Env {
   if (!Number.isFinite(port) || port <= 0) {
     throw new Error(`PORT must be numeric, got: ${portRaw}`)
   }
+  // Validate auth config before frontendBaseUrl so AUTH_MODE/NODE_ENV
+  // mismatches (which gate the entire boot) trip first — frontendBaseUrl
+  // errors are downstream of a valid auth posture.
+  const authConfig = loadAuthConfig()
+  const frontendBaseUrl = validateFrontendBaseUrl(
+    process.env.FRONTEND_BASE_URL,
+    process.env.NODE_ENV,
+  )
   return Object.freeze({
     databaseUrl: buildDatabaseUrl(),
     redisRealtimeUrl: buildRedisUrl('realtime'),
     redisBatchUrl: buildRedisUrl('batch'),
     port,
-    ...loadAuthConfig(),
+    ...authConfig,
+    frontendBaseUrl,
   })
 }

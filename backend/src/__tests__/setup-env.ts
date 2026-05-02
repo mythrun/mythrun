@@ -17,6 +17,7 @@ config({ path: resolve(here, '../../../.env.development') })
 // still work; vi.unstubAllEnvs restores TO this baseline, not to undefined.
 process.env.AUTH_MODE ??= 'bypass'
 process.env.NODE_ENV ??= 'development'
+process.env.FRONTEND_BASE_URL ??= 'http://localhost:5173'
 
 // Global teardown: any test that uses `vi.stubEnv(...)` to mutate process.env
 // gets cleanup automatically so env-mutations don't leak to sibling tests
