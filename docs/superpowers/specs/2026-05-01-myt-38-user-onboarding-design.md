@@ -209,11 +209,12 @@ interface User {
 - Default auth, owner-only.
 - Returns `200 {invites: [{inviteCode, inviteUrl, uses, expiresAt, createdAt, primary}, ...]}`. The `primary: boolean` field marks the first (oldest, non-revoked) invite — surfaces the canonical "share this" link. Recomputed per-request: if the owner revokes the current primary, the next-oldest non-revoked becomes primary on the next list call. SPAs caching the value should refetch after any mutation.
 
-### `DELETE /api/campaigns/:id/invites/:inviteId`
+### `DELETE /api/campaigns/:id/invites/:inviteCode`
 
 - Default auth, owner-only.
-- `repo.invites.revoke(inviteId, campaignId)` sets `expires_at = now()` if the invite belongs to the campaign.
-- Returns `204` on success. Returns `404 {code: 'invite_not_found'}` if the invite doesn't exist OR belongs to a different campaign (response shape is identical for both — no enumeration oracle).
+- **Addresses by `inviteCode`** (not `inviteId`) for symmetry with `accept` and `preview`, AND so the owner can call DELETE directly from the `listForCampaign` response (which exposes `inviteCode`, not `inviteId`).
+- `repo.invites.revoke(inviteCode, campaignId)` sets `expires_at = now()` if the invite belongs to the campaign.
+- Returns `204` on success. Returns `404 {code: 'invite_not_found'}` if the code is unknown OR belongs to a different campaign (response shape is identical for both — no enumeration oracle).
 
 ### `GET /api/invites/:inviteCode/preview`
 
@@ -410,7 +411,7 @@ createInvitesRepo(pool, opts?: { lockTimeoutMs?: number; statementTimeoutMs?: nu
   getByCode(code: string): Promise<CampaignInvite | null>
   getCodePreview(code: string): Promise<CampaignInvitePreview | null>
   listForCampaign(campaignId: string): Promise<CampaignInvite[]>  // active only, primary computed
-  revoke(inviteId: string, campaignId: string):
+  revoke(inviteCode: string, campaignId: string):
     Promise<{ revoked: true } | { notFoundOrWrongCampaign: true }>
   acceptInvite(input: { code: string; userId: string }):
     Promise<
