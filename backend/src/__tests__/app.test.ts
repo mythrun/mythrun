@@ -1,4 +1,20 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+
+// requireOnboarded looks up the users row via getByCognitoSubWithTimeout.
+// In these tests the Pool is a stub, so we mock the users repo to return
+// a synthetic onboarded row for the bypass user. Tests that need to
+// exercise the 403/401/null paths live in require-onboarded.test.ts.
+vi.mock('../repo/users.js', () => ({
+  createUsersRepo: () => ({
+    getByCognitoSubWithTimeout: vi.fn().mockResolvedValue({
+      id: 'stub-user-id',
+      cognitoSub: 'bypass:dev-1',
+      username: 'bypass',
+      displayName: 'Bypass',
+    }),
+  }),
+}))
+
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import type { Pool } from 'pg'

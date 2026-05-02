@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { Server, IncomingMessage, ServerResponse } from 'node:http'
 import Fastify, { type FastifyInstance } from 'fastify'
+import rateLimit from '@fastify/rate-limit'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { AppDeps } from './app-deps.js'
 import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
+import { requireOnboarded } from './auth/require-onboarded.js'
 import { registerReadyRoute } from './routes/health-ready.js'
 
 export const buildApp = async (
@@ -16,6 +18,10 @@ export const buildApp = async (
   // (Http2SecureServer), which then propagates incompatible RawServer
   // types into hooks/plugins that expect the default.
   const app = Fastify<Server, IncomingMessage, ServerResponse>({
+    // ALB → ECS: trust exactly one proxy hop so request.ip / hostname read
+    // X-Forwarded-* with the real client values, not the ALB's. Required for
+    // accurate rate-limit keys and for routes that log/use request.ip.
+    trustProxy: 1,
     // CRITICAL: Fastify's default pluginTimeout is 10s. Our jwtPlugin's
     // hydrate has up-to-1s jitter + 10s timeout = 11s wall budget. Without
     // the bump, Fastify's pluginTimeout fires first on slow Cognito and
@@ -78,6 +84,22 @@ export const buildApp = async (
   })
 
   await registerAuth(app, authOpts)
+
+  // Rate-limit plugin — global=false so individual routes opt in via
+  // config.rateLimit. The 1000/min ceiling is a safety net only; per-route
+  // limits set tighter caps (e.g. /api/users/register = 5/min). Default
+  // in-memory store; MYT-45 swaps to Redis-backed.
+  await app.register(rateLimit, {
+    global: false,
+    max: 1000,
+    timeWindow: '1 minute',
+  })
+
+  // requireOnboarded gates protected routes on a real users row. Public +
+  // jwt-no-db opt out; jwt-no-db is allowlist-bound and boot fails if a
+  // non-allowlisted route uses it.
+  await app.register(requireOnboarded, { pool: deps.pg })
+
   return app
 }
 

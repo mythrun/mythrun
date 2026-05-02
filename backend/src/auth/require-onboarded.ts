@@ -88,8 +88,12 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
   })
 }
 
+// No `dependencies` field: the real-mode `mythrun-auth-jwt` and the dev-mode
+// `mythrun-auth-bypass` both attach request.user via preHandler, and either
+// satisfies this plugin's contract. fastify-plugin's `dependencies` is
+// strict AND, which would lock us out of bypass mode. Hook ordering
+// (registerAuth runs before this plugin) is the actual guarantee.
 export const requireOnboarded = fp(impl, {
   fastify: '5.x',
   name: 'mythrun-require-onboarded',
-  dependencies: ['mythrun-auth-jwt'],
 })
