@@ -8,6 +8,7 @@ import type { AppDeps } from './app-deps.js'
 import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
 import { requireOnboarded } from './auth/require-onboarded.js'
 import { registerReadyRoute } from './routes/health-ready.js'
+import { usersRoutes } from './routes/users.js'
 
 export const buildApp = async (
   deps: AppDeps,
@@ -99,6 +100,8 @@ export const buildApp = async (
   // jwt-no-db opt out; jwt-no-db is allowlist-bound and boot fails if a
   // non-allowlisted route uses it.
   await app.register(requireOnboarded, { pool: deps.pg })
+
+  await app.register(usersRoutes, { pool: deps.pg })
 
   return app
 }
