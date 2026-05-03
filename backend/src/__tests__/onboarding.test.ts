@@ -59,7 +59,7 @@ describe('onboarding routes (integration)', () => {
       redisBatch: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
       repo: createRepo(pool),
     }
-    app = await buildApp(deps, { mode: 'bypass' })
+    app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
   })
 
   afterAll(async () => {

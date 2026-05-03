@@ -9,10 +9,19 @@ import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
 import { requireOnboarded } from './auth/require-onboarded.js'
 import { registerReadyRoute } from './routes/health-ready.js'
 import { usersRoutes } from './routes/users.js'
+import { invitesRoutes } from './routes/invites.js'
+
+export interface AppConfig {
+  /** Origin of the frontend SPA, used to compose share URLs (e.g. invite links).
+   *  Validated by loadEnv() against an allowlist of hosts. Pass through
+   *  intact — handlers concatenate paths onto it without re-validation. */
+  readonly frontendBaseUrl: string
+}
 
 export const buildApp = async (
   deps: AppDeps,
   authOpts: RegisterAuthOptions,
+  config: AppConfig,
 ): Promise<FastifyInstance> => {
   // Explicit type parameters force selection of the plain-HTTP Fastify
   // overload. Without them, TS picks the first matching overload
@@ -102,6 +111,10 @@ export const buildApp = async (
   await app.register(requireOnboarded, { pool: deps.pg })
 
   await app.register(usersRoutes, { pool: deps.pg })
+  await app.register(invitesRoutes, {
+    pool: deps.pg,
+    frontendBaseUrl: config.frontendBaseUrl,
+  })
 
   return app
 }

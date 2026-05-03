@@ -41,7 +41,7 @@ describe('createShutdown', () => {
   })
 
   it('drains in order: app.close → pg.end → redis.quit (both), then exit(0)', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' })
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
     const clients = makeMockClients()
     const callOrder: string[] = []
 
@@ -85,7 +85,7 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if app.close throws', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' })
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
     const clients = makeMockClients()
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.reject(new Error('boom'))) as unknown as typeof app.close,
@@ -102,7 +102,7 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if pg.end throws (after app.close succeeded)', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' })
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
     const clients = makeMockClients()
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.resolve()) as unknown as typeof app.close,

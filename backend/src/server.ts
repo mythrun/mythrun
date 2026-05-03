@@ -72,7 +72,9 @@ async function fallbackStart(): Promise<void> {
     redisBatch: { quit: () => Promise.resolve('OK') } as unknown as Redis,
     repo: createRepo(stubPool),
   }
-  const app = await buildApp(stubDeps, authOpts)
+  const app = await buildApp(stubDeps, authOpts, {
+    frontendBaseUrl: env.frontendBaseUrl,
+  })
   await app.listen({ port: env.port, host: '0.0.0.0' })
   const handleShutdown = createShutdown(app, stubDeps)
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
@@ -134,6 +136,7 @@ export async function main(): Promise<void> {
     const app = await buildApp(
       { pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo },
       authOpts,
+      { frontendBaseUrl: env.frontendBaseUrl },
     )
     await app.listen({ port: env.port, host: '0.0.0.0' })
 
