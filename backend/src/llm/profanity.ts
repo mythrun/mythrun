@@ -48,6 +48,9 @@ export interface ProfanityResult {
   readonly reason?: 'reserved' | 'profane'
 }
 
+// MYT-44 swaps the body for a real Haiku call; the Promise return shape is
+// the production contract, even though today's stub is fully synchronous.
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function classifyProfanity(text: string): Promise<ProfanityResult> {
   const lower = text.toLowerCase()
 

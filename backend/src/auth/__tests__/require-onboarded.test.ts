@@ -16,7 +16,9 @@ import { requireOnboarded } from '../require-onboarded.js'
 // passes, and (per-test) attaches request.user when desired.
 function fakeJwtPlugin(attachUser: { sub: string } | undefined) {
   return fp(
+    // eslint-disable-next-line @typescript-eslint/require-await
     async (app) => {
+      // eslint-disable-next-line @typescript-eslint/require-await
       app.addHook('preHandler', async (request) => {
         if (attachUser) {
           ;(request as unknown as { user?: { sub: string; cognitoUsername: string; scopes: readonly string[] } }).user = {

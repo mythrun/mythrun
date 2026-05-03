@@ -57,6 +57,10 @@ function generateSuggestion(base: string): string {
   return `${base}${digits}`
 }
 
+// FastifyPluginAsync requires an async function shape; the body has no
+// top-level await (route registration is synchronous), so the rule is
+// disabled here per existing precedent in auth/bypass-plugin.ts.
+// eslint-disable-next-line @typescript-eslint/require-await
 export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const users = createUsersRepo(opts.pool)
 
@@ -105,7 +109,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
           username: username.trim(),
           displayName: displayName.trim(),
         })
-        return reply
+        return await reply
           .header('Location', '/api/users/me')
           .code(201)
           .send({ user, created: true })

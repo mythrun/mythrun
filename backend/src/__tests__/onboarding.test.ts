@@ -18,7 +18,11 @@ const here = fileURLToPath(import.meta.url)
 const REAL_MIGRATIONS_DIR = resolve(here, '../../../migrations')
 
 function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = { write: () => {} }
+  const sink: DestinationStream = {
+    write: (): void => {
+      // discard log output
+    },
+  }
   return pino({ base: { component: 'migrate' } }, sink)
 }
 
@@ -63,8 +67,8 @@ describe('onboarding routes (integration)', () => {
   })
 
   afterAll(async () => {
-    if (app) await app.close()
-    if (pool) await pool.end()
+    await app.close()
+    await pool.end()
     vi.unstubAllEnvs()
   })
 
@@ -72,7 +76,7 @@ describe('onboarding routes (integration)', () => {
     testIpCounter += 1
     // Spread across /16 to avoid colliding with rate-limit's /24 bucketing
     // even if more than 256 tests ever run in this file.
-    currentTestIp = `10.0.${Math.floor(testIpCounter / 256)}.${testIpCounter % 256}`
+    currentTestIp = `10.0.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
     await resetData(pool)
   })
 

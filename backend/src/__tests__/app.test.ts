@@ -55,19 +55,19 @@ describe('buildApp', () => {
   })
 
   it('builds a Fastify instance with no side effects on import', async () => {
-    app = await buildApp(makeStubDeps(), { mode: 'bypass' })
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
     expect(app).toBeDefined()
   })
 
   it('/health returns {status:"ok"}', async () => {
-    app = await buildApp(makeStubDeps(), { mode: 'bypass' })
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ status: 'ok' })
   })
 
   it('encapsulation: auth hook applies to parent-scope routes', async () => {
-    app = await buildApp(makeStubDeps(), { mode: 'bypass' })
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
     let attached: unknown = 'sentinel'
     app.get('/post-register-route', (request) => {
       attached = request.user

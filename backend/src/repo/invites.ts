@@ -22,8 +22,13 @@ const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 function generateInviteCode(): string {
   const result: string[] = []
   while (result.length < 12) {
-    const b = randomBytes(1)[0]!
-    if (b < 248) result.push(ALPHABET[b % 62]!)
+    const buf = randomBytes(1)
+    const b = buf[0]
+    if (b === undefined) continue
+    if (b < 248) {
+      const ch = ALPHABET[b % 62]
+      if (ch !== undefined) result.push(ch)
+    }
   }
   return result.join('')
 }

@@ -21,7 +21,11 @@ const here = fileURLToPath(import.meta.url)
 const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
 
 function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = { write: () => {} }
+  const sink: DestinationStream = {
+    write: (): void => {
+      // discard log output
+    },
+  }
   return pino({ base: { component: 'migrate' } }, sink)
 }
 
@@ -261,8 +265,8 @@ describe('invites repo — concurrency (separate pool)', () => {
         invitesRepo.acceptInvite({ code: inv.inviteCode, userId: player.id }),
       ])
 
-      const inserts = [r1, r2].filter((r) => 'alreadyMember' in r && r.alreadyMember === false)
-      const replays = [r1, r2].filter((r) => 'alreadyMember' in r && r.alreadyMember === true)
+      const inserts = [r1, r2].filter((r) => 'alreadyMember' in r && !r.alreadyMember)
+      const replays = [r1, r2].filter((r) => 'alreadyMember' in r && r.alreadyMember)
       expect(inserts.length).toBe(1)
       expect(replays.length).toBe(1)
 
@@ -308,7 +312,9 @@ describe('invites repo — concurrency (separate pool)', () => {
         expect(caught.sqlstate).toBe('55P03')
       }
     } finally {
-      await holder.query('ROLLBACK').catch(() => {})
+      await holder.query('ROLLBACK').catch(() => {
+        // ignore — connection may already be in a failed state
+      })
       holder.release()
     }
   }, 10_000)

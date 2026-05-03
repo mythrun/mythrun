@@ -28,7 +28,11 @@ const FRONTEND_BASE_URL = 'http://localhost:5173'
 const BYPASS_SUB = 'bypass:dev-1'
 
 function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = { write: () => {} }
+  const sink: DestinationStream = {
+    write: (): void => {
+      // discard log output
+    },
+  }
   return pino({ base: { component: 'migrate' } }, sink)
 }
 
@@ -138,14 +142,14 @@ describe('invite routes (integration)', () => {
   })
 
   afterAll(async () => {
-    if (app) await app.close()
-    if (pool) await pool.end()
+    await app.close()
+    await pool.end()
     vi.unstubAllEnvs()
   })
 
   beforeEach(async () => {
     testIpCounter += 1
-    currentTestIp = `10.0.${Math.floor(testIpCounter / 256)}.${testIpCounter % 256}`
+    currentTestIp = `10.0.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
     await resetData(pool)
   })
 
@@ -198,7 +202,7 @@ describe('invite routes (integration)', () => {
       const res = await inject({ method: 'GET', url: `/api/campaigns/${campaignId}/invites` })
       expect(res.statusCode).toBe(200)
       const body = res.json<{
-        invites: Array<{ inviteCode: string; inviteUrl: string; primary: boolean }>
+        invites: { inviteCode: string; inviteUrl: string; primary: boolean }[]
       }>()
       expect(body.invites.length).toBe(2)
       // First (oldest) is primary.
@@ -378,7 +382,7 @@ describe('invite routes (integration)', () => {
       })
       expect(res.statusCode).toBe(200)
       const body = res.json<{
-        members: Array<{ userId: string; role: string; username: string }>
+        members: { userId: string; role: string; username: string }[]
       }>()
       expect(body.members.length).toBe(1)
       expect(body.members[0]?.username).toBe('bypass')

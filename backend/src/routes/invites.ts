@@ -108,6 +108,10 @@ async function requireMember(
   return true
 }
 
+// FastifyPluginAsync requires an async function shape; the body has no
+// top-level await (route registration is synchronous), so the rule is
+// disabled here per existing precedent in auth/bypass-plugin.ts.
+// eslint-disable-next-line @typescript-eslint/require-await
 export const invitesRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const repo = createRepo(opts.pool)
   const { frontendBaseUrl } = opts
@@ -126,7 +130,7 @@ export const invitesRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
       try {
         const invite = await repo.invites.create({ campaignId, createdBy: userId })
-        return reply
+        return await reply
           .header('Location', `/api/invites/${invite.inviteCode}/preview`)
           .code(201)
           .send({
@@ -244,33 +248,33 @@ export const invitesRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         const result = await repo.invites.acceptInvite({ code: inviteCode, userId })
         if ('campaignId' in result) {
           if (result.alreadyMember) {
-            return reply.code(200).send({
+            return await reply.code(200).send({
               campaignId: result.campaignId,
               alreadyMember: true,
             })
           }
-          return reply
+          return await reply
             .header('Location', `/api/campaigns/${result.campaignId}`)
             .code(201)
             .send({ campaignId: result.campaignId, alreadyMember: false })
         }
         if ('notFound' in result) {
-          return reply.code(404).send({ code: 'invite_not_found' })
+          return await reply.code(404).send({ code: 'invite_not_found' })
         }
         if ('revoked' in result) {
-          return reply.code(410).send({ code: 'invite_revoked' })
+          return await reply.code(410).send({ code: 'invite_revoked' })
         }
         if ('campaignGone' in result) {
-          return reply.code(410).send({ code: 'campaign_gone' })
+          return await reply.code(410).send({ code: 'campaign_gone' })
         }
         // campaignFull
-        return reply.code(409).send({
+        return await reply.code(409).send({
           code: 'campaign_full',
           activeMembers: result.activeMembers,
         })
       } catch (err) {
         if (err instanceof InviteTimeoutError) {
-          return reply
+          return await reply
             .header('Retry-After', '1')
             .code(503)
             .send({ code: 'invite_timeout', retryAfterSec: 1 })

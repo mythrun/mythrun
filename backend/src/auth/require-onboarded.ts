@@ -24,9 +24,13 @@ const JWT_NO_DB_ALLOWLIST = new Set<string>([
 
 const REQUIRE_ONBOARDED_LOOKUP_TIMEOUT_MS = 200
 
+// FastifyPluginAsync requires an async function shape; the body has no
+// top-level await (only hook registration is synchronous), so the rule
+// is disabled per existing precedent in auth/bypass-plugin.ts.
+// eslint-disable-next-line @typescript-eslint/require-await
 const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
   const users = createUsersRepo(opts.pool)
-  const observed: Array<{ method: string; url: string }> = []
+  const observed: { method: string; url: string }[] = []
 
   // Collect routes during registration. Fastify v5 doesn't expose a stable
   // public app.routes() API; the canonical pattern is onRoute → collect →
@@ -48,6 +52,7 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
   })
 
   // Boot-time enforcement of the allowlist.
+  // eslint-disable-next-line @typescript-eslint/require-await
   app.addHook('onReady', async () => {
     const offenders: string[] = []
     for (const { method, url } of observed) {
@@ -69,10 +74,10 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // Per-request gate.
   app.addHook('preHandler', async (request, reply) => {
-    const cfg = request.routeOptions?.config?.auth
+    const cfg = request.routeOptions.config.auth
     if (cfg === 'public' || cfg === 'jwt-no-db') return
 
-    if (request.routeOptions?.url === undefined) return // 404 fall-through
+    if (request.routeOptions.url === undefined) return // 404 fall-through
 
     if (!request.user) {
       return reply.code(401).send({ code: 'unauthenticated' })

@@ -105,7 +105,7 @@ function validateFrontendBaseUrl(raw: string | undefined, nodeEnv: string | unde
 
   if (!allowedHosts.has(url.hostname)) {
     throw new Error(
-      `frontendBaseUrl host '${url.hostname}' is not in the allowlist for NODE_ENV=${nodeEnv}`,
+      `frontendBaseUrl host '${url.hostname}' is not in the allowlist for NODE_ENV=${String(nodeEnv)}`,
     )
   }
 

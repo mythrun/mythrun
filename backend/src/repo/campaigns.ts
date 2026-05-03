@@ -79,8 +79,9 @@ export function createCampaignsRepo(pool: Pool) {
          RETURNING *`,
         [id, input.campaignId, input.userId, input.role, input.inviteAccepted ?? true],
       )
-      if (inserted.rowCount === 1) {
-        return toCampaignMember(inserted.rows[0]!)
+      const insertedRow = inserted.rows[0]
+      if (inserted.rowCount === 1 && insertedRow !== undefined) {
+        return toCampaignMember(insertedRow)
       }
       const existing = await pool.query<CampaignMemberDbRow>(
         `SELECT * FROM campaign_members WHERE campaign_id = $1 AND user_id = $2`,
@@ -112,14 +113,14 @@ export function createCampaignsRepo(pool: Pool) {
     listMembers: async (
       campaignId: string,
     ): Promise<
-      Array<{
+      {
         userId: string
         role: CampaignMemberRole
         username: string
         displayName: string
         characterId: string | null
         joinedAt: Date
-      }>
+      }[]
     > => {
       const result = await pool.query<{
         user_id: string
