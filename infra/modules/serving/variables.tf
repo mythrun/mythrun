@@ -173,10 +173,11 @@ variable "extra_env" {
         "AUTH_MODE", "NODE_ENV", "BOOT_GATE_ENABLED",
         "COGNITO_USER_POOL_ID", "COGNITO_APP_CLIENT_ID",
         "COGNITO_ISSUER_URL", "COGNITO_HOSTED_UI_DOMAIN",
+        "FRONTEND_BASE_URL",
         "AWS_EXECUTION_ENV", "ECS_CONTAINER_METADATA_URI_V4",
       ], e.name)
     ])
-    error_message = "extra_env must not contain reserved auth/Cognito/boot-gate/AWS-runtime names. Use the module's dedicated variables (auth_mode, node_env) instead."
+    error_message = "extra_env must not contain reserved auth/Cognito/boot-gate/frontend/AWS-runtime names. Use the module's dedicated variables (auth_mode, node_env, frontend_base_url) instead."
   }
 }
 
@@ -240,4 +241,22 @@ variable "cognito_hosted_ui_domain" {
   description = "Cognito Hosted UI domain (from auth module). Injected as COGNITO_HOSTED_UI_DOMAIN."
   type        = string
   default     = ""
+}
+
+# MYT-38: frontend base URL — required by the env validator; used to compose
+# share URLs (e.g. invite links). Must not contain a path/query/hash. The app
+# validates the host against an allowlist per NODE_ENV (mythrun.com /
+# staging.mythrun.com in real envs; localhost+127.0.0.1 also OK in dev/test).
+variable "frontend_base_url" {
+  description = "Origin of the frontend SPA. Required in real envs; injected as FRONTEND_BASE_URL. Must be origin-only (no path/query/hash) and host-allowlisted per NODE_ENV by the app's loadEnv validator. Empty default is rejected by the boot gate, so a misconfig fails loud rather than silently composing share URLs against an unknown host."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.frontend_base_url == "" ||
+      can(regex("^https?://[^/?#]+$", var.frontend_base_url))
+    )
+    error_message = "frontend_base_url must be empty or a bare https?:// origin with no path/query/hash."
+  }
 }
