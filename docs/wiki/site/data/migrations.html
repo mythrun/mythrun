@@ -467,8 +467,9 @@
   <li>
     From the repo root: <code>pnpm db:migrate</code>. On a fresh DB, the runner applies
     <code>001_initial_schema.sql</code>, <code>002_indexes.sql</code>,
-    <code>003_srd_reference_data.sql</code>, <code>004_credit_ledger_invariants.sql</code> in order
-    — the <a href="./schema.html">initial schema</a>. A second run is a no-op that logs
+    <code>003_srd_reference_data.sql</code>, <code>004_credit_ledger_invariants.sql</code>, and
+    <code>005_drop_profile_columns_users.sql</code> in order — the
+    <a href="./schema.html">current schema</a>. A second run is a no-op that logs
     <code>migrate.no_pending</code> and exits 0.
   </li>
   <li>
@@ -564,7 +565,7 @@ aws ecs execute-command \
 <h2 id="integration-points">Integration points</h2>
 
 <p>
-  The runner applies the <a href="./schema.html">initial schema</a> — three files in
+  The runner applies the <a href="./schema.html">current schema</a> — five files in
   <code>backend/migrations/</code>, 35 application tables + 22 named indexes + 3 SRD reference
   tables — onto a fresh database; the <code>schema</code> page is the explainer for what those files
   lay down. The runner reuses <a href="../runtime/index.html"><code>createPgPool</code></a> from the

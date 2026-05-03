@@ -1,0 +1,100 @@
+digraph onboarding {
+  // The first-login flow + the invite system. A signed-in player has a
+  // verified Cognito JWT but no users row yet — requireOnboarded gates
+  // every protected route on that row's existence; POST /api/users/register
+  // is the one route allowed to create it. Invites then let one DM-owner
+  // pull others into a campaign by sharing a 12-char code.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  client [label="HTTP client\n(JWT-authenticated)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_gates {
+    label="onRequest hooks";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    auth      [label="registerAuth\n(MYT-37)\nattach request.user"];
+    onboarded [label="requireOnboarded\nDB-row gate\n200ms timeout\nallowlist for jwt-no-db"];
+  }
+
+  subgraph cluster_routes_users {
+    label="users routes  (config.auth: 'jwt-no-db')";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    register [label="POST /api/users/register\nformat + profanity check\ncreate users row\n201 / 409 / 400"];
+    check    [label="GET /api/users/check-username\nformat + profanity + uniqueness\nadvisory only"];
+    me       [label="GET /api/users/me\nreturn caller's row\n(default-auth, gated)"];
+  }
+
+  subgraph cluster_routes_invites {
+    label="invites routes  (default-auth = onboarded)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    invite_create  [label="POST /api/campaigns/:id/invites\nowner-only\ncap=25 active"];
+    invite_list    [label="GET /api/campaigns/:id/invites\nowner-only"];
+    invite_revoke  [label="DELETE …/invites/:code\nowner-only\nexpires_at = now()"];
+    invite_preview [label="GET /api/invites/:code/preview\nPUBLIC (auth: 'public')\npre-OAuth landing"];
+    invite_accept  [label="POST /api/invites/:code/accept\nload-bearing transaction:\nlock → membership-first →\nexpiry → cap → INSERT\n→ uses++"];
+    members        [label="GET /api/campaigns/:id/members\nany member"];
+  }
+
+  subgraph cluster_repo {
+    label="repo (closure factory over pg.Pool)";
+    style="dotted";
+
+    users_repo    [label="repo.users\ncreate, getByCognitoSub,\ngetByCognitoSubWithTimeout,\ngetByUsername"];
+    invites_repo  [label="repo.invites\ncreate, getCodePreview,\nlistForCampaign, revoke,\nacceptInvite"];
+    camps_repo    [label="repo.campaigns\naddMember, getMembership,\ngetOwner, listMembers"];
+  }
+
+  subgraph cluster_llm {
+    label="profanity (stub today; Haiku in MYT-44)";
+    style="dotted";
+
+    profanity [label="classifyProfanity(text)\nreserved set + seed substring\n→ MYT-44 fast-path"];
+  }
+
+  pg [label="Postgres\nusers, campaigns,\ncampaign_members,\ncampaign_invites", color="ember", fontcolor="ember"];
+
+  // Per-request flow
+  client -> auth        [label="Bearer JWT"];
+  auth   -> onboarded   [label="request.user attached"];
+  onboarded -> register [label="jwt-no-db opt-out\n(pre-onboarded path)", style=dashed];
+  onboarded -> check    [label="jwt-no-db opt-out", style=dashed];
+  onboarded -> me       [label="default-auth\nrow exists"];
+  onboarded -> invite_create  [label="default-auth"];
+  onboarded -> invite_list    [label=""];
+  onboarded -> invite_revoke  [label=""];
+  onboarded -> invite_accept  [label=""];
+  onboarded -> members        [label=""];
+  client    -> invite_preview [label="public route\nno gate", style=dashed];
+
+  // Route → repo
+  register       -> users_repo   [label="create", style=dashed];
+  register       -> profanity    [label="username +\ndisplay_name", style=dashed];
+  check          -> users_repo   [label="getByUsername", style=dashed];
+  check          -> profanity    [label="", style=dashed];
+  me             -> users_repo   [label="getByCognitoSub", style=dashed];
+  invite_create  -> camps_repo   [label="getMembership\n(owner check)", style=dashed];
+  invite_create  -> invites_repo [label="create", style=dashed];
+  invite_list    -> invites_repo [label="listForCampaign", style=dashed];
+  invite_revoke  -> invites_repo [label="revoke", style=dashed];
+  invite_preview -> invites_repo [label="getCodePreview", style=dashed];
+  invite_accept  -> invites_repo [label="acceptInvite\n(BEGIN; FOR NO KEY UPDATE;\nmembership-first;\nexpiry; cap; INSERT;\nuses++; COMMIT)"];
+  members        -> camps_repo   [label="listMembers", style=dashed];
+
+  users_repo   -> pg [label="SQL"];
+  invites_repo -> pg [label="SQL"];
+  camps_repo   -> pg [label=""];
+
+  // requireOnboarded itself reads
+  onboarded -> users_repo [label="getByCognitoSubWithTimeout\n(BEGIN; SET LOCAL\nstatement_timeout=200ms)", style=dashed];
+}

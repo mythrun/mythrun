@@ -1,0 +1,739 @@
+<!-- source: backend/src/routes/users.ts -->
+<!-- source: backend/src/routes/invites.ts -->
+<!-- source: backend/src/auth/require-onboarded.ts -->
+<!-- source: backend/src/auth/onboarding-errors.ts -->
+<!-- source: backend/src/repo/invites.ts -->
+<!-- source: backend/src/repo/invites-errors.ts -->
+<!-- source: backend/src/repo/campaigns.ts -->
+<!-- source: backend/src/llm/profanity.ts -->
+<!-- source: backend/src/llm/profanity-seed-en.txt -->
+<!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
+<!-- source: backend/src/app.ts -->
+<!-- source-hash: sha256:bc7ec1b99dea45e3a8f29c0c679c0af506058beae599384d1355ae42349d1dee -->
+<!-- last-ticket: MYT-38 -->
+
+<h1>Onboarding &amp; Invites</h1>
+
+<p class="lead">
+  How a Cognito-signed-in player turns into a Mythrun user row, and how a DM-owner pulls others into
+  their campaign by sharing a 12-character invite code. A request-time gate
+  (<code>requireOnboarded</code>) refuses every protected route until the row exists; a small
+  allowlist of routes opt out so the row can be created in the first place.
+</p>
+
+<!-- @diagram: auth-billing/onboarding -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Sign-in lands the caller a verified Cognito access token (<a href="./identity.html">Identity</a>),
+  which the <a href="./jwt-middleware.html">JWT middleware</a> turns into a claims-only
+  <code>request.user = { sub, cognitoUsername, scopes }</code>. None of those claims is "the user
+  row in our database" — that row is created on the first call to
+  <code>POST /api/users/register</code>, and the player can't get there if every protected route
+  pre-emptively rejects them. Onboarding is the small surface that solves that, plus the invite flow
+  that builds on it.
+</p>
+
+<p>Two HTTP route groups, one Fastify hook, one repo namespace, and one stub LLM call:</p>
+
+<ul>
+  <li>
+    <strong><code>requireOnboarded</code> hook</strong> — a Fastify plugin that on every protected
+    request issues a 200 ms-bounded <code>SELECT</code> against <code>users</code>; missing row →
+    403 with <code>{ code: 'username_required' }</code>.
+  </li>
+  <li>
+    <strong><code>POST /api/users/register</code></strong> +
+    <strong><code>GET /api/users/check-username</code></strong> — both opt out of the gate via
+    <code>config.auth = 'jwt-no-db'</code>, and both are pinned to that opt-out by a boot-time
+    allowlist.
+  </li>
+  <li>
+    <strong><code>GET /api/users/me</code></strong> — the gated read every authenticated client
+    pulls on hydration.
+  </li>
+  <li>
+    <strong>Six invite routes</strong> on <code>/api/campaigns/:id/invites/*</code> and
+    <code>/api/invites/:code/*</code> — owner-only create/list/revoke, public preview, accept,
+    members list.
+  </li>
+  <li>
+    <strong><code>repo.invites</code></strong> — the namespace whose <code>acceptInvite</code> is
+    the load-bearing transaction at the heart of the join flow.
+  </li>
+  <li>
+    <strong><code>classifyProfanity</code></strong> — a static reserved-name + seed-substring stub
+    today, with the production Haiku call landing in MYT-44.
+  </li>
+</ul>
+
+<h2>The <code>requireOnboarded</code> gate and its allowlist</h2>
+
+<p>
+  The plugin lives at <code>backend/src/auth/require-onboarded.ts</code> and is registered in
+  <code>buildApp</code> after the auth dispatcher and the rate-limit plugin, so it sees a populated
+  <code>request.user</code> and runs after the per-route limiter. It installs a
+  <code>preHandler</code> hook that branches three ways: <code>config.auth === 'public'</code> →
+  return; <code>config.auth === 'jwt-no-db'</code> → return; default → look up the row by
+  <code>cognito_sub</code> and 403 if it's missing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two opt-out values, not one</strong> — <code>'public'</code> means "no auth at all"
+  (skipped by the JWT middleware too, used by <code>/health</code> and the invite preview);
+  <code>'jwt-no-db'</code> means "validate the JWT and attach claims, but skip the DB-row gate." The
+  two answer different questions. The register route is the textbook <code>'jwt-no-db'</code> case:
+  the client has a JWT, but the row that the gate looks up is the one this very route is about to
+  create.
+</aside>
+
+<p>
+  The <code>'jwt-no-db'</code> opt-out is the dangerous one — a route that uses it operates without
+  the DB-row guarantee every other handler can rely on, which means it has to validate the caller's
+  identity and authority by other means. To keep that surface tiny, the plugin enforces a hard-coded
+  allowlist at boot:
+</p>
+
+<ul>
+  <li><code>POST::/api/users/register</code></li>
+  <li><code>GET::/api/users/check-username</code></li>
+</ul>
+
+<p>
+  An <code>onRoute</code> hook collects every route registered with
+  <code>config.auth === 'jwt-no-db'</code>; an <code>onReady</code> hook compares the collected set
+  against the allowlist and throws if any unrecognized entry shows up.
+  <code>app.ready()</code> propagates that throw to the boot sequence, which crashes the process —
+  so a future PR that adds a new <code>'jwt-no-db'</code> route fails CI on the first test that
+  awaits <code>app.ready()</code>, even before any request is fired.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Boot-time allowlist, not a per-request comment in the route file</strong> — a comment is a
+  contract enforced by reviewer attention. The allowlist is enforced by the runtime, audited by one
+  screen of code in one file, and impossible to bypass without editing that file plus passing
+  security review on the PR. The hook's error message points reviewers at exactly that workflow.
+</aside>
+
+<p>
+  The lookup itself goes through <code>repo.users.getByCognitoSubWithTimeout</code>, which wraps the
+  read in <code>BEGIN; SET LOCAL statement_timeout = '200ms'; SELECT … ; COMMIT</code>.
+  <code>SET LOCAL</code> only takes effect inside a transaction, so the BEGIN/COMMIT wrapper is
+  load-bearing even though the read is single-statement. SQLSTATE
+  <code>57014</code> (statement_timeout) maps to a <code>LookupTimeoutError</code> the plugin lets
+  bubble — the route layer's default <code>setErrorHandler</code> renders it as 503. Bounding the
+  per-request lookup at 200 ms is what stops a wedged Postgres from pinning every connection in the
+  pool.
+</p>
+
+<h2><code>POST /api/users/register</code>: the one route that creates the row</h2>
+
+<p>
+  The handler validates the request shape (<code>username</code> 3-20 chars matching
+  <code>^[a-zA-Z0-9](?:[a-zA-Z0-9_]{1,18}[a-zA-Z0-9])?$</code>; <code>displayName</code> 1-40
+  chars), runs both fields through <code>classifyProfanity</code>, then attempts
+  <code>repo.users.create({ cognitoSub, username, displayName })</code>. The interesting cases are
+  the failure paths.
+</p>
+
+<p>
+  A unique-violation on <code>users_cognito_sub_key</code> means "this caller already onboarded" —
+  the handler reads the existing row and returns one of two shapes:
+</p>
+
+<ul>
+  <li>
+    <strong>Same username (case-insensitive)</strong> → 200 with the existing row and a
+    <code>Content-Location: /api/users/me</code> header. The caller retried, the DB happened to have
+    the row already; success is idempotent.
+  </li>
+  <li>
+    <strong>Different username</strong> → 409 with
+    <code>{ code: 'already_onboarded', currentUsername, requestedUsername }</code>. The caller can't
+    change their username through register; they have to use the (future) profile-edit surface.
+  </li>
+</ul>
+
+<p>
+  A unique-violation on <code>users_username_lower_key</code> (the case-insensitive expression index
+  from <a href="../data/schema.html">migration 005</a>) means "this username is taken." The handler
+  generates a <code>${requested}${100..999}</code> suggestion, runs it through the profanity check
+  up to 3 times, and returns 409 with <code>{ code: 'username_taken', suggestion }</code>.
+  Generating a non-profane suggestion deterministically requires the loop because seed-substring
+  matches occasionally fire on the digit-suffixed shape; three attempts is enough for the static
+  stub and will tighten when MYT-44's Haiku swap lands.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Suggestion in the conflict response, not after a follow-up call</strong> — a separate
+  "suggest me a name" round-trip would mean the SPA hits the API twice on every collision. Folding
+  the suggestion into the 409 cuts that to one. The shape of the suggestion is intentionally obvious
+  (<code>requested + 3 digits</code>) so users understand what changed and can pick a variant they
+  actually want; the API doesn't try to be clever about plausible alternatives.
+</aside>
+
+<h2><code>GET /api/users/check-username</code>: advisory uniqueness check</h2>
+
+<p>
+  Same validation pipeline as register, minus the create. Returns
+  <code>{ available: true }</code> or
+  <code>{ available: false, reason: 'format' | 'reserved' | 'profane' | 'taken' }</code>. The route
+  exists for the SPA's "as-you-type" feedback on the username picker — the user shouldn't have to
+  POST a register attempt to learn that <code>admin</code> is reserved.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Advisory-only — register still has to redo the uniqueness check</strong> — between a
+  successful <code>check-username</code> and the matching <code>register</code> call, another player
+  could have claimed the same name. The DB's UNIQUE expression index is the actual authority;
+  <code>check-username</code> is a UX nicety. Treating the check as a reservation would introduce a
+  TTL story (when does a reservation expire?) and a denial surface (squat 100 reservations, lock
+  everyone out) for no real product benefit.
+</aside>
+
+<h2><code>POST /api/invites/:inviteCode/accept</code>: the load-bearing transaction</h2>
+
+<p>
+  Of the six invite routes, this is the only one with non-trivial logic — accepting an invite has to
+  handle a small braid of races without leaving any inconsistent state. The handler is a one-liner
+  around <code>repo.invites.acceptInvite</code>; the work happens in the transaction the repo runs:
+</p>
+
+<ol>
+  <li>
+    <code
+      >BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '500ms';
+      SET LOCAL statement_timeout = '2000ms';</code
+    >
+  </li>
+  <li>
+    <strong>Lock the invite row.</strong>
+    <code>SELECT * FROM campaign_invites WHERE invite_code = $1 FOR NO KEY UPDATE</code>. Missing
+    row → <code>{ notFound: true }</code> + ROLLBACK. The lock pins the invite for the rest of the
+    transaction so concurrent accepts can't race the expiry/cap checks against an
+    <code>UPDATE … SET expires_at = now()</code> from a <code>revoke</code>.
+  </li>
+  <li>
+    <strong>Membership check first.</strong> If the caller is already in
+    <code>campaign_members</code> for this campaign, the transaction commits immediately with
+    <code>{ campaignId, alreadyMember: true }</code>. Membership trumps revoke: a player who is
+    already in a campaign sees the same success regardless of whether the invite they used to find
+    out has since been revoked.
+  </li>
+  <li>
+    <strong>Expiry check, only for non-members.</strong>
+    <code>expires_at !== null && expires_at <= now()</code> → <code>{ revoked: true }</code> +
+    ROLLBACK. The order matters — checking expiry first would 410 a returning member just because
+    the original invite expired.
+  </li>
+  <li>
+    <strong>Cap check.</strong> <code>SELECT count(*)</code> from <code>campaign_members</code>; if
+    the count is at <code>PARTY_SIZE_CAP</code> (6), return
+    <code>{ campaignFull: true, activeMembers }</code> + ROLLBACK.
+  </li>
+  <li>
+    <strong>INSERT membership with ON CONFLICT.</strong>
+    <code>INSERT … VALUES (…) ON CONFLICT (campaign_id, user_id) DO NOTHING RETURNING *</code>. If
+    the FK trips with SQLSTATE <code>23503</code>, the campaign was deleted between step 2 and here
+    — return <code>{ campaignGone: true }</code>. If the INSERT returns zero rows (a concurrent
+    accept via a different invite just landed the row first), return
+    <code>{ campaignId, alreadyMember: true }</code> without bumping <code>uses</code>.
+  </li>
+  <li>
+    <strong>Bump <code>uses</code></strong> — only on the rowCount === 1 branch. The user joined via
+    <em>this</em> invite; <code>uses + 1</code> is what makes the per-invite analytics meaningful.
+  </li>
+  <li><code>COMMIT</code>.</li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Membership check before expiry check</strong> — flipping that order produces a real bug: a
+  player who joined the campaign yesterday and revisits the invite link today gets 410 (revoked)
+  instead of 200 (you're already a member, here's the campaign). The ordering pins the contract:
+  once you're in, you're in, regardless of what the invite did after.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Don't bump <code>uses</code> on the ON-CONFLICT-zero-rows branch</strong> — two concurrent
+  accepts of two different invites by the same player race; the first one's INSERT wins. If both
+  incremented <code>uses</code>, the loser's invite would record a use it didn't cause. The
+  <code>rowCount === 1</code> check makes the bump exactly-once-per-actual-join.
+</aside>
+
+<p>
+  Lock-timeout (SQLSTATE <code>55P03</code>) and statement-timeout (<code>57014</code>) both map to
+  a single <code>InviteTimeoutError</code> the route layer translates to 503 with
+  <code>Retry-After: 1</code>. The dual timeout — 500 ms on row locks, 2000 ms on the whole
+  transaction — separates "another accept is holding the invite" from "the whole DB is wedged" in
+  the SQLSTATE without changing the caller's view.
+</p>
+
+<h2>The other invite routes (cap=25, owner-only)</h2>
+
+<p>
+  <strong><code>POST /api/campaigns/:id/invites</code></strong> creates an invite. Owner-only,
+  enforced by <code>repo.campaigns.getMembership(campaignId, userId)</code> + role-check (404 if the
+  campaign doesn't exist, 403 if the caller isn't its owner). The repo's <code>create</code> takes a
+  <code>FOR NO KEY UPDATE</code> lock on the campaigns row first (lock-order convention: campaigns →
+  invites → members), counts active invites, refuses with <code>InviteCapReachedError</code> at 25,
+  and otherwise generates a 12-char base62 code with rejection sampling (<code>randomBytes</code> +
+  a <code>b < 248</code> filter, no modulo bias). Up to 3 retries on a UNIQUE collision against the
+  <code>invite_code</code> column; collisions on a 62^12 keyspace are vanishingly unlikely but the
+  retry loop is cheap and removes one failure mode from the ops surface.
+</p>
+
+<p>
+  <strong><code>GET /api/campaigns/:id/invites</code></strong> lists active invites for the campaign
+  — owner-only. The first row in the result is flagged <code>primary: true</code> so the SPA can
+  highlight a "default" invite without us needing a separate column on the table. The "primary"
+  notion is purely presentational and re-derived on every list call; nothing in the schema knows
+  about it.
+</p>
+
+<p>
+  <strong><code>DELETE /api/campaigns/:id/invites/:inviteCode</code></strong> revokes an invite by
+  setting <code>expires_at = now()</code>. Returns 204 on success, 404 if the
+  <code>(inviteCode, campaignId)</code> tuple doesn't match (the route is keyed on the invite-code,
+  but the path also carries the campaign-id; mismatch is its own 404 to keep the contract simple).
+  Already-accepted memberships are unaffected — revoke prevents future accepts, never retroactively
+  kicks members.
+</p>
+
+<p>
+  <strong><code>GET /api/invites/:inviteCode/preview</code></strong> is the only invite route
+  configured <code>auth: 'public'</code>. The use case: a friend pastes the invite URL in Discord,
+  the recipient clicks it, the SPA loads at <code>/join/&lt;code&gt;</code> and wants to show
+  "Krestyn the Bold invites you to Storms of Bravelos" before the recipient signs in. The repo query
+  joins <code>campaign_invites → campaigns → users (owner)</code>, filters out suspended owners (so
+  a banned DM's invites don't keep working), and returns
+  <code>{ campaignName, ownerUsername, ownerDisplayName, valid }</code>. No authentication,
+  rate-limited to 10/min/IP, and no information about the recipient is read or written.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Preview is <code>'public'</code>, not <code>'jwt-no-db'</code></strong> — preview is the
+  only invite route a not-yet-signed-in user hits, deliberately. The <code>jwt-no-db</code> opt-out
+  would require a JWT (and break the pre-OAuth landing UX); the <code>public</code> opt-out skips
+  both gates. The preview is also <em>not</em> in the <code>JWT_NO_DB_ALLOWLIST</code> — it's a
+  separate axis. Adding a route as <code>auth: 'public'</code> doesn't trip the requireOnboarded
+  boot gate; reviewers should still treat it as security-sensitive on its own merits.
+</aside>
+
+<p>
+  <strong><code>GET /api/campaigns/:id/members</code></strong> returns the member roster — any
+  campaign member, not just the owner. The repo joins <code>campaign_members → users</code>, filters
+  out suspended accounts (banned members don't surface to the rest of the party), and returns
+  <code>{ userId, role, username, displayName, characterId, joinedAt }</code> rows. The
+  <code>characterId</code> is always <code>null</code> today; it'll be wired up when the characters
+  namespace ships.
+</p>
+
+<h2>The profanity stub</h2>
+
+<p>
+  <code>backend/src/llm/profanity.ts</code> exports
+  <code>classifyProfanity(text): Promise&lt;ProfanityResult&gt;</code> with two layers:
+</p>
+
+<ul>
+  <li>
+    <strong>RESERVED_USERNAMES</strong> — a small case-insensitive exact-match set of names that
+    impersonate Mythrun, its vendors, or system roles (<code>admin</code>, <code>support</code>,
+    <code>mythrun</code>, <code>anthropic</code>, <code>stripe</code>, <code>aws</code>,
+    <code>cognito</code>, <code>root</code>, <code>noreply</code>, <code>me</code>,
+    <code>null</code>, <code>undefined</code>, …). Hits return
+    <code>{ profane: true, reason: 'reserved' }</code>.
+  </li>
+  <li>
+    <strong>profanity-seed-en.txt</strong> — a curated subset of the Shutterstock
+    <code>LDNOOBW</code> English list, loaded at module import. Each line is lowercase and
+    substring-matched. Hits return <code>{ profane: true, reason: 'profane' }</code>.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Two layers and a Promise return shape today, even though the body is sync</strong> —
+  MYT-44 swaps the body for an Anthropic Haiku call (per ZFC: when in doubt, call Haiku), and Haiku
+  is async by nature. Shipping the contract as a Promise now means the swap is a one-file change
+  instead of a route-by-route refactor. The static layers stay as the fast-path defense even after
+  Haiku lands — exact-match reserved names and obvious slurs don't need an LLM round-trip.
+</aside>
+
+<p>
+  The full <code>LDNOOBW</code> English list folds in before public launch; today's seed is
+  intentionally minimal (the project is pre-launch, no real users, no exposure surface for the
+  gaps). <code>tracking bead myth-urh6</code> tracks the swap.
+</p>
+
+<h2>Rate limits per route</h2>
+
+<p>
+  Rate limits live as per-route <code>config.rateLimit</code> entries against
+  <code>@fastify/rate-limit</code> (registered with <code>global: false</code>, so global is off and
+  routes opt in). The current shape:
+</p>
+
+<ul>
+  <li>
+    <code>POST /api/users/register</code> — <strong>5/min</strong>. Registration is once-per-user; a
+    higher rate is a typo storm or a bot.
+  </li>
+  <li>
+    <code>GET /api/users/check-username</code> — <strong>10/min</strong>. As-you-type checks but not
+    per-keystroke — the SPA debounces.
+  </li>
+  <li>Invite create / list / revoke — <strong>30/min</strong>. Owner-side admin operations.</li>
+  <li><code>GET /api/invites/:code/preview</code> — <strong>10/min/IP</strong>. Public route.</li>
+  <li>
+    <code>POST /api/invites/:code/accept</code> — <strong>30/min</strong>, keyed on
+    <code>request.user.sub</code> (not IP), so a player on a shared NAT isn't penalised for someone
+    else's retries.
+  </li>
+  <li><code>GET /api/campaigns/:id/members</code> — <strong>60/min</strong>.</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Per-cognito-sub key for accept, IP key for the rest</strong> — accept is the route most
+  likely to fire from a polled retry-loop on the SPA (the user clicks "Join"; the SPA POSTs; network
+  hiccups; SPA retries). Keying on <code>request.user.sub</code> bounds one player's storm without
+  colliding into other players sharing their IP. The IP-keyed routes are either pre-auth (preview)
+  or bursty enough that per-user keying gives no real signal (a busy DM rotating invites).
+</aside>
+
+<p>
+  The store is in-memory today; MYT-45 swaps it to Redis-backed so the limits hold across the ECS
+  service's task replicas instead of per-task.
+</p>
+
+<h2><code>FRONTEND_BASE_URL</code> and the host allowlist</h2>
+
+<p>
+  Invite-create responses include <code>inviteUrl: ${frontendBaseUrl}/join/${inviteCode}</code> so
+  the SPA can render a copy-able link without re-implementing the URL shape. The base URL is loaded
+  from the <code>FRONTEND_BASE_URL</code> env var, validated by <code>config/env.ts</code> against
+  an explicit host allowlist:
+</p>
+
+<ul>
+  <li>Production allows <code>mythrun.com</code> and <code>staging.mythrun.com</code>.</li>
+  <li>
+    Development and test additionally allow <code>localhost</code> and <code>127.0.0.1</code> (any
+    port).
+  </li>
+  <li>The pathname must be <code>/</code>; query string and hash fragment must be empty.</li>
+  <li>
+    The validator returns <code>url.origin</code> — the canonical
+    <code>scheme://host[:port]</code> form — so handlers concatenate paths against a stable shape.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Allowlist + path-must-be-/ closes an open-redirect surface</strong> — the base URL drives
+  OAuth redirect targets and invite-link composition; a permissive value (or an attacker-controlled
+  override) would let a misrouted redirect carry tokens off-origin. Allowing any host is one bad ECS
+  task-def env entry away from a credential-leak; pinning the host set and forbidding
+  path/query/hash means a typo can't accidentally pin redirects to a sub-route.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="add-a-new-jwt-no-db-route">Add a new <code>jwt-no-db</code> route</h3>
+<ol>
+  <li>
+    Add the route under <code>backend/src/routes/</code> with
+    <code>{ config: { auth: 'jwt-no-db', rateLimit: { … } } }</code>. Validate the request shape by
+    hand (no DB-row guarantee).
+  </li>
+  <li>
+    Add the route's <code>METHOD::URL</code> string to <code>JWT_NO_DB_ALLOWLIST</code> in
+    <code>backend/src/auth/require-onboarded.ts</code>. URL normalization strips trailing slashes;
+    method is uppercased.
+  </li>
+  <li>
+    Tag the PR for security review. The reviewer's checklist: does the handler pre-onboarding state
+    safely? Does it write any row that requires a real <code>users.id</code>? Does its failure
+    surface leak whether the caller is already onboarded?
+  </li>
+  <li>
+    Run <code>pnpm test --filter @mythrun/backend</code>. The
+    <code>require-onboarded.test.ts</code> suite asserts the boot crash on an unrecognized
+    <code>jwt-no-db</code> route — adding the route without updating the allowlist will fail that
+    test.
+  </li>
+</ol>
+
+<h3 id="diagnose-an-invite-accept-failure">Diagnose an invite-accept failure</h3>
+<ol>
+  <li>
+    The HTTP status maps to one of: 404 (<code>invite_not_found</code>), 410 (<code
+      >invite_revoked</code
+    >
+    | <code>campaign_gone</code>), 409 (<code>campaign_full</code>), 503
+    (<code>invite_timeout</code>). Anything else is unexpected and worth a 500-spike alert.
+  </li>
+  <li>
+    For 503 spikes, check CloudWatch for <code>InviteTimeoutError</code> and read the
+    <code>cause</code> field. <code>cause: 'lock'</code> + sqlstate <code>55P03</code> means a
+    different accept (or a revoke) is holding the row past the 500 ms lock-timeout — a sustained
+    rate suggests a live contention pattern. <code>cause: 'statement'</code> + sqlstate
+    <code>57014</code> means the whole transaction blew the 2 s budget — usually pg-side; cross
+    against pg metrics.
+  </li>
+  <li>
+    For 409 spikes, the campaign hit the 6-player cap (or the cap was lowered post-launch). There is
+    no admin override yet; growing the cap is a follow-up bead.
+  </li>
+  <li>
+    Recovery — invites are stateless from the API's side. Revoke + re-create produces a fresh code.
+    Existing accepted memberships are independent of any individual invite row.
+  </li>
+</ol>
+
+<h3 id="reset-a-stuck-username-during-onboarding">Reset a stuck username during onboarding</h3>
+<ol>
+  <li>
+    A player who 409'd on <code>username_taken</code> and abandoned the flow has nothing to clean up
+    — no row was created.
+  </li>
+  <li>
+    A player who 409'd on <code>already_onboarded</code> already has a row pinned at a different
+    username and hits this every time they retry. Username changes via the register endpoint are
+    intentionally refused; the player should use the (future) profile-edit surface, or you can
+    manually rewrite <code>users.username</code> via psql in dev/staging if there's no self-service
+    path yet.
+  </li>
+  <li>
+    The case-insensitive UNIQUE on <code>LOWER(username)</code> is enforced at the DB; you can't
+    rename to a casing-variant of an existing taken name.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  Upstream: <a href="./identity.html">Identity</a> mints the access tokens this surface consumes;
+  the <a href="./jwt-middleware.html">JWT middleware</a> attaches <code>request.user</code> the gate
+  then reads. Downstream: <a href="../data/repository.html">repository layer</a>'s
+  <code>users</code>, <code>invites</code>, and <code>campaigns</code> namespaces are the only DB
+  seam this surface touches — <code>users.create</code>,
+  <code>users.getByCognitoSubWithTimeout</code>, <code>users.getByUsername</code>,
+  <code>invites.acceptInvite</code>, <code>campaigns.addMember</code> / <code>getMembership</code> /
+  <code>listMembers</code>. The <a href="../data/schema.html">schema</a>'s migration 005 establishes
+  the minimal-claims user shape and the case-insensitive username index this layer relies on. The
+  <a href="../runtime/index.html">backend runtime</a> page describes the
+  <code>buildApp</code> wiring that registers <code>requireOnboarded</code>, the rate-limit plugin,
+  and these route groups in order. Future work: MYT-44 replaces the profanity stub with a Haiku
+  call; MYT-45 swaps rate-limit storage to Redis; the SPA's first-login screen and invite-landing
+  page consume these endpoints.
+</p>
+
+<h2>Appendix: HTTP surface</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Path</th>
+      <th>Auth</th>
+      <th>Limit</th>
+      <th>Body / response highlights</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/users/register</code></td>
+      <td><code>jwt-no-db</code></td>
+      <td>5/min</td>
+      <td>
+        body: <code>{ username, displayName }</code> · 201 + <code>Location</code> on create · 200 +
+        <code>Content-Location</code> on idempotent retry · 409 <code>already_onboarded</code> · 409
+        <code>username_taken</code> + suggestion · 400 <code>username_invalid</code> · 400
+        <code>display_name_invalid</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/users/check-username?username=…</code></td>
+      <td><code>jwt-no-db</code></td>
+      <td>10/min</td>
+      <td>
+        <code>{ available: true }</code> or
+        <code>{ available: false, reason: 'format' | 'reserved' | 'profane' | 'taken' }</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/users/me</code></td>
+      <td>default (gated)</td>
+      <td>—</td>
+      <td>
+        <code>{ user }</code> · 403 <code>username_required</code> if the row hasn't been created
+        yet
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/campaigns/:id/invites</code></td>
+      <td>default + owner</td>
+      <td>30/min</td>
+      <td>
+        201 <code>{ inviteCode, inviteUrl, uses, expiresAt, createdAt }</code> · 409
+        <code>invite_cap_reached</code> · 403 <code>not_campaign_owner</code> · 404
+        <code>campaign_not_found</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/campaigns/:id/invites</code></td>
+      <td>default + owner</td>
+      <td>30/min</td>
+      <td>
+        <code>{ invites: [{ inviteCode, inviteUrl, uses, expiresAt, createdAt, primary }] }</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>DELETE</code></td>
+      <td><code>/api/campaigns/:id/invites/:inviteCode</code></td>
+      <td>default + owner</td>
+      <td>30/min</td>
+      <td>204 on revoke · 404 <code>invite_not_found</code></td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/invites/:inviteCode/preview</code></td>
+      <td><code>public</code></td>
+      <td>10/min/IP</td>
+      <td>
+        <code>{ campaignName, ownerUsername, ownerDisplayName, valid }</code> · 404
+        <code>invite_not_found</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/invites/:inviteCode/accept</code></td>
+      <td>default (gated)</td>
+      <td>30/min/sub</td>
+      <td>
+        201 <code>{ campaignId, alreadyMember: false }</code> · 200
+        <code>{ campaignId, alreadyMember: true }</code> · 410 <code>invite_revoked</code> /
+        <code>campaign_gone</code> · 409 <code>campaign_full</code> · 404
+        <code>invite_not_found</code> · 503 <code>invite_timeout</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/campaigns/:id/members</code></td>
+      <td>default + member</td>
+      <td>60/min</td>
+      <td>
+        <code>{ members: [{ userId, role, username, displayName, characterId, joinedAt }] }</code>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Caps and timeouts</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Where</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>REQUIRE_ONBOARDED_LOOKUP_TIMEOUT_MS</code></td>
+      <td>200 ms</td>
+      <td><code>auth/require-onboarded.ts</code></td>
+    </tr>
+    <tr>
+      <td><code>ACCEPT_LOCK_TIMEOUT_MS</code></td>
+      <td>500 ms</td>
+      <td><code>repo/invites-errors.ts</code></td>
+    </tr>
+    <tr>
+      <td><code>ACCEPT_STATEMENT_TIMEOUT_MS</code></td>
+      <td>2000 ms</td>
+      <td><code>repo/invites-errors.ts</code></td>
+    </tr>
+    <tr>
+      <td><code>INVITE_CAP_PER_CAMPAIGN</code></td>
+      <td>25 active invites</td>
+      <td><code>repo/invites-errors.ts</code></td>
+    </tr>
+    <tr>
+      <td><code>PARTY_SIZE_CAP</code></td>
+      <td>6 members</td>
+      <td><code>repo/invites-errors.ts</code></td>
+    </tr>
+    <tr>
+      <td><code>INVITE_CODE_RETRIES</code></td>
+      <td>3 retries on UNIQUE collision</td>
+      <td><code>repo/invites-errors.ts</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Error classes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Class</th>
+      <th>Source</th>
+      <th>Maps to HTTP</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>UsernameInvalidError</code> / <code>DisplayNameInvalidError</code></td>
+      <td><code>auth/onboarding-errors.ts</code></td>
+      <td>400</td>
+    </tr>
+    <tr>
+      <td><code>UsernameTakenError</code></td>
+      <td><code>auth/onboarding-errors.ts</code></td>
+      <td>409 + suggestion</td>
+    </tr>
+    <tr>
+      <td><code>AlreadyOnboardedError</code></td>
+      <td><code>auth/onboarding-errors.ts</code></td>
+      <td>409 + currentUsername</td>
+    </tr>
+    <tr>
+      <td><code>InviteCapReachedError</code></td>
+      <td><code>repo/invites-errors.ts</code></td>
+      <td>409</td>
+    </tr>
+    <tr>
+      <td><code>InviteCreationError</code></td>
+      <td><code>repo/invites-errors.ts</code></td>
+      <td>500 (retries exhausted on UNIQUE; should be vanishingly rare)</td>
+    </tr>
+    <tr>
+      <td><code>InviteTimeoutError</code></td>
+      <td><code>repo/invites-errors.ts</code></td>
+      <td>503 + <code>Retry-After: 1</code></td>
+    </tr>
+    <tr>
+      <td><code>LookupTimeoutError</code></td>
+      <td><code>repo/users.ts</code></td>
+      <td>503 (requireOnboarded path)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/routes/users.ts</code>, <code>backend/src/routes/invites.ts</code>,
+  <code>backend/src/auth/require-onboarded.ts</code>,
+  <code>backend/src/auth/onboarding-errors.ts</code>, <code>backend/src/repo/invites.ts</code>,
+  <code>backend/src/repo/invites-errors.ts</code>, <code>backend/src/repo/campaigns.ts</code>,
+  <code>backend/src/llm/profanity.ts</code>, <code>backend/src/llm/profanity-seed-en.txt</code>,
+  <code>backend/migrations/005_drop_profile_columns_users.sql</code>.
+</p>

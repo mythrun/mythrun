@@ -4,12 +4,15 @@
   session credit is metered, and how Stripe fits in.
 </p>
 <p>
-  Two pages in this section so far: <a href="./identity.html">Identity</a> — the Cognito User Pool,
-  the PKCE public App Client, the Hosted UI domain, and the Google + Discord OIDC providers that
-  back federated sign-in; and <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify
-  plugin family that validates Cognito access tokens at the edge, the bypass mode for local dev with
-  its six-layer defense against accidental activation, and the <code>requireUser</code> narrowing
-  helper protected handlers reach through. The user-bootstrap-on-first-login flow, the
-  <code>loadCurrentUser</code> DB-lookup plugin, the credits ledger, and Stripe webhooks all land as
-  those layers ship.
+  Three pages in this section so far:
+  <a href="./identity.html">Identity</a> — the Cognito User Pool, the PKCE public App Client, the
+  Hosted UI domain, and the Google + Discord OIDC providers that back federated sign-in;
+  <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify plugin family that validates
+  Cognito access tokens at the edge, the bypass mode for local dev with its six-layer defense
+  against accidental activation, and the <code>requireUser</code> narrowing helper protected
+  handlers reach through; and <a href="./onboarding.html">Onboarding &amp; invites</a> — the
+  first-login flow that creates the <code>users</code> row, the <code>requireOnboarded</code> gate
+  that pins every protected route on that row's existence, and the six invite routes that let a
+  DM-owner pull others into a campaign by sharing a 12-character code. The credits ledger and Stripe
+  webhooks land as those layers ship.
 </p>

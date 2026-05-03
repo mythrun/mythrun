@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:c63a58cb5ddec3e0120b7714655c21e13e7ee7cea28158c72c677b8ab9703b3a -->
-<!-- last-ticket: MYT-40 -->
+<!-- source-hash: sha256:6e0eb35604988947dd1f5e2cf41b51ef79df5e8040a85ca395ca1deb55068f69 -->
+<!-- last-ticket: MYT-38 -->
 
 <h1>Repository layer</h1>
 
@@ -18,13 +18,14 @@
 <p>
   <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
   takes a <code>pg.Pool</code> and returns
-  <code>{ users, worlds, campaigns, sessions, credits }</code> — one namespace per top-level table
-  cluster. Each namespace is built by a sibling factory (<code>createUsersRepo(pool)</code>,
-  <code>createWorldsRepo(pool)</code>, …) that closes over the pool and exposes the typed methods
-  for that table. The return type is exported as <code>type Repo</code>; the
-  <a href="../runtime/index.html">backend runtime</a>'s <code>AppDeps</code> carries it alongside
-  <code>pg</code> and the two Redis clients, and <code>server.ts</code> threads
-  <code>createRepo(pgRef)</code> into <code>buildApp</code> on both boot paths.
+  <code>{ users, worlds, campaigns, sessions, credits, invites }</code> — one namespace per
+  top-level table cluster. Each namespace is built by a sibling factory
+  (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
+  pool and exposes the typed methods for that table. The return type is exported as
+  <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
+  <code>AppDeps</code> carries it alongside <code>pg</code> and the two Redis clients, and
+  <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
+  boot paths.
 </p>
 
 <aside class="wiki-rationale">
@@ -46,14 +47,15 @@
   guaranteed on every UPDATE.
 </p>
 
-<h2>Namespace boundaries: 5 today, 20 deferred</h2>
+<h2>Namespace boundaries: 6 today, 19 deferred</h2>
 
 <p>
   Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
-  <strong>5</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
-  <code>sessions</code>, <code>credits</code> — the foundations Auth, the prep pipeline, the session
-  runtime, and Billing immediately need. The remaining 20 are tracked as beads under the
-  <code>repo-deferred</code> label and ship batched with their consumers.
+  <strong>6</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code>, <code>credits</code>, <code>invites</code> — the foundations Auth, the
+  onboarding flow, the prep pipeline, the session runtime, and Billing immediately need. The
+  remaining 19 are tracked as beads under the <code>repo-deferred</code> label and ship batched with
+  their consumers.
 </p>
 
 <aside class="wiki-rationale">
@@ -62,7 +64,10 @@
   produces guesses. <code>credits</code> shipped on the same principle: the atomic-debit pattern was
   held back from the v1 repo until MYT-40 picked up Billing's first consumer-facing surface, because
   designing <code>grant</code> / <code>debit</code> / <code>getBalance</code> as separate primitives
-  without the spend path in mind is exactly how a TOCTOU race ships. The deferral list is in the v2
+  without the spend path in mind is exactly how a TOCTOU race ships. <code>invites</code> followed
+  in MYT-38 alongside its routes consumer; the multi-step <code>acceptInvite</code> transaction
+  (lock invite → membership check first → expiry check → cap check → INSERT with ON CONFLICT →
+  uses-bump) only fell into shape with the HTTP layer co-designed. The deferral list is in the v2
   design spec; <code>bd list --label=repo-deferred</code> is the live view.
 </aside>
 
@@ -97,34 +102,37 @@
   <code>Update</code> input types are spelled out (not
   <code>Partial&lt;Pick&lt;User, …&gt;&gt;</code>) so
   <code>exactOptionalPropertyTypes</code> semantics are intentional: each key is omitted to leave
-  the field unchanged, or supplied with a value to set it. Identity fields (<code>cognitoSub</code>,
-  <code>email</code>, <code>authProvider</code>) are <em>never</em> in the Update type — mutating
-  them would break Cognito linkage in ways the layer above doesn't want to think about.
+  the field unchanged, or supplied with a value to set it. The identity field
+  <code>cognitoSub</code> is <em>never</em> in the Update type — mutating it would break Cognito
+  linkage in ways the layer above doesn't want to think about. <code>username</code> and
+  <code>displayName</code> are mutable through Update because the user owns them; the schema catches
+  case-insensitive collisions via <code>users_username_lower_key</code> if a rename conflicts.
 </p>
 
 <h2>Narrowing helpers for enum-like CHECK columns</h2>
 
 <p>
-  <code>auth_provider</code> is <code>TEXT</code> with a CHECK constraint enforcing
-  <code>('google', 'discord')</code>. The schema guarantees the SQL invariant, but the mapper still
-  refuses to bare-cast <code>row.auth_provider as 'google' | 'discord'</code>. Instead, a small
-  helper validates and narrows:
+  Several columns in the schema are <code>TEXT</code> with CHECK constraints enforcing a small enum:
+  <code>worlds.status</code>, <code>worlds.moderation_status</code>, <code>campaigns.status</code>,
+  <code>sessions.status</code>, <code>credit_ledger.credit_type</code>,
+  <code>credit_ledger.source_type</code>, <code>campaign_members.role</code>. The schema guarantees
+  the SQL invariant, but the mapper still refuses to bare-cast
+  <code>row.status as 'generating' | 'complete' | 'failed'</code>. Instead, a small helper validates
+  and narrows:
 </p>
 
-<pre><code>function toAuthProvider(v: string): 'google' | 'discord' {
-  if (v !== 'google' && v !== 'discord') {
-    throw new Error(`unexpected auth_provider value from DB: ${v}`)
+<pre><code>function toCampaignMemberRole(v: string): 'owner' | 'player' {
+  if (v !== 'owner' && v !== 'player') {
+    throw new Error(`unexpected campaign_members.role value from DB: ${v}`)
   }
   return v
 }</code></pre>
 
 <aside class="wiki-rationale">
-  <strong>Defense in depth, not paranoia</strong> — if a future migration adds a
-  <code>'github'</code> option but the TS interface stays at <code>'google' | 'discord'</code>, a
-  bare cast would silently mistype every row. The helper fails loudly at the boundary and the test
-  suite or production logs flag it before the bug spreads. Same pattern for
-  <code>worlds.status</code>, <code>worlds.moderation_status</code>, <code>campaigns.status</code>,
-  <code>sessions.status</code> — every CHECK-constrained text column gets a narrowing function.
+  <strong>Defense in depth, not paranoia</strong> — if a future migration adds a new role option but
+  the TS interface stays at <code>'owner' | 'player'</code>, a bare cast would silently mistype
+  every row. The helper fails loudly at the boundary and the test suite or production logs flag it
+  before the bug spreads. Every CHECK-constrained text column gets one of these.
 </aside>
 
 <h2>UUIDv7 in its own seam</h2>
@@ -171,11 +179,10 @@
 </p>
 
 <pre><code>UPDATE users
-   SET display_name       = COALESCE($2, display_name),
-       username           = COALESCE($3, username),
-       avatar_url         = COALESCE($4, avatar_url),
-       stripe_customer_id = COALESCE($5, stripe_customer_id),
-       free_trial_used    = COALESCE($6, free_trial_used),
+   SET username           = COALESCE($2, username),
+       display_name       = COALESCE($3, display_name),
+       stripe_customer_id = COALESCE($4, stripe_customer_id),
+       free_trial_used    = COALESCE($5, free_trial_used),
        updated_at         = now()
  WHERE id = $1
  RETURNING *</code></pre>
@@ -201,11 +208,12 @@
 
 <aside class="wiki-rationale">
   <strong>COALESCE caveat: nullable fields can't be cleared</strong> — passing
-  <code>{ avatarUrl: null }</code> to <code>users.update</code> is indistinguishable from omitting
-  the key entirely; both encode as a SQL <code>null</code> parameter and the COALESCE leaves the
-  column unchanged. This is a deliberate v1 trade-off, documented at the type site. When a real
-  consumer needs to clear an avatar or stripe id, the API grows a sentinel value or a dedicated
-  <code>clearAvatar()</code> method — not before.
+  <code>{ stripeCustomerId: null }</code> to <code>users.update</code> is indistinguishable from
+  omitting the key entirely; both encode as a SQL <code>null</code> parameter and the COALESCE
+  leaves the column unchanged. This is a deliberate v1 trade-off, documented at the type site. When
+  a real consumer needs to clear a stripe id (a customer-record reset, a refund-flow rebuild), the
+  API grows a sentinel value or a dedicated <code>clearStripeCustomerId()</code> method — not
+  before.
 </aside>
 
 <h2>The boot gate's stub pool, composed</h2>
@@ -233,15 +241,38 @@
 
 <p>
   <strong><code>users</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>. Each
-  <code>getByX</code> maps 1:1 to a column with an index that supports it; adding a method is the
-  deliberate act of sanctioning a new lookup path. A generic <code>getBy(filter)</code> would
-  silently accept filters with no supporting index — a sequential-scan trap that wouldn't surface
-  until production load — and would force readers to inspect every call site to learn which lookup
-  shape was used. The explicit names also make consumer audits trivial: a <code>grep</code> for
-  <code>getByEmail</code> returns the complete set of invite-resolution callers, and
-  <code>getByCognitoSub</code> returns the first-sign-in path. We accept the small cost of "five
-  methods instead of one" to get index-as-API-surface and exact searchability.
+  <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>, <code>getByUsername</code>,
+  <code>update</code>. Each <code>getByX</code> maps 1:1 to a column with an index that supports it
+  (or, for <code>getByUsername</code>, the <code>users_username_lower_key</code> expression index);
+  adding a method is the deliberate act of sanctioning a new lookup path. A generic
+  <code>getBy(filter)</code> would silently accept filters with no supporting index — a
+  sequential-scan trap that wouldn't surface until production load — and would force readers to
+  inspect every call site to learn which lookup shape was used. The explicit names also make
+  consumer audits trivial: a <code>grep</code> for <code>getByUsername</code> returns the
+  uniqueness-check call sites in the onboarding flow, and <code>getByCognitoSub</code> returns the
+  per-request user lookup. We accept the small cost of "several methods instead of one" to get
+  index-as-API-surface and exact searchability.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>getByCognitoSubWithTimeout</code> wraps the read in a transaction</strong> — the
+  <a href="../auth-billing/onboarding.html">requireOnboarded</a> hook calls this on every protected
+  request to confirm a real users row exists for the caller's <code>cognitoSub</code>. A wedged
+  Postgres would otherwise pin the request thread until pg's default <code>statement_timeout</code>
+  fires (or never, if it isn't set). The method opens a dedicated client, runs
+  <code>BEGIN; SET LOCAL statement_timeout = '200ms';</code> + the <code>SELECT</code>, commits, and
+  releases — bounding any single lookup to the configured budget. <code>SET LOCAL</code> only takes
+  effect inside a transaction, so the BEGIN/COMMIT wrapper isn't optional even though the read
+  itself is single-statement. SQLSTATE <code>57014</code> (statement_timeout) maps to a
+  <code>LookupTimeoutError</code> the route layer translates to a 503.
+</aside>
+
+<p>
+  <code>getByUsername</code> uses <code>WHERE LOWER(username) = LOWER($1)</code> so the
+  <code>users_username_lower_key</code> expression index serves the lookup directly — case-folding
+  on both sides keeps the planner from falling to a sequential scan. The case-insensitive uniqueness
+  story is in the <a href="./schema.html">schema page</a>'s identity-cluster section; the repo
+  simply consumes that invariant.
 </p>
 
 <p>
@@ -255,11 +286,26 @@
 
 <p>
   <strong><code>campaigns</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>listByUser</code>, <code>update</code>. <code>listByUser</code> joins
-  <code>campaign_members</code> directly in SQL to filter to "campaigns I'm a member of with an
-  accepted invite." That's fine even though <code>campaign_members</code> is one of the deferred
-  namespaces — we're using the table, not exposing an API surface for it.
+  <code>listByUser</code>, <code>update</code>, plus four membership methods:
+  <code>addMember</code>, <code>getMembership</code>, <code>getOwner</code>,
+  <code>listMembers</code>. <code>listByUser</code> joins <code>campaign_members</code> directly in
+  SQL to filter to "campaigns I'm a member of with an accepted invite." <code>addMember</code> uses
+  <code>INSERT … ON CONFLICT (campaign_id, user_id) DO NOTHING RETURNING *</code> so a re-add is
+  idempotent — when the conflict swallows the row, the method falls through to a follow-up
+  <code>SELECT</code> and returns the existing membership. <code>listMembers</code> joins
+  <code>users</code> for username + display_name and filters out suspended accounts so a banned
+  member doesn't surface in another player's roster.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Membership methods on <code>campaigns</code>, not their own namespace</strong> — the v2
+  namespace plan reserved a <code>campaign_members</code> namespace, but membership is read and
+  written exclusively in service of campaign-scoped operations (owner check, member list, invite
+  acceptance). A separate namespace would force every consumer to import two factories and reason
+  about ordering between them. Keeping the methods on <code>campaigns</code> matches how callers
+  think — "what's true about <em>this campaign</em>" — and lets the lock-order convention (campaigns
+  → invites → members) sit naturally inside one factory's transactions.
+</aside>
 
 <p>
   <strong><code>sessions</code></strong> — <code>create</code>, <code>getById</code>,
@@ -282,6 +328,15 @@
   <code>atomicDebit</code>, <code>listEntries</code>. The full credit-ledger story has its own
   section below; the short version is "balance is a SUM over an append-only ledger; debits go
   through a transaction-scoped lock anchored on the user row, not on the ledger."
+</p>
+
+<p>
+  <strong><code>invites</code></strong> — <code>create</code>, <code>getByCode</code>,
+  <code>getCodePreview</code>, <code>listForCampaign</code>, <code>revoke</code>,
+  <code>acceptInvite</code>. Invites are how new players join a campaign in MYT-38's onboarding
+  flow; <code>getCodePreview</code> is the only read this layer exposes to unauthenticated callers
+  (the public preview the SPA shows on the join page before the user signs in). The rest are
+  authenticated. The non-trivial method is <code>acceptInvite</code> — its own section below.
 </p>
 
 <h2>The credits namespace: append-only ledger with an atomic spend</h2>
@@ -441,23 +496,27 @@
     <tr>
       <td><code>src/repo/types.ts</code></td>
       <td>
-        <code>User</code>, <code>World</code>, <code>Campaign</code>, <code>Session</code>;
-        <code>CreateXxxInput</code> + <code>XxxUpdate</code> for each.
+        <code>User</code>, <code>World</code>, <code>Campaign</code>, <code>Session</code>,
+        <code>CampaignMember</code>, <code>CampaignInvite</code>,
+        <code>CampaignInvitePreview</code>; <code>CreateXxxInput</code> + <code>XxxUpdate</code> for
+        each mutable row type.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/mappers.ts</code></td>
       <td>
         <code>UserDbRow</code> / <code>WorldDbRow</code> / <code>CampaignDbRow</code> /
-        <code>SessionDbRow</code>; <code>toUser</code> / <code>toWorld</code> /
-        <code>toCampaign</code> / <code>toSession</code>; narrowing helpers.
+        <code>SessionDbRow</code> / <code>CampaignMemberDbRow</code> /
+        <code>CampaignInviteDbRow</code>; matching <code>toXxx</code> functions; narrowing helpers
+        for CHECK-constrained text columns.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/users.ts</code></td>
       <td>
         <code>createUsersRepo(pool)</code> — <code>create</code>, <code>getById</code>,
-        <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>.
+        <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>,
+        <code>getByUsername</code>, <code>update</code>; <code>LookupTimeoutError</code>.
       </td>
     </tr>
     <tr>
@@ -472,7 +531,29 @@
       <td><code>src/repo/campaigns.ts</code></td>
       <td>
         <code>createCampaignsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
-        <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>.
+        <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>;
+        membership: <code>addMember</code>, <code>getMembership</code>, <code>getOwner</code>,
+        <code>listMembers</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/invites.ts</code></td>
+      <td>
+        <code>createInvitesRepo(pool, opts?)</code> — <code>create</code>, <code>getByCode</code>,
+        <code>getCodePreview</code>, <code>listForCampaign</code>, <code>revoke</code>,
+        <code>acceptInvite</code> (load-bearing transaction). Lock and statement timeouts
+        overridable via <code>opts</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/invites-errors.ts</code></td>
+      <td>
+        <code>InviteNotFoundError</code>, <code>InviteRevokedError</code>,
+        <code>InviteCapReachedError</code>, <code>CampaignFullError</code>,
+        <code>CampaignGoneError</code>, <code>InviteCreationError</code>,
+        <code>InviteTimeoutError</code>; the <code>ACCEPT_LOCK_TIMEOUT_MS</code> /
+        <code>ACCEPT_STATEMENT_TIMEOUT_MS</code> / <code>INVITE_CAP_PER_CAMPAIGN</code> /
+        <code>PARTY_SIZE_CAP</code> / <code>INVITE_CODE_RETRIES</code> constants.
       </td>
     </tr>
     <tr>

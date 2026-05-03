@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html" class="active">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html" class="active">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing</div>
         <article><h1>Auth &amp; Billing</h1>
@@ -31,14 +31,17 @@
   session credit is metered, and how Stripe fits in.
 </p>
 <p>
-  Two pages in this section so far: <a href="./identity.html">Identity</a> — the Cognito User Pool,
-  the PKCE public App Client, the Hosted UI domain, and the Google + Discord OIDC providers that
-  back federated sign-in; and <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify
-  plugin family that validates Cognito access tokens at the edge, the bypass mode for local dev with
-  its six-layer defense against accidental activation, and the <code>requireUser</code> narrowing
-  helper protected handlers reach through. The user-bootstrap-on-first-login flow, the
-  <code>loadCurrentUser</code> DB-lookup plugin, the credits ledger, and Stripe webhooks all land as
-  those layers ship.
+  Three pages in this section so far:
+  <a href="./identity.html">Identity</a> — the Cognito User Pool, the PKCE public App Client, the
+  Hosted UI domain, and the Google + Discord OIDC providers that back federated sign-in;
+  <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify plugin family that validates
+  Cognito access tokens at the edge, the bypass mode for local dev with its six-layer defense
+  against accidental activation, and the <code>requireUser</code> narrowing helper protected
+  handlers reach through; and <a href="./onboarding.html">Onboarding &amp; invites</a> — the
+  first-login flow that creates the <code>users</code> row, the <code>requireOnboarded</code> gate
+  that pins every protected route on that row's existence, and the six invite routes that let a
+  DM-owner pull others into a campaign by sharing a 12-character code. The credits ledger and Stripe
+  webhooks land as those layers ship.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>

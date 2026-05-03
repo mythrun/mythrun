@@ -12,7 +12,7 @@
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
-<!-- source-hash: sha256:8251f49217d4aa0b9584e58be17bf49ec426ace5451fc183a60ec13ed151b99b -->
+<!-- source-hash: sha256:bdf1d04880ccb45edfe8b4158f30c8c0232cc14a1ab205789b625052acc1a8d0 -->
 <!-- last-ticket: MYT-37 -->
 
 <h1>JWT middleware</h1>
@@ -76,22 +76,29 @@
 <p>
   <code>request.user</code> is <code>{ sub, cognitoUsername, scopes }</code> — three fields, all
   derived from the verified access-token payload, all frozen. <code>sub</code> is Cognito's stable
-  per-user identifier (the canonical key for cross-system reference once MYT-38's onboarding creates
-  the matching <code>users</code> row). <code>cognitoUsername</code> is the federated identity's
-  internal username (<code>Google_&lt;sub&gt;</code> / <code>Discord_&lt;snowflake&gt;</code>) and
-  is treated as opaque — never substring-parsed for provider routing. <code>scopes</code> is the
-  OAuth scope string parsed once at the boundary into a frozen array, so handlers do
-  <code>scopes.includes('admin')</code> rather than <code>scope.includes('admin')</code> — the
-  latter would substring-match <code>'administrator'</code>, which is a real authorization bug
-  class.
+  per-user identifier and the canonical key for cross-system reference; the
+  <a href="./onboarding.html">onboarding flow</a> creates the matching <code>users</code> row on
+  first call to <code>POST /api/users/register</code>, and the <code>requireOnboarded</code> hook
+  gates every default-auth route on that row's existence. <code>cognitoUsername</code> is the
+  federated identity's internal username (<code>Google_&lt;sub&gt;</code> /
+  <code>Discord_&lt;snowflake&gt;</code>) and is treated as opaque — never substring-parsed for
+  provider routing. <code>scopes</code> is the OAuth scope string parsed once at the boundary into a
+  frozen array, so handlers do <code>scopes.includes('admin')</code> rather than
+  <code>scope.includes('admin')</code> — the latter would substring-match
+  <code>'administrator'</code>, which is a real authorization bug class.
 </p>
 
 <aside class="wiki-rationale">
   <strong>No <code>email</code>, no <code>name</code>, no internal user UUID</strong> — those live
-  in the <code>users</code> table that MYT-39's <code>loadCurrentUser</code> plugin will lift onto
-  <code>request.dbUser</code>. Today's middleware is the first half of a two-stage attach: validate
-  the token and surface its claims; defer the DB lookup. A protected handler that needs the email or
-  the internal id is wrong about its layer, not blocked on a missing field.
+  in the <code>users</code> table that the
+  <a href="./onboarding.html#the-requireonboarded-gate-and-its-allowlist"
+    ><code>requireOnboarded</code></a
+  >
+  hook gates protected routes on. Today's middleware is the first half of a two-stage attach:
+  validate the token and surface its claims; defer the DB lookup to the onboarding gate. A protected
+  handler that needs the internal user id reaches through
+  <code>repo.users.getByCognitoSub(request.user.sub)</code>; the
+  <a href="./onboarding.html">onboarding routes</a> are the only ones in flight today that do so.
 </aside>
 
 <p>
@@ -106,12 +113,17 @@
   </li>
   <li>
     <code>config: { auth: 'jwt-no-db' }</code> — verify the JWT, attach the claims, do not look up
-    the <code>users</code> row. Reserved for MYT-38's <code>POST /api/users/register</code>: the row
-    doesn't exist yet at first call.
+    the <code>users</code> row. Used by
+    <a href="./onboarding.html"><code>POST /api/users/register</code></a> and
+    <code>GET /api/users/check-username</code>: the row doesn't exist yet at first call. The
+    <code>requireOnboarded</code> hook enforces a boot-time allowlist that pins which routes may use
+    this opt-out — see the
+    <a href="./onboarding.html#the-requireonboarded-gate-and-its-allowlist">Onboarding</a> page.
   </li>
   <li>
-    <code>auth</code> unset (the default) — verify and attach. After MYT-39 lands, this case will
-    also lift the DB row and run the <code>suspended_at</code> gate.
+    <code>auth</code> unset (the default) — verify, attach, and run the
+    <a href="./onboarding.html"><code>requireOnboarded</code></a> DB-row gate. A future
+    <code>suspended_at</code> check folds in alongside that gate when the suspension surface ships.
   </li>
 </ul>
 
@@ -471,10 +483,10 @@
   <code>loadAuthConfig</code>. The <a href="../runtime/index.html">backend runtime</a> page
   describes the <code>buildApp</code> + <code>server.ts</code> wiring that <code>registerAuth</code>
   composes against; this page is the auth-specific deepening of that surface.
-  <code>requireUser</code> is the seam every protected handler MYT-38 onwards reaches through;
-  MYT-39's <code>loadCurrentUser</code> plugin will layer a second request property
-  (<code>request.dbUser</code>) on top of <code>request.user</code> without changing this
-  middleware's contract.
+  <code>requireUser</code> is the seam every protected handler reaches through.
+  <a href="./onboarding.html"><code>requireOnboarded</code></a> registers as the next plugin and
+  layers the DB-row gate on top of this middleware's contract; the onboarding + invite routes are
+  today's consumers.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -537,12 +549,15 @@
     </tr>
     <tr>
       <td><code>'jwt-no-db'</code></td>
-      <td>Verify token, attach claims, no DB lookup.</td>
-      <td>(reserved for MYT-38 <code>POST /api/users/register</code>)</td>
+      <td>Verify token, attach claims, no DB lookup. Allowlist-bound at boot.</td>
+      <td><code>POST /api/users/register</code>, <code>GET /api/users/check-username</code></td>
     </tr>
     <tr>
       <td>unset (default)</td>
-      <td>Verify and attach. Today identical to <code>'jwt-no-db'</code>.</td>
+      <td>
+        Verify, attach, then run <code>requireOnboarded</code>'s DB-row gate (200 ms-bounded).
+        Missing row → 403 <code>username_required</code>.
+      </td>
       <td>every other route</td>
     </tr>
   </tbody>

@@ -349,18 +349,45 @@
 <h2 id="the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</h2>
 
 <p>
-  <code>app.ts</code> exports <code>buildApp(deps: AppDeps)</code> — a pure factory that returns a
-  Fastify instance with two health routes registered — and
-  <code>createShutdown(app, clients)</code>, a pure function that returns a signal handler.
-  <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares the injection shape:
+  <code>app.ts</code> exports <code>buildApp(deps, authOpts, config)</code> — a pure async factory
+  that returns a Fastify instance — and <code>createShutdown(app, clients)</code>, a pure function
+  that returns a signal handler. <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares
+  the injection shape:
   <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, repo: Repo }</code>.
   <code>Repo</code> is the closure-factory bundle from
   <a href="../data/repository.html">the repository layer</a> — composed over the same
-  <code>pg</code> by <code>server.ts</code> on both boot paths. Nothing in <code>app.ts</code> has
-  side effects on import — no listener, no signal hooks, no connection opens. The first
-  Auth/Billing plugin will <code>app.decorate('repo', deps.repo)</code> and add the matching
-  <code>declare module 'fastify'</code> augmentation so route handlers reach
-  <code>req.server.repo.users.getByCognitoSub(...)</code> directly.
+  <code>pg</code> by <code>server.ts</code> on both boot paths. <code>authOpts</code> drives
+  <a href="../auth-billing/jwt-middleware.html"><code>registerAuth</code></a
+  >'s real-vs-bypass dispatch; <code>config</code> carries the validated
+  <code>frontendBaseUrl</code> the invite routes consume to compose share links. Nothing in
+  <code>app.ts</code> has side effects on import — no listener, no signal hooks, no connection
+  opens.
+</p>
+
+<p>
+  Plugins register in a fixed order inside <code>buildApp</code>: liveness <code>/health</code> and
+  the <code>/health/ready</code> route first; then a custom 404 handler; then
+  <code>registerAuth</code> attaches <code>request.user</code>;
+  <code>@fastify/rate-limit</code> registers with <code>global: false</code> so individual routes
+  opt in via <code>config.rateLimit</code>; then
+  <a href="../auth-billing/onboarding.html"><code>requireOnboarded</code></a> gates every default-
+  auth route on a real <code>users</code> row; <code>usersRoutes</code> and
+  <code>invitesRoutes</code> register the
+  <a href="../auth-billing/onboarding.html">first-login + invite surface</a>. The order is
+  load-bearing — auth attaches <code>request.user</code> before <code>requireOnboarded</code>
+  reads it; rate-limit registers before the routes that opt in; the routes register after the
+  <code>requireOnboarded</code> hook so its <code>onRoute</code> collector sees them.
+</p>
+
+<p>
+  The Fastify instance carries a few non-default settings: <code>trustProxy: 1</code> so
+  <code>request.ip</code> reads the ALB's <code>X-Forwarded-For</code> with the real client value
+  (required for accurate rate-limit keys); a custom <code>genReqId</code> that picks up the ALB's
+  <code>X-Amzn-Trace-Id</code> when present; pino <code>redact</code> for
+  <code>Authorization</code> + <code>Cookie</code> + <code>Set-Cookie</code> headers; and a
+  <code>req</code> serializer that strips the query string from logged URLs (forward defense against
+  MYT-39's WebSocket <code>?ticket=&lt;nonce&gt;</code> handshake). <code>pluginTimeout</code> is
+  bumped to 30 s so the JWT plugin's hydrate-at-boot has headroom past Fastify's 10 s default.
 </p>
 
 <h2 id="two-health-endpoints-two-different-consumers">Two health endpoints, two different consumers</h2>
@@ -379,10 +406,9 @@
   <code>Promise.race</code> timeout. All three pass → <code>200 {"ready":true}</code>; any fail →
   <code>503 {"ready":false, "failed":[...]}</code> with one structured
   <code>app.log.warn({ probe, err }, 'health-ready probe failed')</code> per failed probe so
-  CloudWatch can be filtered. The
-  <a href="../infra/serving.html">ALB target group</a> uses this endpoint. If it flaps, the ALB
-  stops routing while the container keeps running and may self-heal — Redis reconnects, pg pool
-  recovers — without an ECS task replacement.
+  CloudWatch can be filtered. The <a href="../infra/serving.html">ALB target group</a> uses this
+  endpoint. If it flaps, the ALB stops routing while the container keeps running and may self-heal —
+  Redis reconnects, pg pool recovers — without an ECS task replacement.
 </p>
 
 <aside class="wiki-rationale">
@@ -399,7 +425,8 @@
   <code>Promise.race</code> guarantees the HTTP response returns fast, but does NOT cancel the
   underlying <code>pg.query</code> / <code>ioredis.ping</code> — those run until the client's own
   timeout. A wedged pg under load would deplete the pool; the container's
-  <code>HEALTHCHECK</code> watchdog is the recovery path for that scenario, not <code>/health/ready</code>.
+  <code>HEALTHCHECK</code> watchdog is the recovery path for that scenario, not
+  <code>/health/ready</code>.
 </aside>
 
 <aside class="wiki-rationale">
@@ -459,12 +486,12 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Per-env opt-in, not a default-on flag</strong> — keeping <code>BOOT_GATE_ENABLED</code>
-  unset by default let staging deploy green at <code>/health</code> while the data layer was being
-  built, and lets the MYT-28 entrypoint stay the safe fallback when an environment is misconfigured
-  (a missing secret, a dropped SG rule). The cost is that prod composition has to remember to flip
-  it on; a follow-up bead tracks a Terraform-side guard so prod can't silently launch with the gate
-  off.
+  <strong>Per-env opt-in, not a default-on flag</strong> — keeping
+  <code>BOOT_GATE_ENABLED</code> unset by default let staging deploy green at
+  <code>/health</code> while the data layer was being built, and lets the MYT-28 entrypoint stay the
+  safe fallback when an environment is misconfigured (a missing secret, a dropped SG rule). The cost
+  is that prod composition has to remember to flip it on; a follow-up bead tracks a Terraform-side
+  guard so prod can't silently launch with the gate off.
 </aside>
 
 <p>
@@ -546,13 +573,13 @@
 <h2 id="the-worker-entrypoint-scaffold">The worker entrypoint scaffold</h2>
 
 <p>
-  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic
-  today, but in the build and on the task definition. It exports <code>main()</code> so tests can
-  import without executing, and runs <code>main()</code> only when invoked directly via
+  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic today,
+  but in the build and on the task definition. It exports <code>main()</code> so tests can import
+  without executing, and runs <code>main()</code> only when invoked directly via
   <code>node dist/worker.js</code> (the entry-point guard uses <code>pathToFileURL</code> to be
-  cross-platform). At startup it loads env, opens a redis-batch client, calls
-  <code>ping()</code> to surface connection failures synchronously, registers SIGTERM/SIGINT
-  handlers that <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
+  cross-platform). At startup it loads env, opens a redis-batch client, calls <code>ping()</code> to
+  surface connection failures synchronously, registers SIGTERM/SIGINT handlers that
+  <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
   <code>Promise&lt;never&gt;</code> to keep the event loop alive.
 </p>
 
@@ -689,10 +716,11 @@
   <code>/health/ready</code>, on purpose — see "Two health endpoints" above. The
   <code>start-period</code> bump matters only for local <code>docker compose up --wait</code>
   cold-starts when the boot gate is on; in Fargate the
-  <a href="../infra/serving.html">task definition</a>'s own <code>healthCheck.startPeriod = 60</code>
-  is the binding knob. Two <code>.dockerignore</code> files work together — the root one is
-  authoritative for repo-root build contexts, <code>backend/.dockerignore</code> is a narrower
-  duplicate kept alongside the Dockerfile as a readable hint.
+  <a href="../infra/serving.html">task definition</a>'s own
+  <code>healthCheck.startPeriod = 60</code> is the binding knob. Two
+  <code>.dockerignore</code> files work together — the root one is authoritative for repo-root build
+  contexts, <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the Dockerfile
+  as a readable hint.
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -866,9 +894,9 @@
       <td><code>BOOT_GATE_ENABLED</code></td>
       <td>unset</td>
       <td>
-        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging passes
-        <code>1</code> via the serving module's <code>extra_env</code>; prod is unset until its
-        workspace is composed at Launch.
+        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging passes <code>1</code> via
+        the serving module's <code>extra_env</code>; prod is unset until its workspace is composed
+        at Launch.
       </td>
     </tr>
     <tr>
@@ -893,6 +921,32 @@
         <code>redis://</code> otherwise.
       </td>
     </tr>
+    <tr>
+      <td><code>AUTH_MODE</code></td>
+      <td>—</td>
+      <td>
+        <code>real</code> or <code>bypass</code>. Bypass is dev-only and walled off behind six
+        layers of defense; see <a href="../auth-billing/jwt-middleware.html">JWT middleware</a>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>COGNITO_USER_POOL_ID</code> / <code>COGNITO_APP_CLIENT_ID</code> /
+        <code>COGNITO_ISSUER_URL</code> / <code>COGNITO_HOSTED_UI_DOMAIN</code>
+      </td>
+      <td>—</td>
+      <td>All four required when <code>AUTH_MODE=real</code>.</td>
+    </tr>
+    <tr>
+      <td><code>FRONTEND_BASE_URL</code></td>
+      <td>—</td>
+      <td>
+        Origin of the SPA, used to compose invite-link URLs. Validated against an explicit host
+        allowlist (<code>mythrun.com</code>, <code>staging.mythrun.com</code>, plus
+        <code>localhost</code>/<code>127.0.0.1</code> in dev/test); pathname must be
+        <code>/</code> with no query or hash.
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -911,7 +965,10 @@
     </tr>
     <tr>
       <td><code>src/app.ts</code></td>
-      <td><code>buildApp(deps)</code>, <code>createShutdown(app, clients)</code>.</td>
+      <td>
+        <code>buildApp(deps, authOpts, config)</code>, <code>createShutdown(app, clients)</code>;
+        plugin-registration order pinned here.
+      </td>
     </tr>
     <tr>
       <td><code>src/app-deps.ts</code></td>
@@ -946,7 +1003,9 @@
     </tr>
     <tr>
       <td><code>src/worker.ts</code></td>
-      <td><code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.</td>
+      <td>
+        <code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.
+      </td>
     </tr>
   </tbody>
 </table>
@@ -972,10 +1031,21 @@
       <td><code>GET</code></td>
       <td><code>/health/ready</code></td>
       <td>
-        <code>200 {"ready":true}</code> all probes pass; <code>503 {"ready":false,"failed":[…]}</code>
+        <code>200 {"ready":true}</code> all probes pass;
+        <code>503 {"ready":false,"failed":[…]}</code>
         otherwise.
       </td>
       <td>ALB target group (readiness).</td>
+    </tr>
+    <tr>
+      <td colspan="2">
+        <code>/api/users/*</code> (3 routes), <code>/api/campaigns/:id/invites/*</code>,
+        <code>/api/invites/:code/*</code>, <code>/api/campaigns/:id/members</code>
+      </td>
+      <td colspan="2">
+        First-login + invite system. Documented on the
+        <a href="../auth-billing/onboarding.html">Onboarding &amp; invites</a> page.
+      </td>
     </tr>
   </tbody>
 </table>

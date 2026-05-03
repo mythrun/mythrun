@@ -2,13 +2,14 @@
 <!-- source: backend/migrations/002_indexes.sql -->
 <!-- source: backend/migrations/003_srd_reference_data.sql -->
 <!-- source: backend/migrations/004_credit_ledger_invariants.sql -->
-<!-- source-hash: sha256:d75cfae0343b507283ddd8dca17d84a437d782bcedc820548c35feff11ef57dd -->
-<!-- last-ticket: MYT-40 -->
+<!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
+<!-- source-hash: sha256:f03c3d49b01bce1f2e9dd8def4baf1f8359f74ed443341224c8521fe269e2205 -->
+<!-- last-ticket: MYT-38 -->
 
 <h1>Schema</h1>
 
 <p class="lead">
-  The initial Postgres shape Mythrun runs on: 35 application tables grouped into identity, worlds,
+  The Postgres shape Mythrun runs on: 35 application tables grouped into identity, worlds,
   campaigns, sessions, and ops; 22 named performance indexes; 3 empty SRD reference tables waiting
   on data load. Every primary key is a UUIDv7. The schema is enforced at the DB layer, not the app
   layer.
@@ -19,27 +20,52 @@
 <h2>How it fits together</h2>
 
 <p>
-  The schema is the union of four migration files in <code>backend/migrations/</code>:
+  The schema is the union of five migration files in <code>backend/migrations/</code>:
   <code>001_initial_schema.sql</code> ships every <code>CREATE TABLE</code> in topological FK order,
   <code>002_indexes.sql</code> adds the named performance and uniqueness indexes,
-  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables, and
+  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables,
   <code>004_credit_ledger_invariants.sql</code> tightens the <code>credit_ledger</code> with
   defense-in-depth CHECKs, an idempotency partial-unique index, and a CASCADE→RESTRICT swap on the
-  user FK. The <a href="./migrations.html">migrations runner</a> applies all four end-to-end on a
-  fresh database. The diagram clusters tables by the story they tell — read it left to right.
+  user FK, and <code>005_drop_profile_columns_users.sql</code> reduces the <code>users</code> row to
+  its minimal-claims shape and switches its UNIQUE on <code>username</code> to be case-insensitive.
+  The <a href="./migrations.html">migrations runner</a> applies all five end-to-end on a fresh
+  database. The diagram clusters tables by the story they tell — read it left to right.
 </p>
 
 <h3>Identity and billing</h3>
 
 <p>
-  <code>users</code> is the gravitational center of the identity cluster. Cognito's <code>sub</code>
-  is the external identity (UNIQUE), email is the readable identity (UNIQUE), and
-  <code>auth_provider</code> is constrained to <code>google</code> or <code>discord</code> by a
-  CHECK so the application can match without first-checking format. Stripe customer IDs live on the
-  user row; subscription state is a separate <code>user_subscriptions</code> table linked to
+  <code>users</code> is the gravitational center of the identity cluster. The row carries six
+  product-load-bearing fields: <code>cognito_sub</code> (the external Cognito identity, UNIQUE),
+  <code>username</code> (player-chosen handle, UNIQUE on <code>LOWER(username)</code>),
+  <code>display_name</code> (the social-recognition surface in member lists and chrome),
+  <code>stripe_customer_id</code>, <code>free_trial_used</code>, and <code>suspended_at</code>.
+  Subscription state lives in a separate <code>user_subscriptions</code> table linked to
   <code>subscription_tiers</code> (a config table keyed by string, not UUID, because the row
   identity is "the Pro tier" not "this instance of the Pro tier").
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Minimal-claims user row, no email / avatar / auth_provider</strong> — migration 001
+  originally carved <code>email</code>, <code>avatar_url</code>, and <code>auth_provider</code> out
+  of the OAuth claims, but Cognito is already the authentication surface and the user picks their
+  own identity at onboarding. The duplicated provider claim drifted from Cognito over time (a user
+  who relinked from Google to Discord would have a stale <code>auth_provider</code>); the email copy
+  was a GDPR liability that didn't earn its keep; the avatar URL we never displayed. Migration 005
+  drops all three. Future profile fields (uploaded avatar, bio) ship post-launch as user-uploadable
+  attributes, not OAuth-derived ones.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Case-insensitive UNIQUE on <code>LOWER(username)</code></strong> — Postgres TEXT is
+  case-sensitive by default, which would let <code>Admin</code> / <code>admin</code> /
+  <code>ADMIN</code> register as three distinct users. That's a moderator-impersonation lane: an
+  attacker squats the casing variant the deny list misses. Migration 005 drops the original
+  <code>users_username_key</code> constraint and replaces it with a UNIQUE expression index
+  <code>users_username_lower_key ON users (LOWER(username))</code>. The display preserves the user's
+  chosen casing; uniqueness collapses across casings. Repository lookups use
+  <code>WHERE LOWER(username) = LOWER($1)</code> so they hit the expression index.
+</aside>
 
 <p>
   <code>credit_ledger</code> is the only place credit balance lives. There is no
@@ -222,8 +248,9 @@
   delete is a tear-everything-down operation. Stat blocks detach to <code>SET NULL</code> on entity
   deletion; characters detach to <code>SET NULL</code> on entity deletion. The schema-parity test in
   <code>migrate-schema.test.ts</code> pins each of these rules — including the
-  <code>credit_ledger</code> RESTRICT and the four migration-004 invariants — so a future migration
-  can't silently flip a CASCADE to a NO ACTION (or vice versa).
+  <code>credit_ledger</code> RESTRICT, the four migration-004 invariants, and migration 005's
+  drop-and-replacement of the username UNIQUE — so a future migration can't silently flip a CASCADE
+  to a NO ACTION (or vice versa) or re-introduce a case-sensitive username uniqueness.
 </p>
 
 <h3>What's not in the schema yet</h3>
@@ -237,10 +264,10 @@
 <p>
   Repository layer. <code>backend/src/db/</code> ships <code>migrate.ts</code>,
   <code>lock-key.ts</code>, and <code>postgres.ts</code>; the typed namespaces over these tables
-  live next door at <a href="./repository.html"><code>backend/src/repo/</code></a> and ship five
+  live next door at <a href="./repository.html"><code>backend/src/repo/</code></a> and ship six
   namespaces today (<code>users</code>, <code>worlds</code>, <code>campaigns</code>,
-  <code>sessions</code>, <code>credits</code>). The remaining 20 namespaces ship batched with their
-  consumers.
+  <code>sessions</code>, <code>credits</code>, <code>invites</code>). The remaining 19 namespaces
+  ship batched with their consumers.
 </p>
 
 <h2>Operating this piece</h2>
@@ -253,7 +280,7 @@
     migrations.
   </li>
   <li>
-    <code>pnpm db:migrate</code> applies all three migration files end-to-end. A second run is a
+    <code>pnpm db:migrate</code> applies all five migration files end-to-end. A second run is a
     no-op.
   </li>
   <li>
@@ -261,8 +288,11 @@
     <pre><code>docker compose exec postgres psql -U mythrun -d mythrun -c "\dt"
 docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
     You should see 39 tables (1 <code>_migrations</code> + 35 application + 3 SRD), the
-    <code>idx_*</code> index set, and the <code>uniq_credit_ledger_debit_idempotency</code>
-    partial-unique index from migration 004.
+    <code>idx_*</code> index set, the
+    <code>uniq_credit_ledger_debit_idempotency</code> partial-unique index from migration 004, and
+    the <code>users_username_lower_key</code> expression index from migration 005 (with no
+    <code>email</code> / <code>avatar_url</code> / <code>auth_provider</code> columns on
+    <code>users</code>).
   </li>
 </ol>
 
@@ -380,6 +410,13 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
       </td>
     </tr>
     <tr>
+      <td><code>users_username_lower_key</code></td>
+      <td>
+        UNIQUE EXPRESSION INDEX <code>(LOWER(username))</code> — case-insensitive username
+        uniqueness from migration 005
+      </td>
+    </tr>
+    <tr>
       <td><code>idx_user_subscriptions_user</code></td>
       <td><code>(user_id)</code></td>
     </tr>
@@ -438,5 +475,6 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
   <code>backend/migrations/002_indexes.sql</code>,
   <code>backend/migrations/003_srd_reference_data.sql</code>,
   <code>backend/migrations/004_credit_ledger_invariants.sql</code>,
+  <code>backend/migrations/005_drop_profile_columns_users.sql</code>,
   <code>backend/src/db/__tests__/migrate-schema.test.ts</code>.
 </p>

@@ -36,304 +36,369 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1403pt" height="853pt"
- viewBox="14.00 14.00 1389.00 839.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 834.74)">
+<svg width="1415pt" height="1066pt"
+ viewBox="14.00 14.00 1400.00 1051.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1047.49)">
 <title>repository</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-820.34 1370.62,-820.34 1370.62,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1033.09 1382.02,-1033.09 1382.02,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_callers</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-291.01 8,-429.01 171.7,-429.01 171.7,-291.01 8,-291.01"/>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-415.11" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">callers (future)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-298.17 8,-449.17 204.71,-449.17 204.71,-298.17 8,-298.17"/>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-435.27" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">callers</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_factory</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="365.72,-153.01 365.72,-667.01 678.77,-667.01 678.77,-153.01 365.72,-153.01"/>
-<text xml:space="preserve" text-anchor="middle" x="522.25" y="-653.11" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">createRepo(pool) &#160;(backend/src/repo/index.ts)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="416.73,-133.17 416.73,-812.17 729.78,-812.17 729.78,-133.17 416.73,-133.17"/>
+<text xml:space="preserve" text-anchor="middle" x="573.26" y="-798.27" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">createRepo(pool) &#160;(backend/src/repo/index.ts)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_seams</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="860.79,-216.01 860.79,-479.01 1031.1,-479.01 1031.1,-216.01 860.79,-216.01"/>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-465.11" font-family="Courier,monospace" font-size="11.00">shared seams</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="911.8,-290.17 911.8,-567.17 1062.3,-567.17 1062.3,-290.17 911.8,-290.17"/>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-553.27" font-family="Courier,monospace" font-size="11.00">shared seams</text>
 </g>
 <!-- routes -->
 <g id="node1" class="node">
 <title>routes</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="171.7,-407.85 8,-407.85 8,-364.17 171.7,-364.17 171.7,-407.85"/>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-389.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Fastify routes</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-376.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(Auth, Billing, …)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="178.3,-427.61 34.4,-427.61 34.4,-370.73 178.3,-370.73 178.3,-427.61"/>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-409.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Fastify routes</text>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-395.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(users, invites,</text>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-382.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">requireOnboarded)</text>
 </g>
 <!-- users -->
 <g id="node3" class="node">
 <title>users</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="597,-421.05 446.5,-421.05 446.5,-350.97 597,-350.97 597,-421.05"/>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-402.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">users.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-389.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-376.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getByCognitoSub,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-362.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getByEmail, update</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="677.71,-552.81 467.8,-552.81 467.8,-469.53 677.71,-469.53 677.71,-552.81"/>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-534.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">users.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-521.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-507.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getByCognitoSub,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-494.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getByCognitoSubWithTimeout,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-481.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getByUsername, update</text>
 </g>
 <!-- routes&#45;&gt;users -->
 <g id="edge1" class="edge">
 <title>routes&#45;&gt;users</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.22,-386.01C248.04,-386.01 360.61,-386.01 437.15,-386.01"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="437.01,-388.46 444.01,-386.01 437.01,-383.56 437.01,-388.46"/>
-<text xml:space="preserve" text-anchor="middle" x="268.71" y="-389.01" font-family="Courier,monospace" font-size="10.00">repo.users.create</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M178.9,-416.42C253.58,-434.43 371.76,-462.93 459.01,-483.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="458.21,-486.3 465.59,-485.56 459.36,-481.54 458.21,-486.3"/>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-480.2" font-family="Courier,monospace" font-size="10.00">repo.users.create</text>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-468.2" font-family="Courier,monospace" font-size="10.00">.getByCognitoSubWithTimeout</text>
 </g>
 <!-- worlds -->
 <g id="node4" class="node">
 <title>worlds</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="600.3,-645.65 443.2,-645.65 443.2,-562.37 600.3,-562.37 600.3,-645.65"/>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-627.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-613.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-600.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByUser, update,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-587.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">updateStatus,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-574.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">incrementForkCount</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="651.31,-440.81 494.21,-440.81 494.21,-357.53 651.31,-357.53 651.31,-440.81"/>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-422.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-409.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-395.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByUser, update,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-382.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">updateStatus,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-369.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">incrementForkCount</text>
 </g>
 <!-- routes&#45;&gt;worlds -->
 <g id="edge2" class="edge">
 <title>routes&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M118.67,-408.59C139.49,-424.97 169.04,-447.12 196.7,-464.01 268.3,-507.72 288.59,-515.04 365.72,-548.01 387.75,-557.42 411.95,-566.67 434.55,-574.85"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="433.67,-577.14 441.09,-577.2 435.33,-572.53 433.67,-577.14"/>
-<text xml:space="preserve" text-anchor="middle" x="268.71" y="-540.14" font-family="Courier,monospace" font-size="10.00">repo.worlds.…</text>
-</g>
-<!-- credits -->
-<g id="node7" class="node">
-<title>credits</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="590.4,-533.65 453.1,-533.65 453.1,-450.37 590.4,-450.37 590.4,-533.65"/>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-515.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credits.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-501.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">balance, grant,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-488.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">atomicDebit,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-475.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listEntries</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-462.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(users&#45;row lock)</text>
-</g>
-<!-- routes&#45;&gt;credits -->
-<g id="edge3" class="edge">
-<title>routes&#45;&gt;credits</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.22,-406.07C250.43,-425.36 367.73,-454.28 444.26,-473.15"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="443.31,-475.44 450.7,-474.74 444.49,-470.68 443.31,-475.44"/>
-<text xml:space="preserve" text-anchor="middle" x="268.71" y="-448.36" font-family="Courier,monospace" font-size="10.00">repo.credits.atomicDebit</text>
-</g>
-<!-- workers -->
-<g id="node2" class="node">
-<title>workers</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="151.9,-334.85 27.8,-334.85 27.8,-291.17 151.9,-291.17 151.9,-334.85"/>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-316.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BullMQ workers</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-303.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(prep, scribe)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M178.9,-399.17C261.26,-399.17 396.52,-399.17 484.87,-399.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="484.72,-401.62 491.72,-399.17 484.72,-396.72 484.72,-401.62"/>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-402.17" font-family="Courier,monospace" font-size="10.00">repo.worlds.…</text>
 </g>
 <!-- camps -->
 <g id="node5" class="node">
 <title>camps</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="597,-209.45 446.5,-209.45 446.5,-152.57 597,-152.57 597,-209.45"/>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-190.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-177.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-164.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByUser, update</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="671.11,-328.81 474.4,-328.81 474.4,-245.53 671.11,-245.53 671.11,-328.81"/>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-310.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-297.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-283.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByUser, update,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-270.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">addMember, getMembership,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-257.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getOwner, listMembers</text>
+</g>
+<!-- routes&#45;&gt;camps -->
+<g id="edge5" class="edge">
+<title>routes&#45;&gt;camps</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M178.8,-380.86C195.49,-376.64 213.21,-372.21 229.71,-368.17 308.57,-348.84 397.86,-327.72 465.43,-311.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="465.96,-314.29 472.21,-310.31 464.84,-309.52 465.96,-314.29"/>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-383.17" font-family="Courier,monospace" font-size="10.00">repo.campaigns.</text>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-371.17" font-family="Courier,monospace" font-size="10.00">listMembers / addMember</text>
+</g>
+<!-- credits -->
+<g id="node7" class="node">
+<title>credits</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="641.41,-790.81 504.11,-790.81 504.11,-707.53 641.41,-707.53 641.41,-790.81"/>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-772.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credits.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-759.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">balance, grant,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-745.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">atomicDebit,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-732.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listEntries</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-719.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(users&#45;row lock)</text>
+</g>
+<!-- routes&#45;&gt;credits -->
+<g id="edge3" class="edge">
+<title>routes&#45;&gt;credits</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M118.89,-428.11C136.99,-470.4 175.64,-549.42 229.71,-599.17 306.02,-669.38 420.47,-710.4 495.63,-731.31"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="494.54,-733.55 501.94,-733.03 495.83,-728.82 494.54,-733.55"/>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-696.21" font-family="Courier,monospace" font-size="10.00">repo.credits.atomicDebit</text>
+</g>
+<!-- invites -->
+<g id="node8" class="node">
+<title>invites</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="654.61,-678.41 490.91,-678.41 490.91,-581.93 654.61,-581.93 654.61,-678.41"/>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-659.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">invites.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-646.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getByCode,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-633.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getCodePreview,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-620.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listForCampaign,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-607.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">revoke, acceptInvite</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-593.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(load&#45;bearing tx)</text>
+</g>
+<!-- routes&#45;&gt;invites -->
+<g id="edge4" class="edge">
+<title>routes&#45;&gt;invites</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M138.68,-428.33C162.34,-449.23 196.34,-476.98 229.71,-496.17 310.76,-542.77 411.15,-579.94 482.15,-603.2"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="481.09,-605.43 488.5,-605.27 482.6,-600.77 481.09,-605.43"/>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-583.27" font-family="Courier,monospace" font-size="10.00">repo.invites.acceptInvite</text>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-571.27" font-family="Courier,monospace" font-size="10.00">.create / .revoke</text>
+</g>
+<!-- workers -->
+<g id="node2" class="node">
+<title>workers</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="204.71,-342.01 8,-342.01 8,-298.33 204.71,-298.33 204.71,-342.01"/>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-323.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BullMQ workers</text>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-310.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(prep, scribe — future)</text>
 </g>
 <!-- workers&#45;&gt;camps -->
-<g id="edge4" class="edge">
+<g id="edge6" class="edge">
 <title>workers&#45;&gt;camps</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M152.57,-291C167.01,-285.97 182.37,-280.72 196.7,-276.01 271.37,-251.48 290.29,-246.07 365.72,-224.01 389,-217.2 414.33,-210.06 437.63,-203.6"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="438.27,-205.97 444.36,-201.74 436.96,-201.25 438.27,-205.97"/>
-<text xml:space="preserve" text-anchor="middle" x="268.71" y="-279.01" font-family="Courier,monospace" font-size="10.00">repo.campaigns.…</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M184.48,-297.62C199.36,-294.13 214.93,-291.05 229.71,-289.17 308.09,-279.16 397.4,-279.01 465.1,-281.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="464.77,-283.62 471.85,-281.41 464.93,-278.73 464.77,-283.62"/>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-292.17" font-family="Courier,monospace" font-size="10.00">repo.campaigns.…</text>
 </g>
 <!-- sessions -->
 <g id="node6" class="node">
 <title>sessions</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="603.6,-321.65 439.9,-321.65 439.9,-238.37 603.6,-238.37 603.6,-321.65"/>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-303.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-289.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-276.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getActiveByCampaign,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-263.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByCampaign,</text>
-<text xml:space="preserve" text-anchor="middle" x="521.75" y="-250.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">update</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="654.61,-216.81 490.91,-216.81 490.91,-133.53 654.61,-133.53 654.61,-216.81"/>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-198.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-185.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create, getById,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-171.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getActiveByCampaign,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-158.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listByCampaign,</text>
+<text xml:space="preserve" text-anchor="middle" x="572.76" y="-145.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">update</text>
 </g>
 <!-- workers&#45;&gt;sessions -->
-<g id="edge5" class="edge">
+<g id="edge7" class="edge">
 <title>workers&#45;&gt;sessions</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M152.44,-308.28C225.32,-302.69 347.27,-293.33 430.73,-286.92"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="430.84,-289.37 437.63,-286.39 430.46,-284.48 430.84,-289.37"/>
-<text xml:space="preserve" text-anchor="middle" x="268.71" y="-307.16" font-family="Courier,monospace" font-size="10.00">repo.sessions.…</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M148.63,-297.67C171.93,-285.63 201.88,-271.25 229.71,-261.17 313.24,-230.88 411.96,-207.3 481.83,-192.55"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="482.08,-195 488.42,-191.17 481.07,-190.21 482.08,-195"/>
+<text xml:space="preserve" text-anchor="middle" x="310.72" y="-264.17" font-family="Courier,monospace" font-size="10.00">repo.sessions.…</text>
 </g>
 <!-- uuid -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>uuid</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1014.59,-259.85 877.3,-259.85 877.3,-216.17 1014.59,-216.17 1014.59,-259.85"/>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-241.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">uuidv7.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-228.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">uuidv7(): string</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1055.7,-334.01 918.4,-334.01 918.4,-290.33 1055.7,-290.33 1055.7,-334.01"/>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-315.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">uuidv7.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-302.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">uuidv7(): string</text>
 </g>
 <!-- users&#45;&gt;uuid -->
-<g id="edge6" class="edge">
+<g id="edge8" class="edge">
 <title>users&#45;&gt;uuid</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M597.68,-365.33C623.77,-357.26 652.95,-347.24 678.77,-336.01 690.45,-330.93 692.16,-327.23 703.77,-322.01 757.47,-297.85 820.37,-276.14 868.46,-260.85"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="868.99,-263.26 874.93,-258.81 867.51,-258.59 868.99,-263.26"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-325.01" font-family="Courier,monospace" font-size="10.00">id =</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M678.37,-489.93C757.06,-472.08 856.34,-444.92 886.8,-416.17 910.22,-394.06 890.19,-372.03 911.8,-348.17 914.54,-345.14 917.59,-342.34 920.85,-339.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="922.08,-341.89 926.32,-335.81 919.21,-337.92 922.08,-341.89"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-471.76" font-family="Courier,monospace" font-size="10.00">id =</text>
 </g>
 <!-- mappers -->
-<g id="node10" class="node">
+<g id="node11" class="node">
 <title>mappers</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1031.1,-458.05 860.79,-458.05 860.79,-387.97 1031.1,-387.97 1031.1,-458.05"/>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-439.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mappers.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-426.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">snake → camel</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-413.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">narrowing helpers</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-399.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(toAuthProvider, …)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1059,-545.61 915.1,-545.61 915.1,-488.73 1059,-488.73 1059,-545.61"/>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-527.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mappers.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-513.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">snake → camel</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-500.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">narrowing helpers</text>
 </g>
 <!-- users&#45;&gt;mappers -->
-<g id="edge11" class="edge">
+<g id="edge14" class="edge">
 <title>users&#45;&gt;mappers</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M597.44,-384C661.1,-383.33 754.86,-384.83 835.79,-396.01 841,-396.73 846.31,-397.59 851.66,-398.57"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="850.95,-400.93 858.29,-399.84 851.88,-396.11 850.95,-400.93"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-399.01" font-family="Courier,monospace" font-size="10.00">toUser</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M678.46,-522.68C703.44,-524.96 730.03,-527.01 754.78,-528.17 813.39,-530.91 828.22,-531.4 886.8,-528.17 892.99,-527.82 899.39,-527.36 905.81,-526.82"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="906.01,-529.27 912.76,-526.2 905.57,-524.38 906.01,-529.27"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-533.41" font-family="Courier,monospace" font-size="10.00">toUser</text>
 </g>
 <!-- pool -->
-<g id="node11" class="node">
+<g id="node12" class="node">
 <title>pool</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1014.59,-557.05 877.3,-557.05 877.3,-486.97 1014.59,-486.97 1014.59,-557.05"/>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-538.51" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pg.Pool</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-525.31" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(boot&#45;gate path)</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-512.11" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">or stub Pool</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-498.91" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(fallback path)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1055.7,-644.21 918.4,-644.21 918.4,-574.13 1055.7,-574.13 1055.7,-644.21"/>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-625.67" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pg.Pool</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-612.47" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(boot&#45;gate path)</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-599.27" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">or stub Pool</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-586.07" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(fallback path)</text>
 </g>
 <!-- users&#45;&gt;pool -->
-<g id="edge16" class="edge">
+<g id="edge20" class="edge">
 <title>users&#45;&gt;pool</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M597.36,-409.88C623.15,-418.14 652.24,-427.47 678.77,-436.01 742.62,-456.55 815.05,-479.96 868.21,-497.16"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="867.44,-499.49 874.85,-499.31 868.94,-494.82 867.44,-499.49"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-523.92" font-family="Courier,monospace" font-size="10.00">pool.query</text>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-511.92" font-family="Courier,monospace" font-size="10.00">INSERT … RETURNING *</text>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-499.92" font-family="Courier,monospace" font-size="10.00">UPDATE … COALESCE</text>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-487.92" font-family="Courier,monospace" font-size="10.00">SELECT …</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M678.33,-536.02C750.4,-553.15 844.54,-575.53 909.63,-591"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="908.67,-593.29 916.05,-592.53 909.81,-588.52 908.67,-593.29"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-624.48" font-family="Courier,monospace" font-size="10.00">pool.query</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-612.48" font-family="Courier,monospace" font-size="10.00">INSERT … RETURNING *</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-600.48" font-family="Courier,monospace" font-size="10.00">UPDATE … COALESCE</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-588.48" font-family="Courier,monospace" font-size="10.00">SELECT …</text>
 </g>
 <!-- worlds&#45;&gt;uuid -->
-<g id="edge7" class="edge">
+<g id="edge9" class="edge">
 <title>worlds&#45;&gt;uuid</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M586.03,-646.38C656.18,-687.57 768.3,-735.4 835.79,-672.01 900.39,-611.34 809.69,-346.41 860.79,-274.01 863.42,-270.29 866.51,-266.95 869.93,-263.96"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="871.38,-265.93 875.44,-259.72 868.39,-262.05 871.38,-265.93"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M651.91,-378.58C683.72,-370.5 720.9,-361.45 754.78,-354.17 806.04,-343.15 864.09,-332.62 909.21,-324.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="909.5,-327.29 915.98,-323.69 908.67,-322.46 909.5,-327.29"/>
 </g>
 <!-- worlds&#45;&gt;mappers -->
-<g id="edge12" class="edge">
+<g id="edge15" class="edge">
 <title>worlds&#45;&gt;mappers</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M560.7,-646.4C624.19,-712.37 753.11,-824.56 835.79,-749.01 881.42,-707.32 827.61,-524.15 860.79,-472.01 862.34,-469.58 864.05,-467.27 865.89,-465.05"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="867.59,-466.82 870.58,-460.03 864.01,-463.48 867.59,-466.82"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-777.16" font-family="Courier,monospace" font-size="10.00">toWorld</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M652.02,-388.43C732.42,-379.16 850.75,-370.97 886.8,-397.17 915.91,-418.32 889.18,-446.19 911.8,-474.17 914.12,-477.03 916.68,-479.75 919.43,-482.31"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="917.81,-484.16 924.73,-486.85 921,-480.43 917.81,-484.16"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-400.17" font-family="Courier,monospace" font-size="10.00">toWorld</text>
 </g>
 <!-- worlds&#45;&gt;pool -->
-<g id="edge17" class="edge">
+<g id="edge21" class="edge">
 <title>worlds&#45;&gt;pool</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M547.76,-646.28C578,-692.77 633.68,-764.87 703.77,-795.01 757.68,-818.19 787.21,-827.91 835.79,-795.01 911.89,-743.48 934.94,-629.41 941.92,-566.25"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="944.33,-566.71 942.61,-559.49 939.46,-566.21 944.33,-566.71"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M651.82,-407.26C738.95,-417.01 870,-434.08 886.8,-450.17 926.16,-487.83 879,-526.67 911.8,-570.17 911.92,-570.32 912.03,-570.47 912.15,-570.62"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="910.19,-572.11 916.67,-575.72 913.86,-568.86 910.19,-572.11"/>
 </g>
 <!-- camps&#45;&gt;uuid -->
-<g id="edge8" class="edge">
+<g id="edge10" class="edge">
 <title>camps&#45;&gt;uuid</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M543.95,-152.04C574.29,-113.31 634.19,-46.47 703.77,-20.01 758.62,0.85 785.87,10.83 835.79,-20.01 902.72,-61.34 930,-157.55 939.92,-207.18"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="937.47,-207.39 941.19,-213.81 942.28,-206.47 937.47,-207.39"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M671.56,-266.03C692.68,-257.88 713.52,-246.64 729.78,-231.17 750.72,-211.26 730.74,-187.19 754.78,-171.17 803.6,-138.62 834.72,-144.14 886.8,-171.17 931.45,-194.34 960.24,-247.84 974.76,-281.87"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="972.35,-282.44 977.29,-287.97 976.88,-280.57 972.35,-282.44"/>
 </g>
 <!-- camps&#45;&gt;mappers -->
-<g id="edge13" class="edge">
+<g id="edge16" class="edge">
 <title>camps&#45;&gt;mappers</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M556.56,-151.83C619.43,-101.17 755.24,-9.07 835.79,-83.01 883.61,-126.9 826.07,-319.18 860.79,-374.01 862.33,-376.44 864.04,-378.76 865.88,-380.98"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="863.99,-382.54 870.55,-386 867.58,-379.21 863.99,-382.54"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-86.01" font-family="Courier,monospace" font-size="10.00">toCampaign</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M671.76,-254.03C751.5,-229.98 855.74,-206.17 886.8,-234.17 926.64,-270.06 882.65,-429.16 911.8,-474.17 913.72,-477.12 915.91,-479.89 918.31,-482.5"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="916.23,-483.9 922.97,-487 919.64,-480.37 916.23,-483.9"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-249.17" font-family="Courier,monospace" font-size="10.00">toCampaign</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-237.17" font-family="Courier,monospace" font-size="10.00">toCampaignMember</text>
 </g>
 <!-- camps&#45;&gt;pool -->
-<g id="edge18" class="edge">
+<g id="edge22" class="edge">
 <title>camps&#45;&gt;pool</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M597.56,-164.96C669.1,-154.42 774.83,-152.29 835.79,-214.01 877.98,-256.72 826.17,-433.96 860.79,-483.01 863.4,-486.7 866.44,-490.04 869.79,-493.08"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="868.19,-494.93 875.18,-497.41 871.26,-491.12 868.19,-494.93"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M671.64,-286.68C742.16,-291.92 833.87,-311.28 886.8,-372.17 945,-439.1 861.25,-497.28 911.8,-570.17 912.03,-570.49 912.26,-570.82 912.5,-571.15"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="910.37,-572.42 916.76,-576.19 914.11,-569.26 910.37,-572.42"/>
 </g>
 <!-- sessions&#45;&gt;uuid -->
-<g id="edge9" class="edge">
+<g id="edge11" class="edge">
 <title>sessions&#45;&gt;uuid</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M604.23,-263.88C630.42,-255.49 658,-242.87 678.77,-224.01 698.05,-206.5 681.78,-184.95 703.77,-171.01 753.33,-139.59 779.33,-155.06 835.79,-171.01 863.17,-178.74 890.44,-195.47 910.87,-210.28"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="909.26,-212.14 916.35,-214.34 912.18,-208.2 909.26,-212.14"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M609.87,-132.8C670.4,-66.97 794.73,45.78 886.8,-20.17 971.85,-81.09 984.89,-219.11 986.3,-281.06"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="983.85,-280.85 986.4,-287.81 988.75,-280.77 983.85,-280.85"/>
 </g>
 <!-- sessions&#45;&gt;mappers -->
-<g id="edge14" class="edge">
+<g id="edge17" class="edge">
 <title>sessions&#45;&gt;mappers</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M604.2,-254.51C685.02,-231.53 801.63,-205.4 835.79,-234.01 884.26,-274.58 824.58,-322.21 860.79,-374.01 862.6,-376.58 864.58,-379.05 866.71,-381.39"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="864.7,-382.85 871.38,-386.06 868.16,-379.38 864.7,-382.85"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-237.01" font-family="Courier,monospace" font-size="10.00">toSession</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M626.52,-132.78C695.11,-83.04 814.61,-15.44 886.8,-83.17 950.3,-142.73 865.93,-400.16 911.8,-474.17 913.51,-476.92 915.47,-479.52 917.62,-481.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="915.76,-483.58 922.43,-486.82 919.24,-480.13 915.76,-483.58"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-86.17" font-family="Courier,monospace" font-size="10.00">toSession</text>
 </g>
 <!-- sessions&#45;&gt;pool -->
-<g id="edge19" class="edge">
+<g id="edge23" class="edge">
 <title>sessions&#45;&gt;pool</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M604.01,-270.33C685.32,-262.61 802.92,-257.4 835.79,-287.01 901.05,-345.78 808.93,-412.15 860.79,-483.01 863.46,-486.65 866.55,-489.96 869.94,-492.97"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="868.37,-494.85 875.38,-497.27 871.41,-491.01 868.37,-494.85"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M655.27,-159.69C726.96,-151.26 828.7,-152.84 886.8,-214.17 941.35,-271.73 868.43,-503.77 911.8,-570.17 912.02,-570.5 912.24,-570.83 912.47,-571.16"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="910.3,-572.38 916.6,-576.29 914.12,-569.3 910.3,-572.38"/>
 </g>
 <!-- credits&#45;&gt;uuid -->
-<g id="edge10" class="edge">
+<g id="edge12" class="edge">
 <title>credits&#45;&gt;uuid</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M590.83,-502.36C671.97,-513.01 800.97,-524.08 835.79,-493.01 872.34,-460.4 831.54,-313.29 860.79,-274.01 863.46,-270.44 866.54,-267.21 869.93,-264.31"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="871.24,-266.39 875.34,-260.2 868.28,-262.49 871.24,-266.39"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M622.7,-791.34C690.54,-844.59 813.09,-921.3 886.8,-851.17 927.34,-812.59 880.93,-394.83 911.8,-348.17 913.76,-345.21 916.03,-342.49 918.54,-339.98"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="919.76,-342.17 923.42,-335.72 916.53,-338.48 919.76,-342.17"/>
 </g>
 <!-- credits&#45;&gt;mappers -->
-<g id="edge15" class="edge">
+<g id="edge18" class="edge">
 <title>credits&#45;&gt;mappers</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M591.12,-513.3C618.83,-522.76 650.82,-534.76 678.77,-548.01 690.48,-553.56 691.29,-559.55 703.77,-563.01 760.32,-578.67 789.13,-598.58 835.79,-563.01 869.15,-537.58 835.22,-505.25 860.79,-472.01 862.77,-469.45 864.91,-466.99 867.2,-464.65"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="868.79,-466.51 872.22,-459.93 865.44,-462.94 868.79,-466.51"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-585.89" font-family="Courier,monospace" font-size="10.00">toCreditEntry</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M606.05,-791.52C666.68,-866.16 799.32,-1005.87 886.8,-924.17 946.22,-868.68 868.47,-627.95 911.8,-559.17 913.3,-556.79 914.99,-554.53 916.83,-552.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="918.35,-554.33 921.48,-547.61 914.84,-550.91 918.35,-554.33"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-952.01" font-family="Courier,monospace" font-size="10.00">toCreditEntry</text>
 </g>
 <!-- credits&#45;&gt;pool -->
-<g id="edge20" class="edge">
+<g id="edge24" class="edge">
 <title>credits&#45;&gt;pool</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M590.84,-503.44C620.94,-511.51 654.86,-525.13 678.77,-548.01 699.95,-568.26 679.44,-592.69 703.77,-609.01 752.5,-641.7 780.41,-628.38 835.79,-609.01 862.31,-599.74 887.18,-581.03 906.47,-563.33"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="908.05,-565.2 911.47,-558.62 904.7,-561.64 908.05,-565.2"/>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-655.84" font-family="Courier,monospace" font-size="10.00">BEGIN; SET LOCAL …</text>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-643.84" font-family="Courier,monospace" font-size="10.00">SELECT … FOR UPDATE</text>
-<text xml:space="preserve" text-anchor="middle" x="769.78" y="-631.84" font-family="Courier,monospace" font-size="10.00">INSERT; &#160;COMMIT</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M593.57,-791.3C621.19,-844.41 676.79,-933.23 754.78,-970.17 807.81,-995.28 840.14,-1005.73 886.8,-970.17 937.41,-931.6 968.66,-740.89 980.56,-653.3"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="982.98,-653.71 981.48,-646.45 978.12,-653.06 982.98,-653.71"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-1020.09" font-family="Courier,monospace" font-size="10.00">BEGIN; SET LOCAL …</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-1008.09" font-family="Courier,monospace" font-size="10.00">SELECT … FOR UPDATE</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-996.09" font-family="Courier,monospace" font-size="10.00">INSERT; &#160;COMMIT</text>
+</g>
+<!-- invites&#45;&gt;uuid -->
+<g id="edge13" class="edge">
+<title>invites&#45;&gt;uuid</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M655.24,-661.04C725.67,-681.87 825.52,-696.43 886.8,-640.17 934.78,-596.12 874.9,-401.83 911.8,-348.17 913.81,-345.24 916.13,-342.55 918.67,-340.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="919.88,-342.26 923.6,-335.84 916.69,-338.54 919.88,-342.26"/>
+</g>
+<!-- invites&#45;&gt;mappers -->
+<g id="edge19" class="edge">
+<title>invites&#45;&gt;mappers</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M655.12,-653.57C680.57,-663.28 707.74,-676.3 729.78,-693.17 744.39,-704.35 738.3,-717.98 754.78,-726.17 807.33,-752.28 842.35,-764.46 886.8,-726.17 943.66,-677.18 869.28,-621.01 911.8,-559.17 913.44,-556.79 915.26,-554.53 917.22,-552.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="918.88,-554.18 922.2,-547.54 915.47,-550.66 918.88,-554.18"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-753.53" font-family="Courier,monospace" font-size="10.00">toCampaignInvite</text>
+</g>
+<!-- invites&#45;&gt;pool -->
+<g id="edge25" class="edge">
+<title>invites&#45;&gt;pool</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M655.26,-648.1C682.07,-657.57 710.04,-671.83 729.78,-693.17 754.8,-720.19 725.07,-750.41 754.78,-772.17 802.12,-806.84 835.65,-800.91 886.8,-772.17 931.84,-746.86 958.83,-691.92 973.05,-652.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="975.28,-653.87 975.29,-646.46 970.66,-652.25 975.28,-653.87"/>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-835" font-family="Courier,monospace" font-size="10.00">BEGIN; lock invite</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-823" font-family="Courier,monospace" font-size="10.00">membership&#45;first;</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-811" font-family="Courier,monospace" font-size="10.00">expiry; cap; INSERT;</text>
+<text xml:space="preserve" text-anchor="middle" x="820.79" y="-799" font-family="Courier,monospace" font-size="10.00">uses++; COMMIT</text>
 </g>
 <!-- types -->
-<g id="node9" class="node">
+<g id="node10" class="node">
 <title>types</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1017.9,-359.05 874,-359.05 874,-288.97 1017.9,-288.97 1017.9,-359.05"/>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-340.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">types.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-327.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">User, World,</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-314.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Campaign, Session</text>
-<text xml:space="preserve" text-anchor="middle" x="945.95" y="-300.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ Update inputs</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1062.3,-459.41 911.8,-459.41 911.8,-362.93 1062.3,-362.93 1062.3,-459.41"/>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-440.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">types.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-427.67" font-family="Courier,monospace" font-size="11.00" fill="#231b12">User, World,</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-414.47" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Campaign, Session,</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-401.27" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CampaignMember,</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-388.07" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CampaignInvite</text>
+<text xml:space="preserve" text-anchor="middle" x="987.05" y="-374.87" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ Update inputs</text>
 </g>
 <!-- types&#45;&gt;users -->
-<g id="edge22" class="edge">
+<g id="edge27" class="edge">
 <title>types&#45;&gt;users</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M873.47,-334.51C799.53,-345.36 684.16,-362.3 606.12,-373.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="606.11,-371.29 599.54,-374.73 606.82,-376.14 606.11,-371.29"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M928.26,-460.13C908.05,-477.02 889.64,-492.05 886.8,-493.17 823.76,-517.91 748.07,-522.85 686.91,-521.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="687.26,-518.96 680.19,-521.21 687.12,-523.86 687.26,-518.96"/>
 </g>
 <!-- types&#45;&gt;worlds -->
-<g id="edge23" class="edge">
+<g id="edge28" class="edge">
 <title>types&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M873.59,-357.89C868.67,-362.39 864.29,-367.42 860.79,-373.01 820.54,-437.45 891.45,-662.28 835.79,-714.01 762.32,-782.3 643.96,-706.79 575.77,-651.51"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="577.71,-649.93 570.74,-647.38 574.6,-653.72 577.71,-649.93"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M911.19,-375.83C903.1,-373.12 894.87,-370.8 886.8,-369.17 811.14,-353.82 723.56,-364.58 660.3,-377.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="660.08,-374.83 653.71,-378.64 661.06,-379.63 660.08,-374.83"/>
 </g>
 <!-- types&#45;&gt;camps -->
-<g id="edge24" class="edge">
+<g id="edge29" class="edge">
 <title>types&#45;&gt;camps</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M873.44,-288.78C868.62,-284.34 864.3,-279.43 860.79,-274.01 834.19,-232.88 872.34,-87.62 835.79,-55.01 752.33,19.47 619.22,-87.25 556.95,-146.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="555.46,-144.34 552.11,-150.95 558.85,-147.87 555.46,-144.34"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M921.84,-362.45C918.07,-357.92 914.66,-353.15 911.8,-348.17 879.92,-292.58 935.89,-247.36 886.8,-206.17 841.86,-168.44 808.99,-183.71 754.78,-206.17 740.26,-212.18 743.05,-222.75 729.78,-231.17 714.39,-240.92 697.08,-249.28 679.72,-256.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="679.05,-253.96 673.44,-258.81 680.85,-258.51 679.05,-253.96"/>
 </g>
 <!-- types&#45;&gt;sessions -->
-<g id="edge25" class="edge">
+<g id="edge30" class="edge">
 <title>types&#45;&gt;sessions</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M875.6,-288.45C870.18,-284.05 865.14,-279.24 860.79,-274.01 840.21,-249.25 862.2,-224.44 835.79,-206.01 787.68,-172.43 759.62,-188 703.77,-206.01 690.74,-210.21 690.89,-217.63 678.77,-224.01 657.9,-234.99 634.41,-244.68 612.11,-252.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="611.43,-250.41 605.67,-255.07 613.08,-255.03 611.43,-250.41"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M921.01,-362.32C917.49,-357.85 914.36,-353.12 911.8,-348.17 881.85,-290.09 934.93,-99.37 886.8,-55.17 811.22,14.25 691.26,-68.87 623.9,-127.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="622.56,-125.26 618.91,-131.72 625.79,-128.95 622.56,-125.26"/>
 </g>
 <!-- types&#45;&gt;credits -->
-<g id="edge26" class="edge">
+<g id="edge31" class="edge">
 <title>types&#45;&gt;credits</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M873.33,-358.91C868.61,-363.16 864.34,-367.85 860.79,-373.01 821.3,-430.53 888.92,-482.77 835.79,-528.01 801.27,-557.41 680.15,-533.63 599.09,-513.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="600.03,-510.93 592.64,-511.58 598.82,-515.68 600.03,-510.93"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M920.87,-459.94C917.38,-464.43 914.3,-469.18 911.8,-474.17 891.14,-515.48 920.44,-857.5 886.8,-889.17 808.49,-962.9 684.79,-862.83 618.78,-797.55"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="620.54,-795.85 613.86,-792.63 617.08,-799.31 620.54,-795.85"/>
+</g>
+<!-- types&#45;&gt;invites -->
+<g id="edge32" class="edge">
+<title>types&#45;&gt;invites</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M921.17,-460.1C917.62,-464.55 914.43,-469.25 911.8,-474.17 888.92,-516.97 923.04,-658.87 886.8,-691.17 843,-730.21 812.68,-700.66 754.78,-691.17 724.27,-686.16 691.97,-676.71 663.23,-666.72"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="664.36,-664.52 656.94,-664.49 662.72,-669.14 664.36,-664.52"/>
 </g>
 <!-- db -->
-<g id="node12" class="node">
+<g id="node13" class="node">
 <title>db</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1366.62,-557.05 1183.11,-557.05 1183.11,-486.97 1366.62,-486.97 1366.62,-557.05"/>
-<text xml:space="preserve" text-anchor="middle" x="1274.87" y="-538.51" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Postgres</text>
-<text xml:space="preserve" text-anchor="middle" x="1274.87" y="-525.31" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">users, worlds,</text>
-<text xml:space="preserve" text-anchor="middle" x="1274.87" y="-512.11" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">campaigns, sessions</text>
-<text xml:space="preserve" text-anchor="middle" x="1274.87" y="-498.91" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ campaign_members JOIN</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1378.02,-657.41 1214.32,-657.41 1214.32,-560.93 1378.02,-560.93 1378.02,-657.41"/>
+<text xml:space="preserve" text-anchor="middle" x="1296.17" y="-638.87" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Postgres</text>
+<text xml:space="preserve" text-anchor="middle" x="1296.17" y="-625.67" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">users, worlds,</text>
+<text xml:space="preserve" text-anchor="middle" x="1296.17" y="-612.47" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">campaigns, sessions,</text>
+<text xml:space="preserve" text-anchor="middle" x="1296.17" y="-599.27" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">campaign_members,</text>
+<text xml:space="preserve" text-anchor="middle" x="1296.17" y="-586.07" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">campaign_invites,</text>
+<text xml:space="preserve" text-anchor="middle" x="1296.17" y="-572.87" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">credit_ledger</text>
 </g>
 <!-- pool&#45;&gt;db -->
-<g id="edge21" class="edge">
+<g id="edge26" class="edge">
 <title>pool&#45;&gt;db</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1015.08,-522.01C1061.08,-522.01 1122.56,-522.01 1174.06,-522.01"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1173.74,-524.46 1180.74,-522.01 1173.74,-519.56 1173.74,-524.46"/>
-<text xml:space="preserve" text-anchor="middle" x="1107.11" y="-525.01" font-family="Courier,monospace" font-size="10.00">parameterized SQL</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1056.21,-609.17C1100.05,-609.17 1157.5,-609.17 1205.08,-609.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1205.03,-611.62 1212.03,-609.17 1205.03,-606.72 1205.03,-611.62"/>
+<text xml:space="preserve" text-anchor="middle" x="1138.31" y="-612.17" font-family="Courier,monospace" font-size="10.00">parameterized SQL</text>
 </g>
 </g>
 </svg>
@@ -348,13 +413,14 @@
 <p>
   <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
   takes a <code>pg.Pool</code> and returns
-  <code>{ users, worlds, campaigns, sessions, credits }</code> — one namespace per top-level table
-  cluster. Each namespace is built by a sibling factory (<code>createUsersRepo(pool)</code>,
-  <code>createWorldsRepo(pool)</code>, …) that closes over the pool and exposes the typed methods
-  for that table. The return type is exported as <code>type Repo</code>; the
-  <a href="../runtime/index.html">backend runtime</a>'s <code>AppDeps</code> carries it alongside
-  <code>pg</code> and the two Redis clients, and <code>server.ts</code> threads
-  <code>createRepo(pgRef)</code> into <code>buildApp</code> on both boot paths.
+  <code>{ users, worlds, campaigns, sessions, credits, invites }</code> — one namespace per
+  top-level table cluster. Each namespace is built by a sibling factory
+  (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
+  pool and exposes the typed methods for that table. The return type is exported as
+  <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
+  <code>AppDeps</code> carries it alongside <code>pg</code> and the two Redis clients, and
+  <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
+  boot paths.
 </p>
 
 <aside class="wiki-rationale">
@@ -376,14 +442,15 @@
   guaranteed on every UPDATE.
 </p>
 
-<h2 id="namespace-boundaries-5-today-20-deferred">Namespace boundaries: 5 today, 20 deferred</h2>
+<h2 id="namespace-boundaries-6-today-19-deferred">Namespace boundaries: 6 today, 19 deferred</h2>
 
 <p>
   Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
-  <strong>5</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
-  <code>sessions</code>, <code>credits</code> — the foundations Auth, the prep pipeline, the session
-  runtime, and Billing immediately need. The remaining 20 are tracked as beads under the
-  <code>repo-deferred</code> label and ship batched with their consumers.
+  <strong>6</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code>, <code>credits</code>, <code>invites</code> — the foundations Auth, the
+  onboarding flow, the prep pipeline, the session runtime, and Billing immediately need. The
+  remaining 19 are tracked as beads under the <code>repo-deferred</code> label and ship batched with
+  their consumers.
 </p>
 
 <aside class="wiki-rationale">
@@ -392,7 +459,10 @@
   produces guesses. <code>credits</code> shipped on the same principle: the atomic-debit pattern was
   held back from the v1 repo until MYT-40 picked up Billing's first consumer-facing surface, because
   designing <code>grant</code> / <code>debit</code> / <code>getBalance</code> as separate primitives
-  without the spend path in mind is exactly how a TOCTOU race ships. The deferral list is in the v2
+  without the spend path in mind is exactly how a TOCTOU race ships. <code>invites</code> followed
+  in MYT-38 alongside its routes consumer; the multi-step <code>acceptInvite</code> transaction
+  (lock invite → membership check first → expiry check → cap check → INSERT with ON CONFLICT →
+  uses-bump) only fell into shape with the HTTP layer co-designed. The deferral list is in the v2
   design spec; <code>bd list --label=repo-deferred</code> is the live view.
 </aside>
 
@@ -427,34 +497,37 @@
   <code>Update</code> input types are spelled out (not
   <code>Partial&lt;Pick&lt;User, …&gt;&gt;</code>) so
   <code>exactOptionalPropertyTypes</code> semantics are intentional: each key is omitted to leave
-  the field unchanged, or supplied with a value to set it. Identity fields (<code>cognitoSub</code>,
-  <code>email</code>, <code>authProvider</code>) are <em>never</em> in the Update type — mutating
-  them would break Cognito linkage in ways the layer above doesn't want to think about.
+  the field unchanged, or supplied with a value to set it. The identity field
+  <code>cognitoSub</code> is <em>never</em> in the Update type — mutating it would break Cognito
+  linkage in ways the layer above doesn't want to think about. <code>username</code> and
+  <code>displayName</code> are mutable through Update because the user owns them; the schema catches
+  case-insensitive collisions via <code>users_username_lower_key</code> if a rename conflicts.
 </p>
 
 <h2 id="narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</h2>
 
 <p>
-  <code>auth_provider</code> is <code>TEXT</code> with a CHECK constraint enforcing
-  <code>('google', 'discord')</code>. The schema guarantees the SQL invariant, but the mapper still
-  refuses to bare-cast <code>row.auth_provider as 'google' | 'discord'</code>. Instead, a small
-  helper validates and narrows:
+  Several columns in the schema are <code>TEXT</code> with CHECK constraints enforcing a small enum:
+  <code>worlds.status</code>, <code>worlds.moderation_status</code>, <code>campaigns.status</code>,
+  <code>sessions.status</code>, <code>credit_ledger.credit_type</code>,
+  <code>credit_ledger.source_type</code>, <code>campaign_members.role</code>. The schema guarantees
+  the SQL invariant, but the mapper still refuses to bare-cast
+  <code>row.status as 'generating' | 'complete' | 'failed'</code>. Instead, a small helper validates
+  and narrows:
 </p>
 
-<pre><code>function toAuthProvider(v: string): 'google' | 'discord' {
-  if (v !== 'google' && v !== 'discord') {
-    throw new Error(`unexpected auth_provider value from DB: ${v}`)
+<pre><code>function toCampaignMemberRole(v: string): 'owner' | 'player' {
+  if (v !== 'owner' && v !== 'player') {
+    throw new Error(`unexpected campaign_members.role value from DB: ${v}`)
   }
   return v
 }</code></pre>
 
 <aside class="wiki-rationale">
-  <strong>Defense in depth, not paranoia</strong> — if a future migration adds a
-  <code>'github'</code> option but the TS interface stays at <code>'google' | 'discord'</code>, a
-  bare cast would silently mistype every row. The helper fails loudly at the boundary and the test
-  suite or production logs flag it before the bug spreads. Same pattern for
-  <code>worlds.status</code>, <code>worlds.moderation_status</code>, <code>campaigns.status</code>,
-  <code>sessions.status</code> — every CHECK-constrained text column gets a narrowing function.
+  <strong>Defense in depth, not paranoia</strong> — if a future migration adds a new role option but
+  the TS interface stays at <code>'owner' | 'player'</code>, a bare cast would silently mistype
+  every row. The helper fails loudly at the boundary and the test suite or production logs flag it
+  before the bug spreads. Every CHECK-constrained text column gets one of these.
 </aside>
 
 <h2 id="uuidv7-in-its-own-seam">UUIDv7 in its own seam</h2>
@@ -501,11 +574,10 @@
 </p>
 
 <pre><code>UPDATE users
-   SET display_name       = COALESCE($2, display_name),
-       username           = COALESCE($3, username),
-       avatar_url         = COALESCE($4, avatar_url),
-       stripe_customer_id = COALESCE($5, stripe_customer_id),
-       free_trial_used    = COALESCE($6, free_trial_used),
+   SET username           = COALESCE($2, username),
+       display_name       = COALESCE($3, display_name),
+       stripe_customer_id = COALESCE($4, stripe_customer_id),
+       free_trial_used    = COALESCE($5, free_trial_used),
        updated_at         = now()
  WHERE id = $1
  RETURNING *</code></pre>
@@ -531,11 +603,12 @@
 
 <aside class="wiki-rationale">
   <strong>COALESCE caveat: nullable fields can't be cleared</strong> — passing
-  <code>{ avatarUrl: null }</code> to <code>users.update</code> is indistinguishable from omitting
-  the key entirely; both encode as a SQL <code>null</code> parameter and the COALESCE leaves the
-  column unchanged. This is a deliberate v1 trade-off, documented at the type site. When a real
-  consumer needs to clear an avatar or stripe id, the API grows a sentinel value or a dedicated
-  <code>clearAvatar()</code> method — not before.
+  <code>{ stripeCustomerId: null }</code> to <code>users.update</code> is indistinguishable from
+  omitting the key entirely; both encode as a SQL <code>null</code> parameter and the COALESCE
+  leaves the column unchanged. This is a deliberate v1 trade-off, documented at the type site. When
+  a real consumer needs to clear a stripe id (a customer-record reset, a refund-flow rebuild), the
+  API grows a sentinel value or a dedicated <code>clearStripeCustomerId()</code> method — not
+  before.
 </aside>
 
 <h2 id="the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</h2>
@@ -563,15 +636,38 @@
 
 <p>
   <strong><code>users</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>. Each
-  <code>getByX</code> maps 1:1 to a column with an index that supports it; adding a method is the
-  deliberate act of sanctioning a new lookup path. A generic <code>getBy(filter)</code> would
-  silently accept filters with no supporting index — a sequential-scan trap that wouldn't surface
-  until production load — and would force readers to inspect every call site to learn which lookup
-  shape was used. The explicit names also make consumer audits trivial: a <code>grep</code> for
-  <code>getByEmail</code> returns the complete set of invite-resolution callers, and
-  <code>getByCognitoSub</code> returns the first-sign-in path. We accept the small cost of "five
-  methods instead of one" to get index-as-API-surface and exact searchability.
+  <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>, <code>getByUsername</code>,
+  <code>update</code>. Each <code>getByX</code> maps 1:1 to a column with an index that supports it
+  (or, for <code>getByUsername</code>, the <code>users_username_lower_key</code> expression index);
+  adding a method is the deliberate act of sanctioning a new lookup path. A generic
+  <code>getBy(filter)</code> would silently accept filters with no supporting index — a
+  sequential-scan trap that wouldn't surface until production load — and would force readers to
+  inspect every call site to learn which lookup shape was used. The explicit names also make
+  consumer audits trivial: a <code>grep</code> for <code>getByUsername</code> returns the
+  uniqueness-check call sites in the onboarding flow, and <code>getByCognitoSub</code> returns the
+  per-request user lookup. We accept the small cost of "several methods instead of one" to get
+  index-as-API-surface and exact searchability.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>getByCognitoSubWithTimeout</code> wraps the read in a transaction</strong> — the
+  <a href="../auth-billing/onboarding.html">requireOnboarded</a> hook calls this on every protected
+  request to confirm a real users row exists for the caller's <code>cognitoSub</code>. A wedged
+  Postgres would otherwise pin the request thread until pg's default <code>statement_timeout</code>
+  fires (or never, if it isn't set). The method opens a dedicated client, runs
+  <code>BEGIN; SET LOCAL statement_timeout = '200ms';</code> + the <code>SELECT</code>, commits, and
+  releases — bounding any single lookup to the configured budget. <code>SET LOCAL</code> only takes
+  effect inside a transaction, so the BEGIN/COMMIT wrapper isn't optional even though the read
+  itself is single-statement. SQLSTATE <code>57014</code> (statement_timeout) maps to a
+  <code>LookupTimeoutError</code> the route layer translates to a 503.
+</aside>
+
+<p>
+  <code>getByUsername</code> uses <code>WHERE LOWER(username) = LOWER($1)</code> so the
+  <code>users_username_lower_key</code> expression index serves the lookup directly — case-folding
+  on both sides keeps the planner from falling to a sequential scan. The case-insensitive uniqueness
+  story is in the <a href="./schema.html">schema page</a>'s identity-cluster section; the repo
+  simply consumes that invariant.
 </p>
 
 <p>
@@ -585,11 +681,26 @@
 
 <p>
   <strong><code>campaigns</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>listByUser</code>, <code>update</code>. <code>listByUser</code> joins
-  <code>campaign_members</code> directly in SQL to filter to "campaigns I'm a member of with an
-  accepted invite." That's fine even though <code>campaign_members</code> is one of the deferred
-  namespaces — we're using the table, not exposing an API surface for it.
+  <code>listByUser</code>, <code>update</code>, plus four membership methods:
+  <code>addMember</code>, <code>getMembership</code>, <code>getOwner</code>,
+  <code>listMembers</code>. <code>listByUser</code> joins <code>campaign_members</code> directly in
+  SQL to filter to "campaigns I'm a member of with an accepted invite." <code>addMember</code> uses
+  <code>INSERT … ON CONFLICT (campaign_id, user_id) DO NOTHING RETURNING *</code> so a re-add is
+  idempotent — when the conflict swallows the row, the method falls through to a follow-up
+  <code>SELECT</code> and returns the existing membership. <code>listMembers</code> joins
+  <code>users</code> for username + display_name and filters out suspended accounts so a banned
+  member doesn't surface in another player's roster.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Membership methods on <code>campaigns</code>, not their own namespace</strong> — the v2
+  namespace plan reserved a <code>campaign_members</code> namespace, but membership is read and
+  written exclusively in service of campaign-scoped operations (owner check, member list, invite
+  acceptance). A separate namespace would force every consumer to import two factories and reason
+  about ordering between them. Keeping the methods on <code>campaigns</code> matches how callers
+  think — "what's true about <em>this campaign</em>" — and lets the lock-order convention (campaigns
+  → invites → members) sit naturally inside one factory's transactions.
+</aside>
 
 <p>
   <strong><code>sessions</code></strong> — <code>create</code>, <code>getById</code>,
@@ -612,6 +723,15 @@
   <code>atomicDebit</code>, <code>listEntries</code>. The full credit-ledger story has its own
   section below; the short version is "balance is a SUM over an append-only ledger; debits go
   through a transaction-scoped lock anchored on the user row, not on the ledger."
+</p>
+
+<p>
+  <strong><code>invites</code></strong> — <code>create</code>, <code>getByCode</code>,
+  <code>getCodePreview</code>, <code>listForCampaign</code>, <code>revoke</code>,
+  <code>acceptInvite</code>. Invites are how new players join a campaign in MYT-38's onboarding
+  flow; <code>getCodePreview</code> is the only read this layer exposes to unauthenticated callers
+  (the public preview the SPA shows on the join page before the user signs in). The rest are
+  authenticated. The non-trivial method is <code>acceptInvite</code> — its own section below.
 </p>
 
 <h2 id="the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</h2>
@@ -771,23 +891,27 @@
     <tr>
       <td><code>src/repo/types.ts</code></td>
       <td>
-        <code>User</code>, <code>World</code>, <code>Campaign</code>, <code>Session</code>;
-        <code>CreateXxxInput</code> + <code>XxxUpdate</code> for each.
+        <code>User</code>, <code>World</code>, <code>Campaign</code>, <code>Session</code>,
+        <code>CampaignMember</code>, <code>CampaignInvite</code>,
+        <code>CampaignInvitePreview</code>; <code>CreateXxxInput</code> + <code>XxxUpdate</code> for
+        each mutable row type.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/mappers.ts</code></td>
       <td>
         <code>UserDbRow</code> / <code>WorldDbRow</code> / <code>CampaignDbRow</code> /
-        <code>SessionDbRow</code>; <code>toUser</code> / <code>toWorld</code> /
-        <code>toCampaign</code> / <code>toSession</code>; narrowing helpers.
+        <code>SessionDbRow</code> / <code>CampaignMemberDbRow</code> /
+        <code>CampaignInviteDbRow</code>; matching <code>toXxx</code> functions; narrowing helpers
+        for CHECK-constrained text columns.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/users.ts</code></td>
       <td>
         <code>createUsersRepo(pool)</code> — <code>create</code>, <code>getById</code>,
-        <code>getByCognitoSub</code>, <code>getByEmail</code>, <code>update</code>.
+        <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>,
+        <code>getByUsername</code>, <code>update</code>; <code>LookupTimeoutError</code>.
       </td>
     </tr>
     <tr>
@@ -802,7 +926,29 @@
       <td><code>src/repo/campaigns.ts</code></td>
       <td>
         <code>createCampaignsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
-        <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>.
+        <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>;
+        membership: <code>addMember</code>, <code>getMembership</code>, <code>getOwner</code>,
+        <code>listMembers</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/invites.ts</code></td>
+      <td>
+        <code>createInvitesRepo(pool, opts?)</code> — <code>create</code>, <code>getByCode</code>,
+        <code>getCodePreview</code>, <code>listForCampaign</code>, <code>revoke</code>,
+        <code>acceptInvite</code> (load-bearing transaction). Lock and statement timeouts
+        overridable via <code>opts</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/invites-errors.ts</code></td>
+      <td>
+        <code>InviteNotFoundError</code>, <code>InviteRevokedError</code>,
+        <code>InviteCapReachedError</code>, <code>CampaignFullError</code>,
+        <code>CampaignGoneError</code>, <code>InviteCreationError</code>,
+        <code>InviteTimeoutError</code>; the <code>ACCEPT_LOCK_TIMEOUT_MS</code> /
+        <code>ACCEPT_STATEMENT_TIMEOUT_MS</code> / <code>INVITE_CAP_PER_CAMPAIGN</code> /
+        <code>PARTY_SIZE_CAP</code> / <code>INVITE_CODE_RETRIES</code> constants.
       </td>
     </tr>
     <tr>
@@ -846,7 +992,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#namespace-boundaries-5-today-20-deferred">Namespace boundaries: 5 today, 20 deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#namespace-boundaries-6-today-19-deferred">Namespace boundaries: 6 today, 19 deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
