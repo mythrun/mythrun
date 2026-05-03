@@ -29,18 +29,21 @@ CREATE UNIQUE INDEX users_username_lower_key ON users (LOWER(username));
 -- orphaned columns remain. Check by indexname rather than text-matching
 -- indexdef (Postgres lowercases function names in pg_get_indexdef output,
 -- so a LIKE '%LOWER(username)%' pattern would not match the stored text
--- 'lower(username)').
+-- 'lower(username)'). Schema-scoped to current_schema() rather than
+-- hard-coded 'public' so the migration is portable across runners that
+-- apply against a throwaway schema (e.g., the wiki schema extractor sets
+-- search_path to a random name to introspect without touching public).
 DO $$ BEGIN
   ASSERT EXISTS (
     SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public'
+    WHERE schemaname = current_schema()
       AND tablename = 'users'
       AND indexname = 'users_username_lower_key'
   ), 'users_username_lower_key was not created';
 
   ASSERT NOT EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
+    WHERE table_schema = current_schema()
       AND table_name = 'users'
       AND column_name IN ('email', 'avatar_url', 'auth_provider')
   ), 'profile columns email/avatar_url/auth_provider were not dropped';
