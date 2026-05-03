@@ -64,3 +64,23 @@ const TABLES = [
 export async function resetData(pool: Pool): Promise<void> {
   await pool.query(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`)
 }
+
+/**
+ * Fast reset for tests that only touch users + credit_ledger.
+ *
+ * TRUNCATE has a fixed per-call overhead (~270-400ms here, dominated by
+ * acquiring ACCESS EXCLUSIVE locks on every table in the list). For
+ * race-style tests that run 50-100 iterations of {reset + create + race},
+ * that overhead alone can blow the per-test timeout (e.g., 100 × 400ms =
+ * 40s already, before any actual test work). DELETE statements skip the
+ * lock-each-table fixed cost and run in a few ms each. Order matches the
+ * FK delete_rule — credit_ledger.user_id is RESTRICT, so it must go first.
+ *
+ * Use this ONLY when the test's surface is provably users+credits. Tests
+ * that touch worlds/campaigns/invites/sessions must use the full
+ * resetData() above.
+ */
+export async function resetCreditsData(pool: Pool): Promise<void> {
+  await pool.query('DELETE FROM credit_ledger')
+  await pool.query('DELETE FROM users')
+}

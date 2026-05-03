@@ -9,7 +9,7 @@ import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
 import { createCreditsRepo } from '../credits.js'
 import { uuidv7 } from '../uuidv7.js'
-import { resetData } from './_helpers/reset-data.js'
+import { resetData, resetCreditsData } from './_helpers/reset-data.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -522,8 +522,12 @@ describe('credits repo — concurrency (separate pool)', () => {
     await pool.end()
   })
 
+  // The concurrency tests only touch users + credit_ledger; resetCreditsData
+  // is ~50x faster than the full TRUNCATE-38-tables resetData(). With 100
+  // iterations per race test, the difference is the gap between hitting the
+  // 60s timeout and finishing in ~10s.
   beforeEach(async () => {
-    await resetData(pool)
+    await resetCreditsData(pool)
   })
 
   it('two parallel debits on user with 1 credit — exactly one succeeds', async () => {
@@ -531,7 +535,7 @@ describe('credits repo — concurrency (separate pool)', () => {
     const credits = createCreditsRepo(pool)
 
     for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
-      await resetData(pool)
+      await resetCreditsData(pool)
       const u = await users.create({
         ...baseUserInput,
         cognitoSub: `sub-race-${String(i)}`,
@@ -566,7 +570,7 @@ describe('credits repo — concurrency (separate pool)', () => {
     const credits = createCreditsRepo(pool)
 
     for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
-      await resetData(pool)
+      await resetCreditsData(pool)
       const u = await users.create({
         ...baseUserInput,
         cognitoSub: `sub-empty-${String(i)}`,
@@ -605,7 +609,7 @@ describe('credits repo — concurrency (separate pool)', () => {
     const credits = createCreditsRepo(pool)
 
     for (let i = 0; i < RACE_ITERATIONS_PAIRED; i++) {
-      await resetData(pool)
+      await resetCreditsData(pool)
       const u = await users.create({
         ...baseUserInput,
         cognitoSub: `sub-same-${String(i)}`,
