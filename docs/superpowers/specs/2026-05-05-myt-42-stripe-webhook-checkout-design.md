@@ -31,9 +31,10 @@ After this issue, a user can register, get a free trial credit, click Buy, compl
 - `stripe_customer_id` backfill for users created before MYT-42 — lazy-create-on-first-use covers all paths going forward.
 - Subscription pause/resume — out of Customer Portal allowlist per MYT-41.
 - Dunning event variants (`invoice.payment_failed`, etc.) — log-and-ignore for now, follow-up bead.
-- Partial refunds — full clawback only at launch; partial-refund handling is a follow-up bead. Stripe Dashboard operators should refund full charges only until partial-refund support lands.
-- Mid-period tier-switch credit grants on `invoice.paid` with `billing_reason='subscription_update'` — skipped at launch (the original tier's credits remain consumable through period_end; the new tier's credits arrive at next renewal). Customer Portal Switch Plan defaults to "applies at next renewal" so this branch is rare and admin-driven; document and revisit if Customer Portal exposes a "switch plan immediately" path.
+- **Partial refunds** — full clawback only at launch (decision 5 of round-2 review). Webhook handler asserts `charge.amount_refunded === charge.amount_captured` before clawing back; mismatch pages a `billing.partial_refund_unsupported` alarm and skips clawback. Operator workflow: refund full charges only; partial refunds require manual reconciliation. Partial-refund implementation is a follow-up bead.
+- **Non-card / non-Link payment methods** (ACH, SEPA, BNPL, Cash App Pay, Amazon Pay, etc.) — out of scope at launch (decision 3 of round-2 review). Mythrun's launch market is US/card-first. Checkout Sessions pin `payment_method_types: ['card', 'link']`; account-level Payment Methods config disables everything else. Apple Pay and Google Pay come along automatically as wallet wrappers over `card`. International expansion + delayed-confirm support is a follow-up bead with concrete event-handler additions (`checkout.session.async_payment_succeeded`, `_failed`, plus `purchases.status='pending_settlement'` state).
 - A frontend pricing page or Buy button — backend-only; frontend lives in a later milestone.
+- Frontend "Upgrade tier" UI — required for the custom upgrade endpoint per §4.6; deferred to the frontend milestone. The MYT-42 backend endpoint ships and is callable from any frontend that pulls together the appropriate request body.
 
 ## 3. Architecture overview
 
@@ -45,30 +46,35 @@ After this issue, a user can register, get a free trial credit, click Buy, compl
 
    GET  /api/billing/skus            ──► public, served from boot-cache populated by MYT-41 probe
    GET  /api/billing/balance         ──► JWT, reads credit_ledger + user_subscriptions
-   POST /api/billing/checkout        ──► JWT, creates Stripe Checkout Session
-   POST /api/billing/portal          ──► JWT, creates Customer Portal Session
-   GET  /api/billing/history         ──► JWT, cursor-paginated (purchases ∪ invoices)
+   POST /api/billing/checkout        ──► JWT, creates Stripe Checkout Session (initial subscription / à-la-carte)
+   POST /api/billing/upgrade-tier    ──► JWT, executes a tier upgrade via subscriptions.update +
+                                          proration_date=current_period_start + proration_behavior='always_invoice'
+   POST /api/billing/portal          ──► JWT, creates Customer Portal Session (downgrades + cancel + payment-method update)
+   GET  /api/billing/history         ──► JWT, cursor-paginated (purchases ∪ invoices ∪ refunds)
    GET  /api/billing/subscription    ──► JWT, single active sub or null
 
-   POST /webhooks/stripe             ──► public, Stripe-signed (raw body parser),
+   POST /webhooks/stripe             ──► public, Stripe-signed (encapsulated raw-body parser),
                                           dispatch table → per-event-type handler,
                                           single Postgres tx per event with
                                           stripe_events.event_id PK idempotency
 ```
 
 New backend files:
-- `backend/src/routes/billing.ts` — the 6 user-facing routes.
-- `backend/src/routes/webhook.ts` — `POST /webhooks/stripe` route, raw-body parser scope, signature verification, dispatch into orchestrator.
+- `backend/src/routes/billing.ts` — the 7 user-facing routes (skus, balance, checkout, upgrade-tier, portal, history, subscription).
+- `backend/src/routes/webhook.ts` — `POST /webhooks/stripe` route in its own encapsulated plugin, raw-body parser scoped to that plugin, signature verification, dispatch into orchestrator.
 - `backend/src/billing/webhook.ts` — orchestrator + per-event-type handler functions.
-- `backend/src/billing/customer.ts` — `findOrCreateStripeCustomer(userId)` helper used by both checkout and portal.
+- `backend/src/billing/customer.ts` — `findOrCreateStripeCustomer(tx, userId)` helper used by both checkout and portal.
+- `backend/src/billing/upgrade.ts` — tier-upgrade implementation (validates monotonic upgrade, calls `subscriptions.update` with `proration_date` set to the current period start, `proration_behavior: 'always_invoice'`); the resulting `invoice.paid` is processed by the same webhook handler that handles renewals.
 - `backend/src/billing/sku-cache.ts` — boot-time cache of `LOOKUP_KEYS` + Stripe price snapshot, populated immediately after the probe passes. Exposes both forward (`lookup_key → SkuListing`) and reverse (`stripe_price_id → SkuListing`) lookups; the reverse map is required by webhook handlers since Stripe at API version `2026-04-22.dahlia` returns price IDs (not lookup keys) on `InvoiceLineItem.pricing.price_details.price`.
+- `backend/src/billing/errors.ts` — `BillingErrorCode` union type (closed enum of all 4xx codes any billing route can return).
 - `backend/src/repo/purchases.ts`, `backend/src/repo/user-subscriptions.ts`, `backend/src/repo/stripe-events.ts`, `backend/src/repo/billing-history.ts` — four new namespaces.
 
 Patches:
-- `backend/src/repo/users.ts` — `findOrCreateStripeCustomer(userId)` that wraps the customer.ts helper + the conditional UPDATE; **`create(client, ...)` refactored to accept a `ClientLike` transaction handle** so the trial-credit grant can ride in the same BEGIN.
-- `backend/src/repo/credits.ts` — `grant(client, ...)` accepts a `ClientLike` transaction handle so the trial-credit grant in §8 runs inside the register transaction. **No change to `atomicDebit`** — that recipe extension was deferred to MYT-43 in round 1 of this spec's review.
-- `backend/src/routes/users.ts` (MYT-38's register handler) — refactored to open `BEGIN`/`COMMIT` explicitly, call `users.create(client, ...)` + `repo.credits.grant(client, ...)` + `UPDATE users SET free_trial_used = true` + read-back the row for the response shape.
-- `backend/src/billing/probe.ts` — populate `sku-cache` immediately after a successful probe (cheap; same data already fetched).
+- `backend/src/repo/users.ts` — `findOrCreateStripeCustomer(tx, userId)` (FOR-UPDATE lock + lazy-create); **`create(tx, ...)` refactored to accept a `ClientLike` transaction handle** so the trial-credit grant can ride in the same BEGIN. Round 1 / round 2 of this spec's review (Florin I4 / Hydra C1 / Ducat I6 / Sphinx I2) flagged this as a real refactor, not a type-annotation change.
+- `backend/src/repo/credits.ts` — extract a `grantInTx(client, input)` helper that runs ONLY the INSERT (no own BEGIN/COMMIT, no own connection acquisition); the existing `grant(input)` becomes a thin wrapper that opens a tx and delegates to `grantInTx`. Add a new method `recordClawback(client, input)` that writes negative-polarity rows (`source_type='debit'`, `amount < 0`) for refund clawbacks — this is the ONLY entrypoint that may write a debit row to credit_ledger outside `atomicDebit`. **No change to `atomicDebit`** — that recipe extension was deferred to MYT-43 in round 1 of this spec's review.
+- `backend/src/routes/users.ts` (MYT-38's register handler) — refactored to open `BEGIN`/`COMMIT` explicitly, call `users.create(client, ...)` + `repo.credits.grantInTx(client, ...)` + `UPDATE users SET free_trial_used = true` + read-back the row for the response shape. **`classifyProfanity` LLM calls remain BEFORE `BEGIN`** (per Sphinx I2 round 2: a 200–800ms LLM call inside a transaction holds a `PoolClient` open and is a DoS amplifier on a `max=10` pool).
+- `backend/src/billing/probe.ts` — populate `sku-cache` immediately after a successful probe (cheap; same data already fetched). Add a Customer Portal config probe step that asserts `proration_behavior='create_prorations'` AND `schedule_at_period_end.conditions` contains `{type:'decreasing_item_amount'}` AND the per-tier `subscription_update.products` allowlists are downgrade-only. Defense-in-depth against Dashboard config drift.
+- `backend/src/auth/require-onboarded.ts` — extend the boot-time allowlist mechanism to include a `PUBLIC_BILLING_ROUTE_ALLOWLIST` (parallel to the existing `JWT_NO_DB_ALLOWLIST`) enforced at boot time; routes carrying `config: { auth: 'public' }` MUST be in either the existing public-route set (`/health`, `/health/ready`) or the new billing-public set (`/api/billing/skus`, `/webhooks/stripe`). Per Sphinx C3 round 2: closes the defense-in-depth gap where a future implementer marking the wrong route public ships silently.
 - `backend/src/server.ts` / `backend/src/app.ts` — wire the new route plugins.
 
 ### 3.1 Stripe API at dahlia — load-bearing field-shape notes
@@ -96,10 +102,11 @@ These notes are referenced by §5.4.1, §5.4.2, §5.4.3, §5.4.5, and §15. Impl
 | `GET /api/billing/skus` | public (`config: { auth: 'public' }`) | — | `[{ lookup_key, displayName, type, sessionsGranted, worldsGranted, price: { unit_amount_cents, currency } }]` |
 | `GET /api/billing/balance` | JWT | — | `{ balance: { session, world_gen }, tier: { lookup_key, displayName, renewsAt, cancelAtPeriodEnd } \| null }` |
 | `POST /api/billing/checkout` | JWT | `{ items: [{ lookup_key, quantity }] }` | `{ checkoutUrl }` |
+| `POST /api/billing/upgrade-tier` | JWT | `{ target_tier_lookup_key }` | `{ invoice_id, amount_paid_cents }` |
 | `POST /api/billing/portal` | JWT | — | `{ portalUrl }` |
 | `GET /api/billing/history?cursor=<token>` | JWT | — | `{ events: [{ kind: 'purchase'\|'invoice'\|'refund', id, occurredAt, amount_cents, currency, lookup_key?, status }], nextCursor: string \| null }` |
 | `GET /api/billing/subscription` | JWT | — | The user's full `user_subscriptions` row enriched with `displayName`, or `null` |
-| `POST /webhooks/stripe` | public | raw body (preserved via plugin-scoped `addContentTypeParser`) | `200 { received: true }` on success / 400 on signature mismatch |
+| `POST /webhooks/stripe` | public | raw body (preserved via encapsulated `addContentTypeParser`) | `200 { received: true }` on success / 400 on signature mismatch |
 
 **Error envelope:** every 4xx response from these routes uses the shape `{ code: 'snake_case_string', ...optional_detail }`. The closed set of codes lives in `backend/src/billing/errors.ts` exporting a `BillingErrorCode` union. The webhook route (`POST /webhooks/stripe`) follows the same envelope for `400 { code: 'missing_signature' }` / `{ code: 'invalid_signature' }`.
 
@@ -127,8 +134,9 @@ Server-derived `mode`: `'subscription'` if any tier present, else `'payment'`.
 ```
 {
   mode: <derived>,
+  payment_method_types: ['card', 'link'],  // decision 3 of round-2 review: card-only (Apple Pay / Google Pay come along automatically as wallet wrappers); Link is Stripe's saved-card SSO and is card-equivalent for settlement
   line_items: <items resolved via SKU cache to { price: <price_id>, quantity }>,
-  customer: <findOrCreateStripeCustomer(userId)>,
+  customer: <findOrCreateStripeCustomer(tx, userId)>,
   metadata: { userId },
   success_url: `${env.frontendBaseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
   cancel_url: `${env.frontendBaseUrl}/billing/cancel`,
@@ -137,7 +145,11 @@ Server-derived `mode`: `'subscription'` if any tier present, else `'payment'`.
 }
 ```
 
-`subscription_data.metadata.userId` is a fallback signal: webhook handlers (§5.4.3 / §5.4.4) resolve user via `event.data.object.customer` (the `cus_*` string) → `users.stripe_customer_id`. If that lookup misses (a Stripe-side delivery race; should be unreachable in practice because `findOrCreateStripeCustomer` writes `users.stripe_customer_id` synchronously before checkout-session-create returns), handlers fall back to `subscription.metadata.userId` before logging + 200. Without this fallback, the spec sets metadata that no handler reads — Doubloon C5 in round 1 of review flagged the inconsistency.
+`payment_method_types: ['card', 'link']` is the runtime-enforced lock. A second defense layer lives at the Stripe Account-level Payment Methods config (Dashboard → Settings → Payment Methods), where Card + Link are enabled and everything else is disabled (per §15 runbook step). Apple Pay and Google Pay are wallet wrappers over `'card'` — they appear automatically on supported devices when `'card'` is in the list, no enum entry required. Stripe Checkout's hosted page handles Apple Pay domain verification automatically (we're served from `checkout.stripe.com`).
+
+`subscription_data.metadata.userId` is a fallback signal: webhook handlers (§5.4.3 / §5.4.4) resolve user via `event.data.object.customer` (the `cus_*` string) → `users.stripe_customer_id`. If that lookup misses (a Stripe-side delivery race; should be unreachable in practice because `findOrCreateStripeCustomer` writes `users.stripe_customer_id` synchronously before checkout-session-create returns), handlers fall back to `subscription.metadata.userId` before logging + 200.
+
+The `findOrCreateStripeCustomer(tx, userId)` call lives BEFORE the `checkout.sessions.create` call in the request handler, both running outside any DB transaction (the customer-create path takes its own short tx with `SELECT … FOR UPDATE` per §9). Stripe API calls are not held inside webhook transactions — see §5.3 for the prefetch-then-write split.
 
 ### 4.4 Customer Portal creation (`POST /api/billing/portal`)
 
@@ -149,6 +161,63 @@ stripe.billingPortal.sessions.create({
 ```
 
 Lazy-creates the customer if the user has never checked out — this lets a freshly-registered user open the portal even though they have nothing to manage. The portal will show "no active subscription"; the user can leave or browse historical invoices (which there are none of). MYT-41 spec §8 originally proposed a `409 { code: 'no_billing_history' }` for this case to avoid an enumeration vector, but the lazy-create path is no worse: every call to this endpoint is JWT-authenticated and rate-limited, and `customers.create` is idempotent on the deterministic key, so an attacker authenticated as user X can't enumerate other users' Stripe records. The lazy-create wins on UX (no special-case 409 frontend handling) without weakening the boundary. This is a deliberate change from MYT-41 §8 — see §14 spec patches.
+
+### 4.6 Tier upgrade endpoint (`POST /api/billing/upgrade-tier`)
+
+Body Zod: `{ target_tier_lookup_key: enum(LOOKUP_KEYS where type === 'recurring') }`. Validation:
+
+1. Caller is JWT-authenticated; resolve their active subscription via `repo.userSubscriptions.getActiveForUser(tx, userId)`. No active subscription → 400 `{ code: 'no_active_subscription' }`.
+2. Compute current tier from `active_sub.tier_lookup_key`. Compute target tier from body. Both are in `LOOKUP_KEYS` (Zod enforced).
+3. **Monotonic upgrade check**: target tier's `unit_amount_cents` (from SKU cache) MUST be strictly greater than current tier's. Equal → 400 `{ code: 'tier_unchanged' }`. Less → 400 `{ code: 'not_an_upgrade' }` (downgrades go through Customer Portal per Decision 2).
+
+Implementation:
+
+```ts
+// All Stripe state needed up-front; no DB transaction held during the Stripe call.
+const subscription = await stripe.subscriptions.retrieve(active_sub.stripe_subscription_id, {
+  expand: ['items.data.price'],
+})
+const subscription_item_id = subscription.items.data[0].id
+const period_start = subscription.items.data[0].current_period_start  // dahlia: per-item
+
+// One Stripe call. Stripe computes proration_date == period_start ⇒ flat delta charge.
+// proration_behavior='always_invoice' fires the proration invoice synchronously
+// (instead of deferring it to the next renewal), and the invoice's default
+// payment method (the user's saved card) is charged immediately.
+const updated = await stripe.subscriptions.update(active_sub.stripe_subscription_id, {
+  items: [{ id: subscription_item_id, price: target_price_id }],
+  proration_date: period_start,
+  proration_behavior: 'always_invoice',
+})
+
+// Find the just-created invoice. Stripe attaches it to the subscription's
+// latest_invoice field synchronously when proration_behavior='always_invoice'.
+const latest_invoice = await stripe.invoices.retrieve(updated.latest_invoice as string)
+return reply.send({
+  invoice_id: latest_invoice.id,
+  amount_paid_cents: latest_invoice.amount_paid,
+})
+```
+
+The webhook handler does the actual credit grant when `invoice.paid` arrives for this invoice — same code path as renewals (§5.4.2), with an explicit `billing_reason='subscription_update'` branch that recognizes the upgrade and grants the credit DELTA (not the full new tier).
+
+**Credit-grant math at webhook time** (executed in §5.4.2 not here):
+- Compute `target_spec = LOOKUP_KEYS[target_tier_lookup_key]`, `current_spec = LOOKUP_KEYS[old_tier_lookup_key]` (read from `user_subscriptions.tier_lookup_key` BEFORE the upsert applies the new tier — see §5.4.3 lock-acquisition order).
+- Sessions delta = `target_spec.sessionsGranted - current_spec.sessionsGranted` (e.g. Wayfarer→Mythwright: 16 - 4 = 12).
+- Worlds delta = `target_spec.worldsGranted - current_spec.worldsGranted` (Wayfarer→Mythwright: 4 - 1 = 3).
+- `expires_at` = `current_period_end + tier_period_length` (i.e., the next-period-end after the upgrade — credits get a full period of life rather than the days remaining in the original period). For Mythrun's monthly tiers, that's `current_period_end + 30 days` rounded to Stripe's actual billing-cycle anchor at next renewal.
+- Insert via `repo.credits.grantInTx(tx, ...)` with `source_type='subscription'`, `source_billing_history_id` linking to the billing_history row written for this invoice.
+
+**Effective per-period cost over a Wayfarer→Mythwright upgrade on day 28 of the period** (sanity check):
+- Day 1: $15 Wayfarer initial → 4 sessions, 1 world, expires day 30.
+- Day 28: $30 upgrade delta (flat — Stripe's `proration_date=period_start` math) → 12 sessions, 3 worlds, expires day 60.
+- Day 30: $45 Mythwright renewal → 16 sessions, 4 worlds, expires day 60.
+- Total Days 1–60: $15 + $30 + $45 = $90. Compare to two full Mythwright periods: $45 + $45 = $90. Same.
+- Total credits Days 1–60: 4 (Wayfarer, days 1–30) + 12 (upgrade-delta, days 28–60) + 16 (Mythwright period 2, days 30–60) = 32 sessions; 1 + 3 + 4 = 8 worlds. Same as two full Mythwright periods.
+
+Not gameable — the user pays the same as if they'd subscribed to Mythwright from day 1.
+
+**Why this can't go through Customer Portal Switch Plan**: Stripe's Customer Portal `proration_behavior='create_prorations'` is hard-coded to time-prorate the dollar charge. Setting `proration_date=current_period_start` requires a direct API call to `subscriptions.update` — Customer Portal doesn't expose that knob. So upgrades use this Mythrun-native endpoint; downgrades use Customer Portal Switch Plan (per Decision 2 of round-2 review). The asymmetry is by design.
 
 ### 4.5 SKU listing endpoint (`GET /api/billing/skus`)
 
@@ -183,7 +252,7 @@ await app.register(webhookRoutes)  // encapsulated; the parser does not leak to 
 
 Inside the route handler, `request.body` is the raw `Buffer` produced by the encapsulated parser; bind it as `const rawBody = request.body as Buffer`. Stripe also sends `application/json; charset=utf-8` on some retries — Fastify matches the registered `application/json` against this with parameter-tolerance, but the regression test in §13 explicitly covers the charset-suffix variant.
 
-The webhook route additionally carries `rateLimit: { max: 60, timeWindow: '1 minute' }` (per-IP). Stripe's legitimate cadence is well below this; the cap exists because every webhook request does an HMAC verify + DB write and a flood would burn DB and CPU.
+The webhook route additionally carries `rateLimit: { max: 1500, timeWindow: '1 minute' }` (per-IP). Decision-justification: per Sphinx I4 round 2, Stripe's burst delivery rate during backlog drain (e.g., right after `STRIPE_WEBHOOK_SECRET` rotation per §15) is documented at up to ~25/sec = 1500/min. A lower cap throttles legitimate Stripe traffic into 429s and pushes events into ~3 days of exponential-backoff retries — the exact failure mode the rate limit is supposed to defend against. 1500/min is well above worst-case Stripe traffic; non-Stripe abuse traffic from a single IP at this rate is handled at the ALB / WAF layer, not here.
 
 ### 5.2 Signature verification
 
@@ -219,7 +288,33 @@ INSERT INTO stripe_events (event_id, event_type, processed_at)
 COMMIT;
 ```
 
-`stripe_events` already exists from migration 001 with `event_id TEXT PRIMARY KEY`. First-write-wins. Stripe retries the same event ID on transient delivery failures; the second delivery hits the conflict and exits cleanly. **Note on rollback semantics:** any handler error inside the tx (CHECK violation, FK miss, etc.) rolls back the `stripe_events` row alongside the rest of the writes. This is the correct shape for *retryable* failures (transient DB error, momentary lock contention) — Stripe redelivers, the handler tries again. **It is NOT the right shape for non-retryable bugs**: a handler that always errors burns ~3 days of Stripe retries before delivery is given up, accumulating noise in logs. Handlers must therefore be pure-DB inside the tx (no Stripe API calls, no external network calls) and the tests in §13 must cover every error branch a handler can take. A future "poison-event escape" (record `last_error` + `attempts` in `stripe_events` and stop retrying after N failed attempts) is a follow-up bead.
+`stripe_events` already exists from migration 001 with `event_id TEXT PRIMARY KEY`. First-write-wins. Stripe retries the same event ID on transient delivery failures; the second delivery hits the conflict and exits cleanly. **Note on rollback semantics:** any handler error inside the tx (CHECK violation, FK miss, etc.) rolls back the `stripe_events` row alongside the rest of the writes. This is the correct shape for *retryable* failures (transient DB error, momentary lock contention) — Stripe redelivers, the handler tries again. **It is NOT the right shape for non-retryable bugs**: a handler that always errors burns ~3 days of Stripe retries before delivery is given up, accumulating noise in logs. A future "poison-event escape" (record `last_error` + `attempts` in `stripe_events` and stop retrying after N failed attempts) is a follow-up bead.
+
+**Stripe API calls are NOT held inside the webhook tx.** Per Chimera I2 / Hydra I2 / Sphinx M3 round 2, several handlers need to retrieve additional Stripe state (Checkout Session line_items, parent subscription on `invoice.paid`, charge details on `charge.refunded`). Holding the row-level lock on `stripe_events.event_id` across a Stripe network call (typical 100–500ms, tail latency multi-second under Stripe outage) compounds with MYT-40's `lock_timeout='1s'` discipline and produces confusing `DebitTimeoutError` cascades in unrelated user-facing paths. The handler structure is **prefetch-then-write**:
+
+```ts
+async function dispatchEvent(event: Stripe.Event, stripe: Stripe, pool: Pool) {
+  // Phase 1: prefetch all Stripe state needed for this handler. Outside any DB tx.
+  // Idempotent on retry (Stripe Checkout Sessions, paid invoices, settled charges
+  // are all immutable post-completion). Tail latency under Stripe outage just
+  // delays our processing — it does NOT pin DB resources.
+  const prefetch = await PREFETCHERS[event.type]?.(event, stripe)
+  // Phase 2: open the DB tx, insert stripe_events, dispatch the handler with
+  // both the event and the prefetched data. Pure-DB writes inside.
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query("SET LOCAL transaction_isolation = 'read committed'")
+    const inserted = await stripeEvents.recordOrSkip(client, event.id, event.type)
+    if (inserted === 'duplicate') { await client.query('ROLLBACK'); return }
+    await HANDLERS[event.type]?.(event, prefetch, client)
+    await client.query('COMMIT')
+  } catch (err) { await client.query('ROLLBACK'); throw err }
+  finally { client.release() }
+}
+```
+
+The `PREFETCHERS` table mirrors `HANDLERS`: each event type optionally declares a prefetch function that returns whatever Stripe-side data the handler needs. Handlers receive that prefetch data as their second argument; they do not call Stripe themselves. Tests in §13 mock the Stripe client at the prefetch boundary (the handler's tx body never references it).
 
 After successful insert into `stripe_events`, dispatch:
 
@@ -253,7 +348,7 @@ if (handler) {
 return reply.code(200).send({ received: true })
 ```
 
-The handler signature takes both the tx and the Stripe SDK because some handlers retrieve additional Stripe state (e.g., `checkout.session.completed` always retrieves `line_items` per §3.1 note 3). The retrieve is deterministic on retry (Stripe Checkout Sessions are immutable post-completion).
+**Lock acquisition order discipline.** All webhook handlers that touch user-scoped state acquire `SELECT id FROM users WHERE id = $1 FOR UPDATE` as their FIRST DB operation in the tx (after the `stripe_events` insert). This anchor lock matches MYT-40's `atomicDebit` recipe and prevents deadlocks where two concurrent handlers (e.g., `checkout.session.completed` racing `invoice.paid`) acquire user-scoped locks in different orders. Per Hydra I3 round 2.
 
 ### 5.4 Per-event-type handlers
 
@@ -270,34 +365,61 @@ Resolve user via `event.data.object.metadata.userId` (we set this on session cre
 
 **Always retrieve line_items.** The `checkout.session.completed` event payload at dahlia does NOT include `line_items` — fetch them with `stripe.checkout.sessions.retrieve(session_id, { expand: ['line_items.data.price'] })` inside the tx (deterministic on retry; sessions are immutable post-completion).
 
-Branch on `event.data.object.payment_status` and `event.data.object.mode`:
+Branch on `event.data.object.mode`:
 
-- **Subscription mode + `payment_status === 'paid'`**: this is the success path. Retrieve the subscription via `stripe.subscriptions.retrieve(subscription_id, { expand: ['items.data.price'] })`. Assert `subscription.items.data.length === 1` (Mythrun policy; loud abort otherwise). Read the subscription's status, `items.data[0].price.lookup_key`, `items.data[0].current_period_start`, `items.data[0].current_period_end`, and `cancel_at_period_end`.
-  - **Upsert** `user_subscriptions` via `repo.userSubscriptions.upsertFromStripe` (ON CONFLICT (`stripe_subscription_id`) DO UPDATE) with `status` from Stripe (NOT hardcoded `'active'` — handles SCA-pending and `incomplete` states correctly), `tier_lookup_key`, period dates, and `cancel_at_period_end`. The upsert tolerates out-of-order arrival of `customer.subscription.{created,updated}` events (which Stripe fires on the same session-create, with no guaranteed order vs. `checkout.session.completed`).
-  - **Grant first-month credits** via `repo.credits.grant`: per MYT-41 contract, first-month subscription credits come from `checkout.session.completed`, not `invoice.paid`. The `invoice.paid` handler skips `billing_reason === 'subscription_create'` to avoid double-grant. Insert one credit_ledger row per `(credit_type)` — `amount = spec.sessionsGranted` for `credit_type='session'`, `amount = spec.worldsGranted` for `credit_type='world_gen'`. `source_type='subscription'`, `source_id = uuidv7()`, `expires_at = items.data[0].current_period_end`.
-  - **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id` from the session's invoice, `amount_cents = amount_total`, `lookup_key = items.data[0].price.lookup_key`. Used by `/api/billing/history` and by `charge.refunded` resolution.
-- **Subscription mode + `payment_status !== 'paid'`** (SCA-pending, `incomplete`, etc.): upsert `user_subscriptions` with the Stripe-reported `status` (likely `incomplete`); do NOT grant credits. The subsequent `invoice.paid` (when SCA completes) is responsible for the credit grant — at that point §5.4.2 sees `billing_reason='subscription_create'` AND no prior credit grant for this subscription, and DOES grant. (The de-dup check is on `(stripe_subscription_id, billing_reason='subscription_create')` not having any existing `credit_ledger` row.)
-- **Payment mode (à-la-carte)**: walk the retrieved `line_items.data`. For each line, resolve the `price.id` against the SKU cache reverse map (§10) → `lookup_key` → `LookupKeySpec`. Compute `expected_total = sum(spec.priceCents * line.quantity)` and assert `expected_total === amount_total`; mismatch → §5.4 cross-cutting rule 2 (log + COMMIT + 200, no grant). Pass:
-  - **One `purchases` row per line item**: `(stripe_payment_intent_id = event.data.object.payment_intent, lookup_key, quantity, amount_cents = line.amount_total, currency, status='completed')`. The migration 007 schema replaces the per-row `stripe_payment_intent_id UNIQUE` constraint with a composite `(stripe_payment_intent_id, lookup_key) UNIQUE` so multi-line carts (which share one PI) don't collide on insert.
-  - **Credit grants** via `repo.credits.grant`: one row per `(line, credit_type)` — `amount = spec.sessionsGranted * line.quantity` for sessions; same for worlds. `source_type='purchase'`, `source_id = purchases.id` (the row just inserted), `expires_at = NULL` (à-la-carte never expires).
-  - **billing_history** row: `kind='purchase'`, `source_id_stripe = payment_intent`, `amount_cents = amount_total`, `lookup_key = NULL` (multi-line; the per-line lookup_keys are in the `purchases` rows).
+- **Subscription mode**: per Decision 1 of round-2 review, `checkout.session.completed` for subscription mode does **NOT grant credits**. Subscription credit grants flow exclusively through `invoice.paid` (single source of truth — handles fresh subscriptions + renewals + SCA-pending → SCA-completed transitions + ACH/SEPA settlement uniformly). This handler's responsibilities for subscription mode:
+  - **Upsert** `user_subscriptions` via `repo.userSubscriptions.upsertFromStripe` (single `INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE` statement) with `status` from Stripe (NOT hardcoded `'active'` — handles SCA-pending `'incomplete'` correctly), `tier_lookup_key`, period dates from `items.data[0].current_period_*`, `cancel_at_period_end`. The upsert tolerates any arrival order between `checkout.session.completed`, `customer.subscription.created`, and `customer.subscription.updated` since all three call the same `upsertFromStripe`. Stale-event ordering is rejected via `WHERE excluded.stripe_event_created_at > existing.stripe_event_created_at`.
+  - **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id` from the session's `invoice` field. (Required for refund-resolution per §5.4.5.)
+  - **NO `credit_ledger` writes** in this handler for subscription mode. The downstream `invoice.paid` arrives ~100ms later (or whenever SCA / ACH / etc. settle) and produces the grant.
+- **Payment mode (à-la-carte)**: walk the prefetched `line_items.data` (retrieved via `stripe.checkout.sessions.retrieve(session_id, { expand: ['line_items.data.price'] })` in the prefetch phase per §5.3). For each line, resolve `line.price.id` against the SKU cache reverse map → `lookup_key` → `LookupKeySpec`.
+  - **Amount validation**: compute `expected_subtotal = sum(spec.priceCents * line.quantity)` and assert `expected_subtotal === event.data.object.amount_subtotal` (Chimera I5 round 2 — using `amount_subtotal` not `amount_total` is tax-/discount-tolerant by construction; tax/discount are off at launch but a future config flip wouldn't silently break this validation). Mismatch → §5.4 cross-cutting rule 2 (log + COMMIT + 200, no grant).
+  - **One `purchases` row per line item**: `(stripe_payment_intent_id = event.data.object.payment_intent, lookup_key, quantity, amount_cents = line.amount_total, currency, status='completed')`. Composite UNIQUE on `(stripe_payment_intent_id, lookup_key)` per §6.
+  - **Credit grants** via `repo.credits.grantInTx(client, ...)`: one row per `(line, credit_type)` — `amount = spec.sessionsGranted * line.quantity` for sessions; same for worlds. `source_type='purchase'`, **`source_purchase_id = purchases.id`** (the row just inserted) per Decision 4 of round-2 review. `source_billing_history_id = NULL`. `expires_at = NULL` (à-la-carte never expires).
+  - **billing_history** row: `kind='purchase'`, `source_id_stripe = payment_intent`, `amount_cents = amount_subtotal`, `lookup_key = NULL` (multi-line; the per-line lookup_keys are in the `purchases` rows).
+
+Per Doubloon I3 round 2: the legacy `payment_status === 'paid'` branch is no longer load-bearing for subscription mode (since we don't grant on this event for subscriptions). For payment mode, retain a defensive `payment_status === 'paid'` assertion before any credit grant — at launch with `payment_method_types: ['card', 'link']` (Decision 3), this is always true; a non-paid value indicates misconfiguration and triggers a paging log line.
 
 #### 5.4.2 `invoice.paid`
 
 Fires for: subscription cycle (renewal), subscription update (proration). **Skip when `billing_reason === 'subscription_create'`** — first-month credits are granted by `checkout.session.completed` per §5.4.1 (and per MYT-41's locked contract). **Skip when `billing_reason === 'subscription_update'`** — mid-period tier-switch credit grants are out-of-scope for MYT-42 (see §2 non-goals; the original tier's credits remain through period_end, the new tier's credits arrive at next renewal). The handler still records the invoice in `billing_history` for both skipped cases — the skip applies only to credit grants, not to the audit row.
 
-Resolve user via `event.data.object.customer` (string) → `users.stripe_customer_id`. On miss → fall back to `subscription.metadata.userId` (retrieve subscription first if needed). On total miss → log + COMMIT + 200 (this case is "Stripe-side test event for a customer we don't know"; not paging-grade unless paired with a checkout for a real Mythrun user, which would already have triggered §5.4.1's orphan path).
+Per Decision 1 of round-2 review, **`invoice.paid` is the single source of truth for subscription credit grants** (replacing the round-1 split between `checkout.session.completed` and `invoice.paid`). One handler covers fresh subscriptions, renewals, mid-period upgrades via the §4.6 endpoint, SCA-pending → SCA-completed transitions, and ACH/SEPA settlement uniformly. The dedup mechanism is `stripe_events.event_id` PK — the same `invoice.paid` event redelivered hits the conflict and exits cleanly.
 
-Retrieve the parent subscription via `event.data.object.subscription` for the period dates and the canonical `items.data[0].price.lookup_key` (NOT from `invoice.lines.data[i].price.lookup_key` — that field doesn't exist at dahlia; use the SKU cache reverse map on `line.pricing.price_details.price` if you need a per-line resolution, but the subscription's single-item gives a cleaner read for tier_lookup_key).
+Resolve user via `event.data.object.customer` (string) → `users.stripe_customer_id`. On miss → fall back to `subscription.metadata.userId` (retrieved at prefetch time per §5.3). On total miss → behavior depends on `billing_reason` and `amount_paid`:
 
-For `billing_reason === 'subscription_cycle'`:
-- Compute `expected_total = price.unit_amount` (single-item subscription) and assert `expected_total === amount_paid`. Mismatch → §5.4 cross-cutting rule 2.
-- Grant via `repo.credits.grant` per `(credit_type)`: `amount = spec.{sessions,worlds}Granted`, `source_type='subscription'`, `source_id = uuidv7()`, `expires_at = subscription.items.data[0].current_period_end`.
-- Append `billing_history` row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = amount_paid`, `lookup_key = price.lookup_key`.
+- `billing_reason === 'subscription_cycle'` (or `'subscription_create'` / `'subscription_update'`) AND `amount_paid > 0` → **paging-grade** `billing.invoice_orphan` log line at error level (per Kraken I4 round 2: a real renewal payment landed for a customer we can't find — money taken, no credits granted, no alert is unacceptable). COMMIT + 200 (don't loop Stripe retries; manual reconciliation).
+- Any other condition (zero amount, test event, etc.) → INFO-level log + COMMIT + 200.
 
-For `billing_reason === 'subscription_create'` and `'subscription_update'`: append `billing_history` row only; no credit grant (per above).
+Acquire the user-row anchor lock per §5.3 lock-acquisition discipline. Then read the prefetched subscription state (Stripe's `Subscription` object retrieved at prefetch time): assert `subscription.items.data.length === 1` (loud abort on multi-item — Mythrun doesn't expose multi-item subs to users; an admin-created multi-item sub is operator error and should not silently grant). Read `tier_lookup_key = items.data[0].price.lookup_key`, `period_start = items.data[0].current_period_start`, `period_end = items.data[0].current_period_end`.
 
-Negative-amount or zero-amount invoices (downgrade prorations, $0 trial-to-paid transitions if Mythrun ever introduces them): skip the credit grant and skip the amount validation; record `billing_history` only.
+Branch on `billing_reason`:
+
+#### `billing_reason === 'subscription_cycle'` (renewal)
+
+- **Amount validation**: assert `event.data.object.subtotal === price.unit_amount` (single-item subscription; `subtotal` is Stripe's pre-tax-pre-discount line total — tax/discount-tolerant per Chimera I5 round 2). Mismatch → §5.4 cross-cutting rule 2.
+- **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` — `amount = spec.sessionsGranted` for `credit_type='session'`, same for worlds. `source_type='subscription'`. `source_billing_history_id` set to the billing_history row's id (written next, in the same tx; insert order: billing_history first, then credit_ledger with the FK). `source_purchase_id = NULL`. `expires_at = period_end`.
+- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal`, `lookup_key = tier_lookup_key`, `expires_at = period_end` (mirrors the credit_ledger.expires_at for refund-resolution per §5.4.5).
+
+#### `billing_reason === 'subscription_create'` (initial subscription invoice — fresh sub or post-SCA settlement)
+
+Same logic as `subscription_cycle`, with one subtlety: at this moment `user_subscriptions` may not yet have a row for this `stripe_subscription_id` if `customer.subscription.created` / `customer.subscription.updated` hasn't arrived yet (race on Stripe's side). The `upsertFromStripe` call from §5.4.3 covers the row creation; if THIS handler runs first, it must also call `upsertFromStripe` (idempotent) before the credit grant so that the user_subscriptions row exists and the upgrade-tier endpoint's read-back works. Order: `upsertFromStripe` → grant credits → append billing_history.
+
+#### `billing_reason === 'subscription_update'` (mid-period upgrade via §4.6)
+
+- This is the upgrade-tier endpoint's invoice landing. The invoice carries the **flat dollar delta** (e.g., $30 for Wayfarer→Mythwright via Stripe's `proration_date=current_period_start` math).
+- Read the OLD tier from `user_subscriptions.tier_lookup_key` via `getActiveForUser(client, userId)` BEFORE calling `upsertFromStripe` (which would overwrite the row to the new tier). Compute the credit DELTA: `(target_spec.sessionsGranted - old_spec.sessionsGranted)` for sessions, same for worlds. Old and new tier specs both come from `LOOKUP_KEYS`.
+- **Amount validation**: assert `subtotal === (target_spec.priceCents - old_spec.priceCents)` (the flat dollar delta per Decision 2). Mismatch → §5.4 cross-cutting rule 2 (likely indicates a Stripe-side proration math change or a config drift; pages an alert).
+- **Upsert** `user_subscriptions` to the new tier via `upsertFromStripe`.
+- **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` with `amount = delta` (for the credit_type), `source_type='subscription'`, `source_billing_history_id` linked, `expires_at = period_end + tier_period_length` (i.e., the next-period-end after the upgrade — credits get a full period of life, not the days remaining in the original period). For Mythrun's monthly tiers this is `period_end + INTERVAL '1 month'` computed in SQL.
+- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal` (the delta), `lookup_key = target_tier_lookup_key`, `expires_at = period_end + tier_period_length`.
+
+#### Other `billing_reason` values (`manual`, `quote_accept`, `subscription_threshold`, etc.)
+
+Per Chimera M7 round 2: explicit allowlist. The handler accepts `subscription_cycle`, `subscription_create`, `subscription_update`. Any other `billing_reason` → record `billing_history` row only (audit trail), no credit grant. Log at INFO with the unhandled `billing_reason`. Defends against admin-issued Dashboard invoices accidentally granting credits.
+
+#### Negative-amount or zero-amount invoices
+
+Skip credit grant and skip amount validation; record `billing_history` only (with the negative or zero amount). Negative invoices are Stripe-side credit memos (e.g., promotion-code refunds, downgrade prorations from non-Mythrun-issued operations); they're audit-relevant but don't trigger ledger writes.
 
 #### 5.4.3 `customer.subscription.created` and `customer.subscription.updated` (shared `handleSubscriptionUpsert`)
 
@@ -309,28 +431,44 @@ Assert `subscription.items.data.length === 1`. Read `tier_lookup_key`, `status`,
 
 `repo.userSubscriptions.upsertFromStripe` issues a single `INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE` statement so concurrent deliveries can't both INSERT and trip the UNIQUE constraint. The UPDATE clause reads `WHERE excluded.stripe_event_created_at >= user_subscriptions.stripe_event_created_at` to reject stale-event ordering (a late-arriving stale event mustn't overwrite a fresh row). The `stripe_event_created_at` column is added to `user_subscriptions` in migration 007 for this purpose.
 
-**No credit grant** in this handler — all subscription credits flow through `checkout.session.completed` (first month) or `invoice.paid` (renewals). Subscription state lives in this row; credits live in `credit_ledger`.
+**No credit grant** in this handler — all subscription credits flow through `invoice.paid` per Decision 1 of round-2 review. Subscription state (tier, period, status, cancel_at_period_end) lives in this row; credits live in `credit_ledger`.
 
 #### 5.4.4 `customer.subscription.deleted`
 
-UPDATE via `repo.userSubscriptions.markCanceled(stripe_subscription_id, event.data.object)` which sets `status='canceled'`, `cancel_at_period_end = false` (Stripe's payload may say true if scheduled; we collapse to false at deletion since the deletion has occurred), and reads `event.data.object.cancellation_details` into the row for analytics. Existing credits in `credit_ledger` stay; they remain consumable until `expires_at` (`current_period_end`). Per parent spec §3.3 + §10: no retroactive expiry on cancellation.
+UPDATE via `repo.userSubscriptions.markCanceled(client, stripe_subscription_id, event.data.object)` which sets `status='canceled'`, **preserves `cancel_at_period_end` from the event payload as a historical fact** (per Kraken C3 round 2: collapsing to false on `.deleted` destroys the user-vs-Stripe-cancel distinction needed for differential UX and analytics — re-subscribe prompts, refund decisioning, churn reasons), copies `event.data.object.cancellation_details` into the row, and copies `event.data.object.cancel_at` (a Stripe-side timestamp marking when the cancel takes effect) if present.
+
+Existing credits in `credit_ledger` stay; they remain consumable until natural `expires_at` (`current_period_end`). Per parent spec §3.3 + §10: no retroactive expiry on cancellation. The user paid for the period; they get to use it through `current_period_end` regardless of cancellation reason.
 
 If no row matches the `stripe_subscription_id` (Stripe-side test event, deleted user, deletion-before-creation), log + COMMIT + 200.
 
 #### 5.4.5 `charge.refunded`
 
-Refund handling at launch: **full refunds only**. Partial refunds are a follow-up bead (§2 non-goals). For full refunds:
+Refund handling at launch: **full refunds only** (per Decision 5 of round-2 review). Partial-refund implementation is a follow-up bead.
 
-1. **Resolve the originating Mythrun entity.** `event.data.object.payment_intent` (string, may be null for non-PI charges) is the join key. Three resolution paths in order:
-   - **À-la-carte purchase**: query `purchases WHERE stripe_payment_intent_id = $1 AND status='completed'`. If non-empty, this is an à-la-carte refund. Walk all matching `purchases` rows (a multi-line cart has multiple).
-   - **Subscription invoice**: query `billing_history WHERE source_id_stripe IN (SELECT stripe_invoice_id FROM ...)` — actually simpler: `billing_history WHERE source_id_stripe = (SELECT id FROM invoices WHERE payment_intent = $1)`. Since we don't mirror Stripe invoices into Postgres, retrieve the charge via `stripe.charges.retrieve(charge_id)` and read `charge.invoice` to get the invoice ID, then look up `billing_history WHERE source_id_stripe = invoice_id AND kind='invoice'`.
-   - **Neither matches**: this is a non-Mythrun charge (admin Dashboard test, manual charge, or null payment_intent). Log + COMMIT + 200.
-2. **Compute the clawback.** For each originating credit_ledger row (resolvable from the `purchases.id` or `billing_history.id` foreign reference — see §6 schema additions), insert a debit row via `repo.credits.grant` with: `credit_type = original.credit_type`, `amount = -original.amount`, `source_type='debit'` (NOT `'refund'` — MYT-40 §"Caller obligations" reserves `'debit'` for negative-polarity rows; the `'refund'` source_type per MYT-40 line 136 is for POSITIVE re-grants, e.g., goodwill credits on top of a refund), `source_id = original.id` (links the clawback to its origin grant), `expires_at = original.expires_at`.
-   - This satisfies the migration 004 polarity invariant: only `source_type='debit'` rows can have `amount < 0`; the spec's previous claim of `source_type='refund'` with negative amount would have aborted on the polarity CHECK constraint and put the refund pipeline into infinite-retry (Florin C1 round 1).
-3. **UPDATE source row status.** For à-la-carte: `UPDATE purchases SET status='refunded' WHERE id = $1`. For subscription invoice: `UPDATE billing_history SET status='refunded' WHERE id = $1`. Append a `billing_history` row with `kind='refund'`, `source_id_stripe = refund_id` (Stripe's `re_*` ID, unique even when the same PI has multiple refunds), `amount_cents = -refund.amount`.
-4. **Resulting balance** MAY go negative. MYT-40's atomic-debit refuses to consume from balance ≤ 0; at session-start, the user gets 402 Payment Required and must purchase to lift the balance back to positive. An in-flight session (already-debited credit) is unaffected by a refund arriving mid-session — the debit row stays committed; only the *next* session-start gates on the new balance.
+**Step 0 — partial-refund hard-refuse**: assert `event.data.object.amount_refunded === event.data.object.amount_captured`. Mismatch → emit a paging metric `billing.partial_refund_unsupported` at error level with `{ charge_id, amount_captured, amount_refunded, payment_intent }`, COMMIT the `stripe_events` row (suppresses Stripe retries — there's nothing to retry until partial-refund support lands), do NOT clawback, return 200. Operator workflow: the Stripe-side refund stays valid (the customer's money is being returned by Stripe); Mythrun-side credit clawback is gated until manual reconciliation. Operators are instructed (in the runbook) to refund full charges only.
 
-For subscription refunds, the resolution path means we also have the original `credit_ledger` row's `expires_at` (it's mirrored through `billing_history`'s `expires_at` column added in §11). Subscription refunds beyond `current_period_end` clawback against credits that may already have expired — the resulting "negative against an expired bucket" is benign: balance is still computed off non-expired rows, so a clawback against an expired grant simply doesn't move the balance. Document in §12.
+For full refunds:
+
+1. **Resolve the originating Mythrun entity.** `event.data.object.payment_intent` (string, may be null for non-PI charges) is the join key. Two resolution paths in order:
+   - **À-la-carte purchase**: query `purchases WHERE stripe_payment_intent_id = $1 AND status='completed'`. If non-empty, walk all matching `purchases` rows (a multi-line cart has multiple). For each row, query `credit_ledger WHERE source_purchase_id = purchases.id AND source_type='purchase'` to find the originating grant rows (per Decision 4 of round-2 review: explicit FK columns).
+   - **Subscription invoice**: query `billing_history WHERE source_id_stripe = $1 AND kind='invoice'` directly — but `event.data.object.payment_intent` for a subscription refund is the PI Stripe auto-generated for the invoice, not the invoice ID. The mapping from PI → invoice_id is read at PREFETCH time (per §5.3 prefetch-then-write split) via `stripe.charges.retrieve(charge_id)` to get `charge.invoice`. The handler's tx body uses the prefetched `invoice_id` as the `source_id_stripe` lookup key. From the resulting `billing_history.id`, query `credit_ledger WHERE source_billing_history_id = billing_history.id AND source_type='subscription'` to find the originating grant rows.
+   - **Neither matches** (`payment_intent: null`, admin Dashboard test charge, non-Mythrun charge): log at WARN + COMMIT + 200. No clawback (we have nothing to debit).
+
+2. **Compute the clawback.** For each originating `credit_ledger` grant row found above, insert a debit row via `repo.credits.recordClawback(client, ...)` (the new method in §7.6) with:
+   - `credit_type = original.credit_type`
+   - `amount = -original.amount` (negative; respects migration 004 polarity invariant — only `source_type='debit'` rows can carry negative amounts)
+   - `source_type='debit'` (per MYT-40 §"Caller obligations": `'refund'` source_type is reserved for POSITIVE goodwill grants; clawbacks use `'debit'`)
+   - `source_id = original.id` (the originating grant row's UUID; namespace-disjoint from session-debit `source_id` per Kraken C4 round 2 — UUIDv7 non-collision is the discipline invariant)
+   - **`expires_at = NULL`** (per Kraken I8 round 2: `credit_ledger_debit_no_expiry_chk` migration-004 CHECK requires `source_type='debit'` rows have `expires_at IS NULL`. Setting `expires_at = original.expires_at` would violate the CHECK and abort the refund tx, putting the refund pipeline into infinite Stripe retry).
+   - `source_purchase_id = NULL`, `source_billing_history_id = NULL` (the new FK columns are for grant rows; clawback rows link via `source_id` for idempotency-keyed dedup).
+
+3. **UPDATE source row status.** For à-la-carte: `UPDATE purchases SET status='refunded' WHERE id = $1` for each affected purchases row. For subscription invoice: `UPDATE billing_history SET status='refunded' WHERE id = $1` for the affected billing_history row.
+
+4. **Append a `billing_history` row** with `kind='refund'`, `source_id_stripe = refund_id` (Stripe's `re_*` ID, unique even when the same PI has multiple full refunds across time — re-refund of an already-refunded charge is forbidden by Stripe), `amount_cents = -refund.amount`, `lookup_key = NULL` (multi-line refunds don't pin a single lookup_key), `occurred_at = refund.created`.
+
+5. **Resulting balance** MAY go negative. MYT-40's atomic-debit refuses to consume from balance ≤ 0; at session-start, the user gets 402 Payment Required and must purchase to lift the balance back to positive. An in-flight session (already-debited credit) is unaffected by a refund arriving mid-session — the debit row stays committed; only the *next* session-start gates on the new balance.
+
+**Refunds beyond `current_period_end`**: the clawback rows have `expires_at = NULL` per step 2, so they contribute to the balance computation indefinitely. The originating grant rows have already expired (passed `current_period_end`) and don't contribute to the balance. Net effect: balance moves down by the clawback amount, even though the originating grant is no longer counted — the user owes the platform the refund amount in unexpired credit-currency until they buy more. Documented in §12.
 
 ### 5.5 Customer-not-found handling
 
@@ -400,32 +538,58 @@ CREATE TABLE user_subscriptions (
 );
 CREATE INDEX idx_user_subscriptions_user ON user_subscriptions(user_id);
 
--- billing_history: the unified audit feed for /api/billing/history AND the
--- resolution table for charge.refunded → originating credit_ledger rows.
+-- billing_history: the unified audit feed for /api/billing/history. Per
+-- Decision 4 of round-2 review, the refund-resolution role moves to explicit
+-- FK columns on credit_ledger (added below); billing_history.related_id_stripe
+-- is dropped — Chimera I7 / Kraken I3 round 2 flagged it as a dead column
+-- whose population rules contradicted between the schema and the prose.
 -- For à-la-carte: kind='purchase', source_id_stripe = payment_intent.
 -- For subscription invoice: kind='invoice', source_id_stripe = invoice_id.
 -- For refund: kind='refund', source_id_stripe = refund_id (re_*).
--- Stripe ID namespaces (pi_*, in_*, re_*) are disjoint, so source_id_stripe
--- is globally unique across all three kinds.
+-- The three Stripe ID prefixes used today (pi_*, in_*, re_*) are disjoint.
+-- A CHECK constraint enforces the prefix per kind for defense-in-depth.
 CREATE TABLE billing_history (
   id                          UUID        PRIMARY KEY,
   user_id                     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   kind                        TEXT        NOT NULL CHECK (kind IN ('purchase','invoice','refund')),
   source_id_stripe            TEXT        NOT NULL UNIQUE,
-  -- For invoice: subscription_id of the parent subscription (for refund resolution).
-  -- For refund: payment_intent of the refunded charge.
-  -- For purchase: NULL.
-  related_id_stripe           TEXT        NULL,
   lookup_key                  TEXT        NULL,           -- nullable: multi-line à-la-carte rows leave it NULL; subscription invoices fill it
   amount_cents                INTEGER     NOT NULL,       -- positive for purchase/invoice, negative for refund
   currency                    TEXT        NOT NULL DEFAULT 'usd',
   status                      TEXT        NOT NULL DEFAULT 'completed' CHECK (status IN ('completed','refunded')),
   expires_at                  TIMESTAMPTZ NULL,           -- mirrors the originating credit_ledger.expires_at; NULL for à-la-carte and refund
   occurred_at                 TIMESTAMPTZ NOT NULL,       -- Stripe's event timestamp (full precision)
-  created_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (
+    (kind = 'purchase' AND source_id_stripe LIKE 'pi_%')
+    OR (kind = 'invoice'  AND source_id_stripe LIKE 'in_%')
+    OR (kind = 'refund'   AND source_id_stripe LIKE 're_%')
+  )
 );
 CREATE INDEX idx_billing_history_user_occurred ON billing_history(user_id, occurred_at DESC, id DESC);
-CREATE INDEX idx_billing_history_related_id ON billing_history(related_id_stripe) WHERE related_id_stripe IS NOT NULL;
+
+-- credit_ledger refund-resolution FKs (Decision 4 of round-2 review).
+-- Grants link back to either a purchases row (à-la-carte) or a billing_history
+-- row (subscription invoice). The CHECK enforces "exactly one is non-null per
+-- non-debit, non-trial grant" — the refund handler queries via FK to find
+-- the originating grant rows. ON DELETE RESTRICT prevents an orphaned grant
+-- if a parent row is ever hard-deleted (we don't today, but the constraint
+-- enforces invariant against future cleanup paths).
+ALTER TABLE credit_ledger
+  ADD COLUMN source_purchase_id        UUID NULL REFERENCES purchases(id) ON DELETE RESTRICT,
+  ADD COLUMN source_billing_history_id UUID NULL REFERENCES billing_history(id) ON DELETE RESTRICT,
+  ADD CONSTRAINT credit_ledger_source_link_chk CHECK (
+    -- debit rows link via source_id (existing migration 001 + 004 invariants); no FK columns set.
+    -- trial rows have no link (one-shot at registration).
+    -- gift rows (future) have no link until a gifts table exists.
+    source_type IN ('debit', 'trial', 'gift', 'refund')
+    -- purchase + subscription grants MUST set exactly one FK.
+    OR (source_purchase_id IS NOT NULL) <> (source_billing_history_id IS NOT NULL)
+  );
+CREATE INDEX idx_credit_ledger_source_purchase
+  ON credit_ledger(source_purchase_id) WHERE source_purchase_id IS NOT NULL;
+CREATE INDEX idx_credit_ledger_source_billing_history
+  ON credit_ledger(source_billing_history_id) WHERE source_billing_history_id IS NOT NULL;
 
 -- Post-create assertion (current_schema() not hard-coded 'public', per the
 -- migration 005 fix).
@@ -437,14 +601,22 @@ DO $$ BEGIN
     GROUP BY 1 = 1
     HAVING count(*) = 3
   ), 'migration 007 did not create all three tables';
+  ASSERT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'credit_ledger'
+      AND column_name IN ('source_purchase_id', 'source_billing_history_id')
+    GROUP BY 1 = 1
+    HAVING count(*) = 2
+  ), 'migration 007 did not add credit_ledger FK columns';
 END $$;
 ```
 
 Schema-parity test (`backend/src/db/__tests__/migrate-schema.test.ts`) updated:
 - Add `'purchases'`, `'user_subscriptions'`, `'billing_history'` to `EXPECTED_TABLES`.
-- Add `'idx_purchases_user'`, `'idx_user_subscriptions_user'`, `'idx_billing_history_user_occurred'`, `'idx_billing_history_related_id'` to `EXPECTED_IDX_NAMES`.
-- Add the new check constraints (purchases.status, purchases.quantity > 0, user_subscriptions.status, user_subscriptions period-monotonicity, billing_history.kind, billing_history.status) to `EXPECTED_CHECK_CONSTRAINTS`.
-- Add the FK rows: `purchases.user_id` (NO ACTION), `user_subscriptions.user_id` (CASCADE), `billing_history.user_id` (CASCADE). No FK from `tier_lookup_key` or `lookup_key`.
+- Add `'idx_purchases_user'`, `'idx_user_subscriptions_user'`, `'idx_billing_history_user_occurred'`, `'idx_credit_ledger_source_purchase'`, `'idx_credit_ledger_source_billing_history'` to `EXPECTED_IDX_NAMES`.
+- Add the new check constraints (purchases.status, purchases.quantity > 0, user_subscriptions.status, user_subscriptions period-monotonicity, billing_history.kind, billing_history.status, billing_history prefix-by-kind, credit_ledger_source_link_chk) to `EXPECTED_CHECK_CONSTRAINTS`.
+- Add the FK rows: `purchases.user_id` (NO ACTION), `user_subscriptions.user_id` (CASCADE), `billing_history.user_id` (CASCADE), `credit_ledger.source_purchase_id` (RESTRICT), `credit_ledger.source_billing_history_id` (RESTRICT).
 - Append `'007_recreate_billing_tables.sql'` to the migrations list.
 
 `reset-data.ts` `TABLES` list extended with `purchases`, `user_subscriptions`, and `billing_history`.
@@ -502,15 +674,13 @@ interface StripeEventsRepo {
 ```ts
 interface BillingHistoryRepo {
   append(tx: ClientLike, row: NewBillingHistoryRow): Promise<BillingHistoryRow>
-  // Inserts a kind='purchase'|'invoice'|'refund' row. Source-id is the Stripe
-  // ID (pi_*, in_*, or re_*); UNIQUE constraint blocks duplicate inserts.
+  // Inserts a kind='purchase'|'invoice'|'refund' row. source_id_stripe is the Stripe
+  // ID (pi_*, in_*, or re_*); UNIQUE constraint blocks duplicate inserts. The
+  // CHECK constraint enforces prefix-by-kind for defense-in-depth.
 
-  findByRelatedStripeId(tx: ClientLike, related_id_stripe: string): Promise<readonly BillingHistoryRow[]>
-  // Used by §5.4.5 charge.refunded resolution: a refund's
-  // event.data.object.payment_intent matches a billing_history row's
-  // related_id_stripe (set on kind='invoice' rows to the parent subscription_id,
-  // and on kind='purchase' rows the related_id_stripe is the same as
-  // source_id_stripe so this is a no-op for à-la-carte refunds).
+  findBySourceStripeId(tx: ClientLike, source_id_stripe: string): Promise<BillingHistoryRow | null>
+  // Used by §5.4.5 charge.refunded subscription-invoice resolution: lookup by
+  // invoice_id (resolved from charge.invoice at prefetch time per §5.3).
 
   listByUser(tx: ClientLike, userId: string, opts: { cursor?: { t: string, i: string }, limit: number }): Promise<{ rows: BillingHistoryRow[], nextCursor: string | null }>
   // Cursor format per §4.1.
@@ -518,6 +688,8 @@ interface BillingHistoryRepo {
   markRefunded(tx: ClientLike, id: string): Promise<void>
 }
 ```
+
+The `findByRelatedStripeId` method from round 1 is **dropped** (per Chimera I7 / Kraken I3 round 2 — it referenced a `related_id_stripe` column that no handler actually queried, and Decision 4's explicit FK columns on credit_ledger replace its intended role). Refund resolution now flows through credit_ledger's `source_purchase_id` / `source_billing_history_id` FK columns directly.
 
 ### 7.5 `repo.users.create` + `findOrCreateStripeCustomer` (extensions)
 
@@ -540,23 +712,47 @@ interface UsersRepo {
 }
 ```
 
-### 7.6 `repo.credits.grant` (signature unchanged; tx parameter clarified)
+### 7.6 `repo.credits` extensions: `grantInTx` + `recordClawback`
+
+Per Hydra C1 round 2: the shipped `repo.credits.grant` from MYT-40 acquires its own connection from the pool, runs its own `BEGIN`/`COMMIT`, and takes its own `SELECT … FOR UPDATE` user lock. Calling it with an already-open transaction is a real refactor, not a type-annotation change. MYT-42 splits the implementation:
 
 ```ts
 interface CreditsRepo {
-  grant(tx: ClientLike, row: NewCreditLedgerRow): Promise<CreditLedgerRow>
-  // Accepts a transaction handle. Used by:
+  // PUBLIC, transaction-owning. Backwards-compatible with MYT-40 callers that
+  // don't have a tx of their own. Internally: pool.connect() + BEGIN + grantInTx + COMMIT.
+  grant(row: NewCreditLedgerRow): Promise<CreditLedgerRow>
+
+  // PUBLIC, transaction-following. Caller passes a ClientLike with an already-open
+  // tx; this method performs the SELECT user FOR UPDATE + INSERT against that
+  // same tx without managing its own BEGIN/COMMIT. Used by:
   //   - register flow (trial credit, §8)
-  //   - checkout.session.completed handler (à-la-carte purchase grants, §5.4.1)
-  //   - invoice.paid handler (subscription cycle grants, §5.4.2)
-  //   - charge.refunded handler (debit clawback rows with negative amount and
-  //     source_type='debit' to respect MYT-40's polarity invariant)
-  // No change to the underlying recipe; just a type annotation that grant
-  // takes a tx (already implied by MYT-40's caller obligation #4).
+  //   - checkout.session.completed handler (à-la-carte grants, §5.4.1)
+  //   - invoice.paid handler (subscription grants, §5.4.2)
+  // The user-row FOR UPDATE inside grantInTx assumes the caller has NOT already
+  // taken that lock. If the caller already holds it (per §5.3 lock-acquisition
+  // discipline), the FOR UPDATE in grantInTx is a no-op self-relock — Postgres
+  // permits this for ACCESS EXCLUSIVE locks. Verify in tests.
+  grantInTx(tx: ClientLike, row: NewCreditLedgerRow): Promise<CreditLedgerRow>
+
+  // NEW: clawback writer. Bypasses the polarity guard explicitly because
+  // clawbacks are the ONE legitimate path for negative-amount, source_type='debit'
+  // rows outside atomicDebit. Asserts: amount < 0; source_type='debit'; source_id
+  // is non-null (the originating grant row's UUID); expires_at IS NULL (per
+  // migration 004's credit_ledger_debit_no_expiry_chk).
+  // Used by:
+  //   - charge.refunded handler (§5.4.5)
+  recordClawback(tx: ClientLike, row: NewClawbackRow): Promise<CreditLedgerRow>
+
+  // UNCHANGED from MYT-40.
+  atomicDebit(tx: ClientLike, params: AtomicDebitParams): Promise<AtomicDebitResult>
 }
 ```
 
+Why a new method instead of letting `grant` take negative amounts: the existing MYT-40 `grant` ships explicit guards `if (amount <= 0) throw` and `if (sourceType === 'debit') throw 'use atomicDebit'`. Hydra C2 round 2 caught that the round-1 spec's "use grant() for clawbacks" prescription would crash on every refund. `recordClawback` is the new sanctioned entrypoint; tests in §13 assert (a) `grant` still rejects negative amounts and `'debit'` source_type, (b) `recordClawback` requires negative amount + `'debit'` source_type + non-null source_id + null expires_at, (c) `recordClawback`'s output respects migration 004's `uniq_credit_ledger_debit_idempotency` UNIQUE INDEX `(user_id, credit_type, source_id) WHERE source_type='debit'` — clawback rows MUST use the originating grant's UUID as `source_id`, never a session UUID, to keep the namespaces disjoint per Kraken C4 round 2.
+
 **Deliberate non-extension:** `repo.credits.atomicDebit` is NOT extended in this issue. Round 1 of this spec's review (Florin C2 / Sestertius C1) showed that exposing `consumedSourceType` requires a recipe redesign — MYT-40's recipe is balance-based, not row-traversal-based, and there is no "consumed row" to label without rewriting the lock discipline. The trial-detection signal (`source_type='trial'` on the consumed credit) lives in `credit_ledger` already; MYT-43 picks the consumption-priority order and exposes the signal at that point. MYT-42 ships the credit, not the consumer.
+
+**Trial-FIRST consumption invariant** (Kraken I6 round 2): MYT-43's eventual consumption-priority order MUST consume `source_type='trial'` rows BEFORE any other source type for users with both trial and paid credits. Rationale: the trial UX (reduced budget, demo world, time cap) is supposed to run on the trial credit; if MYT-43 picks a priority that lets paid credits be consumed first, trial-mode never lands for the user, and the trial credit just sits in the ledger forever (or expires unused if we ever add expiry). This invariant is pinned in MYT-42 because the credit is shipped here; MYT-43 must honor it.
 
 ## 8. Trial credit at registration
 
@@ -565,13 +761,16 @@ The MYT-38 register handler today calls `users.create(...)` against the connecti
 **Refactor:**
 
 1. `repo.users.create(client, params)` now accepts a `ClientLike` (per §7.5). The route handler acquires a `PoolClient` via `pool.connect()` and runs `BEGIN`/`COMMIT` itself. The shipped `users.create` (single `pool.query` INSERT) is updated to take the client and run on it instead.
-2. The route handler calls, in order:
+2. **`classifyProfanity` LLM calls remain BEFORE `BEGIN`** (per Sphinx I2 round 2): the existing MYT-38 register handler runs `classifyProfanity(username)` and `classifyProfanity(displayName)` before creating the users row. These are Haiku calls (200–800ms typical). They MUST stay outside the transaction — holding a `PoolClient` open during a 200ms+ LLM call exhausts the pool under sustained register traffic (`max=10`). The 23505 fallback paths from the shipped handler (username taken, already onboarded, inconsistent state) also stay outside the transaction; if any fires, no transaction was opened so there is nothing to ROLLBACK.
+3. The route handler calls, in order:
+   - `await classifyProfanity(username)` — outside any tx.
+   - `await classifyProfanity(displayName)` — outside any tx.
    - `await client.query('BEGIN')`
    - `const user = await repo.users.create(client, params)` — creates the users row (without `free_trial_used`).
-   - `await repo.credits.grant(client, { userId: user.id, creditType: 'session', amount: 1, sourceType: 'trial', sourceId: null, expiresAt: null })` — uses the canonical repo method per MYT-40 §"Caller obligations" #4 ("No write to credit_ledger may happen outside repo.credits.*"). Round 1 of this spec's review (Sestertius I2) flagged the original raw-INSERT shape as a caller-obligation violation.
+   - `await repo.credits.grantInTx(client, { userId: user.id, creditType: 'session', amount: 1, sourceType: 'trial', sourceId: null, expiresAt: null })` — uses `grantInTx` (the new transaction-following entrypoint per §7.6, NOT the connection-acquiring `grant`). Per Hydra C1 round 2: `grant` opens its own connection and BEGIN/COMMIT, which would commit the route's transaction prematurely if called from inside it.
    - `await client.query('UPDATE users SET free_trial_used = true WHERE id = $1', [user.id])`
    - `await client.query('COMMIT')` (or ROLLBACK on error inside a try/catch/finally that always releases the client).
-3. The handler re-reads `user` (or stitches `free_trial_used = true` into the response shape) so the `POST /api/users/register` body reflects the post-COMMIT state. Florin I4 in round 1 noted this gap.
+4. The handler re-reads `user` (or stitches `free_trial_used = true` into the response shape) so the `POST /api/users/register` body reflects the post-COMMIT state. Florin I4 in round 1 noted this gap.
 
 **Why all in one transaction:** if the credit_ledger INSERT fails (CHECK violation, concurrent constraint deadlock, anything), the users row must roll back too — otherwise we'd have an "onboarded user with no trial credit + flag set" stuck state that the existing-user-check code path can't recover from (re-registration is short-circuited, so the user can never get their trial). Single transaction is the only correct shape.
 
@@ -727,66 +926,118 @@ If the query returns 51 rows, the response includes 50 and sets `nextCursor` fro
 
 The closed set of error codes lives in `backend/src/billing/errors.ts` exporting a `BillingErrorCode` union type. All 4xx responses use the envelope `{ code: 'snake_case', ...optional_detail }`.
 
+### 12.1 BillingErrorCode union (normative)
+
+```ts
+export type BillingErrorCode =
+  | 'body_invalid'              // Zod schema rejected body
+  | 'mixed_cart'                // tier + à-la-carte in same cart
+  | 'tier_cart_shape'           // tier with items.length > 1 OR quantity > 1
+  | 'duplicate_lookup_key'      // same lookup_key listed twice in items[]
+  | 'unknown_lookup_key'        // lookup_key not in LOOKUP_KEYS
+  | 'no_active_subscription'    // /upgrade-tier called by user with no active sub
+  | 'tier_unchanged'            // /upgrade-tier target_tier === current tier
+  | 'not_an_upgrade'            // /upgrade-tier target_tier price <= current
+  | 'invalid_cursor'            // /history cursor failed base64url/JSON decode
+  | 'stripe_unavailable'        // Stripe API call returned 5xx or timed out
+  | 'missing_signature'         // /webhooks/stripe missing Stripe-Signature header
+  | 'invalid_signature'         // /webhooks/stripe constructEvent failed
+
+// Closed enum. Adding a code requires updating this type, the §12 table, and any
+// route handler that emits it. The §13 routes test asserts every emit-site uses
+// a code that's in this union.
+```
+
+### 12.2 Scenarios
+
 | Scenario | Response |
 |---|---|
-| Checkout body invalid (Zod) | 400 with field-level detail; codes `body_invalid` |
+| Checkout body invalid (Zod) | 400 with field-level detail; code `body_invalid` |
 | Mixed tier + à-la-carte cart | 400 `{ code: 'mixed_cart' }` |
 | Tier with quantity > 1 or items.length > 1 | 400 `{ code: 'tier_cart_shape' }` |
 | Duplicate lookup_key in cart | 400 `{ code: 'duplicate_lookup_key' }` |
 | Unknown lookup_key | 400 `{ code: 'unknown_lookup_key' }` |
-| Stripe API error during checkout | 502 (logged with detail; client gets `{ code: 'stripe_unavailable' }`) |
+| `/upgrade-tier` for user with no active subscription | 400 `{ code: 'no_active_subscription' }` |
+| `/upgrade-tier` target_tier price equal to current | 400 `{ code: 'tier_unchanged' }` |
+| `/upgrade-tier` target_tier price below current (downgrade attempt) | 400 `{ code: 'not_an_upgrade' }` (downgrades go through Customer Portal) |
+| `/history` cursor token malformed | 400 `{ code: 'invalid_cursor' }` |
+| Stripe API error during checkout | 502 `{ code: 'stripe_unavailable' }` (logged with detail) |
+| Stripe API timeout / unavailable on /upgrade-tier | 502 `{ code: 'stripe_unavailable' }` |
 | User has no `stripe_customer_id` and Stripe is down at portal request | 502 `{ code: 'stripe_unavailable' }` |
 | Webhook signature missing | 400 `{ code: 'missing_signature' }` |
 | Webhook signature invalid | 400 `{ code: 'invalid_signature' }` |
 | Webhook secret is `'PLACEHOLDER'` | All signatures invalid → 400. **Fail-closed by design.** The first action after MYT-42 ships is rotating Secrets Manager from PLACEHOLDER → the Dashboard-issued `whsec_*`. |
 | Webhook `event.api_version` ≠ SDK pin | 200 + ERROR-level log `stripe_webhook_api_version_mismatch`; processing continues but Dashboard config needs an ops fix |
 | Webhook event already processed (idempotent replay) | 200 (stripe_events PK ON CONFLICT DO NOTHING; ROLLBACK and exit) |
-| Webhook event for unknown customer (subscription/invoice/charge events) | 200 + INFO-level log + record event_id; non-paging |
+| `subscription.*`/`charge.*` event for unknown customer | 200 + INFO-level log + record event_id; non-paging |
+| **`invoice.paid` with `billing_reason='subscription_cycle'` AND `amount_paid > 0` AND user lookup misses** | 200 + ERROR-level log `billing.invoice_orphan` + COMMIT (per Kraken I4 round 2: real renewal payment landed for a customer we can't resolve — paging-grade, manual reconciliation) |
 | **`checkout.session.completed` with `metadata.userId` missing or unresolvable** | 200 + ERROR-level log `billing.checkout_orphan` + COMMIT (paid customer with no credits to grant; **paging-grade**, distinct from generic unknown-customer); manual reconciliation required |
 | **`checkout.session.completed` `event.data.object.customer` ≠ `users[metadata.userId].stripe_customer_id`** | 200 + ERROR-level log `billing.checkout_customer_mismatch` + COMMIT (paging-grade); manual reconciliation |
-| Webhook `amount_total` reconstruction mismatch (per-charge validation, §5.4 cross-cutting rule 2) | 200 + ERROR-level log `billing.amount_validation_failed` + COMMIT (no credit grant; suppresses Stripe retries); manual reconciliation |
+| Webhook `amount_subtotal` reconstruction mismatch (per-charge validation, §5.4 cross-cutting rule 2) | 200 + ERROR-level log `billing.amount_validation_failed` + COMMIT (no credit grant; suppresses Stripe retries); manual reconciliation |
 | Webhook event of unknown type | 200 + INFO-level log + record event_id |
+| `charge.refunded` partial refund (`amount_refunded < amount_captured`) | 200 + ERROR-level log `billing.partial_refund_unsupported` + COMMIT (no clawback per Decision 5; manual reconciliation; operator instructed to refund full charges only) |
 | Refund on an invoice/charge that doesn't map to any local row | 200 + WARN-level log; no clawback (we have nothing to debit) |
 | Refund makes balance negative | Allowed; atomic-debit at session-start returns 402 until balance is positive |
 | Refund arrives mid-session (after debit but before session ends) | The in-flight debit is unaffected; the session completes normally; the negative balance gates only the *next* session-start. The 402 response includes `available: <negative number>` so the frontend can show "you need to purchase N credits to lift your balance to positive" |
-| Refund against credits that already expired | Clawback row inserts cleanly; balance is computed off non-expired rows so an expired-bucket clawback simply doesn't move the visible balance |
+| Refund against credits that already expired | Clawback row inserts with `expires_at = NULL` (per migration 004 polarity invariant) and contributes negatively to balance indefinitely; the originating grant has expired and no longer contributes positively. Net: balance moves down by the clawback amount until purchases offset it. |
 | Concurrent refund + session-start | credit_ledger / users FOR UPDATE locks serialize; refund completes first or session-start consumes pre-refund credits, never both |
 | Concurrent checkout calls before customer exists | `findOrCreateStripeCustomer` FOR UPDATE on users.id serializes; only the first racer reaches the Stripe API. Stripe idempotency-key dedupes Stripe-side as a belt-and-suspenders defense |
-| Subscription event arrives before checkout.session.completed (out-of-order delivery) | `upsertFromStripe` is a single ON CONFLICT DO UPDATE statement; any arrival order produces a single row, with stale-event ordering rejected by `WHERE excluded.stripe_event_created_at >= existing.stripe_event_created_at` |
+| Subscription event arrives before checkout.session.completed (out-of-order delivery) | All three handlers (`checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`) call the same `upsertFromStripe` (single ON CONFLICT DO UPDATE statement); any arrival order converges to one row, with stale-event ordering rejected by `WHERE excluded.stripe_event_created_at > existing.stripe_event_created_at` |
 | `users.stripe_customer_id` row not found for a `customer.subscription.*` event | 200 + log + try `subscription.metadata.userId` fallback; total miss → log + record event_id (Stripe-side test event for an orphan customer) |
-| `invoice.paid` with `billing_reason='subscription_create'` | Skip credit grant (already granted by `checkout.session.completed`); record `billing_history` row for the invoice |
-| `invoice.paid` with `billing_reason='subscription_update'` (mid-period proration) | Skip credit grant per §2 non-goals; record `billing_history` row |
+| **`invoice.paid` with `billing_reason='subscription_create'`** (Decision 1: invoice.paid is single source of truth) | Grant first-month credits via `repo.credits.grantInTx`; record `billing_history` row. `upsertFromStripe` first if no `user_subscriptions` row exists yet (covers race against `customer.subscription.created`). |
+| **`invoice.paid` with `billing_reason='subscription_update'`** (Decision 2: tier upgrade via `/api/billing/upgrade-tier`) | Read OLD tier via `getActiveForUser` BEFORE upserting; compute credit DELTA `(target_spec - old_spec)`; assert `subtotal === flat_dollar_delta`; upsert `user_subscriptions` to new tier; grant DELTA credits with `expires_at = period_end + tier_period_length` (extended life); record `billing_history` row with `kind='invoice'`. |
+| `invoice.paid` with other `billing_reason` (`manual`, `quote_accept`, `subscription_threshold`, etc.) | Record `billing_history` row only; no credit grant (per Chimera M7 round 2: explicit allowlist defends against admin-issued Dashboard invoices accidentally granting credits) |
 | `invoice.paid` with negative or zero amount | Skip credit grant; skip amount validation; record `billing_history` row |
-| `customer.subscription.updated` schedules a downgrade for next period (Stripe `pending_update`) | UPDATE `user_subscriptions` row with current price (no change to tier_lookup_key until activation event arrives at period_end) |
-| Mid-period upgrade with proration (admin Dashboard only — not exposed to users via Customer Portal) | Per §2 non-goals: no credit grant on the proration invoice. Document policy and revisit if Customer Portal exposes "switch plan immediately" |
-| Concurrent `customer.subscription.updated` and `checkout.session.completed` for same subscription | `upsertFromStripe`'s ON CONFLICT DO UPDATE is atomic; both transactions converge to a single row reflecting the latest event |
+| `customer.subscription.updated` schedules a downgrade for next period (Stripe Subscription Schedule fired by Customer Portal `schedule_at_period_end.conditions=[{type:'decreasing_item_amount'}]`) | UPDATE `user_subscriptions` row with CURRENT (still-active) tier_lookup_key; the actual tier change fires at period_end as a separate `customer.subscription.updated` event when the Subscription Schedule activates the new phase. |
+| `customer.subscription.deleted` with `cancellation_details.reason='cancellation_requested'` (user clicked Cancel) | UPDATE `status='canceled'`; PRESERVE `cancel_at_period_end` (don't collapse); record `cancellation_details` for analytics. Existing credits stay until natural expiry. |
+| `customer.subscription.deleted` with `cancellation_details.reason='payment_failed'` (Stripe canceled for non-payment) | Same write path as above. Existing credits remain consumable through `current_period_end` because the user paid for the period that's still active. The next period's renewal didn't go through; no new grant fires. |
+| Concurrent `customer.subscription.updated` and `checkout.session.completed` for same subscription | `upsertFromStripe`'s ON CONFLICT DO UPDATE is atomic; both transactions converge to a single row reflecting the most recent event |
 | Operator manually pastes `cus_*` into `users.stripe_customer_id` mid-checkout | `findOrCreateStripeCustomer`'s FOR UPDATE serializes the lock against operator INSERTs; either the operator wins (subsequent checkout reads the manual value and uses it) or the lock holder wins (operator INSERT blocks until the lock releases). 23505 cannot occur because the FOR UPDATE happens before the UPDATE |
+| `/api/billing/upgrade-tier` with target tier price equal to current | 400 `{ code: 'tier_unchanged' }`. No Stripe call. |
+| `/api/billing/upgrade-tier` with target tier price below current (downgrade attempt) | 400 `{ code: 'not_an_upgrade' }`. Downgrades go through Customer Portal Switch Plan. |
+| `/api/billing/upgrade-tier` for user with no active subscription | 400 `{ code: 'no_active_subscription' }`. User must subscribe first via `/api/billing/checkout`. |
+| `/api/billing/upgrade-tier` Stripe `subscriptions.update` returns auth-required error (SCA challenge on the saved card) | 502 `{ code: 'stripe_unavailable' }` for now; the user can retry from the upgrade flow. (Future: surface SCA challenge URL through a 3DS-handoff response — follow-up bead.) |
+| Public route registered with `auth: 'public'` outside the boot-time allowlist | Boot fails with `'auth: public used on non-allowlisted route: <route>'`. Per Sphinx C3 round 2 defense-in-depth. |
+| Webhook `event.api_version` ≠ SDK pin | 200 + ERROR-level log `stripe_webhook_api_version_mismatch`; processing continues but Dashboard config needs an ops fix |
+| Webhook event already processed (idempotent replay) | 200 (stripe_events PK ON CONFLICT DO NOTHING; ROLLBACK and exit) |
+| Webhook secret is `'PLACEHOLDER'` | All signatures invalid → 400. **Fail-closed by design.** The first action after MYT-42 ships is rotating Secrets Manager from PLACEHOLDER → the Dashboard-issued `whsec_*`. |
 
 ## 13. Testing
 
 **Unit / integration**:
 
 - `backend/src/billing/__tests__/webhook.test.ts` — per-event-type fixtures and assertions:
-  - `checkout.session.completed` mode='payment' multi-line cart: 3 line items → 3 `purchases` rows sharing one `payment_intent` (verifies the composite UNIQUE), one `billing_history` row, three `credit_ledger` rows. Re-replay of the same `event.id`: no second writes (idempotency).
-  - `checkout.session.completed` mode='subscription' `payment_status='paid'`: one `user_subscriptions` row (status from Stripe, NOT hardcoded `'active'`), one `billing_history` row for the invoice, one credit_ledger row per credit_type. `repo.userSubscriptions.upsertFromStripe` produces exactly one row across re-replay.
-  - `checkout.session.completed` mode='subscription' `payment_status='unpaid'` (SCA-pending): one `user_subscriptions` row with `status='incomplete'`, no credit grant. Followed by `invoice.paid` (when SCA completes): credit grant runs.
+  - **Prefetch-then-write split**: handlers receive prefetched Stripe state (mocked); the handler's tx body never references the Stripe SDK. A test asserts that mocking `stripe` to throw on any method call doesn't break a handler whose prefetch succeeded.
+  - `checkout.session.completed` mode='payment' multi-line cart: 3 line items → 3 `purchases` rows sharing one `payment_intent` (verifies the composite UNIQUE), one `billing_history` row, three `credit_ledger` rows with `source_purchase_id` set. Re-replay of the same `event.id`: no second writes (idempotency).
+  - `checkout.session.completed` mode='subscription' (Decision 1: NO credit grant): one `user_subscriptions` row (status from Stripe, e.g., `'active'` or `'incomplete'`), one `billing_history` row for the invoice, **zero `credit_ledger` rows**. Subsequent `invoice.paid` produces the credits.
   - `checkout.session.completed` `metadata.userId` missing → ERROR-level `billing.checkout_orphan`, no writes other than `stripe_events`, returns 200.
   - `checkout.session.completed` `event.data.object.customer` ≠ `users[metadata.userId].stripe_customer_id` → ERROR-level `billing.checkout_customer_mismatch`, no writes other than `stripe_events`.
-  - `checkout.session.completed` reconstructed `expected_total ≠ amount_total` → ERROR-level `billing.amount_validation_failed`, no credit grant.
-  - `invoice.paid` `billing_reason='subscription_create'`: skipped credit grant (first-month is via checkout.session.completed); `billing_history` row written.
-  - `invoice.paid` `billing_reason='subscription_cycle'`: credit grant runs; `billing_history` written.
-  - `invoice.paid` `billing_reason='subscription_update'` (proration): skipped credit grant per §2 non-goals; `billing_history` written.
-  - `customer.subscription.created` arrives BEFORE `checkout.session.completed`: upsert produces row with `status='incomplete'`; subsequent checkout.session.completed UPDATEs in place; final row reflects the post-checkout state.
-  - `customer.subscription.updated` arrives twice in different orders: stale-event ordering rejected via `WHERE excluded.stripe_event_created_at >= existing.stripe_event_created_at`.
-  - `customer.subscription.deleted`: status='canceled', `cancellation_details` recorded, existing credit_ledger rows untouched.
-  - `charge.refunded` for à-la-carte: walks `purchases` rows by `(stripe_payment_intent_id)`, inserts negative `credit_ledger` rows with `source_type='debit'` (NOT `'refund'` — verify polarity invariant respected per migration 004 CHECK), updates `purchases.status='refunded'`, appends `billing_history` row with `kind='refund'`.
-  - `charge.refunded` for subscription invoice: resolves via `billing_history.related_id_stripe`, inserts debit rows referencing the original credit_ledger grants, updates `billing_history.status='refunded'`.
+  - `checkout.session.completed` reconstructed `expected_subtotal ≠ amount_subtotal` → ERROR-level `billing.amount_validation_failed`, no credit grant.
+  - `checkout.session.completed` `payment_method_types: ['card', 'link']` is what the test fixture's Stripe `checkout.sessions.create` mock expects (Decision 3 lock).
+  - `invoice.paid` `billing_reason='subscription_create'` (Decision 1: GRANTS first-month credits): per-credit_type rows with `source_type='subscription'`, `source_billing_history_id` set, `expires_at = period_end`. `upsertFromStripe` first if no `user_subscriptions` row exists; otherwise UPDATE.
+  - `invoice.paid` `billing_reason='subscription_cycle'`: per-credit_type rows; `expires_at = period_end`.
+  - `invoice.paid` `billing_reason='subscription_update'` (Decision 2: tier upgrade): asserts `subtotal === flat_dollar_delta` (computed from SKU cache for old + new tier); inserts DELTA credits with `expires_at = period_end + tier_period_length`; `user_subscriptions` upserted to new tier; OLD tier read BEFORE the upsert (regression: ensure handler reads old tier before overwriting).
+  - `invoice.paid` `billing_reason='manual'` or `'quote_accept'` etc.: `billing_history` row only; no credit grant (allowlist).
+  - `invoice.paid` for unknown customer with `amount_paid > 0` and `billing_reason='subscription_cycle'` → ERROR-level `billing.invoice_orphan`, paging-grade.
+  - `customer.subscription.created` arrives BEFORE `checkout.session.completed`: upsert produces row; subsequent checkout.session.completed `upsertFromStripe` is no-op or UPDATE depending on event timestamps.
+  - `customer.subscription.updated` arrives twice in different orders: stale-event ordering rejected via `WHERE excluded.stripe_event_created_at > existing.stripe_event_created_at` (note: strict `>`, not `>=` — same-second distinct events converge to one).
+  - `customer.subscription.deleted` PRESERVES `cancel_at_period_end` from event payload (Kraken C3 round 2: doesn't collapse to false); records `cancellation_details`; existing credit_ledger rows untouched.
+  - `charge.refunded` partial refund (`amount_refunded < amount_captured`) → ERROR-level `billing.partial_refund_unsupported`, no clawback (Decision 5).
+  - `charge.refunded` full refund for à-la-carte: queries credit_ledger via `source_purchase_id` FK, calls `recordClawback` for each grant row → debit rows with `source_type='debit'`, `amount = -original.amount`, `source_id = original.id`, **`expires_at = NULL`** (regression: Kraken I8 round 2 — verify CHECK constraint `credit_ledger_debit_no_expiry_chk` is satisfied), updates `purchases.status='refunded'`, appends `billing_history` row with `kind='refund'`.
+  - `charge.refunded` full refund for subscription invoice: prefetch resolves PI → invoice_id via `stripe.charges.retrieve`; handler queries `billing_history` by `source_id_stripe = invoice_id`, then queries `credit_ledger` by `source_billing_history_id = bh.id`, calls `recordClawback` per row.
   - `charge.refunded` with `payment_intent: null`: log + commit + 200; no writes.
   - Unknown event type: 200 + log + `stripe_events` row recorded.
   - Signature missing → 400 `{ code: 'missing_signature' }`.
   - Signature invalid → 400 `{ code: 'invalid_signature' }`.
   - Webhook secret = `'PLACEHOLDER'`: every event returns 400 (fail-closed).
   - `event.api_version` ≠ SDK pin: ERROR-level log, processing continues.
+
+- `backend/src/billing/__tests__/upgrade.test.ts` — `/api/billing/upgrade-tier`:
+  - Happy path Wayfarer→Mythwright: calls `subscriptions.update` with `proration_date=current_period_start`, `proration_behavior='always_invoice'`, returns `{ invoice_id, amount_paid_cents }`.
+  - Validation: target_tier === current → 400 `{ code: 'tier_unchanged' }`.
+  - Validation: target_tier price < current → 400 `{ code: 'not_an_upgrade' }`.
+  - Validation: user has no active sub → 400 `{ code: 'no_active_subscription' }`.
+  - Stripe API error → 502 `{ code: 'stripe_unavailable' }`.
 
 - `backend/src/billing/__tests__/customer.test.ts` — `findOrCreateStripeCustomer`:
   - Happy path: row has `stripe_customer_id=NULL`, helper calls Stripe, UPDATE succeeds, returns the new `cus_*`.
@@ -807,9 +1058,9 @@ The closed set of error codes lives in `backend/src/billing/errors.ts` exporting
 - `backend/src/repo/__tests__/user-subscriptions.test.ts`:
   - `upsertFromStripe` insert path.
   - `upsertFromStripe` update path.
-  - `upsertFromStripe` stale-event rejection (older `stripe_event_created_at` doesn't overwrite).
+  - `upsertFromStripe` stale-event rejection (older `stripe_event_created_at` doesn't overwrite — strict `>` not `>=`).
   - `getActiveForUser` excludes `status IN ('canceled','incomplete_expired')`.
-  - `markCanceled` sets status + records `cancellation_details`.
+  - `markCanceled` sets status + records `cancellation_details`; `cancel_at_period_end` PRESERVED from payload.
   - Concurrent upserts: two parallel transactions both calling `upsertFromStripe` for the same `stripe_subscription_id` produce exactly one row (atomic ON CONFLICT DO UPDATE).
 
 - `backend/src/repo/__tests__/stripe-events.test.ts`:
@@ -818,11 +1069,17 @@ The closed set of error codes lives in `backend/src/billing/errors.ts` exporting
   - Tx rollback after `'inserted'` → next call sees `'inserted'` again (durability conditional on commit).
 
 - `backend/src/repo/__tests__/billing-history.test.ts`:
-  - `append` for each kind.
-  - `findByRelatedStripeId` returns matching rows.
+  - `append` for each kind, with the prefix-by-kind CHECK enforced (e.g., `kind='purchase'` requires source_id_stripe LIKE 'pi_%'; mismatched prefix → CHECK violation).
+  - `findBySourceStripeId` returns the matching row by `source_id_stripe`.
   - `listByUser` cursor pagination with ties on `occurred_at` resolves by `id` deterministically.
 
-- `backend/src/repo/__tests__/credits.test.ts` — **no `consumedSourceType` test in MYT-42** (deferred to MYT-43); existing `grant` + `atomicDebit` tests stand. Add a test for `grant(tx, ...)` accepting a transaction handle (regression: MYT-40's signature already supports this; test pins the contract).
+- `backend/src/repo/__tests__/credits.test.ts`:
+  - `grant(input)` (no tx, MYT-40 backwards-compat) opens its own connection + tx and commits.
+  - `grantInTx(tx, input)` runs against a passed-in tx; rollback of that tx rolls back the credit_ledger row.
+  - `grant` rejects `amount <= 0` and `sourceType='debit'` (regression).
+  - `recordClawback(tx, ...)` accepts negative amount + `'debit'` source_type + non-null source_id; rejects positive amount or null source_id; rejects non-null `expires_at` (regression: migration 004 `credit_ledger_debit_no_expiry_chk`).
+  - Polymorphic source link (Decision 4): grants have exactly one of `source_purchase_id` / `source_billing_history_id` non-null; setting both raises `credit_ledger_source_link_chk` violation; debit + trial rows have neither set.
+  - **No `consumedSourceType` test** (deferred to MYT-43); existing `atomicDebit` tests stand.
 
 - `backend/src/repo/__tests__/users.test.ts`:
   - `create(tx, ...)` accepts a transaction handle.
@@ -831,20 +1088,27 @@ The closed set of error codes lives in `backend/src/billing/errors.ts` exporting
 - `backend/src/routes/__tests__/billing.test.ts`:
   - Each route: auth contract (JWT-required vs public), body validation, response shape.
   - Cart-shape rules: mixed cart, tier with quantity > 1, duplicate lookup_key, unknown lookup_key, empty array, max-100 array.
-  - History endpoint cursor round-trip: page 1 → cursor → page 2; concatenation matches a flat fetch.
+  - History endpoint cursor round-trip: page 1 → cursor → page 2; concatenation matches a flat fetch. Malformed cursor → 400 `{ code: 'invalid_cursor' }`.
   - SKU listing endpoint: response is the public projection of `cache.listing`; sets `Cache-Control: public, max-age=300`.
+  - Error-code enum: every emitted code is a member of the `BillingErrorCode` union (regression: a const TS check enforces this at compile time).
 
 - `backend/src/routes/__tests__/webhook.test.ts`:
   - **Raw-body parser is encapsulation-scoped** — a sibling JSON route (e.g., `/api/users/register`) still receives a parsed object, NOT a Buffer.
   - The webhook handler receives the Buffer for `Content-Type: application/json`.
   - The webhook handler receives the Buffer for `Content-Type: application/json; charset=utf-8` (charset-suffix variant).
-  - Rate limit: 61st request from same IP within 1 minute → 429.
+  - **Webhook plugin contains exactly one route** (regression: import `webhookRoutes`, register against an empty Fastify, walk `app.printRoutes()`, assert exactly one route at `POST /webhooks/stripe`). Sphinx C1/M6 round 2.
+  - Rate limit: 1501st request from same IP within 1 minute → 429.
 
 - `backend/src/__tests__/onboarding.test.ts` — extended for §8:
   - After register: response includes `free_trial_used: true`.
-  - After register: exactly one credit_ledger row with `source_type='trial'`, `amount=1`, `expires_at=NULL`, `source_id=NULL`.
+  - After register: exactly one credit_ledger row with `source_type='trial'`, `amount=1`, `expires_at=NULL`, `source_id=NULL`, `source_purchase_id=NULL`, `source_billing_history_id=NULL`.
   - Re-registration short-circuit: no second trial credit row.
   - Failed credit_ledger insert (mocked): users row also rolled back (single transaction).
+  - `classifyProfanity` runs BEFORE `BEGIN` (regression: a profanity-classified-as-offensive response returns 422 with NO `pool.connect()` having been called — i.e., no transaction was opened).
+
+- `backend/src/__tests__/probe-portal-config.test.ts` (new): boot probe asserts Customer Portal config has `proration_behavior='create_prorations'` AND `schedule_at_period_end.conditions` contains `{type:'decreasing_item_amount'}` AND each tier's `subscription_update.products` allowlist is downgrade-only. Probe failure → boot abort.
+
+- `backend/src/__tests__/public-route-allowlist.test.ts` (new): boot-time allowlist for `auth: 'public'` routes. Test that registering a route with `config: { auth: 'public' }` outside the allowlist causes `app.ready()` to throw at boot.
 
 **Schema parity**: `backend/src/db/__tests__/migrate-schema.test.ts` updated for migration 007 (purchases, user_subscriptions, billing_history; their indexes; their check constraints including the user_subscriptions period-monotonicity CHECK; their FKs).
 
@@ -856,49 +1120,92 @@ The "route exists" tripwire is preserved; the "route does NOT exist" tripwire is
 ## 14. Spec patches to other docs
 
 **MYT-41 spec patches** (`docs/superpowers/specs/2026-05-04-myt-41-stripe-billing-design.md`):
-- §"Per-event-type resolution rules" — reaffirm that `checkout.session.completed` for subscription mode grants first-month credits AND that `invoice.paid` skips `billing_reason='subscription_create'`. (The original MYT-41 text already says this; the patch is to remove any ambiguity introduced by intermediate drafts.)
+- §"Per-event-type resolution rules" — **reverse** the original "checkout.session.completed grants first-month, invoice.paid skips subscription_create" contract (per Decision 1 of round-2 review). New canonical rule: `invoice.paid` is the single source of truth for subscription credit grants for ALL `billing_reason` values that grant credits (`subscription_create`, `subscription_cycle`, `subscription_update`); `checkout.session.completed` for subscription mode only writes the `user_subscriptions` row + `billing_history` invoice row, no credit grant. Rationale: handles SCA-pending and any future delayed-confirm path uniformly; eliminates the dedup gap when SCA completes.
 - §"Webhook credit-grant contract for MYT-42" — add notes 1–5 from §3.1 of this spec verbatim (Stripe API at dahlia field-shape changes).
 - §"Webhook credit-grant contract for MYT-42" — add `customer.subscription.created` to the Dashboard webhook event subscription list. The handler is shared with `customer.subscription.updated` (`handleSubscriptionUpsert`).
+- §"Customer Portal config" — add explicit settings: `subscription_update.proration_behavior='create_prorations'`, `subscription_update.schedule_at_period_end.conditions=[{type:'decreasing_item_amount'}]`, per-tier `subscription_update.products` allowlists are downgrade-only. Per Decision 2 of round-2 review.
+- §"Customer Portal config" — note that tier upgrades go through the new MYT-42 endpoint `/api/billing/upgrade-tier`, NOT through Customer Portal Switch Plan. Customer Portal Switch Plan is for downgrades (handled natively by Stripe via Subscription Schedules) + cancel + payment-method update only.
+- §"Account-level Payment Methods config" — add a new subsection: at Stripe Dashboard → Settings → Payment Methods, enable Card + Link only; disable Cash App Pay, Amazon Pay, Klarna, Affirm, ACH, SEPA, etc. Apple Pay and Google Pay display toggles stay enabled (they're wallet wrappers over `card`). Per Decision 3 of round-2 review.
 - §8 portal lazy-create — patch the original "409 no_billing_history" recommendation to lazy-create-on-first-portal-request per §4.4 of this spec. The fraud-vector argument is rebutted: every portal call is JWT-authenticated and rate-limited; `customers.create` is idempotent; the boundary holds without the 409 special case.
-- §"Refund handling" — explicitly say negative-polarity rows use `source_type='debit'` (NOT `'refund'`), citing migration 004's polarity CHECK constraint. The `'refund'` source_type is reserved for positive-polarity goodwill grants per MYT-40.
+- §"Refund handling" — explicitly say negative-polarity rows use `source_type='debit'` (NOT `'refund'`), citing migration 004's polarity CHECK constraint AND the new `recordClawback` repo method. The `'refund'` source_type is reserved for positive-polarity goodwill grants per MYT-40. Add: clawback rows use `expires_at = NULL` per migration 004's `credit_ledger_debit_no_expiry_chk` (Kraken I8 round 2).
 
 **Parent billing spec patches** (`docs/specs/2026-04-13-billing-cost-controls.md`):
 - §4 (purchase flow) — refer to the unified `POST /api/billing/checkout` body shape; drop any leftover language about per-line metadata.packId.
-- §7 (free trial) — refine the patched language to reflect the source_type='trial' signal MYT-42 emits and MYT-43 reads.
-- §10 (edge cases) — add the refund-makes-balance-negative case, the refund-against-expired-bucket case, the refund-mid-session case, and the concurrent-checkout-customer-create case.
+- §5 (Stripe integration) — note the MYT-42 split: `/api/billing/checkout` for new subscriptions / new à-la-carte; `/api/billing/upgrade-tier` for tier upgrades; Customer Portal for downgrades + cancel + payment-method update.
+- §7 (free trial) — refine the patched language to reflect the source_type='trial' signal MYT-42 emits and the trial-FIRST consumption invariant MYT-43 must honor.
+- §10 (edge cases) — add the refund-makes-balance-negative case, the refund-against-expired-bucket case, the refund-mid-session case, the concurrent-checkout-customer-create case, the partial-refund-paging case, and the tier-upgrade-mid-period case (flat dollar delta, full credit delta, expires_at extended).
 
 **Backend-core spec patches** (`docs/specs/2026-04-13-backend-core.md`):
-- §5.2 (repo namespace listings) — restore `repo.purchases`, `repo.userSubscriptions`, `repo.stripeEvents`, and `repo.billingHistory` to the "shipped" set; remove the corresponding deferral rows from the deferral table; note that `users.create` now accepts a `ClientLike`.
-- Schema block — `purchases`, `user_subscriptions`, and `billing_history` come back with the new shape (composite UNIQUE on purchases; expanded status enum + `cancel_at` + `cancellation_details` + `stripe_event_created_at` on user_subscriptions; full billing_history table).
-- §"Caller obligations" reference — note that MYT-42 honors the "no direct INSERT into credit_ledger" rule by routing the trial grant through `repo.credits.grant`.
+- §5.2 (repo namespace listings) — restore `repo.purchases`, `repo.userSubscriptions`, `repo.stripeEvents`, and `repo.billingHistory` to the "shipped" set; remove the corresponding deferral rows from the deferral table; note that `users.create` now accepts a `ClientLike`; note the new `repo.credits.grantInTx` and `repo.credits.recordClawback` methods.
+- Schema block — `purchases`, `user_subscriptions`, and `billing_history` come back with the new shape (composite UNIQUE on purchases; expanded status enum + `cancel_at` + `cancellation_details` + `stripe_event_created_at` on user_subscriptions; full billing_history table with kind/status/expires_at/occurred_at; credit_ledger gains `source_purchase_id` + `source_billing_history_id` FK columns + `credit_ledger_source_link_chk`).
+- §"Caller obligations" reference — note that MYT-42 honors the "no direct INSERT into credit_ledger" rule by routing the trial grant through `repo.credits.grantInTx` and refund clawbacks through `repo.credits.recordClawback`.
+
+**MYT-40 spec patches** (`docs/superpowers/specs/2026-05-01-myt-40-credit-ledger-design.md`):
+- §"Repo surface" — add `grantInTx(tx, input)` and `recordClawback(tx, input)` alongside the existing `grant` + `atomicDebit`. Note that `grant` opens its own tx; `grantInTx` follows a caller-supplied tx; `recordClawback` is the only sanctioned writer of negative-polarity / `source_type='debit'` rows outside `atomicDebit`.
+- §"Caller obligations" — clarify that `grant` rejects negative amounts and `'debit'` source_type, and that clawback writers MUST use `recordClawback` instead.
 
 ## 15. Operational notes
 
-**Webhook endpoint registration + secret rotation post-MYT-42 deploy** (manual ops, will land in the wiki runbook):
+These are pre-deploy and post-deploy steps Miklos executes against the Stripe Dashboard. Sequence in `tmp/myt-42-stripe-dashboard-instructions.md` for execution.
+
+### 15.1 Stripe Account-level Payment Methods config (Decision 3)
+
+Dashboard → Settings → Payment Methods. Set state:
+- **Card**: enabled.
+- **Link**: enabled.
+- **Apple Pay**: enabled (display toggle; wraps Card).
+- **Google Pay**: enabled (display toggle; wraps Card).
+- All other methods: **disabled**, including Cash App Pay, Amazon Pay, Klarna, Affirm, ACH Direct Debit, SEPA Direct Debit, iDEAL, Bancontact, etc.
+
+Defense-in-depth on top of the `payment_method_types: ['card', 'link']` runtime pin in §4.3.
+
+### 15.2 Stripe Customer Portal config (Decision 2)
+
+Dashboard → Settings → Billing → Customer Portal. The MYT-41 runbook configured the basics (cancel, switch plan, payment method update, invoice history, branding). MYT-42 extends:
+
+- **Subscription updates → Prorate subscription updates**: ON (`proration_behavior='create_prorations'`).
+- **Subscription updates → Schedule at period end**: enable, with conditions checkbox `"When the resulting item amount would decrease"` (`schedule_at_period_end.conditions=[{type:'decreasing_item_amount'}]`). This is the asymmetric upgrade-immediate / downgrade-at-renewal behavior native to Stripe.
+- **Subscription updates → Allowed plans (per tier)**: configure DOWNGRADE-only allowlists.
+  - Wayfarer config: empty (Wayfarer is the smallest tier; nothing to downgrade to via Portal — only Cancel works).
+  - Sojourner config: Wayfarer.
+  - Mythwright config: Sojourner, Wayfarer.
+- Tier upgrades go through the new MYT-42 endpoint `/api/billing/upgrade-tier`, NOT through Customer Portal Switch Plan. The frontend's "Upgrade" button calls our endpoint; the "Manage subscription" / "Switch plan" Portal flow only ever offers downgrades.
+
+### 15.3 Webhook endpoint registration + secret rotation post-MYT-42 deploy
 
 1. After MYT-42 deploys to staging, register the webhook endpoint in the Stripe Dashboard test-mode account: `https://dashboard.stripe.com/test/webhooks` → Add endpoint → URL `https://staging.mythrun.com/webhooks/stripe`, **API version `2026-04-22.dahlia`** (Dashboard → API version selector — MUST match the SDK's pin per §3.1 note 5; otherwise event payloads at the handler will silently shape-mismatch typed field accesses), events: `checkout.session.completed`, `invoice.paid`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `charge.refunded`.
 2. Stripe issues a `whsec_*` signing secret on creation; copy it.
 3. `aws secretsmanager update-secret --secret-id mythrun/staging/stripe-webhook-secret --secret-string 'whsec_<value>'`.
 4. Force a rolling deploy (`gh workflow run Deploy`) so the new secret is loaded.
-5. Verify: send a test event from the Dashboard's Webhook detail page; confirm 200 + a `stripe_events` row.
+5. Verify: send a test event from the Dashboard's Webhook detail page; confirm 200 + a `stripe_events` row. Note: Dashboard test events use a sentinel `event.id` — verifying with a real test purchase via Payment Link is the more thorough check.
 
-Until step 3, every webhook returns 400 (PLACEHOLDER fails closed). Stripe queues retries with exponential backoff for ~3 days; events delivered before step 3 are lost from Stripe's perspective. Dashboard pre-step-3 should NOT trigger any real charges (test-mode only) — but if it does, manual reconciliation against `billing.checkout_orphan` alerts is the recovery path.
+Until step 3, every webhook returns 400 (PLACEHOLDER fails closed). Stripe queues retries with exponential backoff for ~3 days; events delivered before step 3 are lost from Stripe's perspective.
 
-**Boot probe parity**: when MYT-42 lands, the probe still verifies the same 5 lookup_keys. The MYT-42 surface doesn't change Stripe's price catalog. The new `sku-cache` is a side effect of a successful probe pass; cache failure doesn't gate boot.
+### 15.4 Boot probe parity
 
-**Alarm hand-off (paging-grade webhook events)**: three webhook log events are paging-grade and require CloudWatch alarms:
-- `billing.checkout_orphan` — paid customer with no resolvable user; manual reconciliation needed.
-- `billing.checkout_customer_mismatch` — checkout completed for a user whose `stripe_customer_id` doesn't match the event's customer; possible session corruption.
-- `billing.amount_validation_failed` — Stripe-reported amount doesn't match server-reconstructed `expected_total`; possible price-mutation attempt or Stripe-side data corruption.
+When MYT-42 lands, the probe still verifies the same 5 lookup_keys. The MYT-42 surface doesn't change Stripe's price catalog. The new `sku-cache` is a side effect of a successful probe pass; cache failure doesn't gate boot.
 
-The alarm bead is filed alongside MYT-42 (similar to `myth-billing-probe-alarm` from MYT-41 close).
+The probe gains a Customer Portal config check: read the default Portal config and assert (a) `subscription_update.proration_behavior === 'create_prorations'`, (b) `subscription_update.schedule_at_period_end.conditions` contains `{type: 'decreasing_item_amount'}`, (c) per-tier `subscription_update.products` allowlists match the downgrade-only matrix in §15.2. Probe failure → boot abort. Defends against Dashboard config drift.
 
-**MYT-43 hand-off**: MYT-43 picks up the trial-detection signal at session-start. The signal is `credit_ledger.source_type = 'trial'` on the row consumed by the atomic-debit recipe at session-start. MYT-43 decides:
-- The consumption-priority order (likely earliest-expiring, with trial credits last so paid credits are consumed first).
+### 15.5 Alarm hand-off (paging-grade webhook events)
+
+These webhook log events are paging-grade and require CloudWatch alarms (filed as a follow-up bead alongside MYT-42, similar to `myth-billing-probe-alarm` from MYT-41 close):
+
+- `billing.checkout_orphan` — paid checkout completed for an unresolvable `metadata.userId`; money taken, no credits granted. Manual reconciliation.
+- `billing.checkout_customer_mismatch` — checkout completed for a user whose `stripe_customer_id` doesn't match the event's `customer`; possible session corruption.
+- `billing.invoice_orphan` — `invoice.paid` for `subscription_cycle` with `amount_paid > 0` for an unresolvable customer (e.g., GDPR-deleted user with active sub still in Stripe). Money taken, no credits, no auto-recovery.
+- `billing.amount_validation_failed` — Stripe-reported `subtotal` doesn't match server-reconstructed `expected_subtotal` from SKU cache. Possible price-mutation attempt or Stripe-side data corruption.
+- `billing.partial_refund_unsupported` — Operator clicked Refund with a partial amount. Per Decision 5: clawback gated until manual reconciliation.
+
+### 15.6 MYT-43 hand-off
+
+MYT-43 picks up the trial-detection signal at session-start. The signal is `credit_ledger.source_type = 'trial'` on the row consumed by the atomic-debit recipe at session-start. MYT-43 decides:
+
+- The consumption-priority order — **MUST honor the trial-FIRST invariant from §7.6** (trial credits consumed before any other source for users with both trial and paid credits, so the trial UX runs on the trial credit and not on a paid one).
 - How to expose `consumedSourceType` from the atomic-debit recipe (the recipe redesign deferred from MYT-42 §7.6 lands in MYT-43).
 - The session-start branching: if `consumedSourceType === 'trial'` → trial-mode session (reduced budget, demo world, time cap).
 
-MYT-42 intentionally does NOT pick the priority order; that's a session-runtime concern.
+MYT-42 intentionally does NOT pick the priority order beyond pinning the trial-FIRST invariant; the rest is a session-runtime concern.
 
 ---
 
