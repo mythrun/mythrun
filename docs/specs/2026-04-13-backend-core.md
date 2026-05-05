@@ -519,12 +519,12 @@ CREATE TABLE session_usage (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Purchases
+-- Purchases (re-shaped by MYT-42 migration 007 — lookup_key replaces session_pack_size)
 CREATE TABLE purchases (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id),
   stripe_payment_intent_id TEXT NOT NULL UNIQUE,
-  session_pack_size INTEGER NOT NULL,
+  lookup_key TEXT NOT NULL,  -- closed enum: lookup_keys.ts contract
   amount_cents INTEGER NOT NULL,
   currency TEXT NOT NULL DEFAULT 'usd',
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'refunded')),
@@ -555,24 +555,15 @@ CREATE TABLE moderation_flags (
   resolved_at TIMESTAMPTZ
 );
 
--- Subscription Tiers (configuration)
-CREATE TABLE subscription_tiers (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  stripe_price_id TEXT NOT NULL,
-  session_credits_per_month INTEGER NOT NULL,
-  world_gen_credits_per_month INTEGER NOT NULL,
-  price_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- Subscription tier metadata is in `backend/src/billing/lookup-keys.ts`;
+-- Stripe is the source of truth for prices. No DB-resident config table.
 
--- User Subscriptions
+-- User Subscriptions (re-shaped by MYT-42 migration 007 — tier_lookup_key
+-- replaces tier_id FK)
 CREATE TABLE user_subscriptions (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  tier_id TEXT NOT NULL REFERENCES subscription_tiers(id),
+  tier_lookup_key TEXT NOT NULL,  -- closed enum enforced at write-time by MYT-42 webhook handler
   stripe_subscription_id TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL CHECK (status IN ('active', 'past_due', 'canceled', 'unpaid')),
   current_period_start TIMESTAMPTZ NOT NULL,
@@ -582,18 +573,8 @@ CREATE TABLE user_subscriptions (
 );
 CREATE INDEX idx_user_subscriptions_user ON user_subscriptions(user_id);
 
--- Session Packs (configuration)
-CREATE TABLE session_packs (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  session_credits INTEGER NOT NULL,
-  world_gen_credits INTEGER NOT NULL DEFAULT 0,
-  stripe_price_id TEXT NOT NULL,
-  price_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- À-la-carte SKU metadata is in `backend/src/billing/lookup-keys.ts`.
+-- No DB-resident pack table.
 
 -- Stripe Event Idempotency
 CREATE TABLE stripe_events (
@@ -803,10 +784,6 @@ Each namespace corresponds to a table group. Methods listed are the initial surf
 
 **`repo.userSubscriptions`**: `create`, `getByUser`, `getByStripeId`, `update`
 
-**`repo.subscriptionTiers`**: `getById`, `listActive`
-
-**`repo.sessionPacks`**: `getById`, `listActive`
-
 **`repo.stripeEvents`**: `exists` (check if event already processed), `record` (mark event as processed)
 
 **`repo.srd`**: `getMonster`, `getSpell`, `getCondition`, `searchMonsters`, `searchSpells`
@@ -839,7 +816,7 @@ Where each deferred namespace lands (tracked via beads labeled `repo-deferred` �
 | Namespaces | Triggered by |
 |---|---|
 | `campaignMembers`, `campaignInvites` | MYT-39 (access control + invites) |
-| `purchases`, `userSubscriptions`, `subscriptionTiers`, `sessionPacks`, `stripeEvents` | MYT-42 (Stripe webhook + checkout) |
+| `purchases`, `userSubscriptions`, `stripeEvents` | MYT-42 (Stripe webhook + checkout). MYT-41 dropped `subscriptionTiers` and `sessionPacks` — that metadata lives in `backend/src/billing/lookup-keys.ts`. |
 | `entities`, `proseKernels`, `facts`, `relationships`, `entityHierarchy`, `randomTables` | Prep Pipeline milestone |
 | `pipelineRuns`, `snapshots`, `sessionPreps`, `statBlocks` | Prep Pipeline milestone |
 | `sessionMessages`, `sessionParticipants` | Session Runtime + Combat L1 milestone |
