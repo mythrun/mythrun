@@ -134,6 +134,12 @@ Work continuously through implementation batches without stopping for per-task r
 - **Never accept an unexplained failure.** When something doesn't work for a reason you don't understand, *finding the root cause is the task* — not a nice-to-have. Read docs, search issues, dispatch a research subagent, file a question. Only propose workarounds or concessions *after* you can name the cause. "It just doesn't work, let's ship the reduced version" is never the right call by itself; sometimes the reduced version is right, but only once you can explain what's actually happening.
 - **Don't offer to "call it for the day" inside working hours.** Miklos's working window is roughly 9am–6pm local time. Check the current time before suggesting we stop; if we're inside the window, propose continuing with the next concrete step instead. Outside the window or near the edges, a wrap-up offer is fine.
 
+## The Brand + Design Repo
+
+Brand voice, palette, logomarks, and design decisions live in a separate sibling repo, not in this one: `../../Design/mythrun-design` (sibling of the `Code/` directory containing this repo). Read `brand/brief.md` before any work that touches user-visible naming, copy, error messages, marketing strings, or visual identity. The brand has a strict register — Ghibli-not-Marvel, Lucas Pope-terse, no hype words, no gamerspeak — and skipping the brief wastes round-trips on naming. The brief covers voice, allowed/forbidden moves, target communities, and what Mythrun is/isn't. `brand/decisions.md` records the why behind specific choices.
+
+Don't update or overwrite the design repo from agent sessions. New brand decisions are the user's call.
+
 ## The Prototype Repo
 
 There is a working single-player prototype at `/Users/miklos/Desktop/Files/Personal/mythrun-v5/` that validated the core mechanics (dual-thinker, prep engine, enforced ignorance, skill checks, Scribe extraction). **It is reference-only.** The production codebase is a clean rewrite.
