@@ -368,3 +368,43 @@ describe('frontendBaseUrl', () => {
     expect(() => loadEnv()).toThrow(/valid URL/i)
   })
 })
+
+describe('loadEnv — Stripe fields', () => {
+  beforeEach(() => {
+    SAFE_BASE()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('accepts a restricted-key (rk_) prefix and exposes stripeSecretKey + stripeWebhookSecret', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'rk_test_abc123')
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'whsec_real_value')
+    const env = loadEnv()
+    expect(env.stripeSecretKey).toBe('rk_test_abc123')
+    expect(env.stripeWebhookSecret).toBe('whsec_real_value')
+  })
+
+  it('rejects a full-permission (sk_) secret key', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_full_permission')
+    expect(() => loadEnv()).toThrow(/STRIPE_SECRET_KEY must be a Stripe restricted key/)
+  })
+
+  it("accepts 'PLACEHOLDER' as the webhook secret (pre-MYT-42 window)", () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'rk_test_abc123')
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'PLACEHOLDER')
+    const env = loadEnv()
+    expect(env.stripeWebhookSecret).toBe('PLACEHOLDER')
+  })
+
+  it('rejects an empty STRIPE_SECRET_KEY', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', '')
+    expect(() => loadEnv()).toThrow(/STRIPE_SECRET_KEY/)
+  })
+
+  it('rejects an empty STRIPE_WEBHOOK_SECRET', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'rk_test_abc123')
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', '')
+    expect(() => loadEnv()).toThrow(/STRIPE_WEBHOOK_SECRET/)
+  })
+})

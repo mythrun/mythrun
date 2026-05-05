@@ -12,6 +12,8 @@ export interface Env {
   readonly cognitoIssuerUrl?: string
   readonly cognitoHostedUiDomain?: string
   readonly frontendBaseUrl: string
+  readonly stripeSecretKey: string
+  readonly stripeWebhookSecret: string
 }
 
 // Dev (.env.development) sets DATABASE_URL / REDIS_REALTIME_URL /
@@ -124,6 +126,36 @@ function validateFrontendBaseUrl(raw: string | undefined, nodeEnv: string | unde
   return url.origin
 }
 
+// Mythrun deploys with Stripe restricted keys (rk_*), never full-permission
+// keys (sk_*). The restricted key is the actual price-mutation boundary
+// per the MYT-41 §1 design decision; lookup-keys.ts and the ESLint rules
+// are tripwires above it. Misrotation that puts a full-permission key here
+// would silently degrade the defense — the boot probe (read-only) would
+// still pass. Catching it at env-load is the cheapest enforcement.
+function validateStripeSecretKey(raw: string | undefined): string {
+  if (!raw || raw.trim() === '') {
+    throw new Error('STRIPE_SECRET_KEY is required')
+  }
+  if (!raw.startsWith('rk_')) {
+    throw new Error(
+      `STRIPE_SECRET_KEY must be a Stripe restricted key (rk_*); got prefix '${raw.slice(0, 3)}'. ` +
+        `Full-permission keys (sk_*) are forbidden in deployed environments per the MYT-41 design.`,
+    )
+  }
+  return raw
+}
+
+// PLACEHOLDER literal is permitted in the MYT-41 → MYT-42 window. MYT-42's
+// webhook handler verifies via stripe.webhooks.constructEvent unconditionally;
+// any signature mismatch fails closed regardless of whether the secret is
+// the literal 'PLACEHOLDER' or a real whsec_*. No bypass branch.
+function validateStripeWebhookSecret(raw: string | undefined): string {
+  if (!raw || raw.trim() === '') {
+    throw new Error('STRIPE_WEBHOOK_SECRET is required (use PLACEHOLDER until MYT-42 wires the handler)')
+  }
+  return raw
+}
+
 function loadAuthConfig(): Pick<
   Env,
   'authMode' | 'cognitoUserPoolId' | 'cognitoAppClientId' | 'cognitoIssuerUrl' | 'cognitoHostedUiDomain'
@@ -193,6 +225,8 @@ export function loadEnv(): Env {
     process.env.FRONTEND_BASE_URL,
     process.env.NODE_ENV,
   )
+  const stripeSecretKey = validateStripeSecretKey(process.env.STRIPE_SECRET_KEY)
+  const stripeWebhookSecret = validateStripeWebhookSecret(process.env.STRIPE_WEBHOOK_SECRET)
   return Object.freeze({
     databaseUrl: buildDatabaseUrl(),
     redisRealtimeUrl: buildRedisUrl('realtime'),
@@ -200,5 +234,7 @@ export function loadEnv(): Env {
     port,
     ...authConfig,
     frontendBaseUrl,
+    stripeSecretKey,
+    stripeWebhookSecret,
   })
 }
