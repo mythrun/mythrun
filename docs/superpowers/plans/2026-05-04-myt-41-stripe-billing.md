@@ -20,7 +20,7 @@
 | `backend/src/config/__tests__/env.test.ts` | Modify | Add tests: `rk_` prefix accepted, `sk_` prefix rejected, `STRIPE_WEBHOOK_SECRET=PLACEHOLDER` accepted. |
 | `backend/src/billing/lookup-keys.ts` | Create | The contract: `LookupKey` union + `LOOKUP_KEYS` map with five entries. |
 | `backend/src/billing/__tests__/lookup-keys.test.ts` | Create | Drift test, per-key shape assertions, display-name exactness, `length <= 100` static check. |
-| `backend/src/billing/stripe-client.ts` | Create | Module-level cached `Stripe` client constructor; `STRIPE_API_VERSION = '2026-03-25.dahlia'`. |
+| `backend/src/billing/stripe-client.ts` | Create | Module-level cached `Stripe` client constructor; `STRIPE_API_VERSION = '2026-04-22.dahlia'`. |
 | `backend/src/billing/probe.ts` | Create | Boot probe with retry/backoff/jitter, full billing-shape verification, structured `bootId`-correlated events, distinct error classes (mismatch / auth / API-change / transient). |
 | `backend/src/billing/__tests__/probe.test.ts` | Create | Mocks Stripe SDK at import boundary; covers happy path, every mismatch class, auth failure (no retry), transient retry-then-success, transient exhaustion, has_more API-change, duplicate detection, multiple-mismatches reporting. |
 | `backend/src/server.ts` | Modify | After `waitFor` block + before `app.listen`, construct `getStripeClient(env)` and call `probeStripeContract(stripe, logger)`. Errors propagate to the existing `try/catch` boot-fail path. |
@@ -60,7 +60,7 @@
 cd backend && pnpm add stripe
 ```
 
-The SDK's apiVersion type-narrows to a literal union; the spec pins `'2026-03-25.dahlia'`. If the installed SDK version doesn't include that literal, the spec's `stripe-client.ts` will fail tsc — which is fine, that's the build-time signal. We expect the latest `stripe` (~17 or 18 at install time) to support `2026-03-25.dahlia`.
+The SDK's apiVersion type-narrows to a literal union; the spec pins `'2026-04-22.dahlia'`. If the installed SDK version doesn't include that literal, the spec's `stripe-client.ts` will fail tsc — which is fine, that's the build-time signal. We expect the latest `stripe` (~17 or 18 at install time) to support `2026-04-22.dahlia`.
 
 - [ ] **Step 2: Verify the install**
 
@@ -425,7 +425,7 @@ git commit -m "feat(myt-41): lookup-keys.ts contract — 3 tiers + 2 a-la-carte 
 **Files:**
 - Create: `backend/src/billing/stripe-client.ts`
 
-This is a small constructor-cache module. Its main correctness signal is "does it tsc against the installed Stripe SDK with `apiVersion: '2026-03-25.dahlia'`." Behavioral tests for the cached-instance behavior would tangle with module mocking and offer little value; the probe.test.ts (next task) exercises it indirectly.
+This is a small constructor-cache module. Its main correctness signal is "does it tsc against the installed Stripe SDK with `apiVersion: '2026-04-22.dahlia'`." Behavioral tests for the cached-instance behavior would tangle with module mocking and offer little value; the probe.test.ts (next task) exercises it indirectly.
 
 - [ ] **Step 1: Create `backend/src/billing/stripe-client.ts`**
 
@@ -446,7 +446,7 @@ import type { Env } from '../config/env.js'
 // Cadence: review Stripe's API changelog every 6 months as routine
 // maintenance; bump only when there's a feature we need or a breaking
 // change with a sunset date.
-const STRIPE_API_VERSION = '2026-03-25.dahlia' as const
+const STRIPE_API_VERSION = '2026-04-22.dahlia' as const
 
 let cached: Stripe | null = null
 
@@ -467,14 +467,14 @@ export function getStripeClient(env: Env): Stripe {
 cd backend && pnpm typecheck
 ```
 
-Expected: clean. If `'2026-03-25.dahlia'` isn't in the installed Stripe SDK's `apiVersion` literal union, TS errors here. If that happens: bump the Stripe SDK version (`pnpm add stripe@latest`) and try again. The Stripe SDK currently installed should accept it.
+Expected: clean. If `'2026-04-22.dahlia'` isn't in the installed Stripe SDK's `apiVersion` literal union, TS errors here. If that happens: bump the Stripe SDK version (`pnpm add stripe@latest`) and try again. The Stripe SDK currently installed should accept it.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 cd /Users/miklos/Desktop/Files/Mythrun/Code/mythrun
 git add backend/src/billing/stripe-client.ts
-git commit -m "feat(myt-41): stripe-client.ts — cached client pinned to 2026-03-25.dahlia"
+git commit -m "feat(myt-41): stripe-client.ts — cached client pinned to 2026-04-22.dahlia"
 ```
 
 ---

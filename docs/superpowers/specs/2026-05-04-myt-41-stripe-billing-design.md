@@ -479,7 +479,7 @@ import type { Env } from '../config/env.js'
 // Cadence: review Stripe's API changelog every 6 months as routine
 // maintenance; bump only when there's a feature we need or a breaking
 // change with a sunset date.
-const STRIPE_API_VERSION = '2026-03-25.dahlia' as const
+const STRIPE_API_VERSION = '2026-04-22.dahlia' as const
 
 let cached: Stripe | null = null
 
@@ -1145,7 +1145,7 @@ Open bead `myth-u7k` ("Repo: add billing namespaces — purchases, userSubscript
 ## What MYT-41 ships
 
 - `backend/src/billing/lookup-keys.ts` — the contract.
-- `backend/src/billing/stripe-client.ts` — read-only wrapper, pinned to `2026-03-25.dahlia`.
+- `backend/src/billing/stripe-client.ts` — read-only wrapper, pinned to `2026-04-22.dahlia`.
 - `backend/src/billing/probe.ts` — boot probe with retry/backoff/jitter; auth-error vs transient-vs-mismatch distinction; full billing-shape verification (currency, type, unit_amount > 0, billing_scheme, interval, interval_count, usage_type); duplicate-detect; `has_more` API-change detection; bootId-correlated structured events.
 - `backend/eslint-rules/no-stripe-price-mutations.cjs` — bans price/product/coupon catalog mutations.
 - `backend/eslint-rules/no-stripe-subscription-price-mutation.cjs` — bans `subscriptions.update({ items: [{ price }] })` patterns; closes the price-change-via-subscription backdoor.
