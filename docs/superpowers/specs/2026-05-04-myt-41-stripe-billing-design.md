@@ -91,6 +91,7 @@ A handler crash mid-loop produces a ROLLBACK; the retry re-runs the whole loop a
 | Event type | Resolution | Credit grant? |
 |---|---|---|
 | `checkout.session.completed` | `metadata.userId` (server-set at Checkout creation); cross-check against `customer` field | Yes — per-line-item walk, see above |
+| `customer.subscription.created` | `customer.id → users.stripe_customer_id` | Ignored. The `user_subscriptions` row is created from the corresponding `checkout.session.completed` (subscription mode); subsequent `customer.subscription.updated` events handle state transitions. Emit `billing.webhook_ignored`. |
 | `invoice.paid` (subscription cycle) | `customer.id → users.stripe_customer_id`; verify `billing_reason === 'subscription_cycle'` (skip first-cycle invoices, those grants come from `checkout.session.completed`) | Yes — read the subscription's `items[].price.lookup_key`, grant credits per LOOKUP_KEYS spec |
 | `customer.subscription.updated` | `customer.id → users.stripe_customer_id` | Mid-period plan switch credit handling is deferred to MYT-42; at minimum, update `users` subscription state. Pro-rated credit grants are MYT-42 design |
 | `customer.subscription.deleted` | `customer.id → users.stripe_customer_id` | No grants. Update subscription state; existing credits remain usable through `expires_at`. |
@@ -327,15 +328,20 @@ These contracts are fixed by MYT-41 so MYT-42's implementer has no ambiguity. Th
 **`POST /api/billing/checkout`:**
 
 - Requires JWT auth via the existing `requireOnboarded` plugin (so caller has a `users` row).
-- The request body specifies the `lookup_key`(s) and quantities. **The `customer_id` is server-derived** from `request.user.sub` → `users.stripe_customer_id` (lookup, create-on-first-use). Never trust a client-supplied customer ID.
-- The Checkout session's `metadata.userId` is the server-derived user ID, used by the webhook handler.
+- The request body specifies the `lookup_key`(s) and quantities. The body schema requires `additionalProperties: false` (Fastify/Zod) so client-supplied extra fields cannot leak into the Stripe call's metadata.
+- **The `customer_id` is server-derived** from `request.user.sub` → `users.stripe_customer_id` (lookup, create-on-first-use). Never trust a client-supplied customer ID.
+- **First-checkout customer-create idempotency:** when the user's `stripe_customer_id` is NULL, the endpoint calls `stripe.customers.create({ ... }, { idempotencyKey: \`mythrun-customer-${user.id}\` })`. Stripe deduplicates by the idempotency key, so retries (network blip, user re-clicks the button) return the *same* customer record rather than spawning duplicates. Without this, retried first-checkouts produce orphan Stripe customer records that break the webhook handler's `customer.id → users.stripe_customer_id` join for `invoice.paid` / `customer.subscription.*` / `charge.refunded` events. The customer-id is then persisted in `users.stripe_customer_id` in the same transaction as the Checkout session creation. The idempotency key is stable per Mythrun user-id; key collisions across users are impossible.
+- The Checkout session's `metadata.userId` is the server-derived user ID, used by the webhook handler. `metadata` is constructed only from server state (`metadata: { userId: request.user.internalId }`); the client request body never contributes to `metadata`.
 - The Checkout session's `success_url` and `cancel_url` are Mythrun-controlled (`${env.frontendBaseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}` and `/billing/cancel`); never client-supplied. Stripe allows arbitrary URLs here, which is an open-redirector primitive if exposed.
 
 **`POST /api/billing/portal`:**
 
-- Requires JWT auth.
-- The Portal session's `customer` parameter is server-derived from `request.user.sub` → `users.stripe_customer_id`. Never trust a client-supplied customer ID; the Portal URL Stripe returns is a bearer-style URL that lets anyone with it manage that customer's subscription, so a misimplementation here is an IDOR (cancel-anyone's-sub) vector.
+- **Requires JWT auth via the existing `requireOnboarded` plugin** (same as `/api/billing/checkout` — caller must have a `users` row, not just a valid Cognito sub). Bare JWT auth is insufficient because the lookup `request.user.sub → users.stripe_customer_id` requires the row to exist.
+- If `users.stripe_customer_id IS NULL` (user has never checked out), return `409 {code: 'no_billing_history'}`. **Do NOT call `customers.create` lazily here** — Customer Portal is for users with billing history; a user with no purchases has nothing to manage. Lazy-creating customers from this endpoint is also a fraud vector (an attacker could enumerate Stripe customer records).
+- The Portal session's `customer` parameter is server-derived from the resolved row's `stripe_customer_id`. Never trust a client-supplied customer ID; the Portal URL Stripe returns is a bearer-style URL that lets anyone with it manage that customer's subscription, so a misimplementation here is an IDOR (cancel-anyone's-sub) vector.
+- The request body schema requires `additionalProperties: false` (Fastify/Zod) so client-supplied extra fields can't leak into Stripe-side metadata or future endpoint extensions.
 - The Portal session's `return_url` is Mythrun-controlled (`${env.frontendBaseUrl}/account`); never client-supplied.
+- Per-IP rate-limit (~10/min/IP) enforced via `@fastify/rate-limit` (already wired). The Portal-session URL is bearer; rate-limiting prevents an attacker who briefly captured one access token from minting many Portal URLs.
 
 **`POST /webhooks/stripe`:**
 
@@ -845,6 +851,8 @@ END $$;
 
 **Migration 006 is non-reversible without backup restore.** Pre-drop ASSERT fires loud if any environment has unexpected rows; pre-merge verification confirms emptiness in dev/staging today. MYT-42 ships migration 007 to recreate `user_subscriptions` and `purchases` with the new shape; rollback between MYT-41 ship and MYT-42 ship leaves those two tables absent — acceptable because no code references them in that window.
 
+**Recovery playbook if a pre-drop ASSERT fires:** the migration's transaction wrapper aborts, the deploy fails, and ECS rolls back. The operator opens a session against the offending environment and runs `SELECT * FROM <table_name>` to inspect the rows. For staging/dev: confirm the rows are stale test data, then `TRUNCATE user_subscriptions, purchases, session_packs, subscription_tiers RESTART IDENTITY CASCADE` (FK-correct order is enforced by CASCADE), then redeploy. For production: do NOT truncate — escalate. Production tables containing rows during MYT-41 close indicates a workflow violation (someone wrote to those tables outside the documented MYT-42 path) and needs investigation, not a quick truncate.
+
 ### ESLint rule — `no-stripe-price-mutations`
 
 A custom rule under `backend/eslint-rules/no-stripe-price-mutations.cjs` (wired into the existing `eslint.config.js` flat-config), banning `MemberExpression` chains that mutate the Stripe price/product/coupon catalog. **`stripe.subscriptions.update|cancel|del` are explicitly NOT banned** — they're operationally needed for in-app cancel and admin-tools.
@@ -908,6 +916,10 @@ The Billing spec at `docs/specs/2026-04-13-billing-cost-controls.md` needs three
   Disabled at launch: Promotion codes, Retention coupons, Tax ID, Phone, Shipping address, Update quantities, Cancellation reason (optional, off at launch).
 - §5.5 (Price Manipulation Prevention) — explicit replacement text: "Pricing is immutable from application code. Defense in depth, in order of strength: (1) Stripe restricted API key with no `Prices: write` or `Products: write` — Stripe's API rejects mutation attempts at the network level. (2) Code references prices by `lookup_key` only; no hardcoded Stripe Price IDs. (3) ESLint rule `no-stripe-price-mutations` bans price/product/coupon catalog mutations — a code-review tripwire, not a runtime boundary. The amount-validation in the webhook handler (also in §5.5) is the per-charge correctness check; the boot probe is the catalog-shape correctness check."
 
+### `docs/specs/2026-04-13-billing-cost-controls.md` §6 — Token Budget (vocabulary cleanup)
+
+- §6.298: *"the budget is defined per credit type (session credits from subscriptions may have a different budget than session credits from packs — but for launch, they're identical)."* The "subscriptions/packs" wording is the last surviving "pack" reference in the parent post-other-patches. Replace with: *"the budget is defined per credit type (session credits from tier subscriptions may have a different budget than session credits from à-la-carte SKUs — for launch, identical)."* Or drop the parenthetical entirely, since it's hypothetical.
+
 ### `docs/specs/2026-04-13-billing-cost-controls.md` §7 — Free Trial
 
 - Replace §7.348–356 implementation-steps prose with: *"Trial credit is granted at registration, not at session-start. On `POST /api/users/register`, the same transaction that creates the `users` row inserts a `credit_ledger` row (`credit_type='session', amount=1, source_type='trial', source_id=NULL, expires_at=NULL`) and sets `users.free_trial_used = true`. Sessions consume the trial credit via the standard atomic-debit recipe (§2). No special trial-mode session machinery; the time-cap and demo-world choices in §7 are session-runtime concerns owned by MYT-43, decoupled from credit-grant timing."*
@@ -920,7 +932,8 @@ The Billing spec at `docs/specs/2026-04-13-billing-cost-controls.md` needs three
 ### `docs/specs/2026-04-13-billing-cost-controls.md` §9 — API Routes (consistency)
 
 - `GET /api/billing/tiers` and `GET /api/billing/packs` (§9.420 of parent) → replace with `GET /api/billing/skus` returning a single list keyed by lookup_key. Caching/TTL/fallback rules per §4 above. (Implementation lands in MYT-42; spec text updates here.)
-- §9 balance-response example (line ~439) — update `"tier": "adventurer"` to `"tier": "wayfarer"` (or rename the field to `lookup_key` for consistency with the rest of MYT-41's contract).
+- §9 balance-response example (line ~439) — replace `"tier": "adventurer"` with `"tier": { "lookup_key": "tier_wayfarer", "displayName": "Wayfarer", "renewsAt": "..." }`. The field name `tier` stays (semantic) but the value becomes a structured object containing the `lookup_key` (the contract handle) plus display metadata. The bare-string form is dropped — every consumer of this field needs the lookup_key for the contract anyway.
+- §9 balance-response field names: rename `session_credits` → `session` and `world_gen_credits` → `world_gen` so the JSON keys match the `credit_type` values in the credit_ledger CHECK constraint. Final response shape: `{ balance: { session: 7, world_gen: 2 }, tier: { lookup_key, displayName, renewsAt } | null, ... }`.
 - §9 checkout body shape (line ~426): `{ type: 'subscription', tierId }` / `{ type: 'pack', packId }` — replace with `{ items: [{ lookup_key, quantity }] }`. The Checkout `mode` is server-derived from the items' types per the cart-shapes table.
 - §9 ALTER block (line ~459) — `ALTER TABLE users ADD COLUMN stripe_customer_id` is stale. The column already exists in migration 001. Replace with: *"`users.stripe_customer_id` is part of the initial schema. Populated lazily on first checkout via `customers.create` in MYT-42."*
 
@@ -942,6 +955,7 @@ The Backend Core spec (the canonical schema reference per CLAUDE.md's read-in-de
 ### `docs/specs/2026-04-06-production-architecture-overview.md` (orphan-reference cleanup)
 
 - Line 768's `pack_5` reference → update to `sku_session` / `sku_world`.
+- Line ~771's *"Session pack sizes and pricing are configurable (e.g., 5 sessions for $20, 12 sessions for $40)"* → drop entirely; replace with a pointer: *"À-la-carte SKUs are configurable in Stripe Dashboard, referenced from code by lookup_key per `backend/src/billing/lookup-keys.ts`. No fixed-size packs; sessions and worlds are sold one-at-a-time."*
 - Line ~380's `purchases` CREATE TABLE block carries stale `session_pack_size INTEGER NOT NULL` → drop the column reference or rewrite the block to point to backend-core's canonical schema.
 - Lines ~551, ~575–577, ~749, ~769 reference a `users.session_credits` column or a `free_trial_used = false` gate — both stale per MYT-40 (credits live in `credit_ledger`, balance is `SUM(amount)` filtered by `credit_type` and `expires_at`) and per MYT-41 (the trial is a `credit_ledger` row with `source_type='trial'`, not a column-flip gate). Sweep these references and replace with: "balance check is `SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='session' AND (expires_at IS NULL OR expires_at > now())`; trial credits are part of that balance, not a separate gate."
 - Line ~515 ER-diagram-style line `User ──has──> session_credits, purchases` — drop the `session_credits` half.
@@ -949,6 +963,7 @@ The Backend Core spec (the canonical schema reference per CLAUDE.md's read-in-de
 ### `docs/specs/2026-04-10-ux-design.md` (orphan-reference cleanup)
 
 - Line 490's `Adventurer` / `Champion` mentions → update to `Wayfarer` / `Sojourner` / `Mythwright`.
+- Lines ~487–499 carry session-pack copy (e.g., *"5 sessions — $X" / "12 sessions — $X"* with a *"best value"* label). MYT-41 abolishes the fixed-size pack model — sessions are sold one-at-a-time as `sku_session`. Replace these lines wholesale with copy describing (a) the three subscription tiers, (b) `sku_session` and `sku_world` as one-at-a-time SKUs, (c) no "best value" labels. The pack-of-N model no longer exists.
 
 ### Note on parent-spec line numbers
 
