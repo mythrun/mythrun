@@ -80,7 +80,25 @@ A handler crash mid-loop produces a ROLLBACK; the retry re-runs the whole loop a
 
 **`source_id` shape on grant rows:** `credit_ledger.source_id` is `UUID` (per migration 001 line 30). For grant rows, set `source_id = uuidv7()` — a fresh UUIDv7 per row, derived nowhere from Stripe identifiers. The Stripe `event_id` and `checkout.session.id` are stored in a sibling structured field (the parent spec's `purchases` table on its MYT-42 reshape, OR a `stripe_event_id` column on `credit_ledger` if MYT-42 prefers; the choice is MYT-42's). What matters here: don't try to encode Stripe IDs into the UUID column; the `stripe_events` PK provides cross-event idempotency without it.
 
-**`metadata.userId` is still required on the Checkout session** so the webhook resolves `userId` without a prior `customers` lookup; the parent spec §4 step 3's `metadata.packId` is replaced with the per-line-item walk above. The webhook handler MUST verify `metadata.userId` resolves to a real `users` row before granting (don't insert against a fabricated user; FK violation aborts the transaction silently from Stripe's view, triggering retries).
+**`metadata.userId` is required on the Checkout session** so the webhook resolves `userId` without a prior `customers` lookup; the parent spec §4 step 3's `metadata.packId` is replaced with the per-line-item walk above. The webhook handler MUST verify `metadata.userId` resolves to a real `users` row before granting (don't insert against a fabricated user; FK violation aborts the transaction silently from Stripe's view, triggering retries).
+
+**Defense in depth on `metadata.userId`:** the Checkout endpoint also sets `customer = users[userId].stripe_customer_id` on the same Checkout session (creating the Stripe customer on first checkout, populating `users.stripe_customer_id` atomically). The webhook handler asserts `event.data.object.customer === users[metadata.userId].stripe_customer_id` — a tampered metadata.userId would fail this cross-check. `metadata` is set server-side from the JWT-derived user; client-supplied metadata is rejected at the HTTP boundary.
+
+### Per-event-type resolution rules
+
+`metadata.userId` is only present on `checkout.session.completed` events. Other event types must resolve `userId` differently:
+
+| Event type | Resolution | Credit grant? |
+|---|---|---|
+| `checkout.session.completed` | `metadata.userId` (server-set at Checkout creation); cross-check against `customer` field | Yes — per-line-item walk, see above |
+| `invoice.paid` (subscription cycle) | `customer.id → users.stripe_customer_id`; verify `billing_reason === 'subscription_cycle'` (skip first-cycle invoices, those grants come from `checkout.session.completed`) | Yes — read the subscription's `items[].price.lookup_key`, grant credits per LOOKUP_KEYS spec |
+| `customer.subscription.updated` | `customer.id → users.stripe_customer_id` | Mid-period plan switch credit handling is deferred to MYT-42; at minimum, update `users` subscription state. Pro-rated credit grants are MYT-42 design |
+| `customer.subscription.deleted` | `customer.id → users.stripe_customer_id` | No grants. Update subscription state; existing credits remain usable through `expires_at`. |
+| `charge.refunded` | Traverse via `charge.payment_intent → customer.id → users.stripe_customer_id` | Reverse: insert negative credit_ledger rows mirroring the original grant. Track in `purchases` (MYT-42 reshape) for audit. Negative balance flagged for manual review per parent §5.265 |
+
+Event types not in this table are ignored (return 200 OK to Stripe; emit a `billing.webhook_ignored` log line for observability).
+
+**`users.stripe_customer_id` becomes the join key** for non-Checkout events. The Checkout flow populates it on first checkout (passing `customer = ...` to `checkout.sessions.create`, or letting Stripe auto-create and storing the returned `customer.id` on the user row in the same transaction as the credit grant). Until first checkout, `users.stripe_customer_id` is NULL — but no non-Checkout webhook event can arrive for a user who hasn't had their first Checkout, so the NULL state is unreachable from the webhook handler's perspective.
 
 ### Stripe price-shape verification (boot probe scope)
 
@@ -157,11 +175,16 @@ ESLint is a code-review tripwire — pattern-matching on `MemberExpression` chai
 3. `currency === 'usd'`.
 4. `unit_amount > 0` ($0 price would produce free paid-tier subscriptions).
 5. `billing_scheme === 'per_unit'` (tiered breaks `amount_total` math).
-6. For `tier_*`: `recurring.interval === 'month'`.
-7. For `tier_*`: `recurring.interval_count === 1` (quarterly tier — `interval='month', interval_count=3` — would otherwise silently pass).
-8. For `tier_*`: `recurring.usage_type === 'licensed'` (metered changes which webhook events fire).
+6. **`transform_quantity === null`** (`{divide_by: N}` would silently charge fractional units, e.g., charge for half the sessions purchased).
+7. **`tax_behavior` is `'unspecified'` or `null`** (Mythrun launches USD-only, no tax handling per non-goals; flipping `tax_behavior='inclusive'` or `'exclusive'` shifts displayed-vs-charged math and should require a deliberate spec patch).
+8. **The expanded `product.active === true`** (Stripe permits `price.active=true` while `product.active=false`; `prices.list` still returns the orphaned price, but `checkout.sessions.create` against an archived product 4xx's. The probe must catch this — it is *exactly* the Dashboard-misconfiguration class the probe exists to prevent).
+9. For `tier_*`: `recurring.interval === 'month'`.
+10. For `tier_*`: `recurring.interval_count === 1` (quarterly tier — `interval='month', interval_count=3` — would otherwise silently pass).
+11. For `tier_*`: `recurring.usage_type === 'licensed'` (metered changes which webhook events fire).
 
-**What the probe does NOT verify:** the exact dollar amount, the product name, `tax_behavior`. Those are Miklos-owned via the Dashboard; the probe's job is contract-shape, not pricing-policy.
+**What the probe does NOT verify:** the exact dollar amount and the product name. Those are Miklos-owned via the Dashboard; the probe's job is contract-shape, not pricing-policy.
+
+To support check 8, the probe issues `prices.list({ ..., expand: ['data.product'] })` so each price's `product` field is hydrated to the full Product object. The expanded shape lands as `Stripe.Product`, with `active: boolean`.
 
 **Stripe API errors are not all transient.** The probe distinguishes:
 
@@ -175,14 +198,20 @@ ESLint is a code-review tripwire — pattern-matching on `MemberExpression` chai
 - **Contract mismatch** (lookup_key missing, wrong type, wrong currency, etc.) → boot fails loud with `BillingProbeError`. No retry — this is an operator fix.
 - **Transient Stripe API error** (network error, timeout, 5xx) → retry up to 3 times with exponential backoff (1s, 2s, 4s) plus 0–1s jitter (mirrors MYT-37's JWKS hydrate pattern). If all retries fail, boot fails loud with `BillingProbeTransientError` (distinct error class). The operator response differs: contract mismatch = fix Dashboard, transient = check Stripe status page, redeploy.
 
-**The deliberate availability tradeoff:** the probe's worst-case fail-loud window is approximately 31 seconds (3 attempts × 7s timeout + 1+2+4s backoff + jitter). If Stripe's API stays unavailable for that full window during a Mythrun container start, the container fails to boot. This affects:
+**The Stripe-availability ceiling.** The probe's worst-case fail-loud window is approximately 31 seconds (3 attempts × 7s timeout + 1+2+4s backoff + jitter). For sustained Stripe outages exceeding that window, **Mythrun's API availability is bounded by Stripe's API availability** — for any container that needs to boot during the outage. Specifically:
 
-- ECS rolling deploys (deploy circuit breaker rolls back automatically — operator playbook: "delay the deploy until Stripe recovers").
-- ECS auto-scale events triggered by traffic spikes during a Stripe outage (Mythrun loses *capacity*, not just deploy capability — surviving healthy tasks keep running, but new tasks can't boot).
-- ECS task-replacement after a health-check failure (similar — running tasks unaffected; replacements stuck until Stripe recovers).
-- AZ-level failovers that force task redistribution.
+- ECS rolling deploys: deploy circuit breaker rolls back automatically — operator playbook: "delay the deploy until Stripe recovers."
+- ECS auto-scale events during a Stripe outage: Mythrun cannot add capacity. Surviving healthy tasks continue serving, but the cluster cannot grow.
+- ECS task-replacement after health-check failure: running tasks unaffected; replacements stuck until Stripe recovers.
+- AZ-level failovers: same — redistributed tasks fail to boot.
 
-This is the right tradeoff for Mythrun's launch scale (200–500 concurrent sessions; auto-scale events are rare). A future enhancement worth a follow-up bead: degraded-boot mode using a Redis-cached "last-successful-contract-digest." If Stripe is currently `BillingProbeTransientError`-ing AND the in-cluster Redis has a recent (≤ 1h) probe-success digest, the new task could boot in degraded mode (logging `billing.probe_degraded_boot`) and rely on the per-request `prices.list` resolver in MYT-42 to surface real mid-flight contract changes. The MYT-41 cut accepts the tradeoff and ships fail-loud.
+**This is a deliberate tradeoff.** Mythrun's launch scale (200–500 concurrent sessions) and rare auto-scale events make fail-loud the correct choice today. The alternative (degraded-boot mode using a Redis-cached "last-successful-contract-digest" — if Stripe is `BillingProbeTransientError`-ing AND the in-cluster Redis has a recent ≤ 1h probe-success digest, boot in degraded mode logging `billing.probe_degraded_boot`) is named as a near-future enhancement, not in MYT-41 scope.
+
+**Operator awareness is the load-bearing piece.** The fail-loud-on-Stripe-outage tradeoff is only safe if the operator notices when Stripe is degraded *before* an unrelated cause forces a task replacement. The follow-up bead `myth-billing-probe-alarm` (named below) is a **hard-blocking precondition** for any production traffic — it pages on `billing.probe_failed | billing.probe_auth_failed | billing.probe_transient_failed` so the operator hears about Stripe-degradation immediately, not via customer reports of failed scaling. The bead has owner=Miklos, target completion within 1 cycle of MYT-41 close, and is required before promoting Mythrun to production-launch readiness. **MYT-41 does not promote to production until that alarm is live.**
+
+**Operationally, the consequence:** if Stripe has a degraded-API incident during Mythrun's launch window, the playbook is (a) check CloudWatch for `billing.probe_failed`/`probe_transient_failed` events to confirm the cause, (b) hold deploys, (c) accept that auto-scale won't add capacity until Stripe recovers, (d) communicate with users if session-play surface degrades. Session play itself is not directly Stripe-dependent (atomic-debit reads from `credit_ledger`, not Stripe), so running tasks continue to serve game traffic during a Stripe outage — only billing-write paths and new-task boots are affected. This decouples session-play availability from Stripe availability for the running fleet.
+
+If during launch operations the cluster-capacity-loss tradeoff turns out to bite (auto-scale events coincide with Stripe outages too often), the degraded-boot mode is the prepared mitigation and can land as a hot patch within hours.
 
 **The probe runs on every boot, not on Stripe-side mutations.** If Miklos archives a price in Dashboard while the API is running, the probe doesn't re-run; in-flight requests using the same `lookup_key` will fail at `checkout.sessions.create` time when MYT-42's per-request resolver looks up the key (see §4 below). Adding a periodic re-probe is operationally useful but deferred — we'd want a CloudWatch metric on the re-probe outcome before a paging-able alarm makes sense.
 
@@ -262,17 +291,20 @@ The narrowing matters: the user's intent is "code can't *write the price*," not 
 
 **Restricted-key permission set:**
 
-| Resource | Access |
-|---|---|
-| Prices | Read |
-| Products | Read |
-| Customers | Write |
-| Checkout Sessions | Write |
-| Billing Portal Sessions | Write |
-| Subscriptions | Write |
-| Webhooks (signing secret) | Read |
-| Coupons | None |
-| Promotion Codes | None |
+| Resource | Access | Notes |
+|---|---|---|
+| Prices | Read | Probe + per-request resolver. |
+| Products | Read | Probe expand. |
+| Customers | Write | Create on first checkout; update metadata. |
+| Checkout Sessions | Write | Create checkout sessions. |
+| Billing Portal Sessions | Write | Create Portal sessions. |
+| Subscriptions | Write | Used **only** for admin-tools fraud cancellation (`stripe.subscriptions.cancel`); user-initiated tier switches go through Customer Portal exclusively (per §6 closing of the price-change backdoor). User-initiated cancels also go through Portal at launch; if an in-app cancel button ships later (post-launch UX decision), it would call `stripe.subscriptions.update({ cancel_at_period_end: true })` — covered by this permission. |
+| Webhook Endpoints (signing secret) | Read | MYT-42 reads at startup. |
+| Events | Read | Future bead: webhook-event replay on missed-event recovery. Not strictly needed for MYT-41 launch but cheap to enable now. |
+| Charges | Read | Future bead: refund-flow customer resolution traversal (`charge.payment_intent → customer.id`). |
+| Refunds | None at launch | Refund-issuance is operator-via-Dashboard at launch. Add `Write` later if app code initiates refunds. |
+| Coupons | None | Disabled at launch per non-goals; banned by ESLint rule. |
+| Promotion Codes | None | Same. |
 
 This permission set is enforceable in Stripe Dashboard → Developers → API keys → Create restricted key. The runbook (`tmp/myt-41-stripe-dashboard-instructions.md`) walks through it.
 
@@ -397,9 +429,33 @@ export const LOOKUP_KEYS = {
 } as const satisfies Record<LookupKey, LookupKeySpec>
 ```
 
+### `backend/src/config/env.ts` — add Stripe env fields
+
+The `Env` interface gains two fields and the loader reads + validates them. **Patch:**
+
+```typescript
+// In the Env interface:
+readonly stripeSecretKey: string         // restricted key prefix 'rk_' enforced
+readonly stripeWebhookSecret: string     // 'PLACEHOLDER' permitted until MYT-42 wires the handler
+
+// In loadEnv() / validators:
+const stripeSecretKey = readRequired('STRIPE_SECRET_KEY')
+if (!stripeSecretKey.startsWith('rk_')) {
+  throw new Error(
+    `STRIPE_SECRET_KEY must be a Stripe restricted key (rk_*); got prefix '${stripeSecretKey.slice(0, 3)}'. ` +
+    `Full-permission keys (sk_*) are forbidden in deployed environments per the MYT-41 design.`,
+  )
+}
+const stripeWebhookSecret = readRequired('STRIPE_WEBHOOK_SECRET') // 'PLACEHOLDER' is fine pre-MYT-42
+```
+
+The `rk_` prefix check is the env-loader-side enforcement of the restricted-key invariant from §1. A misrotation that puts an `sk_test_*` (full-permission) key in `STRIPE_SECRET_KEY` would otherwise pass the boot probe (probe only does reads, full-permission satisfies them) and silently degrade the §1 defense.
+
+`STRIPE_WEBHOOK_SECRET` is required-but-not-format-validated; the `'PLACEHOLDER'` literal is allowed during the MYT-41 → MYT-42 window. MYT-42's webhook handler receives the actual signing secret and must fail-closed on any signature mismatch (per §5a).
+
 ### `backend/src/billing/stripe-client.ts` — read-only wrapper
 
-A thin module that constructs a `Stripe` client from `STRIPE_SECRET_KEY` and exports a single instance. The wrapper does *not* expose mutation methods — consumers use `stripeClient.prices.list`, `stripeClient.prices.retrieve`, etc. directly off the underlying SDK. The ESLint rule prevents accidental misuse.
+A thin module that constructs a `Stripe` client from `env.stripeSecretKey` and exports a cached instance. The wrapper is a constructor cache, not a type-narrowing facade — every Stripe SDK method is reachable through it. The actual read-only enforcement layer is the **restricted API key** (§1) — the SDK rejects mutation attempts at the network level regardless of what code calls. The ESLint rule (§6) is a code-review tripwire on top.
 
 ```typescript
 // Module-level cached client. Tests that need to inject a different env
@@ -506,7 +562,8 @@ export async function probeStripeContract(
 
   logger.info({ event: 'billing.probe_started', bootId, count: lookupKeys.length }, 'Stripe billing probe started')
 
-  // Targeted query: ask Stripe for exactly the keys in the contract.
+  // Targeted query: ask Stripe for exactly the keys in the contract,
+  // expanding the product so we can verify product.active === true.
   // Avoids paginate-all-prices truncation hazard.
   const result = await fetchPricesWithRetry(stripe, lookupKeys, logger, bootId)
 
@@ -581,6 +638,32 @@ export async function probeStripeContract(
       )
     }
 
+    // transform_quantity === null (otherwise fractional charging is silent)
+    if (price.transform_quantity !== null) {
+      mismatches.push(
+        `lookup_key '${spec.lookupKey}' has non-null transform_quantity in Stripe; contract requires null (no quantity transformation)`,
+      )
+    }
+
+    // tax_behavior must be 'unspecified' or absent (Mythrun launches USD-only, no tax handling)
+    if (price.tax_behavior && price.tax_behavior !== 'unspecified') {
+      mismatches.push(
+        `lookup_key '${spec.lookupKey}' has tax_behavior '${price.tax_behavior}' in Stripe; contract expects 'unspecified' (no tax handling at launch)`,
+      )
+    }
+
+    // Expanded product must be active.
+    const product = price.product
+    if (typeof product === 'string' || product === null || !('active' in product)) {
+      mismatches.push(
+        `lookup_key '${spec.lookupKey}' has unexpanded or deleted product field; probe expected expand: ['data.product']`,
+      )
+    } else if (!product.active) {
+      mismatches.push(
+        `lookup_key '${spec.lookupKey}' resolves to a price whose product is archived (product.id='${product.id}'); checkout will fail at session-create. Reactivate the product in Dashboard or rotate the lookup_key onto a price under an active product.`,
+      )
+    }
+
     // Recurring-only checks
     if (spec.type === 'recurring') {
       if (price.recurring?.interval !== 'month') {
@@ -628,10 +711,17 @@ async function fetchPricesWithRetry(
         {
           lookup_keys: [...lookupKeys],
           active: true,
-          // limit is the response page size cap. Use lookupKeys.length × 2
-          // as defensive headroom for any pathological response-truncation
-          // (combined with has_more=true assertion in the caller).
-          limit: lookupKeys.length * 2,
+          // expand the product so we can verify product.active === true.
+          // (A price.active=true child of an archived product still
+          // returns from prices.list but fails at checkout.sessions.create.)
+          expand: ['data.product'],
+          // limit is the response page size cap. Use lookupKeys.length × 10
+          // (capped at Stripe's hard ceiling of 100) as headroom for
+          // duplicate-detection — a misconfigured Dashboard with multiple
+          // active prices per lookup_key needs to fit in one response, or
+          // the has_more=true assertion fires and we report the wrong
+          // failure class.
+          limit: Math.min(lookupKeys.length * 10, 100),
         },
         { timeout: PROBE_TIMEOUT_MS },
       )
@@ -834,18 +924,27 @@ The Billing spec at `docs/specs/2026-04-13-billing-cost-controls.md` needs three
 - §9 checkout body shape (line ~426): `{ type: 'subscription', tierId }` / `{ type: 'pack', packId }` — replace with `{ items: [{ lookup_key, quantity }] }`. The Checkout `mode` is server-derived from the items' types per the cart-shapes table.
 - §9 ALTER block (line ~459) — `ALTER TABLE users ADD COLUMN stripe_customer_id` is stale. The column already exists in migration 001. Replace with: *"`users.stripe_customer_id` is part of the initial schema. Populated lazily on first checkout via `customers.create` in MYT-42."*
 
-### `docs/specs/2026-04-13-backend-core.md` — Schema reference cleanup
+### `docs/specs/2026-04-13-backend-core.md` — Schema reference + repo namespace cleanup
 
-The Backend Core spec (the canonical schema reference per CLAUDE.md's read-in-dependency-order) carries CREATE TABLE blocks that migration 006 drops. Patch:
+The Backend Core spec (the canonical schema reference per CLAUDE.md's read-in-dependency-order) carries CREATE TABLE blocks AND `repo.*` namespace listings that migration 006 invalidates. Patch:
 
+**Schema blocks:**
 - Remove the `subscription_tiers` CREATE TABLE block (~line 559) and replace with a one-line pointer: *"Subscription tier metadata is in `backend/src/billing/lookup-keys.ts`; Stripe is the source of truth for prices."*
 - Remove the `session_packs` CREATE TABLE block (~line 586) and replace similarly: *"À-la-carte SKU metadata is in `backend/src/billing/lookup-keys.ts`."*
-- Update the `user_subscriptions` CREATE TABLE block (~line 572) — `tier_id TEXT NOT NULL REFERENCES subscription_tiers(id)` becomes `tier_lookup_key TEXT NOT NULL` (no FK). Note that MYT-42 ships migration 007 with this new shape.
-- Update the `purchases` CREATE TABLE block (parent line ~variable) — same pattern: drop the `session_pack_size INTEGER` column or any pack reference, store `lookup_key TEXT NOT NULL` instead.
+- Update the `user_subscriptions` CREATE TABLE block (~line 572) — `tier_id TEXT NOT NULL REFERENCES subscription_tiers(id)` becomes `tier_lookup_key TEXT NOT NULL` (no FK; the lookup-keys contract enforces the closed enum at write-time via MYT-42's webhook handler, which only writes from `LOOKUP_KEYS`). Note that MYT-42 ships migration 007 with this new shape.
+- Update the `purchases` CREATE TABLE block — same pattern: drop the `session_pack_size INTEGER` column or any pack reference, store `lookup_key TEXT NOT NULL` instead.
+
+**Repo namespace listings (~line 800–810) and `repo-deferred` table (~line 842):**
+- Remove `repo.subscriptionTiers` and `repo.sessionPacks` namespaces entirely — those tables don't exist post-migration-006, and lookup-keys.ts is the contract surface.
+- Update the `repo-deferred` table to drop `subscriptionTiers` and `sessionPacks` from the deferral list. `purchases` and `userSubscriptions` stay deferred to MYT-42 (re-shaped, not removed).
+- Run `bd list --label=repo-deferred` and verify no other bead references the dropped namespaces; close or rescope any matches.
 
 ### `docs/specs/2026-04-06-production-architecture-overview.md` (orphan-reference cleanup)
 
 - Line 768's `pack_5` reference → update to `sku_session` / `sku_world`.
+- Line ~380's `purchases` CREATE TABLE block carries stale `session_pack_size INTEGER NOT NULL` → drop the column reference or rewrite the block to point to backend-core's canonical schema.
+- Lines ~551, ~575–577, ~749, ~769 reference a `users.session_credits` column or a `free_trial_used = false` gate — both stale per MYT-40 (credits live in `credit_ledger`, balance is `SUM(amount)` filtered by `credit_type` and `expires_at`) and per MYT-41 (the trial is a `credit_ledger` row with `source_type='trial'`, not a column-flip gate). Sweep these references and replace with: "balance check is `SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='session' AND (expires_at IS NULL OR expires_at > now())`; trial credits are part of that balance, not a separate gate."
+- Line ~515 ER-diagram-style line `User ──has──> session_credits, purchases` — drop the `session_credits` half.
 
 ### `docs/specs/2026-04-10-ux-design.md` (orphan-reference cleanup)
 
@@ -954,6 +1053,10 @@ Allowed cases (no diagnostic):
 
 A separate test that runs `pnpm exec eslint <fixture>` against a fixture file containing a banned pattern (e.g., `backend/eslint-rules/__tests__/fixtures/banned.fixture.ts` with `stripe.prices.create({})`). Asserts the lint command exits non-zero. **This catches the failure mode "rule is shipped but not registered in `eslint.config.js`"** — `RuleTester` exercises the rule logic directly, but doesn't verify the rule is wired into the project. Without this smoke test, an ESLint flat-config refactor that drops the registration would silently pass CI.
 
+### Webhook route-absence test — `backend/src/__tests__/webhook-absence.test.ts`
+
+A small unit test that asserts `app.routes` (or equivalent Fastify v5 inspection) does NOT contain a route resolving `/webhooks/stripe`. Per §5a, the fail-closed-on-PLACEHOLDER security argument depends on the route being absent until MYT-42 lands the verifying handler. The test fails CI if any future PR registers the route prematurely. MYT-42 deletes this test as part of landing the real handler. Trivial; durable; closes the "manual app.routes check at MYT-41 close" gap.
+
 ### Schema parity test update — `backend/src/db/__tests__/migrate-schema.test.ts`
 
 The test pins `EXPECTED_TABLES`, `EXPECTED_IDX_NAMES`, `EXPECTED_CHECK_CONSTRAINTS`, and `EXPECTED_FK_DELETE_RULES`. Migration 006 changes affect ALL of these:
@@ -1038,7 +1141,7 @@ Open bead `myth-u7k` ("Repo: add billing namespaces — purchases, userSubscript
 - Spec patches: `docs/specs/2026-04-13-billing-cost-controls.md` §3 + §4 + §5 + §7 + §9 + §10; `docs/specs/2026-04-13-backend-core.md` schema-block cleanup; cross-spec orphan refs in `2026-04-06-production-architecture-overview.md` and `2026-04-10-ux-design.md`.
 - Hand-off: `tmp/myt-41-stripe-dashboard-instructions.md` for Miklos to execute (front-loaded: restricted-key creation + product/price creation + Customer Portal config happen BEFORE code lands).
 - Bead `myth-u7k` re-scoping (drop `subscriptionTiers`/`sessionPacks` namespaces; re-scope `purchases`/`userSubscriptions` to MYT-42).
-- Follow-up bead created at MYT-41 close: **`myth-billing-probe-alarm`** — add a CloudWatch metric filter + alarm on `billing.probe_failed | billing.probe_auth_failed | billing.probe_transient_failed | billing.probe_started`-without-corresponding-`probe_passed`, paged to the same destination as other prod alarms. Should land within one cycle of MYT-41 close — without it, contract drift surfaces only via customer-reported failures, defeating the boot-probe design intent.
+- **Hard-blocking precondition for production-launch readiness:** bead `myth-billing-probe-alarm` — CloudWatch metric filters + alarms on `billing.probe_failed`, `billing.probe_auth_failed`, `billing.probe_transient_failed`, all paged to the same destination as other prod alarms. Owner: Miklos. Target completion: within 1 cycle of MYT-41 close. **Mythrun does not promote to production-launch readiness until this alarm is live.** Per the §3 "Stripe-availability ceiling" analysis, the fail-loud-on-Stripe-outage tradeoff is only safe if the operator hears about Stripe degradation immediately. (Note on implementation: missing-`probe_passed`-after-`probe_started` is a sliding-window detection that requires Lambda or metric math; the simpler-and-sufficient version is the three failure-event alarms.)
 
 ## What MYT-41 does NOT ship
 
