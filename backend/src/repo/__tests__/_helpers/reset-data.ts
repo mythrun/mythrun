@@ -15,10 +15,6 @@ const TABLES = [
   // Identity / billing
   'users',
   'credit_ledger',
-  'purchases',
-  'user_subscriptions',
-  'subscription_tiers',
-  'session_packs',
   'stripe_events',
 
   // Worlds + entities

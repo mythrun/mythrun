@@ -29,12 +29,10 @@ const EXPECTED_TABLES = [
   'moderation_flags',
   'pipeline_runs',
   'prose_kernels',
-  'purchases',
   'random_table_entries',
   'random_tables',
   'relationships',
   'session_messages',
-  'session_packs',
   'session_participants',
   'session_preps',
   'session_usage',
@@ -46,8 +44,6 @@ const EXPECTED_TABLES = [
   'stat_block_actions',
   'stat_blocks',
   'stripe_events',
-  'subscription_tiers',
-  'user_subscriptions',
   'users',
   'world_marketplace',
   'world_snapshots',
@@ -68,7 +64,6 @@ const EXPECTED_IDX_NAMES = [
   'idx_pipeline_runs_campaign',
   'idx_pipeline_runs_unique',
   'idx_pipeline_runs_world',
-  'idx_purchases_user',
   'idx_random_tables_world',
   'idx_relationships_source',
   'idx_relationships_target',
@@ -76,7 +71,6 @@ const EXPECTED_IDX_NAMES = [
   'idx_session_preps_campaign',
   'idx_sessions_campaign',
   'idx_sessions_one_active',
-  'idx_user_subscriptions_user',
   'idx_world_snapshots_campaign',
 ] as const
 
@@ -99,10 +93,8 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   { table_name: 'moderation_flags', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'reviewed'::text, 'actioned'::text, 'dismissed'::text])))` },
   { table_name: 'moderation_flags', check_clause: `CHECK ((target_type = ANY (ARRAY['world'::text, 'session_message'::text, 'user'::text])))` },
   { table_name: 'pipeline_runs', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text])))` },
-  { table_name: 'purchases', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'failed'::text, 'refunded'::text])))` },
   { table_name: 'sessions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'ended'::text, 'crashed'::text])))` },
   { table_name: 'stat_block_actions', check_clause: `CHECK ((action_type = ANY (ARRAY['action'::text, 'reaction'::text, 'bonus_action'::text, 'legendary'::text])))` },
-  { table_name: 'user_subscriptions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text])))` },
   { table_name: 'worlds', check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))` },
   { table_name: 'worlds', check_clause: `CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))` },
 ]
@@ -138,7 +130,6 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   { table_name: 'pipeline_runs', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
   { table_name: 'pipeline_runs', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
   { table_name: 'prose_kernels', column_name: 'entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
-  { table_name: 'purchases', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
   { table_name: 'random_table_entries', column_name: 'table_id', foreign_table_name: 'random_tables', delete_rule: 'CASCADE' },
   { table_name: 'random_tables', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
   { table_name: 'relationships', column_name: 'source_entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
@@ -154,8 +145,6 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   { table_name: 'session_usage', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
   { table_name: 'sessions', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
   { table_name: 'stat_block_actions', column_name: 'stat_block_id', foreign_table_name: 'stat_blocks', delete_rule: 'CASCADE' },
-  { table_name: 'user_subscriptions', column_name: 'tier_id', foreign_table_name: 'subscription_tiers', delete_rule: 'NO ACTION' },
-  { table_name: 'user_subscriptions', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
   { table_name: 'world_marketplace', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
   { table_name: 'world_snapshots', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
   { table_name: 'worlds', column_name: 'created_by', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
@@ -204,6 +193,7 @@ describe('schema-parity (integration)', () => {
       '003_srd_reference_data.sql',
       '004_credit_ledger_invariants.sql',
       '005_drop_profile_columns_users.sql',
+      '006_drop_billing_config_tables.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -275,6 +265,15 @@ describe('schema-parity (integration)', () => {
     const userIndexNames = userIndexes.rows.map((r) => r.indexname)
     expect(userIndexNames).toContain('users_username_lower_key')
     expect(userIndexNames).not.toContain('users_username_key')
+
+    // Migration 006: legacy billing-config tables are gone.
+    const droppedTables = ['subscription_tiers', 'session_packs', 'user_subscriptions', 'purchases']
+    const tableExists = await pool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
+      [droppedTables],
+    )
+    expect(tableExists.rows).toEqual([])
 
     // Idempotency — second run is a no-op.
     const second = await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })

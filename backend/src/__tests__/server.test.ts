@@ -12,6 +12,7 @@ const mockRtbPing = vi.fn()
 const mockRtbQuit = vi.fn().mockResolvedValue('OK')
 const mockListen = vi.fn().mockResolvedValue(undefined)
 const mockCreateRedisClient = vi.fn()
+const mockProbe = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('../db/postgres.js', () => ({
   createPgPool: () => ({ query: mockPgQuery, end: mockPgEnd }) as unknown as Pool,
@@ -19,6 +20,17 @@ vi.mock('../db/postgres.js', () => ({
 vi.mock('../redis/client.js', () => ({
   createRedisClient: (url: string) => mockCreateRedisClient(url) as Redis,
 }))
+// MYT-41: stub the Stripe probe so server.test.ts stays unit-level. The
+// probe-itself happy path is covered in src/billing/__tests__/probe.test.ts.
+vi.mock('../billing/stripe-client.js', () => ({
+  getStripeClient: () => ({}) as unknown as import('stripe').default,
+}))
+vi.mock('../billing/probe.js', () => ({
+  probeStripeContract: async (): Promise<void> => {
+    await mockProbe()
+  },
+}))
+
 vi.mock('../app.js', async () => {
   const actual = await vi.importActual<typeof import('../app.js')>('../app.js')
   return {
@@ -56,6 +68,7 @@ describe('server boot gate', () => {
     mockRtbPing.mockReset()
     mockRtbQuit.mockReset().mockResolvedValue('OK')
     mockListen.mockReset().mockResolvedValue(undefined)
+    mockProbe.mockReset().mockResolvedValue(undefined)
     // Each call to createRedisClient returns a fresh ioredis-shaped object.
     // Order matters: server.ts calls realtime first, then batch.
     const fakeRtr = { ping: mockRtrPing, quit: mockRtrQuit } as unknown as Redis
