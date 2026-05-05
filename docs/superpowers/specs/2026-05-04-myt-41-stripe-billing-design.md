@@ -47,7 +47,7 @@ Stripe Checkout's `mode` field gates which line-item compositions are allowed. T
 
 ### Webhook credit-grant contract for MYT-42
 
-The webhook handler (lands in MYT-42, but the contract is fixed here so MYT-42 has no ambiguity) **iterates `data.object.line_items` and grants credits per-line-item via `lookup_key`**, not via the single-SKU `metadata.packId` shape the parent spec §4 step 3 assumes. For each line item:
+The webhook handler (lands in MYT-42, but the contract is fixed here) **iterates `data.object.line_items` and grants credits per-line-item via `lookup_key`**, not via the single-SKU `metadata.packId` shape parent spec §4 step 3 assumes. For each line item:
 
 ```
 lookup_key = line_item.price.lookup_key   (resolved via expand at session-retrieve time)
@@ -57,9 +57,60 @@ sessions   = spec.sessionsGranted * quantity
 worlds     = spec.worldsGranted   * quantity
 ```
 
-The grant inserts up to two `credit_ledger` rows per line item — one with `credit_type = 'session'` if `sessions > 0`, one with `credit_type = 'world_gen'` if `worlds > 0`. Both rows share the same `source_id` (the Stripe `checkout.session.id` plus the line-item index, encoded as a deterministic string so retries are idempotent). This is consistent with migration 004's `uniq_credit_ledger_debit_idempotency` partial unique index, which only constrains debits — grants can share `source_id` across `credit_type`s.
+The grant inserts up to two `credit_ledger` rows per line item — one with `credit_type = 'session'` if `sessions > 0`, one with `credit_type = 'world_gen'` if `worlds > 0`.
 
-**`metadata.userId` is still required on the Checkout session** so the webhook can resolve `userId` without a prior `customers` lookup; the parent spec §4 step 3's `metadata.packId` is replaced with the per-line-item walk above.
+**Idempotency mechanism: `stripe_events` table, not `source_id`.** Per parent spec §5, the webhook handler is gated by inserting `event.id` into the `stripe_events` table (event_id PK, ON CONFLICT DO NOTHING). The handler MUST run the entire credit-grant in a single Postgres transaction with the `stripe_events` insert as the first statement. ON CONFLICT means a retry sees the row already exists, the transaction commits with no further work, and credit grants are not re-applied. Migration 004's `uniq_credit_ledger_debit_idempotency` partial unique index does NOT constrain grants — `stripe_events` is the grant-side idempotency.
+
+**The transaction shape:**
+
+```sql
+BEGIN;
+SET LOCAL transaction_isolation = 'read committed';
+INSERT INTO stripe_events (event_id, event_type)
+  VALUES ($eventId, $eventType)
+  ON CONFLICT (event_id) DO NOTHING
+  RETURNING event_id;
+-- if no row returned, the event was already processed; COMMIT and exit.
+-- otherwise, run all credit_ledger inserts for this event below.
+INSERT INTO credit_ledger (...);  -- one per (line_item, credit_type) where >0
+COMMIT;
+```
+
+A handler crash mid-loop produces a ROLLBACK; the retry re-runs the whole loop atomically. Without the transaction, partial grants are possible.
+
+**`source_id` shape on grant rows:** `credit_ledger.source_id` is `UUID` (per migration 001 line 30). For grant rows, set `source_id = uuidv7()` — a fresh UUIDv7 per row, derived nowhere from Stripe identifiers. The Stripe `event_id` and `checkout.session.id` are stored in a sibling structured field (the parent spec's `purchases` table on its MYT-42 reshape, OR a `stripe_event_id` column on `credit_ledger` if MYT-42 prefers; the choice is MYT-42's). What matters here: don't try to encode Stripe IDs into the UUID column; the `stripe_events` PK provides cross-event idempotency without it.
+
+**`metadata.userId` is still required on the Checkout session** so the webhook resolves `userId` without a prior `customers` lookup; the parent spec §4 step 3's `metadata.packId` is replaced with the per-line-item walk above. The webhook handler MUST verify `metadata.userId` resolves to a real `users` row before granting (don't insert against a fabricated user; FK violation aborts the transaction silently from Stripe's view, triggering retries).
+
+### Stripe price-shape verification (boot probe scope)
+
+The boot probe (per §3) verifies the contract-shape dimensions where Dashboard misconfiguration would silently produce wrong charges:
+
+| Dimension | Tier | À-la-carte | Reason |
+|---|---|---|---|
+| `lookup_key` resolves to exactly one active price | yes | yes | Mismatch / typo. |
+| `currency === 'usd'` | yes | yes | EUR-by-accident charges wrong amount. |
+| `recurring.interval === 'month'` | yes | n/a | Annual-by-accident charges 12× expected interval. |
+| `recurring.interval_count === 1` | yes | n/a | Quarterly (`interval='month', interval_count=3`) silently passes interval check; bills every 3 months while granting monthly. |
+| `recurring.usage_type === 'licensed'` | yes | n/a | Metered changes which webhook events fire (`invoice.created` line items vs flat `invoice.paid`); breaks credit-grant assumption. |
+| `billing_scheme === 'per_unit'` | yes | yes | Tiered changes how `amount_total` is computed and breaks downstream amount validation. |
+| `unit_amount > 0` | yes | yes | $0 price produces free paid-tier subscriptions. |
+| Type matches contract (`recurring` ↔ tier, no `recurring` ↔ SKU) | yes | yes | Kind mismatch. |
+| No duplicate active lookup_keys | yes | yes | Silent-overwrite would let an attacker swap pricing. |
+
+**Not verified (out of scope):** `unit_amount` exact value (Miklos-owned via Dashboard), product name, `tax_behavior` (revisit when international billing matters).
+
+### Replacing parent spec §5.5's `amount_total` validation
+
+Parent §5.5 said the webhook handler verifies `amount_total` matches the expected price stored in `subscription_tiers` / `session_packs`. MYT-41 drops those tables; `lookup-keys.ts` deliberately excludes prices. **The webhook handler validates `amount_total` against Stripe itself, not against a checked-in source.** Specifically:
+
+- Webhook receives `event.data.object` with `amount_total` and the line-item array.
+- Webhook fetches each line item's `unit_amount` from `event.data.object.line_items[].price.unit_amount` (Stripe expands this when retrieving the Checkout session with `expand: ['line_items.data.price']`).
+- Webhook computes `expected_total = sum(unit_amount * quantity)` and asserts `expected_total === amount_total`.
+
+**TOCTOU window:** if a Dashboard mutation lands between Checkout creation and webhook arrival, the `unit_amount` Stripe reports on the webhook event matches what was actually charged (Stripe captures the price snapshot at session creation time). So `amount_total === sum(unit_amount × qty)` is always true under normal Stripe behavior — the validation is a defense against (a) Stripe API bugs, (b) mid-flight tampering by an attacker who can write to Stripe (which the restricted key blocks). It is NOT a defense against the operator changing the price between yesterday and today; that is policy, not correctness.
+
+The boot probe (catalog-shape) and the webhook validation (per-charge sum) together cover §5.5's price-manipulation prevention intent. The `lookup-keys.ts` contract isn't part of the price-validation chain; it's the credit-grant contract.
 
 ## Design decisions
 
@@ -102,18 +153,36 @@ ESLint is a code-review tripwire — pattern-matching on `MemberExpression` chai
 **What the probe verifies (per lookup_key in the contract):**
 
 1. The key resolves to exactly one active price. Zero matches → "not found." Two or more → "duplicate-active-key conflict; archive one in Dashboard or rotate the lookup_key." Both are `BillingProbeError`s; multi-match is a *fail-loud* failure mode, not silently-pick-one.
-2. The price's `currency === 'usd'`.
-3. The price's type matches the contract: `tier_*` → `recurring`, `sku_*` → one-time (`price.recurring === null`).
-4. For `tier_*`: `price.recurring.interval === 'month'`.
+2. The price's type matches the contract: `tier_*` → `recurring`, `sku_*` → one-time (`price.recurring === null`).
+3. `currency === 'usd'`.
+4. `unit_amount > 0` ($0 price would produce free paid-tier subscriptions).
+5. `billing_scheme === 'per_unit'` (tiered breaks `amount_total` math).
+6. For `tier_*`: `recurring.interval === 'month'`.
+7. For `tier_*`: `recurring.interval_count === 1` (quarterly tier — `interval='month', interval_count=3` — would otherwise silently pass).
+8. For `tier_*`: `recurring.usage_type === 'licensed'` (metered changes which webhook events fire).
 
-**What the probe does NOT verify:** the dollar amount and the product name. Those are operationally meaningful but Miklos-owned via the Dashboard; the probe's job is contract-shape, not pricing-policy.
+**What the probe does NOT verify:** the exact dollar amount, the product name, `tax_behavior`. Those are Miklos-owned via the Dashboard; the probe's job is contract-shape, not pricing-policy.
+
+**Stripe API errors are not all transient.** The probe distinguishes:
+
+- `Stripe.errors.StripeAuthenticationError` (401, bad API key) → fail fast as `BillingProbeAuthError`. No retry. The fix is to rotate the secret; retrying won't help.
+- `Stripe.errors.StripePermissionError` (403, restricted-key missing `Prices: read`) → fail fast as `BillingProbeAuthError`. Same reason.
+- `Stripe.errors.StripeAPIError` / `StripeConnectionError` / network timeout → transient, retry up to 3× with backoff (per below).
+- Contract mismatch (lookup_key missing, wrong type, etc.) → fail loud as `BillingProbeError`. No retry.
 
 **Transient-error handling.** Stripe API has occasional 5xx and timeouts. The probe distinguishes:
 
 - **Contract mismatch** (lookup_key missing, wrong type, wrong currency, etc.) → boot fails loud with `BillingProbeError`. No retry — this is an operator fix.
 - **Transient Stripe API error** (network error, timeout, 5xx) → retry up to 3 times with exponential backoff (1s, 2s, 4s) plus 0–1s jitter (mirrors MYT-37's JWKS hydrate pattern). If all retries fail, boot fails loud with `BillingProbeTransientError` (distinct error class). The operator response differs: contract mismatch = fix Dashboard, transient = check Stripe status page, redeploy.
 
-**The deliberate availability tradeoff:** if Stripe's API is fully unavailable for >7 seconds during a Mythrun container start, that container fails to boot. ECS rolling deploys during Stripe outages would take Mythrun down. This is the right tradeoff for Mythrun's scale (revenue-per-incident is small relative to the cost of silently shipping a broken-billing build). It is documented here so the operator playbook for "Stripe is degraded" includes "delay the deploy."
+**The deliberate availability tradeoff:** the probe's worst-case fail-loud window is approximately 31 seconds (3 attempts × 7s timeout + 1+2+4s backoff + jitter). If Stripe's API stays unavailable for that full window during a Mythrun container start, the container fails to boot. This affects:
+
+- ECS rolling deploys (deploy circuit breaker rolls back automatically — operator playbook: "delay the deploy until Stripe recovers").
+- ECS auto-scale events triggered by traffic spikes during a Stripe outage (Mythrun loses *capacity*, not just deploy capability — surviving healthy tasks keep running, but new tasks can't boot).
+- ECS task-replacement after a health-check failure (similar — running tasks unaffected; replacements stuck until Stripe recovers).
+- AZ-level failovers that force task redistribution.
+
+This is the right tradeoff for Mythrun's launch scale (200–500 concurrent sessions; auto-scale events are rare). A future enhancement worth a follow-up bead: degraded-boot mode using a Redis-cached "last-successful-contract-digest." If Stripe is currently `BillingProbeTransientError`-ing AND the in-cluster Redis has a recent (≤ 1h) probe-success digest, the new task could boot in degraded mode (logging `billing.probe_degraded_boot`) and rely on the per-request `prices.list` resolver in MYT-42 to surface real mid-flight contract changes. The MYT-41 cut accepts the tradeoff and ships fail-loud.
 
 **The probe runs on every boot, not on Stripe-side mutations.** If Miklos archives a price in Dashboard while the API is running, the probe doesn't re-run; in-flight requests using the same `lookup_key` will fail at `checkout.sessions.create` time when MYT-42's per-request resolver looks up the key (see §4 below). Adding a periodic re-probe is operationally useful but deferred — we'd want a CloudWatch metric on the re-probe outcome before a paging-able alarm makes sense.
 
@@ -123,11 +192,19 @@ ESLint is a code-review tripwire — pattern-matching on `MemberExpression` chai
 
 **Why:** The boot probe is a fail-fast contract verification, not a price-binding cache. If we cached price IDs from boot, a Stripe Dashboard mutation (archive + recreate) during the running container's lifetime would silently use a stale ID; users would hit "no such price" 500s. Per-request resolution makes the system tolerant to mid-flight Dashboard changes — at the cost of one extra Stripe API call per checkout, which is negligible.
 
-**Caching guidance for non-checkout reads** (e.g., a `/api/billing/tiers` endpoint that displays tier prices on a marketing page): in-process LRU cache, 60-second TTL, fall-back-to-last-known on Stripe 5xx. Spec'd in MYT-42; flagged here so the implementer doesn't reach for `prices.retrieve` on every render.
+**Stripe 5xx behavior at checkout time:** the per-request resolver gets a tight timeout (≤ 3s) and **NO retry, NO cache fallback**. On Stripe 5xx or timeout, the checkout endpoint returns `503 {code: 'billing_temporarily_unavailable'}` with `Retry-After: 30`. The user retries; staging/prod Stripe outages affect checkout availability but not running session play.
+
+**No fallback to boot-cached map.** Even though the boot probe verified prices, the Checkout endpoint never reaches into the probe's resolution map. The boot probe is a fail-fast verification at startup; the per-request resolver is the contract for live operation.
+
+**Caching guidance for non-checkout reads** (e.g., a `GET /api/billing/skus` endpoint that displays tier prices on a marketing page): in-process LRU cache, 60-second TTL, fall-back-to-last-known on Stripe 5xx. The marketing page's data freshness has a different SLA than checkout — stale-but-up is the right tradeoff. Spec'd in MYT-42; flagged here so the implementer doesn't reach for `prices.retrieve` on every render.
 
 ### 5. The trial is account-state, not a Stripe SKU.
 
-**Decision:** First-time users get one trial session granted automatically at account creation, with no card collected and no Stripe interaction. Tracked as a row in `credit_ledger` with `credit_type = 'session'`, `amount = 1`, `source_type = 'trial'`, `source_id = NULL`, `expires_at = NULL`. The grant + the `users.free_trial_used = true` flip happen in a single transaction so a partial failure can't double-grant.
+**Decision:** First-time users get one trial session credit granted **at account registration**, with no card collected and no Stripe interaction. Tracked as a row in `credit_ledger` with `credit_type = 'session'`, `amount = 1`, `source_type = 'trial'`, `source_id = NULL`, `expires_at = NULL`. The grant + the `users.free_trial_used = true` flip happen in a single transaction so a partial failure can't double-grant.
+
+This corrects the parent §7 ambiguity: parent §7 implementation steps imply the flag flips at session-start; that prose is now wrong. The §"Spec patches" section below patches parent §7 to match this design (grant at registration, not at session-start). MYT-43 implements the registration flow against this row shape.
+
+All four migration 004 CHECK constraints + the partial unique idempotency index are non-firing for this row shape — `(source_type='debit') = (amount<0)` becomes `false=false`; `source_id IS NULL` is allowed for non-debits; `expires_at IS NULL` is allowed for non-debits; `source_type` is in the enumerated allowlist. Cross-spec compatible.
 
 **Why account state, not a Stripe SKU:** Trials have a different fraud profile than purchases (collusion risk if a single user can spawn unlimited trial sessions). Putting it in account state lets us add account-level abuse signals later. **Per-Cognito-sub uniqueness alone does not prevent multi-account trial farming** (free Google sign-up = free trial); MYT-43 owns the decision on additional friction (CAPTCHA, payment-method fingerprint, IP/device heuristics) or the deliberate accepted-loss posture.
 
@@ -148,19 +225,30 @@ This invariant is documented here so MYT-42's implementer doesn't reach for the 
 **Banned (rule fires):**
 
 - `stripe.products.create|update|del`
-- `stripe.prices.create|update` (Stripe doesn't expose `prices.del`; archival is `update({ active: false })`, also banned)
+- `stripe.prices.create|update` — both arg shapes including the archival idiom `update(id, { active: false })`. Archival is a Dashboard task; the runtime never archives prices.
 - `stripe.coupons.create|update|del` (disabled at launch; pre-emptive ban so re-enabling is a deliberate spec change)
 - `stripe.promotionCodes.create|update` (same reason)
+- **`stripe.subscriptions.update` calls passing a literal `price_*` argument in `items[].price`** — closes the subscription-item-mutation backdoor (see below).
 
 **Explicitly allowed (rule does NOT fire):**
 
 - `stripe.checkout.sessions.create` — creates a hosted-checkout session
 - `stripe.billingPortal.sessions.create` — creates a Portal session
 - `stripe.webhooks.constructEvent` — verifies webhooks
-- `stripe.subscriptions.update` — needed for in-app cancel (`{ cancel_at_period_end: true }`), pause, metadata edits
+- `stripe.subscriptions.update` for non-pricing fields — `cancel_at_period_end`, `metadata`, `pause_collection`. Banned only for `items[].price` mutations (see custom rule below).
 - `stripe.subscriptions.cancel` / `stripe.subscriptions.del` — needed for admin-tools fraud cancellation
 - `stripe.customers.create|retrieve|update` — managing the customer record on our side
 - All read methods: `prices.list`, `prices.retrieve`, `products.retrieve`, `subscriptions.retrieve`, etc.
+
+### Closing the `subscriptions.update` price-change backdoor
+
+`stripe.subscriptions.update(id, { items: [{ id: si_x, price: 'price_NEW' }] })` is technically a `Subscriptions: write` operation that the restricted key permits, but it changes the effective billing price for the customer's next renewal — the same outcome the price-mutation defenses are supposed to prevent. The defense layers, in order:
+
+1. **Mythrun's tier-switching flow goes through Stripe Customer Portal exclusively** (not via app code). The Portal's "Switch plan" feature is allowlisted (per the §5.4 patch) to the three configured tiers (Wayfarer/Sojourner/Mythwright). App code does NOT call `subscriptions.update({ items: [...] })` to change tiers under any circumstance.
+2. **Custom ESLint rule** (`no-stripe-subscription-price-mutation`) flags any `stripe.subscriptions.update` call whose object literal includes `items: [...]` containing a `price` field — regardless of whether the price value is a literal `price_*` string, a lookup_key resolution, or any other expression. The rule is conservative: any subscription-item price-mutation pattern fires the diagnostic and requires explicit `// eslint-disable-next-line` review.
+3. **Runtime guard in the Stripe-client wrapper** (out of MYT-41 scope, owned by MYT-42's checkout/portal helper layer): a typed wrapper that disallows passing `items: [{ price }]` to `stripe.subscriptions.update`. Implementation deferred to MYT-42.
+
+The defense is "tier-switching is Portal-only, never app-code-initiated" with lint + (future) typed-wrapper as tripwires. This narrows the Lyra I3 attack surface to "an attacker with access to the Stripe API key calls subscriptions.update directly" — at which point they already have the restricted key and the only remaining defense is rotation + Stripe's own logging. Acceptable.
 
 The narrowing matters: the user's intent is "code can't *write the price*," not "code can't touch any Stripe object." Banning `subscriptions.update|cancel` would block legitimate cancel-from-our-UI flows and admin escape hatches.
 
@@ -188,7 +276,13 @@ The narrowing matters: the user's intent is "code can't *write the price*," not 
 
 This permission set is enforceable in Stripe Dashboard → Developers → API keys → Create restricted key. The runbook (`tmp/myt-41-stripe-dashboard-instructions.md`) walks through it.
 
-**Rotation procedure:** rotate the restricted key every 6 months, immediately on suspected compromise, or when the permission set needs to change. Procedure: (1) create a new restricted key in Stripe Dashboard, (2) update the Secrets Manager entry, (3) trigger an ECS rolling deploy, (4) the boot probe re-runs against the new key on each new task — green = rotation complete, red = rollback the secret. The rotation has the same operability profile as any other secret rotation.
+**Rotation procedure:**
+
+For MYT-41 (no Stripe-using runtime code): rotate by (1) create a new restricted key in Stripe Dashboard, (2) update the Secrets Manager entry, (3) trigger an ECS rolling deploy via `gh workflow run Deploy` (ECS does NOT auto-restart on Secrets Manager changes — the rolling deploy is what re-reads the secret). (4) The boot probe re-runs against the new key on each new task; green = rotation complete; red = rollback the secret value.
+
+For post-MYT-42 (Stripe-using runtime code): the same sequence with one critical change — **do NOT revoke the old key until the new-key deploy is fully rolled out.** Stripe Dashboard's "Roll" rotation supports keeping multiple restricted keys live concurrently. Use that. Sequence: (1) create new restricted key, (2) update Secrets Manager, (3) deploy, (4) verify all running tasks are on the new key (CloudWatch: every running task has emitted at least one `billing.probe_passed` since the secret update), (5) revoke the old key in Stripe Dashboard. If you revoke before step 4, in-flight Stripe API calls in old-key tasks start 401-ing.
+
+**Rotation cadence enforcement:** "every 6 months" is a guideline, not an automated check. The cheapest enforcement is a recurring Linear issue (Linear supports cycle-based recurring issues) titled "MYT-ops: rotate STRIPE_SECRET_KEY restricted key in test + prod" — set up at MYT-41 close. Stripe also sends sunset emails for API versions ~12 months in advance; the email destination should be monitored.
 
 **MYT-31 status:** populated test-mode `STRIPE_SECRET_KEY` for staging with a *full-permission* key (the restricted-key concept didn't exist in MYT-41's design when MYT-31 ran). **This MYT-41 close replaces it with a restricted key**; the runbook step is "rotate the existing secret to the restricted key."
 
@@ -217,7 +311,9 @@ These contracts are fixed by MYT-41 so MYT-42's implementer has no ambiguity. Th
 - `stripe.webhooks.constructEvent(rawBody, signatureHeader, env.stripeWebhookSecret)` is the trust boundary; signature mismatch returns 400 immediately. **No bypass branch on `secret === 'PLACEHOLDER'`** (per §5a).
 - The handler iterates `event.data.object.line_items` for credit grants per §"Webhook credit-grant contract for MYT-42" above, never `metadata.packId`.
 
-**`users.stripe_customer_id` ALTER lands in MYT-42, not MYT-41.** The column is defined in the parent specs but does not exist in any current migration. MYT-41 ships migration 006 (drops billing config tables); MYT-42 ships migration 007 (adds `users.stripe_customer_id TEXT UNIQUE NULL`). MYT-41 is silent on this column; the boot probe and lookup-keys contract do not depend on it.
+**`users.stripe_customer_id` already exists.** Migration 001 creates it (`stripe_customer_id TEXT UNIQUE`), and migrations 002–005 leave it intact. MYT-42 reuses the column — no ALTER needed. MYT-41 is silent on this column; the boot probe and lookup-keys contract do not depend on it. The column is `NULL` until a user's first checkout populates it via `customers.create` in MYT-42.
+
+**Webhook route absence during the MYT-41 → MYT-42 window.** Until MYT-42 lands, no `/webhooks/stripe` route exists in the Fastify app — the §5a "fail closed on `'PLACEHOLDER'`" argument depends on the verifying handler being the only code path that consumes the secret. Until that handler exists, the route MUST NOT be registered (no smoke-test handler, no body-logger, no permissive catch-all). MYT-41 closes by confirming via `app.routes` that no route resolves `/webhooks/stripe`; MYT-42 lands the route + the rotated secret atomically. Stripe Dashboard webhook endpoint is also NOT created until MYT-42 — otherwise Stripe queues real events into 404s during the window.
 
 ## Architecture
 
@@ -342,15 +438,17 @@ export function getStripeClient(env: Env): Stripe {
 // Runs once per boot, after loadEnv() succeeds and before app.listen().
 //
 // Verifies every lookup_key in LOOKUP_KEYS resolves to exactly one active
-// Stripe price with the right type, currency, and (for recurring) billing
-// interval. Distinguishes contract-mismatch failures (operator fixes
-// Dashboard) from transient Stripe API errors (retry with backoff, then
-// boot fails until Stripe recovers).
+// Stripe price with the right type, currency, billing-shape dimensions,
+// and (for recurring) interval + interval_count + usage_type. Distinguishes
+// auth errors (fail fast — fix the secret), contract mismatches (fail
+// loud — fix Dashboard), and transient Stripe-API errors (retry with
+// backoff).
 //
 // Read-only: only stripe.prices.list. Restricted API key in production
 // rejects any mutation regardless.
 
-import type Stripe from 'stripe'
+import { randomUUID } from 'node:crypto'
+import Stripe from 'stripe'
 import type { Logger } from 'pino'
 import { LOOKUP_KEYS, type LookupKey } from './lookup-keys.js'
 
@@ -359,18 +457,42 @@ const PROBE_MAX_ATTEMPTS = 3
 const PROBE_BACKOFF_MS = [1000, 2000, 4000]
 const PROBE_JITTER_MS = 1000
 
+// Static guardrail: lookup_keys filter has a Stripe-API hard ceiling at 100.
+// If LOOKUP_KEYS ever grows past this, the probe needs pagination.
+if (Object.keys(LOOKUP_KEYS).length > 100) {
+  throw new Error(
+    'BillingProbe: LOOKUP_KEYS exceeds 100 entries; Stripe prices.list lookup_keys filter caps at 100 — redesign required.',
+  )
+}
+
 export class BillingProbeError extends Error {
   readonly code = 'BILLING_PROBE_FAILED'
-  constructor(readonly mismatches: ReadonlyArray<string>) {
-    super(`Stripe billing probe failed (contract mismatch):\n  ${mismatches.join('\n  ')}`)
+  constructor(readonly mismatches: ReadonlyArray<string>, readonly bootId: string) {
+    super(`Stripe billing probe failed (contract mismatch) [boot=${bootId}]:\n  ${mismatches.join('\n  ')}`)
     this.name = 'BillingProbeError'
+  }
+}
+
+export class BillingProbeAuthError extends Error {
+  readonly code = 'BILLING_PROBE_AUTH'
+  constructor(readonly cause: unknown, readonly bootId: string) {
+    super(`Stripe billing probe failed at authentication [boot=${bootId}]: ${String(cause)} — rotate STRIPE_SECRET_KEY`)
+    this.name = 'BillingProbeAuthError'
+  }
+}
+
+export class BillingProbeStripeAPIChangeError extends Error {
+  readonly code = 'BILLING_PROBE_API_CHANGE'
+  constructor(readonly bootId: string) {
+    super(`Stripe billing probe got has_more=true on a lookup_keys-bounded query [boot=${bootId}]; Stripe API contract changed.`)
+    this.name = 'BillingProbeStripeAPIChangeError'
   }
 }
 
 export class BillingProbeTransientError extends Error {
   readonly code = 'BILLING_PROBE_TRANSIENT'
-  constructor(readonly cause: unknown, readonly attempts: number) {
-    super(`Stripe billing probe failed transiently after ${String(attempts)} attempts: ${String(cause)}`)
+  constructor(readonly cause: unknown, readonly attempts: number, readonly bootId: string) {
+    super(`Stripe billing probe failed transiently after ${String(attempts)} attempts [boot=${bootId}]: ${String(cause)}`)
     this.name = 'BillingProbeTransientError'
   }
 }
@@ -379,17 +501,26 @@ export async function probeStripeContract(
   stripe: Stripe,
   logger: Logger,
 ): Promise<void> {
+  const bootId = randomUUID()
   const lookupKeys = Object.keys(LOOKUP_KEYS) as LookupKey[]
 
+  logger.info({ event: 'billing.probe_started', bootId, count: lookupKeys.length }, 'Stripe billing probe started')
+
   // Targeted query: ask Stripe for exactly the keys in the contract.
-  // Returns at most one active price per lookup_key (or zero if missing).
-  // Avoids paginate-all-prices truncation hazard at >100 active prices.
-  const fetched = await fetchPricesWithRetry(stripe, lookupKeys, logger)
+  // Avoids paginate-all-prices truncation hazard.
+  const result = await fetchPricesWithRetry(stripe, lookupKeys, logger, bootId)
+
+  // Defensive: a lookup_keys-bounded query should NEVER return has_more=true.
+  // If Stripe ever changes that, treat as a contract-shape change, not a
+  // probe-pass-with-truncated-data.
+  if (result.has_more) {
+    throw new BillingProbeStripeAPIChangeError(bootId)
+  }
 
   const mismatches: string[] = []
+  const fetched = result.data
 
-  // Detect duplicate active lookup_keys (operationally rare but possible
-  // via API; a fail-loud failure mode, not silent last-wins).
+  // Duplicate detection — fail loud, not silent last-wins.
   const counts = new Map<string, number>()
   for (const p of fetched) {
     if (p.lookup_key) counts.set(p.lookup_key, (counts.get(p.lookup_key) ?? 0) + 1)
@@ -402,9 +533,7 @@ export async function probeStripeContract(
     }
   }
 
-  // Build a map only AFTER duplicate-detection so we don't silently
-  // overwrite. Skip duplicates from the per-key checks below; they're
-  // already a mismatch.
+  // Build a map only after duplicate-detection.
   const byLookup = new Map<string, Stripe.Price>()
   for (const p of fetched) {
     if (p.lookup_key && (counts.get(p.lookup_key) ?? 0) === 1) {
@@ -415,40 +544,73 @@ export async function probeStripeContract(
   for (const key of lookupKeys) {
     const spec = LOOKUP_KEYS[key]
     if ((counts.get(spec.lookupKey) ?? 0) > 1) continue // already flagged
+
     const price = byLookup.get(spec.lookupKey)
     if (!price) {
       mismatches.push(`lookup_key '${spec.lookupKey}' not found in active Stripe prices`)
       continue
     }
+
+    // Currency
     if (price.currency !== 'usd') {
       mismatches.push(
         `lookup_key '${spec.lookupKey}' has currency '${price.currency}' in Stripe; contract expects 'usd'`,
       )
     }
+
+    // Type (recurring vs one-time)
     const stripeType: 'recurring' | 'one_time' = price.recurring ? 'recurring' : 'one_time'
     if (stripeType !== spec.type) {
       mismatches.push(
         `lookup_key '${spec.lookupKey}' has type '${stripeType}' in Stripe but contract expects '${spec.type}'`,
       )
-      continue
+      continue // remaining shape checks depend on the type
     }
-    if (spec.type === 'recurring' && price.recurring?.interval !== 'month') {
+
+    // unit_amount > 0 (no $0 paid-tiers)
+    if (typeof price.unit_amount !== 'number' || price.unit_amount <= 0) {
       mismatches.push(
-        `lookup_key '${spec.lookupKey}' has recurring.interval '${String(price.recurring?.interval)}' in Stripe; contract expects 'month'`,
+        `lookup_key '${spec.lookupKey}' has unit_amount '${String(price.unit_amount)}' in Stripe; contract expects > 0`,
       )
+    }
+
+    // billing_scheme === 'per_unit' (tiered breaks amount_total math)
+    if (price.billing_scheme !== 'per_unit') {
+      mismatches.push(
+        `lookup_key '${spec.lookupKey}' has billing_scheme '${price.billing_scheme}' in Stripe; contract expects 'per_unit'`,
+      )
+    }
+
+    // Recurring-only checks
+    if (spec.type === 'recurring') {
+      if (price.recurring?.interval !== 'month') {
+        mismatches.push(
+          `lookup_key '${spec.lookupKey}' has recurring.interval '${String(price.recurring?.interval)}' in Stripe; contract expects 'month'`,
+        )
+      }
+      if (price.recurring?.interval_count !== 1) {
+        mismatches.push(
+          `lookup_key '${spec.lookupKey}' has recurring.interval_count '${String(price.recurring?.interval_count)}' in Stripe; contract expects 1 (monthly, not multi-month)`,
+        )
+      }
+      if (price.recurring?.usage_type !== 'licensed') {
+        mismatches.push(
+          `lookup_key '${spec.lookupKey}' has recurring.usage_type '${String(price.recurring?.usage_type)}' in Stripe; contract expects 'licensed'`,
+        )
+      }
     }
   }
 
   if (mismatches.length > 0) {
     logger.error(
-      { event: 'billing.probe_failed', mismatchCount: mismatches.length, mismatches },
+      { event: 'billing.probe_failed', bootId, mismatchCount: mismatches.length, mismatches },
       'Stripe billing contract mismatch',
     )
-    throw new BillingProbeError(mismatches)
+    throw new BillingProbeError(mismatches, bootId)
   }
 
   logger.info(
-    { event: 'billing.probe_passed', count: lookupKeys.length },
+    { event: 'billing.probe_passed', bootId, count: lookupKeys.length },
     'Stripe billing contract verified',
   )
 }
@@ -457,20 +619,35 @@ async function fetchPricesWithRetry(
   stripe: Stripe,
   lookupKeys: ReadonlyArray<LookupKey>,
   logger: Logger,
-): Promise<Stripe.Price[]> {
+  bootId: string,
+): Promise<Stripe.ApiList<Stripe.Price>> {
   let lastErr: unknown
   for (let attempt = 1; attempt <= PROBE_MAX_ATTEMPTS; attempt++) {
     try {
-      const res = await stripe.prices.list(
+      return await stripe.prices.list(
         {
           lookup_keys: [...lookupKeys],
           active: true,
-          limit: lookupKeys.length, // exactly enough; never exceeds the contract size
+          // limit is the response page size cap. Use lookupKeys.length × 2
+          // as defensive headroom for any pathological response-truncation
+          // (combined with has_more=true assertion in the caller).
+          limit: lookupKeys.length * 2,
         },
         { timeout: PROBE_TIMEOUT_MS },
       )
-      return res.data
     } catch (err) {
+      // Auth / permission errors are NOT transient. Fail fast — retrying
+      // won't help; the operator must rotate the secret.
+      if (
+        err instanceof Stripe.errors.StripeAuthenticationError ||
+        err instanceof Stripe.errors.StripePermissionError
+      ) {
+        logger.error(
+          { event: 'billing.probe_auth_failed', bootId, err: err.message },
+          'Stripe billing probe auth/permission failure',
+        )
+        throw new BillingProbeAuthError(err, bootId)
+      }
       lastErr = err
       if (attempt === PROBE_MAX_ATTEMPTS) break
       const base = PROBE_BACKOFF_MS[attempt - 1] ?? PROBE_BACKOFF_MS[PROBE_BACKOFF_MS.length - 1]!
@@ -478,6 +655,7 @@ async function fetchPricesWithRetry(
       logger.warn(
         {
           event: 'billing.probe_transient_retry',
+          bootId,
           attempt,
           nextDelayMs: base + jitter,
           err: err instanceof Error ? err.message : String(err),
@@ -490,16 +668,24 @@ async function fetchPricesWithRetry(
   logger.error(
     {
       event: 'billing.probe_transient_failed',
+      bootId,
       attempts: PROBE_MAX_ATTEMPTS,
       err: lastErr instanceof Error ? lastErr.message : String(lastErr),
     },
     'Stripe billing probe transient failure after retries',
   )
-  throw new BillingProbeTransientError(lastErr, PROBE_MAX_ATTEMPTS)
+  throw new BillingProbeTransientError(lastErr, PROBE_MAX_ATTEMPTS, bootId)
 }
 ```
 
-The probe is called from the boot gate (after `loadEnv` succeeds, before `app.listen`). On `BillingProbeError` → operator fixes Dashboard. On `BillingProbeTransientError` → operator checks Stripe status, redeploys after Stripe recovers. Both surface to ECS as task crashes; the deployment circuit breaker triggers a rollback.
+The probe is called from the boot gate (after `loadEnv` succeeds, before `app.listen`). Failure modes:
+
+- `BillingProbeAuthError` → rotate `STRIPE_SECRET_KEY`; do NOT retry on the same key.
+- `BillingProbeError` → fix Dashboard; redeploy after.
+- `BillingProbeStripeAPIChangeError` → Stripe API contract changed; investigate, possibly bump `STRIPE_API_VERSION`.
+- `BillingProbeTransientError` → check Stripe status; redeploy after Stripe recovers.
+
+All five emit structured CloudWatch events with a `bootId` field for trace correlation. A CloudWatch metric filter alarming on `billing.probe_failed | billing.probe_auth_failed | billing.probe_transient_failed` is a follow-up bead (`myth-billing-probe-alarm`) that should land within one cycle of MYT-41 close — without it, contract drift surfaces only via customer-reported failures.
 
 ### `backend/migrations/006_drop_billing_config_tables.sql`
 
@@ -511,26 +697,46 @@ The probe is called from the boot gate (after `loadEnv` succeeds, before `app.li
 -- the source of truth for prices; lookup_key is the indirection that
 -- lets backend code reference SKUs without coupling to Stripe Price IDs.
 --
--- Drop order matters because of FK dependencies created in migration 001:
---   user_subscriptions.tier_id → subscription_tiers(id) (NO ACTION)
---   purchases.package_id       → session_packs(id) or subscription_tiers(id)
+-- Drop order matters because migration 001 created the FK
+--   user_subscriptions.tier_id → subscription_tiers(id) (ON DELETE NO ACTION)
 -- A naive `DROP TABLE subscription_tiers` would fail with SQLSTATE 2BP01
 -- ("cannot drop table because other objects depend on it"), aborting
 -- migration 006 inside the runner's transaction wrapper.
 --
--- We drop the dependent tables (user_subscriptions, purchases) FIRST.
--- MYT-42 will recreate them with the new shape — referencing
--- lookup_key TEXT NOT NULL instead of FK-into-config-table — as
--- migration 007.
+-- `purchases` from migration 001 has no FK into the config tables (no
+-- `package_id` column; columns are id, user_id, stripe_payment_intent_id,
+-- session_pack_size, amount_cents, currency, status, created_at).
+-- It's still dropped here because MYT-42 recreates it with a new
+-- shape (lookup_key TEXT instead of session_pack_size INTEGER).
+--
+-- Drop order:
+--   1. user_subscriptions (FK depends on subscription_tiers)
+--   2. purchases (no FK, but recreated by MYT-42)
+--   3. session_packs
+--   4. subscription_tiers
 
--- Dependents first.
+-- Pre-drop emptiness check. Pre-merge verification ran ~hours/days ago;
+-- a row could land between merge and deploy. The migration runs inside
+-- the runner's BEGIN/COMMIT, so a non-empty assertion fires-and-aborts
+-- before any destructive operation runs. The four expected counts are 0.
+DO $$ BEGIN
+  ASSERT (SELECT count(*) FROM user_subscriptions) = 0,
+    'user_subscriptions is non-empty; refusing to drop. Inspect rows and decide migration strategy.';
+  ASSERT (SELECT count(*) FROM purchases) = 0,
+    'purchases is non-empty; refusing to drop. Inspect rows and decide migration strategy.';
+  ASSERT (SELECT count(*) FROM session_packs) = 0,
+    'session_packs is non-empty; refusing to drop. Inspect rows and decide migration strategy.';
+  ASSERT (SELECT count(*) FROM subscription_tiers) = 0,
+    'subscription_tiers is non-empty; refusing to drop. Inspect rows and decide migration strategy.';
+END $$;
+
+-- Drops in FK-correct order.
 DROP TABLE IF EXISTS user_subscriptions;
 DROP TABLE IF EXISTS purchases;
-
--- Config tables.
 DROP TABLE IF EXISTS session_packs;
 DROP TABLE IF EXISTS subscription_tiers;
 
+-- Post-drop assertion.
 DO $$ BEGIN
   ASSERT NOT EXISTS (
     SELECT 1 FROM information_schema.tables
@@ -547,7 +753,7 @@ END $$;
 
 `current_schema()` (not hard-coded `'public'`) per the migration 005 fix — keeps the wiki schema extractor happy.
 
-**This migration is non-reversible without backup restore.** All four dropped tables are empty in every Mythrun environment as of 2026-05 (verified by Miklos before merge: `SELECT count(*)` returns 0 for each, in dev / staging). MYT-42 ships migration 007 to recreate `user_subscriptions` and `purchases` with the new shape; rollback of MYT-41 between MYT-41 ship and MYT-42 ship leaves those two tables absent — acceptable because no code references them in that window.
+**Migration 006 is non-reversible without backup restore.** Pre-drop ASSERT fires loud if any environment has unexpected rows; pre-merge verification confirms emptiness in dev/staging today. MYT-42 ships migration 007 to recreate `user_subscriptions` and `purchases` with the new shape; rollback between MYT-41 ship and MYT-42 ship leaves those two tables absent — acceptable because no code references them in that window.
 
 ### ESLint rule — `no-stripe-price-mutations`
 
@@ -612,9 +818,10 @@ The Billing spec at `docs/specs/2026-04-13-billing-cost-controls.md` needs three
   Disabled at launch: Promotion codes, Retention coupons, Tax ID, Phone, Shipping address, Update quantities, Cancellation reason (optional, off at launch).
 - §5.5 (Price Manipulation Prevention) — explicit replacement text: "Pricing is immutable from application code. Defense in depth, in order of strength: (1) Stripe restricted API key with no `Prices: write` or `Products: write` — Stripe's API rejects mutation attempts at the network level. (2) Code references prices by `lookup_key` only; no hardcoded Stripe Price IDs. (3) ESLint rule `no-stripe-price-mutations` bans price/product/coupon catalog mutations — a code-review tripwire, not a runtime boundary. The amount-validation in the webhook handler (also in §5.5) is the per-charge correctness check; the boot probe is the catalog-shape correctness check."
 
-### `docs/specs/2026-04-13-billing-cost-controls.md` §7 — Free Trial (orphan-reference cleanup)
+### `docs/specs/2026-04-13-billing-cost-controls.md` §7 — Free Trial
 
-- §7.350 references `session_usage.source_type = 'trial'` — the `session_usage` table has no `source_type` column. Replace with: "Trial sessions are tracked at the credit-grant level (`credit_ledger` row with `source_type='trial'`). Per-session metering follows the standard token-budgeting flow (§6); trial sessions are not specially flagged in `session_usage`."
+- Replace §7.348–356 implementation-steps prose with: *"Trial credit is granted at registration, not at session-start. On `POST /api/users/register`, the same transaction that creates the `users` row inserts a `credit_ledger` row (`credit_type='session', amount=1, source_type='trial', source_id=NULL, expires_at=NULL`) and sets `users.free_trial_used = true`. Sessions consume the trial credit via the standard atomic-debit recipe (§2). No special trial-mode session machinery; the time-cap and demo-world choices in §7 are session-runtime concerns owned by MYT-43, decoupled from credit-grant timing."*
+- §7.350 references `session_usage.source_type = 'trial'` — the `session_usage` table has no `source_type` column. Drop this line; trial sessions are not flagged in `session_usage`.
 
 ### `docs/specs/2026-04-13-billing-cost-controls.md` §10 — Edge Cases (orphan-reference cleanup)
 
@@ -622,15 +829,31 @@ The Billing spec at `docs/specs/2026-04-13-billing-cost-controls.md` needs three
 
 ### `docs/specs/2026-04-13-billing-cost-controls.md` §9 — API Routes (consistency)
 
-- `GET /api/billing/tiers` and `GET /api/billing/packs` (§9.420 of parent) — replace with `GET /api/billing/skus` returning a single list keyed by lookup_key. Caching/TTL/fallback rules per §4 above. (Implementation lands in MYT-42; spec text updates here.)
+- `GET /api/billing/tiers` and `GET /api/billing/packs` (§9.420 of parent) → replace with `GET /api/billing/skus` returning a single list keyed by lookup_key. Caching/TTL/fallback rules per §4 above. (Implementation lands in MYT-42; spec text updates here.)
+- §9 balance-response example (line ~439) — update `"tier": "adventurer"` to `"tier": "wayfarer"` (or rename the field to `lookup_key` for consistency with the rest of MYT-41's contract).
+- §9 checkout body shape (line ~426): `{ type: 'subscription', tierId }` / `{ type: 'pack', packId }` — replace with `{ items: [{ lookup_key, quantity }] }`. The Checkout `mode` is server-derived from the items' types per the cart-shapes table.
+- §9 ALTER block (line ~459) — `ALTER TABLE users ADD COLUMN stripe_customer_id` is stale. The column already exists in migration 001. Replace with: *"`users.stripe_customer_id` is part of the initial schema. Populated lazily on first checkout via `customers.create` in MYT-42."*
+
+### `docs/specs/2026-04-13-backend-core.md` — Schema reference cleanup
+
+The Backend Core spec (the canonical schema reference per CLAUDE.md's read-in-dependency-order) carries CREATE TABLE blocks that migration 006 drops. Patch:
+
+- Remove the `subscription_tiers` CREATE TABLE block (~line 559) and replace with a one-line pointer: *"Subscription tier metadata is in `backend/src/billing/lookup-keys.ts`; Stripe is the source of truth for prices."*
+- Remove the `session_packs` CREATE TABLE block (~line 586) and replace similarly: *"À-la-carte SKU metadata is in `backend/src/billing/lookup-keys.ts`."*
+- Update the `user_subscriptions` CREATE TABLE block (~line 572) — `tier_id TEXT NOT NULL REFERENCES subscription_tiers(id)` becomes `tier_lookup_key TEXT NOT NULL` (no FK). Note that MYT-42 ships migration 007 with this new shape.
+- Update the `purchases` CREATE TABLE block (parent line ~variable) — same pattern: drop the `session_pack_size INTEGER` column or any pack reference, store `lookup_key TEXT NOT NULL` instead.
 
 ### `docs/specs/2026-04-06-production-architecture-overview.md` (orphan-reference cleanup)
 
-- Line 768's `pack_5` reference → update to `sku_session`/`sku_world`.
+- Line 768's `pack_5` reference → update to `sku_session` / `sku_world`.
 
 ### `docs/specs/2026-04-10-ux-design.md` (orphan-reference cleanup)
 
 - Line 490's `Adventurer` / `Champion` mentions → update to `Wayfarer` / `Sojourner` / `Mythwright`.
+
+### Note on parent-spec line numbers
+
+Cited line numbers above are approximate (parent specs drift by 1–2 lines as edits land). Patch by section heading + content match, not by absolute line number.
 
 **Out-of-scope follow-up:** existing bead `myth-u7k` ("Repo: add billing namespaces — purchases, userSubscriptions, subscriptionTiers, sessionPacks, stripeEvents") references the now-dropped `subscriptionTiers` and `sessionPacks` namespaces. As part of MYT-41 close, edit that bead to remove those two namespaces from its scope, OR close it as obsolete pending MYT-42's recreation of `user_subscriptions` and `purchases` with the new shape.
 
@@ -652,21 +875,50 @@ The Billing spec at `docs/specs/2026-04-13-billing-cost-controls.md` needs three
 
 Mocks `stripe.prices.list` via `vi.mock` at the SDK boundary (no real Stripe calls).
 
-- Happy path: all 5 lookup_keys returned with correct currency='usd', recurring.interval='month' for tiers, no recurring for SKUs → probe resolves; logger emits `billing.probe_passed`.
-- Missing lookup_key → `BillingProbeError` with "lookup_key 'tier_X' not found in active Stripe prices" in the message.
-- Type mismatch (tier_* returned as one-time) → `BillingProbeError` with type-mismatch message.
-- Currency mismatch (tier_* with `currency='eur'`) → `BillingProbeError` with currency message.
-- Interval mismatch (tier_* with `recurring.interval='year'`) → `BillingProbeError` with interval message.
-- Duplicate lookup_keys (two active prices share `lookup_key='tier_wayfarer'`) → `BillingProbeError` with duplicate-detection message; **not silent last-wins**.
-- Multiple mismatches across keys → all reported in a single `BillingProbeError.mismatches` array (don't short-circuit on first).
-- Transient error path: mock `prices.list` to throw `Stripe.errors.StripeAPIError` twice, succeed on third attempt → probe resolves; logger emits `billing.probe_transient_retry` twice and `billing.probe_passed` once.
-- Transient-error exhaustion: mock throws on all 3 attempts → `BillingProbeTransientError` with `attempts=3`; logger emits `billing.probe_transient_failed`.
+**Happy path**
+
+- All 5 lookup_keys returned with correct currency='usd', `unit_amount > 0`, `billing_scheme='per_unit'`, recurring tiers with `interval='month'`, `interval_count=1`, `usage_type='licensed'`, SKUs with `recurring=null` → probe resolves; logger emits `billing.probe_started` then `billing.probe_passed` (both with the same `bootId`).
+
+**Contract mismatches (`BillingProbeError`)**
+
+- Missing lookup_key → "not found in active Stripe prices" message.
+- Type mismatch (tier_* returned as one-time) → type-mismatch message.
+- Currency mismatch (`currency='eur'`) → currency message.
+- `unit_amount = 0` → unit_amount message.
+- `billing_scheme='tiered'` → billing_scheme message.
+- `recurring.interval='year'` (tier) → interval message.
+- `recurring.interval_count=3` (tier, monthly-but-quarterly) → interval_count message.
+- `recurring.usage_type='metered'` (tier) → usage_type message.
+- Duplicate lookup_keys (two active prices share `lookup_key='tier_wayfarer'`) → duplicate-detection message; **not silent last-wins**.
+- Multiple mismatches across keys → all reported in a single `BillingProbeError.mismatches` array (no short-circuit).
+
+**Auth / permission errors (`BillingProbeAuthError`, no retry)**
+
+- `Stripe.errors.StripeAuthenticationError` (401) → fail-fast `BillingProbeAuthError`. Logger emits `billing.probe_auth_failed`. **No retry** — `prices.list` mock called exactly once.
+- `Stripe.errors.StripePermissionError` (403, restricted-key missing `Prices: read`) → same fail-fast path.
+
+**Stripe API contract change (`BillingProbeStripeAPIChangeError`)**
+
+- Mock returns `has_more: true` on the lookup_keys-bounded query → `BillingProbeStripeAPIChangeError`. (Realistically unreachable today, but defensive against future Stripe API changes.)
+
+**Transient errors (`BillingProbeTransientError`, retry with backoff)**
+
+- Mock throws `Stripe.errors.StripeAPIError` twice, succeeds on third → probe resolves; logger emits `billing.probe_transient_retry` twice (each with the same `bootId`) and `billing.probe_passed` once.
+- Mock throws on all 3 attempts → `BillingProbeTransientError` with `attempts=3`; logger emits `billing.probe_transient_failed`.
+
+**Logging / observability**
+
+- Every event emitted by a single boot probe carries the same `bootId` (UUID). Tests assert correlation by capturing logger calls and matching the field across event types.
+
+**Module-load guard**
+
+- `LOOKUP_KEYS` size > 100 — out of scope for runtime test (the constant is checked at module load), but a static type test or a cheap unit test should assert `Object.keys(LOOKUP_KEYS).length <= 100`.
 
 ### ESLint rule tests — `backend/eslint-rules/__tests__/no-stripe-price-mutations.test.cjs`
 
 Use ESLint's `RuleTester`. Banned cases (rule diagnostic):
 
-- `stripe.prices.create({...})`, `stripe.prices.update(id, {...})`
+- `stripe.prices.create({...})`, `stripe.prices.update(id, {...})`, `stripe.prices.update(id, { active: false })` (archival idiom)
 - `stripe.products.create({...})`, `stripe.products.update(id, {...})`, `stripe.products.del(id)`
 - `stripe.coupons.create({...})`, `stripe.coupons.update(id, {...})`, `stripe.coupons.del(id)`
 - `stripe.promotionCodes.create({...})`, `stripe.promotionCodes.update(id, {...})`
@@ -676,11 +928,31 @@ Allowed cases (no diagnostic):
 - `stripe.prices.list({...})`, `stripe.prices.retrieve(id)`
 - `stripe.products.retrieve(id)`
 - `stripe.subscriptions.update(id, { cancel_at_period_end: true })` — explicitly allowed (cancel-from-app)
+- `stripe.subscriptions.update(id, { metadata: {...} })` — allowed
+- `stripe.subscriptions.update(id, { pause_collection: {...} })` — allowed
 - `stripe.subscriptions.cancel(id)` — explicitly allowed (admin fraud cancel)
 - `stripe.checkout.sessions.create({...})`
 - `stripe.billingPortal.sessions.create({...})`
 - `stripe.webhooks.constructEvent(...)`
 - `stripe.customers.create|retrieve|update`
+
+### Subscription-price-mutation rule — `backend/eslint-rules/__tests__/no-stripe-subscription-price-mutation.test.cjs`
+
+Banned cases (rule diagnostic):
+
+- `stripe.subscriptions.update(id, { items: [{ id: 'si_x', price: 'price_NEW' }] })`
+- `stripe.subscriptions.update(id, { items: [{ price: someVar }] })` (any price-field expression in items)
+- `stripe.subscriptions.update(id, { items: [{ price: lookupKeyToPrice() }] })` (even via function call — the rule is structural, not value-aware)
+
+Allowed cases (no diagnostic):
+
+- `stripe.subscriptions.update(id, { items: [{ quantity: 2 }] })` — quantity-only update is fine
+- `stripe.subscriptions.update(id, { cancel_at_period_end: true })` — no items field
+- `stripe.subscriptions.update(id, { metadata: {...} })` — no items field
+
+### Config-wiring smoke test — `backend/eslint-rules/__tests__/config-wiring.test.cjs`
+
+A separate test that runs `pnpm exec eslint <fixture>` against a fixture file containing a banned pattern (e.g., `backend/eslint-rules/__tests__/fixtures/banned.fixture.ts` with `stripe.prices.create({})`). Asserts the lint command exits non-zero. **This catches the failure mode "rule is shipped but not registered in `eslint.config.js`"** — `RuleTester` exercises the rule logic directly, but doesn't verify the rule is wired into the project. Without this smoke test, an ESLint flat-config refactor that drops the registration would silently pass CI.
 
 ### Schema parity test update — `backend/src/db/__tests__/migrate-schema.test.ts`
 
@@ -756,14 +1028,17 @@ Open bead `myth-u7k` ("Repo: add billing namespaces — purchases, userSubscript
 
 - `backend/src/billing/lookup-keys.ts` — the contract.
 - `backend/src/billing/stripe-client.ts` — read-only wrapper, pinned to `2026-03-25.dahlia`.
-- `backend/src/billing/probe.ts` — boot probe with retry/backoff/jitter, structured failure events, currency + interval + duplicate-detect verification, targeted lookup_keys query (no pagination ceiling).
-- `backend/eslint-rules/no-stripe-price-mutations.cjs` + ESLint config wiring (narrowed scope: bans price/product/coupon catalog mutations only; allows subscription lifecycle).
-- `backend/migrations/006_drop_billing_config_tables.sql` — drops `user_subscriptions`, `purchases`, `session_packs`, `subscription_tiers` in FK-correct order.
+- `backend/src/billing/probe.ts` — boot probe with retry/backoff/jitter; auth-error vs transient-vs-mismatch distinction; full billing-shape verification (currency, type, unit_amount > 0, billing_scheme, interval, interval_count, usage_type); duplicate-detect; `has_more` API-change detection; bootId-correlated structured events.
+- `backend/eslint-rules/no-stripe-price-mutations.cjs` — bans price/product/coupon catalog mutations.
+- `backend/eslint-rules/no-stripe-subscription-price-mutation.cjs` — bans `subscriptions.update({ items: [{ price }] })` patterns; closes the price-change-via-subscription backdoor.
+- ESLint config wiring + a fixture-based smoke test that catches "rule shipped but not registered."
+- `backend/migrations/006_drop_billing_config_tables.sql` — pre-drop emptiness ASSERT; drops `user_subscriptions`, `purchases`, `session_packs`, `subscription_tiers` in FK-correct order.
 - Tests for all of the above.
 - Updates: `backend/src/server.ts` (call probe at boot), `backend/src/db/__tests__/migrate-schema.test.ts` (full enumeration update — tables + indexes + checks + FKs), `backend/src/repo/__tests__/_helpers/reset-data.ts` (drop the four dropped tables from the truncate list).
-- Spec patches: `docs/specs/2026-04-13-billing-cost-controls.md` §3 + §4 + §5 + §7 + §9 + §10; cross-spec orphan refs in `2026-04-06-production-architecture-overview.md` and `2026-04-10-ux-design.md`.
-- Hand-off: `tmp/myt-41-stripe-dashboard-instructions.md` for Miklos to execute (now front-loaded: restricted-key creation + product/price creation + Customer Portal config happen BEFORE code lands).
+- Spec patches: `docs/specs/2026-04-13-billing-cost-controls.md` §3 + §4 + §5 + §7 + §9 + §10; `docs/specs/2026-04-13-backend-core.md` schema-block cleanup; cross-spec orphan refs in `2026-04-06-production-architecture-overview.md` and `2026-04-10-ux-design.md`.
+- Hand-off: `tmp/myt-41-stripe-dashboard-instructions.md` for Miklos to execute (front-loaded: restricted-key creation + product/price creation + Customer Portal config happen BEFORE code lands).
 - Bead `myth-u7k` re-scoping (drop `subscriptionTiers`/`sessionPacks` namespaces; re-scope `purchases`/`userSubscriptions` to MYT-42).
+- Follow-up bead created at MYT-41 close: **`myth-billing-probe-alarm`** — add a CloudWatch metric filter + alarm on `billing.probe_failed | billing.probe_auth_failed | billing.probe_transient_failed | billing.probe_started`-without-corresponding-`probe_passed`, paged to the same destination as other prod alarms. Should land within one cycle of MYT-41 close — without it, contract drift surfaces only via customer-reported failures, defeating the boot-probe design intent.
 
 ## What MYT-41 does NOT ship
 
