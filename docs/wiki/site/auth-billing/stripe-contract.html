@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stripe contract · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="auth-billing" data-page="stripe-contract">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/stripe-contract.html" class="active">Stripe contract</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Stripe contract</div>
+        <article>
+<h1>Stripe contract</h1>
+
+<p class="lead">
+  How Mythrun pins its commercial relationship with Stripe: a closed enum of
+  <code>lookup_key</code>s in code, a cached SDK client pinned to one API version, a read-only boot
+  probe that fails closed if Stripe's catalog drifts, and a restricted-key boundary that makes
+  mutation impossible on the wire. No <code>price_*</code> ID is hardcoded in backend code; price
+  stays in Stripe.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1777pt" height="542pt"
+ viewBox="14.00 14.00 1762.00 527.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 523.4)">
+<title>stripe_contract</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-509 1743.7,-509 1743.7,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_code</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="569.23,-106 569.23,-325 1043.95,-325 1043.95,-106 569.23,-106"/>
+<text xml:space="preserve" text-anchor="middle" x="806.59" y="-311.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend code &#160;(src/billing/)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_eslint</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="857.14,-344 857.14,-497 1073.66,-497 1073.66,-344 857.14,-344"/>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-483.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">eslint&#45;rules/ &#160;(AST tripwires)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_env</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="215.3,-136 215.3,-289 425.21,-289 425.21,-136 215.3,-136"/>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-275.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">env &#160;(config/env.ts)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_boot</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-8 8,-106 690.02,-106 690.02,-8 8,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="349.01" y="-92.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">boot gate &#160;(server.ts)</text>
+</g>
+<g id="clust5" class="cluster">
+<title>cluster_stripe</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1259.68,-305 1259.68,-410 1731.7,-410 1731.7,-305 1259.68,-305"/>
+<text xml:space="preserve" text-anchor="middle" x="1495.69" y="-396.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Stripe (external)</text>
+</g>
+<!-- lookup -->
+<g id="node1" class="node">
+<title>lookup</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="706.53,-215.84 575.83,-215.84 575.83,-106.16 706.53,-106.16 706.53,-215.84"/>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-197.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lookup&#45;keys.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-184.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_wayfarer</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-170.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_sojourner</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-157.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_mythwright</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-144.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sku_session</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-131.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sku_world</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-118.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(closed enum)</text>
+</g>
+<!-- probe -->
+<g id="node3" class="node">
+<title>probe</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1043.95,-293.64 886.85,-293.64 886.85,-210.36 1043.95,-210.36 1043.95,-293.64"/>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-275.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probe.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-261.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">read&#45;only</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-248.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stripe.prices.list</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-235.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">retry × 3 + jitter</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-222.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">4 typed errors</text>
+</g>
+<!-- lookup&#45;&gt;probe -->
+<g id="edge4" class="edge">
+<title>lookup&#45;&gt;probe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M707,-179.31C756.2,-193.2 824.34,-212.45 878.15,-227.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="877.17,-229.91 884.57,-229.46 878.5,-225.2 877.17,-229.91"/>
+<text xml:space="preserve" text-anchor="middle" x="785.14" y="-229.65" font-family="Courier,monospace" font-size="10.00">enum drives</text>
+<text xml:space="preserve" text-anchor="middle" x="785.14" y="-217.65" font-family="Courier,monospace" font-size="10.00">lookup_keys filter</text>
+</g>
+<!-- client -->
+<g id="node2" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="713.13,-304.04 569.23,-304.04 569.23,-233.96 713.13,-233.96 713.13,-304.04"/>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-285.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stripe&#45;client.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-272.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cached singleton</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-259.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">apiVersion pinned</text>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-245.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">2026&#45;04&#45;22.dahlia</text>
+</g>
+<!-- client&#45;&gt;probe -->
+<g id="edge5" class="edge">
+<title>client&#45;&gt;probe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M713.69,-265.23C762.06,-262.67 826.24,-259.29 877.55,-256.58"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="877.65,-259.03 884.51,-256.22 877.39,-254.14 877.65,-259.03"/>
+<text xml:space="preserve" text-anchor="middle" x="785.14" y="-266.98" font-family="Courier,monospace" font-size="10.00">injected</text>
+</g>
+<!-- api -->
+<g id="node11" class="node">
+<title>api</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1462.99,-388.64 1259.68,-388.64 1259.68,-305.36 1462.99,-305.36 1462.99,-388.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-370.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">api.stripe.com</text>
+<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-356.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">restricted key:</text>
+<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-343.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Prices read,</text>
+<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-330.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Subscriptions write</text>
+<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-317.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(no Prices/Products write)</text>
+</g>
+<!-- probe&#45;&gt;api -->
+<g id="edge6" class="edge">
+<title>probe&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1044.49,-282.28C1059.94,-287.46 1076.18,-292.35 1091.66,-296 1157.07,-311.45 1175.74,-302 1241.68,-315 1244.65,-315.59 1247.65,-316.2 1250.68,-316.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1250.11,-319.24 1257.48,-318.35 1251.17,-314.45 1250.11,-319.24"/>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-342" font-family="Courier,monospace" font-size="10.00">prices.list</text>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-330" font-family="Courier,monospace" font-size="10.00">lookup_keys, active=true,</text>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-318" font-family="Courier,monospace" font-size="10.00">expand=[product]</text>
+</g>
+<!-- rule_p -->
+<g id="node4" class="node">
+<title>rule_p</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1073.66,-475.44 857.14,-475.44 857.14,-418.56 1073.66,-418.56 1073.66,-475.44"/>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-456.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no&#45;stripe&#45;price&#45;mutations</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-443.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bans prices/products/coupons</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-430.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.create / .update / .del</text>
+</g>
+<!-- rule_p&#45;&gt;api -->
+<g id="edge10" class="edge">
+<title>rule_p&#45;&gt;api</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1074.13,-421.64C1125.04,-409.43 1186.59,-394.36 1241.68,-380 1244.61,-379.24 1247.59,-378.45 1250.58,-377.66"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1251.2,-380.03 1257.34,-375.86 1249.94,-375.3 1251.2,-380.03"/>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-420.31" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">blocked at code review</text>
+</g>
+<!-- rule_s -->
+<g id="node5" class="node">
+<title>rule_s</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1063.75,-400.44 867.05,-400.44 867.05,-343.56 1063.75,-343.56 1063.75,-400.44"/>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-381.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no&#45;stripe&#45;subscription&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-368.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">price&#45;mutation</text>
+<text xml:space="preserve" text-anchor="middle" x="965.4" y="-355.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bans items[].price update</text>
+</g>
+<!-- rule_s&#45;&gt;api -->
+<g id="edge11" class="edge">
+<title>rule_s&#45;&gt;api</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1064.19,-366.1C1116.79,-362.89 1182.79,-358.8 1241.68,-355 1244.51,-354.82 1247.38,-354.63 1250.28,-354.44"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1250.4,-356.89 1257.22,-353.99 1250.08,-352 1250.4,-356.89"/>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-367.4" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">blocked at code review</text>
+</g>
+<!-- env_sk -->
+<g id="node6" class="node">
+<title>env_sk</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="405.41,-267.44 235.11,-267.44 235.11,-210.56 405.41,-210.56 405.41,-267.44"/>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-248.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">STRIPE_SECRET_KEY</text>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-235.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rk_* required</text>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-222.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sk_* rejected at load</text>
+</g>
+<!-- env_sk&#45;&gt;client -->
+<g id="edge8" class="edge">
+<title>env_sk&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M405.88,-246.96C453.66,-251.45 513.02,-257.04 560.04,-261.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="559.66,-263.89 566.86,-262.1 560.12,-259.01 559.66,-263.89"/>
+<text xml:space="preserve" text-anchor="middle" x="497.22" y="-263.14" font-family="Courier,monospace" font-size="10.00">rk_ key only</text>
+</g>
+<!-- env_wh -->
+<g id="node7" class="node">
+<title>env_wh</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="425.21,-192.44 215.3,-192.44 215.3,-135.56 425.21,-135.56 425.21,-192.44"/>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-173.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">STRIPE_WEBHOOK_SECRET</text>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-160.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PLACEHOLDER permitted</text>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-147.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in MYT&#45;41 → MYT&#45;42 window</text>
+</g>
+<!-- listen -->
+<g id="node10" class="node">
+<title>listen</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="690.02,-79 592.33,-79 592.33,-43 690.02,-43 690.02,-79"/>
+<text xml:space="preserve" text-anchor="middle" x="641.18" y="-57.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">app.listen</text>
+</g>
+<!-- env_wh&#45;&gt;listen -->
+<g id="edge9" class="edge">
+<title>env_wh&#45;&gt;listen</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M411.37,-134.9C466.63,-117.05 535.68,-94.75 583.39,-79.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="584.11,-81.68 590.02,-77.2 582.61,-77.02 584.11,-81.68"/>
+<text xml:space="preserve" text-anchor="middle" x="497.22" y="-148.73" font-family="Courier,monospace" font-size="10.00">contract present</text>
+<text xml:space="preserve" text-anchor="middle" x="497.22" y="-136.73" font-family="Courier,monospace" font-size="10.00">(no consumer until</text>
+<text xml:space="preserve" text-anchor="middle" x="497.22" y="-124.73" font-family="Courier,monospace" font-size="10.00">MYT&#45;42)</text>
+</g>
+<!-- waitfor -->
+<g id="node8" class="node">
+<title>waitfor</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="178.3,-64 8,-64 8,-28 178.3,-28 178.3,-64"/>
+<text xml:space="preserve" text-anchor="middle" x="93.15" y="-42.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">waitFor(pg, redis×2)</text>
+</g>
+<!-- probegate -->
+<g id="node9" class="node">
+<title>probegate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="398.81,-74.44 241.71,-74.44 241.71,-17.56 398.81,-17.56 398.81,-74.44"/>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-55.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probeStripeContract</text>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-42.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(fail&#45;closed throw</text>
+<text xml:space="preserve" text-anchor="middle" x="320.26" y="-29.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ ECS rollback)</text>
+</g>
+<!-- waitfor&#45;&gt;probegate -->
+<g id="edge1" class="edge">
+<title>waitfor&#45;&gt;probegate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M178.93,-46C196.5,-46 215.03,-46 232.66,-46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="232.41,-48.45 239.41,-46 232.41,-43.55 232.41,-48.45"/>
+</g>
+<!-- probegate&#45;&gt;listen -->
+<g id="edge2" class="edge">
+<title>probegate&#45;&gt;listen</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M399.48,-29.35C444.21,-22.37 501.2,-17.76 551.23,-27 565.1,-29.56 579.6,-34.19 592.77,-39.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="591.68,-41.43 599.09,-41.73 593.49,-36.87 591.68,-41.43"/>
+<text xml:space="preserve" text-anchor="middle" x="497.22" y="-30" font-family="Courier,monospace" font-size="10.00">ok</text>
+</g>
+<!-- probegate&#45;&gt;listen -->
+<g id="edge3" class="edge">
+<title>probegate&#45;&gt;listen</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M399.27,-49.67C456.1,-52.34 531.8,-55.9 583.06,-58.31"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="582.78,-60.75 589.89,-58.63 583.01,-55.86 582.78,-60.75"/>
+<text xml:space="preserve" text-anchor="middle" x="497.22" y="-71.57" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">throw → exit 1</text>
+<text xml:space="preserve" text-anchor="middle" x="497.22" y="-59.57" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">→ ECS rollback</text>
+</g>
+<!-- api&#45;&gt;probe -->
+<g id="edge7" class="edge">
+<title>api&#45;&gt;probe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1325.54,-304.66C1304.05,-281.97 1274.39,-256.22 1241.68,-244 1181.5,-221.52 1108.67,-224.84 1053.04,-233.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1052.95,-230.61 1046.41,-234.1 1053.7,-235.45 1052.95,-230.61"/>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-283" font-family="Courier,monospace" font-size="10.00">contract verify</text>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-271" font-family="Courier,monospace" font-size="10.00">currency=usd, type,</text>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-259" font-family="Courier,monospace" font-size="10.00">billing_scheme,</text>
+<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-247" font-family="Courier,monospace" font-size="10.00">recurring shape</text>
+</g>
+<!-- portal -->
+<g id="node12" class="node">
+<title>portal</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1731.7,-382.04 1601,-382.04 1601,-311.96 1731.7,-311.96 1731.7,-382.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-363.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Customer Portal</text>
+<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-350.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(tier switching</text>
+<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-337.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lives here, not</text>
+<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-323.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in app code)</text>
+</g>
+<!-- api&#45;&gt;portal -->
+<g id="edge12" class="edge">
+<title>api&#45;&gt;portal</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1463.66,-347C1505.56,-347 1553.25,-347 1591.72,-347"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1591.47,-349.45 1598.47,-347 1591.47,-344.55 1591.47,-349.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1532" y="-362" font-family="Courier,monospace" font-size="10.00">users self&#45;manage</text>
+<text xml:space="preserve" text-anchor="middle" x="1532" y="-350" font-family="Courier,monospace" font-size="10.00">tiers + cancel</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Five files in <code>backend/src/billing/</code> and <code>backend/eslint-rules/</code> hold the
+  whole surface today: <code>lookup-keys.ts</code> declares every SKU as a closed TypeScript enum,
+  <code>stripe-client.ts</code> caches the SDK client pinned to one <code>apiVersion</code>,
+  <code>probe.ts</code> verifies on every boot that Stripe's live catalog matches the enum, and two
+  ESLint rules under <code>backend/eslint-rules/</code> reject any source pattern that would mutate
+  the catalog from the SDK. Two env vars (<code>STRIPE_SECRET_KEY</code>,
+  <code>STRIPE_WEBHOOK_SECRET</code>) wire it to the running container; the boot gate calls the
+  probe between <code>waitFor(pg, redis×2)</code> and <code>app.listen</code>, so a contract
+  mismatch turns the deploy red and triggers an ECS rollback before traffic ever reaches the new
+  tasks. There is no <code>/webhooks/stripe</code> route yet — that lands in MYT-42 with the
+  verifying handler — and a pinned test fails the build if any future PR registers it prematurely.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Lookup keys, not price IDs</strong> — Stripe price objects are immutable: changing a
+  price's amount means archiving the old one and creating a new <code>price_*</code> ID. If backend
+  code referenced prices by ID, every price-amount change would be a code-and-deploy ceremony to
+  swap the constant. Lookup keys are a stable indirection: backend code says
+  <code>tier_wayfarer</code>, Stripe holds the active price under that lookup key, and operators
+  re-point the lookup key to a new price object in the Dashboard whenever the dollar amount needs to
+  change. The probe is what guarantees the indirection still resolves on every boot.
+</aside>
+
+<h3 id="the-closed-enum-and-what-it-carries">The closed enum and what it carries</h3>
+
+<p>
+  <code>lookup-keys.ts</code> exports a <code>LOOKUP_KEYS</code> object literal with five entries:
+  three subscription tiers (<code>tier_wayfarer</code>, <code>tier_sojourner</code>,
+  <code>tier_mythwright</code>) and two a-la-carte SKUs (<code>sku_session</code>,
+  <code>sku_world</code>). Each entry is a <code>LookupKeySpec</code> declaring the lookup key
+  itself, a display name that matches the Stripe product name, the price type (<code
+    >recurring</code
+  >
+  for tiers, <code>one_time</code> for SKUs), and the credit-allocation contract — how many sessions
+  and worlds a successful purchase or billing cycle grants. The TypeScript union type
+  <code>LookupKey</code> is derived from the same five strings, so any code path that takes a lookup
+  key gets compile-time narrowing across the closed set.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Allocation lives in TypeScript, not in a database table</strong> — migration 006 dropped
+  the <code>subscription_tiers</code> and <code>session_packs</code> config tables that earlier
+  designs anchored the allocation against. A DB-resident config is right when operators need to
+  change values without a deploy; for Mythrun's pricing surface (five SKUs, hand-curated by Miklos,
+  no operator-tunable knob), the cost-of-change is dominated by the spec patch and the social
+  decision, not the table-edit ceremony. A checked-in TS enum gives type safety, code-review for
+  every change, and grep-ability across the codebase. If the surface ever grows beyond hand-curation
+  the contract can move back into a table without breaking consumers — they all flow through
+  <code>LOOKUP_KEYS</code>.
+</aside>
+
+<h3 id="the-cached-sdk-client">The cached SDK client</h3>
+
+<p>
+  <code>stripe-client.ts</code> exports <code>getStripeClient(env)</code> — a module-level cache
+  that constructs one <code>Stripe</code> instance the first time it's called and returns it on
+  every subsequent call. The instance is pinned to <code>apiVersion: '2026-04-22.dahlia'</code>, the
+  Stripe API release line in force at MYT-41 design time. Bumping that version is a deliberate spec
+  patch: it changes webhook payload shapes and field names, the SDK type-narrows
+  <code>apiVersion</code> to a literal union of valid values, and the boot probe re-runs against the
+  new shape. Routine maintenance reviews Stripe's API changelog every six months; bumps happen only
+  when there's a feature Mythrun needs or a breaking change with a sunset date.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Pinned <code>apiVersion</code>, not "use whatever Stripe's account default is"</strong> —
+  Stripe lets you set a per-account default API version in the Dashboard, but that's an action at a
+  distance: a Dashboard click could silently change the shape of webhook payloads and SDK responses
+  the deployed binary saw the previous day. Pinning in code means the wire format is whatever the
+  binary was built against, full stop. Upgrading is a code change reviewed and rolled like any
+  other.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Module-level cache, no rotation API</strong> — the cache is process-scoped on purpose.
+  Rotating the Stripe key requires rolling the ECS service after Secrets Manager updates so the new
+  process picks up the new value at boot. There is no in-process "swap clients" path because there
+  is no in-process secret-rotation requirement, and adding one would split the contract surface.
+  Tests that need a different env mock the SDK at the import boundary (Vitest's
+  <code>vi.mock</code>); they do not reach into this cache.
+</aside>
+
+<h3 id="the-boot-probe-and-its-four-error-classes">The boot probe and its four error classes</h3>
+
+<p>
+  <code>probe.ts</code> exports <code>probeStripeContract(stripe, logger)</code>. It runs
+  <code>stripe.prices.list</code> once with the closed-enum lookup keys as the filter,
+  <code>active: true</code>, and <code>expand: ['data.product']</code> so the response includes
+  whether each price's parent product is active. The probe verifies, for each lookup key, that the
+  Stripe response contains exactly one active price whose currency is <code>usd</code>, whose type
+  matches the enum (<code>recurring</code> vs <code>one_time</code>), whose
+  <code>unit_amount</code> is positive, whose <code>billing_scheme</code> is <code>per_unit</code>,
+  whose <code>transform_quantity</code> is <code>null</code>, whose <code>tax_behavior</code> is
+  <code>unspecified</code>, whose product is active, and — for tiers — whose
+  <code>recurring</code> shape is monthly licensed (<code>interval = 'month'</code>,
+  <code>interval_count = 1</code>, <code>usage_type = 'licensed'</code>).
+</p>
+
+<p>The probe distinguishes four failure modes by throwing different typed errors:</p>
+
+<ul>
+  <li>
+    <code>BillingProbeAuthError</code> — Stripe replied 401/403. The fix is to rotate
+    <code>STRIPE_SECRET_KEY</code>; retrying won't help. Thrown immediately on
+    <code>StripeAuthenticationError</code> or <code>StripePermissionError</code>, no backoff.
+  </li>
+  <li>
+    <code>BillingProbeError</code> — Stripe replied with a price set that doesn't match the
+    contract. The error message lists every mismatch (missing lookup key, wrong currency, archived
+    product, duplicate active price under one lookup key, etc.). The fix is in the Stripe Dashboard,
+    not in code. Thrown after a single successful round-trip; no retry would change the answer.
+  </li>
+  <li>
+    <code>BillingProbeStripeAPIChangeError</code> — Stripe returned <code>has_more: true</code> on a
+    query bounded by the enum size. With at most five lookup keys, that's structurally impossible
+    against today's <code>prices.list</code> API; the only way it fires is if Stripe changes the API
+    contract. The fix is a code change to handle the new shape.
+  </li>
+  <li>
+    <code>BillingProbeTransientError</code> — Stripe replied with a 5xx, a network timeout, or a
+    rate-limit error. The probe retries up to three times with exponential backoff (<code
+      >1s, 2s, 4s</code
+    >) plus up to one second of jitter; only after the budget is exhausted does this error throw.
+    The fix is usually waiting; the throw still fails the deploy because starting a binary that
+    can't reach Stripe is worse than deferring the rollover.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Four error classes, not one generic "probe failed"</strong> — a single error class would
+  put the operator in front of a stack trace and force them to read it to know which knob to turn.
+  The four classes encode the actual decision tree on the error type: auth → rotate the secret;
+  contract → fix the Dashboard; API change → write code; transient → wait, then retry. Each class
+  carries a <code>bootId</code> (a UUID generated per probe invocation) so a CloudWatch query can
+  reconstruct one boot's probe events end-to-end across the four log lines the probe emits
+  (<code>billing.probe_started</code>, <code>billing.probe_transient_retry</code>,
+  <code>billing.probe_passed</code> / <code>billing.probe_failed</code> /
+  <code>billing.probe_auth_failed</code> / <code>billing.probe_transient_failed</code>).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Duplicate detection fails loud, not silent last-wins</strong> — if the Stripe Dashboard
+  ends up with two active prices under the same lookup key (a tired operator forgot to archive the
+  old one before creating the new), the SDK happily returns both. A naive
+  <code>map[lookup_key] = price</code> reduction would silently take whichever came last, and the
+  charged amount on the next purchase would be a coin flip. The probe counts occurrences first,
+  reports any lookup key with <code>n > 1</code> as a mismatch, and skips it from the per-price
+  contract checks so the diagnostic stays clean.
+</aside>
+
+<h3 id="the-boot-gate-wiring">The boot-gate wiring</h3>
+
+<p>
+  <code>server.ts</code>'s boot-gate path runs the probe in a fixed sequence: load env (which
+  validates <code>STRIPE_SECRET_KEY</code>'s <code>rk_</code> prefix), open the pg pool and two
+  Redis clients, sequentially <code>waitFor</code> all three to return healthy, construct the cached
+  Stripe client, await <code>probeStripeContract</code>, then build the Fastify app and listen.
+  Anything thrown by the probe propagates out of <code>main()</code>'s try block, lands in the
+  catch, runs <code>closePartials</code> over the pg + redis clients, sets
+  <code>process.exitCode = 1</code>, and arms the five-second watchdog. The deploy pipeline sees the
+  non-zero exit, ECS marks the task unhealthy, and the
+  <a href="../infra/ci-cd.html">CircuitBreaker</a> rolls the deployment back. New tasks never go
+  into rotation with a broken billing contract.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Probe runs after data probes, before <code>app.listen</code></strong> — running it earlier
+  would race against pg/redis becoming reachable; running it later would mean the listening socket
+  is open before the probe has run, so a fast health check could mark a contract-broken task
+  healthy. Between <code>waitFor</code> and <code>listen</code> is the one slot where every
+  prerequisite is true and the failure-mode is "task crashes before serving traffic," which is
+  exactly what the deploy pipeline is shaped to roll back from.
+</aside>
+
+<h3 id="the-restricted-key-boundary">The restricted-key boundary</h3>
+
+<p>
+  <code>config/env.ts</code> rejects any <code>STRIPE_SECRET_KEY</code> that doesn't start with
+  <code>rk_</code>. Mythrun deploys with Stripe restricted keys (read on Prices, write on
+  Subscriptions and Customer-Portal sessions, nothing else); full-permission keys
+  (<code>sk_*</code>) are forbidden in deployed environments. The actual price-mutation boundary is
+  the restricted key itself — Stripe rejects any <code>prices.create</code>,
+  <code>products.update</code>, etc. at the API edge regardless of what the SDK call looks like —
+  but the env-load check catches the foot-gun where someone misrotates a full-permission key into
+  Secrets Manager. With a <code>sk_*</code> key in place, the boot probe (which is read-only) would
+  still pass, and the defense-in-depth stack would silently degrade to "we trust app code not to
+  mutate prices" instead of "Stripe rejects mutations at the network layer."
+</p>
+
+<p>
+  <code>STRIPE_WEBHOOK_SECRET</code> follows a different rule: any non-empty value is accepted, and
+  the literal string <code>PLACEHOLDER</code> is permitted in the MYT-41 → MYT-42 window. The
+  argument is fail-closed-by-absence: with no <code>/webhooks/stripe</code> route registered, no
+  code path ever reads the secret, so its value is irrelevant until the verifying handler lands.
+  MYT-42's webhook handler will call <code>stripe.webhooks.constructEvent</code> unconditionally;
+  any signature mismatch fails closed regardless of whether the secret is the literal
+  <code>PLACEHOLDER</code> or a real <code>whsec_*</code>. There is no bypass branch for the literal
+  value at the verification layer.
+</p>
+
+<h3 id="the-eslint-ast-tripwires">The ESLint AST tripwires</h3>
+
+<p>
+  <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code> is an AST rule that
+  pattern-matches <code>stripe.&lt;namespace&gt;.&lt;method&gt;(...)</code> calls and rejects any in
+  the banned set: <code>prices.create</code>, <code>prices.update</code>,
+  <code>products.create</code>, <code>products.update</code>, <code>products.del</code>,
+  <code>coupons.create</code>, <code>coupons.update</code>, <code>coupons.del</code>,
+  <code>promotionCodes.create</code>, <code>promotionCodes.update</code>.
+  <code>no-stripe-subscription-price-mutation.cjs</code> closes the
+  price-change-via-subscription-item-update backdoor: any call shaped like
+  <code>stripe.subscriptions.update(id, { items: [{ price: 'price_X' }] })</code> trips the rule.
+  Quantity-only item updates and other subscription-update fields
+  (<code>cancel_at_period_end</code>, <code>metadata</code>, <code>pause_collection</code>) remain
+  allowed — the restricted key needs Subscriptions: write for the cancel flows.
+</p>
+
+<p>
+  Both rules are registered under the <code>mythrun</code> plugin namespace in
+  <code>eslint.config.js</code> at <code>error</code> severity, so a violation fails
+  <code>pnpm lint</code> in CI. A config-wiring smoke test under
+  <code>backend/eslint-rules/__tests__/</code> spawns a child eslint pointed at a banned-pattern
+  fixture and expects a non-zero exit with the rule name in the output — catches the failure mode
+  where a rule ships but isn't registered.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Code-review tripwire on top of the restricted key, not instead of it</strong> — the
+  restricted key is the actual security boundary; the ESLint rules are a redundant
+  catch-it-at-review layer. Pattern-evasion paths the rules don't catch (bracket access
+  <code>stripe['products']['create'](...)</code>, alias rebinding, <code>(stripe as any)</code>
+  casts) are documented at the top of each rule. None of those paths get past the restricted key.
+  The rules' value is "an honest mistake in a PR shows up as a lint failure on the diff," not "this
+  is what makes mutation impossible."
+</aside>
+
+<h3 id="the-webhook-route-absence-invariant">The webhook-route absence invariant</h3>
+
+<p>
+  <code>backend/src/__tests__/webhook-absence.test.ts</code> pins the negative space:
+  <code>POST /webhooks/stripe</code> must return <code>404</code> until MYT-42 lands the verifying
+  handler. The test boots a Fastify app via the same factory production uses, injects a POST to
+  <code>/webhooks/stripe</code>, and asserts the response code. A future PR that registers a logging
+  stub, a smoke handler, or a permissive catch-all that shadows the path before
+  <code>stripe.webhooks.constructEvent</code> verification is wired would fail this test loudly.
+  MYT-42 deletes the test file as part of landing the real handler.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</h3>
+<ol>
+  <li>
+    Mint a new restricted key in the Stripe Dashboard with the same scope (<code>Prices: read</code
+    >, <code>Products: read</code>, <code>Subscriptions: write</code>,
+    <code>Checkout sessions: write</code>, <code>Billing portal: write</code>,
+    <code>Customers: read+write</code>, <code>Webhooks endpoints: read</code>; nothing in the
+    Prices: write or Products: write columns).
+  </li>
+  <li>
+    Write the new value to the per-env Secrets Manager shell:
+    <code
+      >aws secretsmanager put-secret-value --secret-id mythrun/&lt;env&gt;/stripe-secret-key
+      --secret-string &lt;value&gt;</code
+    >. The shell has <code>ignore_changes = [secret_string]</code> on its Terraform version, so this
+    write is safe and out-of-band — Terraform won't try to overwrite it.
+  </li>
+  <li>
+    Roll the API service so running tasks pick up the new secret on their next boot:
+    <code
+      >aws ecs update-service --cluster mythrun --service mythrun-&lt;env&gt;-api
+      --force-new-deployment</code
+    >. The boot probe re-runs against the new key. If the new key's permissions are wrong, you'll
+    see <code>BillingProbeAuthError</code> in CloudWatch and the deployment will roll back.
+  </li>
+  <li>
+    Once the rollover completes, revoke the old key in the Stripe Dashboard. Don't reverse the order
+    — revoking before the rollover finishes will fail a probe mid-flight.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-failed-billing-probe">Diagnose a failed billing probe</h3>
+<ol>
+  <li>
+    Find the <code>billing.probe_failed</code> / <code>billing.probe_auth_failed</code> /
+    <code>billing.probe_transient_failed</code> log line in CloudWatch — every probe carries a
+    <code>bootId</code> UUID for cross-line correlation:
+    <pre><code>filter event like /billing.probe/
+| fields @timestamp, event, bootId, mismatchCount, mismatches, err
+| sort @timestamp desc
+| limit 50</code></pre>
+  </li>
+  <li>
+    <code>billing.probe_auth_failed</code> → the restricted key is wrong, expired, or its scope
+    doesn't include Prices: read. Mint a new key (see above) or check the Dashboard for the
+    permissions on the existing one.
+  </li>
+  <li>
+    <code>billing.probe_failed</code> with a <code>mismatches</code> array → Stripe's catalog
+    drifted from the contract. Each mismatch names the lookup key and what's wrong (missing,
+    duplicate, wrong currency, archived product, etc.). The fix is in the Stripe Dashboard: archive
+    duplicates, reactivate products, repoint lookup keys to active prices.
+  </li>
+  <li>
+    <code>billing.probe_transient_failed</code> after three retries → Stripe is having a bad minute,
+    or the VPC's NAT egress is degraded. Check
+    <a href="https://status.stripe.com">status.stripe.com</a>; re-run the deploy once Stripe
+    recovers.
+  </li>
+  <li>
+    <code>BillingProbeStripeAPIChangeError</code> → Stripe changed the <code>prices.list</code> API
+    contract. This requires a code change in <code>probe.ts</code> to handle the new shape; check
+    Stripe's API changelog for the breaking change and bump <code>STRIPE_API_VERSION</code> in
+    <code>stripe-client.ts</code> alongside the fix.
+  </li>
+</ol>
+
+<h3 id="add-a-new-tier-or-sku">Add a new tier or SKU</h3>
+<ol>
+  <li>
+    Pick a lookup key that follows the existing convention (<code>tier_*</code> for recurring,
+    <code>sku_*</code> for one-time). Add the entry to <code>LOOKUP_KEYS</code> in
+    <code>backend/src/billing/lookup-keys.ts</code> with the display name, type, and
+    credit-allocation contract.
+  </li>
+  <li>
+    In the Stripe Dashboard (test mode first, then production after launch), create the product, a
+    price under it, and set the price's <code>lookup_key</code> to match the enum value. Confirm the
+    price is monthly licensed for tiers, USD, no tax handling, no quantity transformation.
+  </li>
+  <li>
+    Run <code>pnpm dev</code> locally with the test-mode key in
+    <code>backend/.env.development</code>. The boot probe should log
+    <code>billing.probe_passed</code> with the new count. If it logs
+    <code>billing.probe_failed</code>, the Dashboard shape doesn't match — fix it there.
+  </li>
+  <li>
+    Ship the code change through the normal deploy pipeline. The probe re-runs against staging's
+    Stripe account on every deploy, then against production's. A drift between the two surfaces as a
+    probe failure on the second deploy.
+  </li>
+  <li>
+    If <code>LOOKUP_KEYS</code> ever grows past 100 entries, the probe needs pagination — there's a
+    static guardrail at the top of <code>probe.ts</code> that throws a load-time error well before
+    the Stripe API's 100-element <code>lookup_keys</code> filter cap silently truncates.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The two Stripe secrets live in <a href="../infra/data.html">Secrets Manager</a> as per-env shells
+  and are wired into the API task definition by the
+  <a href="../infra/serving.html">serving module</a>; rotating them follows the
+  <a href="../infra/serving.html#rotate-the-manual-secret-values">manual-secret rotation runbook</a>
+  on the serving page. The boot probe runs inside the
+  <a href="../runtime/index.html#the-boot-gate-on-in-staging">backend's boot gate</a>; a probe throw
+  uses the same fail-closed-and-rollback path as a pg/Redis probe failure. The
+  <a href="../data/schema.html">schema</a>'s <code>credit_ledger</code> is where every successful
+  purchase or billing-cycle renewal lands as an INSERT — the
+  <a href="../data/repository.html#credits-and-the-grant-debit-pair">credits namespace</a> in the
+  repository layer is the seam, and migration 006 dropped the four legacy billing-config tables this
+  contract replaces (<code>subscription_tiers</code>, <code>session_packs</code>,
+  <code>user_subscriptions</code>, <code>purchases</code>). MYT-42 wires the
+  <code>/webhooks/stripe</code> route, lands a new <code>purchases</code> table shape (lookup_key
+  TEXT instead of session_pack_size INTEGER), and deletes the webhook-absence test.
+</p>
+
+<h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
+
+<h3 id="lookup-keys">Lookup keys</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Lookup key</th>
+      <th>Type</th>
+      <th>Sessions</th>
+      <th>Worlds</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>tier_wayfarer</code></td>
+      <td>recurring (monthly)</td>
+      <td>4 / cycle</td>
+      <td>1 / cycle</td>
+    </tr>
+    <tr>
+      <td><code>tier_sojourner</code></td>
+      <td>recurring (monthly)</td>
+      <td>8 / cycle</td>
+      <td>2 / cycle</td>
+    </tr>
+    <tr>
+      <td><code>tier_mythwright</code></td>
+      <td>recurring (monthly)</td>
+      <td>16 / cycle</td>
+      <td>4 / cycle</td>
+    </tr>
+    <tr>
+      <td><code>sku_session</code></td>
+      <td>one_time</td>
+      <td>1 / purchase</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <td><code>sku_world</code></td>
+      <td>one_time</td>
+      <td>1 / purchase</td>
+      <td>1 / purchase</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="probe-error-classes">Probe error classes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Error</th>
+      <th>Trigger</th>
+      <th>Retry?</th>
+      <th>Fix</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>BillingProbeAuthError</code></td>
+      <td>401 / 403 from Stripe</td>
+      <td>No</td>
+      <td>Rotate <code>STRIPE_SECRET_KEY</code></td>
+    </tr>
+    <tr>
+      <td><code>BillingProbeError</code></td>
+      <td>Catalog mismatch (missing, duplicate, wrong shape)</td>
+      <td>No</td>
+      <td>Fix Stripe Dashboard</td>
+    </tr>
+    <tr>
+      <td><code>BillingProbeStripeAPIChangeError</code></td>
+      <td><code>has_more: true</code> on enum-bounded query</td>
+      <td>No</td>
+      <td>Code change in <code>probe.ts</code></td>
+    </tr>
+    <tr>
+      <td><code>BillingProbeTransientError</code></td>
+      <td>5xx / timeout / rate-limit, after 3 attempts</td>
+      <td>3 attempts with 1/2/4s + jitter</td>
+      <td>Wait for Stripe; redeploy</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="environment-variables">Environment variables</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Var</th>
+      <th>Validation</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>STRIPE_SECRET_KEY</code></td>
+      <td>Required, must start with <code>rk_</code></td>
+      <td>Restricted key only. Full-permission <code>sk_*</code> keys rejected at env load.</td>
+    </tr>
+    <tr>
+      <td><code>STRIPE_WEBHOOK_SECRET</code></td>
+      <td>Required, any non-empty string</td>
+      <td>
+        Literal <code>PLACEHOLDER</code> permitted in the MYT-41 → MYT-42 window — no code path
+        consumes it until the webhook handler lands.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="probe-log-events">Probe log events</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>Level</th>
+      <th>Fields (in addition to <code>bootId</code>)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>billing.probe_started</code></td>
+      <td>info</td>
+      <td><code>count</code> (number of lookup keys)</td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_transient_retry</code></td>
+      <td>warn</td>
+      <td><code>attempt</code>, <code>nextDelayMs</code>, <code>err</code></td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_passed</code></td>
+      <td>info</td>
+      <td><code>count</code></td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_failed</code></td>
+      <td>error</td>
+      <td><code>mismatchCount</code>, <code>mismatches</code> (array of human-readable diffs)</td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_auth_failed</code></td>
+      <td>error</td>
+      <td><code>err</code> (the message of the underlying StripeAuthenticationError)</td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_transient_failed</code></td>
+      <td>error</td>
+      <td><code>attempts</code>, <code>err</code> (last error after retry exhaustion)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/billing/lookup-keys.ts</code>,
+  <code>backend/src/billing/stripe-client.ts</code>, <code>backend/src/billing/probe.ts</code>,
+  <code>backend/src/config/env.ts</code>, <code>backend/src/server.ts</code>,
+  <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code>,
+  <code>backend/eslint-rules/no-stripe-subscription-price-mutation.cjs</code>,
+  <code>backend/src/__tests__/webhook-absence.test.ts</code>, <code>eslint.config.js</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-enum-and-what-it-carries">The closed enum and what it carries</a></li><li style="padding-left:12px"><a href="#the-cached-sdk-client">The cached SDK client</a></li><li style="padding-left:12px"><a href="#the-boot-probe-and-its-four-error-classes">The boot probe and its four error classes</a></li><li style="padding-left:12px"><a href="#the-boot-gate-wiring">The boot-gate wiring</a></li><li style="padding-left:12px"><a href="#the-restricted-key-boundary">The restricted-key boundary</a></li><li style="padding-left:12px"><a href="#the-eslint-ast-tripwires">The ESLint AST tripwires</a></li><li style="padding-left:12px"><a href="#the-webhook-route-absence-invariant">The webhook-route absence invariant</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a></li><li style="padding-left:12px"><a href="#add-a-new-tier-or-sku">Add a new tier or SKU</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#lookup-keys">Lookup keys</a></li><li style="padding-left:12px"><a href="#probe-error-classes">Probe error classes</a></li><li style="padding-left:12px"><a href="#environment-variables">Environment variables</a></li><li style="padding-left:12px"><a href="#probe-log-events">Probe log events</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

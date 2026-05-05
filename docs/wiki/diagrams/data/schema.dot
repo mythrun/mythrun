@@ -14,12 +14,8 @@ digraph schema {
     color="ember";
     fontcolor="ember";
 
-    users   [label="users\ncognito_sub UNIQUE\nemail UNIQUE"];
+    users   [label="users\ncognito_sub UNIQUE\nLOWER(username) UNIQUE"];
     ledger  [label="credit_ledger\n(append-only)"];
-    subs    [label="user_subscriptions"];
-    tiers   [label="subscription_tiers"];
-    packs   [label="session_packs"];
-    purch   [label="purchases"];
     stripe  [label="stripe_events\n(idempotency)"];
   }
 
@@ -82,9 +78,6 @@ digraph schema {
 
   // Identity edges
   users -> ledger    [label="RESTRICT\n(revenue ledger,\nmigration 004)"];
-  users -> subs      [label="CASCADE"];
-  tiers -> subs      [label=""];
-  users -> purch     [label=""];
 
   // Worlds edges
   users    -> worlds   [label="created_by"];

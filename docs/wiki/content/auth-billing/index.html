@@ -4,15 +4,19 @@
   session credit is metered, and how Stripe fits in.
 </p>
 <p>
-  Three pages in this section so far:
+  Four pages in this section so far:
   <a href="./identity.html">Identity</a> — the Cognito User Pool, the PKCE public App Client, the
   Hosted UI domain, and the Google + Discord OIDC providers that back federated sign-in;
   <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify plugin family that validates
   Cognito access tokens at the edge, the bypass mode for local dev with its six-layer defense
   against accidental activation, and the <code>requireUser</code> narrowing helper protected
-  handlers reach through; and <a href="./onboarding.html">Onboarding &amp; invites</a> — the
-  first-login flow that creates the <code>users</code> row, the <code>requireOnboarded</code> gate
-  that pins every protected route on that row's existence, and the six invite routes that let a
-  DM-owner pull others into a campaign by sharing a 12-character code. The credits ledger and Stripe
-  webhooks land as those layers ship.
+  handlers reach through; <a href="./onboarding.html">Onboarding &amp; invites</a> — the first-login
+  flow that creates the <code>users</code> row, the <code>requireOnboarded</code> gate that pins
+  every protected route on that row's existence, and the six invite routes that let a DM-owner pull
+  others into a campaign by sharing a 12-character code; and
+  <a href="./stripe-contract.html">Stripe contract</a> — the closed enum of
+  <code>lookup_key</code>s, the cached SDK client pinned to one API version, the read-only boot
+  probe that fails closed if Stripe's catalog drifts, the restricted-key boundary that makes price
+  mutation impossible on the wire, and the ESLint AST tripwires above it. The credits ledger and
+  Stripe webhooks land as those layers ship.
 </p>

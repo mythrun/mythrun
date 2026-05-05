@@ -1,0 +1,81 @@
+digraph stripe_contract {
+  // The Stripe-contract surface as it stands at MYT-41: a closed enum of
+  // lookup_keys, a cached SDK client pinned to one API version, a read-only
+  // boot-time probe that fails closed on mismatch, and the restricted-key
+  // boundary that keeps mutation off the wire entirely. The webhook route
+  // is intentionally absent until MYT-42 lands the verifying handler.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_code {
+    label="backend code  (src/billing/)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    lookup [label="lookup-keys.ts\ntier_wayfarer\ntier_sojourner\ntier_mythwright\nsku_session\nsku_world\n(closed enum)"];
+    client [label="stripe-client.ts\ncached singleton\napiVersion pinned\n2026-04-22.dahlia"];
+    probe  [label="probe.ts\nread-only\nstripe.prices.list\nretry × 3 + jitter\n4 typed errors"];
+  }
+
+  subgraph cluster_eslint {
+    label="eslint-rules/  (AST tripwires)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    rule_p [label="no-stripe-price-mutations\nbans prices/products/coupons\n.create / .update / .del"];
+    rule_s [label="no-stripe-subscription-\nprice-mutation\nbans items[].price update"];
+  }
+
+  subgraph cluster_env {
+    label="env  (config/env.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    env_sk [label="STRIPE_SECRET_KEY\nrk_* required\nsk_* rejected at load"];
+    env_wh [label="STRIPE_WEBHOOK_SECRET\nPLACEHOLDER permitted\nin MYT-41 → MYT-42 window"];
+  }
+
+  subgraph cluster_boot {
+    label="boot gate  (server.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    waitfor  [label="waitFor(pg, redis×2)"];
+    probegate [label="probeStripeContract\n(fail-closed throw\n→ ECS rollback)"];
+    listen   [label="app.listen"];
+  }
+
+  subgraph cluster_stripe {
+    label="Stripe (external)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    api    [label="api.stripe.com\nrestricted key:\nPrices read,\nSubscriptions write\n(no Prices/Products write)"];
+    portal [label="Customer Portal\n(tier switching\nlives here, not\nin app code)"];
+  }
+
+  // Boot ordering
+  waitfor   -> probegate [label=""];
+  probegate -> listen    [label="ok"];
+  probegate -> listen    [label="throw → exit 1\n→ ECS rollback", style=dashed, color="ember", fontcolor="ember"];
+
+  // Probe wiring
+  lookup -> probe   [label="enum drives\nlookup_keys filter"];
+  client -> probe   [label="injected"];
+  probe  -> api     [label="prices.list\nlookup_keys, active=true,\nexpand=[product]"];
+  api    -> probe   [label="contract verify\ncurrency=usd, type,\nbilling_scheme,\nrecurring shape"];
+
+  // Env wiring
+  env_sk -> client  [label="rk_ key only"];
+  env_wh -> listen  [label="contract present\n(no consumer until\nMYT-42)", style=dashed];
+
+  // Mutation boundary (negative space — what we DON'T do)
+  rule_p -> api     [label="blocked at code review", style=dashed, color="ember", fontcolor="ember"];
+  rule_s -> api     [label="blocked at code review", style=dashed, color="ember", fontcolor="ember"];
+  api    -> portal  [label="users self-manage\ntiers + cancel", style=dashed];
+}

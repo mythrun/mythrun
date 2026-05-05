@@ -37,6 +37,7 @@ export const structure: Section[] = [
       { slug: 'identity', title: 'Identity' },
       { slug: 'jwt-middleware', title: 'JWT middleware' },
       { slug: 'onboarding', title: 'Onboarding & invites' },
+      { slug: 'stripe-contract', title: 'Stripe contract' },
     ],
   },
   {
