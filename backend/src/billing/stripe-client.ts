@@ -19,11 +19,9 @@ const STRIPE_API_VERSION = '2026-04-22.dahlia' as const
 let cached: Stripe | null = null
 
 export function getStripeClient(env: Env): Stripe {
-  if (!cached) {
-    cached = new Stripe(env.stripeSecretKey, {
-      apiVersion: STRIPE_API_VERSION,
-      typescript: true,
-    })
-  }
+  cached ??= new Stripe(env.stripeSecretKey, {
+    apiVersion: STRIPE_API_VERSION,
+    typescript: true,
+  })
   return cached
 }
