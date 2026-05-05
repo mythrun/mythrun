@@ -16,6 +16,12 @@ export default tseslint.config(
       'docs/specs/**',
       '.beads/**',
       '**/*.config.js',
+      // The banned-pattern fixture is the *only* file that should fail
+      // the no-stripe-price-mutations rule. The config-wiring smoke test
+      // (eslint-rules/__tests__/config-wiring.test.cjs) lints it
+      // explicitly with --no-ignore. Excluding it here keeps `pnpm lint`
+      // clean.
+      'backend/eslint-rules/__tests__/fixtures/**',
     ],
   },
   ...tseslint.configs.strictTypeChecked,
@@ -31,7 +37,13 @@ export default tseslint.config(
     },
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // Files outside the TS project (banned-pattern fixtures used by
+          // the config-wiring smoke test) get the default fallback project
+          // so the parser doesn't reject them outright. The mythrun rules
+          // fire on AST shape and don't need type info.
+          allowDefaultProject: ['backend/eslint-rules/__tests__/fixtures/banned.fixture.mjs'],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
