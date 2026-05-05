@@ -14,7 +14,7 @@
 1. [Overview](#1-overview)
 2. [Credit Model](#2-credit-model)
 3. [Subscription Tiers](#3-subscription-tiers)
-4. [Session Packs (One-Time Purchases)](#4-session-packs-one-time-purchases)
+4. [À-la-carte SKUs](#4-à-la-carte-skus)
 5. [Stripe Integration](#5-stripe-integration)
 6. [Session Budget and Token Metering](#6-session-budget-and-token-metering)
 7. [Free Trial](#7-free-trial)
@@ -134,37 +134,24 @@ COMMIT;
 
 ### Infrastructure
 
-Tiers are defined as a **configuration table**, not hardcoded. This allows adding/changing tiers without code deploys.
+Subscription tier metadata lives in `backend/src/billing/lookup-keys.ts`. Stripe Prices map to tiers by `lookup_key`; the DB does not cache tier metadata. (See MYT-41 spec for the design rationale: Stripe stays the source of truth for prices; the lookup-keys file is the closed enum that backend code reads.)
 
-```sql
-CREATE TABLE subscription_tiers (
-  id TEXT PRIMARY KEY,  -- e.g., 'adventurer', 'champion'
-  name TEXT NOT NULL,
-  stripe_price_id TEXT NOT NULL,  -- Stripe's price identifier
-  session_credits_per_month INTEGER NOT NULL,
-  world_gen_credits_per_month INTEGER NOT NULL,
-  price_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-### Launch Tiers (Configurable — Exact Pricing TBD After Cost Modeling)
+### Launch Tiers
 
 | Tier ID | Name | Sessions/mo | World Gens/mo | Target Price |
 |---------|------|-------------|---------------|-------------|
-| `adventurer` | Adventurer | ~4-6 | 1 | $X/mo |
-| `champion` | Champion | ~10-12 | 2-3 | $Y/mo |
+| `tier_wayfarer` | Wayfarer | 4 | 1 | $X/mo |
+| `tier_sojourner` | Sojourner | 8 | 2 | $Y/mo |
+| `tier_mythwright` | Mythwright | 16 | 4 | $Z/mo |
 
-Exact numbers are populated after per-session and per-world-gen cost modeling is complete. The infrastructure supports any values.
+Exact pricing populated after per-session and per-world-gen cost modeling.
 
 ### Subscription Lifecycle
 
-1. **Subscribe:** User selects a tier → Stripe Checkout → `checkout.session.completed` webhook → create `credit_ledger` entries (session credits + world gen credits)
-2. **Monthly renewal:** Stripe charges automatically → `invoice.paid` webhook → grant new monthly credits
-3. **Cancel:** User cancels via Stripe Customer Portal → `customer.subscription.deleted` webhook → no new credits granted. Existing credits remain usable until expiry (if rollover is off) or indefinitely (if rollover is on).
-4. **Upgrade/downgrade:** Handled by Stripe proration. The webhook processes the new tier's credit grant.
+1. **Subscribe:** User selects a tier → Stripe Checkout → `checkout.session.completed` webhook → create `credit_ledger` entries (session credits + world gen credits) — tier metadata read from `lookup-keys.ts` contract.
+2. **Monthly renewal:** Stripe charges automatically → `invoice.paid` webhook → grant new monthly credits.
+3. **Cancel:** User cancels via Stripe Customer Portal → `customer.subscription.deleted` webhook → no new credits granted. Existing credits remain usable through `current_period_end` (no retroactive expiry).
+4. **Upgrade/downgrade:** Handled by Stripe proration via Customer Portal Switch Plan. The webhook processes the new tier's credit grant.
 
 ### Subscription Tracking
 
@@ -172,7 +159,7 @@ Exact numbers are populated after per-session and per-world-gen cost modeling is
 CREATE TABLE user_subscriptions (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  tier_id TEXT NOT NULL REFERENCES subscription_tiers(id),
+  tier_lookup_key TEXT NOT NULL,  -- closed enum enforced at write-time by MYT-42 webhook handler
   stripe_subscription_id TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL CHECK (status IN ('active', 'past_due', 'canceled', 'unpaid')),
   current_period_start TIMESTAMPTZ NOT NULL,
@@ -183,53 +170,40 @@ CREATE TABLE user_subscriptions (
 CREATE INDEX idx_user_subscriptions_user ON user_subscriptions(user_id);
 ```
 
-### Rollover Flexibility
+> MYT-42 ships migration 007 with this new shape (replacing the legacy `tier_id REFERENCES subscription_tiers(id)` column dropped in MYT-41 migration 006).
 
-The `expires_at` column on `credit_ledger` enables both models:
+### Rollover Policy
 
-- **No rollover:** Credits granted with `expires_at = current_period_end`. Unused credits expire at the end of the billing cycle.
-- **Rollover with cap:** Credits granted with `expires_at = NULL` (never expire). A separate check enforces maximum balance: `IF current_balance + new_grant > cap THEN grant = cap - current_balance`.
-
-The business decision (rollover vs no-rollover) is a configuration flag, not a code change.
+No rollover at launch. Tier credits are granted with `expires_at = current_period_end`. Mid-period cancellation does not retroactively expire that period's credits — the user paid for the period, gets to use it through `current_period_end`.
 
 ---
 
-## 4. Session Packs (One-Time Purchases)
+## 4. À-la-carte SKUs
 
-### Pack Configuration
+### SKU Configuration
 
-```sql
-CREATE TABLE session_packs (
-  id TEXT PRIMARY KEY,  -- e.g., 'pack_5', 'pack_12'
-  name TEXT NOT NULL,
-  session_credits INTEGER NOT NULL,
-  world_gen_credits INTEGER NOT NULL DEFAULT 0,
-  stripe_price_id TEXT NOT NULL,
-  price_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
+SKU metadata lives in `backend/src/billing/lookup-keys.ts`. Stripe Prices map to SKUs by `lookup_key`. There is no DB-resident pack table.
 
-### Launch Packs (Pricing TBD)
+### Launch SKUs
 
-| Pack ID | Sessions | World Gens | Target Price |
-|---------|----------|------------|-------------|
-| `pack_5` | 5 | 0 | $X |
-| `pack_12` | 12 | 1 | $Y |
+| SKU ID | Display Name | Sessions | World Gens | Target Price |
+|---|---|---|---|---|
+| `sku_session` | Session | 1 | 0 | $X |
+| `sku_world` | World | 1 | 1 | $Y |
 
-Pack credits never expire (`expires_at = NULL`).
+À-la-carte credits never expire (`expires_at = NULL`).
 
 ### Purchase Flow
 
-1. User selects a pack → `POST /api/billing/checkout` with `{ packId: 'pack_5' }`
-2. Server looks up the pack in `session_packs` table → creates Stripe Checkout Session with the `stripe_price_id`
-3. Server stores `metadata: { packId, userId }` on the Stripe Checkout Session
-4. Returns `{ checkoutUrl }` → frontend redirects to Stripe
-5. Stripe processes payment → `checkout.session.completed` webhook
-6. Webhook handler: reads `metadata`, inserts `purchases` row, inserts `credit_ledger` entries
-7. User sees credits in their balance
+1. User adds SKUs to cart → `POST /api/billing/checkout` with `{ items: [{ lookup_key, quantity }] }` (cart-shape rules per MYT-41 spec §3 — single-tier carts use `mode: 'subscription'`; à-la-carte-only carts use `mode: 'payment'`).
+2. Server resolves each `lookup_key` to its Stripe Price via the runtime probe-validated mapping → creates Stripe Checkout Session.
+3. Server stores `metadata: { userId }` on the Stripe Checkout Session (per-line-item `lookup_key` walk replaces the single packId field — see MYT-41 spec §"Webhook credit-grant contract for MYT-42").
+4. Returns `{ checkoutUrl }` → frontend redirects to Stripe.
+5. Stripe processes payment → `checkout.session.completed` webhook.
+6. Webhook handler: reads `metadata.userId`, iterates Checkout Session `line_items` keyed by `lookup_key`, inserts `purchases` row + `credit_ledger` entries (one per item × quantity).
+7. User sees credits in their balance.
+
+> MYT-42 ships migration 007 to recreate the `purchases` table with `lookup_key TEXT NOT NULL` (replacing the legacy `session_pack_size INTEGER` column dropped in MYT-41 migration 006).
 
 ---
 
@@ -237,14 +211,7 @@ Pack credits never expire (`expires_at = NULL`).
 
 ### Products and Prices
 
-All products and prices are created in Stripe Dashboard (not via API). The Stripe Price IDs are stored in our `subscription_tiers` and `session_packs` tables.
-
-| Stripe Product | Type | Prices |
-|---------------|------|--------|
-| Mythrun Adventurer | Recurring (monthly) | One price per tier |
-| Mythrun Champion | Recurring (monthly) | One price per tier |
-| Session Pack (5) | One-time | One price |
-| Session Pack (12) | One-time | One price |
+All products and prices are created in Stripe Dashboard (not via API). Code references prices by `lookup_key` only; no Stripe Price IDs are stored in the application database. The `backend/src/billing/lookup-keys.ts` contract is the closed enum; the boot probe (MYT-41) verifies every key resolves to a price with the expected shape (currency, type, billing_scheme, recurring interval, etc.).
 
 ### Webhook Handling
 
@@ -276,7 +243,14 @@ CREATE TABLE stripe_events (
 
 ### Stripe Customer Portal
 
-Users manage their payment method, view invoices, and cancel subscriptions via Stripe's hosted Customer Portal:
+Users manage their subscription via Stripe's hosted Customer Portal. Enabled features at launch (Stripe's exact Dashboard labels):
+
+- **Cancel subscription** (Cancel at end of billing period)
+- **Switch plan** (allowlist: Wayfarer, Sojourner, Mythwright)
+- **Payment methods** (update; card only at launch)
+- **Invoice history** (visible)
+
+Disabled at launch: Promotion codes, Retention coupons, Tax ID, Phone, Shipping address, Update quantities, Cancellation reason (optional, off at launch).
 
 `GET /api/billing/portal` → creates a Stripe portal session → returns `{ portalUrl }` → frontend redirects.
 
@@ -284,10 +258,15 @@ No custom payment management UI needed.
 
 ### Price Manipulation Prevention
 
-- The server maps pack/tier IDs to Stripe Price IDs from the database — the client never sends a price
-- The webhook handler verifies `amount_total` matches the expected price for the pack/tier in `metadata`
-- Credit allocation happens ONLY in the webhook handler, never on the checkout success redirect
-- The success redirect URL (`/billing/success`) shows a "Processing..." state until the webhook fires and credits appear in the balance
+Pricing is immutable from application code. Defense in depth, in order of strength:
+
+1. **Stripe restricted API key** with no `Prices: write` or `Products: write` — Stripe's API rejects mutation attempts at the network level. This is the actual SDK-level boundary.
+2. **Code references prices by `lookup_key` only** — no hardcoded Stripe Price IDs anywhere in the application. The `backend/src/billing/lookup-keys.ts` contract is the closed enum; the boot probe (MYT-41) verifies every key resolves to a price with the expected shape.
+3. **ESLint rules** `mythrun/no-stripe-price-mutations` and `mythrun/no-stripe-subscription-price-mutation` ban price/product/coupon catalog mutations and subscription item-price mutations — code-review tripwires above the SDK boundary, not runtime boundaries.
+
+Per-charge correctness is the webhook handler's responsibility (MYT-42): it reconstructs the expected `amount_total` from each line-item's `lookup_key` and verifies against the Stripe-reported total before crediting. Catalog-shape correctness is the boot probe's responsibility (MYT-41): if any lookup_key doesn't resolve to an active price with the expected shape, the deploy fails closed.
+
+Credit allocation happens ONLY in the webhook handler, never on the checkout success redirect. The success redirect URL (`/billing/success`) shows a "Processing..." state until the webhook fires and credits appear in the balance.
 
 ---
 
@@ -295,7 +274,7 @@ No custom payment management UI needed.
 
 ### Token Budget
 
-Each session is allocated a token budget when it starts. The budget is defined per credit type (session credits from subscriptions may have a different budget than session credits from packs — but for launch, they're identical).
+Each session is allocated a token budget when it starts. The budget is defined per credit type (session credits from tier subscriptions may have a different budget than session credits from à-la-carte SKUs — for launch, identical).
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
@@ -345,16 +324,16 @@ The `session_usage.estimated_cost_usd` is calculated on session end by summing `
 
 ### Implementation
 
-1. `users.free_trial_used` flag (from schema)
-2. When a user with no credits and `free_trial_used = false` starts a session:
-   - The session is flagged as a trial session (`session_usage.source_type = 'trial'`)
+Trial credit is granted at registration, not at session-start. On `POST /api/users/register`, the same transaction that creates the `users` row inserts a `credit_ledger` row (`credit_type='session', amount=1, source_type='trial', source_id=NULL, expires_at=NULL`) and sets `users.free_trial_used = true`. Sessions consume the trial credit via the standard atomic-debit recipe (§2). No special trial-mode session machinery; the time-cap, reduced token budget, and demo-world choices below are session-runtime concerns owned by MYT-43, decoupled from credit-grant timing.
+
+1. `users.free_trial_used` flag (set true at registration; subsequent registrations of an existing-by-username user MUST NOT re-grant).
+2. When a trial-credit session starts:
    - Token budget is reduced
    - A 45-minute timer starts
    - The pre-built demo world is used (a specific world ID configured in settings)
 3. At 40 minutes, the ST receives: "The session is ending in 5 minutes. Guide the narrative to a compelling cliffhanger — an unresolved tension, a revelation, a danger emerging. Do NOT resolve the current situation."
 4. At 45 minutes, the session ends regardless. The ST fires a final `session_end` with a hook summary.
-5. `free_trial_used` is set to `true`
-6. The conversion prompt appears
+5. The conversion prompt appears.
 
 ### Demo World
 
@@ -420,10 +399,9 @@ This is deferred to the Observability sub-spec or a future admin tools project.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/api/billing/balance` | JWT | Get current credit balances `{ session_credits, world_gen_credits }` |
-| GET | `/api/billing/tiers` | Public | List available subscription tiers (for pricing page) |
-| GET | `/api/billing/packs` | Public | List available session packs |
-| POST | `/api/billing/checkout` | JWT | Create Stripe Checkout Session. Body: `{ type: 'subscription', tierId }` or `{ type: 'pack', packId }` |
+| GET | `/api/billing/balance` | JWT | Get current credit balances + active tier `{ balance: { session, world_gen }, tier: { lookup_key, displayName, renewsAt } | null }` |
+| GET | `/api/billing/skus` | Public | List available SKUs keyed by `lookup_key` (covers both tier subscriptions and à-la-carte items). Caching/TTL/fallback rules per MYT-41 spec §4. |
+| POST | `/api/billing/checkout` | JWT | Create Stripe Checkout Session. Body: `{ items: [{ lookup_key, quantity }] }`. Mode (`subscription`/`payment`) is server-derived from cart shape per MYT-41 spec §3. |
 | GET | `/api/billing/portal` | JWT | Get Stripe Customer Portal URL |
 | GET | `/api/billing/history` | JWT | Purchase and subscription history |
 | GET | `/api/billing/subscription` | JWT | Current subscription details (tier, status, period dates) |
@@ -433,33 +411,35 @@ This is deferred to the Observability sub-spec or a future admin tools project.
 
 ```json
 {
-  "session_credits": 7,
-  "world_gen_credits": 2,
-  "subscription": {
-    "tier": "adventurer",
-    "status": "active",
+  "balance": {
+    "session": 7,
+    "world_gen": 2
+  },
+  "tier": {
+    "lookup_key": "tier_wayfarer",
+    "displayName": "Wayfarer",
     "renewsAt": "2026-05-13T00:00:00Z"
   }
 }
 ```
 
+`tier` is `null` when the user has no active subscription.
+
 ### Checkout Endpoint
 
+Body shape: `{ items: [{ lookup_key, quantity }] }`. The Checkout `mode` is server-derived from the items' types per the cart-shapes table in MYT-41 spec §3 (single-tier carts → `'subscription'`; à-la-carte-only carts → `'payment'`; mixed → 400 reject).
+
 The server creates the Stripe Checkout Session with:
-- `mode: 'subscription'` or `mode: 'payment'` (depending on type)
-- `line_items: [{ price: stripe_price_id, quantity: 1 }]`
-- `metadata: { userId, tierId/packId }` — used by the webhook to credit the right user
+- `mode: 'subscription'` or `mode: 'payment'` (server-derived from cart shape)
+- `line_items: [{ price: <resolved-from-lookup_key>, quantity }]` for each cart item
+- `metadata: { userId }` (per-line-item `lookup_key` walk replaces tierId/packId)
 - `success_url: https://mythrun.com/billing/success?session_id={CHECKOUT_SESSION_ID}`
 - `cancel_url: https://mythrun.com/billing/cancel`
 - `customer`: existing Stripe customer ID if the user has one, or auto-create
 
 ### Stripe Customer Mapping
 
-```sql
-ALTER TABLE users ADD COLUMN stripe_customer_id TEXT UNIQUE;
-```
-
-Created on first checkout. Subsequent checkouts use the existing customer ID so payment methods and history are linked.
+`users.stripe_customer_id` is part of the initial schema (migration 001). Populated lazily on first checkout via `customers.create` in MYT-42. Subsequent checkouts use the existing customer ID so payment methods and history are linked.
 
 ---
 
@@ -473,7 +453,7 @@ Created on first checkout. Subsequent checkouts use the existing customer ID so 
 | **User starts session right as credits expire** | The `FOR UPDATE` lock in the debit transaction prevents race conditions. If credits expired between page load and session start, the debit fails gracefully. |
 | **Refund after credits are spent** | Negative credit_ledger entry. If balance goes negative, user can't start new sessions until balance is positive (next month's grant or a new purchase). |
 | **Subscription payment fails** | Stripe retries automatically (3 attempts over ~2 weeks). During `past_due` status, no new credits are granted but existing credits still work. After final failure, subscription is canceled. |
-| **User has both subscription and pack credits** | Both contribute to balance. Debit consumes the earliest-expiring credits first (subscription credits with expiry before pack credits with no expiry). |
+| **User has both subscription and à-la-carte credits** | Both contribute to balance. Debit ordering is implementation-defined; MYT-43 picks the consumption-priority strategy. |
 | **Owner leaves mid-session** | Session continues using already-debited credit. No new debit occurs. If owner loses credits mid-session (impossible — debit happens at start), the session finishes normally. |
 | **Campaign ownership transfer** | New owner's credits are used for future sessions. Past session costs stay attributed to the original owner. |
 
