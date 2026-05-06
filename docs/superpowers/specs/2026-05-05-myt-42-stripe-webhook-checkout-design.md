@@ -256,7 +256,18 @@ const period_start = subscription.items.data[0].current_period_start  // dahlia:
 // idempotencyKey collapses double-clicks / browser-retry parallel calls. Stripe
 // dedupes within a 24h window; second call with the same key returns the
 // cached first response.
-const idempotencyKey = `upgrade:${userId}:${active_sub.stripe_subscription_id}:${period_start}:${target_tier_lookup_key}`
+//
+// Per Petra I1 round 8: period_start is DELIBERATELY EXCLUDED from the key.
+// If the user clicks Upgrade right at the period boundary, the first request
+// reads the OLD period_start, the second (sub-second) read may pick up the
+// NEW period_start after Stripe's billing engine rolls the period over —
+// different keys → both calls process → potential double-charge. The
+// composite (userId, sub_id, target_tier_lookup_key) is sufficient for the
+// dedup invariant: same user attempting the same upgrade. The natural
+// 'tier_unchanged' early-exit at line 222 handles the post-COMMIT replay
+// case (Stripe's idempotency cache expired but our DB shows tier already
+// applied).
+const idempotencyKey = `upgrade:${userId}:${active_sub.stripe_subscription_id}:${target_tier_lookup_key}`
 
 const updated = await stripe.subscriptions.update(
   active_sub.stripe_subscription_id,
@@ -517,7 +528,7 @@ The `PREFETCHERS` table mirrors `HANDLERS`: each event type optionally declares 
 ```
 
 The §5.4.2 handler early-returns (log INFO `billing.invoice_non_subscription` + COMMIT `stripe_events` + 200, no credit grant) when `prefetch.subscription === null`. The handler's customer-id-miss fallback reads `prefetch.subscription.metadata.userId`, NOT `event.data.object.metadata.userId` (the latter is the Invoice's own metadata, which is empty for Checkout-driven subs).
-- `refund.created` AND `refund.updated` (per §3.1 note 8 — both subscribed at launch; `refund.failed` deliberately not subscribed): `event.data.object` is the Refund directly. `event.data.object.id === re_*`. `event.data.object.payment_intent` and `event.data.object.charge` are top-level strings (both nullable; `refund.charge` may be missing for non-PI refund paths per Carthage I1 round 6). The handler gates clawback on `event.data.object.status === 'succeeded'` per Carthage C1 round 6 — `pending` / `requires_action` / `canceled` / `failed` paths log+commit+200 without clawback. Prefetch resolves the parent invoice for subscription-refund routing; à-la-carte refunds skip the invoice path entirely:
+- `refund.created` AND `refund.updated` (per §3.1 note 8 — both subscribed at launch; `refund.failed` deliberately not subscribed): `event.data.object` is the Refund directly. `event.data.object.id === re_*`. `event.data.object.payment_intent` and `event.data.object.charge` are top-level strings (both nullable; `refund.charge` may be missing for non-PI refund paths per Carthage I1 round 6). The handler gates clawback on `event.data.object.status === 'succeeded'` per Carthage C1 round 6 — `pending` / `requires_action` / `canceled` / `failed` paths log+commit+200 without clawback. Prefetch fetches the parent Charge for the partial-refund check ONLY; subscription-routing happens via DB-side resolution in the handler tx (per Carthage C1 round 8 — see below). À-la-carte refunds skip the Charge fetch when `refund.charge` is null.
 
 ```ts
 async (event, stripe) => {
@@ -525,32 +536,13 @@ async (event, stripe) => {
   // Step-0 partial-refund check needs charge.amount_refunded vs amount_captured.
   // refund.charge is nullable; if absent, fall through to the §5.4.5 'neither matches' branch.
   const charge = refund.charge ? await stripe.charges.retrieve(refund.charge) : null
-  // Subscription-invoice resolution: PI → invoicePayments.list → invoice (per §3.1 note 6 —
-  // Charge.invoice was removed at basil). null-safe at every hop because invoice.parent
-  // is itself nullable per §3.1 note 7.
-  let invoice: Stripe.Invoice | null = null
-  let subscription: Stripe.Subscription | null = null
-  if (refund.payment_intent) {
-    const ip = await stripe.invoicePayments.list({
-      payment: { type: 'payment_intent', payment_intent: refund.payment_intent },
-      limit: 1,
-    })
-    const invoiceId = ip.data[0]?.invoice ?? null
-    if (invoiceId) {
-      invoice = await stripe.invoices.retrieve(invoiceId)
-      const parentSubId = invoice.parent?.type === 'subscription_details'
-        ? invoice.parent.subscription_details?.subscription ?? null
-        : null
-      if (parentSubId) {
-        subscription = await stripe.subscriptions.retrieve(parentSubId)
-      }
-    }
-  }
-  return { charge, invoice, subscription }
+  return { charge }
 }
 ```
 
-For à-la-carte refunds the `invoicePayments.list` returns empty (`ip.data` length 0); the resolution chain stays null and §5.4.5 step 1 proceeds via `purchases WHERE stripe_payment_intent_id = refund.payment_intent`. Handler's customer-id-miss fallback reads `prefetch.subscription?.metadata.userId` if the chain resolves.
+Per Carthage C1 round 8: the subscription-invoice resolution path no longer prefetches via `stripe.invoicePayments.list` — that endpoint requires `invoice` as a query parameter (not `payment`), so PI → Invoice cannot be resolved via that resource in a single call. The handler instead resolves DB-side: `billing_history` rows of `kind='invoice'` carry a new `stripe_payment_intent_id` column (see §6 migration 007), populated by §5.4.2 at invoice-paid time. The §5.4.5 refund handler reads `SELECT id FROM billing_history WHERE stripe_payment_intent_id = $1 AND kind='invoice'` to find the originating invoice row. No Stripe call needed at refund time; resolution is fully DB-side and avoids the prefetch-then-write round trip for routing.
+
+For à-la-carte refunds the resolution proceeds via `purchases WHERE stripe_payment_intent_id = refund.payment_intent` (unchanged from prior rounds). Handler's customer-id-miss fallback for the subscription path reads from the resolved billing_history row's `user_id` directly (the row carries it via the `users(id)` FK).
 
 These prefetch shapes are pinned in the spec so the implementer doesn't have to derive them. Tests assert each handler's prefetch contract via fixture data.
 
@@ -622,7 +614,7 @@ Branch on `billing_reason`:
 
 - **Amount validation**: assert `event.data.object.subtotal_excluding_tax === price.unit_amount` (single-item subscription; per §5.4 cross-cutting rule 2 + Carthage C1 round 5, this is the pre-tax-pre-discount field; tax-/discount-tolerant by construction so a future tax-on flip doesn't silently break the assertion). Mismatch → §5.4 cross-cutting rule 2.
 - **Insert order (per Petra I5 round 5): append billing_history → grant credits.** The credit_ledger row's `source_billing_history_id` FK references the billing_history row; FK requires billing_history first or the tx aborts.
-- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax`, `lookup_key = tier_lookup_key`, `expires_at = period_end` (mirrors the credit_ledger.expires_at for refund-resolution per §5.4.5).
+- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `stripe_payment_intent_id = invoice.payments[0].payment.payment_intent` (per Carthage C1 round 8 — populates the DB-side resolution column the §5.4.5 refund handler reads; per basil's multi-payment-invoice model `Invoice.payment_intent` was removed but `Invoice.payments[]` carries the same data, with the canonical PI on the first payment record), `amount_cents = subtotal_excluding_tax`, `lookup_key = tier_lookup_key`, `expires_at = period_end` (mirrors the credit_ledger.expires_at for refund-resolution per §5.4.5).
 - **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` — `amount = spec.sessionsGranted` for `credit_type='session'`, same for worlds. `source_type='subscription'`. `source_billing_history_id = <billing_history row inserted above>`. `source_purchase_id = NULL`. `expires_at = period_end`.
 
 #### `billing_reason === 'subscription_create'` (initial subscription invoice — fresh sub or post-SCA settlement)
@@ -633,10 +625,10 @@ Same logic as `subscription_cycle`, with one subtlety: at this moment `user_subs
 
 **Per round 7 + research findings: this branch is REMOVED.** The §4.6 endpoint now uses `payment_behavior: 'pending_if_incomplete'` (per Stripe's purpose-built mechanism for the items-vs-payment split-brain race — see §4.6 prose for the full rationale). Under that flag, item-advance is structurally tied to payment settlement: items DO NOT advance until the proration invoice is paid. The credit-grant + tier-upsert for upgrades flows through the `customer.subscription.pending_update_applied` handler (§5.4.6), NOT through `invoice.paid`.
 
-What `invoice.paid` handler does for upgrade invoices: the `subscription_update` invoice still arrives at this handler (Stripe fires `invoice.paid` when the proration invoice settles AND it ALSO fires the pending_update_applied event). To prevent double-grant, this handler treats `billing_reason='subscription_update'` as **billing_history-only**:
-- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax`, `lookup_key = <NEW tier lookup_key, derived from the positive-amount invoice line via SKU cache reverse map>`, `expires_at = NULL` (the credit-side expiry is recorded on the credit_ledger row written by `pending_update_applied`; the billing_history row is the financial-audit anchor and doesn't carry credit-life metadata for this branch).
+What `invoice.paid` handler does for upgrade invoices: the `subscription_update` invoice still arrives at this handler (Stripe fires `invoice.paid` when the proration invoice settles AND it ALSO fires the pending_update_applied event). The two events may arrive in either order (per Petra I2 round 8). The handler treats `billing_reason='subscription_update'` as **billing_history-only-symmetric**:
+- **Append billing_history** row using the same upsert shape as §5.4.6's pending_update_applied handler: `INSERT ... ON CONFLICT (kind, source_id_stripe) DO UPDATE SET expires_at = COALESCE(billing_history.expires_at, EXCLUDED.expires_at), lookup_key = COALESCE(billing_history.lookup_key, EXCLUDED.lookup_key)`. Row payload: `kind='invoice'`, `source_id_stripe = invoice_id`, `stripe_payment_intent_id = invoice.payments[0].payment.payment_intent`, `amount_cents = subtotal_excluding_tax`, `lookup_key = <NEW tier lookup_key, derived from the positive-amount invoice line via SKU cache reverse map>`, `expires_at = period_end + tier_period_length` (per Persepolis C3 round 8 — `expires_at` is now uniformly populated for `kind='invoice'` rows; the prior NULL-for-this-branch design was inconsistent with `subscription_cycle`).
 - **NO credit grant**, **NO `user_subscriptions` upsert** in this handler. The pending_update_applied handler owns both writes.
-- **Idempotency**: if the event redelivers, `billing_history.source_id_stripe = invoice_id` UNIQUE blocks the duplicate insert. Per round-6 fixes, the spec uses `ON CONFLICT (kind, source_id_stripe) DO NOTHING` on this insert so the redelivery is benign rather than fatal.
+- **Idempotency**: the symmetric upsert is the defense; whichever event arrives first writes the canonical row, the second fills NULLs without overwriting.
 
 #### Other `billing_reason` values (`manual`, `quote_accept`, `subscription_threshold`, etc.)
 
@@ -692,10 +684,13 @@ For full refunds:
 
 This "optimistic resolve, then re-read under lock" pattern is the right shape for cross-row, cross-user webhook resolution where the user_id is not known a priori. The §5.3 anchor-lock-first discipline applies to all OTHER handlers (where `user_id` resolves from `metadata.userId` or `customer.id` BEFORE any DB read); `refund.created` is the documented exception.
 
-1. **Resolve the originating Mythrun entity.** `event.data.object.payment_intent` (string on the Refund object, may be null for non-PI charges — e.g., legacy direct-Charge refunds outside Mythrun's surface) is the join key. Two resolution paths in order:
-   - **À-la-carte purchase**: query `purchases WHERE stripe_payment_intent_id = $1 AND status='completed'`. If non-empty, walk all matching `purchases` rows (a multi-line cart has multiple). For each row, query `credit_ledger WHERE source_purchase_id = purchases.id AND source_type='purchase'` to find the originating grant rows (per Decision 4 of round-2 review: explicit FK columns).
-   - **Subscription invoice**: the Refund's `payment_intent` is the PI Stripe auto-generated for the invoice; the mapping from PI → invoice_id is resolved at PREFETCH time (per §5.3 prefetch-then-write split) via `stripe.invoicePayments.list({ payment: { type: 'payment_intent', payment_intent: refund.payment_intent } })` and reading the result's `invoice` field (per §3.1 note 6 — `Charge.invoice` was removed at basil, so the inverse `invoicePayments` lookup is the dahlia-correct resolution direction). The handler's tx body uses the prefetched `invoice_id` as the `source_id_stripe` lookup key against `billing_history WHERE source_id_stripe = $1 AND kind='invoice'`. From the resulting `billing_history.id`, query `credit_ledger WHERE source_billing_history_id = billing_history.id AND source_type='subscription'` to find the originating grant rows.
-   - **Neither matches** (`payment_intent: null`, admin Dashboard test charge, non-Mythrun charge, OR à-la-carte purchase whose `purchases.status` is already `'refunded'` — operator clicked "Re-deliver" in Dashboard producing a fresh `event.id` for the same `re_*`, OR the originating `billing_history.status` is already `'refunded'` for the subscription path): log at WARN + COMMIT `stripe_events` + **return 200 immediately. Steps 2–5 below do NOT run.** Per Persepolis C5 round 6: continuing past this branch would 23505 on `billing_history.source_id_stripe = re_*` UNIQUE (the prior delivery already inserted that row) and force Stripe into ~3 days of retry-loop. The early exit is the canonical "already-processed refund" idempotency path. Steps 2–5 only execute when step 1 found at least one still-completed originating row.
+1. **Resolve the originating Mythrun entity** (DB-side; no Stripe call). `event.data.object.payment_intent` (string on the Refund object, may be null for non-PI charges — e.g., legacy direct-Charge refunds outside Mythrun's surface) is the join key. Two resolution paths run in order:
+   - **À-la-carte purchase**: query `purchases WHERE stripe_payment_intent_id = $1 AND status='completed'`. If non-empty, walk all matching `purchases` rows (a multi-line cart has multiple) `ORDER BY id ASC` (per Petra M1/C1 round 8 — deterministic ordering avoids cross-handler row-lock-acquisition deadlocks under concurrent re-delivery). For each row, query `credit_ledger WHERE source_purchase_id = purchases.id AND source_type='purchase'` to find the originating grant rows (per Decision 4 of round-2 review: explicit FK columns).
+   - **Subscription invoice**: query `billing_history WHERE stripe_payment_intent_id = $1 AND kind='invoice'` (per Carthage C1 round 8 — DB-side resolution via the new `stripe_payment_intent_id` column on `billing_history`; replaces the round-6 design that called `stripe.invoicePayments.list({ payment: ... })` at prefetch time, which Stripe's API doesn't actually support since `invoice` is the required filter on that endpoint). From the resulting `billing_history.id`, query `credit_ledger WHERE source_billing_history_id = billing_history.id AND source_type='subscription'` to find the originating grant rows.
+   - **Three terminal sub-cases distinguished by ID presence and resolution outcome** (per Petra I7 round 8 — the round-6 collapse of these into a single "neither matches" bucket lost data on transient resolution misses):
+     - `refund.payment_intent IS NULL` (legacy non-PI charge / admin Dashboard test charge / non-Mythrun-issued refund): log INFO `billing.refund_unknown_origin` + COMMIT `stripe_events` + return 200. Steps 2–6 do NOT run. This case is a genuinely-non-mappable refund; lost-forever is acceptable.
+     - `refund.payment_intent` is set, à-la-carte path returns rows but ALL have `status='refunded'` already (operator-driven re-delivery — fresh `event.id` for the same `re_*` against an already-clawed-back PI), OR subscription path resolves to a `billing_history` row with `status='refunded'` already: log INFO `billing.refund_already_applied` + COMMIT `stripe_events` + return 200. Steps 2–6 do NOT run. This is the canonical idempotent-replay path.
+     - `refund.payment_intent` is set BUT neither path resolves (no `purchases` row, no `billing_history` row): **transient resolution miss** — `refund.created` arrived BEFORE `invoice.paid`/`checkout.session.completed` for the same PI (Stripe's at-least-once delivery + redelivery ordering can produce this). Log WARN `billing.refund_resolution_miss` and **throw to the dispatcher** so the tx ROLLBACKs (including `stripe_events`) and Stripe redelivers. The redelivery (or a future natural delivery) will succeed once the originating row exists. Burns ~one Stripe redelivery cycle per such race; acceptable trade for not losing the refund.
 
 2. **Compute the clawback.** For each originating `credit_ledger` grant row found above, insert a debit row via `repo.credits.recordClawback(client, ...)` (the new method in §7.6) with:
    - `credit_type = original.credit_type`
@@ -704,10 +699,11 @@ This "optimistic resolve, then re-read under lock" pattern is the right shape fo
    - `source_id = original.id` (the originating grant row's UUID; namespace-disjoint from session-debit `source_id` per Kraken C4 round 2 — UUIDv7 non-collision is the discipline invariant)
    - **`expires_at = NULL`** (per Kraken I8 round 2: `credit_ledger_debit_no_expiry_chk` migration-004 CHECK requires `source_type='debit'` rows have `expires_at IS NULL`. Setting `expires_at = original.expires_at` would violate the CHECK and abort the refund tx, putting the refund pipeline into infinite Stripe retry).
    - `source_purchase_id = NULL`, `source_billing_history_id = NULL` (the new FK columns are for grant rows; clawback rows link via `source_id` for idempotency-keyed dedup).
+   - **`ON CONFLICT (user_id, credit_type, source_id) WHERE source_type='debit' DO NOTHING`** (per Persepolis C2 round 8). The `uniq_credit_ledger_debit_idempotency` partial unique index from migration 004 already prevents duplicate debit rows; the explicit `DO NOTHING` makes partial-failure-retry safe. Without it, a tx that wrote some clawback rows then rolled back (e.g., a transient deadlock on the `billing_history.append` later) would 23505 on the next delivery's first row, aborting the retry and burning Stripe redelivery budget for a recoverable state. With `DO NOTHING`, the second delivery's `recordClawback` calls cleanly skip the rows already written and proceed to the still-needed work.
 
-3. **UPDATE source row status.** For à-la-carte: `UPDATE purchases SET status='refunded' WHERE id = $1` for each affected purchases row. For subscription invoice: `UPDATE billing_history SET status='refunded' WHERE id = $1` for the affected billing_history row.
+3. **UPDATE source row status.** For à-la-carte: `UPDATE purchases SET status='refunded' WHERE id = $1 AND status='completed'` for each affected purchases row. For subscription invoice: `UPDATE billing_history SET status='refunded' WHERE id = $1 AND status='completed'`. The `AND status='completed'` predicate is an additional idempotency guard — concurrent re-deliveries hitting the row-lock-released-already case observe the already-refunded state via empty rowcount and proceed without error.
 
-4. **Append a `billing_history` row** with `kind='refund'`, `source_id_stripe = refund.id` (Stripe's `re_*` ID — `event.data.object.id`, unambiguous now that we subscribe to `refund.created` rather than `charge.refunded`; unique even when the same PI has multiple full refunds across time — re-refund of an already-refunded charge is forbidden by Stripe), `amount_cents = -refund.amount`, `lookup_key = NULL` (multi-line refunds don't pin a single lookup_key), `occurred_at = to_timestamp(refund.created)` (Refund's own `created` Unix timestamp).
+4. **Append a `billing_history` row** with `kind='refund'`, `source_id_stripe = refund.id` (Stripe's `re_*` ID — `event.data.object.id`, unambiguous now that we subscribe to `refund.created` rather than `charge.refunded`; unique even when the same PI has multiple full refunds across time — re-refund of an already-refunded charge is forbidden by Stripe), `stripe_payment_intent_id = NULL` (refund rows don't store a PI of their own; the original invoice's PI lives on the `kind='invoice'` row that step 1 already resolved), `amount_cents = -refund.amount`, `lookup_key = NULL` (multi-line refunds don't pin a single lookup_key), `occurred_at = to_timestamp(refund.created)` (Refund's own `created` Unix timestamp). **Use `INSERT ... ON CONFLICT (kind, source_id_stripe) DO NOTHING`** for symmetry with the clawback step's idempotent retry safety.
 
 5. **Resulting balance** MAY go negative. MYT-40's atomic-debit refuses to consume from balance ≤ 0; at session-start, the user gets 402 Payment Required and must purchase to lift the balance back to positive. An in-flight session (already-debited credit) is unaffected by a refund arriving mid-session — the debit row stays committed; only the *next* session-start gates on the new balance.
 
@@ -745,9 +741,9 @@ const newLookupKey = skuCache.findByPriceId(positives[0].pricing.price_details.p
 
 **Amount validation**: assert `prefetch.invoice.subtotal_excluding_tax === (LOOKUP_KEYS[newLookupKey].priceCents - LOOKUP_KEYS[oldLookupKey].priceCents)`. Mismatch → `'validation_failed'` sentinel (paging alarm + commit stripe_events).
 
-**Insert order**: `upsertFromStripe` (idempotent — pending_update_applied is the canonical place to write NEW tier; if a prior `customer.subscription.updated` already wrote it, the strict-`>` filter on `stripe_event_created_at` rejects the redundant write) → append billing_history row (`kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax`, `lookup_key = newLookupKey`, `expires_at = period_end + tier_period_length`) → grant credits via `repo.credits.grantInTx` with `amount = (LOOKUP_KEYS[newLookupKey].sessionsGranted - LOOKUP_KEYS[oldLookupKey].sessionsGranted)` (and the same shape for worlds), `source_type='subscription'`, `source_billing_history_id = <billing_history.id>`, `expires_at = period_end + tier_period_length`.
+**Insert order**: `upsertFromStripe` (idempotent — pending_update_applied is the canonical place to write NEW tier; if a prior `customer.subscription.updated` already wrote it, the strict-`>` filter on `stripe_event_created_at` rejects the redundant write) → append billing_history row using `INSERT ... ON CONFLICT (kind, source_id_stripe) DO UPDATE SET expires_at = COALESCE(billing_history.expires_at, EXCLUDED.expires_at), lookup_key = COALESCE(billing_history.lookup_key, EXCLUDED.lookup_key) RETURNING id` (per Persepolis C4 round 8 — symmetric upsert with `invoice.paid` `subscription_update` handler so whichever arrives first writes its values and the second arrival fills in any `NULL`s without overwriting; the `RETURNING id` gives the canonical `billing_history.id` for the credit_ledger FK regardless of insert vs. update path). Row payload: `kind='invoice'`, `source_id_stripe = invoice_id`, `stripe_payment_intent_id = subscription.latest_invoice's PI (resolved from the prefetched invoice's payments[] array)`, `amount_cents = subtotal_excluding_tax`, `lookup_key = newLookupKey`, `expires_at = period_end + tier_period_length` → grant credits via `repo.credits.grantInTx` with `amount = (LOOKUP_KEYS[newLookupKey].sessionsGranted - LOOKUP_KEYS[oldLookupKey].sessionsGranted)` (and the same shape for worlds), `source_type='subscription'`, `source_billing_history_id = <billing_history.id from the upsert RETURNING>`, `expires_at = period_end + tier_period_length`.
 
-The `invoice.paid` handler for `billing_reason='subscription_update'` (§5.4.2) writes a billing_history row with the same `source_id_stripe`. To prevent 23505 collision: the `pending_update_applied` handler runs first in Stripe's documented event ordering, so by the time `invoice.paid` arrives the billing_history row already exists; `invoice.paid` for `subscription_update` uses `INSERT ... ON CONFLICT (kind, source_id_stripe) DO NOTHING`. Both handlers converge to a single billing_history row owned by whichever arrived first.
+The `invoice.paid` handler for `billing_reason='subscription_update'` (§5.4.2) writes the SAME billing_history row via the same `ON CONFLICT (kind, source_id_stripe) DO UPDATE SET ... COALESCE(...)` upsert. Stripe's event ordering between `pending_update_applied` and `invoice.paid` is not contractually guaranteed (per Petra I2 round 8 — the round-7 spec asserted "documented ordering" but Stripe's at-least-once delivery has no documented inter-event ordering). Both handlers' upserts are symmetric and idempotent: whichever arrives first writes the canonical row; the second arrival's `ON CONFLICT DO UPDATE` fills NULLs without overwriting non-NULL values.
 
 #### `customer.subscription.pending_update_expired` — the upgrade-failure path
 
@@ -852,7 +848,28 @@ CREATE TABLE billing_history (
   id                          UUID        PRIMARY KEY,
   user_id                     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   kind                        TEXT        NOT NULL CHECK (kind IN ('purchase','invoice','refund')),
-  source_id_stripe            TEXT        NOT NULL UNIQUE,
+  -- Per Petra I2 / Persepolis C4 round 8: UNIQUE is COMPOSITE on (kind,
+  -- source_id_stripe) to match the handlers' ON CONFLICT (kind,
+  -- source_id_stripe) clauses (§5.4.2 subscription_update, §5.4.6
+  -- pending_update_applied). Earlier rounds had a single-column UNIQUE on
+  -- source_id_stripe alone, which caused a 42P10 invalid_column_reference at
+  -- runtime when ON CONFLICT named both columns. The prefix-by-kind CHECK
+  -- below remains as defense-in-depth: Stripe's pi_*/in_*/re_* prefixes are
+  -- disjoint, so single-column UNIQUE WOULD be enforceable in practice — the
+  -- composite makes the contract explicit at the schema level.
+  source_id_stripe            TEXT        NOT NULL,
+  -- Per Carthage C1 round 8: stripe_payment_intent_id is the canonical
+  -- DB-side resolution column for refund subscription routing. The earlier
+  -- design relied on stripe.invoicePayments.list({ payment: ... }) to walk
+  -- PI → invoice_id at refund-prefetch time; the API requires `invoice` as
+  -- the filter, NOT `payment`, so PI → Invoice is not a single-call lookup
+  -- via that resource. Storing the PI on the kind='invoice' rows lets the
+  -- refund handler resolve via SELECT id FROM billing_history WHERE
+  -- stripe_payment_intent_id = $1 AND kind='invoice'. NULL for kind='purchase'
+  -- (purchases.stripe_payment_intent_id holds it) and kind='refund' (a refund
+  -- has no PI of its own; it has refund.payment_intent which points at the
+  -- ORIGINAL invoice's PI, already resolved before this row is written).
+  stripe_payment_intent_id    TEXT        NULL,
   lookup_key                  TEXT        NULL,           -- nullable: multi-line à-la-carte rows leave it NULL; subscription invoices fill it
   amount_cents                INTEGER     NOT NULL,       -- positive for purchase/invoice, negative for refund
   currency                    TEXT        NOT NULL DEFAULT 'usd',
@@ -860,12 +877,18 @@ CREATE TABLE billing_history (
   expires_at                  TIMESTAMPTZ NULL,           -- mirrors the originating credit_ledger.expires_at; NULL for à-la-carte and refund
   occurred_at                 TIMESTAMPTZ NOT NULL,       -- Stripe's event timestamp (full precision)
   created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (kind, source_id_stripe),
   CHECK (
     (kind = 'purchase' AND source_id_stripe LIKE 'pi_%')
     OR (kind = 'invoice'  AND source_id_stripe LIKE 'in_%')
     OR (kind = 'refund'   AND source_id_stripe LIKE 're_%')
   )
 );
+-- Refund subscription-routing index: kind='invoice' rows store the PI;
+-- refund handler resolves PI → invoice_id via this partial index.
+CREATE INDEX idx_billing_history_invoice_pi
+  ON billing_history(stripe_payment_intent_id)
+  WHERE kind = 'invoice' AND stripe_payment_intent_id IS NOT NULL;
 CREATE INDEX idx_billing_history_user_occurred ON billing_history(user_id, occurred_at DESC, id DESC);
 
 -- credit_ledger refund-resolution FKs (Decision 4 of round-2 review).
@@ -1322,6 +1345,7 @@ export type BillingErrorCode =
   | 'stripe_unavailable'        // Stripe API call returned 5xx or timed out
   | 'missing_signature'         // /webhooks/stripe missing Stripe-Signature header
   | 'invalid_signature'         // /webhooks/stripe constructEvent failed
+  | 'upgrade_payment_pending'   // /upgrade-tier proration invoice failed to settle synchronously; pending_update populated (per §4.6 + §5.4.6)
 
 // Closed enum. Adding a code requires updating this type, the §12 table, and any
 // route handler that emits it. The §13 routes test asserts every emit-site uses
@@ -1374,6 +1398,7 @@ export type BillingErrorCode =
 | Concurrent `customer.subscription.updated` and `checkout.session.completed` for same subscription | `upsertFromStripe`'s ON CONFLICT DO UPDATE is atomic; both transactions converge to a single row reflecting the most recent event |
 | Operator manually pastes `cus_*` into `users.stripe_customer_id` mid-checkout | `findOrCreateStripeCustomer`'s FOR UPDATE serializes the lock against operator INSERTs; either the operator wins (subsequent checkout reads the manual value and uses it) or the lock holder wins (operator INSERT blocks until the lock releases). 23505 cannot occur because the FOR UPDATE happens before the UPDATE |
 | `/api/billing/upgrade-tier` with target tier price equal to current | 400 `{ code: 'tier_unchanged' }`. No Stripe call. |
+| `/api/billing/upgrade-tier` with `payment_behavior: 'pending_if_incomplete'` and the proration invoice fails to settle synchronously (card decline, SCA challenge, async settlement) — Stripe returns the Subscription with `pending_update` populated and items NOT advanced | 502 `{ code: 'upgrade_payment_pending', detail: { pending_update_expires_at, latest_invoice_id } }` per §4.6. Items remain on OLD tier until `customer.subscription.pending_update_applied` fires (success path → §5.4.6) or `customer.subscription.pending_update_expired` fires (23h timeout → no DB writes). |
 | `/api/billing/upgrade-tier` with target tier price below current (downgrade attempt) | 400 `{ code: 'not_an_upgrade' }`. Downgrades go through Customer Portal Switch Plan. |
 | `/api/billing/upgrade-tier` for user with no active subscription | 400 `{ code: 'no_active_subscription' }`. User must subscribe first via `/api/billing/checkout`. |
 | `/api/billing/upgrade-tier` Stripe `subscriptions.update` returns auth-required error (SCA challenge on the saved card) | 502 `{ code: 'stripe_unavailable' }` for now; the user can retry from the upgrade flow. (Future: surface SCA challenge URL through a 3DS-handoff response — follow-up bead.) |
