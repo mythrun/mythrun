@@ -82,6 +82,44 @@ Patches:
   - `POST /webhooks/stripe` (new — Stripe-signature-authed)
   
   Adding any new `auth: 'public'` route requires extending this list AND a security review on the PR. Per Sphinx C3 round 2 + Stilton C2 round 3: closes the defense-in-depth gap where a future implementer marking the wrong route public ships silently. The implementation plan for MYT-42 includes an audit step that greps the codebase for `auth: 'public'` registrations and asserts the allowlist is exhaustive before enabling boot-time enforcement (otherwise enabling enforcement breaks the existing invites-preview path).
+
+  **Enforcement mechanism** (per Ephesus C3 round 6 — recurring across rounds 4/5/6, pinning here so implementer doesn't have to derive it). The check is wired as a top-level Fastify `onRoute` hook registered on the root `app` instance BEFORE any `app.register(...)` call:
+
+  ```ts
+  // backend/src/auth/public-route-allowlist.ts
+  export const PUBLIC_ROUTE_ALLOWLIST: ReadonlySet<string> = new Set([
+    'GET /health',
+    'GET /health/ready',
+    'GET /api/invites/:inviteCode/preview',
+    'GET /api/billing/skus',
+    'POST /webhooks/stripe',
+  ])
+
+  // backend/src/app.ts — registered BEFORE any app.register() call so it sees
+  // every subsequent route registration in every encapsulated child plugin.
+  app.addHook('onRoute', (routeOptions) => {
+    if (routeOptions.config?.auth !== 'public') return  // routes without auth: 'public' are unaffected
+    const key = `${routeOptions.method} ${routeOptions.url}`
+    if (!PUBLIC_ROUTE_ALLOWLIST.has(key)) {
+      throw new Error(`auth: public used on non-allowlisted route: ${key}`)
+    }
+  })
+  ```
+
+  Comparison key: the literal `${METHOD} ${URL}` string with parametric placeholders preserved (`:inviteCode` is matched verbatim, NOT substituted). Routes with no `config.auth` (the JWT-default path) are silently skipped — the hook only flags routes that explicitly declared `auth: 'public'`. The hook fires synchronously during plugin registration; `await app.ready()` propagates the throw, aborting boot before `app.listen()`. The §13 test asserts both directions: (a) registering an allowlisted public route succeeds; (b) registering a non-allowlisted public route causes `await app.ready()` to reject with the documented error message.
+
+  Type augmentation for `config.auth` typo-safety:
+
+  ```ts
+  // backend/src/types/fastify.d.ts
+  declare module 'fastify' {
+    interface FastifyContextConfig {
+      auth?: 'public' | 'jwt'
+    }
+  }
+  ```
+
+  This makes `config: { auth: 'pubic' }` (typo) a TypeScript compile error rather than a silent JWT-required fallback.
 - `backend/src/server.ts` / `backend/src/app.ts` — wire the new route plugins.
 
 ### 3.1 Stripe API at dahlia — load-bearing field-shape notes
@@ -100,9 +138,9 @@ The MYT-41 spec pinned `STRIPE_API_VERSION = '2026-04-22.dahlia'`. Several Subsc
 
 6. **`Charge.invoice` was REMOVED at `2025-03-31.basil`** (per Carthage C1 round 4). The Charge object no longer carries an `invoice` linkage. Resolution direction inverts: to find the Invoice from a PaymentIntent or Charge, query `stripe.invoicePayments.list({ payment: { type: 'payment_intent', payment_intent: pi_id } })` and read the resulting `invoice` field. Affects: `charge.refunded` handler's subscription-refund resolution path (§5.4.5 step 1) — see the prefetch-shape update below.
 
-7. **`Invoice.subscription` was REMOVED at `2025-03-31.basil`** (per Carthage C2 round 4) along with `Invoice.subscription_details` and `Invoice.subscription_proration_date`. The replacement is `invoice.parent.subscription_details.subscription` (after asserting `invoice.parent.type === 'subscription_details'`). Affects: `invoice.paid` handler's subscription resolution path (§5.4.2, §5.3 prefetch shape).
+7. **`Invoice.subscription` was REMOVED at `2025-03-31.basil`** (per Carthage C2 round 4) along with `Invoice.subscription_details` and `Invoice.subscription_proration_date`. The replacement is `invoice.parent.subscription_details.subscription` (after asserting `invoice.parent.type === 'subscription_details'`). **`Invoice.parent` is documented nullable** (per Carthage C3 round 6 — admin-issued / manual standalone invoices have `parent === null`); every dereference path MUST optional-chain. Affects: `invoice.paid` handler's subscription resolution path (§5.4.2, §5.3 prefetch shape).
 
-8. **Switch `charge.refunded` to `refund.created`** (per Carthage C3 / Persepolis C3 round 4): `event.data.object` on `charge.refunded` is the Charge, not the Refund — the handler had no canonical way to identify which `re_*` ID just landed. Subscribing to `refund.created` instead gives `event.data.object.id === re_*` directly, and `event.data.object.payment_intent` / `event.data.object.charge` are top-level strings. The full set of dahlia-supported refund states (succeeded/failed/canceled) flows through `refund.updated`; for full-refund-only at launch (Decision 5), `refund.created` covers the success path.
+8. **Subscribe to `refund.created` AND `refund.updated`** (per Carthage C3 / Persepolis C3 round 4 + Carthage C1 round 6): `event.data.object` on `charge.refunded` was the Charge, not the Refund — the handler had no canonical way to identify which `re_*` ID just landed. Subscribing to `refund.created` gives `event.data.object.id === re_*` directly, and `event.data.object.payment_intent` / `event.data.object.charge` are top-level strings. **However**, card refunds flow through dahlia status transitions: `pending` → `succeeded` (typical async path for some non-US card networks) and `succeeded` → `failed` (issuer rejects after Stripe re-credits the merchant). Per Carthage C1 round 6, the launch design therefore subscribes to BOTH `refund.created` and `refund.updated` and gates clawback strictly on `event.data.object.status === 'succeeded'`. The pending → failed path produces no clawback (status was never `succeeded` at our handler entry); the succeeded → failed path is documented as a known launch gap (rare, requires manual operator reconciliation — follow-up bead). `refund.failed` is NOT subscribed at launch because the only path that requires reversal (succeeded → failed, where we already clawed back) is rare enough to handle via runbook. Decision 5's full-refund-only invariant is preserved; partial-refund support remains a follow-up bead.
 
 These notes are referenced by §5.4.1, §5.4.2, §5.4.3, §5.4.5, and §15. Implementers should re-read the dahlia API reference for any field not explicitly listed in this spec rather than assume older shapes.
 
@@ -329,7 +367,8 @@ const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'customer.subscription.created':  handleSubscriptionUpsert,  // upsert-shaped; same handler as .updated
   'customer.subscription.updated':  handleSubscriptionUpsert,
   'customer.subscription.deleted':  handleSubscriptionDeleted,
-  'refund.created':                 handleRefundCreated,
+  'refund.created':                 handleRefundEvent,
+  'refund.updated':                 handleRefundEvent,
 }
 type KnownStripeEventType = keyof typeof HANDLERS
 
@@ -414,8 +453,57 @@ The `PREFETCHERS` table mirrors `HANDLERS`: each event type optionally declares 
 
 - `checkout.session.completed`: `{ session: stripe.checkout.sessions.retrieve(session_id, { expand: ['line_items.data.price'] }) }`. The session.metadata.userId is on this object.
 - `customer.subscription.created` / `customer.subscription.updated` / `customer.subscription.deleted`: no prefetch needed — the event payload IS the Subscription, with `subscription.metadata.userId` directly readable. Per §3.1 note 2: `subscription.items.data[i].price.lookup_key` IS still present at dahlia (the lookup_key removal applies only to `InvoiceLineItem`, not Subscription items).
-- `invoice.paid`: read the parent subscription via `invoice.parent.subscription_details.subscription` (per §3.1 note 7 — `invoice.subscription` was removed at basil). Prefetch: `{ subscription: stripe.subscriptions.retrieve(invoice.parent.subscription_details.subscription, { expand: ['items.data.price'] }) }`, gated on `invoice.parent.type === 'subscription_details'` (otherwise this is a non-subscription invoice — log + skip credit grant). The handler's customer-id-miss fallback reads `prefetch.subscription.metadata.userId`, NOT `event.data.object.metadata.userId` (the latter is the Invoice's own metadata, which is empty for Checkout-driven subs).
-- `refund.created` (replaces `charge.refunded` per §3.1 note 8): `event.data.object` is the Refund directly. `event.data.object.id === re_*`. `event.data.object.payment_intent` and `event.data.object.charge` are top-level strings. Prefetch only the parent invoice (subscription-refund resolution): `{ invoice: invoicePayment ? stripe.invoices.retrieve(invoicePayment.invoice) : null, subscription: invoice?.parent?.subscription_details?.subscription ? stripe.subscriptions.retrieve(invoice.parent.subscription_details.subscription) : null }` where `invoicePayment` is `(await stripe.invoicePayments.list({ payment: { type: 'payment_intent', payment_intent: refund.payment_intent } })).data[0]` (per §3.1 note 6 — `Charge.invoice` was removed; `invoicePayments.list` is the new resolution direction). For à-la-carte refunds the invoicePayments lookup returns empty and the subscription chain stays null; resolution proceeds via `purchases WHERE stripe_payment_intent_id = refund.payment_intent`. Handler's customer-id-miss fallback reads `prefetch.subscription?.metadata.userId` if the chain resolves.
+- `invoice.paid`: read the parent subscription via `invoice.parent.subscription_details.subscription` (per §3.1 note 7 — `invoice.subscription` was removed at basil; `invoice.parent` itself is nullable per Carthage C3 round 6). The prefetch resolves the parent-subscription ID with full optional-chaining + type gate, returning `{ subscription: null }` for any non-subscription path so the handler can log+skip cleanly:
+
+```ts
+'invoice.paid': async (event, stripe) => {
+  const invoice = event.data.object as Stripe.Invoice
+  const parentSubId = invoice.parent?.type === 'subscription_details'
+    ? invoice.parent.subscription_details?.subscription ?? null
+    : null
+  return {
+    subscription: parentSubId
+      ? await stripe.subscriptions.retrieve(parentSubId, { expand: ['items.data.price'] })
+      : null,
+  }
+}
+```
+
+The §5.4.2 handler early-returns (log INFO `billing.invoice_non_subscription` + COMMIT `stripe_events` + 200, no credit grant) when `prefetch.subscription === null`. The handler's customer-id-miss fallback reads `prefetch.subscription.metadata.userId`, NOT `event.data.object.metadata.userId` (the latter is the Invoice's own metadata, which is empty for Checkout-driven subs).
+- `refund.created` AND `refund.updated` (per §3.1 note 8 — both subscribed at launch; `refund.failed` deliberately not subscribed): `event.data.object` is the Refund directly. `event.data.object.id === re_*`. `event.data.object.payment_intent` and `event.data.object.charge` are top-level strings (both nullable; `refund.charge` may be missing for non-PI refund paths per Carthage I1 round 6). The handler gates clawback on `event.data.object.status === 'succeeded'` per Carthage C1 round 6 — `pending` / `requires_action` / `canceled` / `failed` paths log+commit+200 without clawback. Prefetch resolves the parent invoice for subscription-refund routing; à-la-carte refunds skip the invoice path entirely:
+
+```ts
+async (event, stripe) => {
+  const refund = event.data.object as Stripe.Refund
+  // Step-0 partial-refund check needs charge.amount_refunded vs amount_captured.
+  // refund.charge is nullable; if absent, fall through to the §5.4.5 'neither matches' branch.
+  const charge = refund.charge ? await stripe.charges.retrieve(refund.charge) : null
+  // Subscription-invoice resolution: PI → invoicePayments.list → invoice (per §3.1 note 6 —
+  // Charge.invoice was removed at basil). null-safe at every hop because invoice.parent
+  // is itself nullable per §3.1 note 7.
+  let invoice: Stripe.Invoice | null = null
+  let subscription: Stripe.Subscription | null = null
+  if (refund.payment_intent) {
+    const ip = await stripe.invoicePayments.list({
+      payment: { type: 'payment_intent', payment_intent: refund.payment_intent },
+      limit: 1,
+    })
+    const invoiceId = ip.data[0]?.invoice ?? null
+    if (invoiceId) {
+      invoice = await stripe.invoices.retrieve(invoiceId)
+      const parentSubId = invoice.parent?.type === 'subscription_details'
+        ? invoice.parent.subscription_details?.subscription ?? null
+        : null
+      if (parentSubId) {
+        subscription = await stripe.subscriptions.retrieve(parentSubId)
+      }
+    }
+  }
+  return { charge, invoice, subscription }
+}
+```
+
+For à-la-carte refunds the `invoicePayments.list` returns empty (`ip.data` length 0); the resolution chain stays null and §5.4.5 step 1 proceeds via `purchases WHERE stripe_payment_intent_id = refund.payment_intent`. Handler's customer-id-miss fallback reads `prefetch.subscription?.metadata.userId` if the chain resolves.
 
 These prefetch shapes are pinned in the spec so the implementer doesn't have to derive them. Tests assert each handler's prefetch contract via fixture data.
 
@@ -533,11 +621,17 @@ Existing credits in `credit_ledger` stay; they remain consumable until natural `
 
 If no row matches the `stripe_subscription_id` (Stripe-side test event, deleted user, deletion-before-creation), log + COMMIT + 200.
 
-#### 5.4.5 `refund.created`
+#### 5.4.5 `refund.created` and `refund.updated` (shared `handleRefundEvent`)
 
-Refund handling at launch: **full refunds only** (per Decision 5 of round-2 review). Partial-refund implementation is a follow-up bead. **Event subscription**: `refund.created` (NOT `charge.refunded`) — per Carthage C3 / Persepolis C3 round 4. The `charge.refunded` event payload is the Charge object (no canonical `re_*` ID at the handler's scope); `refund.created` payload IS the Refund (`event.data.object.id === re_*`, `event.data.object.payment_intent` and `event.data.object.charge` are top-level strings, `event.data.object.amount` is the refund amount in the smallest currency unit). The `refund` variable referenced throughout this section is `event.data.object`.
+Refund handling at launch: **full refunds only** (per Decision 5 of round-2 review). Partial-refund implementation is a follow-up bead. **Event subscription**: BOTH `refund.created` and `refund.updated` (per Carthage C1 round 6). The two share `handleRefundEvent` because the dispatch shape is identical — both events carry `event.data.object` as the Refund object with the current `status` snapshot.
 
-**Step 0 — partial-refund hard-refuse**: a `refund.created` event fires for each Refund. To enforce full-refund-only, the handler reads the parent Charge state via `event.data.object.charge` and re-fetches the Charge in the prefetch phase (`prefetch.charge = stripe.charges.retrieve(refund.charge)`), then asserts `prefetch.charge.amount_refunded === prefetch.charge.amount_captured` — i.e., the Charge's cumulative refund total equals its captured amount. Mismatch (partial refund: the Refund just landed but doesn't fully refund the Charge) → emit a paging metric `billing.partial_refund_unsupported` at error level with `{ charge_id: refund.charge, refund_id: refund.id, amount_captured, amount_refunded, payment_intent: refund.payment_intent }`, COMMIT the `stripe_events` row (suppresses Stripe retries — there's nothing to retry until partial-refund support lands), do NOT clawback, return 200. Operator workflow: the Stripe-side refund stays valid (the customer's money is being returned by Stripe); Mythrun-side credit clawback is gated until manual reconciliation. Operators are instructed (in the runbook) to refund full charges only.
+**Step −1 — status gate** (per Carthage C1 round 6): assert `event.data.object.status === 'succeeded'`. Refund status values at dahlia: `pending | requires_action | succeeded | failed | canceled`. Only `succeeded` reflects "money returned to user, credits should be clawed back." For any other status:
+- `pending` / `requires_action` (typical async-card path): log INFO `billing.refund_pending` + COMMIT `stripe_events` row + 200. The transition to `succeeded` will fire `refund.updated` and re-enter this handler.
+- `failed` / `canceled`: log INFO `billing.refund_terminal_non_success` + COMMIT + 200. No clawback (none was made — this handler always idempotently arrives at the succeeded path before any clawback writes). No reversal needed.
+
+**Documented launch gap** (per Carthage C1 round 6): the rare succeeded → failed transition (Stripe re-credits the merchant after a previously-succeeded refund — issuer-side rejection) IS a revenue gap because clawback already landed. At launch this is handled via runbook (paging-grade alarm `billing.refund_succeeded_to_failed` fires when `refund.updated` arrives with `status='failed'` AND a prior clawback exists for that `refund.id` in `billing_history`). The reversal mechanism (insert positive credit_ledger rows undoing the clawback) is a follow-up bead. This is a deliberate trade-off: card refund failure after settlement is rare in production, and the runbook resolution path is well-defined (operator issues a goodwill credit grant).
+
+**Step 0 — partial-refund hard-refuse**: To enforce full-refund-only, the handler reads the parent Charge state via `prefetch.charge` (the prefetcher already optional-chained the `refund.charge` retrieve per §5.3 — if `prefetch.charge === null`, fall through to step 1's "neither matches" branch). Assert `prefetch.charge.amount_refunded === prefetch.charge.amount_captured` — i.e., the Charge's cumulative refund total equals its captured amount. Mismatch (partial refund: the Refund just landed but doesn't fully refund the Charge) → emit a paging metric `billing.partial_refund_unsupported` at error level with `{ charge_id: refund.charge, refund_id: refund.id, amount_captured, amount_refunded, payment_intent: refund.payment_intent }`, COMMIT the `stripe_events` row (suppresses Stripe retries — there's nothing to retry until partial-refund support lands), do NOT clawback, return 200. Operator workflow: the Stripe-side refund stays valid (the customer's money is being returned by Stripe); Mythrun-side credit clawback is gated until manual reconciliation. Operators are instructed (in the runbook) to refund full charges only.
 
 For full refunds:
 
@@ -553,7 +647,7 @@ This "optimistic resolve, then re-read under lock" pattern is the right shape fo
 1. **Resolve the originating Mythrun entity.** `event.data.object.payment_intent` (string on the Refund object, may be null for non-PI charges — e.g., legacy direct-Charge refunds outside Mythrun's surface) is the join key. Two resolution paths in order:
    - **À-la-carte purchase**: query `purchases WHERE stripe_payment_intent_id = $1 AND status='completed'`. If non-empty, walk all matching `purchases` rows (a multi-line cart has multiple). For each row, query `credit_ledger WHERE source_purchase_id = purchases.id AND source_type='purchase'` to find the originating grant rows (per Decision 4 of round-2 review: explicit FK columns).
    - **Subscription invoice**: the Refund's `payment_intent` is the PI Stripe auto-generated for the invoice; the mapping from PI → invoice_id is resolved at PREFETCH time (per §5.3 prefetch-then-write split) via `stripe.invoicePayments.list({ payment: { type: 'payment_intent', payment_intent: refund.payment_intent } })` and reading the result's `invoice` field (per §3.1 note 6 — `Charge.invoice` was removed at basil, so the inverse `invoicePayments` lookup is the dahlia-correct resolution direction). The handler's tx body uses the prefetched `invoice_id` as the `source_id_stripe` lookup key against `billing_history WHERE source_id_stripe = $1 AND kind='invoice'`. From the resulting `billing_history.id`, query `credit_ledger WHERE source_billing_history_id = billing_history.id AND source_type='subscription'` to find the originating grant rows.
-   - **Neither matches** (`payment_intent: null`, admin Dashboard test charge, non-Mythrun charge): log at WARN + COMMIT + 200. No clawback (we have nothing to debit).
+   - **Neither matches** (`payment_intent: null`, admin Dashboard test charge, non-Mythrun charge, OR à-la-carte purchase whose `purchases.status` is already `'refunded'` — operator clicked "Re-deliver" in Dashboard producing a fresh `event.id` for the same `re_*`, OR the originating `billing_history.status` is already `'refunded'` for the subscription path): log at WARN + COMMIT `stripe_events` + **return 200 immediately. Steps 2–5 below do NOT run.** Per Persepolis C5 round 6: continuing past this branch would 23505 on `billing_history.source_id_stripe = re_*` UNIQUE (the prior delivery already inserted that row) and force Stripe into ~3 days of retry-loop. The early exit is the canonical "already-processed refund" idempotency path. Steps 2–5 only execute when step 1 found at least one still-completed originating row.
 
 2. **Compute the clawback.** For each originating `credit_ledger` grant row found above, insert a debit row via `repo.credits.recordClawback(client, ...)` (the new method in §7.6) with:
    - `credit_type = original.credit_type`
@@ -680,12 +774,22 @@ ALTER TABLE credit_ledger
   ADD COLUMN source_purchase_id        UUID NULL REFERENCES purchases(id) ON DELETE RESTRICT,
   ADD COLUMN source_billing_history_id UUID NULL REFERENCES billing_history(id) ON DELETE RESTRICT,
   ADD CONSTRAINT credit_ledger_source_link_chk CHECK (
-    -- debit rows link via source_id (existing migration 001 + 004 invariants); no FK columns set.
-    -- trial rows have no link (one-shot at registration).
-    -- gift rows (future) have no link until a gifts table exists.
-    source_type IN ('debit', 'trial', 'gift', 'refund')
-    -- purchase + subscription grants MUST set exactly one FK.
-    OR (source_purchase_id IS NOT NULL) <> (source_billing_history_id IS NOT NULL)
+    -- Per Petra C3 / Persepolis C1 round 6: per-source_type CASE enforces the
+    -- correct FK shape at write time. The earlier OR-shaped predicate was
+    -- non-restrictive — it admitted (e.g.) source_type='trial' rows with a
+    -- spurious source_purchase_id, and source_type='subscription' rows
+    -- pointing at the wrong FK column. Restating the rule per source_type
+    -- closes those holes AND forecloses on a future 'refund' grant landing
+    -- as a fully-orphaned row (refund-goodwill grants link to billing_history).
+    CASE source_type
+      WHEN 'debit'        THEN source_purchase_id IS NULL AND source_billing_history_id IS NULL
+      WHEN 'trial'        THEN source_purchase_id IS NULL AND source_billing_history_id IS NULL
+      WHEN 'gift'         THEN source_purchase_id IS NULL AND source_billing_history_id IS NULL
+      WHEN 'refund'       THEN source_purchase_id IS NULL AND source_billing_history_id IS NOT NULL
+      WHEN 'purchase'     THEN source_purchase_id IS NOT NULL AND source_billing_history_id IS NULL
+      WHEN 'subscription' THEN source_purchase_id IS NULL AND source_billing_history_id IS NOT NULL
+      ELSE FALSE  -- reject unknown source_types at the DB layer; forces schema discipline
+    END
   );
 CREATE INDEX idx_credit_ledger_source_purchase
   ON credit_ledger(source_purchase_id) WHERE source_purchase_id IS NOT NULL;
@@ -1342,7 +1446,7 @@ Dashboard → Settings → Billing → Customer Portal. The MYT-41 runbook confi
 
 ### 15.3 Webhook endpoint registration + secret rotation post-MYT-42 deploy
 
-1. After MYT-42 deploys to staging, register the webhook endpoint in the Stripe Dashboard test-mode account: `https://dashboard.stripe.com/test/webhooks` → Add endpoint → URL `https://staging.mythrun.com/webhooks/stripe`, **API version `2026-04-22.dahlia`** (Dashboard → API version selector — MUST match the SDK's pin per §3.1 note 5; otherwise event payloads at the handler will silently shape-mismatch typed field accesses; if the dropdown does NOT list `2026-04-22.dahlia`, the account's API version baseline is older — bump it via Dashboard → Developers → API version → upgrade BEFORE creating the webhook endpoint), events: `checkout.session.completed`, `invoice.paid`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, **`refund.created`** (NOT `charge.refunded` — per §3.1 note 8 + Carthage C3 / Persepolis C3 round 4: the Refund-typed payload is required to derive `refund_id` for billing_history without ambiguity). We deliberately do NOT subscribe to `invoice.payment_failed` / `charge.failed` / `charge.dispute.*` / `subscription_schedule.*` at launch; those lifecycles reach us via `customer.subscription.updated` status transitions. Adding subscriptions is a Dashboard-only ops change, not a code deploy.
+1. After MYT-42 deploys to staging, register the webhook endpoint in the Stripe Dashboard test-mode account: `https://dashboard.stripe.com/test/webhooks` → Add endpoint → URL `https://staging.mythrun.com/webhooks/stripe`, **API version `2026-04-22.dahlia`** (Dashboard → API version selector — MUST match the SDK's pin per §3.1 note 5; otherwise event payloads at the handler will silently shape-mismatch typed field accesses; if the dropdown does NOT list `2026-04-22.dahlia`, the account's API version baseline is older — bump it via Dashboard → Developers → API version → upgrade BEFORE creating the webhook endpoint), events: `checkout.session.completed`, `invoice.paid`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, **`refund.created`** AND **`refund.updated`** (NOT `charge.refunded` — per §3.1 note 8 + Carthage C3 / Persepolis C3 round 4: the Refund-typed payload is required to derive `refund_id` for billing_history without ambiguity. Per Carthage C1 round 6: `refund.updated` is required for the pending → succeeded async-card path; without it, refunds that start as `pending` would never trigger clawback even after Stripe transitions them to `succeeded`). We deliberately do NOT subscribe to `invoice.payment_failed` / `charge.failed` / `charge.dispute.*` / `subscription_schedule.*` at launch; those lifecycles reach us via `customer.subscription.updated` status transitions. Adding subscriptions is a Dashboard-only ops change, not a code deploy.
 2. Stripe issues a `whsec_*` signing secret on creation; copy it.
 3. `aws secretsmanager update-secret --secret-id mythrun/staging/stripe-webhook-secret --secret-string 'whsec_<value>'`.
 4. Force a rolling deploy (`gh workflow run Deploy`) so the new secret is loaded.
