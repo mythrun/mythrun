@@ -24,6 +24,7 @@ export type BillingErrorCode =
   | 'invalid_signature'         // /webhooks/stripe constructEvent failed
   | 'upgrade_payment_pending'   // /upgrade-tier proration invoice failed to settle synchronously; pending_update populated (per §4.6 + §5.4.6)
   | 'upgrade_already_pending'   // /upgrade-tier called while sub already has a pending_update from a prior attempt (per Petra I5 round 7)
+  | 'sku_cache_unavailable'     // GET /api/billing/skus — boot probe hasn't populated the cache yet (defensive; probe gates app.ready())
 
 /**
  * The wire envelope shape for billing errors.
