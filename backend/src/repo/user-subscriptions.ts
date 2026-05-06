@@ -164,17 +164,17 @@ export const userSubscriptions = {
    *     `string | null`, Stripe payload is `number | null`; we use the actual type.
    *   - Writes `cancellation_details` as JSONB.
    *
-   * No-row-matched is a silent no-op (returns void). Per spec §5.4.4 line 667:
-   * "If no row matches the stripe_subscription_id (Stripe-side test event,
-   * deleted user, deletion-before-creation), log + COMMIT + 200." Logging is
-   * the caller's responsibility — repo just succeeds.
+   * Returns the number of rows updated (0 or 1). Zero means no row matched
+   * the `stripe_subscription_id` — Stripe-side test event, deleted user, or
+   * deletion-before-creation race. Logging + response shaping is the caller's
+   * responsibility; the repo just surfaces the count. Per spec §5.4.4 line 667.
    */
   async markCanceled(
     tx: ClientLike,
     stripe_subscription_id: string,
     payload: MarkCanceledPayload,
-  ): Promise<void> {
-    await tx.query(
+  ): Promise<number> {
+    const result = await tx.query(
       `UPDATE user_subscriptions
           SET status               = 'canceled',
               cancel_at_period_end = $2,
@@ -189,6 +189,7 @@ export const userSubscriptions = {
         payload.cancellation_details === null ? null : JSON.stringify(payload.cancellation_details),
       ],
     )
+    return result.rowCount ?? 0
   },
 
   /**
