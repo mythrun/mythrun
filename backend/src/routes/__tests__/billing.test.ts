@@ -31,12 +31,16 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
 import type { Pool } from 'pg'
+import type { default as Stripe } from 'stripe'
+import type { Env } from '../../config/env.js'
 import {
   setSkuCache,
   _resetSkuCacheForTests,
   type SkuCache,
+  type SkuInternalEntry,
   type SkuPublicListing,
 } from '../../billing/sku-cache.js'
+import type { LookupKey } from '../../billing/lookup-keys.js'
 import { billingRoutes } from '../billing.js'
 import { registerPublicRouteAllowlistHook } from '../../auth/public-route-allowlist.js'
 import { bypassPlugin } from '../../auth/bypass-plugin.js'
@@ -62,6 +66,18 @@ vi.mock('../../repo/billing-history.js', () => ({
   },
 }))
 
+// Stripe client + find-or-create customer are mocked at the module boundary
+// so /checkout tests can drive them without a live Stripe SDK or pg pool.
+// `getStripeClient` returns a stub whose .checkout.sessions.create and
+// .customers.create methods are individually swappable per test.
+vi.mock('../../billing/stripe-client.js', () => ({
+  getStripeClient: vi.fn(),
+}))
+
+vi.mock('../../billing/customer.js', () => ({
+  findOrCreateStripeCustomer: vi.fn(),
+}))
+
 // ---------------------------------------------------------------------------
 // Import mocked modules after the vi.mock declarations.
 // ---------------------------------------------------------------------------
@@ -70,8 +86,12 @@ import { createRepo } from '../../repo/index.js'
 import { userSubscriptions } from '../../repo/user-subscriptions.js'
 import { billingHistory } from '../../repo/billing-history.js'
 import type { BillingHistoryRow } from '../../repo/billing-history.js'
+import { getStripeClient } from '../../billing/stripe-client.js'
+import { findOrCreateStripeCustomer } from '../../billing/customer.js'
 
 const mockCreateRepo = vi.mocked(createRepo)
+const mockedGetStripeClient = vi.mocked(getStripeClient)
+const mockedFindOrCreateStripeCustomer = vi.mocked(findOrCreateStripeCustomer)
 // Store a reference to the mocked userSubscriptions object. Individual tests
 // call .getActiveForUser.mockResolvedValue(...) inline via this reference to
 // avoid triggering @typescript-eslint/unbound-method on destructured methods.
@@ -171,6 +191,23 @@ function stubPool(): Pool {
   } as unknown as Pool
 }
 
+// Stub Env for routes that need env (POST /api/billing/checkout pulls
+// `getStripeClient(env)`; that call is mocked at the module boundary so
+// the env field values here don't have to be production-shaped — they
+// only need to be non-empty enough to satisfy the route's pass-through.
+function stubEnv(): Env {
+  return Object.freeze({
+    databaseUrl: 'postgresql://stub/db',
+    redisRealtimeUrl: 'redis://stub:6379',
+    redisBatchUrl: 'redis://stub:6379',
+    port: 0,
+    authMode: 'bypass',
+    frontendBaseUrl: 'http://localhost:5173',
+    stripeSecretKey: 'rk_test_stub_for_billing_route_tests',
+    stripeWebhookSecret: 'whsec_test_stub',
+  })
+}
+
 // ---------------------------------------------------------------------------
 // App factories
 // ---------------------------------------------------------------------------
@@ -188,7 +225,7 @@ async function buildAuthedTestApp(): Promise<FastifyInstance> {
   registerPublicRouteAllowlistHook(app)
   await app.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' })
   await app.register(bypassPlugin)
-  await app.register(billingRoutes, { pool: stubPool() })
+  await app.register(billingRoutes, { pool: stubPool(), env: stubEnv() })
   await app.ready()
   return app
 }
@@ -205,7 +242,7 @@ async function buildNoAuthTestApp(): Promise<FastifyInstance> {
       Promise.resolve({ query: () => Promise.resolve({ rows: [] }), release: () => undefined }),
   } as unknown as Pool
   await app.register(requireOnboarded, { pool: noAuthPool })
-  await app.register(billingRoutes, { pool: stubPool() })
+  await app.register(billingRoutes, { pool: stubPool(), env: stubEnv() })
   await app.ready()
   return app
 }
@@ -214,7 +251,7 @@ async function buildPublicTestApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
   registerPublicRouteAllowlistHook(app)
   await app.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' })
-  await app.register(billingRoutes, { pool: stubPool() })
+  await app.register(billingRoutes, { pool: stubPool(), env: stubEnv() })
   await app.ready()
   return app
 }
@@ -640,5 +677,385 @@ describe('billingRoutes — GET /api/billing/history (MYT-42 Task 28)', () => {
     expect(res.statusCode).toBe(401)
     const body = res.json<{ code: string }>()
     expect(body.code).toBe('unauthenticated')
+  })
+})
+
+// ===========================================================================
+// Task 29: POST /api/billing/checkout
+// ===========================================================================
+
+interface CheckoutCreateCall {
+  readonly params: Stripe.Checkout.SessionCreateParams
+}
+
+/**
+ * Helper to install the Stripe stub for checkout tests. The returned bag
+ * exposes:
+ *   - createCalls: every call to checkout.sessions.create captured for assertion
+ *   - createImpl:  swap out the per-test impl (default: returns a fake session)
+ */
+interface StripeStubBag {
+  readonly createCalls: CheckoutCreateCall[]
+  setCreateImpl(
+    impl: (params: Stripe.Checkout.SessionCreateParams) => Promise<Stripe.Checkout.Session>,
+  ): void
+}
+
+function installStripeStub(): StripeStubBag {
+  const createCalls: CheckoutCreateCall[] = []
+  // Default impl: returns a fake Checkout Session. Tests override via
+  // setCreateImpl when they need to drive errors or specific session IDs.
+  // The argument is captured by reference in createCalls, not consumed
+  // here — drop it from the arrow's signature.
+  let createImpl: (
+    params: Stripe.Checkout.SessionCreateParams,
+  ) => Promise<Stripe.Checkout.Session> = () => {
+    const session = {
+      id: 'cs_test_default_fixture',
+      url: 'https://checkout.stripe.com/c/pay/cs_test_default_fixture',
+    } as unknown as Stripe.Checkout.Session
+    return Promise.resolve(session)
+  }
+
+  const stripeStub = {
+    checkout: {
+      sessions: {
+        create: (params: Stripe.Checkout.SessionCreateParams): Promise<Stripe.Checkout.Session> => {
+          createCalls.push({ params })
+          return createImpl(params)
+        },
+      },
+    },
+    // .customers is not exercised here — findOrCreateStripeCustomer is
+    // mocked separately, so the route never reaches into stripe.customers.
+  } as unknown as Stripe
+
+  mockedGetStripeClient.mockReturnValue(stripeStub)
+  return {
+    createCalls,
+    setCreateImpl(impl): void {
+      createImpl = impl
+    },
+  }
+}
+
+const FIXTURE_CHECKOUT_CACHE: SkuCache = (() => {
+  const wayfarer: SkuInternalEntry = {
+    lookup_key: 'tier_wayfarer',
+    stripe_price_id: 'price_test_tier_wayfarer',
+    displayName: 'Wayfarer',
+    type: 'recurring',
+    sessionsGranted: 4,
+    worldsGranted: 1,
+    price: { unit_amount_cents: 999, currency: 'usd' },
+  }
+  const sojourner: SkuInternalEntry = {
+    lookup_key: 'tier_sojourner',
+    stripe_price_id: 'price_test_tier_sojourner',
+    displayName: 'Sojourner',
+    type: 'recurring',
+    sessionsGranted: 8,
+    worldsGranted: 2,
+    price: { unit_amount_cents: 1899, currency: 'usd' },
+  }
+  const session: SkuInternalEntry = {
+    lookup_key: 'sku_session',
+    stripe_price_id: 'price_test_sku_session',
+    displayName: 'Session',
+    type: 'one_time',
+    sessionsGranted: 1,
+    worldsGranted: 0,
+    price: { unit_amount_cents: 499, currency: 'usd' },
+  }
+  const world: SkuInternalEntry = {
+    lookup_key: 'sku_world',
+    stripe_price_id: 'price_test_sku_world',
+    displayName: 'World',
+    type: 'one_time',
+    sessionsGranted: 1,
+    worldsGranted: 1,
+    price: { unit_amount_cents: 799, currency: 'usd' },
+  }
+  const byLookupKey = new Map<LookupKey, SkuInternalEntry>()
+  byLookupKey.set('tier_wayfarer', wayfarer)
+  byLookupKey.set('tier_sojourner', sojourner)
+  byLookupKey.set('sku_session', session)
+  byLookupKey.set('sku_world', world)
+
+  const byPriceId = new Map<string, SkuInternalEntry>()
+  byPriceId.set(wayfarer.stripe_price_id, wayfarer)
+  byPriceId.set(sojourner.stripe_price_id, sojourner)
+  byPriceId.set(session.stripe_price_id, session)
+  byPriceId.set(world.stripe_price_id, world)
+
+  // Public listing strips stripe_price_id (defense in depth on the public route).
+  const toPublic = (e: SkuInternalEntry): SkuPublicListing => ({
+    lookup_key: e.lookup_key,
+    displayName: e.displayName,
+    type: e.type,
+    sessionsGranted: e.sessionsGranted,
+    worldsGranted: e.worldsGranted,
+    price: e.price,
+  })
+
+  return {
+    byLookupKey,
+    byPriceId,
+    publicListing: [wayfarer, sojourner, session, world].map(toPublic),
+  }
+})()
+
+const SUCCESS_URL = 'http://localhost:5173/billing/success?session_id={CHECKOUT_SESSION_ID}'
+const CANCEL_URL = 'http://localhost:5173/billing/cancel'
+
+interface CheckoutSuccessBody {
+  checkout_session_id: string
+  url: string | null
+}
+
+// eslint-disable-next-line max-lines-per-function
+describe('billingRoutes — POST /api/billing/checkout (MYT-42 Task 29)', () => {
+  let app: FastifyInstance | undefined
+  let stripe: StripeStubBag
+
+  beforeEach(() => {
+    _resetSkuCacheForTests()
+    setSkuCache(FIXTURE_CHECKOUT_CACHE)
+    vi.clearAllMocks()
+    app = undefined
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    mockedFindOrCreateStripeCustomer.mockResolvedValue('cus_test_fixture_user')
+    stripe = installStripeStub()
+  })
+
+  afterAll(async () => {
+    if (app) await app.close()
+    _resetSkuCacheForTests()
+    vi.unstubAllEnvs()
+  })
+
+  it('creates a subscription-mode session for a tier-only cart (qty 1)', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [{ lookup_key: 'tier_wayfarer', quantity: 1 }],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<CheckoutSuccessBody>()
+    expect(body.checkout_session_id).toBe('cs_test_default_fixture')
+    expect(body.url).toBe('https://checkout.stripe.com/c/pay/cs_test_default_fixture')
+
+    expect(stripe.createCalls).toHaveLength(1)
+    const call = stripe.createCalls[0]
+    if (call === undefined) throw new Error('expected one create call')
+    expect(call.params.mode).toBe('subscription')
+    expect(call.params.customer).toBe('cus_test_fixture_user')
+    expect(call.params.payment_method_types).toEqual(['card', 'link'])
+    expect(call.params.success_url).toBe(SUCCESS_URL)
+    expect(call.params.cancel_url).toBe(CANCEL_URL)
+    expect(call.params.metadata).toEqual({ userId: BYPASS_USER_ID })
+    expect(call.params.line_items).toEqual([
+      { price: 'price_test_tier_wayfarer', quantity: 1 },
+    ])
+    // subscription_data carries the userId fallback for webhook customer-id misses.
+    expect(call.params.subscription_data).toEqual({ metadata: { userId: BYPASS_USER_ID } })
+
+    // Verified the find-or-create was called with the right userId.
+    expect(mockedFindOrCreateStripeCustomer).toHaveBeenCalledTimes(1)
+    expect(mockedFindOrCreateStripeCustomer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      BYPASS_USER_ID,
+    )
+  })
+
+  it('creates a payment-mode session for a multi-line à-la-carte cart', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [
+          { lookup_key: 'sku_session', quantity: 3 },
+          { lookup_key: 'sku_world', quantity: 1 },
+        ],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<CheckoutSuccessBody>()
+    expect(body.checkout_session_id).toBe('cs_test_default_fixture')
+
+    expect(stripe.createCalls).toHaveLength(1)
+    const call = stripe.createCalls[0]
+    if (call === undefined) throw new Error('expected one create call')
+    expect(call.params.mode).toBe('payment')
+    expect(call.params.line_items).toEqual([
+      { price: 'price_test_sku_session', quantity: 3 },
+      { price: 'price_test_sku_world', quantity: 1 },
+    ])
+    // subscription_data must NOT be set on payment-mode sessions.
+    expect(call.params.subscription_data).toBeUndefined()
+  })
+
+  it('rejects a mixed cart (tier + à-la-carte) with mixed_cart', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [
+          { lookup_key: 'tier_wayfarer', quantity: 1 },
+          { lookup_key: 'sku_session', quantity: 1 },
+        ],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('mixed_cart')
+    expect(stripe.createCalls).toHaveLength(0)
+  })
+
+  it('rejects a tier with quantity > 1 with tier_cart_shape', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [{ lookup_key: 'tier_wayfarer', quantity: 2 }],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('tier_cart_shape')
+    expect(stripe.createCalls).toHaveLength(0)
+  })
+
+  it('rejects a cart with two distinct tiers (items.length > 1) with tier_cart_shape', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [
+          { lookup_key: 'tier_wayfarer', quantity: 1 },
+          { lookup_key: 'tier_sojourner', quantity: 1 },
+        ],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('tier_cart_shape')
+    expect(stripe.createCalls).toHaveLength(0)
+  })
+
+  it('rejects a duplicate lookup_key in items with duplicate_lookup_key', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [
+          { lookup_key: 'sku_session', quantity: 1 },
+          { lookup_key: 'sku_session', quantity: 2 },
+        ],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('duplicate_lookup_key')
+    expect(stripe.createCalls).toHaveLength(0)
+  })
+
+  it('rejects an unknown lookup_key with unknown_lookup_key + the offending key in detail', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [{ lookup_key: 'sku_phantom', quantity: 1 }],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string; lookup_key?: string }>()
+    expect(body.code).toBe('unknown_lookup_key')
+    expect(body.lookup_key).toBe('sku_phantom')
+    expect(stripe.createCalls).toHaveLength(0)
+  })
+
+  it('returns 502 stripe_unavailable when checkout.sessions.create throws', async () => {
+    stripe.setCreateImpl(() => Promise.reject(new Error('stripe-side 503: service unavailable')))
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        items: [{ lookup_key: 'sku_session', quantity: 1 }],
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(502)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('stripe_unavailable')
+  })
+
+  it('returns 400 body_invalid for a malformed body (missing items)', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      headers: { 'content-type': 'application/json' },
+      payload: {
+        success_url: SUCCESS_URL,
+        cancel_url: CANCEL_URL,
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('body_invalid')
+    expect(stripe.createCalls).toHaveLength(0)
   })
 })
