@@ -5,14 +5,16 @@
 //   - GET /api/billing/skus          (Task 25) — public pricing catalogue
 //   - GET /api/billing/balance        (Task 26) — JWT, credit balances + active sub summary
 //   - GET /api/billing/subscription   (Task 27) — JWT, full active subscription row or null
+//   - GET /api/billing/history        (Task 28) — JWT, cursor-paginated billing audit feed
 //
-// Subsequent tasks add: /history, /checkout, /portal, /upgrade-tier.
+// Subsequent tasks add: /checkout, /portal, /upgrade-tier.
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
 import { getSkuCache } from '../billing/sku-cache.js'
 import { createRepo, type Repo } from '../repo/index.js'
 import { userSubscriptions } from '../repo/user-subscriptions.js'
+import { billingHistory } from '../repo/billing-history.js'
 
 export interface BillingRoutesOpts {
   readonly pool: Pool
@@ -65,6 +67,88 @@ async function handleBalance(
         }
 
   return reply.code(200).send({ session, world_gen, active_subscription })
+}
+
+interface HistoryCursor {
+  readonly t: string
+  readonly i: string
+}
+
+/**
+ * Decode and validate the base64url-encoded cursor query param.
+ * Returns the parsed cursor on success, 'invalid' on any failure, or
+ * undefined when the param was not provided.
+ */
+function decodeCursor(raw: string | undefined): HistoryCursor | 'invalid' | undefined {
+  if (raw === undefined) return undefined
+
+  let json: string
+  try {
+    json = Buffer.from(raw, 'base64url').toString('utf8')
+  } catch {
+    return 'invalid'
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json) as unknown
+  } catch {
+    return 'invalid'
+  }
+
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !('t' in parsed) ||
+    !('i' in parsed)
+  ) {
+    return 'invalid'
+  }
+
+  // TypeScript narrows parsed to `object & { t: unknown } & { i: unknown }`
+  // after the `in` checks; destructuring is safe without assertion.
+  const { t, i } = parsed
+  if (typeof t !== 'string' || typeof i !== 'string') return 'invalid'
+  return { t, i }
+}
+
+// Handler: GET /api/billing/history
+async function handleHistory(
+  pool: Pool,
+  repo: Repo,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(repo, request, reply)
+  if (userId === null) return reply
+
+  const rawCursor = (request.query as Record<string, string | undefined>).cursor
+  const cursorResult = decodeCursor(rawCursor)
+  if (cursorResult === 'invalid') {
+    return reply.code(400).send({ code: 'invalid_cursor' })
+  }
+
+  const listOpts =
+    cursorResult !== undefined
+      ? { cursor: cursorResult, limit: 50 }
+      : { limit: 50 }
+  const { rows, nextCursor } = await billingHistory.listByUser(pool, userId, listOpts)
+
+  const encodedNextCursor =
+    nextCursor !== null ? Buffer.from(nextCursor, 'utf8').toString('base64url') : null
+
+  const events = rows.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    occurred_at: row.occurred_at.toISOString(),
+    amount_cents: row.amount_cents,
+    currency: row.currency,
+    lookup_key: row.lookup_key,
+    status: row.status,
+    source_id_stripe: row.source_id_stripe,
+  }))
+
+  return reply.code(200).send({ events, nextCursor: encodedNextCursor })
 }
 
 // Handler: GET /api/billing/subscription
@@ -124,5 +208,9 @@ export const billingRoutes: FastifyPluginAsync<BillingRoutesOpts> = async (scope
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
   }, (request, reply) => handleSubscription(opts.pool, repo, request, reply))
 
-  // Subsequent tasks 28-31 add: /history, /checkout, /portal, /upgrade-tier
+  scope.get('/api/billing/history', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, (request, reply) => handleHistory(opts.pool, repo, request, reply))
+
+  // Subsequent tasks 29-31 add: /checkout, /portal, /upgrade-tier
 }

@@ -19,6 +19,13 @@
 //   2. No active sub: user with no subscription row → 200 with active_subscription: null
 //   3. Unauthenticated (no auth plugin): 401
 //   4. User not found (JWT present, no users row): 403 username_required
+//
+// Task 28 — GET /api/billing/history:
+//   1. Happy path empty: user with no rows → { events: [], nextCursor: null }
+//   2. Single page: 30 rows → 30 events + nextCursor: null
+//   3. Multi-page: 51 rows → page 1 returns 50 + non-null cursor; page 2 returns 1 + null
+//   4. Invalid cursor: malformed base64 → 400 invalid_cursor
+//   5. Unauthenticated: 401
 
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
@@ -49,18 +56,27 @@ vi.mock('../../repo/user-subscriptions.js', () => ({
   },
 }))
 
+vi.mock('../../repo/billing-history.js', () => ({
+  billingHistory: {
+    listByUser: vi.fn(),
+  },
+}))
+
 // ---------------------------------------------------------------------------
 // Import mocked modules after the vi.mock declarations.
 // ---------------------------------------------------------------------------
 
 import { createRepo } from '../../repo/index.js'
 import { userSubscriptions } from '../../repo/user-subscriptions.js'
+import { billingHistory } from '../../repo/billing-history.js'
+import type { BillingHistoryRow } from '../../repo/billing-history.js'
 
 const mockCreateRepo = vi.mocked(createRepo)
 // Store a reference to the mocked userSubscriptions object. Individual tests
 // call .getActiveForUser.mockResolvedValue(...) inline via this reference to
 // avoid triggering @typescript-eslint/unbound-method on destructured methods.
 const mockedUserSubscriptions = vi.mocked(userSubscriptions)
+const mockedBillingHistory = vi.mocked(billingHistory)
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -444,5 +460,185 @@ describe('billingRoutes — GET /api/billing/subscription (MYT-42 Task 27)', () 
     expect(res.statusCode).toBe(403)
     const body = res.json<{ code: string }>()
     expect(body.code).toBe('username_required')
+  })
+})
+
+// ===========================================================================
+// Task 28: GET /api/billing/history
+// ===========================================================================
+
+/**
+ * Build a minimal BillingHistoryRow fixture. Only fields required by the
+ * response mapper are populated; the rest are set to sensible defaults.
+ */
+function makeHistoryRow(overrides: Partial<BillingHistoryRow> = {}): BillingHistoryRow {
+  return {
+    id: '018e2b3c-0000-7000-8000-000000000010',
+    user_id: BYPASS_USER_ID,
+    kind: 'purchase',
+    source_id_stripe: 'pi_test_default',
+    stripe_payment_intent_id: null,
+    lookup_key: null,
+    amount_cents: 499,
+    currency: 'usd',
+    status: 'completed',
+    expires_at: null,
+    occurred_at: new Date('2026-05-01T12:00:00.000Z'),
+    created_at: new Date('2026-05-01T12:00:00.000Z'),
+    ...overrides,
+  }
+}
+
+/** Build `count` distinct history rows with unique ids and source_id_stripe. */
+function makeHistoryRows(count: number): BillingHistoryRow[] {
+  return Array.from({ length: count }, (_, idx) => {
+    const idxStr = String(idx).padStart(3, '0')
+    return makeHistoryRow({
+      id: `018e2b3c-0000-7000-8000-0000000000${idxStr}`,
+      source_id_stripe: `pi_test_${idxStr}`,
+    })
+  })
+}
+
+interface HistoryEvent {
+  id: string
+  kind: string
+  occurred_at: string
+  amount_cents: number
+  currency: string
+  lookup_key: string | null
+  status: string
+  source_id_stripe: string
+}
+
+interface HistoryResponseBody {
+  events: HistoryEvent[]
+  nextCursor: string | null
+}
+
+// eslint-disable-next-line max-lines-per-function
+describe('billingRoutes — GET /api/billing/history (MYT-42 Task 28)', () => {
+  let app: FastifyInstance | undefined
+  let noAuthApp: FastifyInstance | undefined
+
+  beforeEach(() => {
+    _resetSkuCacheForTests()
+    vi.clearAllMocks()
+    app = undefined
+    noAuthApp = undefined
+  })
+
+  afterAll(async () => {
+    if (app) await app.close()
+    if (noAuthApp) await noAuthApp.close()
+    vi.unstubAllEnvs()
+  })
+
+  it('returns 200 with events: [] and nextCursor: null when user has no rows', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    mockedBillingHistory.listByUser.mockResolvedValue({ rows: [], nextCursor: null })
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({ method: 'GET', url: '/api/billing/history' })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<HistoryResponseBody>()
+    expect(body.events).toEqual([])
+    expect(body.nextCursor).toBeNull()
+  })
+
+  it('returns 200 with 30 events and nextCursor: null for a single page', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    const rows = makeHistoryRows(30)
+    mockedBillingHistory.listByUser.mockResolvedValue({ rows, nextCursor: null })
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({ method: 'GET', url: '/api/billing/history' })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<HistoryResponseBody>()
+    expect(body.events).toHaveLength(30)
+    expect(body.nextCursor).toBeNull()
+    // Spot-check shape of first event.
+    const first = body.events[0]
+    expect(first).toBeDefined()
+    if (first === undefined) throw new Error('first event unexpectedly undefined')
+    expect(first).toHaveProperty('id')
+    expect(first).toHaveProperty('kind', 'purchase')
+    expect(first).toHaveProperty('occurred_at', '2026-05-01T12:00:00.000Z')
+    expect(first).toHaveProperty('amount_cents', 499)
+    expect(first).toHaveProperty('currency', 'usd')
+    expect(first).toHaveProperty('lookup_key', null)
+    expect(first).toHaveProperty('status', 'completed')
+    expect(first).toHaveProperty('source_id_stripe')
+  })
+
+  it('paginates correctly: 51 rows yields page 1 of 50 + cursor, page 2 of 1 + null', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    const page1Rows = makeHistoryRows(50)
+    const lastRow = page1Rows[49]
+    if (lastRow === undefined) throw new Error('fixture error: expected 50 rows')
+    const repoNextCursor = JSON.stringify({
+      t: lastRow.occurred_at.toISOString(),
+      i: lastRow.id,
+    })
+    mockedBillingHistory.listByUser
+      .mockResolvedValueOnce({ rows: page1Rows, nextCursor: repoNextCursor })
+      .mockResolvedValueOnce({ rows: makeHistoryRows(1), nextCursor: null })
+    app = await buildAuthedTestApp()
+
+    // Page 1 — no cursor.
+    const res1 = await app.inject({ method: 'GET', url: '/api/billing/history' })
+    expect(res1.statusCode).toBe(200)
+    const body1 = res1.json<HistoryResponseBody>()
+    expect(body1.events).toHaveLength(50)
+    expect(body1.nextCursor).not.toBeNull()
+
+    // Verify cursor round-trips correctly (decode → same t + i).
+    const wireNextCursor = body1.nextCursor
+    if (wireNextCursor === null) throw new Error('nextCursor unexpectedly null')
+    const decoded = JSON.parse(Buffer.from(wireNextCursor, 'base64url').toString('utf8')) as {
+      t: string
+      i: string
+    }
+    expect(decoded.t).toBe(lastRow.occurred_at.toISOString())
+    expect(decoded.i).toBe(lastRow.id)
+
+    // Page 2 — pass cursor.
+    const res2 = await app.inject({
+      method: 'GET',
+      url: `/api/billing/history?cursor=${wireNextCursor}`,
+    })
+    expect(res2.statusCode).toBe(200)
+    const body2 = res2.json<HistoryResponseBody>()
+    expect(body2.events).toHaveLength(1)
+    expect(body2.nextCursor).toBeNull()
+  })
+
+  it('returns 400 with code invalid_cursor for a malformed cursor', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    app = await buildAuthedTestApp()
+
+    // Send a cursor string that is valid base64url but decodes to non-JSON.
+    const invalidCursor = Buffer.from('not-valid-json!!!', 'utf8').toString('base64url')
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/billing/history?cursor=${invalidCursor}`,
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('invalid_cursor')
+  })
+
+  it('returns 401 when request carries no JWT (no auth plugin registered)', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    noAuthApp = await buildNoAuthTestApp()
+
+    const res = await noAuthApp.inject({ method: 'GET', url: '/api/billing/history' })
+
+    expect(res.statusCode).toBe(401)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('unauthenticated')
   })
 })
