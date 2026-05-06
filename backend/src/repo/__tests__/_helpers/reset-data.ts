@@ -13,6 +13,13 @@ import type { Pool } from 'pg'
  */
 const TABLES = [
   // Identity / billing
+  // Order within the section is for readability; FK ordering is handled by
+  // `TRUNCATE ... CASCADE` (see resetData below). credit_ledger has RESTRICT
+  // FKs to purchases and billing_history; CASCADE forces those dependents
+  // to truncate together regardless of position.
+  'billing_history',
+  'user_subscriptions',
+  'purchases',
   'users',
   'credit_ledger',
   'stripe_events',
