@@ -14,6 +14,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 import type { Pool } from 'pg'
 import { createUsersRepo } from '../repo/users.js'
+import { grantInTx } from '../repo/credits.js'
 import { classifyProfanity } from '../llm/profanity.js'
 
 // 3-20 chars; alphanumeric + underscore; no leading/trailing underscore.
@@ -103,17 +104,61 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         })
       }
 
+      // Per spec §8: open a transaction, create the users row, grant the
+      // trial credit, flip free_trial_used. All three writes must succeed
+      // or none — otherwise we get an "onboarded user without trial credit"
+      // wedge state that the existing-user short-circuit can never recover
+      // from on re-registration.
+      //
+      // The classifyProfanity calls above MUST stay outside this tx (per
+      // Sphinx I2 round 2) — they are 200–800ms LLM calls and holding a
+      // PoolClient open across them is a DoS amplifier on `max=10`.
+      const client = await opts.pool.connect()
+      let inTransaction = false
       try {
-        const user = await users.create({
+        await client.query(
+          "BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'",
+        )
+        inTransaction = true
+
+        const user = await users.create(client, {
           cognitoSub: request.user.sub,
           username: username.trim(),
           displayName: displayName.trim(),
         })
+        await grantInTx(client, {
+          userId: user.id,
+          creditType: 'session',
+          amount: 1,
+          sourceType: 'trial',
+          sourceId: null,
+          expiresAt: null,
+          sourcePurchaseId: null,
+          sourceBillingHistoryId: null,
+        })
+        await client.query('UPDATE users SET free_trial_used = true WHERE id = $1', [
+          user.id,
+        ])
+        await client.query('COMMIT')
+        inTransaction = false
+
+        // Stitch the post-COMMIT free_trial_used into the response shape so
+        // the body reflects state-at-end-of-tx. Re-reading is wasted I/O —
+        // the only column we just changed is the flag.
+        const userResponse = { ...user, freeTrialUsed: true }
         return await reply
           .header('Location', '/api/users/me')
           .code(201)
-          .send({ user, created: true })
+          .send({ user: userResponse, created: true })
       } catch (err) {
+        if (inTransaction) {
+          try {
+            await client.query('ROLLBACK')
+          } catch {
+            // Connection may already be in failed state; pool will recycle.
+          }
+          inTransaction = false
+        }
         if (
           typeof err === 'object' &&
           err !== null &&
@@ -122,17 +167,20 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         ) {
           const constraint = (err as { constraint?: string }).constraint ?? ''
           if (constraint === 'users_cognito_sub_key') {
+            // Re-fetch via the pool (NOT the released client) — the
+            // tx is already rolled back and the client is about to be
+            // released in `finally`.
             const existing = await users.getByCognitoSub(request.user.sub)
             if (!existing) {
-              return reply.code(500).send({ code: 'inconsistent_state' })
+              return await reply.code(500).send({ code: 'inconsistent_state' })
             }
             if (existing.username.toLowerCase() === username.trim().toLowerCase()) {
-              return reply
+              return await reply
                 .header('Content-Location', '/api/users/me')
                 .code(200)
                 .send({ user: existing, created: false })
             }
-            return reply.code(409).send({
+            return await reply.code(409).send({
               code: 'already_onboarded',
               currentUsername: existing.username,
               requestedUsername: username.trim(),
@@ -145,10 +193,12 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
               if (!r.profane) break
               suggestion = generateSuggestion(username.trim())
             }
-            return reply.code(409).send({ code: 'username_taken', suggestion })
+            return await reply.code(409).send({ code: 'username_taken', suggestion })
           }
         }
         throw err
+      } finally {
+        client.release()
       }
     },
   )
