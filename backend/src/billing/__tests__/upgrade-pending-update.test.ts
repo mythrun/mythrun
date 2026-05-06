@@ -38,25 +38,23 @@ import Stripe from 'stripe'
  * orphaned in the test-mode account — Miklos can prune them via Dashboard.
  */
 
-const TEST_API_KEY = process.env['STRIPE_TEST_API_KEY']
-const WAYFARER_PRICE_ID = process.env['STRIPE_TEST_WAYFARER_PRICE_ID']
-const MYTHWRIGHT_PRICE_ID = process.env['STRIPE_TEST_MYTHWRIGHT_PRICE_ID']
+const TEST_API_KEY = process.env.STRIPE_TEST_API_KEY
+const WAYFARER_PRICE_ID = process.env.STRIPE_TEST_WAYFARER_PRICE_ID
+const MYTHWRIGHT_PRICE_ID = process.env.STRIPE_TEST_MYTHWRIGHT_PRICE_ID
 
-const SHOULD_RUN =
-  typeof TEST_API_KEY === 'string' &&
-  TEST_API_KEY.startsWith('rk_test_') &&
-  typeof WAYFARER_PRICE_ID === 'string' &&
-  WAYFARER_PRICE_ID.length > 0 &&
-  typeof MYTHWRIGHT_PRICE_ID === 'string' &&
-  MYTHWRIGHT_PRICE_ID.length > 0
+const apiKey = typeof TEST_API_KEY === 'string' && TEST_API_KEY.startsWith('rk_test_') ? TEST_API_KEY : null
+const wayfarerId = typeof WAYFARER_PRICE_ID === 'string' && WAYFARER_PRICE_ID.length > 0 ? WAYFARER_PRICE_ID : null
+const mythwrightId = typeof MYTHWRIGHT_PRICE_ID === 'string' && MYTHWRIGHT_PRICE_ID.length > 0 ? MYTHWRIGHT_PRICE_ID : null
+
+const SHOULD_RUN = apiKey !== null && wayfarerId !== null && mythwrightId !== null
 
 const describeMaybe = SHOULD_RUN ? describe : describe.skip
 
 describeMaybe('pre-ship: payment_behavior pending_if_incomplete', () => {
   it('returns Subscription with pending_update populated AND items NOT advanced on soft-decline card', async () => {
-    if (!SHOULD_RUN) return
+    if (apiKey === null || wayfarerId === null || mythwrightId === null) return
 
-    const stripe = new Stripe(TEST_API_KEY!, {
+    const stripe = new Stripe(apiKey, {
       apiVersion: '2026-04-22.dahlia',
     })
 
@@ -85,19 +83,20 @@ describeMaybe('pre-ship: payment_behavior pending_if_incomplete', () => {
 
       const subscription = await stripe.subscriptions.create({
         customer: customer.id,
-        items: [{ price: WAYFARER_PRICE_ID! }],
+        items: [{ price: wayfarerId }],
         payment_behavior: 'error_if_incomplete',
         expand: ['latest_invoice.payment_intent'],
       })
 
       expect(subscription.status).toBe('active')
-      expect(subscription.items.data[0]?.price.id).toBe(WAYFARER_PRICE_ID)
+      expect(subscription.items.data[0]?.price.id).toBe(wayfarerId)
 
       const itemId = subscription.items.data[0]?.id
-      expect(itemId).toBeTruthy()
+      if (itemId === undefined) throw new Error('subscription created without items[0].id')
 
+      // eslint-disable-next-line mythrun/no-stripe-subscription-price-mutation
       const updated = await stripe.subscriptions.update(subscription.id, {
-        items: [{ id: itemId!, price: MYTHWRIGHT_PRICE_ID! }],
+        items: [{ id: itemId, price: mythwrightId }],
         payment_behavior: 'pending_if_incomplete',
         proration_behavior: 'always_invoice',
       })
@@ -108,8 +107,8 @@ describeMaybe('pre-ship: payment_behavior pending_if_incomplete', () => {
       expect(updated.pending_update).toBeDefined()
 
       // Assertion 2: items DID NOT advance — still on the OLD price
-      expect(updated.items.data[0]?.price.id).toBe(WAYFARER_PRICE_ID)
-      expect(updated.items.data[0]?.price.id).not.toBe(MYTHWRIGHT_PRICE_ID)
+      expect(updated.items.data[0]?.price.id).toBe(wayfarerId)
+      expect(updated.items.data[0]?.price.id).not.toBe(mythwrightId)
 
       // Bonus: status should still be active (subscription is "split-brain
       // safe" — old tier still serving until payment lands).

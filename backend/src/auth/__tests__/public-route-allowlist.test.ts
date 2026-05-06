@@ -17,7 +17,9 @@ describe('public-route allowlist', () => {
     registerPublicRouteAllowlistHook(app)
     // Routes in production are always registered inside app.register() plugins;
     // only plugin-wrapped registrations defer onRoute errors to app.ready().
+    // eslint-disable-next-line @typescript-eslint/require-await
     app.register(async (child) => {
+      // eslint-disable-next-line @typescript-eslint/require-await
       child.get('/health', { config: { auth: 'public' } }, async () => ({ ok: true }))
     })
     await expect(app.ready()).resolves.toBeDefined()
@@ -27,7 +29,9 @@ describe('public-route allowlist', () => {
   it('non-allowlisted public route causes app.ready() to reject', async () => {
     const app = Fastify()
     registerPublicRouteAllowlistHook(app)
+    // eslint-disable-next-line @typescript-eslint/require-await
     app.register(async (child) => {
+      // eslint-disable-next-line @typescript-eslint/require-await
       child.get('/secret', { config: { auth: 'public' } }, async () => ({ ok: true }))
     })
     await expect(app.ready()).rejects.toThrow(/non-allowlisted route/)
@@ -37,7 +41,9 @@ describe('public-route allowlist', () => {
   it('JWT-default route (no config.auth) is silently skipped', async () => {
     const app = Fastify()
     registerPublicRouteAllowlistHook(app)
+    // eslint-disable-next-line @typescript-eslint/require-await
     app.register(async (child) => {
+      // eslint-disable-next-line @typescript-eslint/require-await
       child.get('/api/something', async () => ({ ok: true }))
     })
     await expect(app.ready()).resolves.toBeDefined()

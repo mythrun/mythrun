@@ -24,6 +24,7 @@ import type { EventHandler } from './webhook.js'
  * MYT-42 — the user can simply re-click "Upgrade" and the §4.6
  * route re-runs cleanly.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export const handlePendingUpdateExpired: EventHandler = async (event, _prefetch, _client, log) => {
   const sub = event.data.object as Stripe.Subscription
 

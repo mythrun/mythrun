@@ -103,9 +103,9 @@ interface PortalConfigFixture {
     subscription_update: {
       proration_behavior: 'create_prorations' | 'always_invoice' | 'none'
       schedule_at_period_end: {
-        conditions: Array<{ type: 'decreasing_item_amount' | 'shortening_interval' }>
+        conditions: { type: 'decreasing_item_amount' | 'shortening_interval' }[]
       }
-      products: Array<{ product: string; prices: string[] }> | null
+      products: { product: string; prices: string[] }[] | null
     }
   }
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Stripe } from 'stripe'
+import type { FastifyBaseLogger } from 'fastify'
 import { handlePendingUpdateExpired } from '../webhook-pending-update-expired.js'
 import type { ClientLike } from '../../repo/_types.js'
 
@@ -63,7 +64,7 @@ function makeEvent(overrides: Partial<Stripe.Subscription> = {}): Stripe.Event {
 
 // Stub client — handler should not touch it.
 const noopClient: ClientLike = {
-  query: async () => {
+  query: () => {
     throw new Error('handler should not query the database')
   },
 }
@@ -72,25 +73,23 @@ describe('webhook handler — customer.subscription.pending_update_expired', () 
   it('logs INFO billing.upgrade_expired with subscription_id, customer_id, latest_invoice_id, target_tier_lookup_key — and performs ZERO DB writes', async () => {
     const { calls, logger } = makeLog()
     const event = makeEvent()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await handlePendingUpdateExpired(event, undefined, noopClient, logger as any)
+    const result = await handlePendingUpdateExpired(event, undefined, noopClient, logger as unknown as FastifyBaseLogger)
     expect(result).toBe('ok')
     expect(calls).toHaveLength(1)
     const first = calls[0]
     expect(first?.level).toBe('info')
     expect(first?.msg).toBe('billing.upgrade_expired')
-    expect(first?.obj['subscription_id']).toBe('sub_test_expired')
-    expect(first?.obj['customer_id']).toBe('cus_test_expired')
-    expect(first?.obj['latest_invoice_id']).toBe('in_test_voided')
-    expect(first?.obj['target_tier_lookup_key']).toBe('mythwright')
-    expect(first?.obj['event_id']).toBe('evt_test_expired_1')
+    expect(first?.obj.subscription_id).toBe('sub_test_expired')
+    expect(first?.obj.customer_id).toBe('cus_test_expired')
+    expect(first?.obj.latest_invoice_id).toBe('in_test_voided')
+    expect(first?.obj.target_tier_lookup_key).toBe('mythwright')
+    expect(first?.obj.event_id).toBe('evt_test_expired_1')
   })
 
   it('handles null latest_invoice without throwing', async () => {
     const { logger } = makeLog()
     const event = makeEvent({ latest_invoice: null })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await handlePendingUpdateExpired(event, undefined, noopClient, logger as any)
+    const result = await handlePendingUpdateExpired(event, undefined, noopClient, logger as unknown as FastifyBaseLogger)
     expect(result).toBe('ok')
   })
 })

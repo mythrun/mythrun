@@ -32,7 +32,8 @@ describe('sku-cache', () => {
 
   it('setSkuCache + getSkuCache round-trips byLookupKey, byPriceId, and publicListing', () => {
     const internal = makeEntry('sku_session', 'price_test_session')
-    const { stripe_price_id: _omit, ...publicEntry } = internal
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { stripe_price_id, ...publicEntry } = internal
     const snapshot: SkuCache = {
       byLookupKey: new Map([[internal.lookup_key, internal]]),
       byPriceId: new Map([[internal.stripe_price_id, internal]]),
@@ -52,7 +53,8 @@ describe('sku-cache', () => {
     // grows a stripe_price_id field. Runtime: the rest-omit pattern
     // strips it from the snapshot.
     const internal = makeEntry('sku_session', 'price_test_session')
-    const { stripe_price_id: _omit, ...publicEntry } = internal
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { stripe_price_id, ...publicEntry } = internal
     const asPublic: SkuPublicListing = publicEntry
     expect(Object.keys(asPublic)).not.toContain('stripe_price_id')
     // Belt-and-suspenders: the type-level keys exposed by SkuPublicListing
