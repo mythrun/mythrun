@@ -3,6 +3,7 @@ import { createShutdown, buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
+import { makeStubEnv } from './helpers/stub-env.js'
 
 type ExitFn = (code?: string | number | null) => never
 
@@ -41,7 +42,7 @@ describe('createShutdown', () => {
   })
 
   it('drains in order: app.close → pg.end → redis.quit (both), then exit(0)', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
     const clients = makeMockClients()
     const callOrder: string[] = []
 
@@ -85,7 +86,7 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if app.close throws', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
     const clients = makeMockClients()
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.reject(new Error('boom'))) as unknown as typeof app.close,
@@ -102,7 +103,7 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if pg.end throws (after app.close succeeded)', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
+    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
     const clients = makeMockClients()
     vi.spyOn(app, 'close').mockImplementation(
       (() => Promise.resolve()) as unknown as typeof app.close,

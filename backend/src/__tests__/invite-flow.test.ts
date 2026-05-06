@@ -20,6 +20,7 @@ import { resetData } from '../repo/__tests__/_helpers/reset-data.js'
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo, type Repo } from '../repo/index.js'
+import { makeStubEnv } from './helpers/stub-env.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -139,7 +140,7 @@ describe('invite routes (integration)', () => {
       redisBatch: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
       repo,
     }
-    app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: FRONTEND_BASE_URL })
+    app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: FRONTEND_BASE_URL, env: makeStubEnv({ frontendBaseUrl: FRONTEND_BASE_URL }) })
   })
 
   afterAll(async () => {

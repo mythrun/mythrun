@@ -76,6 +76,7 @@ async function fallbackStart(): Promise<void> {
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
+    env,
   })
   await app.listen({ port: env.port, host: '0.0.0.0' })
   const handleShutdown = createShutdown(app, stubDeps)
@@ -148,7 +149,7 @@ export async function main(): Promise<void> {
     const app = await buildApp(
       { pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo },
       authOpts,
-      { frontendBaseUrl: env.frontendBaseUrl },
+      { frontendBaseUrl: env.frontendBaseUrl, env },
     )
     await app.listen({ port: env.port, host: '0.0.0.0' })
 

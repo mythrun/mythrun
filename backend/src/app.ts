@@ -6,18 +6,34 @@ import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { AppDeps } from './app-deps.js'
 import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
+import { registerPublicRouteAllowlistHook } from './auth/public-route-allowlist.js'
 import { requireOnboarded } from './auth/require-onboarded.js'
+import type { Env } from './config/env.js'
 import { registerReadyRoute } from './routes/health-ready.js'
 import { usersRoutes } from './routes/users.js'
 import { invitesRoutes } from './routes/invites.js'
+import { webhookRoutes } from './routes/webhook.js'
+import { billingRoutes } from './routes/billing.js'
 
 export interface AppConfig {
   /** Origin of the frontend SPA, used to compose share URLs (e.g. invite links).
    *  Validated by loadEnv() against an allowlist of hosts. Pass through
    *  intact — handlers concatenate paths onto it without re-validation. */
   readonly frontendBaseUrl: string
+  /** Loaded process env. Threaded into the webhook + billing plugins so
+   *  they can pull stripeSecretKey / stripeWebhookSecret without
+   *  reaching back into module-level config. */
+  readonly env: Env
 }
 
+// buildApp is the boot orchestrator: a flat, top-to-bottom registration
+// sequence where the ORDER is load-bearing (allowlist hook before
+// /health, webhook plugin before usersRoutes, billingRoutes last).
+// Splitting it into helpers would scatter the order-dependence across
+// files and obscure the wiring contract this function exists to express.
+// Comments + Fastify config inflate the line count past the 50-line
+// heuristic; the cohesion case is the same as routes/billing.ts.
+/* eslint-disable-next-line max-lines-per-function */
 export const buildApp = async (
   deps: AppDeps,
   authOpts: RegisterAuthOptions,
@@ -78,6 +94,16 @@ export const buildApp = async (
     },
   })
 
+  // Public-route allowlist hook (MYT-42 task 11 + spec §3 lines 86–109).
+  // MUST be installed BEFORE any route registration that may set
+  // `config.auth: 'public'` — Fastify's onRoute hook is inherited downward
+  // only into plugins/routes registered AFTER the hook is added on the
+  // same scope. Hoisting this above `/health` is load-bearing: if the
+  // hook is registered after /health, the hook never validates the
+  // /health registration and a future addition of a public route there
+  // would silently slip through.
+  registerPublicRouteAllowlistHook(app)
+
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' })) // liveness
   registerReadyRoute(app, deps) // /health/ready opts out via config: { auth: 'public' } INSIDE the route file
 
@@ -110,11 +136,24 @@ export const buildApp = async (
   // non-allowlisted route uses it.
   await app.register(requireOnboarded, { pool: deps.pg })
 
+  // Webhook plugin (MYT-42 Task 15). Registered BEFORE any sibling JSON
+  // route the parent scope cares about, so the encapsulated raw-body
+  // parser stays inside the child context (Fastify v5's
+  // addContentTypeParser is encapsulation-scoped, not route-scoped — see
+  // routes/webhook.ts for the full rationale).
+  await app.register(webhookRoutes, { pool: deps.pg, env: config.env })
+
   await app.register(usersRoutes, { pool: deps.pg })
   await app.register(invitesRoutes, {
     pool: deps.pg,
     frontendBaseUrl: config.frontendBaseUrl,
   })
+
+  // Billing plugin (MYT-42 Tasks 25–31). Registered last as a direct
+  // child of `app` so it inherits the public-route allowlist + auth
+  // hooks installed above. /api/billing/skus is the only public route
+  // here; the rest go through the JWT + requireOnboarded chain.
+  await app.register(billingRoutes, { pool: deps.pg, env: config.env })
 
   return app
 }

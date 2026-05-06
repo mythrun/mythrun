@@ -12,6 +12,7 @@ import { resetData } from '../repo/__tests__/_helpers/reset-data.js'
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo } from '../repo/index.js'
+import { makeStubEnv } from './helpers/stub-env.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -63,7 +64,7 @@ describe('onboarding routes (integration)', () => {
       redisBatch: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
       repo: createRepo(pool),
     }
-    app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
+    app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
   })
 
   afterAll(async () => {

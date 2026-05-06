@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from '../app.js'
 import { makeStubDeps } from './helpers/stub-deps.js'
+import { makeStubEnv } from './helpers/stub-env.js'
 
 interface ReadyBody {
   ready: boolean
@@ -30,7 +31,7 @@ describe('GET /health/ready', () => {
   })
 
   it('returns 200 {ready:true} when all probes succeed', async () => {
-    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173' })
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
     const res = await app.inject({ method: 'GET', url: '/health/ready' })
     expect(res.statusCode).toBe(200)
     expect(res.json<ReadyBody>()).toEqual({ ready: true })
@@ -42,7 +43,7 @@ describe('GET /health/ready', () => {
         pgQuery: () => Promise.reject(new Error('connection refused')),
       }),
       { mode: 'bypass' },
-      { frontendBaseUrl: 'http://localhost:5173' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
     const res = await app.inject({ method: 'GET', url: '/health/ready' })
     expect(res.statusCode).toBe(503)
@@ -56,7 +57,7 @@ describe('GET /health/ready', () => {
         pingBatch: () => Promise.reject(new Error('redis-batch down')),
       }),
       { mode: 'bypass' },
-      { frontendBaseUrl: 'http://localhost:5173' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
     const res = await app.inject({ method: 'GET', url: '/health/ready' })
     expect(res.statusCode).toBe(503)
@@ -73,7 +74,7 @@ describe('GET /health/ready', () => {
         pgQuery: () => new Promise(() => undefined),
       }),
       { mode: 'bypass' },
-      { frontendBaseUrl: 'http://localhost:5173' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
     const responsePromise = app.inject({ method: 'GET', url: '/health/ready' })
     await vi.advanceTimersByTimeAsync(1001)
