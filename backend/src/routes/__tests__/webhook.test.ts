@@ -11,7 +11,7 @@
 // signature-verification contract is tested against the actual SDK
 // behavior, not a mocked verifier.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import Fastify, {
   type FastifyInstance,
   type FastifyPluginAsync,
@@ -21,6 +21,15 @@ import Stripe from 'stripe'
 import type { Pool } from 'pg'
 import type { Env } from '../../config/env.js'
 import { webhookRoutes } from '../webhook.js'
+
+// Stub the dispatcher at the import boundary. The route plugin's contract
+// is signature verification + body-parser plumbing; the dispatcher's
+// behavior (idempotency, tx discipline, handler fan-out) is covered by
+// `src/billing/__tests__/webhook.test.ts`. Mocking here decouples the
+// route tests from a live Postgres pool.
+vi.mock('../../billing/webhook.js', () => ({
+  dispatchEvent: vi.fn(() => Promise.resolve()),
+}))
 
 // Test fixture: a structurally valid `whsec_*` secret. The actual bytes
 // don't matter for `generateTestHeaderString` + `constructEvent` round-trip
