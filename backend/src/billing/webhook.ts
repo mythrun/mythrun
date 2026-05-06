@@ -53,6 +53,7 @@ import {
   prefetchPendingUpdateApplied,
 } from './webhook-pending-update-applied.js'
 import { handlePendingUpdateExpired } from './webhook-pending-update-expired.js'
+import { handleRefundEvent, prefetchRefund } from './webhook-refund.js'
 import type { HandlerResult } from './webhook-types.js'
 
 export type { HandlerResult } from './webhook-types.js'
@@ -77,16 +78,9 @@ export type EventHandler = (
 
 export type PrefetchFn = (event: Stripe.Event, stripe: Stripe) => Promise<unknown>
 
-// Per-event handler stubs. Tasks 17-24 replace each
-// `() => Promise.resolve('ok')` with the real handler (see spec §5.4.1
-// through §5.4.7). Exported so tests can override individual entries.
-//
-// ESLint @typescript-eslint/require-await flags `async () => 'ok'`
-// shaped stubs because the body has no `await`. Using
-// `() => Promise.resolve('ok')` produces an identical runtime value and
-// the same `EventHandler` type signature without the lint error.
-const okHandler: EventHandler = () => Promise.resolve('ok')
-
+// Per-event handler map. All entries are wired to their real per-event
+// handlers as of Task 24 (refund.created / refund.updated were the last
+// two stubs). Exported so tests can override individual entries.
 export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'checkout.session.completed': handleCheckoutCompleted,
   'invoice.paid': handleInvoicePaid,
@@ -95,8 +89,8 @@ export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'customer.subscription.deleted': handleSubscriptionDeleted,
   'customer.subscription.pending_update_applied': handlePendingUpdateApplied,
   'customer.subscription.pending_update_expired': handlePendingUpdateExpired,
-  'refund.created': okHandler,
-  'refund.updated': okHandler,
+  'refund.created': handleRefundEvent,
+  'refund.updated': handleRefundEvent,
 }
 
 // Per-event prefetch shapes (spec §5.3 lines 510-547). Tasks 17-24 fill
@@ -107,6 +101,8 @@ export const PREFETCHERS: Partial<Record<KnownStripeEventType, PrefetchFn>> = {
   'checkout.session.completed': prefetchCheckoutCompleted,
   'invoice.paid': prefetchInvoicePaid,
   'customer.subscription.pending_update_applied': prefetchPendingUpdateApplied,
+  'refund.created': prefetchRefund,
+  'refund.updated': prefetchRefund,
 }
 
 /**
