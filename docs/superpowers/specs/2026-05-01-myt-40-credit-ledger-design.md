@@ -348,13 +348,40 @@ export class UserNotFoundError extends Error {
   }
 }
 
+export interface ClawbackInput {
+  userId: string
+  creditType: CreditType
+  amount: number              // must be > 0; recorded as negative in ledger
+  sourceId: string            // REQUIRED — the idempotency key (typically the Stripe refund_id)
+  // sourceType is fixed to 'debit' — the polarity CHECK + debit_no_expiry_chk
+  // require it. Caller does not supply sourceType.
+  // expiresAt is fixed to NULL — debit_no_expiry_chk requires it. Caller
+  // does not supply expiresAt.
+}
+
 export function createCreditsRepo(pool: Pool): {
   balance(userId: string, type: CreditType): Promise<number>
   grant(input: GrantInput): Promise<CreditEntry>
+  // grantInTx — same as grant, but follows a caller-supplied tx instead of
+  // opening its own. MYT-42 wires the trial grant at user-registration
+  // through this so the credit row lands atomically with the users row
+  // insert.
+  grantInTx(tx: ClientLike, input: GrantInput): Promise<CreditEntry>
   atomicDebit(input: DebitInput): Promise<CreditEntry>
+  // recordClawback — the only sanctioned writer of negative-polarity /
+  // source_type='debit' rows outside atomicDebit. Used by MYT-42's refund
+  // handler. Validates amount > 0 (recorded as negative), takes the same
+  // users-row lock + timeout pair as atomicDebit, idempotent on
+  // (user_id, credit_type, source_id) per the partial unique index
+  // uniq_credit_ledger_debit_idempotency. expires_at is fixed to NULL per
+  // credit_ledger_debit_no_expiry_chk; source_type is fixed to 'debit'
+  // per the polarity CHECK.
+  recordClawback(tx: ClientLike, input: ClawbackInput): Promise<CreditEntry>
   listEntries(userId: string, opts?: { limit?: number | null; type?: CreditType }): Promise<CreditEntry[]>
 }
 ```
+
+`grant` opens its own transaction (with the standard isolation + lock_timeout + statement_timeout triple); `grantInTx` follows a caller-supplied transaction (the caller is responsible for the tx setup + COMMIT/ROLLBACK). `recordClawback` follows a caller-supplied tx in the same way — refund handlers run inside the webhook transaction wrapping `stripe_events.insertIfAbsent`, and the clawback row must land or roll back atomically with that idempotency row.
 
 ### Method semantics
 
@@ -393,6 +420,8 @@ The repo enforces correctness for what it owns; certain invariants depend on cal
 2a. **`atomicDebit` callers must derive `amount` deterministically from `sourceId`.** The same `sourceId` must always map to the same `amount`, regardless of when the call is made or what application state is loaded. For fixed-cost debits today (session credit = 1, world_gen credit = 1), this is naturally satisfied. For any future variable-cost debit (per-turn metered billing, tiered session pricing, etc.), the caller MUST snapshot the amount alongside the sourceId at the first invocation and reuse that snapshot on retry. Violating this contract surfaces as `IdempotencyConflictError` — and the `error`-level severity is correct because the violation IS a bug. The natural counterexample (an HTTP retry where the caller re-derives `amount` from freshly-loaded application state that has changed since the original invocation) is exactly the bug class this contract prevents.
 3. **No caller may use `balance()` to gate a billable action.** Use `atomicDebit` and let it throw `InsufficientCreditsError`. (Repeated from the method docs because it's the most common foot-gun.)
 4. **No write to `credit_ledger` may happen outside `repo.credits.*`.** Direct INSERTs from migrations, admin scripts, or future repo namespaces bypass the lock discipline. The DB-level CHECKs and the partial unique index are the safety net for accidental violations, but the discipline is the primary enforcement.
+5. **`grant` rejects negative amounts and `source_type='debit'`.** Both at the application layer (validation throws before the SQL fires) and via migration 004's polarity CHECK as the safety net. `grant` and `grantInTx` are positive-polarity-only writers; their `GrantInput.sourceType` type-system-excludes `'debit'`.
+6. **Clawback writers MUST use `recordClawback`.** It is the only sanctioned writer of negative-polarity / `source_type='debit'` rows outside `atomicDebit`. Refund handlers (MYT-42) and any future negative-polarity writer (e.g., admin "claw back fraudulent grant" tooling) MUST go through `recordClawback`, which fixes `source_type='debit'` and `expires_at=NULL` per the migration-004 invariants. A caller that hand-rolls an `INSERT INTO credit_ledger (...)` with negative amount bypasses the lock discipline AND risks violating the `credit_ledger_debit_no_expiry_chk` constraint.
 
 ## Errors
 

@@ -86,20 +86,78 @@ A handler crash mid-loop produces a ROLLBACK; the retry re-runs the whole loop a
 
 ### Per-event-type resolution rules
 
+> **MYT-42 patch (Decision 1, round-2 review).** The original contract here had `checkout.session.completed` granting first-month subscription credits and `invoice.paid` skipping `billing_reason === 'subscription_create'`. That design has a delivery-order race + an SCA-pending hole + a dedup gap. **Reversed:** `invoice.paid` is now the **single canonical credit-grant trigger** for ALL `billing_reason` values that grant credits (`subscription_create`, `subscription_cycle`, `subscription_update`). `checkout.session.completed` for subscription mode writes ONLY the `user_subscriptions` row — NO credit grant AND NO `billing_history` row. Rationale: handles SCA-pending and any future delayed-confirm path uniformly; eliminates the dedup gap when SCA completes; removes the concurrent-INSERT 23505 collision on `(source_id_stripe = invoice_id, kind='invoice')` UNIQUE that would otherwise occur when both handlers tried to write the invoice's `billing_history` row (Manchego M2 round 3 + Persepolis C1 round 4). The invoice's `billing_history` row is owned by `invoice.paid` exclusively.
+
 `metadata.userId` is only present on `checkout.session.completed` events. Other event types must resolve `userId` differently:
 
-| Event type | Resolution | Credit grant? |
-|---|---|---|
-| `checkout.session.completed` | `metadata.userId` (server-set at Checkout creation); cross-check against `customer` field | Yes — per-line-item walk, see above |
-| `customer.subscription.created` | `customer.id → users.stripe_customer_id` | Ignored. The `user_subscriptions` row is created from the corresponding `checkout.session.completed` (subscription mode); subsequent `customer.subscription.updated` events handle state transitions. Emit `billing.webhook_ignored`. |
-| `invoice.paid` (subscription cycle) | `customer.id → users.stripe_customer_id`; verify `billing_reason === 'subscription_cycle'` (skip first-cycle invoices, those grants come from `checkout.session.completed`) | Yes — read the subscription's `items[].price.lookup_key`, grant credits per LOOKUP_KEYS spec |
-| `customer.subscription.updated` | `customer.id → users.stripe_customer_id` | Mid-period plan switch credit handling is deferred to MYT-42; at minimum, update `users` subscription state. Pro-rated credit grants are MYT-42 design |
-| `customer.subscription.deleted` | `customer.id → users.stripe_customer_id` | No grants. Update subscription state; existing credits remain usable through `expires_at`. |
-| `charge.refunded` | Traverse via `charge.payment_intent → customer.id → users.stripe_customer_id` | Reverse: insert negative credit_ledger rows mirroring the original grant. Track in `purchases` (MYT-42 reshape) for audit. Negative balance flagged for manual review per parent §5.265 |
+| Event type | Resolution | Credit grant? | `billing_history` row? | `user_subscriptions` row? |
+|---|---|---|---|---|
+| `checkout.session.completed` (mode='subscription') | `metadata.userId` (server-set at Checkout creation); cross-check against `customer` field | **No** — credit grant is owned by `invoice.paid` for ALL billing_reasons | **No** — the invoice row is owned by `invoice.paid` | **Yes** — write the `user_subscriptions` row here (idempotent on `stripe_subscription_id` UNIQUE) |
+| `checkout.session.completed` (mode='payment') | `metadata.userId`; cross-check against `customer` field | Yes — per-line-item walk over à-la-carte SKUs | Yes (kind='purchase') | n/a |
+| `customer.subscription.created` | `customer.id → users.stripe_customer_id` | No | No | Yes — handler shared with `customer.subscription.updated` via `handleSubscriptionUpsert`. Subscribed to defend against delivery-order races where `created` arrives after `updated`. |
+| `invoice.paid` (any `billing_reason` granting credits: `subscription_create`, `subscription_cycle`, `subscription_update`) | `customer.id → users.stripe_customer_id`; fall back to `subscription.metadata.userId` on miss | **Yes** — read the subscription's per-item period dates (`subscription.items.data[i].current_period_start/_end` per dahlia, see MYT-42 §3.1 note 1) and `items[].price.lookup_key`, grant credits per LOOKUP_KEYS spec | Yes (kind='invoice', UNIQUE on stripe_event_id) | n/a (handled by the .upsert event) |
+| `customer.subscription.updated` | `customer.id → users.stripe_customer_id` | No (credit deltas come from the corresponding `invoice.paid` for the proration; or from `customer.subscription.pending_update_applied` for `pending_if_incomplete` upgrades — see MYT-42 §4.6 / §5.4.6) | No | Yes — upsert state transitions |
+| `customer.subscription.pending_update_applied` | `customer.id → users.stripe_customer_id` | Yes — credit delta + tier write applied atomically (MYT-42 §5.4.6) | No | Yes — apply the pending update |
+| `customer.subscription.pending_update_expired` | `customer.id → users.stripe_customer_id` | No | No | No state change (Stripe gave up after 23h); emit operator signal log |
+| `customer.subscription.deleted` | `customer.id → users.stripe_customer_id` | No clawback. Existing credits remain usable through `expires_at`. | No | Yes — mark canceled |
+| `refund.created` / `refund.updated` (status='succeeded' only) | `event.data.object.charge` (string) → resolve PaymentIntent → resolve invoice via `stripe.invoicePayments.list` (per MYT-42 §3.1 note 6: `Charge.invoice` was removed at basil; resolution direction inverted) → user via `customer.id → users.stripe_customer_id` | Yes — clawback via `repo.credits.recordClawback` (negative-polarity rows; `source_type='debit'`; `expires_at = NULL`); see "Refund handling" below | Yes (kind='refund', UNIQUE on `refund_id`) | n/a |
 
-Event types not in this table are ignored (return 200 OK to Stripe; emit a `billing.webhook_ignored` log line for observability).
+Event types not in this table are ignored (return 200 OK to Stripe; emit a `billing.webhook_ignored` log line for observability). NOT subscribed at launch (per MYT-42 spec §15.3): `invoice.payment_failed`, `charge.failed`, `charge.dispute.*`, `subscription_schedule.*`, `charge.refunded` (superseded by `refund.created` / `refund.updated`).
+
+**Dahlia API field-shape notes (MYT-42 spec §3.1, copied verbatim — implementers MUST honor these or webhook payloads silently shape-mismatch):**
+
+1. **Subscription period dates** live on `subscription.items.data[i].current_period_start` and `…current_period_end`. They were removed from the top-level `Subscription` object in API version `2025-03-31.basil` and replaced with per-item period dates. Mythrun enforces single-item subscriptions at the cart-shape rule (§4.2), so `subscription.items.data[0]` is the canonical read site. Add a runtime guard that asserts `subscription.items.data.length === 1` and aborts loudly on any other count (defends against a Customer Portal misconfiguration that adds a second item).
+
+2. **Invoice line price identification** comes from `line.pricing.price_details.price` (a price ID string, e.g. `price_xxx`). The previous `line.price.lookup_key` field was removed in `2025-03-31.basil`. Webhook handlers walking `invoice.lines.data` MUST resolve the line's lookup_key by reverse-lookup against the SKU cache (MYT-42 §10), NOT by reading `line.price.lookup_key`.
+
+3. **Checkout Session line items** are NEVER present in the `checkout.session.completed` event payload at dahlia. The handler MUST always retrieve them via `stripe.checkout.sessions.retrieve(sessionId, { expand: ['line_items.data.price'] })` inside the webhook transaction. Stripe Checkout Session line items are immutable post-completion, so the retrieve is deterministic on retry — safe inside the tx.
+
+4. **`event.data.object.customer`** is a string (the customer ID `cus_*`), not a `Customer` object, on subscription / invoice / charge events. Read it as a string. Resolve via `users.stripe_customer_id` lookup; on miss, fall back to `subscription.metadata.userId` (a UUID string set at Checkout Session creation in MYT-42 §4.3) before logging + 200.
+
+5. **`event.api_version`** carries the Dashboard webhook endpoint's configured API version, NOT the SDK's pin. Dashboard webhook configuration MUST set API version to `2026-04-22.dahlia` (MYT-42 §15 step 1). The handler asserts `event.api_version === STRIPE_API_VERSION` at dispatch time and logs a loud error on mismatch (silent corruption of typed field access otherwise).
 
 **`users.stripe_customer_id` becomes the join key** for non-Checkout events. The Checkout flow populates it on first checkout (passing `customer = ...` to `checkout.sessions.create`, or letting Stripe auto-create and storing the returned `customer.id` on the user row in the same transaction as the credit grant). Until first checkout, `users.stripe_customer_id` is NULL — but no non-Checkout webhook event can arrive for a user who hasn't had their first Checkout, so the NULL state is unreachable from the webhook handler's perspective.
+
+**Dashboard webhook event subscription list** (per MYT-42 spec §15.3, the canonical 9 events): `checkout.session.completed`, `invoice.paid`, `customer.subscription.created` (handler is shared with `customer.subscription.updated` via `handleSubscriptionUpsert`), `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.pending_update_applied`, `customer.subscription.pending_update_expired`, `refund.created`, `refund.updated`.
+
+### Refund handling
+
+Refunds insert negative-polarity rows into `credit_ledger` via `repo.credits.recordClawback` (the only sanctioned writer of negative-polarity / `source_type='debit'` rows outside `atomicDebit`).
+
+- **`source_type` on clawback rows is `'debit'`**, NOT `'refund'`. Per migration 004's polarity CHECK: negative-amount rows MUST have `source_type='debit'`. The `'refund'` `source_type` is reserved for **positive-polarity goodwill grants** per MYT-40 — it's the source signal for "operator gave the user a free credit because we screwed up", which is a positive grant, not a clawback.
+- **`expires_at = NULL` on clawback rows**, per migration 004's `credit_ledger_debit_no_expiry_chk` (Kraken I8 round 2). All `'debit'` rows must have NULL expiry; the partial unique index `uniq_credit_ledger_debit_idempotency` keys on `source_id` for clawback idempotency.
+- **`recordClawback` is the sanctioned writer.** Direct INSERTs into `credit_ledger` from the webhook handler bypass the lock discipline AND the polarity rules. Use `recordClawback`.
+- **Negative balance is allowed** at the row level (no DB CHECK enforces non-negative balance), but the webhook handler emits `billing.refund_makes_balance_negative` for operator visibility. Decision 5 of MYT-42 round-2 review.
+
+### Customer Portal config
+
+> Patched by MYT-42 (Decision 2 of round-2 review). The MYT-41 baseline configured Cancel + Switch plan + Payment methods + Invoice history; MYT-42 extends with three Stripe-native asymmetric-update behaviors and narrows Switch plan to downgrades only.
+
+The Customer Portal config (Dashboard → Settings → Billing → Customer Portal) gains the following explicit settings:
+
+- **`subscription_update.proration_behavior = 'create_prorations'`** — Stripe applies a prorated charge / credit on tier changes; the corresponding `invoice.paid` event drives our credit-grant. Dashboard label: "Prorate subscription updates".
+- **`subscription_update.schedule_at_period_end.conditions = [{ type: 'decreasing_item_amount' }]`** — schedule the change for next renewal ONLY when the resulting item amount would decrease (downgrade). Upgrades, in the rare case Portal Switch Plan ever offers one, would apply immediately; in our config Portal never offers upgrades, so this branch is moot. Dashboard label: "Schedule at period end → When the resulting item amount would decrease" (verify exact label per MYT-42 runbook §2.3).
+- **`subscription_update.products` per-tier allowlists are downgrade-only:**
+  - Wayfarer's allowlist: empty (smallest tier; Cancel is the only Portal exit).
+  - Sojourner's allowlist: Wayfarer.
+  - Mythwright's allowlist: Sojourner, Wayfarer.
+
+**Tier upgrades go through the new MYT-42 endpoint `/api/billing/upgrade-tier`, NOT through Customer Portal Switch Plan.** The frontend's "Upgrade" button calls our backend; the "Manage subscription" / "Switch plan" Portal flow only ever offers downgrades. Customer Portal at MYT-42 ship handles **downgrades + cancel + payment-method update + invoice history** — not tier upgrades.
+
+The MYT-42 boot probe re-reads the Customer Portal config on every boot and asserts (a) `proration_behavior === 'create_prorations'`, (b) `schedule_at_period_end.conditions` contains `{type: 'decreasing_item_amount'}`, (c) per-tier `subscription_update.products` allowlists match the matrix above. Probe failure → boot abort. Defends against Dashboard config drift.
+
+### Account-level Payment Methods config
+
+> Added by MYT-42 (Decision 3 of round-2 review). Defense-in-depth on top of the `payment_method_types: ['card', 'link']` runtime pin in MYT-42 §4.3.
+
+At Stripe Dashboard → Settings → Payment Methods, the account-level Payment Methods config is set to:
+
+- **Card**: enabled.
+- **Link**: enabled.
+- **Apple Pay** and **Google Pay**: enabled (display toggles; both wrap `card` for settlement).
+- **All other methods disabled**, including Cash App Pay, Amazon Pay, Klarna, Affirm, ACH Direct Debit, SEPA Direct Debit, iDEAL, Bancontact, etc.
+
+Even if a code regression dropped the runtime `payment_method_types` pin, the account-level config refuses non-card methods. The two layers AND together: a method shows up only if both layers permit it.
 
 ### Stripe price-shape verification (boot probe scope)
 
@@ -337,7 +395,7 @@ These contracts are fixed by MYT-41 so MYT-42's implementer has no ambiguity. Th
 **`POST /api/billing/portal`:**
 
 - **Requires JWT auth via the existing `requireOnboarded` plugin** (same as `/api/billing/checkout` — caller must have a `users` row, not just a valid Cognito sub). Bare JWT auth is insufficient because the lookup `request.user.sub → users.stripe_customer_id` requires the row to exist.
-- If `users.stripe_customer_id IS NULL` (user has never checked out), return `409 {code: 'no_billing_history'}`. **Do NOT call `customers.create` lazily here** — Customer Portal is for users with billing history; a user with no purchases has nothing to manage. Lazy-creating customers from this endpoint is also a fraud vector (an attacker could enumerate Stripe customer records).
+- If `users.stripe_customer_id IS NULL` (user has never checked out), **lazy-create the Stripe customer in this endpoint** via `findOrCreateStripeCustomer(tx, userId)`. The Portal session opens against the freshly-created (empty) customer; the user sees "no active subscription" and can navigate away or browse historical invoices (none yet). This is a deliberate change from MYT-41's original `409 {code: 'no_billing_history'}` — see MYT-42 spec §4.4 for the canonical rule. **The fraud-vector argument is rebutted:** every call to `/api/billing/portal` is JWT-authenticated via `requireOnboarded` AND rate-limited (~10/min/IP), and `customers.create` is idempotent on the deterministic key (`mythrun-customer-${user.id}`). An attacker authenticated as user X can't enumerate other users' Stripe records — the lookup keys to user X's own customer, and `customers.create` returns the existing customer rather than spawning a new one. The boundary holds without the 409 special case; the lazy-create wins on UX (no special-case 409 frontend handling).
 - The Portal session's `customer` parameter is server-derived from the resolved row's `stripe_customer_id`. Never trust a client-supplied customer ID; the Portal URL Stripe returns is a bearer-style URL that lets anyone with it manage that customer's subscription, so a misimplementation here is an IDOR (cancel-anyone's-sub) vector.
 - The request body schema requires `additionalProperties: false` (Fastify/Zod) so client-supplied extra fields can't leak into Stripe-side metadata or future endpoint extensions.
 - The Portal session's `return_url` is Mythrun-controlled (`${env.frontendBaseUrl}/account`); never client-supplied.

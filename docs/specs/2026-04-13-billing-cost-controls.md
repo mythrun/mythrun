@@ -195,15 +195,15 @@ SKU metadata lives in `backend/src/billing/lookup-keys.ts`. Stripe Prices map to
 
 ### Purchase Flow
 
-1. User adds SKUs to cart → `POST /api/billing/checkout` with `{ items: [{ lookup_key, quantity }] }` (cart-shape rules per MYT-41 spec §3 — single-tier carts use `mode: 'subscription'`; à-la-carte-only carts use `mode: 'payment'`).
+1. User adds SKUs to cart → `POST /api/billing/checkout` with the unified body shape `{ items: [{ lookup_key, quantity }] }` (cart-shape rules per MYT-41 spec §3 — single-tier carts use `mode: 'subscription'`; à-la-carte-only carts use `mode: 'payment'`; mixed carts → 400 reject). The `metadata.packId` shape from earlier drafts is gone — there's no per-line metadata.packId; `metadata` carries only `userId` (server-derived from the JWT).
 2. Server resolves each `lookup_key` to its Stripe Price via the runtime probe-validated mapping → creates Stripe Checkout Session.
 3. Server stores `metadata: { userId }` on the Stripe Checkout Session (per-line-item `lookup_key` walk replaces the single packId field — see MYT-41 spec §"Webhook credit-grant contract for MYT-42").
 4. Returns `{ checkoutUrl }` → frontend redirects to Stripe.
-5. Stripe processes payment → `checkout.session.completed` webhook.
-6. Webhook handler: reads `metadata.userId`, iterates Checkout Session `line_items` keyed by `lookup_key`, inserts `purchases` row + `credit_ledger` entries (one per item × quantity).
+5. Stripe processes payment → `checkout.session.completed` webhook (writes `user_subscriptions` for tier carts; writes `purchases` + grants credits for à-la-carte). For tier carts, the credit grant comes from the corresponding `invoice.paid` event with `billing_reason='subscription_create'` — NOT from `checkout.session.completed`. See MYT-42 §5.4.1 + MYT-41 §"Per-event-type resolution rules" (Decision 1 of MYT-42 round-2 review).
+6. Webhook handler: reads `metadata.userId`, iterates Checkout Session `line_items` keyed by `lookup_key`, inserts `purchases` row + `credit_ledger` entries (one per item × quantity) for à-la-carte; for tier mode, inserts only the `user_subscriptions` row and waits for `invoice.paid` to grant credits.
 7. User sees credits in their balance.
 
-> MYT-42 ships migration 007 to recreate the `purchases` table with `lookup_key TEXT NOT NULL` (replacing the legacy `session_pack_size INTEGER` column dropped in MYT-41 migration 006).
+> MYT-42 ships migration 007 which recreates the `purchases` table with a composite UNIQUE on `(stripe_event_id, kind)`, and adds `user_subscriptions` (with expanded status enum + `cancel_at` + `cancellation_details` + `stripe_event_created_at`), `billing_history` (kind/status/expires_at/occurred_at), and the `credit_ledger.source_purchase_id` + `credit_ledger.source_billing_history_id` FK columns + the `credit_ledger_source_link_chk` constraint.
 
 ---
 
@@ -212,6 +212,14 @@ SKU metadata lives in `backend/src/billing/lookup-keys.ts`. Stripe Prices map to
 ### Products and Prices
 
 All products and prices are created in Stripe Dashboard (not via API). Code references prices by `lookup_key` only; no Stripe Price IDs are stored in the application database. The `backend/src/billing/lookup-keys.ts` contract is the closed enum; the boot probe (MYT-41) verifies every key resolves to a price with the expected shape (currency, type, billing_scheme, recurring interval, etc.).
+
+### Endpoint split (MYT-42)
+
+MYT-42 splits the user-facing Stripe entry points by intent:
+
+- **`POST /api/billing/checkout`** — new subscriptions and new à-la-carte purchases. Body: `{ items: [{ lookup_key, quantity }] }`. Cart-shape rules per MYT-41 §3 (single-tier OR à-la-carte-only; mixed rejects 400; tier-cart quantity must be 1).
+- **`POST /api/billing/upgrade-tier`** — tier upgrades for an existing active subscription. Body: `{ target_tier_lookup_key }`. Returns `{ invoice_id, amount_paid_cents }`. Server-side calls `stripe.subscriptions.update` with `payment_behavior: 'pending_if_incomplete'`; the actual credit grant lands on the `customer.subscription.pending_update_applied` webhook (MYT-42 §4.6 / §5.4.6). Tier upgrades do NOT go through Customer Portal.
+- **`POST /api/billing/portal`** — Customer Portal session for downgrades + cancel + payment-method update + invoice history. Tier upgrades are NOT in the Portal allowlist (per-tier `subscription_update.products` is downgrade-only; see MYT-41 spec §"Customer Portal config").
 
 ### Webhook Handling
 
@@ -324,7 +332,11 @@ The `session_usage.estimated_cost_usd` is calculated on session end by summing `
 
 ### Implementation
 
-Trial credit is granted at registration, not at session-start. On `POST /api/users/register`, the same transaction that creates the `users` row inserts a `credit_ledger` row (`credit_type='session', amount=1, source_type='trial', source_id=NULL, expires_at=NULL`) and sets `users.free_trial_used = true`. Sessions consume the trial credit via the standard atomic-debit recipe (§2). No special trial-mode session machinery; the time-cap, reduced token budget, and demo-world choices below are session-runtime concerns owned by MYT-43, decoupled from credit-grant timing.
+Trial credit is granted at registration, not at session-start. On `POST /api/users/register`, the same transaction that creates the `users` row inserts a `credit_ledger` row (`credit_type='session', amount=1, source_type='trial', source_id=NULL, source_purchase_id=NULL, source_billing_history_id=NULL, expires_at=NULL`) and sets `users.free_trial_used = true`. The `source_type='trial'` value is the **signal MYT-42 emits** — it's how downstream code identifies the row consumed at session-start as the trial credit (vs. a paid session credit).
+
+Sessions consume the trial credit via the standard atomic-debit recipe (§2), but **MYT-43 MUST honor the trial-FIRST consumption invariant**: for users who have BOTH trial credit and paid credits in their balance, the atomic-debit recipe consumes the trial row before any paid row, so the trial UX (reduced budget, demo world, time cap) runs on the trial credit and not on a paid credit. The recipe redesign that exposes `consumedSourceType` from atomic-debit is deferred to MYT-43 (per MYT-42 §7.6 hand-off); MYT-42 pins only the trial-FIRST invariant and the `source_type='trial'` signal.
+
+No special trial-mode session machinery; the time-cap, reduced token budget, and demo-world choices below are session-runtime concerns owned by MYT-43, decoupled from credit-grant timing.
 
 1. `users.free_trial_used` flag (set true at registration; subsequent registrations of an existing-by-username user MUST NOT re-grant).
 2. When a trial-credit session starts:
@@ -453,9 +465,15 @@ The server creates the Stripe Checkout Session with:
 | **User starts session right as credits expire** | The `FOR UPDATE` lock in the debit transaction prevents race conditions. If credits expired between page load and session start, the debit fails gracefully. |
 | **Refund after credits are spent** | Negative credit_ledger entry. If balance goes negative, user can't start new sessions until balance is positive (next month's grant or a new purchase). |
 | **Subscription payment fails** | Stripe retries automatically (3 attempts over ~2 weeks). During `past_due` status, no new credits are granted but existing credits still work. After final failure, subscription is canceled. |
-| **User has both subscription and à-la-carte credits** | Both contribute to balance. Debit ordering is implementation-defined; MYT-43 picks the consumption-priority strategy. |
+| **User has both subscription and à-la-carte credits** | Both contribute to balance. Debit ordering is implementation-defined; MYT-43 picks the consumption-priority strategy. **Trial-FIRST invariant**: users with both trial and paid credits MUST consume trial before any paid row (per §7). |
 | **Owner leaves mid-session** | Session continues using already-debited credit. No new debit occurs. If owner loses credits mid-session (impossible — debit happens at start), the session finishes normally. |
 | **Campaign ownership transfer** | New owner's credits are used for future sessions. Past session costs stay attributed to the original owner. |
+| **Refund makes balance negative** | Clawback inserts a negative-polarity row (`source_type='debit'`, `expires_at=NULL`) via `repo.credits.recordClawback`; `SUM(amount)` may go negative. New session-start fails `InsufficientCreditsError`. Operator alarm `billing.refund_makes_balance_negative` per MYT-42 spec §15.5 (Decision 5 of round-2 review). User can recover by purchasing more credits or waiting for next subscription cycle. |
+| **Refund against expired bucket** | The original credit row may have `expires_at < now()` by the time the refund arrives. Clawback still inserts the negative row with `expires_at=NULL` (debit rows never expire per migration 004's `credit_ledger_debit_no_expiry_chk`). Effective balance: the expired credit was already excluded from the balance SUM by the expiry filter, so the negative row reduces SUM further. Operator alarm flags this as a corner case per MYT-42 §10. |
+| **Refund mid-session** | Session has already debited the credit at start. The refund's clawback inserts an additional negative row; the session continues to completion (no mid-session debit reversal). Net balance reflects both the start-of-session debit AND the refund clawback. |
+| **Concurrent checkout customer-create** | Two simultaneous first-checkout requests from the same user race on `users.stripe_customer_id`. MYT-42 §9 specifies a `SELECT … FOR UPDATE` on the users row inside `findOrCreateStripeCustomer(tx, userId)` PLUS Stripe's `idempotencyKey: 'mythrun-customer-${userId}'` on `customers.create`. The DB lock serializes the two requests; Stripe's idempotency-key collapses any duplicate `customers.create` calls to a single customer record. |
+| **Partial refund paging** | Operator clicks Refund with a partial amount in Dashboard. Per Decision 5 of MYT-42 round-2 review, partial refunds are unsupported at launch; the webhook handler emits `billing.partial_refund_unsupported` and skips clawback. Manual reconciliation required. |
+| **Tier-upgrade mid-period** | User on Wayfarer upgrades to Sojourner via `/api/billing/upgrade-tier`. Stripe applies a flat dollar delta proration ($25 - $15 = $10 charged immediately). On `customer.subscription.pending_update_applied`, MYT-42 grants the **full credit delta** (4 → 8 sessions, 1 → 2 worlds = +4 sessions, +1 world) with `expires_at` extended to the new period end. The `payment_behavior: 'pending_if_incomplete'` flag ensures items don't advance until the proration invoice is paid (no zero-credit tier-advance state). |
 
 ---
 
