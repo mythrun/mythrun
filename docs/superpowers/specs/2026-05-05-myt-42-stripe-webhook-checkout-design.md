@@ -65,7 +65,7 @@ New backend files:
 - `backend/src/billing/webhook.ts` — orchestrator + per-event-type handler functions.
 - `backend/src/billing/customer.ts` — `findOrCreateStripeCustomer(tx, userId)` helper used by both checkout and portal.
 - `backend/src/billing/upgrade.ts` — tier-upgrade implementation (validates monotonic upgrade, calls `subscriptions.update` with `proration_date` set to the current period start, `proration_behavior: 'always_invoice'`); the resulting `invoice.paid` is processed by the same webhook handler that handles renewals.
-- `backend/src/billing/sku-cache.ts` — boot-time cache of `LOOKUP_KEYS` + Stripe price snapshot, populated immediately after the probe passes. Exposes both forward (`lookup_key → SkuListing`) and reverse (`stripe_price_id → SkuListing`) lookups; the reverse map is required by webhook handlers since Stripe at API version `2026-04-22.dahlia` returns price IDs (not lookup keys) on `InvoiceLineItem.pricing.price_details.price`.
+- `backend/src/billing/sku-cache.ts` — boot-time cache of `LOOKUP_KEYS` + Stripe price snapshot, populated immediately after the probe passes. Exposes forward (`lookup_key → SkuInternalEntry`) and reverse (`stripe_price_id → SkuInternalEntry`) lookups for webhook handlers, plus a `publicListing: SkuPublicListing[]` view for the public route response. The reverse map is required because Stripe at API version `2026-04-22.dahlia` returns price IDs (not lookup keys) on `InvoiceLineItem.pricing.price_details.price`. The two types (internal vs public) are split so the public endpoint cannot accidentally leak `stripe_price_id` (per Stilton I7 round 3).
 - `backend/src/billing/errors.ts` — `BillingErrorCode` union type (closed enum of all 4xx codes any billing route can return).
 - `backend/src/repo/purchases.ts`, `backend/src/repo/user-subscriptions.ts`, `backend/src/repo/stripe-events.ts`, `backend/src/repo/billing-history.ts` — four new namespaces.
 
@@ -74,7 +74,14 @@ Patches:
 - `backend/src/repo/credits.ts` — extract a `grantInTx(client, input)` helper that runs ONLY the INSERT (no own BEGIN/COMMIT, no own connection acquisition); the existing `grant(input)` becomes a thin wrapper that opens a tx and delegates to `grantInTx`. Add a new method `recordClawback(client, input)` that writes negative-polarity rows (`source_type='debit'`, `amount < 0`) for refund clawbacks — this is the ONLY entrypoint that may write a debit row to credit_ledger outside `atomicDebit`. **No change to `atomicDebit`** — that recipe extension was deferred to MYT-43 in round 1 of this spec's review.
 - `backend/src/routes/users.ts` (MYT-38's register handler) — refactored to open `BEGIN`/`COMMIT` explicitly, call `users.create(client, ...)` + `repo.credits.grantInTx(client, ...)` + `UPDATE users SET free_trial_used = true` + read-back the row for the response shape. **`classifyProfanity` LLM calls remain BEFORE `BEGIN`** (per Sphinx I2 round 2: a 200–800ms LLM call inside a transaction holds a `PoolClient` open and is a DoS amplifier on a `max=10` pool).
 - `backend/src/billing/probe.ts` — populate `sku-cache` immediately after a successful probe (cheap; same data already fetched). Add a Customer Portal config probe step that asserts `proration_behavior='create_prorations'` AND `schedule_at_period_end.conditions` contains `{type:'decreasing_item_amount'}` AND the per-tier `subscription_update.products` allowlists are downgrade-only. Defense-in-depth against Dashboard config drift.
-- `backend/src/auth/require-onboarded.ts` — extend the boot-time allowlist mechanism to include a `PUBLIC_BILLING_ROUTE_ALLOWLIST` (parallel to the existing `JWT_NO_DB_ALLOWLIST`) enforced at boot time; routes carrying `config: { auth: 'public' }` MUST be in either the existing public-route set (`/health`, `/health/ready`) or the new billing-public set (`/api/billing/skus`, `/webhooks/stripe`). Per Sphinx C3 round 2: closes the defense-in-depth gap where a future implementer marking the wrong route public ships silently.
+- `backend/src/auth/require-onboarded.ts` — extend the boot-time allowlist mechanism to include a `PUBLIC_ROUTE_ALLOWLIST` (parallel to the existing `JWT_NO_DB_ALLOWLIST`) enforced at boot time. The closed allowlist enumerates EVERY existing route carrying `config: { auth: 'public' }` plus the two new MYT-42 additions:
+  - `GET /health` (existing — liveness check)
+  - `GET /health/ready` (existing — readiness check)
+  - `GET /api/invites/:inviteCode/preview` (existing — MYT-39 invite preview, per Stilton C2 round 3)
+  - `GET /api/billing/skus` (new — public pricing-page endpoint)
+  - `POST /webhooks/stripe` (new — Stripe-signature-authed)
+  
+  Adding any new `auth: 'public'` route requires extending this list AND a security review on the PR. Per Sphinx C3 round 2 + Stilton C2 round 3: closes the defense-in-depth gap where a future implementer marking the wrong route public ships silently. The implementation plan for MYT-42 includes an audit step that greps the codebase for `auth: 'public'` registrations and asserts the allowlist is exhaustive before enabling boot-time enforcement (otherwise enabling enforcement breaks the existing invites-preview path).
 - `backend/src/server.ts` / `backend/src/app.ts` — wire the new route plugins.
 
 ### 3.1 Stripe API at dahlia — load-bearing field-shape notes
@@ -225,7 +232,7 @@ Served from `sku-cache.ts` — a module-level frozen object populated immediatel
 
 Cache is read-only after boot; refreshes only on next deploy (which re-runs the probe). Mythrun policy is "Stripe Dashboard is the source of truth, deploy releases pin to a probe-validated state" (MYT-41 spec §1) — prices changing without a deploy is a violation, so cache-on-boot is the right grain.
 
-`SkuListing` is a strictly public projection: the type explicitly excludes user-, tenant-, or environment-leaky fields. A typecheck assertion in §13 enforces this. Response sets `Cache-Control: public, max-age=300` so CDN traffic doesn't hit the app process on burst loads. Per-IP rate limit `60/min` is added for symmetric DoS defense (the only public endpoint that lookups Stripe state).
+`SkuPublicListing` is a strictly public projection: the type EXPLICITLY excludes `stripe_price_id` and any user-/tenant-/environment-leaky fields. A typecheck assertion in §13 enforces this. Response sets `Cache-Control: public, max-age=300` (with `Vary: Authorization` defensive header) so CDN traffic doesn't hit the app process on burst loads. Per-IP rate limit `60/min` is added for symmetric DoS defense (the only public endpoint that lookups Stripe state).
 
 If the SKU cache is empty (no probe pass yet — should be impossible because the probe gates boot), return 503. Defensive only.
 
@@ -238,6 +245,12 @@ If the SKU cache is empty (no probe pass yet — should be impossible because th
 ```ts
 // backend/src/routes/webhook.ts
 export const webhookRoutes: FastifyPluginAsync = async (scope) => {
+  // Per Stilton C1 round 3: Fastify v5 INHERITS the parent's default
+  // 'application/json' parser into child encapsulation contexts. Calling
+  // addContentTypeParser('application/json', ...) without first removing
+  // the inherited default throws FST_ERR_CTP_ALREADY_PRESENT at app.ready().
+  // Remove the inherited parser, then register the buffer-pass-through.
+  scope.removeContentTypeParser('application/json')
   scope.addContentTypeParser(
     'application/json',
     { parseAs: 'buffer' },
@@ -277,6 +290,8 @@ Every event runs in a single Postgres transaction with explicit isolation parity
 ```sql
 BEGIN;
 SET LOCAL transaction_isolation = 'read committed';
+SET LOCAL lock_timeout = '1s';            -- per Camembert C2 round 3: matches MYT-40's discipline so
+SET LOCAL statement_timeout = '5s';       -- a contended user-row lock can't pin a PoolClient indefinitely
 -- Defense-in-depth: assert event.api_version matches the SDK's pin
 -- (handler-side, not in SQL — see TS dispatch below).
 INSERT INTO stripe_events (event_id, event_type, processed_at)
@@ -315,6 +330,15 @@ async function dispatchEvent(event: Stripe.Event, stripe: Stripe, pool: Pool) {
 ```
 
 The `PREFETCHERS` table mirrors `HANDLERS`: each event type optionally declares a prefetch function that returns whatever Stripe-side data the handler needs. Handlers receive that prefetch data as their second argument; they do not call Stripe themselves. Tests in §13 mock the Stripe client at the prefetch boundary (the handler's tx body never references it).
+
+**Per-event prefetch shapes** (per Roquefort C2 round 3 — pinning these resolves the prior round's ambiguity about where `subscription.metadata.userId` is read from):
+
+- `checkout.session.completed`: `{ session: stripe.checkout.sessions.retrieve(session_id, { expand: ['line_items.data.price'] }) }`. The session.metadata.userId is on this object.
+- `customer.subscription.created` / `customer.subscription.updated` / `customer.subscription.deleted`: no prefetch needed — the event payload IS the Subscription, with `subscription.metadata.userId` directly readable.
+- `invoice.paid`: `{ subscription: stripe.subscriptions.retrieve(invoice.subscription, { expand: ['items.data.price'] }) }`. The handler's customer-id-miss fallback reads `prefetch.subscription.metadata.userId`, NOT `event.data.object.metadata.userId` (the latter is the Invoice's own metadata, which is empty for Checkout-driven subs).
+- `charge.refunded`: `{ charge: stripe.charges.retrieve(charge_id), invoice: charge.invoice ? stripe.invoices.retrieve(charge.invoice) : null, subscription: invoice?.subscription ? stripe.subscriptions.retrieve(invoice.subscription) : null }`. Two-hop chain for subscription refunds; `null` cascade for à-la-carte (where `charge.invoice` is null). Handler's customer-id-miss fallback reads `prefetch.subscription?.metadata.userId` if the chain resolves.
+
+These prefetch shapes are pinned in the spec so the implementer doesn't have to derive them. Tests assert each handler's prefetch contract via fixture data.
 
 After successful insert into `stripe_events`, dispatch:
 
@@ -355,7 +379,23 @@ return reply.code(200).send({ received: true })
 Two cross-cutting rules apply to every handler:
 
 1. **`event.data.object.customer` is a string** (`cus_*`), not an object. Read it as a string. Resolve user via `users.stripe_customer_id`. On miss, fall back to `subscription.metadata.userId` (if present on the event's subscription object — set at Checkout Session creation per §4.3) before logging + 200.
-2. **Per-charge `amount_total` validation** (per MYT-41 spec §"Replacing parent spec §5.5"): before granting any credits, the handler reconstructs `expected_total = sum(unit_amount * quantity)` from line-item lookup_keys + the SKU cache and asserts `expected_total === amount_total` (or `amount_paid` for invoices). Mismatch → log `billing.amount_validation_failed` at error level, do NOT grant, COMMIT the `stripe_events` row to suppress retries, return 200. This is the per-charge correctness layer that complements the boot probe.
+2. **Per-charge amount validation** (per MYT-41 spec §"Replacing parent spec §5.5"): before granting any credits, the handler reconstructs `expected_subtotal = sum(unit_amount * quantity)` from line-item lookup_keys + the SKU cache and asserts `expected_subtotal === event.data.object.amount_subtotal` (Checkout Session) or `expected_subtotal === event.data.object.subtotal_excluding_tax` (Invoice — per Stilton I6 / Roquefort C3 round 3, this is the pre-tax-pre-discount field; tax-/discount-tolerant by construction so a future tax-on flip doesn't silently break this assertion).
+   
+   **Validation runs FIRST** (after stripe_events insert + user-row anchor lock, BEFORE any other DB writes). Per Camembert I3 round 3, this resolves the prior round's contradiction where "COMMIT stripe_events on validation failure" conflicted with "catch-block rolls back the entire tx." Concretely:
+   
+   ```ts
+   // Inside the dispatch tx, after stripe_events insert + anchor lock:
+   const validationResult = validateAmount(event, prefetch, skuCache)
+   if (!validationResult.ok) {
+     log.error({ event_id, expected: validationResult.expected, actual: validationResult.actual },
+               'billing.amount_validation_failed')
+     return 'validation_failed'   // sentinel; the dispatcher COMMITs (stripe_events row stays) without invoking handler writes
+   }
+   await handler(event, prefetch, client)
+   return 'ok'
+   ```
+   
+   The dispatcher COMMIT-s on `'validation_failed'` (the only write at that point is the `stripe_events` row, which is what we want — Stripe stops retrying), and ROLLBACK-s on any thrown exception (the handler's writes were partial; Stripe redelivers). This split makes "validation failure" a non-throwing return, distinct from the runtime-error path.
 
 #### 5.4.1 `checkout.session.completed`
 
@@ -369,7 +409,7 @@ Branch on `event.data.object.mode`:
 
 - **Subscription mode**: per Decision 1 of round-2 review, `checkout.session.completed` for subscription mode does **NOT grant credits**. Subscription credit grants flow exclusively through `invoice.paid` (single source of truth — handles fresh subscriptions + renewals + SCA-pending → SCA-completed transitions + ACH/SEPA settlement uniformly). This handler's responsibilities for subscription mode:
   - **Upsert** `user_subscriptions` via `repo.userSubscriptions.upsertFromStripe` (single `INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE` statement) with `status` from Stripe (NOT hardcoded `'active'` — handles SCA-pending `'incomplete'` correctly), `tier_lookup_key`, period dates from `items.data[0].current_period_*`, `cancel_at_period_end`. The upsert tolerates any arrival order between `checkout.session.completed`, `customer.subscription.created`, and `customer.subscription.updated` since all three call the same `upsertFromStripe`. Stale-event ordering is rejected via `WHERE excluded.stripe_event_created_at > existing.stripe_event_created_at`.
-  - **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id` from the session's `invoice` field. (Required for refund-resolution per §5.4.5.)
+  - **No billing_history write here.** Per Manchego M2 round 3: the invoice's billing_history row is owned by the `invoice.paid` handler (§5.4.2), NOT this one — otherwise both handlers would race to INSERT the same `(source_id_stripe = invoice_id, kind='invoice')` and the second would 23505 on the UNIQUE constraint. checkout.session.completed for subscription mode writes ONLY the `user_subscriptions` row; the invoice (and its credit grants + billing_history) is owned by `invoice.paid`. This matches Decision 1's "invoice.paid is the single source of truth for subscription credit grants" — the same invariant extends to billing_history rows.
   - **NO `credit_ledger` writes** in this handler for subscription mode. The downstream `invoice.paid` arrives ~100ms later (or whenever SCA / ACH / etc. settle) and produces the grant.
 - **Payment mode (à-la-carte)**: walk the prefetched `line_items.data` (retrieved via `stripe.checkout.sessions.retrieve(session_id, { expand: ['line_items.data.price'] })` in the prefetch phase per §5.3). For each line, resolve `line.price.id` against the SKU cache reverse map → `lookup_key` → `LookupKeySpec`.
   - **Amount validation**: compute `expected_subtotal = sum(spec.priceCents * line.quantity)` and assert `expected_subtotal === event.data.object.amount_subtotal` (Chimera I5 round 2 — using `amount_subtotal` not `amount_total` is tax-/discount-tolerant by construction; tax/discount are off at launch but a future config flip wouldn't silently break this validation). Mismatch → §5.4 cross-cutting rule 2 (log + COMMIT + 200, no grant).
@@ -381,9 +421,9 @@ Per Doubloon I3 round 2: the legacy `payment_status === 'paid'` branch is no lon
 
 #### 5.4.2 `invoice.paid`
 
-Fires for: subscription cycle (renewal), subscription update (proration). **Skip when `billing_reason === 'subscription_create'`** — first-month credits are granted by `checkout.session.completed` per §5.4.1 (and per MYT-41's locked contract). **Skip when `billing_reason === 'subscription_update'`** — mid-period tier-switch credit grants are out-of-scope for MYT-42 (see §2 non-goals; the original tier's credits remain through period_end, the new tier's credits arrive at next renewal). The handler still records the invoice in `billing_history` for both skipped cases — the skip applies only to credit grants, not to the audit row.
+Fires for: subscription create (fresh sub or post-SCA settlement), subscription cycle (renewal), subscription update (mid-period upgrade via §4.6). All three branches GRANT credits per the per-billing-reason subsections below. The §5.4.2 preface that previously said "skip subscription_create / subscription_update" was a round-1 design that round-2 Decision 1 inverted; the inversion was applied but the preface text wasn't deleted, producing the contradiction Manchego C1 round 3 caught. Subsequent removal: this paragraph.
 
-Per Decision 1 of round-2 review, **`invoice.paid` is the single source of truth for subscription credit grants** (replacing the round-1 split between `checkout.session.completed` and `invoice.paid`). One handler covers fresh subscriptions, renewals, mid-period upgrades via the §4.6 endpoint, SCA-pending → SCA-completed transitions, and ACH/SEPA settlement uniformly. The dedup mechanism is `stripe_events.event_id` PK — the same `invoice.paid` event redelivered hits the conflict and exits cleanly.
+Per Decision 1 of round-2 review, **`invoice.paid` is the single source of truth for subscription credit grants**. One handler covers fresh subscriptions (`subscription_create`), renewals (`subscription_cycle`), mid-period upgrades via the §4.6 endpoint (`subscription_update`), SCA-pending → SCA-completed transitions, and any future delayed-confirm settlement uniformly. The dedup mechanism is `stripe_events.event_id` PK — the same `invoice.paid` event redelivered hits the conflict and exits cleanly. Other `billing_reason` values (`manual`, `quote_accept`, `subscription_threshold`, etc.) record `billing_history` only — see the per-case sections below for the full branching.
 
 Resolve user via `event.data.object.customer` (string) → `users.stripe_customer_id`. On miss → fall back to `subscription.metadata.userId` (retrieved at prefetch time per §5.3). On total miss → behavior depends on `billing_reason` and `amount_paid`:
 
@@ -429,7 +469,7 @@ Resolve user via `event.data.object.customer` → `users.stripe_customer_id`; fa
 
 Assert `subscription.items.data.length === 1`. Read `tier_lookup_key`, `status`, `items.data[0].current_period_start`, `items.data[0].current_period_end`, `cancel_at_period_end`, `cancellation_details` (if present — Stripe surfaces it on `cancel_at_period_end` toggles).
 
-`repo.userSubscriptions.upsertFromStripe` issues a single `INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE` statement so concurrent deliveries can't both INSERT and trip the UNIQUE constraint. The UPDATE clause reads `WHERE excluded.stripe_event_created_at >= user_subscriptions.stripe_event_created_at` to reject stale-event ordering (a late-arriving stale event mustn't overwrite a fresh row). The `stripe_event_created_at` column is added to `user_subscriptions` in migration 007 for this purpose.
+`repo.userSubscriptions.upsertFromStripe` issues a single `INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE` statement so concurrent deliveries can't both INSERT and trip the UNIQUE constraint. The UPDATE clause reads `WHERE excluded.stripe_event_created_at > user_subscriptions.stripe_event_created_at` (strict `>`, NOT `>=`, per Camembert I1 / Stilton + Roquefort M5 round 3 — same-second distinct events converge to one row, picking whichever arrived first; subsequent same-second events are rejected as stale, which is acceptable because Stripe's event delivery includes the canonical event in the FIRST delivery and redeliveries are byte-identical). The `stripe_event_created_at` column is added to `user_subscriptions` in migration 007; populated from `event.created` (the Stripe Event's own timestamp), NOT from any field on the Subscription / Invoice payload.
 
 **No credit grant** in this handler — all subscription credits flow through `invoice.paid` per Decision 1 of round-2 review. Subscription state (tier, period, status, cancel_at_period_end) lives in this row; credits live in `credit_ledger`.
 
@@ -448,6 +488,15 @@ Refund handling at launch: **full refunds only** (per Decision 5 of round-2 revi
 **Step 0 — partial-refund hard-refuse**: assert `event.data.object.amount_refunded === event.data.object.amount_captured`. Mismatch → emit a paging metric `billing.partial_refund_unsupported` at error level with `{ charge_id, amount_captured, amount_refunded, payment_intent }`, COMMIT the `stripe_events` row (suppresses Stripe retries — there's nothing to retry until partial-refund support lands), do NOT clawback, return 200. Operator workflow: the Stripe-side refund stays valid (the customer's money is being returned by Stripe); Mythrun-side credit clawback is gated until manual reconciliation. Operators are instructed (in the runbook) to refund full charges only.
 
 For full refunds:
+
+**Lock-acquisition ordering exception.** Per Manchego I2 round 3: the §5.3 discipline "user-row anchor lock as the FIRST DB operation in the tx" cannot apply directly to `charge.refunded` because the user is unknown until step 1's resolution finishes. The handler-specific ordering for refunds is:
+1. `stripe_events` insert (§5.3 standard).
+2. Originating-entity resolution (read-only queries against `purchases` / `billing_history`; no FOR UPDATE).
+3. `SELECT id FROM users WHERE id = $resolved_user_id FOR UPDATE` (the deferred anchor lock).
+4. Re-fetch the originating rows under the lock to confirm they haven't transitioned (e.g., concurrent refund racing this one). Refusal-on-already-refunded is in step 3 of the original §5.4.5 numbered list below.
+5. Write clawback rows + UPDATE source row status + append `billing_history` row.
+
+This "optimistic resolve, then re-read under lock" pattern is the right shape for cross-row, cross-user webhook resolution where the user_id is not known a priori. The §5.3 anchor-lock-first discipline applies to all OTHER handlers (where `user_id` resolves from `metadata.userId` or `customer.id` BEFORE any DB read); `charge.refunded` is the documented exception.
 
 1. **Resolve the originating Mythrun entity.** `event.data.object.payment_intent` (string, may be null for non-PI charges) is the join key. Two resolution paths in order:
    - **À-la-carte purchase**: query `purchases WHERE stripe_payment_intent_id = $1 AND status='completed'`. If non-empty, walk all matching `purchases` rows (a multi-line cart has multiple). For each row, query `credit_ledger WHERE source_purchase_id = purchases.id AND source_type='purchase'` to find the originating grant rows (per Decision 4 of round-2 review: explicit FK columns).
@@ -529,7 +578,7 @@ CREATE TABLE user_subscriptions (
   cancel_at                   TIMESTAMPTZ NULL,           -- Stripe's cancel_at field (timestamp), nullable
   cancellation_details        JSONB       NULL,           -- Stripe's cancellation_details on .deleted, nullable
   -- Used by upsertFromStripe to reject stale-event ordering: an UPDATE on
-  -- conflict reads WHERE excluded.stripe_event_created_at >= row's value, so a
+  -- conflict reads WHERE excluded.stripe_event_created_at > row's value (strict), so a
   -- late stale event can't overwrite a fresh row.
   stripe_event_created_at     TIMESTAMPTZ NOT NULL,
   created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -650,9 +699,16 @@ interface UserSubscriptionsRepo {
   // Mythrun policy via Customer Portal Switch Plan is one active subscription
   // per user. "Active" excludes status IN ('canceled','incomplete_expired').
 
-  markCanceled(tx: ClientLike, stripe_subscription_id: string, cancellation_details: unknown): Promise<void>
-  // status='canceled', cancel_at_period_end=false (collapsed since deletion has
-  // occurred), cancellation_details from Stripe payload.
+  markCanceled(tx: ClientLike, stripe_subscription_id: string, payload: { cancel_at_period_end: boolean; cancel_at: string | null; cancellation_details: unknown }): Promise<void>
+  // status='canceled'. PRESERVE cancel_at_period_end from the event payload
+  // (per Kraken C3 round 2 / Stilton M4 round 3). Note Roquefort C1 round 3:
+  // Stripe's customer.subscription.deleted typically reports cancel_at_period_end=false
+  // at deletion time (the subscription has already canceled, so it's not
+  // "scheduled to cancel at period end" anymore). The "preserve" semantic is
+  // therefore mostly a no-op for .deleted; the user-vs-Stripe-cancel distinction
+  // lives in cancellation_details.reason ('cancellation_requested' vs
+  // 'payment_failed' vs 'payment_disputed' vs 'automation_action'). cancel_at
+  // (timestamp) and cancellation_details (full object) are also recorded.
 }
 ```
 
@@ -809,43 +865,98 @@ export async function createStripeCustomer(
 }
 ```
 
-`repo.users.findOrCreateStripeCustomer(tx, userId)` — uses `SELECT ... FOR UPDATE` to serialize concurrent callers, then unconditional UPDATE:
+`repo.users.findOrCreateStripeCustomer(pool, userId)` — uses **prefetch-then-write** (NOT a single tx held through the Stripe call), per Stilton I9 round 3 / Hydra I2 round 2 (the round-2 fix attempted to address this for webhook handlers but missed this surface):
 
 ```ts
-async function findOrCreateStripeCustomer(tx: ClientLike, userId: string): Promise<string> {
-  const locked = await tx.query<{ stripe_customer_id: string | null }>(
-    `SELECT stripe_customer_id FROM users WHERE id = $1 FOR UPDATE`,
+async function findOrCreateStripeCustomer(pool: Pool, userId: string): Promise<string> {
+  // Phase 1 — short tx: read existing value; release immediately.
+  const phase1 = await pool.query<{ stripe_customer_id: string | null }>(
+    `SELECT stripe_customer_id FROM users WHERE id = $1`,
     [userId],
   )
-  if (locked.rows.length === 0) {
+  if (phase1.rows.length === 0) {
     throw new Error(`findOrCreateStripeCustomer: users row not found for userId=${userId}`)
   }
-  const existing = locked.rows[0].stripe_customer_id
-  if (existing) return existing
-  // FOR UPDATE has serialized us against any concurrent caller; safe to call
-  // Stripe and unconditional-UPDATE without race-loser branching.
+  if (phase1.rows[0].stripe_customer_id) return phase1.rows[0].stripe_customer_id
+
+  // Phase 2 — outside any DB tx: Stripe API call. Idempotency-keyed, so concurrent
+  // callers all hit the same Stripe-side customer record (Stripe's idempotency cache
+  // dedupes within 24h); the DB-side write phase below picks one canonical winner.
   const cusId = await createStripeCustomer(stripeClient, userId)
-  await tx.query(
-    `UPDATE users SET stripe_customer_id = $2 WHERE id = $1`,
-    [userId, cusId],
-  )
-  return cusId
+
+  // Phase 3 — short tx: serialized write with FOR UPDATE to handle concurrent racers.
+  // The lock is held only across two short DB ops (re-read + UPDATE); no Stripe call
+  // happens inside this tx, so MYT-40's lock_timeout='1s' discipline is honored.
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query("SET LOCAL lock_timeout = '1s'")
+    const phase3 = await client.query<{ stripe_customer_id: string | null }>(
+      `SELECT stripe_customer_id FROM users WHERE id = $1 FOR UPDATE`,
+      [userId],
+    )
+    const racewinner = phase3.rows[0]?.stripe_customer_id
+    if (racewinner) {
+      // A concurrent caller wrote first within Stripe's 24h idempotency window
+      // they got the same cus_*. Use the persisted one.
+      await client.query('COMMIT')
+      return racewinner
+    }
+    await client.query(
+      `UPDATE users SET stripe_customer_id = $2 WHERE id = $1`,
+      [userId, cusId],
+    )
+    await client.query('COMMIT')
+    return cusId
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
 }
 ```
 
-Why the FOR UPDATE shape: round 1 of this spec's review (Florin C3) flagged that the previous conditional-UPDATE-and-re-read shape didn't gracefully handle every interleaving — specifically the `stripe_customer_id_already_set, re-read` failure mode that 23505 surfaces under operator-manual races. FOR UPDATE serializes the entire lookup-or-create against concurrent callers; only the first racer reaches the Stripe call, the others see the populated row and return immediately. No 23505, no race-loser branch, no orphan Stripe customer if the DB write fails post-Stripe-create (because the DB write is inside the same tx as the lock).
+Why prefetch-then-write: round 2's "FOR UPDATE through the Stripe call" shape held the user-row lock for the duration of `customers.create` — 100–500ms typical, multi-second tail under Stripe outage. Combined with MYT-40's `lock_timeout='1s'` discipline, any concurrent atomic-debit on the same user (session-start) would fail with a confusing `DebitTimeoutError` for what's actually a Stripe-side latency. The prefetch-then-write pattern releases the lock during the Stripe call; the lock is held only across two short DB queries.
 
-Why the idempotency-key strategy: Stripe's `customers.create` accepts an idempotency-key header that returns the same Customer object across retries within 24h, **provided the request parameters match exactly**. `customer_for_${userId}` is deterministic and the parameters are `{ metadata: { userId } }` only. Combined with our DB-side FOR UPDATE serialization, double-creation is impossible: at most one Stripe customer per userId, at most one `users.stripe_customer_id` value per row, no race-loser fallback needed.
+Concurrent-caller handling: two parallel callers for the same userId both hit Phase 1 (no lock), both see NULL, both call Stripe. Stripe's idempotency-key (`customer_for_${userId}`) returns the SAME `cus_*` to both. Phase 3's FOR UPDATE serializes them: first racer's UPDATE wins; second racer's Phase-3 SELECT sees the now-populated value (the racewinner branch) and returns it. Net: at most one row state per user, at most one Stripe customer per user.
+
+Why the idempotency-key strategy: Stripe's `customers.create` accepts an idempotency-key header that returns the same Customer object across retries within 24h, **provided the request parameters match exactly**. `customer_for_${userId}` is deterministic and the parameters are `{ metadata: { userId } }` only. The 24h window is sufficient for our concurrent-callers race (which resolves in milliseconds). Outside 24h: the first call after that window creates a new Stripe customer; if our Phase-3 already wrote a value, we never reach the Stripe call again, so the orphan-customer-after-24h vector is closed by the `if (phase1.rows[0].stripe_customer_id) return` short-circuit at Phase 1.
 
 ## 10. SKU listing cache
 
 `backend/src/billing/sku-cache.ts`:
 
 ```ts
+// Internal cache entry — INCLUDES stripe_price_id for the webhook reverse-map.
+// Used by handlers, NEVER serialized to a public response.
+export interface SkuInternalEntry {
+  readonly lookup_key: LookupKey
+  readonly stripe_price_id: string  // e.g. price_1ABCxyz — internal-only
+  readonly displayName: string
+  readonly type: 'recurring' | 'one_time'
+  readonly sessionsGranted: number
+  readonly worldsGranted: number
+  readonly price: { unit_amount_cents: number; currency: string }
+}
+
+// Public projection — EXCLUDES stripe_price_id. This is the type the
+// /api/billing/skus route serializes. Per Stilton I7 round 3: principle of
+// least disclosure on a public unauthenticated endpoint; the Stripe price ID
+// has no business in a marketing/pricing-page payload.
+export interface SkuPublicListing {
+  readonly lookup_key: LookupKey
+  readonly displayName: string
+  readonly type: 'recurring' | 'one_time'
+  readonly sessionsGranted: number
+  readonly worldsGranted: number
+  readonly price: { unit_amount_cents: number; currency: string }
+}
+
 interface SkuCache {
-  readonly byLookupKey: ReadonlyMap<LookupKey, SkuListing>
-  readonly byPriceId: ReadonlyMap<string, SkuListing>  // reverse lookup, used by webhook handlers
-  readonly listing: readonly SkuListing[]              // serialization-friendly array view
+  readonly byLookupKey: ReadonlyMap<LookupKey, SkuInternalEntry>
+  readonly byPriceId: ReadonlyMap<string, SkuInternalEntry>  // reverse lookup, used by webhook handlers
+  readonly publicListing: readonly SkuPublicListing[]        // serialization-friendly array view; excludes stripe_price_id
 }
 
 let cache: SkuCache | null = null
@@ -857,16 +968,6 @@ export function setSkuCache(snapshot: SkuCache): void {
 export function getSkuCache(): SkuCache | null {
   return cache
 }
-
-export interface SkuListing {
-  readonly lookup_key: LookupKey
-  readonly stripe_price_id: string  // e.g. price_1ABCxyz
-  readonly displayName: string
-  readonly type: 'recurring' | 'one_time'
-  readonly sessionsGranted: number
-  readonly worldsGranted: number
-  readonly price: { unit_amount_cents: number; currency: string }
-}
 ```
 
 The reverse map (`byPriceId`) is required by webhook handlers that need to resolve a Stripe-returned `price.id` (e.g., `invoice.lines.data[i].pricing.price_details.price`) back to a `lookup_key` and `LookupKeySpec`. At dahlia, the lookup_key is no longer present on invoice line objects — see §3.1 note 2.
@@ -875,12 +976,12 @@ Populated by `probe.ts` after a successful probe pass — the probe already fetc
 
 ```ts
 // at the end of probeStripeContract, after mismatches.length === 0:
-const listing: SkuListing[] = []
-const byLookupKey = new Map<LookupKey, SkuListing>()
-const byPriceId = new Map<string, SkuListing>()
+const publicListing: SkuPublicListing[] = []
+const byLookupKey = new Map<LookupKey, SkuInternalEntry>()
+const byPriceId = new Map<string, SkuInternalEntry>()
 for (const [lookup_key, spec] of Object.entries(LOOKUP_KEYS)) {
   const price = byLookup.get(lookup_key)!  // probe asserted presence
-  const item: SkuListing = {
+  const internal: SkuInternalEntry = {
     lookup_key: lookup_key as LookupKey,
     stripe_price_id: price.id,
     displayName: spec.displayName,
@@ -889,16 +990,18 @@ for (const [lookup_key, spec] of Object.entries(LOOKUP_KEYS)) {
     worldsGranted: spec.worldsGranted,
     price: { unit_amount_cents: price.unit_amount!, currency: price.currency },
   }
-  listing.push(item)
-  byLookupKey.set(item.lookup_key, item)
-  byPriceId.set(item.stripe_price_id, item)
+  byLookupKey.set(internal.lookup_key, internal)
+  byPriceId.set(internal.stripe_price_id, internal)
+  // Public projection: omit stripe_price_id explicitly via a TS-rest pattern.
+  const { stripe_price_id: _omit, ...publicEntry } = internal
+  publicListing.push(publicEntry)
 }
-setSkuCache({ byLookupKey, byPriceId, listing })
+setSkuCache({ byLookupKey, byPriceId, publicListing })
 ```
 
-`GET /api/billing/skus` reads `cache.listing` and returns it. Cache miss → 503 (defensive only; the probe gates boot, so any request reaching this endpoint has a populated cache). Response sets `Cache-Control: public, max-age=300`.
+`GET /api/billing/skus` reads `cache.publicListing` and returns it. Cache miss → 503 (defensive only; the probe gates boot, so any request reaching this endpoint has a populated cache). Response sets `Cache-Control: public, max-age=300` and `Vary: Authorization`.
 
-The `SkuListing` interface is a strictly public projection: it has no user-, tenant-, or environment-leaky fields. A typecheck assertion in §13 (a const test that fails to compile if `SkuListing` ever gains a field whose name matches `userId|email|tenant|internal|env|secret`) defends the public-projection invariant.
+The `SkuPublicListing` interface explicitly omits `stripe_price_id` (per Stilton I7 round 3) — internal Stripe identifiers do not leak through the public endpoint. A typecheck assertion in §13 enforces both (a) `SkuPublicListing` does NOT have `stripe_price_id`, (b) `SkuPublicListing` has no field whose name matches `userId|email|tenant|internal|env|secret`.
 
 Cache is process-scoped; refreshes only on next deploy (which re-runs the probe). This is the right grain because the probe is the contract — prices changing without a deploy is a violation of the MYT-41 design.
 
@@ -918,7 +1021,7 @@ ORDER BY occurred_at DESC, id DESC
 LIMIT $4 + 1;  -- fetch one extra to derive nextCursor
 ```
 
-If the query returns 51 rows, the response includes 50 and sets `nextCursor` from the 51st row's `(occurred_at, id)`. If 50 or fewer, `nextCursor` is `null`.
+If the query returns 51 rows, the response includes the FIRST 50 rows and sets `nextCursor` from the **50th row's** `(occurred_at, id)`. The 51st row is fetched only to detect that a next page exists (it is NOT the cursor source). If 50 or fewer rows return, `nextCursor` is `null`. Per Stilton I3 round 3: this matches §4.1's "encodes the LAST row of the current page" definition; the prior round-2 prose that said "from the 51st row's" was off by one and would have produced page-2 queries that included the cursor row itself (duplicate).
 
 `occurred_at` is Stripe's event timestamp at full precision. `id` is `billing_history.id UUID` (UUIDv7), unique table-wide so ties on `occurred_at` resolve deterministically by id.
 
@@ -997,10 +1100,7 @@ export type BillingErrorCode =
 | `/api/billing/upgrade-tier` with target tier price below current (downgrade attempt) | 400 `{ code: 'not_an_upgrade' }`. Downgrades go through Customer Portal Switch Plan. |
 | `/api/billing/upgrade-tier` for user with no active subscription | 400 `{ code: 'no_active_subscription' }`. User must subscribe first via `/api/billing/checkout`. |
 | `/api/billing/upgrade-tier` Stripe `subscriptions.update` returns auth-required error (SCA challenge on the saved card) | 502 `{ code: 'stripe_unavailable' }` for now; the user can retry from the upgrade flow. (Future: surface SCA challenge URL through a 3DS-handoff response — follow-up bead.) |
-| Public route registered with `auth: 'public'` outside the boot-time allowlist | Boot fails with `'auth: public used on non-allowlisted route: <route>'`. Per Sphinx C3 round 2 defense-in-depth. |
-| Webhook `event.api_version` ≠ SDK pin | 200 + ERROR-level log `stripe_webhook_api_version_mismatch`; processing continues but Dashboard config needs an ops fix |
-| Webhook event already processed (idempotent replay) | 200 (stripe_events PK ON CONFLICT DO NOTHING; ROLLBACK and exit) |
-| Webhook secret is `'PLACEHOLDER'` | All signatures invalid → 400. **Fail-closed by design.** The first action after MYT-42 ships is rotating Secrets Manager from PLACEHOLDER → the Dashboard-issued `whsec_*`. |
+| Public route registered with `auth: 'public'` outside the boot-time allowlist | Boot fails with `'auth: public used on non-allowlisted route: <route>'`. Per Sphinx C3 round 2 / Stilton C2 round 3 defense-in-depth. |
 
 ## 13. Testing
 
@@ -1047,7 +1147,7 @@ export type BillingErrorCode =
 - `backend/src/billing/__tests__/sku-cache.test.ts`:
   - `setSkuCache` + `getSkuCache` round-trip preserves `byLookupKey`, `byPriceId`, and `listing`.
   - `byPriceId` reverse map populated correctly from probe data.
-  - `SkuListing` type assertion: a const test that fails to compile if `SkuListing` ever gains a field whose name matches `userId|email|tenant|internal|env|secret`.
+  - `SkuPublicListing` type assertion: a const test that fails to compile if `SkuPublicListing` ever gains a field named `stripe_price_id` OR a field whose name matches `userId|email|tenant|internal|env|secret`. Defends the public-projection invariant per Stilton I7 round 3.
 
 - `backend/src/repo/__tests__/purchases.test.ts`:
   - Insert two rows with same `stripe_payment_intent_id` and DIFFERENT `lookup_key`: succeeds (composite UNIQUE).
@@ -1089,7 +1189,7 @@ export type BillingErrorCode =
   - Each route: auth contract (JWT-required vs public), body validation, response shape.
   - Cart-shape rules: mixed cart, tier with quantity > 1, duplicate lookup_key, unknown lookup_key, empty array, max-100 array.
   - History endpoint cursor round-trip: page 1 → cursor → page 2; concatenation matches a flat fetch. Malformed cursor → 400 `{ code: 'invalid_cursor' }`.
-  - SKU listing endpoint: response is the public projection of `cache.listing`; sets `Cache-Control: public, max-age=300`.
+  - SKU listing endpoint: response is `cache.publicListing` (NOT `cache.byLookupKey` — the public projection excludes `stripe_price_id`); sets `Cache-Control: public, max-age=300` + `Vary: Authorization`. Test asserts the response body contains no `stripe_price_id` field on any item.
   - Error-code enum: every emitted code is a member of the `BillingErrorCode` union (regression: a const TS check enforces this at compile time).
 
 - `backend/src/routes/__tests__/webhook.test.ts`:
