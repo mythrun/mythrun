@@ -70,6 +70,7 @@ export const TABLE_CLUSTERS: Readonly<Record<string, ClusterName>> = {
   session_packs: 'Identity & billing',
   purchases: 'Identity & billing',
   stripe_events: 'Identity & billing',
+  billing_history: 'Identity & billing',
   // Worlds & entities
   worlds: 'Worlds & entities',
   entities: 'Worlds & entities',
