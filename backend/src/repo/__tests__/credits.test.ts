@@ -160,6 +160,263 @@ describe('credits repo (integration)', () => {
         credits.grant({ userId: fakeId, creditType: 'session', amount: 1, sourceType: 'gift' }),
       ).rejects.toBeInstanceOf(UserNotFoundError)
     })
+
+    // Backwards-compat smoke test for the wrapper after the grantInTx extraction
+    // (Task 8 of MYT-42). Re-validates that calling `grant` from the public
+    // surface still opens its own tx + lock + INSERT and the row is visible
+    // post-COMMIT. If this regresses, the wrapper has stopped delegating
+    // correctly to grantInTx.
+    it('still opens its own tx and commits (post-grantInTx-extraction)', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+
+      const entry = await credits.grant({
+        userId: u.id,
+        creditType: 'world_gen',
+        amount: 2,
+        sourceType: 'gift',
+      })
+
+      expect(entry.creditType).toBe('world_gen')
+      expect(entry.amount).toBe(2)
+      // Visible from a fresh read on the pool — proves COMMIT happened.
+      expect(await credits.balance(u.id, 'world_gen')).toBe(2)
+    })
+  })
+
+  describe('grantInTx()', () => {
+    it('writes a row when called inside an existing tx', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const entry = await credits.grantInTx(client, {
+          userId: u.id,
+          creditType: 'session',
+          amount: 4,
+          sourceType: 'gift',
+        })
+        expect(entry.amount).toBe(4)
+        expect(entry.sourceType).toBe('gift')
+        expect(entry.userId).toBe(u.id)
+        await client.query('COMMIT')
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => { /* ignore */ })
+        throw err
+      } finally {
+        client.release()
+      }
+
+      // Row visible to a fresh pool read post-COMMIT.
+      expect(await credits.balance(u.id, 'session')).toBe(4)
+    })
+
+    it('self-relock under existing user-row lock is a no-op (tuple re-entrancy)', async () => {
+      const users = createUsersRepo(pool)
+      // Tighten lock_timeout so a regression (genuine wait) would surface fast.
+      const credits = createCreditsRepo(pool, { debitLockTimeoutMs: 500 })
+      const u = await users.create(pool, baseUserInput)
+
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        // Caller takes the user-row lock first — webhook-handler discipline.
+        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [u.id])
+
+        // grantInTx's internal SELECT FOR UPDATE on the same xid must be a no-op.
+        const start = Date.now()
+        const entry = await credits.grantInTx(client, {
+          userId: u.id,
+          creditType: 'session',
+          amount: 7,
+          sourceType: 'gift',
+        })
+        const elapsed = Date.now() - start
+
+        expect(entry.amount).toBe(7)
+        // Self-relock is instantaneous (Postgres tuple lock re-entrancy);
+        // assert hard upper bound that's well under the lock_timeout setting.
+        expect(elapsed).toBeLessThan(200)
+
+        await client.query('COMMIT')
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => { /* ignore */ })
+        throw err
+      } finally {
+        client.release()
+      }
+
+      expect(await credits.balance(u.id, 'session')).toBe(7)
+    })
+  })
+
+  describe('recordClawback()', () => {
+    it('rejects amount >= 0 (positive)', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await expect(
+          credits.recordClawback(client, {
+            userId: u.id,
+            creditType: 'session',
+            amount: 1,
+            sourceId: uuidv7(),
+          }),
+        ).rejects.toThrow(/amount must be negative/)
+        await expect(
+          credits.recordClawback(client, {
+            userId: u.id,
+            creditType: 'session',
+            amount: 0,
+            sourceId: uuidv7(),
+          }),
+        ).rejects.toThrow(/amount must be negative/)
+        await client.query('ROLLBACK')
+      } finally {
+        client.release()
+      }
+    })
+
+    it('rejects empty sourceId', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await expect(
+          credits.recordClawback(client, {
+            userId: u.id,
+            creditType: 'session',
+            amount: -1,
+            sourceId: '',
+          }),
+        ).rejects.toThrow(/sourceId required/)
+        await client.query('ROLLBACK')
+      } finally {
+        client.release()
+      }
+    })
+
+    it('writes a negative-polarity debit row with NULL FKs and NULL expires_at', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      // Pre-grant some credits so the post-clawback balance is sensible.
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+      })
+
+      const sourceId = uuidv7()
+      const client = await pool.connect()
+      let entry
+      try {
+        await client.query('BEGIN')
+        entry = await credits.recordClawback(client, {
+          userId: u.id,
+          creditType: 'session',
+          amount: -2,
+          sourceId,
+        })
+        await client.query('COMMIT')
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => { /* ignore */ })
+        throw err
+      } finally {
+        client.release()
+      }
+
+      expect(entry.amount).toBe(-2)
+      expect(entry.sourceType).toBe('debit')
+      expect(entry.sourceId).toBe(sourceId)
+      expect(entry.expiresAt).toBeNull()
+
+      // Verify the FK columns are NULL via raw SQL (mapper doesn't expose them).
+      const raw = await pool.query<{
+        source_purchase_id: string | null
+        source_billing_history_id: string | null
+        expires_at: Date | null
+      }>(
+        `SELECT source_purchase_id, source_billing_history_id, expires_at
+           FROM credit_ledger WHERE id = $1`,
+        [entry.id],
+      )
+      const row = raw.rows[0]
+      expect(row?.source_purchase_id).toBeNull()
+      expect(row?.source_billing_history_id).toBeNull()
+      expect(row?.expires_at).toBeNull()
+
+      // Balance reflects clawback.
+      expect(await credits.balance(u.id, 'session')).toBe(3)
+    })
+
+    it('ON CONFLICT idempotency: second call returns the same canonical row, no duplicate', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({
+        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+      })
+
+      const sourceId = uuidv7()
+
+      // First call.
+      const client1 = await pool.connect()
+      let first
+      try {
+        await client1.query('BEGIN')
+        first = await credits.recordClawback(client1, {
+          userId: u.id,
+          creditType: 'session',
+          amount: -1,
+          sourceId,
+        })
+        await client1.query('COMMIT')
+      } finally {
+        client1.release()
+      }
+
+      // Second call with the same (userId, creditType, sourceId).
+      const client2 = await pool.connect()
+      let second
+      try {
+        await client2.query('BEGIN')
+        second = await credits.recordClawback(client2, {
+          userId: u.id,
+          creditType: 'session',
+          amount: -1,
+          sourceId,
+        })
+        await client2.query('COMMIT')
+      } finally {
+        client2.release()
+      }
+
+      // Same canonical row.
+      expect(second.id).toBe(first.id)
+      expect(second.amount).toBe(-1)
+      expect(second.sourceType).toBe('debit')
+
+      // Only one debit row exists for this sourceId.
+      const count = await pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM credit_ledger
+          WHERE user_id = $1 AND source_type = 'debit' AND source_id = $2`,
+        [u.id, sourceId],
+      )
+      expect(Number(count.rows[0]?.count)).toBe(1)
+
+      // Balance reflects exactly one clawback (-1), not two.
+      expect(await credits.balance(u.id, 'session')).toBe(4)
+    })
   })
 
   describe('atomicDebit()', () => {
