@@ -2,15 +2,106 @@
 //
 // MYT-42 billing routes plugin. Routes are added task by task (Tasks 25–31).
 // Current routes:
-//   - GET /api/billing/skus   (Task 25) — public pricing catalogue
+//   - GET /api/billing/skus          (Task 25) — public pricing catalogue
+//   - GET /api/billing/balance        (Task 26) — JWT, credit balances + active sub summary
+//   - GET /api/billing/subscription   (Task 27) — JWT, full active subscription row or null
 //
-// Subsequent tasks add: /balance, /subscription, /history, /checkout,
-// /portal, /upgrade-tier.
+// Subsequent tasks add: /history, /checkout, /portal, /upgrade-tier.
 
-import type { FastifyPluginAsync } from 'fastify'
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
+import type { Pool } from 'pg'
 import { getSkuCache } from '../billing/sku-cache.js'
+import { createRepo, type Repo } from '../repo/index.js'
+import { userSubscriptions } from '../repo/user-subscriptions.js'
 
-export const billingRoutes: FastifyPluginAsync = async (scope) => {
+export interface BillingRoutesOpts {
+  readonly pool: Pool
+}
+
+// Resolve the caller's users.id from request.user.sub. Returns null and
+// writes the appropriate error reply on failure (matching the pattern in
+// routes/invites.ts).
+async function resolveUserId(
+  repo: Repo,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<string | null> {
+  if (!request.user) {
+    reply.code(401).send({ code: 'unauthenticated' })
+    return null
+  }
+  const user = await repo.users.getByCognitoSub(request.user.sub)
+  if (!user) {
+    reply.code(403).send({ code: 'username_required' })
+    return null
+  }
+  return user.id
+}
+
+// Handler: GET /api/billing/balance
+async function handleBalance(
+  pool: Pool,
+  repo: Repo,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(repo, request, reply)
+  if (userId === null) return reply
+
+  const [session, world_gen, sub] = await Promise.all([
+    repo.credits.balance(userId, 'session'),
+    repo.credits.balance(userId, 'world_gen'),
+    userSubscriptions.getActiveForUser(pool, userId),
+  ])
+
+  const active_subscription =
+    sub === null
+      ? null
+      : {
+          tier_lookup_key: sub.tier_lookup_key,
+          current_period_end: sub.current_period_end.toISOString(),
+          cancel_at_period_end: sub.cancel_at_period_end,
+          status: sub.status,
+        }
+
+  return reply.code(200).send({ session, world_gen, active_subscription })
+}
+
+// Handler: GET /api/billing/subscription
+async function handleSubscription(
+  pool: Pool,
+  repo: Repo,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(repo, request, reply)
+  if (userId === null) return reply
+
+  const sub = await userSubscriptions.getActiveForUser(pool, userId)
+
+  const active_subscription =
+    sub === null
+      ? null
+      : {
+          tier_lookup_key: sub.tier_lookup_key,
+          stripe_subscription_id: sub.stripe_subscription_id,
+          status: sub.status,
+          current_period_start: sub.current_period_start.toISOString(),
+          current_period_end: sub.current_period_end.toISOString(),
+          cancel_at_period_end: sub.cancel_at_period_end,
+          cancel_at: sub.cancel_at !== null ? sub.cancel_at.toISOString() : null,
+        }
+
+  return reply.code(200).send({ active_subscription })
+}
+
+// FastifyPluginAsync requires an async function shape; the body has no
+// top-level await (route registration is synchronous), so the rule is
+// disabled here per existing precedent in auth/bypass-plugin.ts.
+// eslint-disable-next-line @typescript-eslint/require-await
+export const billingRoutes: FastifyPluginAsync<BillingRoutesOpts> = async (scope, opts) => {
+  const repo = createRepo(opts.pool)
+
   scope.get('/api/billing/skus', {
     config: { auth: 'public', rateLimit: { max: 60, timeWindow: '1 minute' } },
   }, async (_request, reply) => {
@@ -25,6 +116,13 @@ export const billingRoutes: FastifyPluginAsync = async (scope) => {
       .send(cache.publicListing)
   })
 
-  // Subsequent tasks 26-31 add: /balance, /subscription, /history,
-  // /checkout, /portal, /upgrade-tier
+  scope.get('/api/billing/balance', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, (request, reply) => handleBalance(opts.pool, repo, request, reply))
+
+  scope.get('/api/billing/subscription', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, (request, reply) => handleSubscription(opts.pool, repo, request, reply))
+
+  // Subsequent tasks 28-31 add: /history, /checkout, /portal, /upgrade-tier
 }
