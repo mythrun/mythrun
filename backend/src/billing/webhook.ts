@@ -45,6 +45,7 @@ import { userSubscriptions } from '../repo/user-subscriptions.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from './stripe-client.js'
 import { handleCheckoutCompletedPayment } from './webhook-checkout-payment.js'
+import { handleInvoicePaid, prefetchInvoicePaid } from './webhook-invoice-paid.js'
 import type { HandlerResult } from './webhook-types.js'
 
 export type { HandlerResult } from './webhook-types.js'
@@ -81,7 +82,7 @@ const okHandler: EventHandler = () => Promise.resolve('ok')
 
 export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'checkout.session.completed': handleCheckoutCompleted,
-  'invoice.paid': okHandler,
+  'invoice.paid': handleInvoicePaid,
   'customer.subscription.created': okHandler,
   'customer.subscription.updated': okHandler,
   'customer.subscription.deleted': okHandler,
@@ -97,6 +98,7 @@ export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
 // directly).
 export const PREFETCHERS: Partial<Record<KnownStripeEventType, PrefetchFn>> = {
   'checkout.session.completed': prefetchCheckoutCompleted,
+  'invoice.paid': prefetchInvoicePaid,
 }
 
 /**
