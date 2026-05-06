@@ -48,6 +48,10 @@ import { handleCheckoutCompletedPayment } from './webhook-checkout-payment.js'
 import { handleInvoicePaid, prefetchInvoicePaid } from './webhook-invoice-paid.js'
 import { handleSubscriptionUpsert } from './webhook-subscription-upsert.js'
 import { handleSubscriptionDeleted } from './webhook-subscription-deleted.js'
+import {
+  handlePendingUpdateApplied,
+  prefetchPendingUpdateApplied,
+} from './webhook-pending-update-applied.js'
 import type { HandlerResult } from './webhook-types.js'
 
 export type { HandlerResult } from './webhook-types.js'
@@ -88,7 +92,7 @@ export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'customer.subscription.created': handleSubscriptionUpsert,
   'customer.subscription.updated': handleSubscriptionUpsert,
   'customer.subscription.deleted': handleSubscriptionDeleted,
-  'customer.subscription.pending_update_applied': okHandler,
+  'customer.subscription.pending_update_applied': handlePendingUpdateApplied,
   'customer.subscription.pending_update_expired': okHandler,
   'refund.created': okHandler,
   'refund.updated': okHandler,
@@ -101,6 +105,7 @@ export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
 export const PREFETCHERS: Partial<Record<KnownStripeEventType, PrefetchFn>> = {
   'checkout.session.completed': prefetchCheckoutCompleted,
   'invoice.paid': prefetchInvoicePaid,
+  'customer.subscription.pending_update_applied': prefetchPendingUpdateApplied,
 }
 
 /**
