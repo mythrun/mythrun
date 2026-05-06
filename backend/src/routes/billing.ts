@@ -7,8 +7,9 @@
 //   - GET  /api/billing/subscription   (Task 27) — JWT, full active subscription row or null
 //   - GET  /api/billing/history        (Task 28) — JWT, cursor-paginated billing audit feed
 //   - POST /api/billing/checkout       (Task 29) — JWT, cart → Stripe Checkout Session
+//   - POST /api/billing/portal         (Task 30) — JWT, Stripe Customer Portal session
 //
-// Subsequent tasks add: /portal, /upgrade-tier.
+// Subsequent tasks add: /upgrade-tier.
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
@@ -400,6 +401,62 @@ function isReplied(
   return typeof result === 'object' && result !== null && '_replied' in result
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/billing/portal (Task 30)
+//
+// Spec: §4.4 — Customer Portal session creation.
+// Body shape: { return_url: string }.
+//
+// Lazy-creates the Stripe customer if one doesn't exist yet (§4.4).
+// ---------------------------------------------------------------------------
+
+interface PortalBody {
+  readonly return_url: string
+}
+
+function parsePortalBody(body: unknown): PortalBody | null {
+  if (typeof body !== 'object' || body === null) return null
+  const b = body as { return_url?: unknown }
+  if (typeof b.return_url !== 'string' || b.return_url.length === 0) return null
+  return { return_url: b.return_url }
+}
+
+// Handler: POST /api/billing/portal
+async function handlePortal(
+  pool: Pool,
+  repo: Repo,
+  env: Env,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  // 1. Body shape (structural).
+  const parsed = parsePortalBody(request.body)
+  if (parsed === null) {
+    return reply.code(400).send({ code: 'body_invalid' })
+  }
+
+  // 2. Auth resolution.
+  const userId = await resolveUserId(repo, request, reply)
+  if (userId === null) return reply
+
+  // 3. Find or lazy-create the Stripe customer.
+  const stripe = getStripeClient(env)
+  const cusResult = await withStripeUnavailable(
+    request, reply, userId, 'findOrCreateStripeCustomer',
+    () => findOrCreateStripeCustomer(pool, stripe, userId),
+  )
+  if (isReplied(cusResult)) return cusResult._replied
+
+  // 4. Create the portal session.
+  const portalResult = await withStripeUnavailable(
+    request, reply, userId, 'billingPortal.sessions.create',
+    () => stripe.billingPortal.sessions.create({ customer: cusResult, return_url: parsed.return_url }),
+  )
+  if (isReplied(portalResult)) return portalResult._replied
+
+  return reply.code(200).send({ url: portalResult.url })
+}
+
 // Handler: POST /api/billing/checkout
 async function handleCheckout(
   pool: Pool,
@@ -491,5 +548,9 @@ export const billingRoutes: FastifyPluginAsync<BillingRoutesOpts> = async (scope
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, (request, reply) => handleCheckout(opts.pool, repo, opts.env, request, reply))
 
-  // Subsequent tasks 30-31 add: /portal, /upgrade-tier
+  scope.post('/api/billing/portal', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, (request, reply) => handlePortal(opts.pool, repo, opts.env, request, reply))
+
+  // Subsequent tasks add: /upgrade-tier
 }

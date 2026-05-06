@@ -1059,3 +1059,169 @@ describe('billingRoutes — POST /api/billing/checkout (MYT-42 Task 29)', () => 
     expect(stripe.createCalls).toHaveLength(0)
   })
 })
+
+// ===========================================================================
+// Task 30: POST /api/billing/portal
+// ===========================================================================
+
+/**
+ * Helper to install the Stripe portal stub. The returned bag exposes:
+ *   - createCalls: every call to billingPortal.sessions.create captured for assertion
+ *   - setCreateImpl: swap out the per-test impl
+ */
+interface PortalCreateCall {
+  readonly params: { customer: string; return_url: string }
+}
+
+interface PortalStubBag {
+  readonly createCalls: PortalCreateCall[]
+  setCreateImpl(
+    impl: (params: { customer: string; return_url: string }) => Promise<{ url: string }>,
+  ): void
+}
+
+function installPortalStub(): PortalStubBag {
+  const createCalls: PortalCreateCall[] = []
+  let createImpl: (params: { customer: string; return_url: string }) => Promise<{ url: string }> =
+    (params) => {
+      return Promise.resolve({ url: `https://billing.stripe.com/p/session_test?customer=${params.customer}` })
+    }
+
+  const stripeStub = {
+    billingPortal: {
+      sessions: {
+        create: (params: { customer: string; return_url: string }): Promise<{ url: string }> => {
+          createCalls.push({ params })
+          return createImpl(params)
+        },
+      },
+    },
+  } as unknown as import('stripe').default
+
+  mockedGetStripeClient.mockReturnValue(stripeStub)
+  return {
+    createCalls,
+    setCreateImpl(impl): void {
+      createImpl = impl
+    },
+  }
+}
+
+const PORTAL_RETURN_URL = 'http://localhost:5173/account'
+
+// eslint-disable-next-line max-lines-per-function
+describe('billingRoutes — POST /api/billing/portal (MYT-42 Task 30)', () => {
+  let app: FastifyInstance | undefined
+  let noAuthApp: FastifyInstance | undefined
+  let portal: PortalStubBag
+
+  beforeEach(() => {
+    _resetSkuCacheForTests()
+    vi.clearAllMocks()
+    app = undefined
+    noAuthApp = undefined
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    mockedFindOrCreateStripeCustomer.mockResolvedValue('cus_test_portal_user')
+    portal = installPortalStub()
+  })
+
+  afterAll(async () => {
+    if (app) await app.close()
+    if (noAuthApp) await noAuthApp.close()
+    _resetSkuCacheForTests()
+    vi.unstubAllEnvs()
+  })
+
+  it('returns 200 with the portal session URL on happy path', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/portal',
+      headers: { 'content-type': 'application/json' },
+      payload: { return_url: PORTAL_RETURN_URL },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ url: string }>()
+    expect(body.url).toBe(`https://billing.stripe.com/p/session_test?customer=cus_test_portal_user`)
+
+    expect(portal.createCalls).toHaveLength(1)
+    const call = portal.createCalls[0]
+    if (call === undefined) throw new Error('expected one create call')
+    expect(call.params.customer).toBe('cus_test_portal_user')
+    expect(call.params.return_url).toBe(PORTAL_RETURN_URL)
+
+    expect(mockedFindOrCreateStripeCustomer).toHaveBeenCalledTimes(1)
+    expect(mockedFindOrCreateStripeCustomer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      BYPASS_USER_ID,
+    )
+  })
+
+  it('returns 502 stripe_unavailable when billingPortal.sessions.create throws', async () => {
+    portal.setCreateImpl(() => Promise.reject(new Error('stripe-side 503')))
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/portal',
+      headers: { 'content-type': 'application/json' },
+      payload: { return_url: PORTAL_RETURN_URL },
+    })
+
+    expect(res.statusCode).toBe(502)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('stripe_unavailable')
+  })
+
+  it('returns 401 when request carries no JWT (no auth plugin registered)', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    noAuthApp = await buildNoAuthTestApp()
+
+    const res = await noAuthApp.inject({
+      method: 'POST',
+      url: '/api/billing/portal',
+      headers: { 'content-type': 'application/json' },
+      payload: { return_url: PORTAL_RETURN_URL },
+    })
+
+    expect(res.statusCode).toBe(401)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('unauthenticated')
+  })
+
+  it('returns 400 body_invalid when return_url is missing', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/portal',
+      headers: { 'content-type': 'application/json' },
+      payload: {},
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('body_invalid')
+    expect(portal.createCalls).toHaveLength(0)
+  })
+
+  it('returns 403 username_required when authenticated user has no users row', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo({ userFound: false }))
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/portal',
+      headers: { 'content-type': 'application/json' },
+      payload: { return_url: PORTAL_RETURN_URL },
+    })
+
+    expect(res.statusCode).toBe(403)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('username_required')
+    expect(portal.createCalls).toHaveLength(0)
+  })
+})
