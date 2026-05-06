@@ -1,4 +1,7 @@
 // backend/src/routes/__tests__/billing.test.ts
+/* eslint-disable max-lines -- Tests for all seven MYT-42 billing handlers
+ * are colocated in one suite (matches the single-plugin shape of
+ * routes/billing.ts and shares fixtures across describe blocks). */
 //
 // MYT-42 billing routes plugin.
 //
@@ -1223,5 +1226,441 @@ describe('billingRoutes — POST /api/billing/portal (MYT-42 Task 30)', () => {
     const body = res.json<{ code: string }>()
     expect(body.code).toBe('username_required')
     expect(portal.createCalls).toHaveLength(0)
+  })
+})
+
+// ===========================================================================
+// Task 31: POST /api/billing/upgrade-tier
+// ===========================================================================
+
+interface SubscriptionsRetrieveCall {
+  readonly id: string
+  readonly opts: { expand?: string[] } | undefined
+}
+
+interface SubscriptionsUpdateCall {
+  readonly id: string
+  readonly params: Stripe.SubscriptionUpdateParams
+  readonly opts: { idempotencyKey?: string } | undefined
+}
+
+interface UpgradeStripeStubBag {
+  readonly retrieveCalls: SubscriptionsRetrieveCall[]
+  readonly updateCalls: SubscriptionsUpdateCall[]
+  setRetrieveImpl(impl: (id: string) => Promise<Stripe.Subscription>): void
+  setUpdateImpl(impl: (id: string, params: Stripe.SubscriptionUpdateParams) => Promise<Stripe.Subscription>): void
+}
+
+/**
+ * Build a fake Stripe.Subscription for the upgrade-tier tests. Only the
+ * fields the route handler actually reads are populated; everything else is
+ * undefined-by-omission. The cast through `unknown` is the standard Stripe
+ * test-fixture pattern in this file (see installStripeStub on line 704+).
+ */
+function makeSubscriptionFixture(opts: {
+  readonly id?: string
+  readonly itemId?: string
+  readonly priceId?: string
+  readonly periodStart?: number
+  readonly pendingUpdate?: { expires_at: number } | null
+  readonly latestInvoice?: string | null
+}): Stripe.Subscription {
+  const id = opts.id ?? 'sub_test_fixture_01'
+  const itemId = opts.itemId ?? 'si_test_item_1'
+  const priceId = opts.priceId ?? 'price_test_tier_wayfarer'
+  const periodStart = opts.periodStart ?? 1_780_000_000 // 2026-05-29 UTC-ish
+  const sub = {
+    id,
+    object: 'subscription',
+    items: {
+      object: 'list',
+      data: [
+        {
+          id: itemId,
+          object: 'subscription_item',
+          price: { id: priceId, object: 'price' },
+          current_period_start: periodStart,
+        },
+      ],
+    },
+    pending_update: opts.pendingUpdate ?? null,
+    latest_invoice: opts.latestInvoice ?? null,
+  } as unknown as Stripe.Subscription
+  return sub
+}
+
+function installUpgradeStripeStub(): UpgradeStripeStubBag {
+  const retrieveCalls: SubscriptionsRetrieveCall[] = []
+  const updateCalls: SubscriptionsUpdateCall[] = []
+  let retrieveImpl: (id: string) => Promise<Stripe.Subscription> = (id) =>
+    Promise.resolve(makeSubscriptionFixture({ id }))
+  let updateImpl: (id: string, params: Stripe.SubscriptionUpdateParams) => Promise<Stripe.Subscription> = (id) =>
+    Promise.resolve(makeSubscriptionFixture({ id, latestInvoice: 'in_test_proration_01' }))
+
+  const stripeStub = {
+    subscriptions: {
+      retrieve: (
+        id: string,
+        opts?: { expand?: string[] },
+      ): Promise<Stripe.Subscription> => {
+        retrieveCalls.push({ id, opts })
+        return retrieveImpl(id)
+      },
+      update: (
+        id: string,
+        params: Stripe.SubscriptionUpdateParams,
+        opts?: { idempotencyKey?: string },
+      ): Promise<Stripe.Subscription> => {
+        updateCalls.push({ id, params, opts })
+        return updateImpl(id, params)
+      },
+    },
+  } as unknown as Stripe
+
+  mockedGetStripeClient.mockReturnValue(stripeStub)
+  return {
+    retrieveCalls,
+    updateCalls,
+    setRetrieveImpl(impl): void {
+      retrieveImpl = impl
+    },
+    setUpdateImpl(impl): void {
+      updateImpl = impl
+    },
+  }
+}
+
+/**
+ * Active subscription fixture used as the user's pre-upgrade state across
+ * tier-upgrade tests. tier_lookup_key='tier_wayfarer' (999¢) — upgrades to
+ * tier_sojourner (1899¢) or tier_mythwright. Reuses FIXTURE_SUB_ROW shape but
+ * with a tier_lookup_key that exists in FIXTURE_CHECKOUT_CACHE.
+ */
+const FIXTURE_UPGRADE_ACTIVE_SUB = {
+  ...FIXTURE_SUB_ROW,
+  tier_lookup_key: 'tier_wayfarer',
+}
+
+// Mythwright is the top tier in the spec; add it to FIXTURE_CHECKOUT_CACHE-style
+// resolution by reusing the existing fixture and grafting in a Mythwright
+// entry. Encapsulated here so the upgrade-tier suite can flip between
+// tier_sojourner and tier_mythwright as the target without polluting earlier
+// describe blocks.
+const FIXTURE_UPGRADE_CACHE: SkuCache = (() => {
+  const mythwright: SkuInternalEntry = {
+    lookup_key: 'tier_mythwright',
+    stripe_price_id: 'price_test_tier_mythwright',
+    displayName: 'Mythwright',
+    type: 'recurring',
+    sessionsGranted: 16,
+    worldsGranted: 4,
+    price: { unit_amount_cents: 4499, currency: 'usd' },
+  }
+  const byLookupKey = new Map<LookupKey, SkuInternalEntry>(FIXTURE_CHECKOUT_CACHE.byLookupKey)
+  byLookupKey.set('tier_mythwright', mythwright)
+
+  const byPriceId = new Map<string, SkuInternalEntry>(FIXTURE_CHECKOUT_CACHE.byPriceId)
+  byPriceId.set(mythwright.stripe_price_id, mythwright)
+
+  return {
+    byLookupKey,
+    byPriceId,
+    publicListing: [
+      ...FIXTURE_CHECKOUT_CACHE.publicListing,
+      {
+        lookup_key: mythwright.lookup_key,
+        displayName: mythwright.displayName,
+        type: mythwright.type,
+        sessionsGranted: mythwright.sessionsGranted,
+        worldsGranted: mythwright.worldsGranted,
+        price: mythwright.price,
+      },
+    ],
+  }
+})()
+
+// eslint-disable-next-line max-lines-per-function
+describe('billingRoutes — POST /api/billing/upgrade-tier (MYT-42 Task 31)', () => {
+  let app: FastifyInstance | undefined
+  let noAuthApp: FastifyInstance | undefined
+  let stripe: UpgradeStripeStubBag
+
+  beforeEach(() => {
+    _resetSkuCacheForTests()
+    setSkuCache(FIXTURE_UPGRADE_CACHE)
+    vi.clearAllMocks()
+    app = undefined
+    noAuthApp = undefined
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    mockedUserSubscriptions.getActiveForUser.mockResolvedValue({ ...FIXTURE_UPGRADE_ACTIVE_SUB })
+    stripe = installUpgradeStripeStub()
+  })
+
+  afterAll(async () => {
+    if (app) await app.close()
+    if (noAuthApp) await noAuthApp.close()
+    _resetSkuCacheForTests()
+    vi.unstubAllEnvs()
+  })
+
+  it('returns 200 with invoice_id when items advance synchronously (happy path)', async () => {
+    stripe.setUpdateImpl((id) =>
+      Promise.resolve(
+        makeSubscriptionFixture({
+          id,
+          pendingUpdate: null,
+          latestInvoice: 'in_test_proration_42',
+        }),
+      ),
+    )
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ invoice_id: string | null }>()
+    expect(body.invoice_id).toBe('in_test_proration_42')
+
+    expect(stripe.retrieveCalls).toHaveLength(1)
+    expect(stripe.updateCalls).toHaveLength(1)
+    const updateCall = stripe.updateCalls[0]
+    if (updateCall === undefined) throw new Error('expected one update call')
+    expect(updateCall.id).toBe(FIXTURE_UPGRADE_ACTIVE_SUB.stripe_subscription_id)
+    expect(updateCall.params.payment_behavior).toBe('pending_if_incomplete')
+    expect(updateCall.params.proration_behavior).toBe('always_invoice')
+    expect(updateCall.params.proration_date).toBeTypeOf('number')
+    expect(updateCall.params.items).toEqual([
+      { id: 'si_test_item_1', price: 'price_test_tier_sojourner' },
+    ])
+  })
+
+  it('returns 502 upgrade_payment_pending when the response carries pending_update', async () => {
+    const expiresAtSec = 1_790_000_000
+    stripe.setUpdateImpl((id) =>
+      Promise.resolve(
+        makeSubscriptionFixture({
+          id,
+          pendingUpdate: { expires_at: expiresAtSec },
+          latestInvoice: 'in_test_pending_invoice_99',
+        }),
+      ),
+    )
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(502)
+    const body = res.json<{
+      code: string
+      detail: { pending_update_expires_at: string; latest_invoice_id: string | null }
+    }>()
+    expect(body.code).toBe('upgrade_payment_pending')
+    expect(body.detail.pending_update_expires_at).toBe(new Date(expiresAtSec * 1000).toISOString())
+    expect(body.detail.latest_invoice_id).toBe('in_test_pending_invoice_99')
+  })
+
+  it('returns 409 upgrade_already_pending when the live subscription has a pending_update', async () => {
+    const expiresAtSec = 1_795_000_000
+    stripe.setRetrieveImpl((id) =>
+      Promise.resolve(
+        makeSubscriptionFixture({
+          id,
+          pendingUpdate: { expires_at: expiresAtSec },
+          latestInvoice: 'in_test_inflight_07',
+        }),
+      ),
+    )
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(409)
+    const body = res.json<{
+      code: string
+      detail: { pending_update_expires_at: string; latest_invoice_id: string | null }
+    }>()
+    expect(body.code).toBe('upgrade_already_pending')
+    expect(body.detail.pending_update_expires_at).toBe(new Date(expiresAtSec * 1000).toISOString())
+    expect(body.detail.latest_invoice_id).toBe('in_test_inflight_07')
+
+    // The route MUST NOT call subscriptions.update when an in-flight
+    // pending_update is already present.
+    expect(stripe.updateCalls).toHaveLength(0)
+  })
+
+  it('returns 400 no_active_subscription when the user has no active sub', async () => {
+    mockedUserSubscriptions.getActiveForUser.mockResolvedValue(null)
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('no_active_subscription')
+    expect(stripe.retrieveCalls).toHaveLength(0)
+    expect(stripe.updateCalls).toHaveLength(0)
+  })
+
+  it('returns 400 tier_unchanged when target equals current', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_wayfarer' },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('tier_unchanged')
+    expect(stripe.retrieveCalls).toHaveLength(0)
+    expect(stripe.updateCalls).toHaveLength(0)
+  })
+
+  it('returns 400 not_an_upgrade when target price is below current', async () => {
+    // Active sub at tier_sojourner (1899¢), target tier_wayfarer (999¢).
+    mockedUserSubscriptions.getActiveForUser.mockResolvedValue({
+      ...FIXTURE_UPGRADE_ACTIVE_SUB,
+      tier_lookup_key: 'tier_sojourner',
+    })
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_wayfarer' },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('not_an_upgrade')
+    expect(stripe.retrieveCalls).toHaveLength(0)
+    expect(stripe.updateCalls).toHaveLength(0)
+  })
+
+  it('returns 400 unknown_lookup_key when target_tier_lookup_key is unknown', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_unobtanium' },
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('unknown_lookup_key')
+    expect(stripe.retrieveCalls).toHaveLength(0)
+    expect(stripe.updateCalls).toHaveLength(0)
+  })
+
+  it('uses idempotencyKey shape upgrade:<userId>:<sub_id>:<target_tier> with NO period_start', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(stripe.updateCalls).toHaveLength(1)
+    const updateCall = stripe.updateCalls[0]
+    if (updateCall === undefined) throw new Error('expected one update call')
+    const expectedKey = `upgrade:${BYPASS_USER_ID}:${FIXTURE_UPGRADE_ACTIVE_SUB.stripe_subscription_id}:tier_sojourner`
+    expect(updateCall.opts?.idempotencyKey).toBe(expectedKey)
+    // Belt-and-suspenders: the literal idempotency key MUST NOT contain the
+    // period_start integer (per Petra I1 round 8 — see file-top spec ref).
+    expect(updateCall.opts?.idempotencyKey).not.toContain(String(1_780_000_000))
+  })
+
+  it('returns 502 stripe_unavailable when subscriptions.update throws a network/5xx error', async () => {
+    stripe.setUpdateImpl(() => Promise.reject(new Error('stripe-side 503: service unavailable')))
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(502)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('stripe_unavailable')
+  })
+
+  it('returns 502 stripe_unavailable when subscriptions.retrieve throws', async () => {
+    stripe.setRetrieveImpl(() => Promise.reject(new Error('stripe-side network error')))
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(502)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('stripe_unavailable')
+    expect(stripe.updateCalls).toHaveLength(0)
+  })
+
+  it('returns 400 body_invalid when target_tier_lookup_key is missing', async () => {
+    app = await buildAuthedTestApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: {},
+    })
+
+    expect(res.statusCode).toBe(400)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('body_invalid')
+    expect(stripe.retrieveCalls).toHaveLength(0)
+    expect(stripe.updateCalls).toHaveLength(0)
+  })
+
+  it('returns 401 when the request carries no JWT (no auth plugin registered)', async () => {
+    mockCreateRepo.mockReturnValue(makeMockRepo())
+    noAuthApp = await buildNoAuthTestApp()
+
+    const res = await noAuthApp.inject({
+      method: 'POST',
+      url: '/api/billing/upgrade-tier',
+      headers: { 'content-type': 'application/json' },
+      payload: { target_tier_lookup_key: 'tier_sojourner' },
+    })
+
+    expect(res.statusCode).toBe(401)
+    const body = res.json<{ code: string }>()
+    expect(body.code).toBe('unauthenticated')
   })
 })
