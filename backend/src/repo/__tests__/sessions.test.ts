@@ -37,7 +37,7 @@ async function makeCampaign(pool: Pool): Promise<{ campaignId: string }> {
   const users = createUsersRepo(pool)
   const worlds = createWorldsRepo(pool)
   const campaigns = createCampaignsRepo(pool)
-  const owner = await users.create(baseUserInput)
+  const owner = await users.create(pool, baseUserInput)
   const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
   const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'C' })
   return { campaignId: c.id }

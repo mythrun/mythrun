@@ -59,7 +59,7 @@ describe('credits repo (integration)', () => {
     it('returns 0 for an empty ledger (both credit types)', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       expect(await credits.balance(u.id, 'session')).toBe(0)
       expect(await credits.balance(u.id, 'world_gen')).toBe(0)
     })
@@ -67,7 +67,7 @@ describe('credits repo (integration)', () => {
     it('grant + balance returns the granted amount', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
 
       await credits.grant({
         userId: u.id,
@@ -83,7 +83,7 @@ describe('credits repo (integration)', () => {
     it('multiple grants sum', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 3, sourceType: 'gift' })
       await credits.grant({ userId: u.id, creditType: 'session', amount: 2, sourceType: 'gift' })
       expect(await credits.balance(u.id, 'session')).toBe(5)
@@ -92,7 +92,7 @@ describe('credits repo (integration)', () => {
     it('expired credits are excluded', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({
         userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
         expiresAt: new Date(Date.now() - 86_400_000),
@@ -107,7 +107,7 @@ describe('credits repo (integration)', () => {
     it('credit-type isolation: session and world_gen do not bleed', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
       await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 2, sourceType: 'gift' })
       expect(await credits.balance(u.id, 'session')).toBe(5)
@@ -119,7 +119,7 @@ describe('credits repo (integration)', () => {
     it('inserts a positive credit entry and balance reflects it', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
 
       const entry = await credits.grant({
         userId: u.id,
@@ -140,7 +140,7 @@ describe('credits repo (integration)', () => {
     it('throws on amount <= 0', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
 
       await expect(
         credits.grant({ userId: u.id, creditType: 'session', amount: 0, sourceType: 'gift' }),
@@ -166,7 +166,7 @@ describe('credits repo (integration)', () => {
     it('debits and returns the new entry; balance reflects it', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       const sourceId = uuidv7()
@@ -183,7 +183,7 @@ describe('credits repo (integration)', () => {
     it('throws InsufficientCreditsError when balance is too low', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
 
       const { InsufficientCreditsError } = await import('../credits-errors.js')
@@ -200,7 +200,7 @@ describe('credits repo (integration)', () => {
     it('throws InsufficientCreditsError on empty ledger', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
 
       const { InsufficientCreditsError } = await import('../credits-errors.js')
       await expect(
@@ -214,7 +214,7 @@ describe('credits repo (integration)', () => {
     it('debit on world_gen does not see session credits', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       const { InsufficientCreditsError } = await import('../credits-errors.js')
@@ -229,7 +229,7 @@ describe('credits repo (integration)', () => {
     it('throws on amount <= 0', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await expect(
         credits.atomicDebit({
           userId: u.id, creditType: 'session', amount: 0, sourceId: uuidv7(),
@@ -240,7 +240,7 @@ describe('credits repo (integration)', () => {
     it('throws on empty sourceId', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await expect(
         credits.atomicDebit({
           userId: u.id, creditType: 'session', amount: 1, sourceId: '',
@@ -263,7 +263,7 @@ describe('credits repo (integration)', () => {
     it('idempotent retry returns the prior entry, no second insert', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       const sourceId = uuidv7()
@@ -289,7 +289,7 @@ describe('credits repo (integration)', () => {
     it('idempotency conflict on amount mismatch throws IdempotencyConflictError', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       const sourceId = uuidv7()
@@ -315,7 +315,7 @@ describe('credits repo (integration)', () => {
     it('different sourceIds stay distinct', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       await credits.atomicDebit({
@@ -331,7 +331,7 @@ describe('credits repo (integration)', () => {
     it('cross-credit-type same sourceId both succeed (sequential)', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
       await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 2, sourceType: 'gift' })
 
@@ -352,7 +352,7 @@ describe('credits repo (integration)', () => {
     it('returns DESC by (granted_at, id), default limit 100', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
 
       const a = await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
       const b = await credits.grant({ userId: u.id, creditType: 'session', amount: 3, sourceType: 'gift' })
@@ -372,7 +372,7 @@ describe('credits repo (integration)', () => {
     it('credit-type filter narrows', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
       await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 1, sourceType: 'gift' })
 
@@ -384,7 +384,7 @@ describe('credits repo (integration)', () => {
     it('includes expired entries (audit view, not balance view)', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({
         userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
         expiresAt: new Date(Date.now() - 86_400_000),
@@ -399,7 +399,7 @@ describe('credits repo (integration)', () => {
   describe('schema invariants (migration 004)', () => {
     it('polarity CHECK rejects positive amount with source_type=debit', async () => {
       const users = createUsersRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await expect(
         pool.query(
           `INSERT INTO credit_ledger
@@ -412,7 +412,7 @@ describe('credits repo (integration)', () => {
 
     it('polarity CHECK rejects negative amount with source_type=subscription', async () => {
       const users = createUsersRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await expect(
         pool.query(
           `INSERT INTO credit_ledger
@@ -425,7 +425,7 @@ describe('credits repo (integration)', () => {
 
     it('debit_has_source_chk rejects NULL source_id with source_type=debit', async () => {
       const users = createUsersRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await expect(
         pool.query(
           `INSERT INTO credit_ledger
@@ -438,7 +438,7 @@ describe('credits repo (integration)', () => {
 
     it('debit_no_expiry_chk rejects expires_at on a debit row', async () => {
       const users = createUsersRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await expect(
         pool.query(
           `INSERT INTO credit_ledger
@@ -451,7 +451,7 @@ describe('credits repo (integration)', () => {
 
     it('idempotency partial unique index rejects duplicate (user_id, credit_type, source_id) for debits', async () => {
       const users = createUsersRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       const sharedSourceId = uuidv7()
       await pool.query(
         `INSERT INTO credit_ledger
@@ -472,7 +472,7 @@ describe('credits repo (integration)', () => {
     it('FK ON DELETE RESTRICT rejects user deletion when ledger rows exist', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       await credits.grant({
         userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift',
       })
@@ -483,7 +483,7 @@ describe('credits repo (integration)', () => {
 
     it('idempotency SELECT plan uses the partial unique index (EXPLAIN)', async () => {
       const users = createUsersRepo(pool)
-      const u = await users.create(baseUserInput)
+      const u = await users.create(pool, baseUserInput)
       // Insert one debit so the planner has stats to work with.
       await pool.query(
         `INSERT INTO credit_ledger
@@ -536,7 +536,7 @@ describe('credits repo — concurrency (separate pool)', () => {
 
     for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
       await resetCreditsData(pool)
-      const u = await users.create({
+      const u = await users.create(pool, {
         ...baseUserInput,
         cognitoSub: `sub-race-${String(i)}`,
         username: `race${String(i)}`,
@@ -571,7 +571,7 @@ describe('credits repo — concurrency (separate pool)', () => {
 
     for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
       await resetCreditsData(pool)
-      const u = await users.create({
+      const u = await users.create(pool, {
         ...baseUserInput,
         cognitoSub: `sub-empty-${String(i)}`,
         username: `empty${String(i)}`,
@@ -610,7 +610,7 @@ describe('credits repo — concurrency (separate pool)', () => {
 
     for (let i = 0; i < RACE_ITERATIONS_PAIRED; i++) {
       await resetCreditsData(pool)
-      const u = await users.create({
+      const u = await users.create(pool, {
         ...baseUserInput,
         cognitoSub: `sub-same-${String(i)}`,
         username: `same${String(i)}`,
@@ -647,7 +647,7 @@ describe('credits repo — concurrency (separate pool)', () => {
     // Tighten the lock timeout for this test so we don't wait the full 1s default.
     const fastCredits = createCreditsRepo(pool, { debitLockTimeoutMs: 200 })
 
-    const u = await users.create({
+    const u = await users.create(pool, {
       ...baseUserInput,
       cognitoSub: 'sub-lock-timeout',
       username: 'locktimeout',
@@ -694,7 +694,7 @@ describe('credits repo — concurrency (separate pool)', () => {
   it('every error path issues ROLLBACK (no idle-in-transaction leaks)', async () => {
     const users = createUsersRepo(pool)
     const credits = createCreditsRepo(pool)
-    const u = await users.create({
+    const u = await users.create(pool, {
       ...baseUserInput,
       cognitoSub: 'sub-rollback',
       username: 'rollback',

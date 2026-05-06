@@ -52,7 +52,7 @@ describe('users repo (integration)', () => {
 
   it('create returns a fully-populated user row', async () => {
     const repo = createUsersRepo(pool)
-    const u = await repo.create(baseInput)
+    const u = await repo.create(pool, baseInput)
     expect(u.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(u.cognitoSub).toBe('google_12345')
     expect(u.displayName).toBe('Alice')
@@ -66,7 +66,7 @@ describe('users repo (integration)', () => {
 
   it('getById returns the user when present', async () => {
     const repo = createUsersRepo(pool)
-    const created = await repo.create(baseInput)
+    const created = await repo.create(pool, baseInput)
     const found = await repo.getById(created.id)
     expect(found).not.toBeNull()
     expect(found?.id).toBe(created.id)
@@ -80,7 +80,7 @@ describe('users repo (integration)', () => {
 
   it('getByCognitoSub returns the user when present', async () => {
     const repo = createUsersRepo(pool)
-    await repo.create(baseInput)
+    await repo.create(pool, baseInput)
     const u = await repo.getByCognitoSub('google_12345')
     expect(u).not.toBeNull()
     expect(u?.username).toBe('alice')
@@ -94,7 +94,7 @@ describe('users repo (integration)', () => {
 
   it('update mutates supplied fields and bumps updatedAt', async () => {
     const repo = createUsersRepo(pool)
-    const created = await repo.create(baseInput)
+    const created = await repo.create(pool, baseInput)
     await new Promise((r) => setTimeout(r, 5))
     const updated = await repo.update(created.id, { displayName: 'Alicia' })
     expect(updated.displayName).toBe('Alicia')
@@ -104,7 +104,7 @@ describe('users repo (integration)', () => {
 
   it('update with all-undefined patch is a no-op (except updatedAt)', async () => {
     const repo = createUsersRepo(pool)
-    const created = await repo.create(baseInput)
+    const created = await repo.create(pool, baseInput)
     await new Promise((r) => setTimeout(r, 5))
     const updated = await repo.update(created.id, {})
     expect(updated.displayName).toBe(created.displayName)
@@ -121,7 +121,7 @@ describe('users repo (integration)', () => {
 
   it('getByUsername is case-insensitive', async () => {
     const repo = createUsersRepo(pool)
-    await repo.create({ ...baseInput, username: 'Gandalf' })
+    await repo.create(pool, { ...baseInput, username: 'Gandalf' })
     expect(await repo.getByUsername('GANDALF')).not.toBeNull()
     expect(await repo.getByUsername('gandalf')).not.toBeNull()
     expect((await repo.getByUsername('gandalf'))?.username).toBe('Gandalf')
@@ -129,15 +129,15 @@ describe('users repo (integration)', () => {
 
   it('UNIQUE LOWER(username) rejects case-variant duplicates', async () => {
     const repo = createUsersRepo(pool)
-    await repo.create({ ...baseInput, username: 'Admin' })
+    await repo.create(pool, { ...baseInput, username: 'Admin' })
     await expect(
-      repo.create({ ...baseInput, cognitoSub: 'google_xyz', username: 'admin' }),
+      repo.create(pool, { ...baseInput, cognitoSub: 'google_xyz', username: 'admin' }),
     ).rejects.toThrow(/users_username_lower_key|duplicate key/)
   })
 
   it('getByCognitoSubWithTimeout returns the user under normal load', async () => {
     const repo = createUsersRepo(pool)
-    const u = await repo.create(baseInput)
+    const u = await repo.create(pool, baseInput)
     const found = await repo.getByCognitoSubWithTimeout(u.cognitoSub, 200)
     expect(found?.id).toBe(u.id)
   })

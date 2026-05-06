@@ -63,7 +63,7 @@ describe('invites repo (integration)', () => {
     const campaigns = createCampaignsRepo(pool)
     const invites = createInvitesRepo(pool)
 
-    const owner = await users.create(baseUserInput(userSuffix))
+    const owner = await users.create(pool, baseUserInput(userSuffix))
     const w = await worlds.create({ createdBy: owner.id, name: 'World', concept: 'concept' })
     const c = await campaigns.create({ worldId: w.id, createdBy: owner.id, name: 'Campaign' })
     await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
@@ -154,7 +154,7 @@ describe('invites repo (integration)', () => {
   describe('acceptInvite', () => {
     it('happy path: adds member, returns alreadyMember=false, increments uses', async () => {
       const { invites, campaign, owner, users } = await setup()
-      const player = await users.create(baseUserInput('player'))
+      const player = await users.create(pool, baseUserInput('player'))
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
 
       const result = await invites.acceptInvite({ code: inv.inviteCode, userId: player.id })
@@ -166,7 +166,7 @@ describe('invites repo (integration)', () => {
 
     it('already-member: returns alreadyMember=true, uses NOT incremented', async () => {
       const { invites, campaigns, campaign, owner, users } = await setup()
-      const player = await users.create(baseUserInput('player'))
+      const player = await users.create(pool, baseUserInput('player'))
       await campaigns.addMember({ campaignId: campaign.id, userId: player.id, role: 'player' })
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
 
@@ -179,7 +179,7 @@ describe('invites repo (integration)', () => {
 
     it('membership trumps revoke: already-member of revoked invite returns alreadyMember=true', async () => {
       const { invites, campaigns, campaign, owner, users } = await setup()
-      const player = await users.create(baseUserInput('player'))
+      const player = await users.create(pool, baseUserInput('player'))
       await campaigns.addMember({ campaignId: campaign.id, userId: player.id, role: 'player' })
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       await invites.revoke(inv.inviteCode, campaign.id)
@@ -190,7 +190,7 @@ describe('invites repo (integration)', () => {
 
     it('non-member + revoked → revoked: true', async () => {
       const { invites, campaign, owner, users } = await setup()
-      const player = await users.create(baseUserInput('player'))
+      const player = await users.create(pool, baseUserInput('player'))
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       await invites.revoke(inv.inviteCode, campaign.id)
 
@@ -200,7 +200,7 @@ describe('invites repo (integration)', () => {
 
     it('unknown code → notFound: true', async () => {
       const { invites, users } = await setup()
-      const player = await users.create(baseUserInput('player'))
+      const player = await users.create(pool, baseUserInput('player'))
       const result = await invites.acceptInvite({ code: 'NOTACODE0000', userId: player.id })
       expect(result).toEqual({ notFound: true })
     })
@@ -208,10 +208,10 @@ describe('invites repo (integration)', () => {
     it('campaign full (6 members) → campaignFull: true', async () => {
       const { invites, campaigns, campaign, owner, users } = await setup()
       for (let i = 0; i < 5; i++) {
-        const p = await users.create(baseUserInput(`p${String(i)}`))
+        const p = await users.create(pool, baseUserInput(`p${String(i)}`))
         await campaigns.addMember({ campaignId: campaign.id, userId: p.id, role: 'player' })
       }
-      const newPlayer = await users.create(baseUserInput('seventh'))
+      const newPlayer = await users.create(pool, baseUserInput('seventh'))
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       const result = await invites.acceptInvite({ code: inv.inviteCode, userId: newPlayer.id })
       expect(result).toEqual({ campaignFull: true, activeMembers: 6 })
@@ -245,12 +245,12 @@ describe('invites repo — concurrency (separate pool)', () => {
 
     for (let i = 0; i < RACE_ITERATIONS; i++) {
       await resetData(pool)
-      const owner = await users.create({
+      const owner = await users.create(pool, {
         cognitoSub: `sub-race-o-${String(i)}`,
         username: `raceo${String(i)}`,
         displayName: 'Owner',
       })
-      const player = await users.create({
+      const player = await users.create(pool, {
         cognitoSub: `sub-race-p-${String(i)}`,
         username: `racep${String(i)}`,
         displayName: 'Player',
@@ -288,8 +288,8 @@ describe('invites repo — concurrency (separate pool)', () => {
     const fastInvites = createInvitesRepo(pool, { lockTimeoutMs: 200 })
     const invitesRepo = createInvitesRepo(pool)
 
-    const owner = await users.create({ cognitoSub: 'sub-lock-o', username: 'locko', displayName: 'O' })
-    const player = await users.create({ cognitoSub: 'sub-lock-p', username: 'lockp', displayName: 'P' })
+    const owner = await users.create(pool, { cognitoSub: 'sub-lock-o', username: 'locko', displayName: 'O' })
+    const player = await users.create(pool, { cognitoSub: 'sub-lock-p', username: 'lockp', displayName: 'P' })
     const w = await worldsRepo.create({ createdBy: owner.id, name: 'W', concept: 'c' })
     const c = await campaignsRepo.create({ worldId: w.id, createdBy: owner.id, name: 'C' })
     await campaignsRepo.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })

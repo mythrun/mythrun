@@ -36,8 +36,8 @@ function silentLogger(): ReturnType<typeof pino> {
   return pino({ base: { component: 'migrate' } }, sink)
 }
 
-async function seedBypassUser(repo: Repo): Promise<string> {
-  const u = await repo.users.create({
+async function seedBypassUser(repo: Repo, pool: Pool): Promise<string> {
+  const u = await repo.users.create(pool, {
     cognitoSub: BYPASS_SUB,
     username: 'bypass',
     displayName: 'Bypass',
@@ -53,9 +53,10 @@ interface SeededOther {
 
 async function seedOtherOwnedCampaign(
   repo: Repo,
+  pool: Pool,
   suffix: string,
 ): Promise<SeededOther> {
-  const owner = await repo.users.create({
+  const owner = await repo.users.create(pool, {
     cognitoSub: `other-sub-${suffix}`,
     username: `other${suffix}`,
     displayName: `Other ${suffix}`,
@@ -78,11 +79,11 @@ async function seedOtherOwnedCampaign(
   return { userId: owner.id, worldId: world.id, campaignId: campaign.id }
 }
 
-async function seedBypassOwnedCampaign(repo: Repo): Promise<{
+async function seedBypassOwnedCampaign(repo: Repo, pool: Pool): Promise<{
   readonly bypassUserId: string
   readonly campaignId: string
 }> {
-  const bypassUserId = await seedBypassUser(repo)
+  const bypassUserId = await seedBypassUser(repo, pool)
   const world = await repo.worlds.create({
     createdBy: bypassUserId,
     name: 'World',
@@ -155,7 +156,7 @@ describe('invite routes (integration)', () => {
 
   describe('POST /api/campaigns/:id/invites', () => {
     it('owner creates invite → 201 with code, url, Location header', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo)
+      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
       const res = await inject({
         method: 'POST',
         url: `/api/campaigns/${campaignId}/invites`,
@@ -169,8 +170,8 @@ describe('invite routes (integration)', () => {
     })
 
     it('non-owner (non-member) → 403 not_campaign_owner', async () => {
-      await seedBypassUser(repo)
-      const other = await seedOtherOwnedCampaign(repo, 'a')
+      await seedBypassUser(repo, pool)
+      const other = await seedOtherOwnedCampaign(repo, pool, 'a')
       const res = await inject({
         method: 'POST',
         url: `/api/campaigns/${other.campaignId}/invites`,
@@ -180,7 +181,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown campaign → 404 campaign_not_found', async () => {
-      await seedBypassUser(repo)
+      await seedBypassUser(repo, pool)
       const res = await inject({
         method: 'POST',
         url: '/api/campaigns/00000000-0000-7000-8000-000000000000/invites',
@@ -192,7 +193,7 @@ describe('invite routes (integration)', () => {
 
   describe('GET /api/campaigns/:id/invites', () => {
     it('owner lists invites → 200 with array including primary', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo)
+      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
       // create 2 invites
       const c1 = await inject({ method: 'POST', url: `/api/campaigns/${campaignId}/invites` })
       const c2 = await inject({ method: 'POST', url: `/api/campaigns/${campaignId}/invites` })
@@ -212,8 +213,8 @@ describe('invite routes (integration)', () => {
     })
 
     it('non-owner → 403 not_campaign_owner', async () => {
-      await seedBypassUser(repo)
-      const other = await seedOtherOwnedCampaign(repo, 'b')
+      await seedBypassUser(repo, pool)
+      const other = await seedOtherOwnedCampaign(repo, pool, 'b')
       const res = await inject({ method: 'GET', url: `/api/campaigns/${other.campaignId}/invites` })
       expect(res.statusCode).toBe(403)
       expect(res.json()).toEqual({ code: 'not_campaign_owner' })
@@ -222,7 +223,7 @@ describe('invite routes (integration)', () => {
 
   describe('DELETE /api/campaigns/:id/invites/:inviteCode', () => {
     it('owner revokes invite → 204', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo)
+      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
       const created = await inject({ method: 'POST', url: `/api/campaigns/${campaignId}/invites` })
       const code = created.json<{ inviteCode: string }>().inviteCode
 
@@ -234,7 +235,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown invite code → 404 invite_not_found', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo)
+      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
       const res = await inject({
         method: 'DELETE',
         url: `/api/campaigns/${campaignId}/invites/NOTAREALCODE`,
@@ -246,7 +247,7 @@ describe('invite routes (integration)', () => {
 
   describe('GET /api/invites/:inviteCode/preview', () => {
     it('valid invite → 200 valid:true with campaign + owner identity', async () => {
-      const other = await seedOtherOwnedCampaign(repo, 'pv1')
+      const other = await seedOtherOwnedCampaign(repo, pool, 'pv1')
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -263,7 +264,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('revoked invite → 200 valid:false', async () => {
-      const other = await seedOtherOwnedCampaign(repo, 'pv2')
+      const other = await seedOtherOwnedCampaign(repo, pool, 'pv2')
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -291,8 +292,8 @@ describe('invite routes (integration)', () => {
 
   describe('POST /api/invites/:inviteCode/accept', () => {
     it('accept new invite → 201 alreadyMember:false + Location header', async () => {
-      await seedBypassUser(repo)
-      const other = await seedOtherOwnedCampaign(repo, 'ac1')
+      await seedBypassUser(repo, pool)
+      const other = await seedOtherOwnedCampaign(repo, pool, 'ac1')
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -310,7 +311,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('already member → 200 alreadyMember:true (no Location)', async () => {
-      const { bypassUserId, campaignId } = await seedBypassOwnedCampaign(repo)
+      const { bypassUserId, campaignId } = await seedBypassOwnedCampaign(repo, pool)
       // bypass user is already the owner of this campaign — count as member.
       void bypassUserId
       const inv = await repo.invites.create({
@@ -329,8 +330,8 @@ describe('invite routes (integration)', () => {
     })
 
     it('revoked invite, non-member → 410 invite_revoked', async () => {
-      await seedBypassUser(repo)
-      const other = await seedOtherOwnedCampaign(repo, 'ac3')
+      await seedBypassUser(repo, pool)
+      const other = await seedOtherOwnedCampaign(repo, pool, 'ac3')
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -346,7 +347,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('membership trumps revoke: already-member of revoked invite → 200 alreadyMember:true', async () => {
-      const { bypassUserId, campaignId } = await seedBypassOwnedCampaign(repo)
+      const { bypassUserId, campaignId } = await seedBypassOwnedCampaign(repo, pool)
       const inv = await repo.invites.create({
         campaignId,
         createdBy: bypassUserId,
@@ -363,7 +364,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown code → 404 invite_not_found', async () => {
-      await seedBypassUser(repo)
+      await seedBypassUser(repo, pool)
       const res = await inject({
         method: 'POST',
         url: '/api/invites/NOTAREALCODE/accept',
@@ -375,7 +376,7 @@ describe('invite routes (integration)', () => {
 
   describe('GET /api/campaigns/:id/members', () => {
     it('member lists members → 200 with members array', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo)
+      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
       const res = await inject({
         method: 'GET',
         url: `/api/campaigns/${campaignId}/members`,
@@ -390,8 +391,8 @@ describe('invite routes (integration)', () => {
     })
 
     it('non-member → 403 not_campaign_member', async () => {
-      await seedBypassUser(repo)
-      const other = await seedOtherOwnedCampaign(repo, 'm1')
+      await seedBypassUser(repo, pool)
+      const other = await seedOtherOwnedCampaign(repo, pool, 'm1')
       const res = await inject({
         method: 'GET',
         url: `/api/campaigns/${other.campaignId}/members`,
@@ -401,7 +402,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown campaign → 404 campaign_not_found', async () => {
-      await seedBypassUser(repo)
+      await seedBypassUser(repo, pool)
       const res = await inject({
         method: 'GET',
         url: '/api/campaigns/00000000-0000-7000-8000-000000000000/members',

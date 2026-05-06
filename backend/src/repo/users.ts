@@ -1,6 +1,7 @@
 import { type Pool, type PoolClient } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import { toUser, type UserDbRow } from './mappers.js'
+import type { ClientLike } from './_types.js'
 import type { CreateUserInput, User, UserUpdate } from './types.js'
 
 export class LookupTimeoutError extends Error {
@@ -13,9 +14,9 @@ export class LookupTimeoutError extends Error {
 
 export function createUsersRepo(pool: Pool) {
   return {
-    create: async (input: CreateUserInput): Promise<User> => {
+    create: async (tx: ClientLike, input: CreateUserInput): Promise<User> => {
       const id = uuidv7()
-      const result = await pool.query<UserDbRow>(
+      const result = await tx.query<UserDbRow>(
         `INSERT INTO users (id, cognito_sub, username, display_name)
          VALUES ($1, $2, $3, $4)
          RETURNING *`,
