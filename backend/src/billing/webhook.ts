@@ -41,6 +41,8 @@ import type { Pool } from 'pg'
 import type { FastifyBaseLogger } from 'fastify'
 import type { ClientLike } from '../repo/_types.js'
 import { stripeEvents } from '../repo/stripe-events.js'
+import { userSubscriptions } from '../repo/user-subscriptions.js'
+import { uuidv7 } from '../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from './stripe-client.js'
 
 export type KnownStripeEventType =
@@ -60,6 +62,7 @@ export type EventHandler = (
   event: Stripe.Event,
   prefetch: unknown,
   client: ClientLike,
+  log: FastifyBaseLogger,
 ) => Promise<HandlerResult>
 
 export type PrefetchFn = (event: Stripe.Event, stripe: Stripe) => Promise<unknown>
@@ -75,7 +78,7 @@ export type PrefetchFn = (event: Stripe.Event, stripe: Stripe) => Promise<unknow
 const okHandler: EventHandler = () => Promise.resolve('ok')
 
 export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
-  'checkout.session.completed': okHandler,
+  'checkout.session.completed': handleCheckoutCompleted,
   'invoice.paid': okHandler,
   'customer.subscription.created': okHandler,
   'customer.subscription.updated': okHandler,
@@ -86,12 +89,13 @@ export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'refund.updated': okHandler,
 }
 
-// Per-event prefetch shapes (spec §5.3 lines 510-547). Currently empty;
-// Tasks 17-24 fill in the entries that need Stripe-side fetches (e.g.
-// checkout.session.completed expands line_items, invoice.paid resolves
-// the parent subscription). Default: no prefetch (handler reads
-// event.data.object directly).
-export const PREFETCHERS: Partial<Record<KnownStripeEventType, PrefetchFn>> = {}
+// Per-event prefetch shapes (spec §5.3 lines 510-547). Tasks 17-24 fill
+// in the entries that need Stripe-side fetches; the default for
+// unlisted entries is "no prefetch" (handler reads event.data.object
+// directly).
+export const PREFETCHERS: Partial<Record<KnownStripeEventType, PrefetchFn>> = {
+  'checkout.session.completed': prefetchCheckoutCompleted,
+}
 
 /**
  * Look up a HANDLERS entry by runtime event-type string. Returns
@@ -202,7 +206,7 @@ export async function dispatchEvent(
       return
     }
 
-    const result = await handler(event, prefetch, client)
+    const result = await handler(event, prefetch, client, log)
     await client.query('COMMIT')
 
     if (result === 'validation_failed') {
@@ -226,4 +230,272 @@ export async function dispatchEvent(
   } finally {
     client.release()
   }
+}
+
+// ─── checkout.session.completed (Task 17, MYT-42 §5.4.1) ────────────────────
+//
+// Subscription mode: upsert user_subscriptions ONLY. No billing_history,
+// no credit_ledger writes — those are owned by the `invoice.paid` handler
+// (Decision 1 of round-2 review + Manchego M2 round 3). The downstream
+// `invoice.paid` arrives ~100ms later (or whenever SCA / ACH settles)
+// and produces the credit grant.
+//
+// Payment mode (à-la-carte): deferred to Task 18. The handler returns
+// 'ok' as a temporary placeholder so unrelated payment-mode webhook
+// deliveries don't retry-loop in the meantime.
+
+/**
+ * Shape of the prefetched session + subscription. The dispatcher runs
+ * this OUTSIDE the dispatch tx (per §5.3 prefetch-then-write discipline),
+ * so a Stripe outage can delay processing without pinning the PoolClient.
+ *
+ * `subscription` is null for payment-mode sessions (no Stripe
+ * subscription was created); the subscription-branch handler asserts
+ * non-null before reading from it.
+ */
+export interface CheckoutCompletedPrefetch {
+  readonly session: Stripe.Checkout.Session
+  readonly subscription: Stripe.Subscription | null
+}
+
+/**
+ * Prefetcher for `checkout.session.completed` (spec §5.3 line 512).
+ *
+ * Always retrieves the session (the event payload at dahlia does NOT
+ * include `line_items`). When the session is in subscription mode,
+ * additionally retrieves the subscription so the handler has access to
+ * `items.data[0].current_period_*` plus `status`, `cancel_at_period_end`,
+ * `cancel_at`, and `cancellation_details` — Stripe's webhook payloads
+ * don't deep-expand by default per §3.1 note 4.
+ *
+ * Idempotent on retry: completed sessions and their subscriptions are
+ * immutable post-completion.
+ */
+async function prefetchCheckoutCompleted(
+  event: Stripe.Event,
+  stripe: Stripe,
+): Promise<CheckoutCompletedPrefetch> {
+  const obj = event.data.object as Stripe.Checkout.Session
+  const session = await stripe.checkout.sessions.retrieve(obj.id, {
+    expand: ['line_items.data.price'],
+  })
+  let subscription: Stripe.Subscription | null = null
+  if (typeof session.subscription === 'string' && session.subscription.length > 0) {
+    subscription = await stripe.subscriptions.retrieve(session.subscription, {
+      expand: ['items.data.price'],
+    })
+  }
+  return { session, subscription }
+}
+
+/**
+ * Read the prefetch with a runtime-shape gate so the handler doesn't
+ * have to litter `as` casts. Throws if the prefetch is shaped wrong —
+ * a programming error that should be caught loudly (the dispatcher will
+ * ROLLBACK and Stripe redelivers).
+ */
+function asCheckoutPrefetch(prefetch: unknown): CheckoutCompletedPrefetch {
+  if (
+    typeof prefetch !== 'object' ||
+    prefetch === null ||
+    !('session' in prefetch) ||
+    !('subscription' in prefetch)
+  ) {
+    throw new Error('checkout.session.completed: prefetch shape unexpected')
+  }
+  // The interface fields are typed; the cast through unknown lets us
+  // narrow without fighting TS's structural-type inference on `in`.
+  return prefetch as CheckoutCompletedPrefetch
+}
+
+/**
+ * Handler for `checkout.session.completed` (spec §5.4.1).
+ *
+ * Resolves user via `event.data.object.metadata.userId` (NOT via
+ * `customer.id` — checkout sessions carry the userId in metadata at
+ * session-create time per §4.3). Cross-checks `customer` against
+ * `users.stripe_customer_id` for defense-in-depth. On miss or mismatch,
+ * pages a paging-grade error metric and returns 'ok' so the dispatcher
+ * COMMITs the `stripe_events` row (Stripe stops retrying); manual
+ * reconciliation handles the corruption.
+ *
+ * Branches on `mode`:
+ *   - 'subscription': upsert `user_subscriptions` via the repo (single
+ *     ON CONFLICT statement; idempotent across redeliveries and across
+ *     racing `customer.subscription.created/.updated` events). NO writes
+ *     to billing_history / credit_ledger.
+ *   - 'payment': Task 18 placeholder — returns 'ok'.
+ */
+interface CheckoutLogIds {
+  readonly event_id: string
+  readonly session_id: string
+  readonly payment_intent: string | null
+  readonly subscription: string | null
+  readonly metadata_user_id: string | null
+  readonly customer: string | null
+}
+
+function checkoutLogIds(event: Stripe.Event, session: Stripe.Checkout.Session): CheckoutLogIds {
+  return {
+    event_id: event.id,
+    session_id: session.id,
+    payment_intent: typeof session.payment_intent === 'string' ? session.payment_intent : null,
+    subscription: typeof session.subscription === 'string' ? session.subscription : null,
+    metadata_user_id: session.metadata?.userId ?? null,
+    customer: typeof session.customer === 'string' ? session.customer : null,
+  }
+}
+
+async function handleCheckoutCompleted(
+  event: Stripe.Event,
+  prefetch: unknown,
+  client: ClientLike,
+  log: FastifyBaseLogger,
+): Promise<HandlerResult> {
+  const { session, subscription } = asCheckoutPrefetch(prefetch)
+  const ids = checkoutLogIds(event, session)
+
+  // 1. Orphan check — `metadata.userId` doesn't resolve to a users row.
+  //    Page (paid-but-unknown-user is paging-grade per §5.4.1) + COMMIT
+  //    the stripe_events row + return 'ok' (NOT validation_failed; that
+  //    sentinel is reserved for amount-validation per §5.4 cross-cutting
+  //    rule 2). NO throw — throwing would ROLLBACK and Stripe would
+  //    redeliver, accumulating noise without changing the outcome.
+  if (ids.metadata_user_id === null) {
+    log.error(ids, 'billing.checkout_orphan')
+    return 'ok'
+  }
+  const userRow = await client.query<{ id: string; stripe_customer_id: string | null }>(
+    'SELECT id, stripe_customer_id FROM users WHERE id = $1 FOR UPDATE',
+    [ids.metadata_user_id],
+  )
+  const user = userRow.rows[0]
+  if (!user) {
+    log.error(ids, 'billing.checkout_orphan')
+    return 'ok'
+  }
+
+  // 2. Cross-check: session.customer must match users.stripe_customer_id.
+  //    A mismatch means the user-checkout-customer triple is corrupted
+  //    (operator review). Page + COMMIT + return 'ok' — same shape as
+  //    the orphan path; the row writes are NOT applied.
+  if (ids.customer !== user.stripe_customer_id) {
+    log.error(
+      { ...ids, users_stripe_customer_id: user.stripe_customer_id },
+      'billing.checkout_customer_mismatch',
+    )
+    return 'ok'
+  }
+
+  // 3. Branch on session.mode.
+  if (session.mode === 'subscription') {
+    return await handleCheckoutCompletedSubscription(
+      event,
+      session,
+      subscription,
+      user.id,
+      client,
+      log,
+    )
+  }
+  if (session.mode === 'payment') {
+    // TODO(Task 18): payment-mode handler. Placeholder so unrelated
+    // payment-mode webhook deliveries don't retry-loop until that task
+    // ships; per §5.4.1 the payment branch writes purchases +
+    // credit_ledger + billing_history.
+    log.info(
+      { event_id: event.id, session_id: session.id, mode: 'payment' },
+      'billing.checkout_payment_mode_placeholder',
+    )
+    return 'ok'
+  }
+  // 'setup' mode (or anything else dahlia might add): nothing to do.
+  log.info(
+    { event_id: event.id, session_id: session.id, mode: session.mode },
+    'billing.checkout_unhandled_mode',
+  )
+  return 'ok'
+}
+
+/**
+ * Subscription-mode branch of `checkout.session.completed` (spec §5.4.1
+ * subscription-mode bullets, lines 586-589).
+ *
+ * Writes ONLY the `user_subscriptions` row via `upsertFromStripe`
+ * (idempotent ON CONFLICT). NO `billing_history`, NO `credit_ledger` —
+ * those are owned by `invoice.paid`.
+ */
+async function handleCheckoutCompletedSubscription(
+  event: Stripe.Event,
+  session: Stripe.Checkout.Session,
+  subscription: Stripe.Subscription | null,
+  userId: string,
+  client: ClientLike,
+  log: FastifyBaseLogger,
+): Promise<HandlerResult> {
+  // Multi-line subscription guard (per Persepolis C4 round 7 multi-line
+  // pattern, applied here for the subscription branch — Mythrun never
+  // exposes multi-item subs to users; an admin-created multi-line
+  // subscription session is operator error and must NOT silently grant
+  // a tier). Returning 'validation_failed' commits stripe_events without
+  // any other writes; Stripe stops retrying.
+  const lineCount = session.line_items?.data.length ?? 0
+  if (lineCount !== 1) {
+    log.error(
+      { event_id: event.id, session_id: session.id, line_items_count: lineCount },
+      'billing.checkout_subscription_multi_line',
+    )
+    return 'validation_failed'
+  }
+
+  // Subscription must have been prefetched. Stripe always sets
+  // session.subscription when mode='subscription'; a null prefetch here
+  // is a programming error and should fail loudly.
+  if (!subscription) {
+    throw new Error(
+      `checkout.session.completed: subscription mode but prefetch.subscription is null (session=${session.id})`,
+    )
+  }
+  if (subscription.items.data.length !== 1) {
+    log.error(
+      {
+        event_id: event.id,
+        subscription_id: subscription.id,
+        items_count: subscription.items.data.length,
+      },
+      'billing.checkout_subscription_multi_item',
+    )
+    return 'validation_failed'
+  }
+  const item = subscription.items.data[0]
+  if (!item) {
+    throw new Error(`checkout.session.completed: subscription items.data[0] missing (sub=${subscription.id})`)
+  }
+  const tierLookupKey = item.price.lookup_key
+  if (typeof tierLookupKey !== 'string' || tierLookupKey.length === 0) {
+    log.error(
+      {
+        event_id: event.id,
+        subscription_id: subscription.id,
+        price_id: item.price.id,
+      },
+      'billing.checkout_subscription_missing_lookup_key',
+    )
+    return 'validation_failed'
+  }
+
+  await userSubscriptions.upsertFromStripe(client, {
+    id: uuidv7(),
+    user_id: userId,
+    stripe_subscription_id: subscription.id,
+    tier_lookup_key: tierLookupKey,
+    status: subscription.status,
+    current_period_start: new Date(item.current_period_start * 1000),
+    current_period_end: new Date(item.current_period_end * 1000),
+    cancel_at_period_end: subscription.cancel_at_period_end,
+    cancel_at: subscription.cancel_at,
+    cancellation_details: subscription.cancellation_details,
+    stripe_event_created_at: new Date(event.created * 1000),
+  })
+  return 'ok'
 }
