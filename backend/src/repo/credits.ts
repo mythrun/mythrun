@@ -18,6 +18,66 @@ export interface CreditsRepoOpts {
 }
 
 /**
+ * Standalone version of `grantInTx` — same shape as the closure-bound method
+ * on `createCreditsRepo`'s return value, but importable directly so callers
+ * that already have a `ClientLike` (e.g., the §5.4 Stripe webhook handlers)
+ * don't have to thread a pool-bound repo through. Pure: no pool / connection
+ * lifecycle of its own.
+ *
+ * The user-row anchor lock is safe to re-acquire when the caller already
+ * holds it on the same xid (Postgres tuple-lock re-entrancy — same xid
+ * re-acquiring is a no-op). This makes the helper composable with the §5.3
+ * webhook discipline of "lock the user row first, then grantInTx".
+ */
+export async function grantInTx(tx: ClientLike, input: GrantInput): Promise<CreditEntry> {
+  if (input.amount <= 0) {
+    throw new Error('grant: amount must be > 0')
+  }
+  // Type system already excludes 'debit' from sourceType, but a caller
+  // passing through `any` could still violate. Belt-and-suspenders.
+  if ((input.sourceType as string) === 'debit') {
+    throw new Error('grant: sourceType cannot be "debit" — use atomicDebit')
+  }
+
+  const userCheck = await tx.query<{ id: string }>(
+    'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+    [input.userId],
+  )
+  if (userCheck.rowCount === 0) {
+    throw new UserNotFoundError(input.userId)
+  }
+
+  const id = uuidv7()
+  // The FK columns source_purchase_id / source_billing_history_id are
+  // required for source_type='purchase' / 'subscription' / 'refund' per
+  // migration 007's credit_ledger_source_link_chk CHECK. The CHECK
+  // enforces "exactly one populated for grant kinds; both NULL for
+  // trial/gift/debit"; passing both columns here lets every grant kind
+  // share the same INSERT path.
+  const result = await tx.query<CreditEntryDbRow>(
+    `INSERT INTO credit_ledger
+       (id, user_id, credit_type, amount, source_type, source_id, expires_at,
+        source_purchase_id, source_billing_history_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [
+      id,
+      input.userId,
+      input.creditType,
+      input.amount,
+      input.sourceType,
+      input.sourceId ?? null,
+      input.expiresAt ?? null,
+      input.sourcePurchaseId ?? null,
+      input.sourceBillingHistoryId ?? null,
+    ],
+  )
+  const row = result.rows[0]
+  if (!row) throw new Error('grant: INSERT returned no row')
+  return toCreditEntry(row)
+}
+
+/**
  * Caller-shape for `recordClawback`. Negative-polarity row written to
  * credit_ledger when a Stripe refund (full or partial) requires unwinding
  * a prior grant. The originating grant row's UUID — NOT a session id — is
@@ -51,50 +111,6 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
        SET LOCAL statement_timeout = '${String(stmtTimeoutMs)}ms';`,
     )
 
-  // Private helper: validation + user-row anchor lock + INSERT, on a
-  // caller-managed tx. Both the internal `grant` wrapper and the public
-  // `grantInTx` surface delegate here. The user-row lock is safe to
-  // re-acquire when the caller already holds it on the same xid (Postgres
-  // tuple-lock re-entrancy — same xid re-acquiring is a no-op).
-  const grantInTxImpl = async (tx: ClientLike, input: GrantInput): Promise<CreditEntry> => {
-    if (input.amount <= 0) {
-      throw new Error('grant: amount must be > 0')
-    }
-    // Type system already excludes 'debit' from sourceType, but a caller
-    // passing through `any` could still violate. Belt-and-suspenders.
-    if ((input.sourceType as string) === 'debit') {
-      throw new Error('grant: sourceType cannot be "debit" — use atomicDebit')
-    }
-
-    const userCheck = await tx.query<{ id: string }>(
-      'SELECT id FROM users WHERE id = $1 FOR UPDATE',
-      [input.userId],
-    )
-    if (userCheck.rowCount === 0) {
-      throw new UserNotFoundError(input.userId)
-    }
-
-    const id = uuidv7()
-    const result = await tx.query<CreditEntryDbRow>(
-      `INSERT INTO credit_ledger
-         (id, user_id, credit_type, amount, source_type, source_id, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [
-        id,
-        input.userId,
-        input.creditType,
-        input.amount,
-        input.sourceType,
-        input.sourceId ?? null,
-        input.expiresAt ?? null,
-      ],
-    )
-    const row = result.rows[0]
-    if (!row) throw new Error('grant: INSERT returned no row')
-    return toCreditEntry(row)
-  }
-
   return {
     balance: async (userId: string, type: CreditType): Promise<number> => {
       const result = await pool.query<{ balance: string }>(
@@ -120,7 +136,7 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
      * no-op). This makes the helper composable with the §5.3 webhook
      * discipline of "lock the user row first, then call grantInTx".
      */
-    grantInTx: grantInTxImpl,
+    grantInTx,
 
     grant: async (input: GrantInput): Promise<CreditEntry> => {
       const client = await pool.connect()
@@ -128,7 +144,7 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
       try {
         await beginAndConfigure(client)
         inTransaction = true
-        const entry = await grantInTxImpl(client, input)
+        const entry = await grantInTx(client, input)
         await client.query('COMMIT')
         inTransaction = false
         return entry

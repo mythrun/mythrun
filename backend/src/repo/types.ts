@@ -176,6 +176,21 @@ export interface GrantInput {
   readonly sourceType: Exclude<CreditSourceType, 'debit'>
   readonly sourceId?: string | null
   readonly expiresAt?: Date | null
+  /**
+   * FK to the originating `purchases` row. Per migration 007's
+   * `credit_ledger_source_link_chk`: REQUIRED when `sourceType='purchase'`,
+   * MUST be NULL otherwise. Wired through to the INSERT so the §5.4.1
+   * payment-mode handler can write valid à-la-carte grant rows.
+   */
+  readonly sourcePurchaseId?: string | null
+  /**
+   * FK to the originating `billing_history` row. Per migration 007's
+   * `credit_ledger_source_link_chk`: REQUIRED when `sourceType` is
+   * `'subscription'` or `'refund'`, MUST be NULL otherwise. Wired through
+   * to the INSERT so §5.4.2 (subscription grant) + future refund-goodwill
+   * handlers can write valid grant rows.
+   */
+  readonly sourceBillingHistoryId?: string | null
 }
 
 export interface DebitInput {

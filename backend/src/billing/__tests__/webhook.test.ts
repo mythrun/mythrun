@@ -8,7 +8,7 @@
 // via unique event_ids per test (uuidv7-prefixed) so the committed
 // `stripe_events` rows from one test do not collide with another's.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
@@ -21,6 +21,13 @@ import {
   type EventHandler,
   type KnownStripeEventType,
 } from '../webhook.js'
+import {
+  setSkuCache,
+  _resetSkuCacheForTests,
+  type SkuCache,
+  type SkuInternalEntry,
+} from '../sku-cache.js'
+import { LOOKUP_KEYS, type LookupKey } from '../lookup-keys.js'
 
 /**
  * Insert a users row directly via the shared pool. Returns the new id and
@@ -343,10 +350,16 @@ interface SessionFixture {
     readonly data: readonly {
       readonly id: string
       readonly quantity: number | null
-      readonly price: { readonly id: string; readonly lookup_key: string | null } | null
+      readonly amount_total: number
+      readonly price: {
+        readonly id: string
+        readonly lookup_key: string | null
+        readonly currency: string
+      } | null
     }[]
   }
   readonly amount_subtotal: number | null
+  readonly currency: string | null
 }
 
 interface SubscriptionFixture {
@@ -479,11 +492,13 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
           {
             id: 'li_1',
             quantity: 1,
-            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer' },
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
           },
         ],
       },
       amount_subtotal: 1500,
+      currency: 'usd',
     }
     const periodStart = Math.floor(new Date('2026-05-05T00:00:00Z').getTime() / 1000)
     const periodEnd = Math.floor(new Date('2026-06-05T00:00:00Z').getTime() / 1000)
@@ -569,10 +584,16 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
       metadata: { userId: orphanUserId },
       line_items: {
         data: [
-          { id: 'li_1', quantity: 1, price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer' } },
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
         ],
       },
       amount_subtotal: 1500,
+      currency: 'usd',
     }
     const { stripe } = makeStripeWithFixtures({
       session,
@@ -615,10 +636,16 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
       metadata: { userId },
       line_items: {
         data: [
-          { id: 'li_1', quantity: 1, price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer' } },
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
         ],
       },
       amount_subtotal: 1500,
+      currency: 'usd',
     }
     const { stripe } = makeStripeWithFixtures({
       session,
@@ -660,11 +687,22 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
       metadata: { userId },
       line_items: {
         data: [
-          { id: 'li_1', quantity: 1, price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer' } },
-          { id: 'li_2', quantity: 1, price: { id: 'price_sojourner', lookup_key: 'tier_sojourner' } },
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
+          {
+            id: 'li_2',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_sojourner', lookup_key: 'tier_sojourner', currency: 'usd' },
+          },
         ],
       },
       amount_subtotal: 3000,
+      currency: 'usd',
     }
     const { stripe } = makeStripeWithFixtures({
       session,
@@ -687,6 +725,432 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
 
     // Nothing else landed.
     expect(await countUserSubs(pool, sub_id)).toBe(0)
+    expect(await countBillingHistoryFor(pool, userId)).toBe(0)
+    expect(await countCreditLedgerFor(pool, userId)).toBe(0)
+  })
+})
+
+// ─── checkout.session.completed (payment mode, Task 18) ─────────────────────
+//
+// Spec §5.4.1 payment-mode bullets (lines 590-596):
+//   - Walk session.line_items.data; resolve each line.price.id via the SKU
+//     cache reverse map → lookup_key → LookupKeySpec.
+//   - Amount validation: sum(price.unit_amount_cents * quantity) per line
+//     must equal session.amount_subtotal. Mismatch → 'validation_failed'.
+//   - Defensive payment_status === 'paid' assertion (always true at launch
+//     under payment_method_types: ['card', 'link']).
+//   - One purchases row per line_item.
+//   - One billing_history row (kind='purchase', lookup_key=NULL,
+//     amount_cents=amount_subtotal).
+//   - One credit_ledger row per (line, credit_type) where the spec's
+//     sessionsGranted/worldsGranted is > 0; source_type='purchase',
+//     source_purchase_id linked back to the purchases row inserted above.
+//
+// SKU-cache fixtures cover sku_session and sku_world (the two one-time
+// SKUs in lookup-keys.ts). Tests that exercise the unknown-price-id branch
+// build a price.id that the cache doesn't know.
+
+const PRICE_ID_SKU_SESSION = 'price_test_sku_session'
+const PRICE_ID_SKU_WORLD = 'price_test_sku_world'
+
+function makeSkuEntry(lookup_key: LookupKey, stripe_price_id: string, unit_amount_cents: number): SkuInternalEntry {
+  const spec = LOOKUP_KEYS[lookup_key]
+  return {
+    lookup_key,
+    stripe_price_id,
+    displayName: spec.displayName,
+    type: spec.type,
+    sessionsGranted: spec.sessionsGranted,
+    worldsGranted: spec.worldsGranted,
+    price: { unit_amount_cents, currency: 'usd' },
+  }
+}
+
+function buildSkuCacheForPaymentTests(): SkuCache {
+  // 500¢ for sku_session, 1500¢ for sku_world — the validation tests rely on
+  // these specific unit prices to construct a mismatch fixture.
+  const sessionEntry = makeSkuEntry('sku_session', PRICE_ID_SKU_SESSION, 500)
+  const worldEntry = makeSkuEntry('sku_world', PRICE_ID_SKU_WORLD, 1500)
+  return {
+    byLookupKey: new Map([
+      ['sku_session', sessionEntry],
+      ['sku_world', worldEntry],
+    ]),
+    byPriceId: new Map([
+      [sessionEntry.stripe_price_id, sessionEntry],
+      [worldEntry.stripe_price_id, worldEntry],
+    ]),
+    publicListing: [],
+  }
+}
+
+interface PurchaseRow {
+  readonly id: string
+  readonly user_id: string
+  readonly stripe_payment_intent_id: string
+  readonly lookup_key: string
+  readonly quantity: number
+  readonly amount_cents: number
+  readonly currency: string
+  readonly status: string
+}
+
+async function fetchPurchasesByPi(p: Pool, pi: string): Promise<readonly PurchaseRow[]> {
+  const r = await p.query<PurchaseRow>(
+    `SELECT id, user_id, stripe_payment_intent_id, lookup_key, quantity, amount_cents, currency, status
+       FROM purchases
+       WHERE stripe_payment_intent_id = $1
+       ORDER BY id ASC`,
+    [pi],
+  )
+  return r.rows
+}
+
+interface BillingHistoryReadRow {
+  readonly id: string
+  readonly user_id: string
+  readonly kind: string
+  readonly source_id_stripe: string
+  readonly stripe_payment_intent_id: string | null
+  readonly lookup_key: string | null
+  readonly amount_cents: number
+  readonly currency: string
+  readonly expires_at: Date | null
+  readonly occurred_at: Date
+}
+
+async function fetchBillingHistoryForUser(
+  p: Pool,
+  user_id: string,
+): Promise<readonly BillingHistoryReadRow[]> {
+  const r = await p.query<BillingHistoryReadRow>(
+    `SELECT id, user_id, kind, source_id_stripe, stripe_payment_intent_id,
+            lookup_key, amount_cents, currency, expires_at, occurred_at
+       FROM billing_history
+       WHERE user_id = $1
+       ORDER BY occurred_at ASC, id ASC`,
+    [user_id],
+  )
+  return r.rows
+}
+
+interface CreditLedgerReadRow {
+  readonly id: string
+  readonly user_id: string
+  readonly credit_type: string
+  readonly amount: number
+  readonly source_type: string
+  readonly source_purchase_id: string | null
+  readonly source_billing_history_id: string | null
+  readonly expires_at: Date | null
+}
+
+async function fetchCreditLedgerForUser(
+  p: Pool,
+  user_id: string,
+): Promise<readonly CreditLedgerReadRow[]> {
+  const r = await p.query<CreditLedgerReadRow>(
+    `SELECT id, user_id, credit_type, amount, source_type,
+            source_purchase_id, source_billing_history_id, expires_at
+       FROM credit_ledger
+       WHERE user_id = $1
+       ORDER BY granted_at ASC, id ASC`,
+    [user_id],
+  )
+  return r.rows
+}
+
+describe('billing.webhook checkout.session.completed (payment mode)', () => {
+  beforeEach(() => {
+    _resetSkuCacheForTests()
+    setSkuCache(buildSkuCacheForPaymentTests())
+  })
+
+  it('multi-line cart happy path: sku_session × qty 2 + sku_world × qty 1 produces 2 purchases, 1 billing_history, credit_ledger rows linked via source_purchase_id', async () => {
+    // Stripe's Checkout consolidates duplicate SKUs into a single line with
+    // quantity > 1, AND the purchases composite UNIQUE on (PI, lookup_key)
+    // structurally enforces the same rule on our side. The fixture below
+    // matches what real Stripe sends: one line per distinct lookup_key,
+    // quantity multiplies the per-row grant.
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const pi = `pi_test_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_pay_${uuidv7().slice(0, 12)}`,
+      mode: 'payment',
+      customer: cus,
+      subscription: null,
+      payment_intent: pi,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 2,
+            // line.amount_total is post-tax/discount per-line: 500 × 2 = 1000.
+            amount_total: 1000,
+            price: { id: PRICE_ID_SKU_SESSION, lookup_key: 'sku_session', currency: 'usd' },
+          },
+          {
+            id: 'li_2',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: PRICE_ID_SKU_WORLD, lookup_key: 'sku_world', currency: 'usd' },
+          },
+        ],
+      },
+      // expected_subtotal = 500*2 + 1500*1 = 2500
+      amount_subtotal: 2500,
+      currency: 'usd',
+    }
+    const { stripe } = makeStripeWithFixtures({ session })
+    // Use a stable event.created for the occurred_at field assertion below.
+    const eventCreated = Math.floor(new Date('2026-05-06T12:34:56Z').getTime() / 1000)
+    const event = makeCheckoutEvent(session, eventCreated)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    // stripe_events row committed.
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+
+    // Two purchases rows landed (one per line_item), sharing the PaymentIntent.
+    const purchases = await fetchPurchasesByPi(pool, pi)
+    expect(purchases).toHaveLength(2)
+    const byKey = new Map(purchases.map((p) => [p.lookup_key, p] as const))
+    const sessionPurchase = byKey.get('sku_session')
+    const worldPurchase = byKey.get('sku_world')
+    if (!sessionPurchase || !worldPurchase) {
+      throw new Error('expected one purchases row per lookup_key')
+    }
+    expect(sessionPurchase.user_id).toBe(userId)
+    expect(sessionPurchase.quantity).toBe(2)
+    expect(sessionPurchase.amount_cents).toBe(1000)
+    expect(sessionPurchase.currency).toBe('usd')
+    expect(sessionPurchase.status).toBe('completed')
+    expect(worldPurchase.quantity).toBe(1)
+    expect(worldPurchase.amount_cents).toBe(1500)
+    expect(worldPurchase.status).toBe('completed')
+
+    // billing_history: exactly one row, kind='purchase', lookup_key=NULL,
+    // amount_cents=amount_subtotal, expires_at=NULL.
+    const histRows = await fetchBillingHistoryForUser(pool, userId)
+    expect(histRows).toHaveLength(1)
+    const hist = histRows[0]
+    if (!hist) throw new Error('expected billing_history row')
+    expect(hist.kind).toBe('purchase')
+    expect(hist.source_id_stripe).toBe(pi)
+    expect(hist.stripe_payment_intent_id).toBe(pi)
+    expect(hist.lookup_key).toBeNull()
+    expect(hist.amount_cents).toBe(2500)
+    expect(hist.currency).toBe('usd')
+    expect(hist.expires_at).toBeNull()
+    expect(hist.occurred_at.toISOString()).toBe('2026-05-06T12:34:56.000Z')
+
+    // credit_ledger: one row per (line, credit_type with grant > 0).
+    //   - sku_session line: sessionsGranted=1 × qty 2 → 1 row, amount=2 (session)
+    //   - sku_world line:   sessionsGranted=1 × qty 1 → 1 row, amount=1 (session)
+    //                       worldsGranted=1   × qty 1 → 1 row, amount=1 (world_gen)
+    // Total: 3 rows.
+    const ledger = await fetchCreditLedgerForUser(pool, userId)
+    expect(ledger).toHaveLength(3)
+
+    // Every row: source_type='purchase', source_purchase_id NOT NULL,
+    // source_billing_history_id NULL, expires_at NULL (à-la-carte never expires).
+    for (const row of ledger) {
+      expect(row.source_type).toBe('purchase')
+      expect(row.source_purchase_id).not.toBeNull()
+      expect(row.source_billing_history_id).toBeNull()
+      expect(row.expires_at).toBeNull()
+    }
+
+    // FK linkage: every credit_ledger.source_purchase_id should be one of the
+    // purchases rows we just inserted.
+    const purchaseIds = new Set(purchases.map((p) => p.id))
+    for (const row of ledger) {
+      const linkedId = row.source_purchase_id ?? ''
+      expect(purchaseIds.has(linkedId)).toBe(true)
+    }
+
+    // Per-row amounts:
+    //   - row linked to sessionPurchase (sku_session × qty 2): credit_type='session', amount=2
+    //   - row linked to worldPurchase   (sku_world   × qty 1): credit_type='session', amount=1
+    //   - row linked to worldPurchase   (sku_world   × qty 1): credit_type='world_gen', amount=1
+    const sessionRowsForSessionPurchase = ledger.filter(
+      (r) => r.source_purchase_id === sessionPurchase.id && r.credit_type === 'session',
+    )
+    expect(sessionRowsForSessionPurchase).toHaveLength(1)
+    expect(sessionRowsForSessionPurchase[0]?.amount).toBe(2)
+
+    const sessionRowsForWorldPurchase = ledger.filter(
+      (r) => r.source_purchase_id === worldPurchase.id && r.credit_type === 'session',
+    )
+    expect(sessionRowsForWorldPurchase).toHaveLength(1)
+    expect(sessionRowsForWorldPurchase[0]?.amount).toBe(1)
+
+    const worldRowsForWorldPurchase = ledger.filter(
+      (r) => r.source_purchase_id === worldPurchase.id && r.credit_type === 'world_gen',
+    )
+    expect(worldRowsForWorldPurchase).toHaveLength(1)
+    expect(worldRowsForWorldPurchase[0]?.amount).toBe(1)
+
+    // No paging error logs on the happy path.
+    expect(entries.filter((e) => e.level === 'error')).toEqual([])
+
+    // Replay: same event.id → stripe_events PK dedupes; no second writes.
+    const ledgerCountBefore = ledger.length
+    const purchasesCountBefore = purchases.length
+    const histCountBefore = histRows.length
+    await dispatchEvent(event, stripe, pool, log)
+    expect((await fetchPurchasesByPi(pool, pi)).length).toBe(purchasesCountBefore)
+    expect((await fetchBillingHistoryForUser(pool, userId)).length).toBe(histCountBefore)
+    expect((await fetchCreditLedgerForUser(pool, userId)).length).toBe(ledgerCountBefore)
+  })
+
+  it('amount validation mismatch: returns validation_failed, commits stripe_events, writes nothing else', async () => {
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const pi = `pi_amtfail_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_amtfail_${uuidv7().slice(0, 12)}`,
+      mode: 'payment',
+      customer: cus,
+      subscription: null,
+      payment_intent: pi,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 500,
+            price: { id: PRICE_ID_SKU_SESSION, lookup_key: 'sku_session', currency: 'usd' },
+          },
+        ],
+      },
+      // expected_subtotal from cache = 500 × 1 = 500. Setting amount_subtotal
+      // to 999 forces the mismatch.
+      amount_subtotal: 999,
+      currency: 'usd',
+    }
+    const { stripe } = makeStripeWithFixtures({ session })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    // stripe_events row commits (sentinel acks delivery).
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+
+    // Paging-grade error log emitted.
+    const paged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'billing.amount_validation_failed',
+    )
+    expect(paged).toBeDefined()
+    if (!paged) throw new Error('expected billing.amount_validation_failed log')
+    expect(paged.obj.event_id).toBe(event.id)
+    expect(paged.obj.expected).toBe(500)
+    expect(paged.obj.actual).toBe(999)
+
+    // Dispatcher's "validation_failed committed" sentinel log also fires.
+    expect(
+      entries.some(
+        (e) => e.level === 'error' && e.msg === 'billing.handler_validation_failed_committed',
+      ),
+    ).toBe(true)
+
+    // No purchases / billing_history / credit_ledger writes landed.
+    expect((await fetchPurchasesByPi(pool, pi)).length).toBe(0)
+    expect(await countBillingHistoryFor(pool, userId)).toBe(0)
+    expect(await countCreditLedgerFor(pool, userId)).toBe(0)
+  })
+
+  it('unknown price ID: returns validation_failed, commits stripe_events, writes nothing else', async () => {
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const pi = `pi_unkprice_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_unkprice_${uuidv7().slice(0, 12)}`,
+      mode: 'payment',
+      customer: cus,
+      subscription: null,
+      payment_intent: pi,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 500,
+            price: { id: 'price_NOT_IN_CACHE', lookup_key: 'sku_session', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 500,
+      currency: 'usd',
+    }
+    const { stripe } = makeStripeWithFixtures({ session })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+
+    const paged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'billing.checkout_unknown_price_id',
+    )
+    expect(paged).toBeDefined()
+    if (!paged) throw new Error('expected billing.checkout_unknown_price_id log')
+    expect(paged.obj.event_id).toBe(event.id)
+    expect(paged.obj.price_id).toBe('price_NOT_IN_CACHE')
+
+    expect((await fetchPurchasesByPi(pool, pi)).length).toBe(0)
+    expect(await countBillingHistoryFor(pool, userId)).toBe(0)
+    expect(await countCreditLedgerFor(pool, userId)).toBe(0)
+  })
+
+  it("payment_status non-'paid': returns validation_failed, pages 'billing.payment_status_unexpected', writes nothing else", async () => {
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const pi = `pi_unpaid_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_unpaid_${uuidv7().slice(0, 12)}`,
+      mode: 'payment',
+      customer: cus,
+      subscription: null,
+      payment_intent: pi,
+      payment_status: 'unpaid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 500,
+            price: { id: PRICE_ID_SKU_SESSION, lookup_key: 'sku_session', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 500,
+      currency: 'usd',
+    }
+    const { stripe } = makeStripeWithFixtures({ session })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+
+    const paged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'billing.payment_status_unexpected',
+    )
+    expect(paged).toBeDefined()
+    if (!paged) throw new Error('expected billing.payment_status_unexpected log')
+    expect(paged.obj.event_id).toBe(event.id)
+    expect(paged.obj.payment_status).toBe('unpaid')
+
+    expect((await fetchPurchasesByPi(pool, pi)).length).toBe(0)
     expect(await countBillingHistoryFor(pool, userId)).toBe(0)
     expect(await countCreditLedgerFor(pool, userId)).toBe(0)
   })

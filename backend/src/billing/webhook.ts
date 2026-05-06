@@ -44,6 +44,10 @@ import { stripeEvents } from '../repo/stripe-events.js'
 import { userSubscriptions } from '../repo/user-subscriptions.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from './stripe-client.js'
+import { handleCheckoutCompletedPayment } from './webhook-checkout-payment.js'
+import type { HandlerResult } from './webhook-types.js'
+
+export type { HandlerResult } from './webhook-types.js'
 
 export type KnownStripeEventType =
   | 'checkout.session.completed'
@@ -55,8 +59,6 @@ export type KnownStripeEventType =
   | 'customer.subscription.pending_update_expired'
   | 'refund.created'
   | 'refund.updated'
-
-export type HandlerResult = 'ok' | 'validation_failed'
 
 export type EventHandler = (
   event: Stripe.Event,
@@ -399,15 +401,7 @@ async function handleCheckoutCompleted(
     )
   }
   if (session.mode === 'payment') {
-    // TODO(Task 18): payment-mode handler. Placeholder so unrelated
-    // payment-mode webhook deliveries don't retry-loop until that task
-    // ships; per §5.4.1 the payment branch writes purchases +
-    // credit_ledger + billing_history.
-    log.info(
-      { event_id: event.id, session_id: session.id, mode: 'payment' },
-      'billing.checkout_payment_mode_placeholder',
-    )
-    return 'ok'
+    return await handleCheckoutCompletedPayment(event, session, user.id, client, log)
   }
   // 'setup' mode (or anything else dahlia might add): nothing to do.
   log.info(
