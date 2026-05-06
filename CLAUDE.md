@@ -83,7 +83,7 @@ When in doubt, ask. The default lean is "build it right." If you're tempted to s
 
 Two trackers serve different altitudes:
 
-- **Linear** (`MYT-` prefix, workspace: Mythrun, project: Mythrun Production) — long-term shipping view. Milestones = scope-named shipping checkpoints with scope-derived dates. Issues = multi-day work units with due dates. Morning-glance tool: "what's due today." Launch target: 2026-05-31.
+- **Linear** (`MYT-` prefix, workspace: Mythrun, project: Mythrun Production) — long-term shipping view. Milestones = scope-named shipping checkpoints with scope-derived dates. Issues = multi-day work units with due dates. Morning-glance tool: "what's due today." Launch target: 2026-06-01.
 - **Beads** (`myth-` prefix, `.beads/` in repo, Dolt-backed, git-committed) — per-feature implementation tracking. Beads are hours-to-half-day tasks derived from an implementation plan. Survives compactions across sessions. Empty between features; populated when a Linear issue gets picked up.
 
 Never duplicate content between them. Linear stays at the shipping-view altitude; beads stays at the implementation-detail altitude.
