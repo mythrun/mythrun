@@ -52,6 +52,7 @@ import {
   handlePendingUpdateApplied,
   prefetchPendingUpdateApplied,
 } from './webhook-pending-update-applied.js'
+import { handlePendingUpdateExpired } from './webhook-pending-update-expired.js'
 import type { HandlerResult } from './webhook-types.js'
 
 export type { HandlerResult } from './webhook-types.js'
@@ -93,7 +94,7 @@ export const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'customer.subscription.updated': handleSubscriptionUpsert,
   'customer.subscription.deleted': handleSubscriptionDeleted,
   'customer.subscription.pending_update_applied': handlePendingUpdateApplied,
-  'customer.subscription.pending_update_expired': okHandler,
+  'customer.subscription.pending_update_expired': handlePendingUpdateExpired,
   'refund.created': okHandler,
   'refund.updated': okHandler,
 }
