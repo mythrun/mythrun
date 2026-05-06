@@ -140,6 +140,8 @@ The MYT-41 spec pinned `STRIPE_API_VERSION = '2026-04-22.dahlia'`. Several Subsc
 
 7. **`Invoice.subscription` was REMOVED at `2025-03-31.basil`** (per Carthage C2 round 4) along with `Invoice.subscription_details` and `Invoice.subscription_proration_date`. The replacement is `invoice.parent.subscription_details.subscription` (after asserting `invoice.parent.type === 'subscription_details'`). **`Invoice.parent` is documented nullable** (per Carthage C3 round 6 — admin-issued / manual standalone invoices have `parent === null`); every dereference path MUST optional-chain. Affects: `invoice.paid` handler's subscription resolution path (§5.4.2, §5.3 prefetch shape).
 
+9. **Tier upgrades use `payment_behavior: 'pending_if_incomplete'`** (per round-7 research findings). The default `'allow_incomplete'` produces a documented split-brain race — `subscriptions.update` advances items atomically, but the proration invoice's payment is a separate step that can decline / require SCA / async-settle. The default fail-mode leaves Stripe-side reporting NEW tier with `status='past_due'` while our webhook upserts NEW tier and `invoice.paid` never fires → tier advanced, zero credits, user paid for nothing. Stripe's `pending_if_incomplete` flag (per [pending updates docs](https://docs.stripe.com/billing/subscriptions/pending-updates)) inverts this: items DO NOT advance until the proration invoice is paid; the attempted change lives on the Subscription as a `pending_update` hash with a 23-hour TTL. Three webhook events drive the lifecycle: `customer.subscription.pending_update_applied` (success — credits + tier write), `customer.subscription.pending_update_expired` (Stripe gave up after 23h), and `customer.subscription.updated` with a populated `pending_update` (intermediate state — gate the upsert). See §4.6 + §5.4.6 for the implementation. **Pre-ship verification**: empirically confirm in Stripe test mode that `payment_behavior: 'pending_if_incomplete'` + `items: [{ id, price }]` (price-change on existing item) produces a `pending_update` and does NOT advance items on a known-decline test card (`4000000000000341` for soft decline, `4000000000009995` for insufficient_funds). Per [laravel/cashier-stripe#969](https://github.com/laravel/cashier-stripe/issues/969) there was a historical Stripe-API limitation around this combination; current dahlia docs say it works but **trust-but-verify** before flipping the launch switch.
+
 8. **Subscribe to `refund.created` AND `refund.updated`** (per Carthage C3 / Persepolis C3 round 4 + Carthage C1 round 6): `event.data.object` on `charge.refunded` was the Charge, not the Refund — the handler had no canonical way to identify which `re_*` ID just landed. Subscribing to `refund.created` gives `event.data.object.id === re_*` directly, and `event.data.object.payment_intent` / `event.data.object.charge` are top-level strings. **However**, card refunds flow through dahlia status transitions: `pending` → `succeeded` (typical async path for some non-US card networks) and `succeeded` → `failed` (issuer rejects after Stripe re-credits the merchant). Per Carthage C1 round 6, the launch design therefore subscribes to BOTH `refund.created` and `refund.updated` and gates clawback strictly on `event.data.object.status === 'succeeded'`. The pending → failed path produces no clawback (status was never `succeeded` at our handler entry); the succeeded → failed path is documented as a known launch gap (rare, requires manual operator reconciliation — follow-up bead). `refund.failed` is NOT subscribed at launch because the only path that requires reversal (succeeded → failed, where we already clawed back) is rare enough to handle via runbook. Decision 5's full-refund-only invariant is preserved; partial-refund support remains a follow-up bead.
 
 These notes are referenced by §5.4.1, §5.4.2, §5.4.3, §5.4.5, and §15. Implementers should re-read the dahlia API reference for any field not explicitly listed in this spec rather than assume older shapes.
@@ -231,26 +233,69 @@ const subscription = await stripe.subscriptions.retrieve(active_sub.stripe_subsc
 const subscription_item_id = subscription.items.data[0].id
 const period_start = subscription.items.data[0].current_period_start  // dahlia: per-item
 
-// One Stripe call. Stripe computes proration_date == period_start ⇒ flat delta charge.
-// proration_behavior='always_invoice' fires the proration invoice synchronously
-// (instead of deferring it to the next renewal), and the invoice's default
-// payment method (the user's saved card) is charged immediately.
-const updated = await stripe.subscriptions.update(active_sub.stripe_subscription_id, {
-  items: [{ id: subscription_item_id, price: target_price_id }],
-  proration_date: period_start,
-  proration_behavior: 'always_invoice',
-})
+// payment_behavior: 'pending_if_incomplete' is the load-bearing flag.
+// Default Stripe behavior ('allow_incomplete') would advance the subscription's
+// items to the NEW price atomically and let the proration invoice settle
+// asynchronously — producing a known split-brain state where Stripe-side
+// reports the user as upgraded (status='past_due', latest_invoice unpaid) but
+// payment never landed. Our webhook would receive customer.subscription.updated
+// with NEW tier and naively upsert it, while invoice.paid would never fire,
+// leaving us with tier=NEW and zero credits granted. The user paid for nothing.
+//
+// 'pending_if_incomplete' inverts this: items DO NOT advance until the proration
+// invoice is paid. The attempted change lives on the Subscription as a
+// `pending_update` hash with a 23-hour TTL. The webhook flow uses three NEW
+// events:
+//   - customer.subscription.pending_update_applied  (payment landed; advance)
+//   - customer.subscription.pending_update_expired  (gave up after 23h)
+//   - customer.subscription.updated with pending_update populated (intermediate)
+//
+// See §5.4.6 for the handlers. This is Stripe's purpose-built mechanism for
+// exactly this race; documented at https://docs.stripe.com/billing/subscriptions/pending-updates
+//
+// idempotencyKey collapses double-clicks / browser-retry parallel calls. Stripe
+// dedupes within a 24h window; second call with the same key returns the
+// cached first response.
+const idempotencyKey = `upgrade:${userId}:${active_sub.stripe_subscription_id}:${period_start}:${target_tier_lookup_key}`
 
-// Find the just-created invoice. Stripe attaches it to the subscription's
-// latest_invoice field synchronously when proration_behavior='always_invoice'.
-const latest_invoice = await stripe.invoices.retrieve(updated.latest_invoice as string)
+const updated = await stripe.subscriptions.update(
+  active_sub.stripe_subscription_id,
+  {
+    items: [{ id: subscription_item_id, price: target_price_id }],
+    proration_date: period_start,
+    proration_behavior: 'always_invoice',
+    payment_behavior: 'pending_if_incomplete',
+  },
+  { idempotencyKey },
+)
+
+// Inspect pending_update on the response.
+//   - populated: items did NOT advance; the proration invoice failed to pay
+//     synchronously (card decline, SCA required, async settlement delay).
+//     Return 502 with code='upgrade_payment_pending'. Frontend tells the user
+//     to update their payment method or complete authentication; they can
+//     retry the upgrade. Do NOT touch user_subscriptions in DB.
+//   - null: items advanced; proration invoice paid. The webhook handler
+//     `customer.subscription.pending_update_applied` (§5.4.6) does the credit
+//     grant + tier upsert. The route returns 200 immediately; the frontend
+//     polls /api/billing/balance or subscribes to its update via the existing
+//     session-runtime channel.
+if (updated.pending_update) {
+  return reply.code(502).send({
+    code: 'upgrade_payment_pending',
+    detail: {
+      pending_update_expires_at: updated.pending_update.expires_at,
+      latest_invoice_id: updated.latest_invoice,
+    },
+  })
+}
+
 return reply.send({
-  invoice_id: latest_invoice.id,
-  amount_paid_cents: latest_invoice.amount_paid,
+  invoice_id: updated.latest_invoice,
 })
 ```
 
-The webhook handler does the actual credit grant when `invoice.paid` arrives for this invoice — same code path as renewals (§5.4.2), with an explicit `billing_reason='subscription_update'` branch that recognizes the upgrade and grants the credit DELTA (not the full new tier).
+The webhook handler grants credits when `customer.subscription.pending_update_applied` arrives for this subscription — see §5.4.6. The previous design (which routed credit grants through `invoice.paid` for `billing_reason='subscription_update'`) is REMOVED in favor of the pending-update event because `pending_if_incomplete` decouples item-advance from invoice settlement.
 
 **Credit-grant math at webhook time** (executed in §5.4.2 not here):
 - Compute `target_spec = LOOKUP_KEYS[target_tier_lookup_key]`, `current_spec = LOOKUP_KEYS[old_tier_lookup_key]` (read from `user_subscriptions.tier_lookup_key` BEFORE the upsert applies the new tier — see §5.4.3 lock-acquisition order).
@@ -369,6 +414,8 @@ const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
   'customer.subscription.deleted':  handleSubscriptionDeleted,
   'refund.created':                 handleRefundEvent,
   'refund.updated':                 handleRefundEvent,
+  'customer.subscription.pending_update_applied':  handlePendingUpdateApplied,
+  'customer.subscription.pending_update_expired':  handlePendingUpdateExpired,
 }
 type KnownStripeEventType = keyof typeof HANDLERS
 
@@ -584,14 +631,12 @@ Same logic as `subscription_cycle`, with one subtlety: at this moment `user_subs
 
 #### `billing_reason === 'subscription_update'` (mid-period upgrade via §4.6)
 
-- This is the upgrade-tier endpoint's invoice landing. The invoice carries the **flat dollar delta** (e.g., $30 for Wayfarer→Mythwright via Stripe's `proration_date=current_period_start` math).
-- **Derive OLD and NEW tier from the invoice line items, NOT from `user_subscriptions`** (per Petra I3 round 5 — load-bearing revenue-hole fix). Stripe's typical event ordering for an `/upgrade-tier` call is `customer.subscription.updated` → `invoice.paid`; the former runs `upsertFromStripe` (per §5.4.3) and writes the NEW `tier_lookup_key` to `user_subscriptions` BEFORE this handler reads it. If this handler used `getActiveForUser` to find the "OLD" tier, it would read the NEW tier (already overwritten), compute `delta = NEW − NEW = 0`, and grant ZERO credits despite the user paying the full upgrade delta. The fix: a proration invoice carries TWO line items — one negative (the prorated refund of the OLD price) and one positive (the prorated charge for the NEW price). Each line's `pricing.price_details.price` (Stripe price ID at dahlia, since `lookup_key` was removed from `InvoiceLineItem` per §3.1 note 2) resolves via the SKU cache reverse map to its `lookup_key`. Concretely: `oldLookupKey = skuCache.findByPriceId(prefetch.invoice.lines.data.find(l => l.amount < 0)!.pricing.price_details.price).lookup_key`; `newLookupKey = skuCache.findByPriceId(prefetch.invoice.lines.data.find(l => l.amount > 0)!.pricing.price_details.price).lookup_key`. Both are pinned by the invoice itself, independent of any race against `customer.subscription.updated`.
-- Compute the credit DELTA from the resolved tier specs: `(LOOKUP_KEYS[newLookupKey].sessionsGranted - LOOKUP_KEYS[oldLookupKey].sessionsGranted)` for sessions, same for worlds.
-- **Amount validation**: assert `event.data.object.subtotal_excluding_tax === (LOOKUP_KEYS[newLookupKey].priceCents - LOOKUP_KEYS[oldLookupKey].priceCents)` (the flat dollar delta per Decision 2). Mismatch → §5.4 cross-cutting rule 2 (likely indicates a Stripe-side proration math change or a config drift; pages an alert).
-- **Upsert** `user_subscriptions` to the new tier via `upsertFromStripe` (idempotent against any prior `customer.subscription.updated`-driven upsert).
-- **Insert order (per Petra I5 round 5): `upsertFromStripe` → append billing_history → grant credits.**
-- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax` (the delta), `lookup_key = newLookupKey`, `expires_at = period_end + tier_period_length`.
-- **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` with `amount = delta` (for the credit_type), `source_type='subscription'`, `source_billing_history_id = <the billing_history row inserted above>`, `expires_at = period_end + tier_period_length` (i.e., the next-period-end after the upgrade — credits get a full period of life, not the days remaining in the original period). For Mythrun's monthly tiers this is `period_end + INTERVAL '1 month'` computed in SQL.
+**Per round 7 + research findings: this branch is REMOVED.** The §4.6 endpoint now uses `payment_behavior: 'pending_if_incomplete'` (per Stripe's purpose-built mechanism for the items-vs-payment split-brain race — see §4.6 prose for the full rationale). Under that flag, item-advance is structurally tied to payment settlement: items DO NOT advance until the proration invoice is paid. The credit-grant + tier-upsert for upgrades flows through the `customer.subscription.pending_update_applied` handler (§5.4.6), NOT through `invoice.paid`.
+
+What `invoice.paid` handler does for upgrade invoices: the `subscription_update` invoice still arrives at this handler (Stripe fires `invoice.paid` when the proration invoice settles AND it ALSO fires the pending_update_applied event). To prevent double-grant, this handler treats `billing_reason='subscription_update'` as **billing_history-only**:
+- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax`, `lookup_key = <NEW tier lookup_key, derived from the positive-amount invoice line via SKU cache reverse map>`, `expires_at = NULL` (the credit-side expiry is recorded on the credit_ledger row written by `pending_update_applied`; the billing_history row is the financial-audit anchor and doesn't carry credit-life metadata for this branch).
+- **NO credit grant**, **NO `user_subscriptions` upsert** in this handler. The pending_update_applied handler owns both writes.
+- **Idempotency**: if the event redelivers, `billing_history.source_id_stripe = invoice_id` UNIQUE blocks the duplicate insert. Per round-6 fixes, the spec uses `ON CONFLICT (kind, source_id_stripe) DO NOTHING` on this insert so the redelivery is benign rather than fatal.
 
 #### Other `billing_reason` values (`manual`, `quote_accept`, `subscription_threshold`, etc.)
 
@@ -606,6 +651,8 @@ Skip credit grant and skip amount validation; record `billing_history` only (wit
 Both event types use the same handler because the upsert shape is identical. Stripe doesn't guarantee delivery order between `customer.subscription.created`, `customer.subscription.updated`, and `checkout.session.completed`; the upsert handler tolerates any ordering.
 
 Resolve user via `event.data.object.customer` → `users.stripe_customer_id`; fallback to `event.data.object.metadata.userId` on miss. Total miss → log + COMMIT + 200.
+
+**Pending-update gate** (per §4.6 redesign + research findings): if `event.data.object.pending_update` is non-null, the subscription has an in-flight upgrade whose proration invoice has NOT yet settled. Stripe fires `customer.subscription.updated` with `pending_update` populated as the intermediate-state notification (e.g., card declined, SCA pending). In this case: log INFO `billing.subscription_pending_update_visible` with `{ subscription_id, pending_update.expires_at, latest_invoice_id }`, COMMIT `stripe_events`, return 200. **Do NOT upsert tier / status / period dates from this event** — the `event.data.object` reflects the OLD subscription state (items NOT advanced) plus the pending-update hash; the actual advance happens on `customer.subscription.pending_update_applied` (§5.4.6). Upserting from a pending-update event would write the OLD state on top of any newer state already in the row, which is fine arithmetically (idempotent) but the explicit early-exit is clearer.
 
 Assert `subscription.items.data.length === 1`. Read `tier_lookup_key`, `status`, `items.data[0].current_period_start`, `items.data[0].current_period_end`, `cancel_at_period_end`, `cancellation_details` (if present — Stripe surfaces it on `cancel_at_period_end` toggles).
 
@@ -637,10 +684,11 @@ For full refunds:
 
 **Lock-acquisition ordering exception.** Per Manchego I2 round 3: the §5.3 discipline "user-row anchor lock as the FIRST DB operation in the tx" cannot apply directly to `refund.created` because the user is unknown until step 1's resolution finishes. The handler-specific ordering for refunds is:
 1. `stripe_events` insert (§5.3 standard).
-2. Originating-entity resolution (read-only queries against `purchases` / `billing_history`; no FOR UPDATE).
+2. Originating-entity resolution (read-only queries against `purchases` / `billing_history`; no FOR UPDATE). If "neither matches" → COMMIT + 200, exit (per step 1's "Neither matches" branch in the numbered list below).
 3. `SELECT id FROM users WHERE id = $resolved_user_id FOR UPDATE` (the deferred anchor lock).
-4. Re-fetch the originating rows under the lock to confirm they haven't transitioned (e.g., concurrent refund racing this one). Refusal-on-already-refunded is in step 3 of the original §5.4.5 numbered list below.
-5. Write clawback rows + UPDATE source row status + append `billing_history` row.
+4. **Re-fetch under lock** (per Petra C1 round 7): re-issue the resolution queries from step 2 with `FOR UPDATE` row locks on the matched `purchases` / `billing_history` rows. If the row's status is now `'refunded'` (a concurrent refund event for the same `re_*` won the race during the lock-free window), log INFO `billing.refund_already_applied` + COMMIT `stripe_events` + return 200. **Steps 5–6 do NOT run.** This is the post-lock equivalent of step 1's early-exit and prevents the 23505 retry-loop on `billing_history.source_id_stripe` UNIQUE that operator-driven re-deliveries (different `event.id`, same `re_*`) would otherwise produce.
+5. Write clawback rows via `recordClawback` + UPDATE source row `status='refunded'`.
+6. Append `billing_history` row.
 
 This "optimistic resolve, then re-read under lock" pattern is the right shape for cross-row, cross-user webhook resolution where the user_id is not known a priori. The §5.3 anchor-lock-first discipline applies to all OTHER handlers (where `user_id` resolves from `metadata.userId` or `customer.id` BEFORE any DB read); `refund.created` is the documented exception.
 
@@ -664,6 +712,59 @@ This "optimistic resolve, then re-read under lock" pattern is the right shape fo
 5. **Resulting balance** MAY go negative. MYT-40's atomic-debit refuses to consume from balance ≤ 0; at session-start, the user gets 402 Payment Required and must purchase to lift the balance back to positive. An in-flight session (already-debited credit) is unaffected by a refund arriving mid-session — the debit row stays committed; only the *next* session-start gates on the new balance.
 
 **Refunds beyond `current_period_end`**: the clawback rows have `expires_at = NULL` per step 2, so they contribute to the balance computation indefinitely. The originating grant rows have already expired (passed `current_period_end`) and don't contribute to the balance. Net effect: balance moves down by the clawback amount, even though the originating grant is no longer counted — the user owes the platform the refund amount in unexpired credit-currency until they buy more. Documented in §12.
+
+#### 5.4.6 `customer.subscription.pending_update_applied` and `customer.subscription.pending_update_expired`
+
+These two events drive the tier-upgrade lifecycle introduced by `payment_behavior: 'pending_if_incomplete'` in §4.6. They REPLACE the round-5/6 `invoice.paid` `subscription_update` branch as the canonical credit-grant path for upgrades.
+
+**Why these events and not `invoice.paid`**: Stripe's `pending_if_incomplete` flag decouples item-advance from invoice settlement. `invoice.paid` for an upgrade invoice fires AT THE SAME TIME as `pending_update_applied`, but `pending_update_applied` is the dedicated event that indicates "items have advanced AND payment landed" — it's the structurally-correct hook for the credit grant. Using `invoice.paid` would re-introduce the race against `customer.subscription.updated` that motivated the redesign. Per Stripe's pending-updates documentation: ["customer.subscription.pending_update_applied … occurs whenever a customer's subscription's pending update is applied, and the subscription is updated."](https://docs.stripe.com/billing/subscriptions/pending-updates)
+
+#### `customer.subscription.pending_update_applied` — the upgrade-success path
+
+`event.data.object` is the Subscription with the pending update applied: `pending_update` is now NULL, `items.data[0].price.lookup_key` reflects the NEW tier, `latest_invoice` is paid.
+
+Resolve user via `event.data.object.customer` → `users.stripe_customer_id`; fallback to `event.data.object.metadata.userId`. Total miss → paging `billing.upgrade_orphan` (the same severity as `billing.invoice_orphan` — money landed for an unresolvable customer) + COMMIT + 200.
+
+Acquire user-row anchor lock per §5.3 discipline.
+
+**Derive OLD and NEW tier from the proration invoice** (NOT from `user_subscriptions`). The proration invoice's line items carry both prices. Prefetch retrieves the invoice via `stripe.invoices.retrieve(subscription.latest_invoice)`; line walker:
+
+```ts
+const lines = prefetch.invoice.lines.data
+const negatives = lines.filter(l => l.amount < 0 && l.pricing?.type === 'price_details')
+const positives = lines.filter(l => l.amount > 0 && l.pricing?.type === 'price_details')
+if (negatives.length !== 1 || positives.length !== 1) {
+  log.error({ event_id, line_amounts: lines.map(l => l.amount) }, 'billing.upgrade_unexpected_line_shape')
+  return 'validation_failed'
+}
+const oldLookupKey = skuCache.findByPriceId(negatives[0].pricing.price_details.price).lookup_key
+const newLookupKey = skuCache.findByPriceId(positives[0].pricing.price_details.price).lookup_key
+```
+
+(Per Petra I2 round 7: gate on `pricing.type === 'price_details'` before reading `price_details.price`; assert exactly-one-each rather than `find`-with-`!`.)
+
+**Amount validation**: assert `prefetch.invoice.subtotal_excluding_tax === (LOOKUP_KEYS[newLookupKey].priceCents - LOOKUP_KEYS[oldLookupKey].priceCents)`. Mismatch → `'validation_failed'` sentinel (paging alarm + commit stripe_events).
+
+**Insert order**: `upsertFromStripe` (idempotent — pending_update_applied is the canonical place to write NEW tier; if a prior `customer.subscription.updated` already wrote it, the strict-`>` filter on `stripe_event_created_at` rejects the redundant write) → append billing_history row (`kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax`, `lookup_key = newLookupKey`, `expires_at = period_end + tier_period_length`) → grant credits via `repo.credits.grantInTx` with `amount = (LOOKUP_KEYS[newLookupKey].sessionsGranted - LOOKUP_KEYS[oldLookupKey].sessionsGranted)` (and the same shape for worlds), `source_type='subscription'`, `source_billing_history_id = <billing_history.id>`, `expires_at = period_end + tier_period_length`.
+
+The `invoice.paid` handler for `billing_reason='subscription_update'` (§5.4.2) writes a billing_history row with the same `source_id_stripe`. To prevent 23505 collision: the `pending_update_applied` handler runs first in Stripe's documented event ordering, so by the time `invoice.paid` arrives the billing_history row already exists; `invoice.paid` for `subscription_update` uses `INSERT ... ON CONFLICT (kind, source_id_stripe) DO NOTHING`. Both handlers converge to a single billing_history row owned by whichever arrived first.
+
+#### `customer.subscription.pending_update_expired` — the upgrade-failure path
+
+Stripe gave up after ~23 hours of retry attempts. `event.data.object` is the Subscription with `pending_update` cleared and items unchanged (still on OLD tier). The associated invoice is voided by Stripe.
+
+Handler responsibilities:
+- Resolve user (same shape as `pending_update_applied`).
+- Log INFO `billing.upgrade_expired` with `{ subscription_id, latest_invoice_id, target_tier_lookup_key }`. Not paging-grade — this is an expected outcome of a card decline + user not updating their payment method within 23h.
+- **No DB writes.** No tier change (Stripe didn't change items; we didn't either). No billing_history row (Stripe voided the invoice; nothing happened from a financial-record standpoint).
+- COMMIT `stripe_events` + return 200.
+- Optional follow-up bead: surface a notification to the user ("your upgrade attempt expired; please retry"). Out of scope for MYT-42; the user can simply re-click "Upgrade" and the flow re-runs cleanly.
+
+#### Refund of an upgrade invoice (post-applied)
+
+When a user (or operator) refunds the proration invoice for a successfully-applied upgrade, Stripe does NOT auto-revert the subscription's items to the OLD tier. Per the research brief: "Stripe has no built-in for this." Mythrun's refund handler (§5.4.5) claws back the DELTA credits via `recordClawback`. It does NOT auto-issue a downgrade; that's an operator decision (the user may want to keep the higher tier and pay a different way, or genuinely intends to downgrade).
+
+**Documented launch gap** (added to §12 + §15.5): `billing.upgrade_invoice_refunded` paging alarm fires when `refund.created`/`refund.updated` resolves to a billing_history row whose originating invoice was a `subscription_update` (i.e., the negative-line lookup_key differs from the positive-line lookup_key). Operator playbook: contact user; if they want the downgrade, manually issue `subscriptions.update` to the OLD tier with `proration_behavior='none'`. Auto-revert is a follow-up bead.
 
 ### 5.5 Customer-not-found handling
 
@@ -711,12 +812,16 @@ CREATE TABLE user_subscriptions (
   tier_lookup_key             TEXT        NOT NULL,
   stripe_subscription_id      TEXT        NOT NULL UNIQUE,
   -- Stripe sends the full enum: incomplete, incomplete_expired, trialing, active,
-  -- past_due, canceled, unpaid. Mythrun cares about all of them; we relax the
-  -- earlier 4-value CHECK to admit incomplete/incomplete_expired/trialing so
-  -- §5.4.1's SCA-pending path (status='incomplete') doesn't violate the constraint.
+  -- past_due, canceled, unpaid, paused. Mythrun cares about all of them; we
+  -- relax the earlier 4-value CHECK to admit
+  -- incomplete/incomplete_expired/trialing/paused so §5.4.1's SCA-pending path
+  -- (status='incomplete') doesn't violate the constraint, and so an operator
+  -- Dashboard config that produces a 'paused' subscription (e.g., a Stripe-side
+  -- trial ending without a payment method, per Carthage C1 round 7) doesn't
+  -- crash the upsert and force ~3 days of Stripe redelivery.
   status                      TEXT        NOT NULL CHECK (status IN (
                                             'active','past_due','canceled','unpaid',
-                                            'incomplete','incomplete_expired','trialing'
+                                            'incomplete','incomplete_expired','trialing','paused'
                                           )),
   current_period_start        TIMESTAMPTZ NOT NULL,
   current_period_end          TIMESTAMPTZ NOT NULL,
@@ -853,7 +958,7 @@ interface UserSubscriptionsRepo {
   getActiveForUser(tx: ClientLike, userId: string): Promise<UserSubscription | null>
   // The "single active subscription" the §9 balance + subscription endpoints need.
   // Mythrun policy via Customer Portal Switch Plan is one active subscription
-  // per user. "Active" excludes status IN ('canceled','incomplete_expired').
+  // per user. "Active" excludes status IN ('canceled','incomplete_expired','paused').
 
   markCanceled(tx: ClientLike, stripe_subscription_id: string, payload: { cancel_at_period_end: boolean; cancel_at: string | null; cancellation_details: unknown }): Promise<void>
   // status='canceled'. PRESERVE cancel_at_period_end from the event payload
@@ -1332,7 +1437,7 @@ export type BillingErrorCode =
   - `upsertFromStripe` insert path.
   - `upsertFromStripe` update path.
   - `upsertFromStripe` stale-event rejection (older `stripe_event_created_at` doesn't overwrite — strict `>` not `>=`).
-  - `getActiveForUser` excludes `status IN ('canceled','incomplete_expired')`.
+  - `getActiveForUser` excludes `status IN ('canceled','incomplete_expired','paused')`.
   - `markCanceled` sets status + records `cancellation_details`; `cancel_at_period_end` PRESERVED from payload.
   - Concurrent upserts: two parallel transactions both calling `upsertFromStripe` for the same `stripe_subscription_id` produce exactly one row (atomic ON CONFLICT DO UPDATE).
 
@@ -1446,7 +1551,7 @@ Dashboard → Settings → Billing → Customer Portal. The MYT-41 runbook confi
 
 ### 15.3 Webhook endpoint registration + secret rotation post-MYT-42 deploy
 
-1. After MYT-42 deploys to staging, register the webhook endpoint in the Stripe Dashboard test-mode account: `https://dashboard.stripe.com/test/webhooks` → Add endpoint → URL `https://staging.mythrun.com/webhooks/stripe`, **API version `2026-04-22.dahlia`** (Dashboard → API version selector — MUST match the SDK's pin per §3.1 note 5; otherwise event payloads at the handler will silently shape-mismatch typed field accesses; if the dropdown does NOT list `2026-04-22.dahlia`, the account's API version baseline is older — bump it via Dashboard → Developers → API version → upgrade BEFORE creating the webhook endpoint), events: `checkout.session.completed`, `invoice.paid`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, **`refund.created`** AND **`refund.updated`** (NOT `charge.refunded` — per §3.1 note 8 + Carthage C3 / Persepolis C3 round 4: the Refund-typed payload is required to derive `refund_id` for billing_history without ambiguity. Per Carthage C1 round 6: `refund.updated` is required for the pending → succeeded async-card path; without it, refunds that start as `pending` would never trigger clawback even after Stripe transitions them to `succeeded`). We deliberately do NOT subscribe to `invoice.payment_failed` / `charge.failed` / `charge.dispute.*` / `subscription_schedule.*` at launch; those lifecycles reach us via `customer.subscription.updated` status transitions. Adding subscriptions is a Dashboard-only ops change, not a code deploy.
+1. After MYT-42 deploys to staging, register the webhook endpoint in the Stripe Dashboard test-mode account: `https://dashboard.stripe.com/test/webhooks` → Add endpoint → URL `https://staging.mythrun.com/webhooks/stripe`, **API version `2026-04-22.dahlia`** (Dashboard → API version selector — MUST match the SDK's pin per §3.1 note 5; otherwise event payloads at the handler will silently shape-mismatch typed field accesses; if the dropdown does NOT list `2026-04-22.dahlia`, the account's API version baseline is older — bump it via Dashboard → Developers → API version → upgrade BEFORE creating the webhook endpoint), events: `checkout.session.completed`, `invoice.paid`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, **`customer.subscription.pending_update_applied`**, **`customer.subscription.pending_update_expired`** (per §4.6 / §5.4.6 — these drive the `payment_behavior: 'pending_if_incomplete'` upgrade lifecycle; without them, applied upgrades grant no credits and expired upgrades produce no operator signal), **`refund.created`** AND **`refund.updated`** (NOT `charge.refunded` — per §3.1 note 8 + Carthage C3 / Persepolis C3 round 4: the Refund-typed payload is required to derive `refund_id` for billing_history without ambiguity. Per Carthage C1 round 6: `refund.updated` is required for the pending → succeeded async-card path; without it, refunds that start as `pending` would never trigger clawback even after Stripe transitions them to `succeeded`). We deliberately do NOT subscribe to `invoice.payment_failed` / `charge.failed` / `charge.dispute.*` / `subscription_schedule.*` at launch; those lifecycles reach us via `customer.subscription.updated` status transitions. Adding subscriptions is a Dashboard-only ops change, not a code deploy.
 2. Stripe issues a `whsec_*` signing secret on creation; copy it.
 3. `aws secretsmanager update-secret --secret-id mythrun/staging/stripe-webhook-secret --secret-string 'whsec_<value>'`.
 4. Force a rolling deploy (`gh workflow run Deploy`) so the new secret is loaded.
