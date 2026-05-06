@@ -313,27 +313,100 @@ COMMIT;
 
 **Stripe API calls are NOT held inside the webhook tx.** Per Chimera I2 / Hydra I2 / Sphinx M3 round 2, several handlers need to retrieve additional Stripe state (Checkout Session line_items, parent subscription on `invoice.paid`, parent invoice and subscription on `refund.created`). Holding the row-level lock on `stripe_events.event_id` across a Stripe network call (typical 100–500ms, tail latency multi-second under Stripe outage) compounds with MYT-40's `lock_timeout='1s'` discipline and produces confusing `DebitTimeoutError` cascades in unrelated user-facing paths. The handler structure is **prefetch-then-write**:
 
+**This is the canonical dispatcher.** §5.3 contained TWO TS dispatcher blocks in earlier rounds; per Ephesus I2 / Petra C1 / Petra C2 round 5, the second block (which passed `(event, tx, stripe)` and lacked timeout SET LOCALs and the validation-failed sentinel) has been removed — the block below is the only dispatcher contract. Handlers receive `(event, prefetch, client)`; they NEVER receive the Stripe SDK; they MAY return `'validation_failed'` to signal "COMMIT the stripe_events row to suppress retries, but skip downstream writes."
+
 ```ts
-async function dispatchEvent(event: Stripe.Event, stripe: Stripe, pool: Pool) {
+type HandlerResult = 'ok' | 'validation_failed'
+type EventHandler = (
+  event: Stripe.Event,
+  prefetch: unknown,
+  client: ClientLike,
+) => Promise<HandlerResult>
+
+const HANDLERS: Record<KnownStripeEventType, EventHandler> = {
+  'checkout.session.completed':     handleCheckoutCompleted,
+  'invoice.paid':                   handleInvoicePaid,
+  'customer.subscription.created':  handleSubscriptionUpsert,  // upsert-shaped; same handler as .updated
+  'customer.subscription.updated':  handleSubscriptionUpsert,
+  'customer.subscription.deleted':  handleSubscriptionDeleted,
+  'refund.created':                 handleRefundCreated,
+}
+type KnownStripeEventType = keyof typeof HANDLERS
+
+async function dispatchEvent(event: Stripe.Event, stripe: Stripe, pool: Pool, log: Logger) {
+  // Defense-in-depth: assert the Dashboard webhook endpoint API version matches
+  // the SDK's pin. Per Ephesus I3 / Carthage M4 round 5: a mismatch is fail-CLOSED
+  // (skip handler invocation, COMMIT the stripe_events row to suppress retries,
+  // page the operator). The earlier "log + continue" rule was inconsistent with
+  // §3.1 notes 6/7/8 documenting BREAKING field-shape changes between API
+  // versions — typed field access against the wrong version is silent corruption,
+  // not graceful degrade.
+  if (event.api_version !== STRIPE_API_VERSION) {
+    log.error(
+      { event_api_version: event.api_version, sdk_pin: STRIPE_API_VERSION, event_id: event.id },
+      'stripe_webhook_api_version_mismatch',
+    )
+    // Best-effort: still record the event_id so Stripe stops retrying. If even
+    // that fails (DB outage), the catch-block in the caller rolls back and
+    // Stripe redelivers — which is the safe behavior in that case.
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'")
+      await stripeEvents.recordOrSkip(client, event.id, event.type)
+      await client.query('COMMIT')
+    } catch (err) { try { await client.query('ROLLBACK') } catch { /* connection dead */ } throw err }
+    finally { client.release() }
+    return  // do NOT invoke the handler; typed field access is unsafe
+  }
+
   // Phase 1: prefetch all Stripe state needed for this handler. Outside any DB tx.
   // Idempotent on retry (Stripe Checkout Sessions, paid invoices, settled charges
   // are all immutable post-completion). Tail latency under Stripe outage just
   // delays our processing — it does NOT pin DB resources.
-  const prefetch = await PREFETCHERS[event.type]?.(event, stripe)
-  // Phase 2: open the DB tx, insert stripe_events, dispatch the handler with
-  // both the event and the prefetched data. Pure-DB writes inside.
+  const prefetch = await PREFETCHERS[event.type as KnownStripeEventType]?.(event, stripe)
+
+  // Phase 2: open the DB tx with full timeout discipline (per Petra C1 round 5 —
+  // matches MYT-40's `atomicDebit` recipe so a contended `users` row from a
+  // concurrent session-debit can't pin the webhook PoolClient).
   const client = await pool.connect()
   try {
-    await client.query('BEGIN')
-    await client.query("SET LOCAL transaction_isolation = 'read committed'")
+    await client.query("BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'")
     const inserted = await stripeEvents.recordOrSkip(client, event.id, event.type)
-    if (inserted === 'duplicate') { await client.query('ROLLBACK'); return }
-    await HANDLERS[event.type]?.(event, prefetch, client)
+    if (inserted === 'duplicate') {
+      await client.query('ROLLBACK')
+      return
+    }
+    const handler = HANDLERS[event.type as KnownStripeEventType]
+    if (!handler) {
+      // Unknown event type: COMMIT the stripe_events row (records acknowledgement
+      // so Stripe stops retrying) and exit cleanly.
+      log.info({ event_type: event.type, event_id: event.id }, 'stripe_webhook_unknown_type')
+      await client.query('COMMIT')
+      return
+    }
+    // Per Petra C2 round 5: handler returns 'ok' (commit all writes) or
+    // 'validation_failed' (commit ONLY the stripe_events row; the handler
+    // is contractually required to have written nothing else when returning
+    // the sentinel — §13 has a regression test asserting this).
+    const result = await handler(event, prefetch, client)
     await client.query('COMMIT')
-  } catch (err) { await client.query('ROLLBACK'); throw err }
-  finally { client.release() }
+    if (result === 'validation_failed') {
+      log.error({ event_id: event.id }, 'billing.handler_validation_failed_committed')
+    }
+  } catch (err) {
+    try { await client.query('ROLLBACK') } catch { /* connection dead; pool will recycle */ }
+    throw err  // caller (the route handler) returns 5xx so Stripe retries
+  } finally {
+    client.release()
+  }
 }
 ```
+
+**Timeout discipline** (Petra C1 round 5): the three `SET LOCAL`s above are the same set MYT-40's `atomicDebit` uses — they MUST be applied at every webhook tx, not just the illustrative SQL block. Implementations that omit them lose the entire pool-protection invariant. Tests in §13 assert that a slow holder on `users.id` produces a typed lock timeout in ~1s (not the holder's full sleep duration).
+
+**Validation-failed sentinel** (Petra C2 round 5): handlers that detect amount-validation failure (per cross-cutting rule 2 in §5.4) MUST return `'validation_failed'` rather than throw. Throwing rolls back `stripe_events` and Stripe redelivers indefinitely. Returning the sentinel commits the `stripe_events` row (suppresses retries) without any other writes. The §13 regression test injects an amount-mismatch on `checkout.session.completed` and asserts (a) no `purchases`/`credit_ledger`/`billing_history` rows landed, (b) `stripe_events` IS persisted, (c) replay of the same `event.id` is correctly skipped as duplicate.
+
+**API-version mismatch is fail-closed** (Ephesus I3 / Carthage M4 round 5): the earlier "log + continue" path was inconsistent with §3.1's documentation of breaking field-shape changes between Stripe API versions. The dispatcher now skips handler invocation entirely on mismatch and commits only the `stripe_events` row — same shape as `'validation_failed'`. Paging-grade alarm fires; operator fixes the Dashboard endpoint API version.
 
 The `PREFETCHERS` table mirrors `HANDLERS`: each event type optionally declares a prefetch function that returns whatever Stripe-side data the handler needs. Handlers receive that prefetch data as their second argument; they do not call Stripe themselves. Tests in §13 mock the Stripe client at the prefetch boundary (the handler's tx body never references it).
 
@@ -346,39 +419,9 @@ The `PREFETCHERS` table mirrors `HANDLERS`: each event type optionally declares 
 
 These prefetch shapes are pinned in the spec so the implementer doesn't have to derive them. Tests assert each handler's prefetch contract via fixture data.
 
-After successful insert into `stripe_events`, dispatch:
+**Lock acquisition order discipline.** All webhook handlers that touch user-scoped state acquire `SELECT id FROM users WHERE id = $1 FOR UPDATE` as their first **write-blocking** DB operation in the tx (after the `stripe_events` insert and after any read-only resolution queries needed to determine the userId — per Petra I8 round 5: `checkout.session.completed` resolves via `metadata.userId`, `invoice.paid` and `customer.subscription.*` resolve via `users.stripe_customer_id` lookup, `refund.created` resolves via `purchases`/`billing_history` walk). This anchor lock matches MYT-40's `atomicDebit` recipe and prevents deadlocks where two concurrent handlers (e.g., `checkout.session.completed` racing `invoice.paid`) acquire user-scoped locks in different orders. Per Hydra I3 round 2 + Petra I1/I7 round 5: this discipline applies to ALL handlers that write user-scoped state, including `customer.subscription.created`/`.updated`/`.deleted` (the single-statement upsert is atomic, but adding the anchor lock makes the §5.3 deadlock-prevention claim hold uniformly across handlers).
 
-```ts
-// Defense-in-depth: assert the Dashboard webhook endpoint API version
-// matches the SDK's pin. A mismatch silently corrupts typed field access.
-if (event.api_version !== STRIPE_API_VERSION) {
-  request.log.error(
-    { event_api_version: event.api_version, sdk_pin: STRIPE_API_VERSION, event_id: event.id },
-    'stripe_webhook_api_version_mismatch — Dashboard endpoint must be set to STRIPE_API_VERSION',
-  )
-  // Continue processing — Stripe field shapes are usually backward-compatible within
-  // a year — but the loud log triggers an ops fix.
-}
-
-const HANDLERS: Record<string, EventHandler> = {
-  'checkout.session.completed':     handleCheckoutCompleted,
-  'invoice.paid':                   handleInvoicePaid,
-  'customer.subscription.created':  handleSubscriptionUpsert,  // upsert-shaped; same handler as .updated
-  'customer.subscription.updated':  handleSubscriptionUpsert,
-  'customer.subscription.deleted':  handleSubscriptionDeleted,
-  'refund.created':                 handleRefundCreated,
-}
-const handler = HANDLERS[event.type]
-if (handler) {
-  await handler(event, tx, stripe)  // tx is the same transaction stripe_events was inserted into
-} else {
-  request.log.info({ event_type: event.type, event_id: event.id }, 'stripe_webhook_unknown_type')
-  // tx still commits — the stripe_events row records that we acknowledged this event
-}
-return reply.code(200).send({ received: true })
-```
-
-**Lock acquisition order discipline.** All webhook handlers that touch user-scoped state acquire `SELECT id FROM users WHERE id = $1 FOR UPDATE` as their FIRST DB operation in the tx (after the `stripe_events` insert). This anchor lock matches MYT-40's `atomicDebit` recipe and prevents deadlocks where two concurrent handlers (e.g., `checkout.session.completed` racing `invoice.paid`) acquire user-scoped locks in different orders. Per Hydra I3 round 2.
+**Route-handler integration.** The Fastify route handler at `POST /webhooks/stripe` calls `dispatchEvent(event, stripe, pool, request.log)` after signature verification (§5.2) and returns `200 { received: true }` on success or 5xx (rethrown error) on failure so Stripe retries.
 
 ### 5.4 Per-event-type handlers
 
@@ -442,22 +485,25 @@ Branch on `billing_reason`:
 
 #### `billing_reason === 'subscription_cycle'` (renewal)
 
-- **Amount validation**: assert `event.data.object.subtotal === price.unit_amount` (single-item subscription; `subtotal` is Stripe's pre-tax-pre-discount line total — tax/discount-tolerant per Chimera I5 round 2). Mismatch → §5.4 cross-cutting rule 2.
-- **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` — `amount = spec.sessionsGranted` for `credit_type='session'`, same for worlds. `source_type='subscription'`. `source_billing_history_id` set to the billing_history row's id (written next, in the same tx; insert order: billing_history first, then credit_ledger with the FK). `source_purchase_id = NULL`. `expires_at = period_end`.
-- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal`, `lookup_key = tier_lookup_key`, `expires_at = period_end` (mirrors the credit_ledger.expires_at for refund-resolution per §5.4.5).
+- **Amount validation**: assert `event.data.object.subtotal_excluding_tax === price.unit_amount` (single-item subscription; per §5.4 cross-cutting rule 2 + Carthage C1 round 5, this is the pre-tax-pre-discount field; tax-/discount-tolerant by construction so a future tax-on flip doesn't silently break the assertion). Mismatch → §5.4 cross-cutting rule 2.
+- **Insert order (per Petra I5 round 5): append billing_history → grant credits.** The credit_ledger row's `source_billing_history_id` FK references the billing_history row; FK requires billing_history first or the tx aborts.
+- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax`, `lookup_key = tier_lookup_key`, `expires_at = period_end` (mirrors the credit_ledger.expires_at for refund-resolution per §5.4.5).
+- **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` — `amount = spec.sessionsGranted` for `credit_type='session'`, same for worlds. `source_type='subscription'`. `source_billing_history_id = <billing_history row inserted above>`. `source_purchase_id = NULL`. `expires_at = period_end`.
 
 #### `billing_reason === 'subscription_create'` (initial subscription invoice — fresh sub or post-SCA settlement)
 
-Same logic as `subscription_cycle`, with one subtlety: at this moment `user_subscriptions` may not yet have a row for this `stripe_subscription_id` if `customer.subscription.created` / `customer.subscription.updated` hasn't arrived yet (race on Stripe's side). The `upsertFromStripe` call from §5.4.3 covers the row creation; if THIS handler runs first, it must also call `upsertFromStripe` (idempotent) before the credit grant so that the user_subscriptions row exists and the upgrade-tier endpoint's read-back works. Order: `upsertFromStripe` → grant credits → append billing_history.
+Same logic as `subscription_cycle`, with one subtlety: at this moment `user_subscriptions` may not yet have a row for this `stripe_subscription_id` if `customer.subscription.created` / `customer.subscription.updated` hasn't arrived yet (race on Stripe's side). The `upsertFromStripe` call from §5.4.3 covers the row creation; if THIS handler runs first, it must also call `upsertFromStripe` (idempotent) so that the user_subscriptions row exists. **Insert order (per Petra I5 round 5): `upsertFromStripe` → append billing_history → grant credits.** The credit_ledger row's `source_billing_history_id` FK references the billing_history row, so billing_history MUST be inserted first or the FK constraint aborts the tx and Stripe redelivers indefinitely.
 
 #### `billing_reason === 'subscription_update'` (mid-period upgrade via §4.6)
 
 - This is the upgrade-tier endpoint's invoice landing. The invoice carries the **flat dollar delta** (e.g., $30 for Wayfarer→Mythwright via Stripe's `proration_date=current_period_start` math).
-- Read the OLD tier from `user_subscriptions.tier_lookup_key` via `getActiveForUser(client, userId)` BEFORE calling `upsertFromStripe` (which would overwrite the row to the new tier). Compute the credit DELTA: `(target_spec.sessionsGranted - old_spec.sessionsGranted)` for sessions, same for worlds. Old and new tier specs both come from `LOOKUP_KEYS`.
-- **Amount validation**: assert `subtotal === (target_spec.priceCents - old_spec.priceCents)` (the flat dollar delta per Decision 2). Mismatch → §5.4 cross-cutting rule 2 (likely indicates a Stripe-side proration math change or a config drift; pages an alert).
-- **Upsert** `user_subscriptions` to the new tier via `upsertFromStripe`.
-- **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` with `amount = delta` (for the credit_type), `source_type='subscription'`, `source_billing_history_id` linked, `expires_at = period_end + tier_period_length` (i.e., the next-period-end after the upgrade — credits get a full period of life, not the days remaining in the original period). For Mythrun's monthly tiers this is `period_end + INTERVAL '1 month'` computed in SQL.
-- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal` (the delta), `lookup_key = target_tier_lookup_key`, `expires_at = period_end + tier_period_length`.
+- **Derive OLD and NEW tier from the invoice line items, NOT from `user_subscriptions`** (per Petra I3 round 5 — load-bearing revenue-hole fix). Stripe's typical event ordering for an `/upgrade-tier` call is `customer.subscription.updated` → `invoice.paid`; the former runs `upsertFromStripe` (per §5.4.3) and writes the NEW `tier_lookup_key` to `user_subscriptions` BEFORE this handler reads it. If this handler used `getActiveForUser` to find the "OLD" tier, it would read the NEW tier (already overwritten), compute `delta = NEW − NEW = 0`, and grant ZERO credits despite the user paying the full upgrade delta. The fix: a proration invoice carries TWO line items — one negative (the prorated refund of the OLD price) and one positive (the prorated charge for the NEW price). Each line's `pricing.price_details.price` (Stripe price ID at dahlia, since `lookup_key` was removed from `InvoiceLineItem` per §3.1 note 2) resolves via the SKU cache reverse map to its `lookup_key`. Concretely: `oldLookupKey = skuCache.findByPriceId(prefetch.invoice.lines.data.find(l => l.amount < 0)!.pricing.price_details.price).lookup_key`; `newLookupKey = skuCache.findByPriceId(prefetch.invoice.lines.data.find(l => l.amount > 0)!.pricing.price_details.price).lookup_key`. Both are pinned by the invoice itself, independent of any race against `customer.subscription.updated`.
+- Compute the credit DELTA from the resolved tier specs: `(LOOKUP_KEYS[newLookupKey].sessionsGranted - LOOKUP_KEYS[oldLookupKey].sessionsGranted)` for sessions, same for worlds.
+- **Amount validation**: assert `event.data.object.subtotal_excluding_tax === (LOOKUP_KEYS[newLookupKey].priceCents - LOOKUP_KEYS[oldLookupKey].priceCents)` (the flat dollar delta per Decision 2). Mismatch → §5.4 cross-cutting rule 2 (likely indicates a Stripe-side proration math change or a config drift; pages an alert).
+- **Upsert** `user_subscriptions` to the new tier via `upsertFromStripe` (idempotent against any prior `customer.subscription.updated`-driven upsert).
+- **Insert order (per Petra I5 round 5): `upsertFromStripe` → append billing_history → grant credits.**
+- **Append billing_history** row: `kind='invoice'`, `source_id_stripe = invoice_id`, `amount_cents = subtotal_excluding_tax` (the delta), `lookup_key = newLookupKey`, `expires_at = period_end + tier_period_length`.
+- **Grant** via `repo.credits.grantInTx(client, ...)`: one row per `(credit_type)` with `amount = delta` (for the credit_type), `source_type='subscription'`, `source_billing_history_id = <the billing_history row inserted above>`, `expires_at = period_end + tier_period_length` (i.e., the next-period-end after the upgrade — credits get a full period of life, not the days remaining in the original period). For Mythrun's monthly tiers this is `period_end + INTERVAL '1 month'` computed in SQL.
 
 #### Other `billing_reason` values (`manual`, `quote_accept`, `subscription_threshold`, etc.)
 
@@ -707,14 +753,25 @@ interface UserSubscriptionsRepo {
 
   markCanceled(tx: ClientLike, stripe_subscription_id: string, payload: { cancel_at_period_end: boolean; cancel_at: string | null; cancellation_details: unknown }): Promise<void>
   // status='canceled'. PRESERVE cancel_at_period_end from the event payload
-  // (per Kraken C3 round 2 / Stilton M4 round 3). Note Roquefort C1 round 3:
-  // Stripe's customer.subscription.deleted typically reports cancel_at_period_end=false
-  // at deletion time (the subscription has already canceled, so it's not
-  // "scheduled to cancel at period end" anymore). The "preserve" semantic is
-  // therefore mostly a no-op for .deleted; the user-vs-Stripe-cancel distinction
-  // lives in cancellation_details.reason ('cancellation_requested' vs
-  // 'payment_failed' vs 'payment_disputed' vs 'automation_action'). cancel_at
-  // (timestamp) and cancellation_details (full object) are also recorded.
+  // (per Kraken C3 round 2 / Stilton M4 round 3). Per Carthage I3 round 5: at
+  // dahlia, cancel_at_period_end on the .deleted payload is the HISTORICAL
+  // fact — Stripe docs: "did (if status=canceled) cancel at the end of the
+  // current billing period." A user who clicked Cancel-At-Period-End and
+  // had the subscription delete arrives with cancel_at_period_end=true; a
+  // Stripe-initiated dunning cancellation arrives with =false. Preserving
+  // the payload value distinguishes these for analytics; collapse-to-false
+  // would erase the distinction.
+  //
+  // The user-vs-Stripe-cancel distinction is also redundantly available
+  // via cancellation_details.reason. Documented Stripe enum values at
+  // dahlia (per Carthage I1 round 5):
+  //   'canceled_by_retention_policy'  // Stripe Smart Retries / retention automation
+  //   'cancellation_requested'        // user clicked Cancel in Customer Portal
+  //                                   // OR you called subscriptions.cancel
+  //   'payment_disputed'              // Stripe canceled because of a dispute
+  //   'payment_failed'                // Stripe canceled after dunning exhausted
+  // cancel_at (timestamp) and cancellation_details (full object) are also
+  // recorded; analytics + audit feed read both.
 }
 ```
 
@@ -894,11 +951,14 @@ async function findOrCreateStripeCustomer(pool: Pool, userId: string): Promise<s
 
   // Phase 3 — short tx: serialized write with FOR UPDATE to handle concurrent racers.
   // The lock is held only across two short DB ops (re-read + UPDATE); no Stripe call
-  // happens inside this tx, so MYT-40's lock_timeout='1s' discipline is honored.
+  // happens inside this tx, so MYT-40's full timeout discipline applies — per Petra
+  // C3 round 5, all three SET LOCALs (transaction_isolation + lock_timeout +
+  // statement_timeout) MUST be set, identical to MYT-40's atomicDebit recipe.
+  // Pinning isolation removes a TOCTOU hole if the connection-pool default ever
+  // drifts (e.g., a future SET SESSION transaction_isolation = 'repeatable read').
   const client = await pool.connect()
   try {
-    await client.query('BEGIN')
-    await client.query("SET LOCAL lock_timeout = '1s'")
+    await client.query("BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'")
     const phase3 = await client.query<{ stripe_customer_id: string | null }>(
       `SELECT stripe_customer_id FROM users WHERE id = $1 FOR UPDATE`,
       [userId],
