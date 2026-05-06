@@ -1,14 +1,14 @@
 <!-- source: backend/src/billing/lookup-keys.ts -->
 <!-- source: backend/src/billing/stripe-client.ts -->
 <!-- source: backend/src/billing/probe.ts -->
+<!-- source: backend/src/billing/sku-cache.ts -->
 <!-- source: backend/src/config/env.ts -->
 <!-- source: backend/src/server.ts -->
 <!-- source: backend/eslint-rules/no-stripe-price-mutations.cjs -->
 <!-- source: backend/eslint-rules/no-stripe-subscription-price-mutation.cjs -->
-<!-- source: backend/src/__tests__/webhook-absence.test.ts -->
 <!-- source: eslint.config.js -->
-<!-- source-hash: sha256:6e47aef6f31e321b3e3584b87157fd282cad31d7523f19df0be4a6ba6984f6ed -->
-<!-- last-ticket: MYT-41 -->
+<!-- source-hash: sha256:776fe0ef41a984514b5427a9d61bb47efef9396bbd8108084208f7c14c3a1d5e -->
+<!-- last-ticket: MYT-42 -->
 
 <h1>Stripe contract</h1>
 
@@ -25,17 +25,19 @@
 <h2>How it fits together</h2>
 
 <p>
-  Five files in <code>backend/src/billing/</code> and <code>backend/eslint-rules/</code> hold the
-  whole surface today: <code>lookup-keys.ts</code> declares every SKU as a closed TypeScript enum,
+  Six files in <code>backend/src/billing/</code> and <code>backend/eslint-rules/</code> hold the
+  whole surface: <code>lookup-keys.ts</code> declares every SKU as a closed TypeScript enum,
   <code>stripe-client.ts</code> caches the SDK client pinned to one <code>apiVersion</code>,
-  <code>probe.ts</code> verifies on every boot that Stripe's live catalog matches the enum, and two
-  ESLint rules under <code>backend/eslint-rules/</code> reject any source pattern that would mutate
-  the catalog from the SDK. Two env vars (<code>STRIPE_SECRET_KEY</code>,
+  <code>probe.ts</code> verifies on every boot that Stripe's live catalog matches the enum and
+  populates the module-level <code>sku-cache.ts</code> the rest of the system reads, and two ESLint
+  rules under <code>backend/eslint-rules/</code> reject any source pattern that would mutate the
+  catalog from the SDK. Two env vars (<code>STRIPE_SECRET_KEY</code>,
   <code>STRIPE_WEBHOOK_SECRET</code>) wire it to the running container; the boot gate calls the
   probe between <code>waitFor(pg, redis×2)</code> and <code>app.listen</code>, so a contract
   mismatch turns the deploy red and triggers an ECS rollback before traffic ever reaches the new
-  tasks. There is no <code>/webhooks/stripe</code> route yet — that lands in MYT-42 with the
-  verifying handler — and a pinned test fails the build if any future PR registers it prematurely.
+  tasks. The <a href="./billing-webhook.html">webhook plugin</a> is what consumes the
+  <code>STRIPE_WEBHOOK_SECRET</code> at request time; everything Stripe-call-shaped on the request
+  path resolves through the cached client and the cached SKU snapshot.
 </p>
 
 <aside class="wiki-rationale">
@@ -120,7 +122,12 @@
   whose <code>transform_quantity</code> is <code>null</code>, whose <code>tax_behavior</code> is
   <code>unspecified</code>, whose product is active, and — for tiers — whose
   <code>recurring</code> shape is monthly licensed (<code>interval = 'month'</code>,
-  <code>interval_count = 1</code>, <code>usage_type = 'licensed'</code>).
+  <code>interval_count = 1</code>, <code>usage_type = 'licensed'</code>). Each verified entry is
+  recorded in the module-level <a href="#the-sku-cache-and-its-public-projection">SKU cache</a> so
+  the rest of the system can resolve <code>lookup_key</code> ↔ <code>price_id</code> without hitting
+  Stripe at request time. The probe then performs a second contract check against the account's
+  default <a href="#the-customer-portal-config-probe">Customer Portal configuration</a>
+  to verify the asymmetric upgrade-immediate / downgrade-at-renewal shape downgrades depend on.
 </p>
 
 <p>The probe distinguishes four failure modes by throwing different typed errors:</p>
@@ -175,6 +182,62 @@
   contract checks so the diagnostic stays clean.
 </aside>
 
+<h3>The SKU cache and its public projection</h3>
+
+<p>
+  <code>sku-cache.ts</code> is a module-level snapshot the probe writes into on a successful pass: a
+  <code>byLookupKey</code> map and a <code>byPriceId</code> reverse map (both keyed on the
+  <code>SkuInternalEntry</code> shape, which carries <code>stripe_price_id</code> alongside the
+  display fields), plus a <code>publicListing</code> array of the same entries with
+  <code>stripe_price_id</code> stripped. The cache is process-scoped and never refreshed within a
+  process — a price drift in Stripe is caught at the next deploy boundary, when the new tasks re-run
+  the probe.
+</p>
+
+<p>
+  Three consumers read the cache:
+  <a href="./billing-routes.html">the <code>/api/billing/skus</code> route</a> serves the public
+  listing as a marketing-page payload; <a href="./billing-webhook.html">webhook handlers</a> use
+  <code>byPriceId</code> to resolve the <code>lookup_key</code> from a Stripe-side
+  <code>price.id</code> they receive on <code>invoice.paid</code>; the checkout and tier-upgrade
+  routes use <code>byLookupKey</code> to resolve the cart items' price IDs and to compare tier
+  amounts.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Internal vs public projection split</strong> — every Stripe price has an internal
+  <code>price_*</code> ID that the SDK needs and the marketing page does not. Returning the full
+  internal entry on the public route would expose a piece of catalogue plumbing on an
+  unauthenticated endpoint. Two projections — one with the price ID, one without — make the
+  least-disclosure principle structurally enforced rather than convention-enforced.
+</aside>
+
+<h3>The Customer Portal config probe</h3>
+
+<p>
+  After the prices-list pass, the probe runs a second contract check against
+  <code>stripe.billingPortal.configurations.list({ active: true, is_default: true })</code>. It
+  expects exactly one default config back and verifies three fields:
+  <code>features.subscription_update.proration_behavior === 'create_prorations'</code>,
+  <code>schedule_at_period_end.conditions</code> includes a
+  <code>{ type: 'decreasing_item_amount' }</code> entry (the asymmetry that defers downgrades to
+  period end while leaving upgrades to take effect immediately), and the per-tier
+  <code>products</code> allowlist isn't empty. A mismatch throws
+  <code>BillingProbePortalConfigError</code>; the deploy fails the same way a price-list mismatch
+  would.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The Portal carries downgrades; the API carries upgrades</strong> — Mythrun routes upgrades
+  through <code>POST /api/billing/upgrade-tier</code> because the upgrade path needs
+  <code>proration_date = current_period_start</code> to make the upgrade non-gameable, and the
+  Portal's <code>create_prorations</code> behavior doesn't expose that knob. Downgrades go through
+  Portal Switch Plan with <code>schedule_at_period_end</code>, which defers the change until the
+  period boundary so a user who downgrades on day 1 keeps their paid tier until day 30. The probe
+  verifies the Portal config carries this asymmetric shape; without it, downgrades would take effect
+  immediately and the user would lose tier access they'd already paid for.
+</aside>
+
 <h3>The boot-gate wiring</h3>
 
 <p>
@@ -215,14 +278,13 @@
 </p>
 
 <p>
-  <code>STRIPE_WEBHOOK_SECRET</code> follows a different rule: any non-empty value is accepted, and
-  the literal string <code>PLACEHOLDER</code> is permitted in the MYT-41 → MYT-42 window. The
-  argument is fail-closed-by-absence: with no <code>/webhooks/stripe</code> route registered, no
-  code path ever reads the secret, so its value is irrelevant until the verifying handler lands.
-  MYT-42's webhook handler will call <code>stripe.webhooks.constructEvent</code> unconditionally;
-  any signature mismatch fails closed regardless of whether the secret is the literal
-  <code>PLACEHOLDER</code> or a real <code>whsec_*</code>. There is no bypass branch for the literal
-  value at the verification layer.
+  <code>STRIPE_WEBHOOK_SECRET</code> follows a softer rule: any non-empty value is accepted at
+  env-load. The actual gate is at the
+  <a href="./billing-webhook.html">webhook plugin's signature verification</a>:
+  <code>stripe.webhooks.constructEvent</code> is invoked unconditionally on every delivery; any
+  signature mismatch fails closed and returns 400. There is no bypass branch for the literal string
+  anywhere — a misconfigured secret produces a webhook that rejects every event Stripe sends, which
+  surfaces in the Stripe Dashboard's webhook attempts UI within minutes.
 </p>
 
 <h3>The ESLint AST tripwires</h3>
@@ -260,18 +322,6 @@
   The rules' value is "an honest mistake in a PR shows up as a lint failure on the diff," not "this
   is what makes mutation impossible."
 </aside>
-
-<h3>The webhook-route absence invariant</h3>
-
-<p>
-  <code>backend/src/__tests__/webhook-absence.test.ts</code> pins the negative space:
-  <code>POST /webhooks/stripe</code> must return <code>404</code> until MYT-42 lands the verifying
-  handler. The test boots a Fastify app via the same factory production uses, injects a POST to
-  <code>/webhooks/stripe</code>, and asserts the response code. A future PR that registers a logging
-  stub, a smoke handler, or a permissive catch-all that shadows the path before
-  <code>stripe.webhooks.constructEvent</code> verification is wired would fail this test loudly.
-  MYT-42 deletes the test file as part of landing the real handler.
-</p>
 
 <h2>Operating this piece</h2>
 
@@ -383,14 +433,14 @@
   on the serving page. The boot probe runs inside the
   <a href="../runtime/index.html#the-boot-gate-on-in-staging">backend's boot gate</a>; a probe throw
   uses the same fail-closed-and-rollback path as a pg/Redis probe failure. The
-  <a href="../data/schema.html">schema</a>'s <code>credit_ledger</code> is where every successful
-  purchase or billing-cycle renewal lands as an INSERT — the
-  <a href="../data/repository.html#credits-and-the-grant-debit-pair">credits namespace</a> in the
-  repository layer is the seam, and migration 006 dropped the four legacy billing-config tables this
-  contract replaces (<code>subscription_tiers</code>, <code>session_packs</code>,
-  <code>user_subscriptions</code>, <code>purchases</code>). MYT-42 wires the
-  <code>/webhooks/stripe</code> route, lands a new <code>purchases</code> table shape (lookup_key
-  TEXT instead of session_pack_size INTEGER), and deletes the webhook-absence test.
+  <a href="./billing-webhook.html">webhook plugin</a> is the request-time consumer of
+  <code>STRIPE_WEBHOOK_SECRET</code> and the <code>byPriceId</code> reverse map, and the
+  <a href="./billing-routes.html">billing routes</a> consume the cached SKU listing for the public
+  catalogue and resolve cart items via <code>byLookupKey</code>. The
+  <a href="../data/schema.html">schema</a>'s migration 007 holds the four billing tables the webhook
+  handlers write to (<code>purchases</code>, <code>user_subscriptions</code>,
+  <code>billing_history</code>, plus the new FK columns on <code>credit_ledger</code>); the
+  <a href="../data/repository.html">repository layer</a> exposes the matching namespaces.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -499,8 +549,8 @@
       <td><code>STRIPE_WEBHOOK_SECRET</code></td>
       <td>Required, any non-empty string</td>
       <td>
-        Literal <code>PLACEHOLDER</code> permitted in the MYT-41 → MYT-42 window — no code path
-        consumes it until the webhook handler lands.
+        Consumed by the <a href="./billing-webhook.html">webhook plugin</a> at request time;
+        signature mismatch fails closed.
       </td>
     </tr>
   </tbody>
@@ -555,8 +605,9 @@
 <p>
   <code>backend/src/billing/lookup-keys.ts</code>,
   <code>backend/src/billing/stripe-client.ts</code>, <code>backend/src/billing/probe.ts</code>,
-  <code>backend/src/config/env.ts</code>, <code>backend/src/server.ts</code>,
+  <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/config/env.ts</code>,
+  <code>backend/src/server.ts</code>,
   <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code>,
   <code>backend/eslint-rules/no-stripe-subscription-price-mutation.cjs</code>,
-  <code>backend/src/__tests__/webhook-absence.test.ts</code>, <code>eslint.config.js</code>.
+  <code>eslint.config.js</code>.
 </p>

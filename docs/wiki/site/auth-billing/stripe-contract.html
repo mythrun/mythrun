@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/stripe-contract.html" class="active">Stripe contract</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/stripe-contract.html" class="active">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Stripe contract</div>
         <article>
@@ -38,230 +38,281 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1777pt" height="542pt"
- viewBox="14.00 14.00 1762.00 527.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 523.4)">
+<svg width="1247pt" height="753pt"
+ viewBox="14.00 14.00 1233.00 738.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 734.4)">
 <title>stripe_contract</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-509 1743.7,-509 1743.7,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-720 1214.68,-720 1214.68,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_code</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="569.23,-106 569.23,-325 1043.95,-325 1043.95,-106 569.23,-106"/>
-<text xml:space="preserve" text-anchor="middle" x="806.59" y="-311.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend code &#160;(src/billing/)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="629.54,-274 629.54,-581 1172.97,-581 1172.97,-274 629.54,-274"/>
+<text xml:space="preserve" text-anchor="middle" x="901.26" y="-567.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend code &#160;(src/billing/)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_eslint</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="857.14,-344 857.14,-497 1073.66,-497 1073.66,-344 857.14,-344"/>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-483.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">eslint&#45;rules/ &#160;(AST tripwires)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="215.3,-8 215.3,-173 451.62,-173 451.62,-8 215.3,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-159.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">eslint&#45;rules/ &#160;(AST tripwires)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_env</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="215.3,-136 215.3,-289 425.21,-289 425.21,-136 215.3,-136"/>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-275.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">env &#160;(config/env.ts)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="238.41,-518 238.41,-671 428.51,-671 428.51,-518 238.41,-518"/>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-657.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">env &#160;(config/env.ts)</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_boot</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-8 8,-106 690.02,-106 690.02,-8 8,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="349.01" y="-92.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">boot gate &#160;(server.ts)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-176 8,-274 770.14,-274 770.14,-176 8,-176"/>
+<text xml:space="preserve" text-anchor="middle" x="389.07" y="-260.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">boot gate &#160;(server.ts)</text>
 </g>
 <g id="clust5" class="cluster">
+<title>cluster_consumers</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="972.96,-581 972.96,-708 1202.68,-708 1202.68,-581 972.96,-581"/>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-694.1" font-family="Courier,monospace" font-size="11.00">request&#45;time consumers</text>
+</g>
+<g id="clust6" class="cluster">
 <title>cluster_stripe</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1259.68,-305 1259.68,-410 1731.7,-410 1731.7,-305 1259.68,-305"/>
-<text xml:space="preserve" text-anchor="middle" x="1495.69" y="-396.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Stripe (external)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="619.64,-71 619.64,-176 1189.47,-176 1189.47,-71 619.64,-71"/>
+<text xml:space="preserve" text-anchor="middle" x="904.56" y="-162.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Stripe (external)</text>
 </g>
 <!-- lookup -->
 <g id="node1" class="node">
 <title>lookup</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="706.53,-215.84 575.83,-215.84 575.83,-106.16 706.53,-106.16 706.53,-215.84"/>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-197.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lookup&#45;keys.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-184.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_wayfarer</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-170.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_sojourner</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-157.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_mythwright</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-144.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sku_session</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-131.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sku_world</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-118.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(closed enum)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="786.64,-383.84 655.94,-383.84 655.94,-274.16 786.64,-274.16 786.64,-383.84"/>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-365.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lookup&#45;keys.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-352.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_wayfarer</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-338.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_sojourner</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-325.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tier_mythwright</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-312.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sku_session</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-299.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sku_world</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-286.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(closed enum)</text>
 </g>
 <!-- probe -->
 <g id="node3" class="node">
 <title>probe</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1043.95,-293.64 886.85,-293.64 886.85,-210.36 1043.95,-210.36 1043.95,-293.64"/>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-275.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probe.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-261.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">read&#45;only</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-248.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stripe.prices.list</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-235.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">retry × 3 + jitter</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-222.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">4 typed errors</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1172.97,-373.24 1002.67,-373.24 1002.67,-276.76 1172.97,-276.76 1172.97,-373.24"/>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-354.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probe.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-341.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">read&#45;only</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-328.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stripe.prices.list</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-315.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ portal config check</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-301.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">retry × 3 + jitter</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-288.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">5 typed errors</text>
 </g>
 <!-- lookup&#45;&gt;probe -->
-<g id="edge4" class="edge">
+<g id="edge5" class="edge">
 <title>lookup&#45;&gt;probe</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M707,-179.31C756.2,-193.2 824.34,-212.45 878.15,-227.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="877.17,-229.91 884.57,-229.46 878.5,-225.2 877.17,-229.91"/>
-<text xml:space="preserve" text-anchor="middle" x="785.14" y="-229.65" font-family="Courier,monospace" font-size="10.00">enum drives</text>
-<text xml:space="preserve" text-anchor="middle" x="785.14" y="-217.65" font-family="Courier,monospace" font-size="10.00">lookup_keys filter</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M787.04,-328.29C844.41,-327.66 928.86,-326.73 993.52,-326.02"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="993.31,-328.48 1000.29,-325.95 993.26,-323.58 993.31,-328.48"/>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-342.59" font-family="Courier,monospace" font-size="10.00">enum drives</text>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-330.59" font-family="Courier,monospace" font-size="10.00">lookup_keys filter</text>
 </g>
 <!-- client -->
 <g id="node2" class="node">
 <title>client</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="713.13,-304.04 569.23,-304.04 569.23,-233.96 713.13,-233.96 713.13,-304.04"/>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-285.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stripe&#45;client.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-272.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cached singleton</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-259.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">apiVersion pinned</text>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-245.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">2026&#45;04&#45;22.dahlia</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="793.24,-472.04 649.34,-472.04 649.34,-401.96 793.24,-401.96 793.24,-472.04"/>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-453.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stripe&#45;client.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-440.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cached singleton</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-427.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">apiVersion pinned</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-413.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">2026&#45;04&#45;22.dahlia</text>
 </g>
 <!-- client&#45;&gt;probe -->
-<g id="edge5" class="edge">
+<g id="edge6" class="edge">
 <title>client&#45;&gt;probe</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M713.69,-265.23C762.06,-262.67 826.24,-259.29 877.55,-256.58"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="877.65,-259.03 884.51,-256.22 877.39,-254.14 877.65,-259.03"/>
-<text xml:space="preserve" text-anchor="middle" x="785.14" y="-266.98" font-family="Courier,monospace" font-size="10.00">injected</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M793.88,-415.01C851.02,-397.45 931.54,-372.71 993.7,-353.61"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="994.25,-356 1000.22,-351.61 992.81,-351.32 994.25,-356"/>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-400.58" font-family="Courier,monospace" font-size="10.00">injected</text>
 </g>
 <!-- api -->
-<g id="node11" class="node">
+<g id="node14" class="node">
 <title>api</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1462.99,-388.64 1259.68,-388.64 1259.68,-305.36 1462.99,-305.36 1462.99,-388.64"/>
-<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-370.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">api.stripe.com</text>
-<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-356.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">restricted key:</text>
-<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-343.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Prices read,</text>
-<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-330.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Subscriptions write</text>
-<text xml:space="preserve" text-anchor="middle" x="1361.33" y="-317.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(no Prices/Products write)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="822.95,-154.64 619.64,-154.64 619.64,-71.36 822.95,-71.36 822.95,-154.64"/>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-136.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">api.stripe.com</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-122.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">restricted key:</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-109.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Prices read,</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-96.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Subscriptions write</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-83.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(no Prices/Products write)</text>
 </g>
 <!-- probe&#45;&gt;api -->
-<g id="edge6" class="edge">
+<g id="edge7" class="edge">
 <title>probe&#45;&gt;api</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1044.49,-282.28C1059.94,-287.46 1076.18,-292.35 1091.66,-296 1157.07,-311.45 1175.74,-302 1241.68,-315 1244.65,-315.59 1247.65,-316.2 1250.68,-316.85"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1250.11,-319.24 1257.48,-318.35 1251.17,-314.45 1250.11,-319.24"/>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-342" font-family="Courier,monospace" font-size="10.00">prices.list</text>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-330" font-family="Courier,monospace" font-size="10.00">lookup_keys, active=true,</text>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-318" font-family="Courier,monospace" font-size="10.00">expand=[product]</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1002.17,-295.23C940.8,-272.24 864.61,-240.37 840.95,-216 826.22,-200.85 836.79,-187.96 822.95,-172 819.46,-167.98 815.63,-164.17 811.57,-160.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="813.33,-158.84 806.4,-156.22 810.19,-162.6 813.33,-158.84"/>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-302.7" font-family="Courier,monospace" font-size="10.00">prices.list</text>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-290.7" font-family="Courier,monospace" font-size="10.00">+ portal config</text>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-278.7" font-family="Courier,monospace" font-size="10.00">list</text>
+</g>
+<!-- cache -->
+<g id="node4" class="node">
+<title>cache</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="813.04,-560.04 629.54,-560.04 629.54,-489.96 813.04,-489.96 813.04,-560.04"/>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-541.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sku&#45;cache.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-528.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">byLookupKey + byPriceId</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-515.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ publicListing</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-501.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">module&#45;level snapshot</text>
+</g>
+<!-- webhook -->
+<g id="node12" class="node">
+<title>webhook</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1192.77,-686.84 982.87,-686.84 982.87,-643.16 1192.77,-643.16 1192.77,-686.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-668.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">webhook plugin</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-655.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">constructEvent + dispatcher</text>
+</g>
+<!-- cache&#45;&gt;webhook -->
+<g id="edge14" class="edge">
+<title>cache&#45;&gt;webhook</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M789.54,-560.7C806.12,-568.87 823.99,-577.15 840.95,-584 890.22,-603.89 907.91,-595.3 954.96,-620 963.94,-624.71 963.9,-629.47 972.96,-634 976.66,-635.85 980.49,-637.6 984.39,-639.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="983.42,-641.5 990.83,-641.84 985.25,-636.96 983.42,-641.5"/>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-635" font-family="Courier,monospace" font-size="10.00">byPriceId</text>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-623" font-family="Courier,monospace" font-size="10.00">reverse lookup</text>
+</g>
+<!-- routes -->
+<g id="node13" class="node">
+<title>routes</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1202.68,-624.84 972.96,-624.84 972.96,-581.16 1202.68,-581.16 1202.68,-624.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-606.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">billing routes</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-593.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">skus / checkout / upgrade&#45;tier</text>
+</g>
+<!-- cache&#45;&gt;routes -->
+<g id="edge15" class="edge">
+<title>cache&#45;&gt;routes</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M813.61,-526.08C858.13,-529.7 911.35,-538.77 954.96,-560 963.08,-563.95 963.46,-569.37 972.48,-575.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="971.02,-577.92 978.27,-579.48 973.57,-573.74 971.02,-577.92"/>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-575" font-family="Courier,monospace" font-size="10.00">byLookupKey +</text>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-563" font-family="Courier,monospace" font-size="10.00">publicListing</text>
 </g>
 <!-- rule_p -->
-<g id="node4" class="node">
+<g id="node5" class="node">
 <title>rule_p</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1073.66,-475.44 857.14,-475.44 857.14,-418.56 1073.66,-418.56 1073.66,-475.44"/>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-456.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no&#45;stripe&#45;price&#45;mutations</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-443.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bans prices/products/coupons</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-430.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.create / .update / .del</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="441.71,-64.44 225.2,-64.44 225.2,-7.56 441.71,-7.56 441.71,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no&#45;stripe&#45;price&#45;mutations</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bans prices/products/coupons</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.create / .update / .del</text>
 </g>
 <!-- rule_p&#45;&gt;api -->
-<g id="edge10" class="edge">
+<g id="edge11" class="edge">
 <title>rule_p&#45;&gt;api</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1074.13,-421.64C1125.04,-409.43 1186.59,-394.36 1241.68,-380 1244.61,-379.24 1247.59,-378.45 1250.58,-377.66"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1251.2,-380.03 1257.34,-375.86 1249.94,-375.3 1251.2,-380.03"/>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-420.31" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">blocked at code review</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M442.45,-57.55C494.93,-68.02 557.88,-80.59 610.59,-91.11"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="609.83,-93.45 617.18,-92.42 610.79,-88.65 609.83,-93.45"/>
+<text xml:space="preserve" text-anchor="middle" x="535.63" y="-91.09" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">blocked at code review</text>
 </g>
 <!-- rule_s -->
-<g id="node5" class="node">
+<g id="node6" class="node">
 <title>rule_s</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1063.75,-400.44 867.05,-400.44 867.05,-343.56 1063.75,-343.56 1063.75,-400.44"/>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-381.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no&#45;stripe&#45;subscription&#45;</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-368.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">price&#45;mutation</text>
-<text xml:space="preserve" text-anchor="middle" x="965.4" y="-355.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bans items[].price update</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="451.62,-152.04 215.3,-152.04 215.3,-81.96 451.62,-81.96 451.62,-152.04"/>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-133.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no&#45;stripe&#45;subscription&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-120.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">price&#45;mutation</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-107.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bans items[].price update</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-93.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(allowlist: upgrade&#45;tier route)</text>
 </g>
 <!-- rule_s&#45;&gt;api -->
-<g id="edge11" class="edge">
+<g id="edge12" class="edge">
 <title>rule_s&#45;&gt;api</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1064.19,-366.1C1116.79,-362.89 1182.79,-358.8 1241.68,-355 1244.51,-354.82 1247.38,-354.63 1250.28,-354.44"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1250.4,-356.89 1257.22,-353.99 1250.08,-352 1250.4,-356.89"/>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-367.4" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">blocked at code review</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M452.32,-115.78C502.6,-115.26 560.94,-114.65 610.32,-114.14"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="610.32,-116.59 617.3,-114.07 610.27,-111.69 610.32,-116.59"/>
+<text xml:space="preserve" text-anchor="middle" x="535.63" y="-118.59" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">blocked at code review</text>
 </g>
 <!-- env_sk -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>env_sk</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="405.41,-267.44 235.11,-267.44 235.11,-210.56 405.41,-210.56 405.41,-267.44"/>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-248.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">STRIPE_SECRET_KEY</text>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-235.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rk_* required</text>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-222.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sk_* rejected at load</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="418.61,-574.44 248.31,-574.44 248.31,-517.56 418.61,-517.56 418.61,-574.44"/>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-555.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">STRIPE_SECRET_KEY</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-542.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rk_* required</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-529.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sk_* rejected at load</text>
 </g>
 <!-- env_sk&#45;&gt;client -->
-<g id="edge8" class="edge">
+<g id="edge9" class="edge">
 <title>env_sk&#45;&gt;client</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M405.88,-246.96C453.66,-251.45 513.02,-257.04 560.04,-261.46"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="559.66,-263.89 566.86,-262.1 560.12,-259.01 559.66,-263.89"/>
-<text xml:space="preserve" text-anchor="middle" x="497.22" y="-263.14" font-family="Courier,monospace" font-size="10.00">rk_ key only</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M419.13,-522.08C485.08,-503.45 575.97,-477.77 640.62,-459.51"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="640.94,-461.96 647.01,-457.7 639.61,-457.25 640.94,-461.96"/>
+<text xml:space="preserve" text-anchor="middle" x="535.63" y="-510.63" font-family="Courier,monospace" font-size="10.00">rk_ key only</text>
 </g>
 <!-- env_wh -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>env_wh</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="425.21,-192.44 215.3,-192.44 215.3,-135.56 425.21,-135.56 425.21,-192.44"/>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-173.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">STRIPE_WEBHOOK_SECRET</text>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-160.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PLACEHOLDER permitted</text>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-147.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in MYT&#45;41 → MYT&#45;42 window</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="428.51,-649.44 238.41,-649.44 238.41,-592.56 428.51,-592.56 428.51,-649.44"/>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-630.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">STRIPE_WEBHOOK_SECRET</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-617.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">any non&#45;empty string</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-604.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">verified at request time</text>
 </g>
-<!-- listen -->
-<g id="node10" class="node">
-<title>listen</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="690.02,-79 592.33,-79 592.33,-43 690.02,-43 690.02,-79"/>
-<text xml:space="preserve" text-anchor="middle" x="641.18" y="-57.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">app.listen</text>
-</g>
-<!-- env_wh&#45;&gt;listen -->
-<g id="edge9" class="edge">
-<title>env_wh&#45;&gt;listen</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M411.37,-134.9C466.63,-117.05 535.68,-94.75 583.39,-79.34"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="584.11,-81.68 590.02,-77.2 582.61,-77.02 584.11,-81.68"/>
-<text xml:space="preserve" text-anchor="middle" x="497.22" y="-148.73" font-family="Courier,monospace" font-size="10.00">contract present</text>
-<text xml:space="preserve" text-anchor="middle" x="497.22" y="-136.73" font-family="Courier,monospace" font-size="10.00">(no consumer until</text>
-<text xml:space="preserve" text-anchor="middle" x="497.22" y="-124.73" font-family="Courier,monospace" font-size="10.00">MYT&#45;42)</text>
+<!-- env_wh&#45;&gt;webhook -->
+<g id="edge10" class="edge">
+<title>env_wh&#45;&gt;webhook</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M428.98,-626.53C567.42,-634.62 824.92,-649.68 973.38,-658.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="973.17,-660.81 980.31,-658.77 973.46,-655.92 973.17,-660.81"/>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-664.51" font-family="Courier,monospace" font-size="10.00">signature</text>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-652.51" font-family="Courier,monospace" font-size="10.00">verification</text>
 </g>
 <!-- waitfor -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>waitfor</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="178.3,-64 8,-64 8,-28 178.3,-28 178.3,-64"/>
-<text xml:space="preserve" text-anchor="middle" x="93.15" y="-42.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">waitFor(pg, redis×2)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="178.3,-236 8,-236 8,-200 178.3,-200 178.3,-236"/>
+<text xml:space="preserve" text-anchor="middle" x="93.15" y="-214.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">waitFor(pg, redis×2)</text>
 </g>
 <!-- probegate -->
-<g id="node9" class="node">
+<g id="node10" class="node">
 <title>probegate</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="398.81,-74.44 241.71,-74.44 241.71,-17.56 398.81,-17.56 398.81,-74.44"/>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-55.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probeStripeContract</text>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-42.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(fail&#45;closed throw</text>
-<text xml:space="preserve" text-anchor="middle" x="320.26" y="-29.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ ECS rollback)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="418.61,-253.04 248.31,-253.04 248.31,-182.96 418.61,-182.96 418.61,-253.04"/>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-234.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probeStripeContract</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-221.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ portal config probe</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-208.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(fail&#45;closed throw</text>
+<text xml:space="preserve" text-anchor="middle" x="333.46" y="-194.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ ECS rollback)</text>
 </g>
 <!-- waitfor&#45;&gt;probegate -->
 <g id="edge1" class="edge">
 <title>waitfor&#45;&gt;probegate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M178.93,-46C196.5,-46 215.03,-46 232.66,-46"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="232.41,-48.45 239.41,-46 232.41,-43.55 232.41,-48.45"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M178.84,-218C198.3,-218 219.11,-218 238.92,-218"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="238.82,-220.45 245.82,-218 238.82,-215.55 238.82,-220.45"/>
 </g>
-<!-- probegate&#45;&gt;listen -->
+<!-- probegate&#45;&gt;cache -->
 <g id="edge2" class="edge">
-<title>probegate&#45;&gt;listen</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M399.48,-29.35C444.21,-22.37 501.2,-17.76 551.23,-27 565.1,-29.56 579.6,-34.19 592.77,-39.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="591.68,-41.43 599.09,-41.73 593.49,-36.87 591.68,-41.43"/>
-<text xml:space="preserve" text-anchor="middle" x="497.22" y="-30" font-family="Courier,monospace" font-size="10.00">ok</text>
+<title>probegate&#45;&gt;cache</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M380.23,-253.58C435.76,-297.88 530.73,-377.33 601.64,-456 610.8,-466.17 608.99,-472.4 619.64,-481 621.14,-482.22 622.69,-483.41 624.27,-484.57"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="622.75,-486.49 629.9,-488.46 625.53,-482.46 622.75,-486.49"/>
+<text xml:space="preserve" text-anchor="middle" x="535.63" y="-459" font-family="Courier,monospace" font-size="10.00">populate</text>
+</g>
+<!-- listen -->
+<g id="node11" class="node">
+<title>listen</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="770.14,-229 672.45,-229 672.45,-193 770.14,-193 770.14,-229"/>
+<text xml:space="preserve" text-anchor="middle" x="721.29" y="-207.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">app.listen</text>
 </g>
 <!-- probegate&#45;&gt;listen -->
 <g id="edge3" class="edge">
 <title>probegate&#45;&gt;listen</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M399.27,-49.67C456.1,-52.34 531.8,-55.9 583.06,-58.31"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="582.78,-60.75 589.89,-58.63 583.01,-55.86 582.78,-60.75"/>
-<text xml:space="preserve" text-anchor="middle" x="497.22" y="-71.57" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">throw → exit 1</text>
-<text xml:space="preserve" text-anchor="middle" x="497.22" y="-59.57" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">→ ECS rollback</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M419.26,-201.32C435.89,-198.69 453.25,-196.38 469.62,-195 528.08,-190.06 543.09,-191.07 601.64,-195 621.87,-196.36 643.92,-199 663.45,-201.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="662.87,-204.15 670.15,-202.73 663.57,-199.3 662.87,-204.15"/>
+<text xml:space="preserve" text-anchor="middle" x="535.63" y="-198" font-family="Courier,monospace" font-size="10.00">ok</text>
+</g>
+<!-- probegate&#45;&gt;listen -->
+<g id="edge4" class="edge">
+<title>probegate&#45;&gt;listen</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M419.13,-216.46C493.33,-215.12 599.11,-213.2 663.55,-212.03"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="663.2,-214.49 670.15,-211.91 663.11,-209.59 663.2,-214.49"/>
+<text xml:space="preserve" text-anchor="middle" x="535.63" y="-230.54" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">throw → exit 1</text>
+<text xml:space="preserve" text-anchor="middle" x="535.63" y="-218.54" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">→ ECS rollback</text>
 </g>
 <!-- api&#45;&gt;probe -->
-<g id="edge7" class="edge">
+<g id="edge8" class="edge">
 <title>api&#45;&gt;probe</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1325.54,-304.66C1304.05,-281.97 1274.39,-256.22 1241.68,-244 1181.5,-221.52 1108.67,-224.84 1053.04,-233.07"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1052.95,-230.61 1046.41,-234.1 1053.7,-235.45 1052.95,-230.61"/>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-283" font-family="Courier,monospace" font-size="10.00">contract verify</text>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-271" font-family="Courier,monospace" font-size="10.00">currency=usd, type,</text>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-259" font-family="Courier,monospace" font-size="10.00">billing_scheme,</text>
-<text xml:space="preserve" text-anchor="middle" x="1166.67" y="-247" font-family="Courier,monospace" font-size="10.00">recurring shape</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M823.5,-140.33C875.34,-155.38 932.24,-173.81 954.96,-188 989.31,-209.45 1021.02,-241.8 1044.73,-269.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1042.73,-271.11 1049.1,-274.89 1046.48,-267.96 1042.73,-271.11"/>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-203" font-family="Courier,monospace" font-size="10.00">contract verify</text>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-191" font-family="Courier,monospace" font-size="10.00">prices + portal</text>
 </g>
 <!-- portal -->
-<g id="node12" class="node">
+<g id="node15" class="node">
 <title>portal</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1731.7,-382.04 1601,-382.04 1601,-311.96 1731.7,-311.96 1731.7,-382.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-363.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Customer Portal</text>
-<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-350.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(tier switching</text>
-<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-337.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lives here, not</text>
-<text xml:space="preserve" text-anchor="middle" x="1666.35" y="-323.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in app code)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1189.47,-148.04 986.17,-148.04 986.17,-77.96 1189.47,-77.96 1189.47,-148.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-129.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Customer Portal</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-116.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(downgrades + cancels;</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-103.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">upgrades go through</text>
+<text xml:space="preserve" text-anchor="middle" x="1087.82" y="-89.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/api/billing/upgrade&#45;tier)</text>
 </g>
 <!-- api&#45;&gt;portal -->
-<g id="edge12" class="edge">
+<g id="edge13" class="edge">
 <title>api&#45;&gt;portal</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1463.66,-347C1505.56,-347 1553.25,-347 1591.72,-347"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1591.47,-349.45 1598.47,-347 1591.47,-344.55 1591.47,-349.45"/>
-<text xml:space="preserve" text-anchor="middle" x="1532" y="-362" font-family="Courier,monospace" font-size="10.00">users self&#45;manage</text>
-<text xml:space="preserve" text-anchor="middle" x="1532" y="-350" font-family="Courier,monospace" font-size="10.00">tiers + cancel</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M823.35,-113C871.05,-113 928.09,-113 976.87,-113"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="976.75,-115.45 983.75,-113 976.75,-110.55 976.75,-115.45"/>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-128" font-family="Courier,monospace" font-size="10.00">users self&#45;manage</text>
+<text xml:space="preserve" text-anchor="middle" x="897.95" y="-116" font-family="Courier,monospace" font-size="10.00">downgrades + cancel</text>
 </g>
 </g>
 </svg>
@@ -274,17 +325,19 @@
 <h2 id="how-it-fits-together">How it fits together</h2>
 
 <p>
-  Five files in <code>backend/src/billing/</code> and <code>backend/eslint-rules/</code> hold the
-  whole surface today: <code>lookup-keys.ts</code> declares every SKU as a closed TypeScript enum,
+  Six files in <code>backend/src/billing/</code> and <code>backend/eslint-rules/</code> hold the
+  whole surface: <code>lookup-keys.ts</code> declares every SKU as a closed TypeScript enum,
   <code>stripe-client.ts</code> caches the SDK client pinned to one <code>apiVersion</code>,
-  <code>probe.ts</code> verifies on every boot that Stripe's live catalog matches the enum, and two
-  ESLint rules under <code>backend/eslint-rules/</code> reject any source pattern that would mutate
-  the catalog from the SDK. Two env vars (<code>STRIPE_SECRET_KEY</code>,
+  <code>probe.ts</code> verifies on every boot that Stripe's live catalog matches the enum and
+  populates the module-level <code>sku-cache.ts</code> the rest of the system reads, and two ESLint
+  rules under <code>backend/eslint-rules/</code> reject any source pattern that would mutate the
+  catalog from the SDK. Two env vars (<code>STRIPE_SECRET_KEY</code>,
   <code>STRIPE_WEBHOOK_SECRET</code>) wire it to the running container; the boot gate calls the
   probe between <code>waitFor(pg, redis×2)</code> and <code>app.listen</code>, so a contract
   mismatch turns the deploy red and triggers an ECS rollback before traffic ever reaches the new
-  tasks. There is no <code>/webhooks/stripe</code> route yet — that lands in MYT-42 with the
-  verifying handler — and a pinned test fails the build if any future PR registers it prematurely.
+  tasks. The <a href="./billing-webhook.html">webhook plugin</a> is what consumes the
+  <code>STRIPE_WEBHOOK_SECRET</code> at request time; everything Stripe-call-shaped on the request
+  path resolves through the cached client and the cached SKU snapshot.
 </p>
 
 <aside class="wiki-rationale">
@@ -369,7 +422,12 @@
   whose <code>transform_quantity</code> is <code>null</code>, whose <code>tax_behavior</code> is
   <code>unspecified</code>, whose product is active, and — for tiers — whose
   <code>recurring</code> shape is monthly licensed (<code>interval = 'month'</code>,
-  <code>interval_count = 1</code>, <code>usage_type = 'licensed'</code>).
+  <code>interval_count = 1</code>, <code>usage_type = 'licensed'</code>). Each verified entry is
+  recorded in the module-level <a href="#the-sku-cache-and-its-public-projection">SKU cache</a> so
+  the rest of the system can resolve <code>lookup_key</code> ↔ <code>price_id</code> without hitting
+  Stripe at request time. The probe then performs a second contract check against the account's
+  default <a href="#the-customer-portal-config-probe">Customer Portal configuration</a>
+  to verify the asymmetric upgrade-immediate / downgrade-at-renewal shape downgrades depend on.
 </p>
 
 <p>The probe distinguishes four failure modes by throwing different typed errors:</p>
@@ -424,6 +482,62 @@
   contract checks so the diagnostic stays clean.
 </aside>
 
+<h3 id="the-sku-cache-and-its-public-projection">The SKU cache and its public projection</h3>
+
+<p>
+  <code>sku-cache.ts</code> is a module-level snapshot the probe writes into on a successful pass: a
+  <code>byLookupKey</code> map and a <code>byPriceId</code> reverse map (both keyed on the
+  <code>SkuInternalEntry</code> shape, which carries <code>stripe_price_id</code> alongside the
+  display fields), plus a <code>publicListing</code> array of the same entries with
+  <code>stripe_price_id</code> stripped. The cache is process-scoped and never refreshed within a
+  process — a price drift in Stripe is caught at the next deploy boundary, when the new tasks re-run
+  the probe.
+</p>
+
+<p>
+  Three consumers read the cache:
+  <a href="./billing-routes.html">the <code>/api/billing/skus</code> route</a> serves the public
+  listing as a marketing-page payload; <a href="./billing-webhook.html">webhook handlers</a> use
+  <code>byPriceId</code> to resolve the <code>lookup_key</code> from a Stripe-side
+  <code>price.id</code> they receive on <code>invoice.paid</code>; the checkout and tier-upgrade
+  routes use <code>byLookupKey</code> to resolve the cart items' price IDs and to compare tier
+  amounts.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Internal vs public projection split</strong> — every Stripe price has an internal
+  <code>price_*</code> ID that the SDK needs and the marketing page does not. Returning the full
+  internal entry on the public route would expose a piece of catalogue plumbing on an
+  unauthenticated endpoint. Two projections — one with the price ID, one without — make the
+  least-disclosure principle structurally enforced rather than convention-enforced.
+</aside>
+
+<h3 id="the-customer-portal-config-probe">The Customer Portal config probe</h3>
+
+<p>
+  After the prices-list pass, the probe runs a second contract check against
+  <code>stripe.billingPortal.configurations.list({ active: true, is_default: true })</code>. It
+  expects exactly one default config back and verifies three fields:
+  <code>features.subscription_update.proration_behavior === 'create_prorations'</code>,
+  <code>schedule_at_period_end.conditions</code> includes a
+  <code>{ type: 'decreasing_item_amount' }</code> entry (the asymmetry that defers downgrades to
+  period end while leaving upgrades to take effect immediately), and the per-tier
+  <code>products</code> allowlist isn't empty. A mismatch throws
+  <code>BillingProbePortalConfigError</code>; the deploy fails the same way a price-list mismatch
+  would.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The Portal carries downgrades; the API carries upgrades</strong> — Mythrun routes upgrades
+  through <code>POST /api/billing/upgrade-tier</code> because the upgrade path needs
+  <code>proration_date = current_period_start</code> to make the upgrade non-gameable, and the
+  Portal's <code>create_prorations</code> behavior doesn't expose that knob. Downgrades go through
+  Portal Switch Plan with <code>schedule_at_period_end</code>, which defers the change until the
+  period boundary so a user who downgrades on day 1 keeps their paid tier until day 30. The probe
+  verifies the Portal config carries this asymmetric shape; without it, downgrades would take effect
+  immediately and the user would lose tier access they'd already paid for.
+</aside>
+
 <h3 id="the-boot-gate-wiring">The boot-gate wiring</h3>
 
 <p>
@@ -464,14 +578,13 @@
 </p>
 
 <p>
-  <code>STRIPE_WEBHOOK_SECRET</code> follows a different rule: any non-empty value is accepted, and
-  the literal string <code>PLACEHOLDER</code> is permitted in the MYT-41 → MYT-42 window. The
-  argument is fail-closed-by-absence: with no <code>/webhooks/stripe</code> route registered, no
-  code path ever reads the secret, so its value is irrelevant until the verifying handler lands.
-  MYT-42's webhook handler will call <code>stripe.webhooks.constructEvent</code> unconditionally;
-  any signature mismatch fails closed regardless of whether the secret is the literal
-  <code>PLACEHOLDER</code> or a real <code>whsec_*</code>. There is no bypass branch for the literal
-  value at the verification layer.
+  <code>STRIPE_WEBHOOK_SECRET</code> follows a softer rule: any non-empty value is accepted at
+  env-load. The actual gate is at the
+  <a href="./billing-webhook.html">webhook plugin's signature verification</a>:
+  <code>stripe.webhooks.constructEvent</code> is invoked unconditionally on every delivery; any
+  signature mismatch fails closed and returns 400. There is no bypass branch for the literal string
+  anywhere — a misconfigured secret produces a webhook that rejects every event Stripe sends, which
+  surfaces in the Stripe Dashboard's webhook attempts UI within minutes.
 </p>
 
 <h3 id="the-eslint-ast-tripwires">The ESLint AST tripwires</h3>
@@ -509,18 +622,6 @@
   The rules' value is "an honest mistake in a PR shows up as a lint failure on the diff," not "this
   is what makes mutation impossible."
 </aside>
-
-<h3 id="the-webhook-route-absence-invariant">The webhook-route absence invariant</h3>
-
-<p>
-  <code>backend/src/__tests__/webhook-absence.test.ts</code> pins the negative space:
-  <code>POST /webhooks/stripe</code> must return <code>404</code> until MYT-42 lands the verifying
-  handler. The test boots a Fastify app via the same factory production uses, injects a POST to
-  <code>/webhooks/stripe</code>, and asserts the response code. A future PR that registers a logging
-  stub, a smoke handler, or a permissive catch-all that shadows the path before
-  <code>stripe.webhooks.constructEvent</code> verification is wired would fail this test loudly.
-  MYT-42 deletes the test file as part of landing the real handler.
-</p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
 
@@ -632,14 +733,14 @@
   on the serving page. The boot probe runs inside the
   <a href="../runtime/index.html#the-boot-gate-on-in-staging">backend's boot gate</a>; a probe throw
   uses the same fail-closed-and-rollback path as a pg/Redis probe failure. The
-  <a href="../data/schema.html">schema</a>'s <code>credit_ledger</code> is where every successful
-  purchase or billing-cycle renewal lands as an INSERT — the
-  <a href="../data/repository.html#credits-and-the-grant-debit-pair">credits namespace</a> in the
-  repository layer is the seam, and migration 006 dropped the four legacy billing-config tables this
-  contract replaces (<code>subscription_tiers</code>, <code>session_packs</code>,
-  <code>user_subscriptions</code>, <code>purchases</code>). MYT-42 wires the
-  <code>/webhooks/stripe</code> route, lands a new <code>purchases</code> table shape (lookup_key
-  TEXT instead of session_pack_size INTEGER), and deletes the webhook-absence test.
+  <a href="./billing-webhook.html">webhook plugin</a> is the request-time consumer of
+  <code>STRIPE_WEBHOOK_SECRET</code> and the <code>byPriceId</code> reverse map, and the
+  <a href="./billing-routes.html">billing routes</a> consume the cached SKU listing for the public
+  catalogue and resolve cart items via <code>byLookupKey</code>. The
+  <a href="../data/schema.html">schema</a>'s migration 007 holds the four billing tables the webhook
+  handlers write to (<code>purchases</code>, <code>user_subscriptions</code>,
+  <code>billing_history</code>, plus the new FK columns on <code>credit_ledger</code>); the
+  <a href="../data/repository.html">repository layer</a> exposes the matching namespaces.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -748,8 +849,8 @@
       <td><code>STRIPE_WEBHOOK_SECRET</code></td>
       <td>Required, any non-empty string</td>
       <td>
-        Literal <code>PLACEHOLDER</code> permitted in the MYT-41 → MYT-42 window — no code path
-        consumes it until the webhook handler lands.
+        Consumed by the <a href="./billing-webhook.html">webhook plugin</a> at request time;
+        signature mismatch fails closed.
       </td>
     </tr>
   </tbody>
@@ -804,17 +905,18 @@
 <p>
   <code>backend/src/billing/lookup-keys.ts</code>,
   <code>backend/src/billing/stripe-client.ts</code>, <code>backend/src/billing/probe.ts</code>,
-  <code>backend/src/config/env.ts</code>, <code>backend/src/server.ts</code>,
+  <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/config/env.ts</code>,
+  <code>backend/src/server.ts</code>,
   <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code>,
   <code>backend/eslint-rules/no-stripe-subscription-price-mutation.cjs</code>,
-  <code>backend/src/__tests__/webhook-absence.test.ts</code>, <code>eslint.config.js</code>.
+  <code>eslint.config.js</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-enum-and-what-it-carries">The closed enum and what it carries</a></li><li style="padding-left:12px"><a href="#the-cached-sdk-client">The cached SDK client</a></li><li style="padding-left:12px"><a href="#the-boot-probe-and-its-four-error-classes">The boot probe and its four error classes</a></li><li style="padding-left:12px"><a href="#the-boot-gate-wiring">The boot-gate wiring</a></li><li style="padding-left:12px"><a href="#the-restricted-key-boundary">The restricted-key boundary</a></li><li style="padding-left:12px"><a href="#the-eslint-ast-tripwires">The ESLint AST tripwires</a></li><li style="padding-left:12px"><a href="#the-webhook-route-absence-invariant">The webhook-route absence invariant</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a></li><li style="padding-left:12px"><a href="#add-a-new-tier-or-sku">Add a new tier or SKU</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#lookup-keys">Lookup keys</a></li><li style="padding-left:12px"><a href="#probe-error-classes">Probe error classes</a></li><li style="padding-left:12px"><a href="#environment-variables">Environment variables</a></li><li style="padding-left:12px"><a href="#probe-log-events">Probe log events</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-enum-and-what-it-carries">The closed enum and what it carries</a></li><li style="padding-left:12px"><a href="#the-cached-sdk-client">The cached SDK client</a></li><li style="padding-left:12px"><a href="#the-boot-probe-and-its-four-error-classes">The boot probe and its four error classes</a></li><li style="padding-left:12px"><a href="#the-sku-cache-and-its-public-projection">The SKU cache and its public projection</a></li><li style="padding-left:12px"><a href="#the-customer-portal-config-probe">The Customer Portal config probe</a></li><li style="padding-left:12px"><a href="#the-boot-gate-wiring">The boot-gate wiring</a></li><li style="padding-left:12px"><a href="#the-restricted-key-boundary">The restricted-key boundary</a></li><li style="padding-left:12px"><a href="#the-eslint-ast-tripwires">The ESLint AST tripwires</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a></li><li style="padding-left:12px"><a href="#add-a-new-tier-or-sku">Add a new tier or SKU</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#lookup-keys">Lookup keys</a></li><li style="padding-left:12px"><a href="#probe-error-classes">Probe error classes</a></li><li style="padding-left:12px"><a href="#environment-variables">Environment variables</a></li><li style="padding-left:12px"><a href="#probe-log-events">Probe log events</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

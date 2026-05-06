@@ -58,7 +58,7 @@
 <details class="schema-table" data-table-name="credit_ledger" id="schema-table-credit_ledger">
   <summary>
     <span class="schema-table-name">credit_ledger</span>
-    <span class="schema-table-meta">8 columns · 1 index · 5 CHECKs · 8 FKs</span>
+    <span class="schema-table-meta">10 columns · 3 indexes · 6 CHECKs · 24 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -119,10 +119,26 @@
         <td>—</td>
         <td>—</td>
       </tr>
+      <tr data-column-name="source_purchase_id">
+        <td><code>source_purchase_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>purchases(id)</code> ON DELETE RESTRICT</td>
+      </tr>
+      <tr data-column-name="source_billing_history_id">
+        <td><code>source_billing_history_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>billing_history(id)</code> ON DELETE RESTRICT</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
+    <li><code>idx_credit_ledger_source_billing_history</code> — (source_billing_history_id) WHERE source_billing_history_id IS NOT NULL</li>
+    <li><code>idx_credit_ledger_source_purchase</code> — (source_purchase_id) WHERE source_purchase_id IS NOT NULL</li>
     <li><code>idx_credit_ledger_user_type</code> — (user_id, credit_type, expires_at)</li>
   </ul>
   <h4>CHECK constraints</h4>
@@ -131,7 +147,100 @@
     <li><code>CHECK (((source_type &lt;&gt; 'debit'::text) OR (source_id IS NOT NULL)))</code></li>
     <li><code>CHECK (((source_type &lt;&gt; 'debit'::text) OR (expires_at IS NULL)))</code></li>
     <li><code>CHECK (((source_type = 'debit'::text) = (amount &lt; 0)))</code></li>
+    <li><code>CHECK (
+CASE source_type
+    WHEN 'debit'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))
+    WHEN 'trial'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))
+    WHEN 'gift'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))
+    WHEN 'refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))
+    WHEN 'purchase'::text THEN ((source_purchase_id IS NOT NULL) AND (source_billing_history_id IS NULL))
+    WHEN 'subscription'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))
+    ELSE false
+END)</code></li>
     <li><code>CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="purchases" id="schema-table-purchases">
+  <summary>
+    <span class="schema-table-name">purchases</span>
+    <span class="schema-table-meta">9 columns · 1 index · 2 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE NO ACTION</td>
+      </tr>
+      <tr data-column-name="stripe_payment_intent_id">
+        <td><code>stripe_payment_intent_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="lookup_key">
+        <td><code>lookup_key</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="quantity">
+        <td><code>quantity</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="amount_cents">
+        <td><code>amount_cents</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="currency">
+        <td><code>currency</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'usd'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'completed'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_purchases_user</code> — (user_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((quantity &gt; 0))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))</code></li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="stripe_events" id="schema-table-stripe_events">
@@ -165,6 +274,117 @@
       </tr>
     </tbody>
   </table>
+</details>
+<details class="schema-table" data-table-name="user_subscriptions" id="schema-table-user_subscriptions">
+  <summary>
+    <span class="schema-table-name">user_subscriptions</span>
+    <span class="schema-table-meta">13 columns · 1 index · 2 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="tier_lookup_key">
+        <td><code>tier_lookup_key</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stripe_subscription_id">
+        <td><code>stripe_subscription_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="current_period_start">
+        <td><code>current_period_start</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="current_period_end">
+        <td><code>current_period_end</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cancel_at_period_end">
+        <td><code>cancel_at_period_end</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cancel_at">
+        <td><code>cancel_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cancellation_details">
+        <td><code>cancellation_details</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stripe_event_created_at">
+        <td><code>stripe_event_created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_user_subscriptions_user</code> — (user_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((current_period_end &gt; current_period_start))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text, 'incomplete'::text, 'incomplete_expired'::text, 'trialing'::text, 'paused'::text])))</code></li>
+  </ul>
 </details>
 <details class="schema-table" data-table-name="users" id="schema-table-users">
   <summary>
@@ -2582,6 +2802,113 @@
     </tbody>
   </table>
 </details>
+<h2 class="schema-cluster" id="other">Other</h2>
+<details class="schema-table" data-table-name="billing_history" id="schema-table-billing_history">
+  <summary>
+    <span class="schema-table-name">billing_history</span>
+    <span class="schema-table-meta">12 columns · 2 indexes · 3 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="kind">
+        <td><code>kind</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="source_id_stripe">
+        <td><code>source_id_stripe</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stripe_payment_intent_id">
+        <td><code>stripe_payment_intent_id</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="lookup_key">
+        <td><code>lookup_key</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="amount_cents">
+        <td><code>amount_cents</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="currency">
+        <td><code>currency</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'usd'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'completed'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="expires_at">
+        <td><code>expires_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="occurred_at">
+        <td><code>occurred_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_billing_history_invoice_pi</code> — (stripe_payment_intent_id) WHERE (kind = 'invoice'::text) AND (stripe_payment_intent_id IS NOT NULL)</li>
+    <li><code>idx_billing_history_user_occurred</code> — <code>CREATE INDEX idx_billing_history_user_occurred ON billing_history USING btree (user_id, occurred_at DESC, id DESC)</code></li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((((kind = 'purchase'::text) AND (source_id_stripe ~~ 'pi_%'::text)) OR ((kind = 'invoice'::text) AND (source_id_stripe ~~ 'in_%'::text)) OR ((kind = 'refund'::text) AND (source_id_stripe ~~ 're_%'::text))))</code></li>
+    <li><code>CHECK ((kind = ANY (ARRAY['purchase'::text, 'invoice'::text, 'refund'::text])))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))</code></li>
+  </ul>
+</details>
 </div>
 
 <h2 id="integration-points">Integration points</h2>
@@ -2596,7 +2923,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#other">Other</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

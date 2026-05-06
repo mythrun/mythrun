@@ -1,9 +1,10 @@
 digraph stripe_contract {
-  // The Stripe-contract surface as it stands at MYT-41: a closed enum of
+  // The Stripe-contract surface as it stands at MYT-42: a closed enum of
   // lookup_keys, a cached SDK client pinned to one API version, a read-only
-  // boot-time probe that fails closed on mismatch, and the restricted-key
-  // boundary that keeps mutation off the wire entirely. The webhook route
-  // is intentionally absent until MYT-42 lands the verifying handler.
+  // boot-time probe that fails closed on mismatch and populates the
+  // module-level SKU cache, the Customer Portal config check, and the
+  // restricted-key boundary that keeps mutation off the wire entirely.
+  // The webhook plugin and billing routes consume the cached snapshot.
   rankdir=LR;
   compound=true;
 
@@ -15,7 +16,8 @@ digraph stripe_contract {
 
     lookup [label="lookup-keys.ts\ntier_wayfarer\ntier_sojourner\ntier_mythwright\nsku_session\nsku_world\n(closed enum)"];
     client [label="stripe-client.ts\ncached singleton\napiVersion pinned\n2026-04-22.dahlia"];
-    probe  [label="probe.ts\nread-only\nstripe.prices.list\nretry × 3 + jitter\n4 typed errors"];
+    probe  [label="probe.ts\nread-only\nstripe.prices.list\n+ portal config check\nretry × 3 + jitter\n5 typed errors"];
+    cache  [label="sku-cache.ts\nbyLookupKey + byPriceId\n+ publicListing\nmodule-level snapshot"];
   }
 
   subgraph cluster_eslint {
@@ -25,7 +27,7 @@ digraph stripe_contract {
     fontcolor="ember";
 
     rule_p [label="no-stripe-price-mutations\nbans prices/products/coupons\n.create / .update / .del"];
-    rule_s [label="no-stripe-subscription-\nprice-mutation\nbans items[].price update"];
+    rule_s [label="no-stripe-subscription-\nprice-mutation\nbans items[].price update\n(allowlist: upgrade-tier route)"];
   }
 
   subgraph cluster_env {
@@ -35,7 +37,7 @@ digraph stripe_contract {
     fontcolor="ember";
 
     env_sk [label="STRIPE_SECRET_KEY\nrk_* required\nsk_* rejected at load"];
-    env_wh [label="STRIPE_WEBHOOK_SECRET\nPLACEHOLDER permitted\nin MYT-41 → MYT-42 window"];
+    env_wh [label="STRIPE_WEBHOOK_SECRET\nany non-empty string\nverified at request time"];
   }
 
   subgraph cluster_boot {
@@ -45,8 +47,16 @@ digraph stripe_contract {
     fontcolor="ember";
 
     waitfor  [label="waitFor(pg, redis×2)"];
-    probegate [label="probeStripeContract\n(fail-closed throw\n→ ECS rollback)"];
+    probegate [label="probeStripeContract\n+ portal config probe\n(fail-closed throw\n→ ECS rollback)"];
     listen   [label="app.listen"];
+  }
+
+  subgraph cluster_consumers {
+    label="request-time consumers";
+    style="dotted";
+
+    webhook [label="webhook plugin\nconstructEvent + dispatcher"];
+    routes  [label="billing routes\nskus / checkout / upgrade-tier"];
   }
 
   subgraph cluster_stripe {
@@ -56,26 +66,31 @@ digraph stripe_contract {
     fontcolor="ember";
 
     api    [label="api.stripe.com\nrestricted key:\nPrices read,\nSubscriptions write\n(no Prices/Products write)"];
-    portal [label="Customer Portal\n(tier switching\nlives here, not\nin app code)"];
+    portal [label="Customer Portal\n(downgrades + cancels;\nupgrades go through\n/api/billing/upgrade-tier)"];
   }
 
   // Boot ordering
   waitfor   -> probegate [label=""];
+  probegate -> cache     [label="populate"];
   probegate -> listen    [label="ok"];
   probegate -> listen    [label="throw → exit 1\n→ ECS rollback", style=dashed, color="ember", fontcolor="ember"];
 
   // Probe wiring
   lookup -> probe   [label="enum drives\nlookup_keys filter"];
   client -> probe   [label="injected"];
-  probe  -> api     [label="prices.list\nlookup_keys, active=true,\nexpand=[product]"];
-  api    -> probe   [label="contract verify\ncurrency=usd, type,\nbilling_scheme,\nrecurring shape"];
+  probe  -> api     [label="prices.list\n+ portal config\nlist"];
+  api    -> probe   [label="contract verify\nprices + portal"];
 
   // Env wiring
   env_sk -> client  [label="rk_ key only"];
-  env_wh -> listen  [label="contract present\n(no consumer until\nMYT-42)", style=dashed];
+  env_wh -> webhook [label="signature\nverification"];
 
   // Mutation boundary (negative space — what we DON'T do)
   rule_p -> api     [label="blocked at code review", style=dashed, color="ember", fontcolor="ember"];
   rule_s -> api     [label="blocked at code review", style=dashed, color="ember", fontcolor="ember"];
-  api    -> portal  [label="users self-manage\ntiers + cancel", style=dashed];
+  api    -> portal  [label="users self-manage\ndowngrades + cancel", style=dashed];
+
+  // Cache consumers
+  cache -> webhook [label="byPriceId\nreverse lookup", style=dashed];
+  cache -> routes  [label="byLookupKey +\npublicListing", style=dashed];
 }

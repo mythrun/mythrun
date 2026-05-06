@@ -1,0 +1,96 @@
+digraph billing_webhook {
+  // The Stripe-webhook surface as it stands at MYT-42: an encapsulated
+  // Fastify plugin with its own raw-body parser, a signature-verifying
+  // ingress, and a two-phase dispatcher (prefetch outside any DB tx, then
+  // a single tx that records the event for idempotency and invokes the
+  // matching handler). Eight event handlers cover the lifecycle of a
+  // subscription + à-la-carte purchase + refund.
+  rankdir=LR;
+  compound=true;
+
+  stripe [label="Stripe\n(api.stripe.com)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_route {
+    label="routes/webhook.ts  (encapsulated plugin)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    parser [label="raw-body parser\n(removeContentTypeParser\n+ buffer pass-through)\nencapsulation-scoped"];
+    sig    [label="POST /webhooks/stripe\nallowlisted public\nstripe.webhooks.constructEvent\nfail-closed on mismatch → 400"];
+  }
+
+  subgraph cluster_dispatch {
+    label="billing/webhook.ts  (dispatchEvent)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    apiver  [label="api_version gate\nmismatch → record-only tx,\nack so Stripe stops retrying"];
+    prefetch [label="phase 1: prefetch\noutside any DB tx\nStripe SDK reads only\n(no PoolClient pinned)"];
+    tx       [label="phase 2: dispatch tx\nBEGIN + 3 SET LOCAL\n(read committed, lock 1s,\nstatement 5s)"];
+    record   [label="stripeEvents.recordOrSkip\nON CONFLICT (event_id)\nDO NOTHING\n→ duplicate? ROLLBACK + return"];
+    handler  [label="lookupHandler(event.type)\n→ 'ok' / 'validation_failed' / throw\nCOMMIT, ROLLBACK,\nor record-only commit"];
+  }
+
+  subgraph cluster_handlers {
+    label="per-event handlers";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    h_checkout [label="checkout.session.completed\npayment-mode → purchases +\nbilling_history + ledger\nsubscription-mode →\nuser_subscriptions only"];
+    h_invoice  [label="invoice.paid\nbilling_reason: cycle / create / update\n→ billing_history (in_*) +\nsubscription credit grant"];
+    h_subupd   [label="customer.subscription.\ncreated / updated\nupsertFromStripe\n(strict-> stale-event filter,\npending_update gate)"];
+    h_subdel   [label="customer.subscription.deleted\nmark canceled\npreserve cancel_at_period_end"];
+    h_pua      [label="pending_update_applied\ncanonical upgrade grant\n(billing_history + ledger)"];
+    h_pue      [label="pending_update_expired\nno-op + log"];
+    h_refund   [label="refund.created / .updated\nDB-side PI → invoice resolution\nclawback ledger entry"];
+  }
+
+  subgraph cluster_state {
+    label="Postgres (migration 007 surface)";
+    style="dotted";
+
+    se [label="stripe_events\nidempotency table"];
+    pu [label="purchases\n(à-la-carte)"];
+    us [label="user_subscriptions\n(strict-> stale filter)"];
+    bh [label="billing_history\n(audit feed:\npurchase / invoice / refund)"];
+    cl [label="credit_ledger\n+ source_purchase_id\n+ source_billing_history_id"];
+  }
+
+  // Wire delivery
+  stripe -> parser  [label="POST /webhooks/stripe\napplication/json + Stripe-Signature"];
+  parser -> sig     [label="raw Buffer"];
+  sig    -> apiver  [label="constructed event"];
+  apiver -> prefetch [label="version match"];
+  apiver -> se      [label="version mismatch:\nrecord-only tx → 200", style=dashed];
+
+  prefetch -> stripe [label="optional read-only\nSDK calls"];
+  prefetch -> tx     [label="prefetch payload"];
+  tx       -> record [label=""];
+  record   -> handler [label="inserted"];
+  record   -> tx      [label="duplicate → ROLLBACK", style=dashed];
+  handler  -> h_checkout [label="", style=dashed];
+  handler  -> h_invoice  [label="", style=dashed];
+  handler  -> h_subupd   [label="", style=dashed];
+  handler  -> h_subdel   [label="", style=dashed];
+  handler  -> h_pua      [label="", style=dashed];
+  handler  -> h_pue      [label="", style=dashed];
+  handler  -> h_refund   [label="", style=dashed];
+
+  // Handler writes
+  h_checkout -> pu [label=""];
+  h_checkout -> bh [label=""];
+  h_checkout -> us [label=""];
+  h_checkout -> cl [label=""];
+  h_invoice  -> bh [label=""];
+  h_invoice  -> cl [label=""];
+  h_subupd   -> us [label=""];
+  h_subdel   -> us [label=""];
+  h_pua      -> bh [label=""];
+  h_pua      -> cl [label=""];
+  h_refund   -> bh [label="status=refunded"];
+  h_refund   -> cl [label="clawback (negative)"];
+  record     -> se [label="event_id"];
+}

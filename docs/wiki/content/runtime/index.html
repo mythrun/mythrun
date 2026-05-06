@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:21f0f68dcbc69b927e2b2ee7c3085462ea7d5f138489c339c3cf056dbe468afc -->
-<!-- last-ticket: MYT-41 -->
+<!-- source-hash: sha256:ab6a849c173e7ebbd589c37208508d1e47c78c5726428e829e4071aadf22f46b -->
+<!-- last-ticket: MYT-42 -->
 
 <h1>Backend</h1>
 
@@ -84,19 +84,38 @@
 </p>
 
 <p>
-  Plugins register in a fixed order inside <code>buildApp</code>: liveness <code>/health</code> and
-  the <code>/health/ready</code> route first; then a custom 404 handler; then
-  <code>registerAuth</code> attaches <code>request.user</code>;
+  Plugins register in a fixed order inside <code>buildApp</code>:
+  <a href="../auth-billing/jwt-middleware.html#the-public-route-allowlist"
+    >the public-route allowlist hook</a
+  >
+  registers first so every subsequent route registration is checked against the closed set of public
+  paths; then liveness <code>/health</code> and the <code>/health/ready</code> route; then a custom
+  404 handler; then <code>registerAuth</code> attaches <code>request.user</code>;
   <code>@fastify/rate-limit</code> registers with <code>global: false</code> so individual routes
   opt in via <code>config.rateLimit</code>; then
-  <a href="../auth-billing/onboarding.html"><code>requireOnboarded</code></a> gates every default-
-  auth route on a real <code>users</code> row; <code>usersRoutes</code> and
+  <a href="../auth-billing/onboarding.html"><code>requireOnboarded</code></a> gates every
+  default-auth route on a real <code>users</code> row;
+  <a href="../auth-billing/billing-webhook.html">the encapsulated webhook plugin</a> registers next
+  so its child-scope raw-body parser is isolated; then <code>usersRoutes</code> and
   <code>invitesRoutes</code> register the
-  <a href="../auth-billing/onboarding.html">first-login + invite surface</a>. The order is
-  load-bearing — auth attaches <code>request.user</code> before <code>requireOnboarded</code>
-  reads it; rate-limit registers before the routes that opt in; the routes register after the
-  <code>requireOnboarded</code> hook so its <code>onRoute</code> collector sees them.
+  <a href="../auth-billing/onboarding.html">first-login + invite surface</a>; finally
+  <a href="../auth-billing/billing-routes.html"><code>billingRoutes</code></a> registers the seven
+  player-facing billing routes. The order is load-bearing — the allowlist hook has to precede every
+  public-route registration; auth attaches <code>request.user</code> before
+  <code>requireOnboarded</code> reads it; the webhook plugin registers before the JSON-using routes
+  so its encapsulated parser doesn't escape its child scope.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Public-route allowlist as an <code>onRoute</code> hook, not a per-route review</strong>
+  — Fastify lets a route opt out of authentication via <code>config.auth: 'public'</code>. Five
+  routes in the system today legitimately need it (the two health checks, the invite preview, the
+  SKU listing, and the Stripe webhook); a sixth public route shipped by mistake would be a security
+  incident. The hook iterates every registered route at boot and throws if one is marked public but
+  not in the allowlist — the <code>app.ready()</code> call propagates the throw and the deploy
+  fails. Adding a public route is now a deliberate code change in two places (the route file and the
+  allowlist), which forces a security-review touchpoint into the diff.
+</aside>
 
 <p>
   The Fastify instance carries a few non-default settings: <code>trustProxy: 1</code> so
@@ -327,9 +346,9 @@
   <code>DB_PASSWORD</code>, <code>REDIS_HOST</code>, <code>REDIS_PORT</code>,
   <code>REDIS_AUTH_TOKEN</code> — and the loader constructs the URLs from those components.
   <code>STRIPE_SECRET_KEY</code> is validated to start with <code>rk_</code> (Stripe restricted
-  keys; full-permission <code>sk_*</code> keys are rejected) and
-  <code>STRIPE_WEBHOOK_SECRET</code> is required but accepts the literal <code>PLACEHOLDER</code> in
-  the MYT-41 → MYT-42 window because no code path consumes it yet — see
+  keys; full-permission <code>sk_*</code> keys are rejected); <code>STRIPE_WEBHOOK_SECRET</code>
+  is required and consumed by the
+  <a href="../auth-billing/billing-webhook.html">webhook plugin</a> at request time. See
   <a href="../auth-billing/stripe-contract.html">Stripe contract</a> for the full reasoning.
 </p>
 
@@ -692,8 +711,9 @@
       <td><code>STRIPE_WEBHOOK_SECRET</code></td>
       <td>—</td>
       <td>
-        Required, any non-empty string. Literal <code>PLACEHOLDER</code> permitted until MYT-42
-        wires the webhook handler.
+        Required, any non-empty string. Consumed at request time by the
+        <a href="../auth-billing/billing-webhook.html">webhook plugin</a>; signature mismatch fails
+        closed.
       </td>
     </tr>
   </tbody>
@@ -753,9 +773,28 @@
     <tr>
       <td><code>src/billing/</code></td>
       <td>
-        <code>lookup-keys.ts</code>, <code>stripe-client.ts</code>, <code>probe.ts</code>. The
-        <a href="../auth-billing/stripe-contract.html">Stripe contract</a> page is the explainer.
+        <code>lookup-keys.ts</code>, <code>stripe-client.ts</code>, <code>probe.ts</code>,
+        <code>sku-cache.ts</code>, <code>customer.ts</code>, <code>errors.ts</code>, plus eight
+        <code>webhook-*.ts</code> handler files and <code>webhook.ts</code> dispatcher. Explainers:
+        <a href="../auth-billing/stripe-contract.html">Stripe contract</a>,
+        <a href="../auth-billing/billing-webhook.html">Billing webhook</a>,
+        <a href="../auth-billing/billing-routes.html">Billing routes</a>.
       </td>
+    </tr>
+    <tr>
+      <td><code>src/auth/public-route-allowlist.ts</code></td>
+      <td>
+        <code>PUBLIC_ROUTE_ALLOWLIST</code> closed set + <code>onRoute</code> hook that throws on a
+        public-marked route not in the allowlist.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/routes/webhook.ts</code></td>
+      <td>Encapsulated Stripe webhook plugin. Raw-body parser scoped to the child context.</td>
+    </tr>
+    <tr>
+      <td><code>src/routes/billing.ts</code></td>
+      <td>Seven player-facing billing routes registered as one Fastify plugin.</td>
     </tr>
     <tr>
       <td><code>backend/eslint-rules/</code></td>
@@ -812,13 +851,21 @@
       </td>
     </tr>
     <tr>
+      <td colspan="2"><code>/api/billing/*</code> (7 routes)</td>
+      <td colspan="2">
+        Player-facing billing surface (skus, balance, subscription, history, checkout, portal,
+        upgrade-tier). See
+        <a href="../auth-billing/billing-routes.html">Billing routes</a>.
+      </td>
+    </tr>
+    <tr>
       <td><code>POST</code></td>
       <td><code>/webhooks/stripe</code></td>
-      <td><code>404</code> (no route registered)</td>
+      <td>signature-verified, dispatched</td>
       <td>
-        Intentionally absent until MYT-42 lands the verifying handler. A pinned test fails the build
-        if any future PR registers the route prematurely. See
-        <a href="../auth-billing/stripe-contract.html">Stripe contract</a>.
+        Stripe webhook ingress. Encapsulated child plugin owns the raw-body parser and signature
+        verification. See
+        <a href="../auth-billing/billing-webhook.html">Billing webhook</a>.
       </td>
     </tr>
   </tbody>

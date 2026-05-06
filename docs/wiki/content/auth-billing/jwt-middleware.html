@@ -6,14 +6,15 @@
 <!-- source: backend/src/auth/require-user.ts -->
 <!-- source: backend/src/auth/constants.ts -->
 <!-- source: backend/src/config/env.ts -->
+<!-- source: backend/src/auth/public-route-allowlist.ts -->
 <!-- source: backend/src/app.ts -->
 <!-- source: backend/src/server.ts -->
 <!-- source: infra/modules/serving/variables.tf -->
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
-<!-- source-hash: sha256:50e8d376e7b9242f1a24b022ed8cd69a6ffe6879e1c86fb71a7f399ba593c090 -->
-<!-- last-ticket: MYT-37 -->
+<!-- source-hash: sha256:caa17e1df696156c1a82a583e44dae16a70b516ef2e6615eebf3eaaa7b167a0f -->
+<!-- last-ticket: MYT-42 -->
 
 <h1>JWT middleware</h1>
 
@@ -109,7 +110,9 @@
 <ul>
   <li>
     <code>config: { auth: 'public' }</code> — skip validation entirely; no
-    <code>request.user</code> attached. Used by <code>/health</code> and <code>/health/ready</code>.
+    <code>request.user</code> attached. Used by <code>/health</code>, <code>/health/ready</code>,
+    the invite preview, the SKU listing, and the Stripe webhook. Pinned by the
+    <a href="#the-public-route-allowlist">public-route allowlist hook</a>.
   </li>
   <li>
     <code>config: { auth: 'jwt-no-db' }</code> — verify the JWT, attach the claims, do not look up
@@ -126,6 +129,37 @@
     <code>suspended_at</code> check folds in alongside that gate when the suspension surface ships.
   </li>
 </ul>
+
+<h3 id="the-public-route-allowlist">The public-route allowlist</h3>
+
+<p>
+  <code>backend/src/auth/public-route-allowlist.ts</code> exports a closed
+  <code>PUBLIC_ROUTE_ALLOWLIST</code> set of <code>${METHOD} ${URL}</code> strings and a
+  <code>registerPublicRouteAllowlistHook(app)</code> function that installs an
+  <code>onRoute</code> hook. The hook fires once per route registration; if the route's
+  <code>config.auth</code> is <code>'public'</code> and its <code>${method} ${url}</code> isn't in
+  the allowlist, it throws. Fastify's <code>app.ready()</code> propagates the throw and the deploy
+  fails. The hook is registered first inside <code>buildApp</code> — even before the
+  <code>/health</code> route — because <code>onRoute</code> only fires for routes registered after
+  the hook on the same scope.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Boot-time enforcement, not a code-review checklist</strong> — relying on reviewers to flag
+  every <code>config: { auth: 'public' }</code> introduction is fragile: a public route that ships
+  by mistake is a security incident, and code review fatigue makes the omission plausible. A
+  boot-time hook fails the deploy on the first run; the deploy can't ship a public route that wasn't
+  authored alongside the allowlist entry. The five entries today cover the two health probes, the
+  invite preview, the SKU listing, and the Stripe webhook — adding a sixth is two file edits in the
+  same PR, both visible in the diff.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Skip auto-generated HEAD routes</strong> — Fastify auto-generates a HEAD route for every
+  GET registration. The <code>onRoute</code> hook fires for it, but HEAD semantics are identical to
+  GET and need no separate allowlist entry. The hook detects the auto-generated HEAD by the presence
+  of a non-null <code>onSend</code> array on the route options and skips it.
+</aside>
 
 <p>
   Protected handlers narrow <code>request.user</code> from optional to required via

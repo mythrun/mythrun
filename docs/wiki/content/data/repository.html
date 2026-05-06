@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:737d70c2311f83780bf0f8d9f6474b5d02725935228fd8fe707c05458a707cdf -->
-<!-- last-ticket: MYT-38 -->
+<!-- source-hash: sha256:e7e624850aaee4bed3146df5f59816abbb68e4cbeb0950b914aaa750a77b70f2 -->
+<!-- last-ticket: MYT-42 -->
 
 <h1>Repository layer</h1>
 
@@ -25,8 +25,24 @@
   <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
   <code>AppDeps</code> carries it alongside <code>pg</code> and the two Redis clients, and
   <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
-  boot paths.
+  boot paths. A second class of namespaces — the four billing-table modules
+  (<code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>,
+  <code>billingHistory</code>) — exports plain object literals whose methods take a
+  <code>ClientLike</code> the caller has already opened. Those namespaces don't bind to a pool; they
+  operate inside a transaction the
+  <a href="../auth-billing/billing-webhook.html">webhook dispatcher</a> already owns.
 </p>
+
+<aside class="wiki-rationale">
+  <strong><code>ClientLike</code>, not <code>Pool</code>, on the billing namespaces</strong> — the
+  webhook dispatcher opens one transaction per event and runs every handler's writes inside it. If
+  the billing namespaces took a <code>Pool</code> like the original six do, they'd open their own
+  connection per query and write outside the dispatcher's tx — which would defeat both the
+  idempotency guarantee (the <code>stripe_events</code> insert wouldn't be in the same transaction
+  as the handler's writes) and the timeout discipline (the dispatcher's <code>SET LOCAL</code>s
+  wouldn't apply). <code>ClientLike</code> is the structural subset of
+  <code>pg.PoolClient</code> the namespaces actually use; the dispatcher passes its own client in.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Closure factory, not a class</strong> — namespaces are bags of pure functions over a
@@ -47,15 +63,17 @@
   guaranteed on every UPDATE.
 </p>
 
-<h2>Namespace boundaries: 6 today, 19 deferred</h2>
+<h2>Namespace boundaries: 10 today, 15 deferred</h2>
 
 <p>
   Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
-  <strong>6</strong>: <code>users</code>, <code>worlds</code>, <code>campaigns</code>,
-  <code>sessions</code>, <code>credits</code>, <code>invites</code> — the foundations Auth, the
-  onboarding flow, the prep pipeline, the session runtime, and Billing immediately need. The
-  remaining 19 are tracked as beads under the <code>repo-deferred</code> label and ship batched with
-  their consumers.
+  <strong>ten</strong>: six pool-bound namespaces (<code>users</code>, <code>worlds</code>,
+  <code>campaigns</code>, <code>sessions</code>, <code>credits</code>, <code>invites</code>) plus
+  four transaction-scoped billing namespaces (<code>stripeEvents</code>, <code>purchases</code>,
+  <code>userSubscriptions</code>, <code>billingHistory</code>) the
+  <a href="../auth-billing/billing-webhook.html">webhook handlers</a> and
+  <a href="../auth-billing/billing-routes.html">billing routes</a> consume. The remaining 15 are
+  tracked as beads under the <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">
@@ -242,17 +260,31 @@
 <p>
   <strong><code>users</code></strong> — <code>create</code>, <code>getById</code>,
   <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>, <code>getByUsername</code>,
-  <code>update</code>. Each <code>getByX</code> maps 1:1 to a column with an index that supports it
-  (or, for <code>getByUsername</code>, the <code>users_username_lower_key</code> expression index);
-  adding a method is the deliberate act of sanctioning a new lookup path. A generic
+  <code>update</code>; plus the standalone
+  <code>findOrCreateStripeCustomer(pool, stripe, userId)</code> helper exported alongside the
+  closure. Each <code>getByX</code> maps 1:1 to a column with an index that supports it (or, for
+  <code>getByUsername</code>, the <code>users_username_lower_key</code> expression index); adding a
+  method is the deliberate act of sanctioning a new lookup path. A generic
   <code>getBy(filter)</code> would silently accept filters with no supporting index — a
   sequential-scan trap that wouldn't surface until production load — and would force readers to
-  inspect every call site to learn which lookup shape was used. The explicit names also make
-  consumer audits trivial: a <code>grep</code> for <code>getByUsername</code> returns the
-  uniqueness-check call sites in the onboarding flow, and <code>getByCognitoSub</code> returns the
-  per-request user lookup. We accept the small cost of "several methods instead of one" to get
-  index-as-API-surface and exact searchability.
+  inspect every call site to learn which lookup shape was used. We accept the small cost of "several
+  methods instead of one" to get index-as-API-surface and exact searchability.
 </p>
+
+<aside class="wiki-rationale">
+  <strong><code>findOrCreateStripeCustomer</code> is a three-phase prefetch-then-write</strong>
+  — the helper has to call Stripe's <code>customers.create</code> with an idempotency key, and that
+  SDK call cannot run inside a held DB transaction (a Stripe outage would pin the PoolClient). Phase
+  1 reads the existing <code>stripe_customer_id</code> in a short tx; if populated, return
+  immediately. Phase 2 calls Stripe outside any tx, deterministic idempotency-key
+  (<code>customer_for_${userId}</code>) so concurrent racers all hit the same Stripe-side record.
+  Phase 3 opens a short tx with the MYT-40 timeout discipline, re-reads the row
+  <code>FOR UPDATE</code>, and either uses a racer's value (the <code>cus_*</code> we just minted
+  becomes a Stripe-side orphan) or writes our own. The helper is exported as a function rather than
+  as a method on the closure so the
+  <a href="../auth-billing/billing-routes.html">billing routes</a> can call it without going through
+  the closure's pool-binding.
+</aside>
 
 <aside class="wiki-rationale">
   <strong><code>getByCognitoSubWithTimeout</code> wraps the read in a transaction</strong> — the
@@ -343,9 +375,10 @@
 
 <p>
   <code>credit_ledger</code> is the only place credit balance lives — the
-  <a href="./schema.html">schema</a>
-  page covers the table shape and migration 004's defense-in-depth invariants. The repo surface the
-  rest of the system sees is four methods.
+  <a href="./schema.html">schema</a> page covers the table shape and migration 004's
+  defense-in-depth invariants. The repo surface the rest of the system sees is four pool-bound
+  methods plus two transaction-bound helpers (<code>grantInTx</code> + <code>recordClawback</code>)
+  exported as standalone functions.
 </p>
 
 <p>
@@ -359,12 +392,29 @@
 
 <p>
   <code>grant(input)</code> writes a positive-amount entry with <code>source_type</code> in
-  <code>purchase | subscription | gift | trial | refund</code>.
-  <code>atomicDebit(input)</code> writes a negative-amount entry with
-  <code>source_type = 'debit'</code>; the amount is a positive integer in the input, recorded as
-  <code>-amount</code> in the row so polarity invariants hold at the DB layer. Both methods take the
-  per-user transaction lock described next.
+  <code>purchase | subscription | gift | trial | refund</code>; the closure-bound version opens its
+  own short tx with the user-row lock. <code>atomicDebit(input)</code> writes a negative-amount
+  entry with <code>source_type = 'debit'</code>; the amount is a positive integer in the input,
+  recorded as <code>-amount</code> in the row so polarity invariants hold at the DB layer. Both
+  methods take the per-user transaction lock described next.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>grantInTx</code> + <code>recordClawback</code> are standalone exports for webhook
+    handlers</strong
+  >
+  — the closure's <code>grant</code> opens its own connection and tx, which is the right shape for
+  one-off grants from route handlers (a manual gift) but the wrong shape for the
+  <a href="../auth-billing/billing-webhook.html">webhook dispatcher</a>'s already-open tx. The
+  standalone <code>grantInTx(tx, input)</code> takes a <code>ClientLike</code> and runs only the
+  INSERT (still re-acquires the user-row lock — Postgres allows tuple-lock re-entrancy on the same
+  xid). <code>recordClawback(tx, input)</code> is its negative-amount sibling for refund events:
+  writes <code>source_type = 'refund'</code> with a negative <code>amount</code> and an FK to the
+  originating <code>billing_history</code> row. Both let the webhook handlers compose one
+  transaction across the <code>stripe_events</code> idempotency check, the audit row write, and the
+  credit grant — a single COMMIT covers all three.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Lock the users row, not the ledger</strong> — the natural-feeling design is
@@ -428,6 +478,77 @@
   over time," not "what can they spend right now."
 </p>
 
+<h2>The four billing namespaces: transaction-scoped, no pool binding</h2>
+
+<p>
+  <code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>, and
+  <code>billingHistory</code> are exported as plain object literals, not closure-built factories.
+  Their methods take a <code>ClientLike</code> as the first argument: the
+  <a href="../auth-billing/billing-webhook.html">webhook dispatcher</a> opens one transaction per
+  event and threads its <code>PoolClient</code> through every handler call inside it. Two of them
+  (<code>userSubscriptions</code> and <code>billingHistory</code>) are also called from the
+  pool-bound <a href="../auth-billing/billing-routes.html">billing routes</a>; for that consumer the
+  route passes a <code>Pool</code> directly (Pool's <code>query</code> shape is a structural
+  superset of PoolClient's, so the same method signature works for both).
+</p>
+
+<p>
+  <strong><code>stripeEvents</code></strong> exposes one method:
+  <code>recordOrSkip(tx, event_id, event_type)</code> runs an
+  <code>INSERT ... ON CONFLICT (event_id) DO NOTHING RETURNING event_id</code> and returns either
+  <code>'inserted'</code> or <code>'duplicate'</code>. The dispatcher branches on the result:
+  <code>'duplicate'</code> means the event was already processed and the rest of the tx is skipped.
+</p>
+
+<p>
+  <strong><code>purchases</code></strong> exposes <code>insertMany</code>,
+  <code>getByPaymentIntent</code>, and <code>markRefunded</code>. <code>insertMany</code> runs a
+  single multi-row INSERT for à-la-carte cart lines, using the composite
+  <code>(stripe_payment_intent_id, lookup_key)</code> UNIQUE for idempotency — a redelivered
+  <code>checkout.session.completed</code> for the same payment intent is a no-op.
+  <code>markRefunded</code> flips <code>status='refunded'</code> on a row the refund handler has
+  resolved.
+</p>
+
+<p>
+  <strong><code>userSubscriptions</code></strong> exposes <code>upsertFromStripe</code>,
+  <code>markCanceled</code>, and <code>getActiveForUser</code>. The first is the load-bearing
+  method: a single <code>INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE</code> with a
+  strict
+  <code
+    >WHERE excluded.stripe_event_created_at &gt; user_subscriptions.stripe_event_created_at</code
+  >
+  filter rejects same-second or earlier deliveries as no-ops. Combined with
+  <code>stripe_events</code> idempotency, this absorbs both Stripe's at-least-once delivery and
+  Stripe's no-guaranteed-ordering across event types.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Strict <code>&gt;</code> on the stale-event filter, not <code>&gt;=</code></strong> —
+  Stripe doesn't guarantee event-ordering by <code>created</code> timestamp at second precision. Two
+  events for the same subscription can carry the same <code>created</code> second; the second one to
+  arrive could be the one that fires first on a multi-worker setup. <code>&gt;=</code> would let the
+  second-arriving same-second event overwrite the first; <code>&gt;</code> rejects it as a no-op.
+  The <code>checkout.session.completed</code> + <code>customer.subscription.created</code> race is
+  the textbook example: both fire within the same second on a fresh checkout.
+</aside>
+
+<p>
+  <strong><code>billingHistory</code></strong> exposes <code>append</code>, <code>find</code>,
+  <code>listByUser</code>, and <code>markRefunded</code>. <code>append</code> uses the composite
+  <code>(kind, source_id_stripe)</code> UNIQUE with <code>ON CONFLICT DO NOTHING</code> + follow-up
+  SELECT so a redelivered event is a no-op. <code>listByUser</code> is the cursor-paginated query
+  backing <code>GET /api/billing/history</code>; the cursor is a (<code>occurred_at</code>,
+  <code>id</code>) pair so two events at the same second don't drop a row at the page boundary.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>(timestamp, id) cursor, not offset pagination</strong> — Stripe events arrive
+  near-real-time and the audit feed grows append-only. Offset pagination drifts on every new row
+  written between page fetches. A (<code>occurred_at</code>, <code>id</code>) cursor is stable; the
+  row id breaks ties when two events share the same Stripe second-precision timestamp.
+</aside>
+
 <h2>Tests: real Postgres, TRUNCATE-based reset</h2>
 
 <p>
@@ -468,11 +589,13 @@
   <code>backend/src/repo/uuidv7.ts</code>. The
   <a href="../runtime/index.html#the-app-factory-and-the-dependency-injection-shape"
     >backend runtime</a
-  >'s <code>AppDeps</code> carries the <code>repo</code> alongside <code>pg</code>;
-  <code>buildApp</code> accepts it today as a no-op pass-through, and future Auth and Billing
-  plugins will decorate it onto the Fastify instance. The <a href="./schema.html">schema</a> is what
-  the repo's queries are typed against — every <code>XxxDbRow</code> matches a table the migration
-  files define.
+  >'s <code>AppDeps</code> carries the <code>repo</code> alongside <code>pg</code>; the
+  <a href="../auth-billing/billing-routes.html">billing routes</a> and the
+  <a href="../auth-billing/onboarding.html">onboarding routes</a> consume it as the seam for all
+  data access. The four billing namespaces are also imported directly by the
+  <a href="../auth-billing/billing-webhook.html">webhook handlers</a> (transaction-scoped consumers
+  don't need a pool binding). The <a href="./schema.html">schema</a> is what the repo's queries are
+  typed against — every <code>XxxDbRow</code> matches a table the migration files define.
 </p>
 
 <h2>Appendix: source layout</h2>
@@ -516,7 +639,9 @@
       <td>
         <code>createUsersRepo(pool)</code> — <code>create</code>, <code>getById</code>,
         <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>,
-        <code>getByUsername</code>, <code>update</code>; <code>LookupTimeoutError</code>.
+        <code>getByUsername</code>, <code>update</code>; <code>LookupTimeoutError</code>; standalone
+        <code>findOrCreateStripeCustomer</code> three-phase helper +
+        <code>StripeCustomersClient</code> structural interface.
       </td>
     </tr>
     <tr>
@@ -567,8 +692,10 @@
       <td><code>src/repo/credits.ts</code></td>
       <td>
         <code>createCreditsRepo(pool, opts?)</code> — <code>balance</code>, <code>grant</code>,
-        <code>atomicDebit</code>, <code>listEntries</code>. Lock and statement timeouts are
-        overridable via <code>opts</code> for tests that exercise the timeout paths.
+        <code>atomicDebit</code>, <code>listEntries</code>; standalone
+        <code>grantInTx(tx, input)</code> + <code>recordClawback(tx, input)</code> for
+        webhook-handler composition. Lock and statement timeouts are overridable via
+        <code>opts</code> for tests that exercise the timeout paths.
       </td>
     </tr>
     <tr>
@@ -577,6 +704,39 @@
         <code>InsufficientCreditsError</code>, <code>IdempotencyConflictError</code>,
         <code>UserNotFoundError</code>, <code>DebitTimeoutError</code>; the
         <code>DEBIT_LOCK_TIMEOUT_MS</code> / <code>DEBIT_STATEMENT_TIMEOUT_MS</code> constants.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/_types.ts</code></td>
+      <td>
+        <code>ClientLike</code> — structural subset of <code>pg.PoolClient</code> that the billing
+        namespaces and standalone tx helpers operate against. Pool's <code>query</code>
+        also satisfies this shape, so methods can be called from either.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/stripe-events.ts</code></td>
+      <td><code>stripeEvents.recordOrSkip(tx, event_id, event_type)</code>.</td>
+    </tr>
+    <tr>
+      <td><code>src/repo/purchases.ts</code></td>
+      <td>
+        <code>purchases.insertMany</code>, <code>getByPaymentIntent</code>,
+        <code>markRefunded</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/user-subscriptions.ts</code></td>
+      <td>
+        <code>userSubscriptions.upsertFromStripe</code> (strict-&gt; stale-event filter),
+        <code>markCanceled</code>, <code>getActiveForUser</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/billing-history.ts</code></td>
+      <td>
+        <code>billingHistory.append</code>, <code>find</code>, <code>listByUser</code> (cursor
+        pagination), <code>markRefunded</code>.
       </td>
     </tr>
     <tr>
