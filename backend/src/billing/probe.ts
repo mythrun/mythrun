@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import Stripe from 'stripe'
 import type { Logger } from 'pino'
 import { LOOKUP_KEYS, type LookupKey } from './lookup-keys.js'
+import { setSkuCache, type SkuCache, type SkuInternalEntry, type SkuPublicListing } from './sku-cache.js'
 
 const PROBE_TIMEOUT_MS = 7000
 const PROBE_MAX_ATTEMPTS = 3
@@ -57,6 +58,16 @@ export class BillingProbeTransientError extends Error {
   constructor(readonly cause: unknown, readonly attempts: number, readonly bootId: string) {
     super(`Stripe billing probe failed transiently after ${String(attempts)} attempts [boot=${bootId}]: ${String(cause)}`)
     this.name = 'BillingProbeTransientError'
+  }
+}
+
+export class BillingProbePortalConfigError extends Error {
+  readonly code = 'BILLING_PROBE_PORTAL_CONFIG'
+  constructor(readonly mismatches: readonly string[], readonly bootId: string) {
+    super(
+      `Stripe billing probe failed (Customer Portal config drift) [boot=${bootId}]:\n  ${mismatches.join('\n  ')}`,
+    )
+    this.name = 'BillingProbePortalConfigError'
   }
 }
 
@@ -185,9 +196,133 @@ export async function probeStripeContract(
     throw new BillingProbeError(mismatches, bootId)
   }
 
+  await probePortalConfig(stripe, logger, bootId)
+
+  populateSkuCache(lookupKeys, byLookup)
+
   logger.info(
     { event: 'billing.probe_passed', bootId, count: lookupKeys.length },
     'Stripe billing contract verified',
+  )
+}
+
+function populateSkuCache(
+  lookupKeys: readonly LookupKey[],
+  byLookup: ReadonlyMap<string, Stripe.Price>,
+): void {
+  const publicListing: SkuPublicListing[] = []
+  const byLookupKey = new Map<LookupKey, SkuInternalEntry>()
+  const byPriceId = new Map<string, SkuInternalEntry>()
+  for (const key of lookupKeys) {
+    const spec = LOOKUP_KEYS[key]
+    const price = byLookup.get(spec.lookupKey)
+    if (!price) {
+      // Probe asserted presence above; this branch is unreachable on a passing probe.
+      throw new Error(
+        `BillingProbe: unreachable — lookup_key '${spec.lookupKey}' missing from byLookup after probe passed`,
+      )
+    }
+    if (typeof price.unit_amount !== 'number') {
+      // Probe validated unit_amount > 0 above; this branch is also unreachable on a passing probe.
+      throw new Error(
+        `BillingProbe: unreachable — price for '${spec.lookupKey}' has non-numeric unit_amount after probe passed`,
+      )
+    }
+    const internal: SkuInternalEntry = {
+      lookup_key: spec.lookupKey,
+      stripe_price_id: price.id,
+      displayName: spec.displayName,
+      type: spec.type,
+      sessionsGranted: spec.sessionsGranted,
+      worldsGranted: spec.worldsGranted,
+      price: { unit_amount_cents: price.unit_amount, currency: price.currency },
+    }
+    byLookupKey.set(internal.lookup_key, internal)
+    byPriceId.set(internal.stripe_price_id, internal)
+    // Public projection: omit stripe_price_id explicitly via TS rest-omit.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { stripe_price_id: _omit, ...publicEntry } = internal
+    publicListing.push(publicEntry)
+  }
+  const snapshot: SkuCache = { byLookupKey, byPriceId, publicListing }
+  setSkuCache(snapshot)
+}
+
+async function probePortalConfig(
+  stripe: Stripe,
+  logger: Logger,
+  bootId: string,
+): Promise<void> {
+  let result: Stripe.ApiList<Stripe.BillingPortal.Configuration>
+  try {
+    result = await stripe.billingPortal.configurations.list(
+      { active: true, is_default: true, limit: 1 },
+      { timeout: PROBE_TIMEOUT_MS },
+    )
+  } catch (err) {
+    if (
+      err instanceof Stripe.errors.StripeAuthenticationError ||
+      err instanceof Stripe.errors.StripePermissionError
+    ) {
+      logger.error(
+        { event: 'billing.probe_auth_failed', bootId, err: err.message },
+        'Stripe billing probe auth/permission failure during portal config check',
+      )
+      throw new BillingProbeAuthError(err, bootId)
+    }
+    logger.error(
+      {
+        event: 'billing.probe_portal_transient_failed',
+        bootId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      'Stripe billing probe portal-config transient failure',
+    )
+    throw new BillingProbeTransientError(err, 1, bootId)
+  }
+
+  const mismatches: string[] = []
+  const config = result.data[0]
+  if (!config) {
+    mismatches.push('no active default Customer Portal configuration found')
+    logger.error(
+      { event: 'billing.probe_portal_failed', bootId, mismatchCount: mismatches.length, mismatches },
+      'Stripe billing probe Customer Portal config drift',
+    )
+    throw new BillingProbePortalConfigError(mismatches, bootId)
+  }
+
+  const subUpdate = config.features.subscription_update
+  if (subUpdate.proration_behavior !== 'create_prorations') {
+    mismatches.push(
+      `Customer Portal subscription_update.proration_behavior is '${subUpdate.proration_behavior}'; contract expects 'create_prorations'`,
+    )
+  }
+  const conditions = subUpdate.schedule_at_period_end.conditions
+  const hasDecreasing = conditions.some((c) => c.type === 'decreasing_item_amount')
+  if (!hasDecreasing) {
+    mismatches.push(
+      `Customer Portal subscription_update.schedule_at_period_end.conditions missing { type: 'decreasing_item_amount' }; contract requires asymmetric upgrade-immediate / downgrade-at-renewal behavior`,
+    )
+  }
+  const products = subUpdate.products ?? []
+  if (products.length === 0) {
+    mismatches.push(
+      `Customer Portal subscription_update.products allowlist is empty; contract requires per-tier downgrade-only allowlists (see spec §15.2)`,
+    )
+  }
+
+  if (mismatches.length > 0) {
+    logger.error(
+      { event: 'billing.probe_portal_failed', bootId, mismatchCount: mismatches.length, mismatches },
+      'Stripe billing probe Customer Portal config drift',
+    )
+    throw new BillingProbePortalConfigError(mismatches, bootId)
+  }
+
+  logger.info(
+    { event: 'billing.probe_portal_passed', bootId, configId: config.id },
+    'Stripe Customer Portal config verified',
   )
 }
 

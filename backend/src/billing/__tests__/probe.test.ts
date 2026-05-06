@@ -5,7 +5,9 @@ import {
   probeStripeContract,
   BillingProbeAuthError,
   BillingProbeStripeAPIChangeError,
+  BillingProbePortalConfigError,
 } from '../probe.js'
+import { getSkuCache, _resetSkuCacheForTests } from '../sku-cache.js'
 
 interface PriceFixture {
   id: string
@@ -95,8 +97,58 @@ function makeLogger(): { logger: Logger; entries: LogEntry[] } {
   return { logger, entries }
 }
 
-function makeStripe(list: ReturnType<typeof vi.fn>): Stripe {
-  return { prices: { list } } as unknown as Stripe
+interface PortalConfigFixture {
+  id: string
+  features: {
+    subscription_update: {
+      proration_behavior: 'create_prorations' | 'always_invoice' | 'none'
+      schedule_at_period_end: {
+        conditions: Array<{ type: 'decreasing_item_amount' | 'shortening_interval' }>
+      }
+      products: Array<{ product: string; prices: string[] }> | null
+    }
+  }
+}
+
+function portalConfigFixture(overrides: Partial<PortalConfigFixture> = {}): PortalConfigFixture {
+  return {
+    id: 'bpc_default',
+    features: {
+      subscription_update: {
+        proration_behavior: 'create_prorations',
+        schedule_at_period_end: {
+          conditions: [{ type: 'decreasing_item_amount' }],
+        },
+        products: [
+          { product: 'prod_w', prices: ['price_w'] },
+          { product: 'prod_s', prices: ['price_s'] },
+        ],
+      },
+    },
+    ...overrides,
+  }
+}
+
+function portalListOk(
+  configs: PortalConfigFixture[],
+): { data: PortalConfigFixture[]; has_more: boolean } {
+  return { data: configs, has_more: false }
+}
+
+interface MakeStripeOptions {
+  portalList?: ReturnType<typeof vi.fn>
+}
+
+function makeStripe(
+  list: ReturnType<typeof vi.fn>,
+  options: MakeStripeOptions = {},
+): Stripe {
+  const portalList =
+    options.portalList ?? vi.fn().mockResolvedValue(portalListOk([portalConfigFixture()]))
+  return {
+    prices: { list },
+    billingPortal: { configurations: { list: portalList } },
+  } as unknown as Stripe
 }
 
 function stripeError(
@@ -117,6 +169,7 @@ function stripeError(
 describe('probeStripeContract', () => {
   beforeEach(() => {
     vi.useRealTimers()
+    _resetSkuCacheForTests()
   })
 
   it('happy path — all 5 lookup_keys with correct shape → resolves', async () => {
@@ -327,5 +380,106 @@ describe('probeStripeContract', () => {
     await probeStripeContract(makeStripe(list), logger)
     const ids = new Set(entries.map((e) => e.bootId).filter((v): v is string => typeof v === 'string'))
     expect(ids.size).toBe(1)
+  })
+
+  it('successful probe populates the SKU cache (byLookupKey, byPriceId, publicListing)', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const { logger } = makeLogger()
+    expect(getSkuCache()).toBeNull()
+    await probeStripeContract(makeStripe(list), logger)
+    const cache = getSkuCache()
+    expect(cache).not.toBeNull()
+    if (!cache) throw new Error('cache should be populated')
+
+    expect(cache.byLookupKey.size).toBe(5)
+    expect(cache.byPriceId.size).toBe(5)
+    expect(cache.publicListing).toHaveLength(5)
+
+    const wayfarer = cache.byLookupKey.get('tier_wayfarer')
+    expect(wayfarer).toBeDefined()
+    expect(wayfarer?.stripe_price_id).toBe('price_w')
+    expect(wayfarer?.displayName).toBe('Wayfarer')
+    expect(wayfarer?.type).toBe('recurring')
+    expect(wayfarer?.sessionsGranted).toBe(4)
+    expect(wayfarer?.worldsGranted).toBe(1)
+    expect(wayfarer?.price).toEqual({ unit_amount_cents: 1500, currency: 'usd' })
+
+    expect(cache.byPriceId.get('price_se')?.lookup_key).toBe('sku_session')
+
+    // publicListing entries must NOT carry stripe_price_id
+    for (const entry of cache.publicListing) {
+      expect(Object.keys(entry)).not.toContain('stripe_price_id')
+    }
+  })
+
+  it('Customer Portal config probe — happy path resolves and does not block SKU cache', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const portalList = vi.fn().mockResolvedValue(portalListOk([portalConfigFixture()]))
+    const { logger, entries } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).resolves.toBeUndefined()
+    expect(portalList).toHaveBeenCalledTimes(1)
+    expect(entries.some((e) => e.event === 'billing.probe_passed')).toBe(true)
+    // SKU cache populated only after BOTH prices and portal pass
+    expect(getSkuCache()).not.toBeNull()
+  })
+
+  it("Customer Portal config probe — proration_behavior 'none' → BillingProbePortalConfigError", async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const config = portalConfigFixture({
+      features: {
+        subscription_update: {
+          proration_behavior: 'none',
+          schedule_at_period_end: { conditions: [{ type: 'decreasing_item_amount' }] },
+          products: [{ product: 'prod_w', prices: ['price_w'] }],
+        },
+      },
+    })
+    const portalList = vi.fn().mockResolvedValue(portalListOk([config]))
+    const { logger } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toBeInstanceOf(BillingProbePortalConfigError)
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toThrow(/proration_behavior/)
+    // cache must NOT be populated when portal probe fails
+    expect(getSkuCache()).toBeNull()
+  })
+
+  it("Customer Portal config probe — schedule_at_period_end missing 'decreasing_item_amount' → BillingProbePortalConfigError", async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const config = portalConfigFixture({
+      features: {
+        subscription_update: {
+          proration_behavior: 'create_prorations',
+          schedule_at_period_end: { conditions: [{ type: 'shortening_interval' }] },
+          products: [{ product: 'prod_w', prices: ['price_w'] }],
+        },
+      },
+    })
+    const portalList = vi.fn().mockResolvedValue(portalListOk([config]))
+    const { logger } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toBeInstanceOf(BillingProbePortalConfigError)
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toThrow(/decreasing_item_amount/)
+    expect(getSkuCache()).toBeNull()
+  })
+
+  it('Customer Portal config probe — empty configurations.list → BillingProbePortalConfigError', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const portalList = vi.fn().mockResolvedValue(portalListOk([]))
+    const { logger } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toBeInstanceOf(BillingProbePortalConfigError)
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toThrow(/no active default Customer Portal configuration/)
+    expect(getSkuCache()).toBeNull()
   })
 })
