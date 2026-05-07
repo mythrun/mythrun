@@ -152,7 +152,7 @@ function validateStripeSecretKey(raw: string | undefined): string {
 // once the first LLM call fires — long after boot. Catching prefix mismatch at
 // env-load makes the failure mode loud, immediate, and obvious.
 function validateAnthropicApiKey(raw: string | undefined): string {
-  if (raw === undefined || raw.length === 0) {
+  if (!raw || raw.trim() === '') {
     throw new Error('ANTHROPIC_API_KEY is required')
   }
   if (!raw.startsWith('sk-ant-')) {
