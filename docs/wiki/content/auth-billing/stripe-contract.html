@@ -7,7 +7,7 @@
 <!-- source: backend/eslint-rules/no-stripe-price-mutations.cjs -->
 <!-- source: backend/eslint-rules/no-stripe-subscription-price-mutation.cjs -->
 <!-- source: eslint.config.js -->
-<!-- source-hash: sha256:776fe0ef41a984514b5427a9d61bb47efef9396bbd8108084208f7c14c3a1d5e -->
+<!-- source-hash: sha256:81408dd6435c6c0e573c314a86918ab2bd0bad60a805671a40be0420ba3e88e4 -->
 <!-- last-ticket: MYT-42 -->
 
 <h1>Stripe contract</h1>
@@ -217,12 +217,11 @@
 <p>
   After the prices-list pass, the probe runs a second contract check against
   <code>stripe.billingPortal.configurations.list({ active: true, is_default: true })</code>. It
-  expects exactly one default config back and verifies three fields:
-  <code>features.subscription_update.proration_behavior === 'create_prorations'</code>,
+  expects exactly one default config back and verifies two fields:
+  <code>features.subscription_update.proration_behavior === 'create_prorations'</code>, and
   <code>schedule_at_period_end.conditions</code> includes a
   <code>{ type: 'decreasing_item_amount' }</code> entry (the asymmetry that defers downgrades to
-  period end while leaving upgrades to take effect immediately), and the per-tier
-  <code>products</code> allowlist isn't empty. A mismatch throws
+  period end while leaving upgrades to take effect immediately). A mismatch throws
   <code>BillingProbePortalConfigError</code>; the deploy fails the same way a price-list mismatch
   would.
 </p>
