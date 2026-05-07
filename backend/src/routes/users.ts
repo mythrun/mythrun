@@ -225,7 +225,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       if (profanity.profane) {
         return reply.send({
           available: false,
-          reason: profanity.reason ?? 'profane',
+          reason: profanity.reason ?? 'offensive',
         })
       }
 

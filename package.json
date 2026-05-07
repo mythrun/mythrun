@@ -20,6 +20,7 @@
     "wiki:check": "pnpm --filter @mythrun/wiki check",
     "wiki:accept-drift": "pnpm --filter @mythrun/wiki accept-drift",
     "wiki:dev": "pnpm --filter @mythrun/wiki dev",
+    "smoke:staging": "bash backend/scripts/smoke/staging.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
