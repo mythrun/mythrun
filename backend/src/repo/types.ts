@@ -1,16 +1,12 @@
 // Row types match the camelCase TS surface. snake_case DbRow types live in
-// mappers.ts where the conversion happens. Identity fields (cognitoSub,
-// email, authProvider on User; etc.) are never part of Update types — see
-// the spec §4.4.
+// mappers.ts where the conversion happens. Identity fields (cognitoSub on
+// User; etc.) are never part of Update types — see the spec §4.4.
 
 export interface User {
   readonly id: string
   readonly cognitoSub: string
-  readonly email: string
-  readonly displayName: string
   readonly username: string
-  readonly avatarUrl: string | null
-  readonly authProvider: 'google' | 'discord'
+  readonly displayName: string
   readonly stripeCustomerId: string | null
   readonly freeTrialUsed: boolean
   readonly suspendedAt: Date | null
@@ -20,11 +16,8 @@ export interface User {
 
 export interface CreateUserInput {
   readonly cognitoSub: string
-  readonly email: string
-  readonly displayName: string
   readonly username: string
-  readonly avatarUrl?: string | null
-  readonly authProvider: 'google' | 'discord'
+  readonly displayName: string
 }
 
 // Spelled-out (not Partial<Pick<...>>) so exactOptionalPropertyTypes
@@ -34,9 +27,8 @@ export interface CreateUserInput {
 // Clearing nullable fields is out of scope; spec §4.4 documents the
 // limitation.
 export interface UserUpdate {
-  readonly displayName?: string
   readonly username?: string
-  readonly avatarUrl?: string | null
+  readonly displayName?: string
   readonly stripeCustomerId?: string | null
   readonly freeTrialUsed?: boolean
 }
@@ -152,4 +144,102 @@ export interface SessionUpdate {
   readonly summary?: string | null
   readonly stRunningSummary?: string | null
   readonly handoff?: string | null
+}
+
+// ─── Credits ─────────────────────────────────────────────────────────────────
+
+export type CreditType = 'session' | 'world_gen'
+
+export type CreditSourceType =
+  | 'purchase'
+  | 'subscription'
+  | 'gift'
+  | 'trial'
+  | 'refund'
+  | 'debit'
+
+export interface CreditEntry {
+  readonly id: string
+  readonly userId: string
+  readonly creditType: CreditType
+  readonly amount: number              // positive = grant, negative = debit
+  readonly sourceType: CreditSourceType
+  readonly sourceId: string | null
+  readonly grantedAt: Date
+  readonly expiresAt: Date | null
+}
+
+export interface GrantInput {
+  readonly userId: string
+  readonly creditType: CreditType
+  readonly amount: number              // must be > 0
+  readonly sourceType: Exclude<CreditSourceType, 'debit'>
+  readonly sourceId?: string | null
+  readonly expiresAt?: Date | null
+  /**
+   * FK to the originating `purchases` row. Per migration 007's
+   * `credit_ledger_source_link_chk`: REQUIRED when `sourceType='purchase'`,
+   * MUST be NULL otherwise. Wired through to the INSERT so the §5.4.1
+   * payment-mode handler can write valid à-la-carte grant rows.
+   */
+  readonly sourcePurchaseId?: string | null
+  /**
+   * FK to the originating `billing_history` row. Per migration 007's
+   * `credit_ledger_source_link_chk`: REQUIRED when `sourceType` is
+   * `'subscription'` or `'refund'`, MUST be NULL otherwise. Wired through
+   * to the INSERT so §5.4.2 (subscription grant) + future refund-goodwill
+   * handlers can write valid grant rows.
+   */
+  readonly sourceBillingHistoryId?: string | null
+}
+
+export interface DebitInput {
+  readonly userId: string
+  readonly creditType: CreditType
+  readonly amount: number              // must be > 0; recorded as negative in ledger
+  readonly sourceId: string            // REQUIRED — the per-user idempotency key
+}
+
+export interface ListEntriesOpts {
+  readonly limit?: number | null       // null/omit → no LIMIT clause
+  readonly type?: CreditType
+}
+
+// ─── Campaign Members ─────────────────────────────────────────────────────────
+
+export type CampaignMemberRole = 'owner' | 'player'
+
+export interface CampaignMember {
+  readonly id: string
+  readonly campaignId: string
+  readonly userId: string
+  readonly role: CampaignMemberRole
+  readonly inviteAccepted: boolean
+  readonly joinedAt: Date
+}
+
+// ─── Campaign Invites ─────────────────────────────────────────────────────────
+
+export interface CampaignInvite {
+  readonly id: string
+  readonly campaignId: string
+  readonly createdBy: string
+  readonly inviteCode: string
+  readonly maxUses: number | null
+  readonly uses: number
+  readonly expiresAt: Date | null
+  readonly createdAt: Date
+  readonly primary: boolean
+}
+
+export interface CampaignInvitePreview {
+  readonly campaignName: string
+  readonly ownerUsername: string
+  readonly ownerDisplayName: string
+  readonly valid: boolean
+}
+
+export interface CreateInviteInput {
+  readonly campaignId: string
+  readonly createdBy: string
 }

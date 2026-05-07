@@ -21,3 +21,6 @@ dist/
 .superpowers/
 .playwright-mcp/
 docker-compose.override.yml
+
+# Local scratch / agent-authored ephemeral files (checklists, reports, etc.)
+tmp/

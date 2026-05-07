@@ -56,7 +56,7 @@ describe('worlds repo (integration)', () => {
   it('create returns a populated world with default status=generating', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const w = await worlds.create({ createdBy: owner.id, name: 'Realm', concept: 'A grim world.' })
     expect(w.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(w.createdBy).toBe(owner.id)
@@ -76,7 +76,7 @@ describe('worlds repo (integration)', () => {
   it('listByUser returns DESC by createdAt', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const a = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'first' })
     await new Promise((r) => setTimeout(r, 5))
     const b = await worlds.create({ createdBy: owner.id, name: 'B', concept: 'second' })
@@ -87,14 +87,14 @@ describe('worlds repo (integration)', () => {
   it('listByUser returns empty array for user with no worlds', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     expect(await worlds.listByUser(owner.id)).toEqual([])
   })
 
   it('update bumps updatedAt and mutates supplied fields', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
     await new Promise((r) => setTimeout(r, 5))
     const updated = await worlds.update(w.id, { name: 'A renamed', isPublic: true })
@@ -107,7 +107,7 @@ describe('worlds repo (integration)', () => {
   it('updateStatus moves a world through generating → complete', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
     expect(w.status).toBe('generating')
     const completed = await worlds.updateStatus(w.id, 'complete')
@@ -117,7 +117,7 @@ describe('worlds repo (integration)', () => {
   it('incrementForkCount adds 1 atomically', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
     expect(w.forkCount).toBe(0)
     const bumped = await worlds.incrementForkCount(w.id)

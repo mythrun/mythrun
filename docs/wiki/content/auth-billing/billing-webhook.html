@@ -1,0 +1,609 @@
+<!-- source: backend/src/routes/webhook.ts -->
+<!-- source: backend/src/billing/webhook.ts -->
+<!-- source: backend/src/billing/webhook-checkout-payment.ts -->
+<!-- source: backend/src/billing/webhook-invoice-paid.ts -->
+<!-- source: backend/src/billing/webhook-subscription-upsert.ts -->
+<!-- source: backend/src/billing/webhook-subscription-deleted.ts -->
+<!-- source: backend/src/billing/webhook-pending-update-applied.ts -->
+<!-- source: backend/src/billing/webhook-pending-update-expired.ts -->
+<!-- source: backend/src/billing/webhook-refund.ts -->
+<!-- source: backend/src/billing/webhook-types.ts -->
+<!-- source: backend/src/repo/stripe-events.ts -->
+<!-- source: backend/src/repo/_types.ts -->
+<!-- source-hash: sha256:3aed5bc7217bcd6e93c4e09e68d206420ec2474fea901fc42e3cde3cf2e507ab -->
+<!-- last-ticket: MYT-42 -->
+
+<h1>Billing webhook</h1>
+
+<p class="lead">
+  How Stripe events become Mythrun state. An encapsulated Fastify plugin owns the raw-body parser
+  and signature verification at the edge; a two-phase dispatcher reads from Stripe outside any DB
+  transaction, then opens one short transaction that records the event ID for idempotency and
+  invokes the per-event handler. Eight handlers cover subscription lifecycle, à-la-carte purchase,
+  and refund.
+</p>
+
+<!-- @diagram: auth-billing/billing-webhook -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The route lives in <code>backend/src/routes/webhook.ts</code> as an encapsulated plugin: it is
+  registered as a child scope of the main app, so the content-type parser it installs only applies
+  inside that scope. The dispatcher in <code>backend/src/billing/webhook.ts</code> is what every
+  verified event flows through, and the eight per-event modules under
+  <code>backend/src/billing/webhook-*.ts</code> are the handlers it routes to. The
+  <a href="../data/repository.html">repository layer</a> exposes the four billing-table namespaces
+  the handlers write to (<code>stripeEvents</code>, <code>purchases</code>,
+  <code>userSubscriptions</code>, <code>billingHistory</code>) plus the credit-ledger
+  <code>grantInTx</code> + <code>recordClawback</code> helpers.
+</p>
+
+<h3>The encapsulated plugin and its raw-body parser</h3>
+
+<p>
+  Stripe's signature verification is HMAC over the raw request bytes. Fastify's default JSON parser
+  reads the body to a string and parses it before any handler sees it; HMAC over a re-serialized
+  JSON object would not match Stripe's signature because key order and whitespace would differ. The
+  webhook plugin removes the inherited JSON parser inside its child scope, then registers a buffer
+  pass-through that delivers <code>request.body</code> as a <code>Buffer</code> for any
+  <code>application/json</code> request landing at <code>POST /webhooks/stripe</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Encapsulated child plugin, not <code>app.addContentTypeParser</code> at the root</strong>
+  — Fastify v5's <code>addContentTypeParser</code> is encapsulation-scoped, not route-scoped.
+  Installing the buffer parser on the top-level <code>app</code> would replace the JSON parser for
+  every other route in the system; every JSON body across the API would arrive as a
+  <code>Buffer</code>. Wrapping the route in a child plugin scope is the smallest unit of isolation
+  Fastify offers and keeps the rest of the API's JSON parsing intact.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>removeContentTypeParser</code> first, then add</strong> — Fastify v5 inherits the
+  parent's default <code>application/json</code> parser into child contexts. Registering a second
+  parser for the same MIME without removing the first throws
+  <code>FST_ERR_CTP_ALREADY_PRESENT</code> at <code>app.ready()</code>. The remove-then-add ordering
+  is what the spec call-out flags as the v5 footgun.
+</aside>
+
+<p>
+  The route handler runs four gates before dispatch: it requires a
+  <code>Stripe-Signature</code> header, asserts <code>request.body</code> is a
+  <code>Buffer</code> (defense in depth — a future refactor that drops the encapsulated parser would
+  otherwise silently HMAC against re-serialized JSON), calls
+  <code>stripe.webhooks.constructEvent</code>, and on signature failure logs only
+  <code>err.message</code> + <code>err.type</code> (the full err object would log the offending
+  signature value). A signature mismatch returns <code>400 invalid_signature</code>; a successful
+  verify hands the constructed <code>Stripe.Event</code> to the dispatcher.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The route is on the public-route allowlist</strong> — Stripe never carries a Mythrun
+  user's JWT, so the route opts out of authentication via <code>config.auth: 'public'</code>. To
+  prevent an honest mistake from shipping another public route silently, the
+  <a href="./jwt-middleware.html#the-public-route-allowlist">boot-time allowlist hook</a> rejects
+  any registration that pairs <code>auth: 'public'</code> with a path not in the closed set.
+  <code>POST /webhooks/stripe</code> is one of five entries.
+</aside>
+
+<h3>The dispatcher: api-version gate, idempotency tx, prefetch-then-write</h3>
+
+<p>
+  The dispatcher's contract is "the same event delivered ten times produces one set of writes." It
+  runs in three steps. First, a <strong>fail-closed api-version gate</strong>: each event carries
+  Stripe's <code>api_version</code>, and a mismatch against the SDK's pinned
+  <code>STRIPE_API_VERSION</code> (<code>2026-04-22.dahlia</code> at MYT-42) is treated as silent
+  corruption — typed field access against the wrong version would read fields whose meaning has
+  shifted between versions. The dispatcher records the event ID in a short single-purpose
+  transaction so Stripe stops retrying, then returns without invoking any handler.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Record-only ack on api-version mismatch, not a 5xx that retries</strong> — letting Stripe
+  redeliver wouldn't change the version mismatch, just accumulate noise. Recording the
+  <code>stripe_events</code> row alone (no downstream writes) acks the event, surfaces the mismatch
+  as a paging-grade log line, and leaves the response state on the manual-reconciliation path. The
+  version pin is bumped via spec patch alongside an SDK upgrade — see
+  <a href="./stripe-contract.html">Stripe contract</a>.
+</aside>
+
+<p>
+  Second, <strong>phase 1: prefetch outside any DB transaction</strong>. Several handlers need
+  fields that aren't on the event payload — Stripe's webhook payloads don't deep-expand by default,
+  so a <code>checkout.session.completed</code> event has the session ID but no
+  <code>line_items</code>, and a <code>customer.subscription.updated</code> event doesn't carry the
+  price's <code>lookup_key</code> on the items it sends. The dispatcher's
+  <code>PREFETCHERS</code> table maps event types to optional async functions that call the Stripe
+  SDK to retrieve whatever else is needed. These calls happen <em>before</em> opening the dispatch
+  transaction.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Stripe API calls outside the DB tx</strong> — running an SDK call inside a held
+  transaction pins the <code>PoolClient</code> for the call's duration. A Stripe outage with
+  multi-second tail latency would block one connection per concurrent webhook delivery. The pool
+  exhausts; unrelated requests get <code>connection_terminated_unexpectedly</code>; the cascade
+  reaches <code>/health/ready</code> and the ALB pulls the task. Prefetch-then-write means a Stripe
+  outage delays processing without pinning any pool slot.
+</aside>
+
+<p>
+  Third, <strong>phase 2: a single dispatch transaction with the MYT-40 timeout discipline</strong>.
+  The dispatcher opens a tx with three <code>SET LOCAL</code> statements bundled into one
+  multi-statement query: <code>transaction_isolation = 'read committed'</code>,
+  <code>lock_timeout = '1s'</code>, <code>statement_timeout = '5s'</code>. Inside the tx it records
+  the event via <code>stripeEvents.recordOrSkip</code> (an
+  <code>INSERT ... ON CONFLICT (event_id) DO NOTHING RETURNING event_id</code>), and on duplicate it
+  ROLLBACKs and returns. On first-write the dispatcher invokes the handler with the prefetch payload
+  and the open <code>ClientLike</code>, then COMMITs.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Idempotency anchored on <code>stripe_events</code>, not on per-handler idempotency
+    checks</strong
+  >
+  — every handler runs inside a transaction whose first INSERT is the event ID. If the same event is
+  redelivered, the conflict fires before the handler runs; the handler never sees the duplicate.
+  Per-handler idempotency would have to reason about partial-write rollback scenarios on each
+  handler separately. One row, one fact: this event was processed exactly once.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Three <code>SET LOCAL</code>s, not one</strong> — same recipe as
+  <a href="../data/repository.html#the-credits-namespace-append-only-ledger-with-an-atomic-spend"
+    >atomicDebit</a
+  >'s. <code>read committed</code> is the pool default but stating it per-tx defends against future
+  pool-config drift. <code>lock_timeout</code> bounds <code>FOR UPDATE</code> waits.
+  <code>statement_timeout</code> bounds the whole transaction. SQLSTATE distinguishes them in logs.
+</aside>
+
+<h3>The validation_failed sentinel</h3>
+
+<p>
+  A handler returns one of three results: <code>'ok'</code> commits cleanly,
+  <code>'validation_failed'</code> commits the <code>stripe_events</code> row and nothing else, and
+  <code>throw</code> rolls the whole tx back so Stripe redelivers. The
+  <code>'validation_failed'</code> sentinel exists for a narrow case: a delivered event passes
+  signature verification and api-version check but fails a domain-level invariant (a multi-line
+  subscription session, a missing <code>lookup_key</code>, a Stripe-side amount that doesn't match
+  the SKU cache). Re-delivering wouldn't change the answer; but the event must be acked so Stripe
+  stops retrying. The dispatcher logs at error level so paging-grade alarms can fire on the pattern.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Three return values, not two</strong> — without the sentinel, a handler facing a domain
+  invariant violation would have to choose between throwing (Stripe redelivers; log noise) or
+  committing the writes anyway (corruption). The sentinel splits the third path — the
+  <code>stripe_events</code> row commits, the rest of the writes don't, the operator gets a paging
+  log line. The handler is contractually required to have written nothing else when it returns the
+  sentinel; a regression test pins this.
+</aside>
+
+<h2>The eight event handlers</h2>
+
+<p>
+  Each handler is a single file under <code>backend/src/billing/webhook-*.ts</code> and exports one
+  function plus an optional prefetcher. The dispatcher's <code>HANDLERS</code> table maps event
+  types to those functions; new event types ship as new files plus one line added to the table.
+</p>
+
+<h3><code>checkout.session.completed</code></h3>
+
+<p>
+  Two distinct branches keyed by <code>session.mode</code>. Both first lock the
+  <code>users</code> row referenced by <code>session.metadata.userId</code> and cross-check
+  <code>session.customer</code> against <code>users.stripe_customer_id</code> — a mismatch is a
+  paging-grade event but the handler returns <code>'ok'</code> so the row commits and Stripe stops
+  retrying (manual reconciliation handles the corruption).
+</p>
+
+<p>
+  In <strong>subscription mode</strong> the handler upserts <code>user_subscriptions</code> and
+  writes nothing else. The credit grant is owned by the downstream <code>invoice.paid</code>
+  delivery (~100 ms later for a card payment, longer for SCA or ACH). Splitting subscription state
+  from credit grants makes both handlers idempotent regardless of delivery order.
+</p>
+
+<p>
+  In <strong>payment mode</strong> (à-la-carte) the handler looks up each line item against the SKU
+  cache (the cache was populated by the boot probe — see
+  <a href="./stripe-contract.html">Stripe contract</a>), inserts one <code>purchases</code> row per
+  line, inserts one <code>billing_history</code> row keyed on the PaymentIntent ID with
+  <code>kind='purchase'</code>, and grants credits via <code>grantInTx</code> for each line. The
+  whole thing is one transaction; the <code>stripe_events</code> idempotency makes redelivery a
+  no-op.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Subscription credit grant lives on <code>invoice.paid</code>, not on
+    <code>checkout.session.completed</code></strong
+  >
+  — Stripe's checkout-mode subscription session fires <code>completed</code> the moment the cart is
+  paid, but the canonical "this billing period's credit is granted" event is the
+  <code>invoice.paid</code> that arrives once the invoice settles. Treating
+  <code>invoice.paid</code> as the only credit-grant trigger means the same handler covers cycle
+  renewals (where there's no checkout session at all), trial-end conversions, and payment-method
+  retries. The checkout-completed handler upserts subscription state without granting credit; the
+  invoice-paid handler grants the credit when the invoice is paid.
+</aside>
+
+<h3><code>invoice.paid</code></h3>
+
+<p>
+  The canonical subscription credit-grant event. The handler branches on
+  <code>invoice.billing_reason</code>: <code>'subscription_create'</code>,
+  <code>'subscription_cycle'</code>, and <code>'subscription_update'</code> all grant credits; other
+  reasons (<code>'manual'</code>, <code>'subscription_threshold'</code>, etc.) are logged and
+  skipped — Mythrun doesn't emit them today, and a stray manual invoice in the Stripe Dashboard
+  shouldn't grant Mythrun credits. The handler resolves the tier's <code>lookup_key</code> via the
+  SKU cache's <code>byPriceId</code> reverse map, inserts a <code>billing_history</code> row keyed
+  on the invoice ID with the originating PaymentIntent stored on a separate column, and calls
+  <code>grantInTx</code> with <code>source_type = 'subscription'</code> and
+  <code>source_billing_history_id</code> pointing at the row just written. The
+  <code>billing_history</code> insert uses
+  <code>ON CONFLICT (kind, source_id_stripe) DO NOTHING</code>, so a redelivery is a no-op even
+  before <code>stripe_events</code> sees it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The PaymentIntent lives on <code>billing_history</code>, not derived at refund time</strong
+  >
+  — when a refund event arrives, the handler needs to find the originating invoice's
+  <code>billing_history</code> row to flip its status to <code>refunded</code> and to read the
+  <code>lookup_key</code> for the clawback. The natural shape would be an SDK call from the refund's
+  <code>payment_intent</code> to the invoice; Stripe's <code>invoicePayments.list</code> requires
+  <code>invoice</code> as the filter, not <code>payment</code>, so PI → invoice is not a single-call
+  lookup. Storing the PI on the invoice row at write time and resolving via
+  <code>SELECT ... WHERE stripe_payment_intent_id = $1 AND kind='invoice'</code> is one DB read with
+  a partial index (<code>idx_billing_history_invoice_pi</code>) and no Stripe-side dependency.
+</aside>
+
+<h3><code>customer.subscription.created / .updated</code></h3>
+
+<p>
+  Both event types share <code>handleSubscriptionUpsert</code>: write through to
+  <code>userSubscriptions.upsertFromStripe</code>. The repo method is a single
+  <code>INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE</code> with a strict
+  <code
+    >WHERE excluded.stripe_event_created_at &gt; user_subscriptions.stripe_event_created_at</code
+  >
+  filter — a same-second or earlier event is rejected as a no-op. A
+  <code>pending_update</code> on the subscription is treated as a gate: an upsert that would advance
+  items mid-flight is recorded but the item shape is left at the pre-upgrade value, so the user's
+  tier doesn't flip until <code>pending_update_applied</code> fires.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Strict <code>&gt;</code>, not <code>&gt;=</code></strong> — Stripe's webhook ordering is
+  not guaranteed; two events with the same <code>created</code> second can arrive
+  out-of-payload-order. <code>&gt;=</code> would let the second-arriving same-second event overwrite
+  the first; <code>&gt;</code> rejects it. The <code>checkout.session.completed</code> +
+  <code>customer.subscription.created</code> race is the textbook example: both events fire within
+  the same second on a fresh checkout.
+</aside>
+
+<h3><code>customer.subscription.deleted</code></h3>
+
+<p>
+  Calls <code>userSubscriptions.markCanceled</code>: status flips to <code>'canceled'</code> and the
+  handler preserves the payload's <code>cancel_at_period_end</code> bit. The distinction matters for
+  downstream reads — a user-clicked cancel that defers to period end carries
+  <code>cancel_at_period_end = true</code>, while a Stripe-initiated terminal cancel (failed-card
+  cascade, fraud lock) sets <code>false</code>. The credit-ledger is not touched: per-tier credits
+  granted earlier in the cycle remain spendable until they expire.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>No credit reclamation on cancel</strong> — the spec is explicit: a cancellation does not
+  claw back already-granted credits. The grant was paid for; the user gets to spend it through the
+  end of the billing period it was issued for. Refunds are the lever for clawing back paid credits,
+  and they have their own handler.
+</aside>
+
+<h3><code>customer.subscription.pending_update_applied</code></h3>
+
+<p>
+  This is the canonical credit-grant trigger for an in-period tier upgrade (see
+  <a href="./billing-routes.html#tier-upgrade">tier upgrade</a> below). When a user upgrades via
+  <code>POST /api/billing/upgrade-tier</code>, Stripe issues a proration invoice with
+  <code>payment_behavior: 'pending_if_incomplete'</code>. If the proration settles synchronously,
+  the subscription's <code>items[]</code> advance immediately and Stripe fires
+  <code>pending_update_applied</code>. The handler upserts the new tier, writes a
+  <code>billing_history</code> row for the proration invoice, and grants the difference in credits.
+  If the proration goes async (SCA, ACH), <code>pending_update_applied</code> fires when it
+  eventually settles; the same handler runs.
+</p>
+
+<h3><code>customer.subscription.pending_update_expired</code></h3>
+
+<p>
+  No-op + log. A <code>pending_update</code> that didn't settle within Stripe's window expires; the
+  upgrade route already returned <code>upgrade_payment_pending</code> to the caller, and the user is
+  still on their pre-upgrade tier. There's nothing to write.
+</p>
+
+<h3><code>refund.created / .updated</code></h3>
+
+<p>
+  Both share <code>handleRefundEvent</code>. The handler resolves the refund's
+  <code>payment_intent</code> to its originating <code>billing_history</code> row via the partial
+  index <code>idx_billing_history_invoice_pi</code> (for subscription invoices) or via
+  <code>purchases.stripe_payment_intent_id</code> (for à-la-carte purchases). It inserts a new
+  <code>billing_history</code> row with <code>kind='refund'</code>, flips the originating row's
+  status to <code>'refunded'</code>, and calls <code>recordClawback</code> on the credit ledger (a
+  negative-amount entry with <code>source_type = 'refund'</code>). Re-running on the
+  <code>updated</code> event is a no-op via the composite unique on
+  <code>(kind, source_id_stripe)</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Refund post-lock re-check on the originating row</strong> — between the refund resolution
+  and the clawback insert, a concurrent process could in principle have already flipped the row to
+  <code>refunded</code>. The handler reads the row <code>FOR UPDATE</code> and re-checks
+  <code>status = 'completed'</code> after acquiring the lock; a second-arriving update finds the row
+  already flipped and skips the clawback. Same shape as the <code>atomicDebit</code> pattern's
+  empty-ledger gotcha — the lock has to anchor on the row whose state the decision depends on.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="rotate-the-stripe-webhook-secret">Rotate the Stripe webhook signing secret</h3>
+<ol>
+  <li>
+    In the Stripe Dashboard, open the
+    <code>POST /webhooks/stripe</code> endpoint configuration. Click
+    <em>Reveal signing secret</em> to mint a new <code>whsec_*</code> value (the existing endpoint
+    keeps the prior secret active until the rollover completes).
+  </li>
+  <li>
+    Write the new value into Secrets Manager:
+    <code
+      >aws secretsmanager put-secret-value --secret-id mythrun/&lt;env&gt;/stripe-webhook-secret
+      --secret-string &lt;value&gt;</code
+    >. The secret shell is Terraform-managed with <code>ignore_changes = [secret_string]</code> on
+    the value, so this write is safe.
+  </li>
+  <li>
+    Roll the API service so running tasks pick up the new secret on their next boot:
+    <code
+      >aws ecs update-service --cluster mythrun --service mythrun-&lt;env&gt;-api
+      --force-new-deployment</code
+    >.
+  </li>
+  <li>
+    Once the rollover completes, the old signing secret is auto-retired by Stripe after a brief
+    grace window. No second-step revocation is needed; verify in CloudWatch that no
+    <code>stripe_webhook_signature_invalid</code> log lines fire on the new tasks.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-failing-webhook-delivery">Diagnose a failing webhook delivery</h3>
+<ol>
+  <li>
+    Filter CloudWatch for the request id Stripe shows in the Dashboard's webhook attempts UI:
+    <pre><code>filter event in ['stripe_webhook_signature_invalid',
+                'stripe_webhook_api_version_mismatch',
+                'billing.handler_validation_failed_committed',
+                'billing.checkout_orphan',
+                'billing.checkout_customer_mismatch']
+| fields @timestamp, event, event_id, event_type, err
+| sort @timestamp desc
+| limit 50</code></pre>
+  </li>
+  <li>
+    <code>stripe_webhook_signature_invalid</code> → secret drift. Compare Secrets Manager value
+    against Dashboard's <em>Reveal signing secret</em>; rotate per the runbook above.
+  </li>
+  <li>
+    <code>stripe_webhook_api_version_mismatch</code> → Stripe's account default API version was
+    changed in the Dashboard, or a webhook endpoint is configured with an explicit API version
+    different from the SDK pin. Both should be set to the SDK's pinned
+    <code>STRIPE_API_VERSION</code> value.
+  </li>
+  <li>
+    <code>billing.handler_validation_failed_committed</code> → a handler returned the
+    <code>'validation_failed'</code> sentinel. The log line includes <code>event_id</code>; pull the
+    event payload from Stripe's Dashboard and reconcile manually (operator review).
+  </li>
+  <li>
+    <code>billing.checkout_orphan</code> or <code>billing.checkout_customer_mismatch</code> → a paid
+    checkout session arrived for a user/customer pair that doesn't reconcile against
+    <code>users.stripe_customer_id</code>. Operator review: typically a Stripe-side customer record
+    was edited out-of-band, or a stale checkout session from a deleted user account settled.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The webhook plugin sits inside the <a href="../runtime/index.html">backend runtime</a>'s Fastify
+  app and registers before the user-facing routes — the encapsulation isolates its raw-body parser.
+  Signature verification depends on the <code>STRIPE_WEBHOOK_SECRET</code> env var, which the
+  <a href="../infra/serving.html">serving module</a>'s task definition wires from Secrets Manager.
+  The eight handlers write through the <a href="../data/repository.html">repository layer</a>'s
+  billing namespaces and into <a href="../data/schema.html">migration 007's three tables</a>. The
+  <a href="./stripe-contract.html">Stripe contract</a> page covers the SKU cache the handlers read
+  for tier resolution, and <a href="./billing-routes.html">billing routes</a> covers the user-facing
+  endpoints that produce the events the webhook ingests.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Stripe events handled</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Event type</th>
+      <th>Handler file</th>
+      <th>Prefetch?</th>
+      <th>Writes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>checkout.session.completed</code></td>
+      <td><code>webhook-checkout-payment.ts</code> + inline subscription branch</td>
+      <td>session + subscription (sub mode)</td>
+      <td>
+        <code>user_subscriptions</code> (sub) or <code>purchases</code> +
+        <code>billing_history</code> + <code>credit_ledger</code> (payment)
+      </td>
+    </tr>
+    <tr>
+      <td><code>invoice.paid</code></td>
+      <td><code>webhook-invoice-paid.ts</code></td>
+      <td>invoice + subscription</td>
+      <td><code>billing_history</code> + <code>credit_ledger</code> (subscription grants)</td>
+    </tr>
+    <tr>
+      <td><code>customer.subscription.created</code> / <code>.updated</code></td>
+      <td><code>webhook-subscription-upsert.ts</code></td>
+      <td>—</td>
+      <td><code>user_subscriptions</code> (strict-&gt; stale filter)</td>
+    </tr>
+    <tr>
+      <td><code>customer.subscription.deleted</code></td>
+      <td><code>webhook-subscription-deleted.ts</code></td>
+      <td>—</td>
+      <td><code>user_subscriptions</code> (status=canceled)</td>
+    </tr>
+    <tr>
+      <td><code>customer.subscription.pending_update_applied</code></td>
+      <td><code>webhook-pending-update-applied.ts</code></td>
+      <td>subscription + invoice</td>
+      <td>
+        <code>user_subscriptions</code> + <code>billing_history</code> + <code>credit_ledger</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>customer.subscription.pending_update_expired</code></td>
+      <td><code>webhook-pending-update-expired.ts</code></td>
+      <td>—</td>
+      <td>none (log only)</td>
+    </tr>
+    <tr>
+      <td><code>refund.created</code> / <code>.updated</code></td>
+      <td><code>webhook-refund.ts</code></td>
+      <td>refund + originating PI</td>
+      <td>
+        <code>billing_history</code> (refund row + flip originating to refunded) +
+        <code>credit_ledger</code> (clawback)
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Handler return contract</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Result</th>
+      <th>Tx outcome</th>
+      <th>Stripe sees</th>
+      <th>Use case</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>'ok'</code></td>
+      <td>COMMIT all writes</td>
+      <td>200, stops retrying</td>
+      <td>Normal success path; orphan-but-acked paths.</td>
+    </tr>
+    <tr>
+      <td><code>'validation_failed'</code></td>
+      <td>COMMIT (only <code>stripe_events</code> row)</td>
+      <td>200, stops retrying</td>
+      <td>Domain invariant violation (multi-line sub, missing lookup_key, amount mismatch).</td>
+    </tr>
+    <tr>
+      <td><code>throw</code></td>
+      <td>ROLLBACK</td>
+      <td>5xx, redelivers</td>
+      <td>Programming error or transient failure that retry might fix.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Source layout</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>routes/webhook.ts</code></td>
+      <td>Encapsulated plugin: raw-body parser, signature verification, dispatch call.</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook.ts</code></td>
+      <td>
+        <code>dispatchEvent</code>, <code>HANDLERS</code> + <code>PREFETCHERS</code> tables, the
+        api-version gate, the dispatch tx, and the inline
+        <code>checkout.session.completed</code> entry point.
+      </td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-types.ts</code></td>
+      <td><code>HandlerResult</code> union (<code>'ok' | 'validation_failed'</code>).</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-checkout-payment.ts</code></td>
+      <td>Payment-mode branch of <code>checkout.session.completed</code>.</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-invoice-paid.ts</code></td>
+      <td><code>handleInvoicePaid</code> + prefetcher; subscription credit-grant trigger.</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-subscription-upsert.ts</code></td>
+      <td><code>handleSubscriptionUpsert</code> for created/updated.</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-subscription-deleted.ts</code></td>
+      <td><code>handleSubscriptionDeleted</code>.</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-pending-update-applied.ts</code></td>
+      <td><code>handlePendingUpdateApplied</code> + prefetcher; tier-upgrade credit grant.</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-pending-update-expired.ts</code></td>
+      <td><code>handlePendingUpdateExpired</code>; no-op + log.</td>
+    </tr>
+    <tr>
+      <td><code>billing/webhook-refund.ts</code></td>
+      <td><code>handleRefundEvent</code> + prefetcher; clawback ledger entry.</td>
+    </tr>
+    <tr>
+      <td><code>repo/stripe-events.ts</code></td>
+      <td><code>recordOrSkip</code>: idempotent INSERT into <code>stripe_events</code>.</td>
+    </tr>
+    <tr>
+      <td><code>repo/_types.ts</code></td>
+      <td>
+        <code>ClientLike</code> — the structural subset of <code>pg.PoolClient</code> that handlers
+        operate against.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/routes/webhook.ts</code>, <code>backend/src/billing/webhook.ts</code>,
+  <code>backend/src/billing/webhook-*.ts</code> (eight files),
+  <code>backend/src/billing/webhook-types.ts</code>, <code>backend/src/repo/stripe-events.ts</code>,
+  <code>backend/src/repo/_types.ts</code>.
+</p>

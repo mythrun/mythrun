@@ -15,11 +15,8 @@ const FIXED_DATE = new Date('2026-04-28T12:00:00.000Z')
 const userRow: UserDbRow = {
   id: '019dccef-300b-7ebc-ac99-d08d3a765185',
   cognito_sub: 'google_12345',
-  email: 'a@b.com',
   display_name: 'Alice',
   username: 'alice',
-  avatar_url: 'https://example.com/a.png',
-  auth_provider: 'google',
   stripe_customer_id: null,
   free_trial_used: false,
   suspended_at: null,
@@ -33,11 +30,8 @@ describe('toUser', () => {
     expect(u).toEqual({
       id: '019dccef-300b-7ebc-ac99-d08d3a765185',
       cognitoSub: 'google_12345',
-      email: 'a@b.com',
       displayName: 'Alice',
       username: 'alice',
-      avatarUrl: 'https://example.com/a.png',
-      authProvider: 'google',
       stripeCustomerId: null,
       freeTrialUsed: false,
       suspendedAt: null,
@@ -47,18 +41,8 @@ describe('toUser', () => {
   })
 
   it('preserves null on nullable columns', () => {
-    const u = toUser({ ...userRow, avatar_url: null, suspended_at: null })
-    expect(u.avatarUrl).toBeNull()
+    const u = toUser({ ...userRow, suspended_at: null })
     expect(u.suspendedAt).toBeNull()
-  })
-
-  it('throws on unexpected auth_provider values', () => {
-    expect(() => toUser({ ...userRow, auth_provider: 'apple' })).toThrow(/unexpected auth_provider/)
-  })
-
-  it('accepts both google and discord', () => {
-    expect(toUser({ ...userRow, auth_provider: 'google' }).authProvider).toBe('google')
-    expect(toUser({ ...userRow, auth_provider: 'discord' }).authProvider).toBe('discord')
   })
 })
 

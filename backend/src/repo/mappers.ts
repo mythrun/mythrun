@@ -1,15 +1,23 @@
-import type { Campaign, Session, User, World } from './types.js'
+import type {
+  Campaign,
+  CampaignInvite,
+  CampaignMember,
+  CampaignMemberRole,
+  CreditEntry,
+  CreditSourceType,
+  CreditType,
+  Session,
+  User,
+  World,
+} from './types.js'
 
 // ─── DB row interfaces (snake_case, exactly as Postgres returns) ─────────────
 
 export interface UserDbRow {
   readonly id: string
   readonly cognito_sub: string
-  readonly email: string
-  readonly display_name: string
   readonly username: string
-  readonly avatar_url: string | null
-  readonly auth_provider: string
+  readonly display_name: string
   readonly stripe_customer_id: string | null
   readonly free_trial_used: boolean
   readonly suspended_at: Date | null
@@ -71,13 +79,6 @@ export interface SessionDbRow {
 // known sets, but the helpers throw loudly if a future migration adds an
 // option without updating the TS types. Defense in depth.
 
-function toAuthProvider(v: string): 'google' | 'discord' {
-  if (v !== 'google' && v !== 'discord') {
-    throw new Error(`unexpected auth_provider value from DB: ${v}`)
-  }
-  return v
-}
-
 function toWorldStatus(v: string): 'generating' | 'complete' | 'failed' {
   if (v !== 'generating' && v !== 'complete' && v !== 'failed') {
     throw new Error(`unexpected world status value from DB: ${v}`)
@@ -112,11 +113,8 @@ export function toUser(row: UserDbRow): User {
   return {
     id: row.id,
     cognitoSub: row.cognito_sub,
-    email: row.email,
-    displayName: row.display_name,
     username: row.username,
-    avatarUrl: row.avatar_url,
-    authProvider: toAuthProvider(row.auth_provider),
+    displayName: row.display_name,
     stripeCustomerId: row.stripe_customer_id,
     freeTrialUsed: row.free_trial_used,
     suspendedAt: row.suspended_at,
@@ -176,5 +174,108 @@ export function toSession(row: SessionDbRow): Session {
     summary: row.summary,
     stRunningSummary: row.st_running_summary,
     handoff: row.handoff,
+  }
+}
+
+// ─── Credits ─────────────────────────────────────────────────────────────────
+
+export interface CreditEntryDbRow {
+  readonly id: string
+  readonly user_id: string
+  readonly credit_type: string
+  readonly amount: number
+  readonly source_type: string
+  readonly source_id: string | null
+  readonly granted_at: Date
+  readonly expires_at: Date | null
+}
+
+function toCreditType(v: string): CreditType {
+  if (v !== 'session' && v !== 'world_gen') {
+    throw new Error(`unexpected credit_type value from DB: ${v}`)
+  }
+  return v
+}
+
+function toCreditSourceType(v: string): CreditSourceType {
+  if (
+    v !== 'purchase' &&
+    v !== 'subscription' &&
+    v !== 'gift' &&
+    v !== 'trial' &&
+    v !== 'refund' &&
+    v !== 'debit'
+  ) {
+    throw new Error(`unexpected source_type value from DB: ${v}`)
+  }
+  return v
+}
+
+export function toCreditEntry(row: CreditEntryDbRow): CreditEntry {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    creditType: toCreditType(row.credit_type),
+    amount: row.amount,
+    sourceType: toCreditSourceType(row.source_type),
+    sourceId: row.source_id,
+    grantedAt: row.granted_at,
+    expiresAt: row.expires_at,
+  }
+}
+
+// ─── Campaign Members ─────────────────────────────────────────────────────────
+
+export interface CampaignMemberDbRow {
+  readonly id: string
+  readonly campaign_id: string
+  readonly user_id: string
+  readonly role: string
+  readonly invite_accepted: boolean
+  readonly joined_at: Date
+}
+
+function toCampaignMemberRole(v: string): CampaignMemberRole {
+  if (v !== 'owner' && v !== 'player') {
+    throw new Error(`unexpected campaign_members.role value from DB: ${v}`)
+  }
+  return v
+}
+
+export function toCampaignMember(row: CampaignMemberDbRow): CampaignMember {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    userId: row.user_id,
+    role: toCampaignMemberRole(row.role),
+    inviteAccepted: row.invite_accepted,
+    joinedAt: row.joined_at,
+  }
+}
+
+// ─── Campaign Invites ─────────────────────────────────────────────────────────
+
+export interface CampaignInviteDbRow {
+  readonly id: string
+  readonly campaign_id: string
+  readonly created_by: string
+  readonly invite_code: string
+  readonly max_uses: number | null
+  readonly uses: number
+  readonly expires_at: Date | null
+  readonly created_at: Date
+}
+
+export function toCampaignInvite(row: CampaignInviteDbRow, primary: boolean): CampaignInvite {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    createdBy: row.created_by,
+    inviteCode: row.invite_code,
+    maxUses: row.max_uses,
+    uses: row.uses,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    primary,
   }
 }

@@ -14,13 +14,12 @@ digraph schema {
     color="ember";
     fontcolor="ember";
 
-    users   [label="users\ncognito_sub UNIQUE\nemail UNIQUE"];
-    ledger  [label="credit_ledger\n(append-only)"];
-    subs    [label="user_subscriptions"];
-    tiers   [label="subscription_tiers"];
-    packs   [label="session_packs"];
-    purch   [label="purchases"];
+    users   [label="users\ncognito_sub UNIQUE\nLOWER(username) UNIQUE\nstripe_customer_id"];
+    ledger  [label="credit_ledger\n(append-only)\n+ source_purchase_id\n+ source_billing_history_id\n(migration 007)"];
     stripe  [label="stripe_events\n(idempotency)"];
+    purchs  [label="purchases\n(à-la-carte)\nUNIQUE(payment_intent,\nlookup_key)"];
+    subs    [label="user_subscriptions\nUNIQUE stripe_subscription_id\n+ stale-event filter\n(migration 007)"];
+    bhist   [label="billing_history\nkind: purchase | invoice |\nrefund\nUNIQUE(kind, source_id_stripe)"];
   }
 
   subgraph cluster_world {
@@ -81,10 +80,12 @@ digraph schema {
   }
 
   // Identity edges
-  users -> ledger    [label="CASCADE"];
-  users -> subs      [label="CASCADE"];
-  tiers -> subs      [label=""];
-  users -> purch     [label=""];
+  users  -> ledger   [label="RESTRICT\n(revenue ledger,\nmigration 004)"];
+  users  -> purchs   [label="RESTRICT"];
+  users  -> subs     [label="CASCADE"];
+  users  -> bhist    [label="CASCADE"];
+  purchs -> ledger   [label="source_purchase_id\nRESTRICT", style=dashed];
+  bhist  -> ledger   [label="source_billing_history_id\nRESTRICT", style=dashed];
 
   // Worlds edges
   users    -> worlds   [label="created_by"];

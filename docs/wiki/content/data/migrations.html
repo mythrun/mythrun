@@ -1,8 +1,8 @@
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: backend/src/db/lock-key.ts -->
 <!-- source: backend/migrations/ -->
-<!-- source-hash: sha256:db61ac6a6bc4215ca069c3fb78800e2600987e1feffe9eb577a5a19e801f69ea -->
-<!-- last-ticket: MYT-34 -->
+<!-- source-hash: sha256:5bb68af373f9bf42ccb9771178a666c98f2248f2b4c3f4eb58ac769b7558d8e9 -->
+<!-- last-ticket: MYT-41 -->
 
 <h1>Migrations</h1>
 
@@ -243,8 +243,10 @@
   <li>
     From the repo root: <code>pnpm db:migrate</code>. On a fresh DB, the runner applies
     <code>001_initial_schema.sql</code>, <code>002_indexes.sql</code>,
-    <code>003_srd_reference_data.sql</code> in order — the
-    <a href="./schema.html">initial schema</a>. A second run is a no-op that logs
+    <code>003_srd_reference_data.sql</code>, <code>004_credit_ledger_invariants.sql</code>,
+    <code>005_drop_profile_columns_users.sql</code>, and
+    <code>006_drop_billing_config_tables.sql</code> in order — the
+    <a href="./schema.html">current schema</a>. A second run is a no-op that logs
     <code>migrate.no_pending</code> and exits 0.
   </li>
   <li>
@@ -340,8 +342,8 @@ aws ecs execute-command \
 <h2>Integration points</h2>
 
 <p>
-  The runner applies the <a href="./schema.html">initial schema</a> — three files in
-  <code>backend/migrations/</code>, 35 application tables + 22 named indexes + 3 SRD reference
+  The runner applies the <a href="./schema.html">current schema</a> — six files in
+  <code>backend/migrations/</code>, 31 application tables + 21 named indexes + 3 SRD reference
   tables — onto a fresh database; the <code>schema</code> page is the explainer for what those files
   lay down. The runner reuses <a href="../runtime/index.html"><code>createPgPool</code></a> from the
   backend workspace and the

@@ -83,7 +83,7 @@ When in doubt, ask. The default lean is "build it right." If you're tempted to s
 
 Two trackers serve different altitudes:
 
-- **Linear** (`MYT-` prefix, workspace: Mythrun, project: Mythrun Production) — long-term shipping view. Milestones = scope-named shipping checkpoints with scope-derived dates. Issues = multi-day work units with due dates. Morning-glance tool: "what's due today." Launch target: 2026-05-31.
+- **Linear** (`MYT-` prefix, workspace: Mythrun, project: Mythrun Production) — long-term shipping view. Milestones = scope-named shipping checkpoints with scope-derived dates. Issues = multi-day work units with due dates. Morning-glance tool: "what's due today." Launch target: 2026-06-01.
 - **Beads** (`myth-` prefix, `.beads/` in repo, Dolt-backed, git-committed) — per-feature implementation tracking. Beads are hours-to-half-day tasks derived from an implementation plan. Survives compactions across sessions. Empty between features; populated when a Linear issue gets picked up.
 
 Never duplicate content between them. Linear stays at the shipping-view altitude; beads stays at the implementation-detail altitude.
@@ -133,6 +133,12 @@ Work continuously through implementation batches without stopping for per-task r
 - Wiki is not optional. Every Linear issue that ships code or infra updates the wiki in the same session, via the hook-dispatched subagent. CI (`pnpm wiki:check`) gates merges on wiki freshness.
 - **Never accept an unexplained failure.** When something doesn't work for a reason you don't understand, *finding the root cause is the task* — not a nice-to-have. Read docs, search issues, dispatch a research subagent, file a question. Only propose workarounds or concessions *after* you can name the cause. "It just doesn't work, let's ship the reduced version" is never the right call by itself; sometimes the reduced version is right, but only once you can explain what's actually happening.
 - **Don't offer to "call it for the day" inside working hours.** Miklos's working window is roughly 9am–6pm local time. Check the current time before suggesting we stop; if we're inside the window, propose continuing with the next concrete step instead. Outside the window or near the edges, a wrap-up offer is fine.
+
+## The Brand + Design Repo
+
+Brand voice, palette, logomarks, and design decisions live in a separate sibling repo, not in this one: `../../Design/mythrun-design` (sibling of the `Code/` directory containing this repo). Read `brand/brief.md` before any work that touches user-visible naming, copy, error messages, marketing strings, or visual identity. The brand has a strict register — Ghibli-not-Marvel, Lucas Pope-terse, no hype words, no gamerspeak — and skipping the brief wastes round-trips on naming. The brief covers voice, allowed/forbidden moves, target communities, and what Mythrun is/isn't. `brand/decisions.md` records the why behind specific choices.
+
+Don't update or overwrite the design repo from agent sessions. New brand decisions are the user's call.
 
 ## The Prototype Repo
 

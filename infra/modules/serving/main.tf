@@ -148,6 +148,8 @@ locals {
     { name = "COGNITO_APP_CLIENT_ID", value = var.cognito_app_client_id },
     { name = "COGNITO_ISSUER_URL", value = var.cognito_issuer_url },
     { name = "COGNITO_HOSTED_UI_DOMAIN", value = var.cognito_hosted_ui_domain },
+    # MYT-38: required by loadEnv() — used to compose invite share URLs.
+    { name = "FRONTEND_BASE_URL", value = var.frontend_base_url },
   ])
 
   # rds-password secret holds a plain string (bootstrap-databases.sh writes

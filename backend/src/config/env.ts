@@ -11,6 +11,9 @@ export interface Env {
   readonly cognitoAppClientId?: string
   readonly cognitoIssuerUrl?: string
   readonly cognitoHostedUiDomain?: string
+  readonly frontendBaseUrl: string
+  readonly stripeSecretKey: string
+  readonly stripeWebhookSecret: string
 }
 
 // Dev (.env.development) sets DATABASE_URL / REDIS_REALTIME_URL /
@@ -77,6 +80,82 @@ function buildRedisUrl(role: 'realtime' | 'batch'): string {
   return `${scheme}://${authPart}${host}:${port}`
 }
 
+// Closes an open-redirect-via-misconfig surface: the frontend base URL is
+// used to construct OAuth redirect targets and post-auth landing URLs, so a
+// permissive value (or an attacker-controlled override) would let a misrouted
+// redirect carry tokens off-origin. Allowlist by host, forbid path/query/hash
+// components so a typo can't accidentally pin redirects to a sub-route.
+function validateFrontendBaseUrl(raw: string | undefined, nodeEnv: string | undefined): string {
+  if (!raw || raw.trim() === '') {
+    throw new Error('FRONTEND_BASE_URL is required')
+  }
+
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error(`FRONTEND_BASE_URL is not a valid URL: ${raw}`)
+  }
+
+  const prodHosts = new Set(['mythrun.com', 'staging.mythrun.com'])
+  const devHosts = new Set(['localhost', '127.0.0.1'])
+
+  const allowedHosts =
+    nodeEnv === 'development' || nodeEnv === 'test'
+      ? new Set([...prodHosts, ...devHosts])
+      : prodHosts
+
+  if (!allowedHosts.has(url.hostname)) {
+    throw new Error(
+      `frontendBaseUrl host '${url.hostname}' is not in the allowlist for NODE_ENV=${String(nodeEnv)}`,
+    )
+  }
+
+  if (url.pathname !== '/') {
+    throw new Error(`frontendBaseUrl pathname must be '/', got '${url.pathname}'`)
+  }
+
+  if (url.search !== '') {
+    throw new Error('frontendBaseUrl must not contain a query string')
+  }
+
+  if (url.hash !== '') {
+    throw new Error('frontendBaseUrl must not contain a hash fragment')
+  }
+
+  return url.origin
+}
+
+// Mythrun deploys with Stripe restricted keys (rk_*), never full-permission
+// keys (sk_*). The restricted key is the actual price-mutation boundary
+// per the MYT-41 §1 design decision; lookup-keys.ts and the ESLint rules
+// are tripwires above it. Misrotation that puts a full-permission key here
+// would silently degrade the defense — the boot probe (read-only) would
+// still pass. Catching it at env-load is the cheapest enforcement.
+function validateStripeSecretKey(raw: string | undefined): string {
+  if (!raw || raw.trim() === '') {
+    throw new Error('STRIPE_SECRET_KEY is required')
+  }
+  if (!raw.startsWith('rk_')) {
+    throw new Error(
+      `STRIPE_SECRET_KEY must be a Stripe restricted key (rk_*); got prefix '${raw.slice(0, 3)}'. ` +
+        `Full-permission keys (sk_*) are forbidden in deployed environments per the MYT-41 design.`,
+    )
+  }
+  return raw
+}
+
+// PLACEHOLDER literal is permitted in the MYT-41 → MYT-42 window. MYT-42's
+// webhook handler verifies via stripe.webhooks.constructEvent unconditionally;
+// any signature mismatch fails closed regardless of whether the secret is
+// the literal 'PLACEHOLDER' or a real whsec_*. No bypass branch.
+function validateStripeWebhookSecret(raw: string | undefined): string {
+  if (!raw || raw.trim() === '') {
+    throw new Error('STRIPE_WEBHOOK_SECRET is required (use PLACEHOLDER until MYT-42 wires the handler)')
+  }
+  return raw
+}
+
 function loadAuthConfig(): Pick<
   Env,
   'authMode' | 'cognitoUserPoolId' | 'cognitoAppClientId' | 'cognitoIssuerUrl' | 'cognitoHostedUiDomain'
@@ -138,11 +217,24 @@ export function loadEnv(): Env {
   if (!Number.isFinite(port) || port <= 0) {
     throw new Error(`PORT must be numeric, got: ${portRaw}`)
   }
+  // Validate auth config before frontendBaseUrl so AUTH_MODE/NODE_ENV
+  // mismatches (which gate the entire boot) trip first — frontendBaseUrl
+  // errors are downstream of a valid auth posture.
+  const authConfig = loadAuthConfig()
+  const frontendBaseUrl = validateFrontendBaseUrl(
+    process.env.FRONTEND_BASE_URL,
+    process.env.NODE_ENV,
+  )
+  const stripeSecretKey = validateStripeSecretKey(process.env.STRIPE_SECRET_KEY)
+  const stripeWebhookSecret = validateStripeWebhookSecret(process.env.STRIPE_WEBHOOK_SECRET)
   return Object.freeze({
     databaseUrl: buildDatabaseUrl(),
     redisRealtimeUrl: buildRedisUrl('realtime'),
     redisBatchUrl: buildRedisUrl('batch'),
     port,
-    ...loadAuthConfig(),
+    ...authConfig,
+    frontendBaseUrl,
+    stripeSecretKey,
+    stripeWebhookSecret,
   })
 }

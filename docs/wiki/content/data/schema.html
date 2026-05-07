@@ -1,16 +1,20 @@
 <!-- source: backend/migrations/001_initial_schema.sql -->
 <!-- source: backend/migrations/002_indexes.sql -->
 <!-- source: backend/migrations/003_srd_reference_data.sql -->
-<!-- source-hash: sha256:0bb4ce65441f9f3aa6b8aedfc4f999bf14c8a54106feea9026e2e218aa5c5c2d -->
-<!-- last-ticket: MYT-33 -->
+<!-- source: backend/migrations/004_credit_ledger_invariants.sql -->
+<!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
+<!-- source: backend/migrations/006_drop_billing_config_tables.sql -->
+<!-- source: backend/migrations/007_recreate_billing_tables.sql -->
+<!-- source-hash: sha256:500631d035ab6af38755b4729e50c22fc77966a5e3d2fba2566a3208b7443813 -->
+<!-- last-ticket: MYT-42 -->
 
 <h1>Schema</h1>
 
 <p class="lead">
-  The initial Postgres shape Mythrun runs on: 35 application tables grouped into identity, worlds,
-  campaigns, sessions, and ops; 22 named performance indexes; 3 empty SRD reference tables waiting
-  on data load. Every primary key is a UUIDv7. The schema is enforced at the DB layer, not the app
-  layer.
+  The Postgres shape Mythrun runs on: 34 application tables grouped into identity, billing, worlds,
+  campaigns, sessions, and ops; 25-plus named performance indexes; 3 empty SRD reference tables
+  waiting on data load. Every primary key is a UUIDv7. The schema is enforced at the DB layer, not
+  the app layer.
 </p>
 
 <!-- @diagram: data/schema -->
@@ -18,25 +22,102 @@
 <h2>How it fits together</h2>
 
 <p>
-  The schema is the union of three migration files in <code>backend/migrations/</code>:
+  The schema is the union of seven migration files in <code>backend/migrations/</code>:
   <code>001_initial_schema.sql</code> ships every <code>CREATE TABLE</code> in topological FK order,
   <code>002_indexes.sql</code> adds the named performance and uniqueness indexes,
-  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables. The
-  <a href="./migrations.html">migrations runner</a> applies all three end-to-end on a fresh
+  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables,
+  <code>004_credit_ledger_invariants.sql</code> tightens the <code>credit_ledger</code> with
+  defense-in-depth CHECKs, an idempotency partial-unique index, and a CASCADE→RESTRICT swap on the
+  user FK, <code>005_drop_profile_columns_users.sql</code> reduces the <code>users</code> row to its
+  minimal-claims shape and switches its UNIQUE on <code>username</code> to be case-insensitive,
+  <code>006_drop_billing_config_tables.sql</code> drops the four legacy billing-config tables now
+  that the tier and pack credit-allocation contract has moved into a checked-in TS file at
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a>, and
+  <code>007_recreate_billing_tables.sql</code> recreates <code>purchases</code> +
+  <code>user_subscriptions</code> with the new <code>lookup_key</code> shape, adds the
+  <code>billing_history</code> audit feed, and adds two FK columns on <code>credit_ledger</code>
+  that link grants back to their originating purchase or invoice row. The
+  <a href="./migrations.html">migrations runner</a> applies all seven end-to-end on a fresh
   database. The diagram clusters tables by the story they tell — read it left to right.
 </p>
 
 <h3>Identity and billing</h3>
 
 <p>
-  <code>users</code> is the gravitational center of the identity cluster. Cognito's <code>sub</code>
-  is the external identity (UNIQUE), email is the readable identity (UNIQUE), and
-  <code>auth_provider</code> is constrained to <code>google</code> or <code>discord</code> by a
-  CHECK so the application can match without first-checking format. Stripe customer IDs live on the
-  user row; subscription state is a separate <code>user_subscriptions</code> table linked to
-  <code>subscription_tiers</code> (a config table keyed by string, not UUID, because the row
-  identity is "the Pro tier" not "this instance of the Pro tier").
+  <code>users</code> is the gravitational center of the identity cluster. The row carries six
+  product-load-bearing fields: <code>cognito_sub</code> (the external Cognito identity, UNIQUE),
+  <code>username</code> (player-chosen handle, UNIQUE on <code>LOWER(username)</code>),
+  <code>display_name</code> (the social-recognition surface in member lists and chrome),
+  <code>stripe_customer_id</code>, <code>free_trial_used</code>, and <code>suspended_at</code>. The
+  <code>stripe_customer_id</code> is lazy-populated on first checkout via
+  <code>findOrCreateStripeCustomer</code>; see <a href="./repository.html">repository layer</a>.
+  Migration 006 dropped the four legacy billing-config tables; migration 007 then recreated three of
+  them with a new shape oriented around Stripe lookup keys instead of foreign-keyed config tables:
+  <code>purchases</code> for à-la-carte buys, <code>user_subscriptions</code> for the user's view of
+  their Stripe subscription, and a new <code>billing_history</code> audit feed that powers the
+  <a href="../auth-billing/billing-routes.html">billing-history endpoint</a>. Migration 007 also
+  adds <code>source_purchase_id</code> + <code>source_billing_history_id</code> FK columns on
+  <code>credit_ledger</code> so a refund handler can resolve from a refund event back to the
+  originating grant row in one indexed lookup.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Three billing tables, not one</strong> — purchase records, subscription state, and the
+  audit feed answer different questions. <code>purchases</code> answers "what did this PaymentIntent
+  buy?" and is keyed by Stripe payment intent. <code>user_subscriptions</code> answers "what tier is
+  this user on?" and is keyed by Stripe subscription ID. <code>billing_history</code> answers "what
+  is this user's billing audit trail?" and is the unified view across purchase / invoice / refund
+  kinds. Conflating any two produces a table that's awkward at the query patterns of the third — the
+  audit feed needs every kind in one ORDER BY, while the subscription lookup wants exactly one
+  active row per user.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Composite UNIQUE on <code>billing_history(kind, source_id_stripe)</code></strong> —
+  Stripe's <code>pi_*</code>, <code>in_*</code>, and <code>re_*</code> ID prefixes are practically
+  disjoint, but the composite key is what matches the webhook handlers' explicit
+  <code>ON CONFLICT (kind, source_id_stripe)</code> clauses. A single-column UNIQUE on
+  <code>source_id_stripe</code> alone produced a 42P10 invalid_column_reference at runtime during
+  MYT-42 development; the composite makes the contract explicit at the schema level. The
+  prefix-by-kind CHECK constraint is defense-in-depth on top of the composite.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>credit_ledger.credit_ledger_source_link_chk</code> uses CASE per source_type</strong
+  >
+  — the FK columns are nullable because not every grant kind has an originating row (a trial credit
+  grant has neither a purchase nor a billing history parent). An OR-shaped predicate would admit a
+  <code>source_type='trial'</code> row with a spurious FK populated. The per-<code
+    >source_type</code
+  >
+  CASE pins exactly the right shape: purchase grants link to <code>purchases</code>, subscription
+  and refund grants link to <code>billing_history</code>, trial / gift / debit have neither set.
+  Unknown <code>source_type</code> values fall to ELSE FALSE so a future schema-drift PR can't
+  quietly expand the enum without revisiting the FK contract.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Minimal-claims user row, no email / avatar / auth_provider</strong> — migration 001
+  originally carved <code>email</code>, <code>avatar_url</code>, and <code>auth_provider</code> out
+  of the OAuth claims, but Cognito is already the authentication surface and the user picks their
+  own identity at onboarding. The duplicated provider claim drifted from Cognito over time (a user
+  who relinked from Google to Discord would have a stale <code>auth_provider</code>); the email copy
+  was a GDPR liability that didn't earn its keep; the avatar URL we never displayed. Migration 005
+  drops all three. Future profile fields (uploaded avatar, bio) ship post-launch as user-uploadable
+  attributes, not OAuth-derived ones.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Case-insensitive UNIQUE on <code>LOWER(username)</code></strong> — Postgres TEXT is
+  case-sensitive by default, which would let <code>Admin</code> / <code>admin</code> /
+  <code>ADMIN</code> register as three distinct users. That's a moderator-impersonation lane: an
+  attacker squats the casing variant the deny list misses. Migration 005 drops the original
+  <code>users_username_key</code> constraint and replaces it with a UNIQUE expression index
+  <code>users_username_lower_key ON users (LOWER(username))</code>. The display preserves the user's
+  chosen casing; uniqueness collapses across casings. Repository lookups use
+  <code>WHERE LOWER(username) = LOWER($1)</code> so they hit the expression index.
+</aside>
 
 <p>
   <code>credit_ledger</code> is the only place credit balance lives. There is no
@@ -53,6 +134,42 @@
   not in-place edits we'd have to reconstruct from Stripe webhooks. The Billing & Cost Controls spec
   picks this up; the schema commits to it now so we don't ship a mutable balance and then try to
   unship it.
+</aside>
+
+<p>
+  Migration 004 adds three CHECK constraints and a partial-unique index that pin the ledger's
+  invariants at the database layer:
+  <code>(source_type = 'debit') = (amount &lt; 0)</code> — debits are negative and only debits are
+  negative; <code>source_type &lt;&gt; 'debit' OR source_id IS NOT NULL</code> — debits must carry
+  the per-user idempotency key; <code>source_type &lt;&gt; 'debit' OR expires_at IS NULL</code> —
+  debits represent consumption and never expire; and
+  <code
+    >uniq_credit_ledger_debit_idempotency ON (user_id, credit_type, source_id) WHERE source_type =
+    'debit'</code
+  >
+  — the same debit cannot land twice. The same migration also swaps the <code>user_id</code> FK from
+  <code>ON DELETE CASCADE</code> to <code>ON DELETE RESTRICT</code>
+  for the same reason a bank ledger isn't garbage-collected when an account closes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>RESTRICT on a financial table, not CASCADE</strong> — the original migration declared the
+  FK as CASCADE alongside the rest of the per-user data. For a revenue ledger that's wrong: a hard
+  delete (admin error, GDPR erasure path) would silently erase every purchase, refund, and debit
+  belonging to that user, breaking Stripe reconciliation and any audit downstream. RESTRICT forces
+  the deletion to fail loudly until the rows are dealt with explicitly. GDPR erasure becomes a
+  soft-delete / pseudonymize flow tracked separately. <code>purchases</code> follows the same
+  RESTRICT pattern (see the migration 007 source); <code>user_subscriptions</code> and
+  <code>billing_history</code> use CASCADE because they're regenerable views of Stripe-side state.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Application-layer enforcement <em>and</em> DB-layer CHECKs</strong> — the repo layer
+  already guarantees these invariants in the happy path (only <code>atomicDebit</code> writes
+  negative amounts; only <code>grant</code> writes positive). The CHECKs are belt-and-suspenders for
+  everything that doesn't go through the repo: a future admin tool, a Stripe webhook backfill, a
+  one-off corrective migration. A bug in any of those gets a clear constraint violation at insert
+  time instead of a silently mis-shaped balance the team discovers months later.
 </aside>
 
 <h3>Worlds and entities</h3>
@@ -173,17 +290,22 @@
 <h3>Cascade rules: which deletes ripple</h3>
 
 <p>
-  The FK cascade rules encode the cleanup paths. Deleting a <code>user</code> CASCADEs through
-  <code>credit_ledger</code> and <code>user_subscriptions</code> but leaves <code>worlds</code> and
-  <code>campaigns</code> orphaned (the FK is <code>NO ACTION</code> on <code>created_by</code>) —
-  user deletion is a billing-team operation, not a content-delete operation. Deleting a
-  <code>world</code> CASCADEs through <code>entities</code> → <code>facts</code> +
-  <code>prose_kernels</code> + <code>relationships</code> + <code>entity_hierarchy</code>, and
-  through <code>campaigns</code> → <code>sessions</code> → <code>session_messages</code>: a world
-  delete is a tear-everything-down operation. Stat blocks detach to <code>SET NULL</code> on entity
-  deletion; characters detach to <code>SET NULL</code> on entity deletion. The schema-parity test in
-  <code>migrate-schema.test.ts</code> pins each of these rules so a future migration can't silently
-  flip a CASCADE to a NO ACTION (or vice versa).
+  The FK cascade rules encode the cleanup paths. Deleting a <code>user</code> RESTRICTs on
+  <code>credit_ledger</code> (a revenue ledger is never garbage-collected; see migration 004 above),
+  and leaves <code>worlds</code> and <code>campaigns</code> orphaned (the FK is
+  <code>NO ACTION</code> on <code>created_by</code>) — user deletion is a billing-team operation,
+  not a content-delete operation. Deleting a <code>world</code> CASCADEs through
+  <code>entities</code> → <code>facts</code> + <code>prose_kernels</code> +
+  <code>relationships</code> + <code>entity_hierarchy</code>, and through <code>campaigns</code> →
+  <code>sessions</code> → <code>session_messages</code>: a world delete is a tear-everything-down
+  operation. Stat blocks detach to <code>SET NULL</code> on entity deletion; characters detach to
+  <code>SET NULL</code> on entity deletion. The schema-parity test in
+  <code>migrate-schema.test.ts</code> pins each of these rules — including the
+  <code>credit_ledger</code> RESTRICT, the four migration-004 invariants, migration 005's
+  drop-and-replacement of the username UNIQUE, and migration 006's drop of the four legacy
+  billing-config tables — so a future migration can't silently flip a CASCADE to a NO ACTION (or
+  vice versa), re-introduce a case-sensitive username uniqueness, or quietly re-add the dropped
+  tables under their old shapes.
 </p>
 
 <h3>What's not in the schema yet</h3>
@@ -195,9 +317,12 @@
 </p>
 
 <p>
-  Repository layer. The <code>backend/src/db/</code> directory ships only <code>migrate.ts</code>,
-  <code>lock-key.ts</code>, and <code>postgres.ts</code> right now. Per-table query helpers, Zod
-  result schemas, and transaction wrappers come in MYT-34.
+  Repository layer. <code>backend/src/db/</code> ships <code>migrate.ts</code>,
+  <code>lock-key.ts</code>, and <code>postgres.ts</code>; the typed namespaces over these tables
+  live next door at <a href="./repository.html"><code>backend/src/repo/</code></a> and ship six
+  namespaces today (<code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code>, <code>credits</code>, <code>invites</code>). The remaining namespaces ship
+  batched with their consumers.
 </p>
 
 <h2>Operating this piece</h2>
@@ -210,15 +335,22 @@
     migrations.
   </li>
   <li>
-    <code>pnpm db:migrate</code> applies all three migration files end-to-end. A second run is a
+    <code>pnpm db:migrate</code> applies all seven migration files end-to-end. A second run is a
     no-op.
   </li>
   <li>
     Verify the shape:
     <pre><code>docker compose exec postgres psql -U mythrun -d mythrun -c "\dt"
 docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
-    You should see 39 tables (1 <code>_migrations</code> + 35 application + 3 SRD) and the
-    <code>idx_*</code> index set.
+    You should see 38 tables (1 <code>_migrations</code> + 34 application + 3 SRD), the
+    <code>idx_*</code> index set, the
+    <code>uniq_credit_ledger_debit_idempotency</code> partial-unique index from migration 004, the
+    <code>users_username_lower_key</code> expression index from migration 005 (with no
+    <code>email</code> / <code>avatar_url</code> / <code>auth_provider</code> columns on
+    <code>users</code>), and the migration 007 surface — <code>purchases</code>,
+    <code>user_subscriptions</code>, <code>billing_history</code>, plus the
+    <code>idx_billing_history_invoice_pi</code> partial index and the two
+    <code>source_*_id</code> FK columns on <code>credit_ledger</code>.
   </li>
 </ol>
 
@@ -245,15 +377,16 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
 <h2>Integration points</h2>
 
 <p>
-  The <a href="./migrations.html">migrations runner</a> applies these three files; the runner's
+  The <a href="./migrations.html">migrations runner</a> applies these six files; the runner's
   <code>_migrations</code> bookkeeping is what the drift hint is reasoning about. Downstream, the
   <a href="../runtime/index.html">backend runtime</a>'s repository layer will read and write these
   tables; the <a href="../auth-billing/index.html">auth & billing</a> stories build on
-  <code>users</code>, <code>credit_ledger</code>, <code>user_subscriptions</code>, and
-  <code>stripe_events</code>; the
-  <a href="../world-campaign/index.html">world & campaign</a> pipeline writes <code>worlds</code> +
-  <code>entities</code> + <code>facts</code> + <code>prose_kernels</code>. For the column-by-column
-  view — every type, default, constraint, index, and FK — see the
+  <code>users</code>, <code>credit_ledger</code>, and <code>stripe_events</code>, with the
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> page covering how Mythrun's
+  view of "what tier is this user on" comes from a per-user Stripe API read instead of a local
+  mirror table; the <a href="../world-campaign/index.html">world & campaign</a> pipeline writes
+  <code>worlds</code> + <code>entities</code> + <code>facts</code> + <code>prose_kernels</code>. For
+  the column-by-column view — every type, default, constraint, index, and FK — see the
   <a href="../reference/schema.html">schema reference</a> page.
 </p>
 
@@ -276,9 +409,8 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
     <tr>
       <td>Identity & billing</td>
       <td>
-        <code>users</code>, <code>credit_ledger</code>, <code>subscription_tiers</code>,
-        <code>user_subscriptions</code>, <code>session_packs</code>, <code>purchases</code>,
-        <code>stripe_events</code>
+        <code>users</code>, <code>credit_ledger</code>, <code>stripe_events</code>,
+        <code>purchases</code>, <code>user_subscriptions</code>, <code>billing_history</code>
       </td>
     </tr>
     <tr>
@@ -328,8 +460,19 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
       <td><code>(user_id, credit_type, expires_at)</code> — balance-sum hot path</td>
     </tr>
     <tr>
-      <td><code>idx_user_subscriptions_user</code></td>
-      <td><code>(user_id)</code></td>
+      <td><code>uniq_credit_ledger_debit_idempotency</code></td>
+      <td>
+        UNIQUE PARTIAL INDEX
+        <code>(user_id, credit_type, source_id) WHERE source_type = 'debit'</code> (NULLS NOT
+        DISTINCT) — DB-level idempotency for <code>atomicDebit</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>users_username_lower_key</code></td>
+      <td>
+        UNIQUE EXPRESSION INDEX <code>(LOWER(username))</code> — case-insensitive username
+        uniqueness from migration 005
+      </td>
     </tr>
     <tr>
       <td><code>idx_pipeline_runs_unique</code></td>
@@ -356,13 +499,39 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
       <td>UNIQUE PARTIAL INDEX <code>WHERE status = 'active'</code> — see rationale</td>
     </tr>
     <tr>
+      <td><code>idx_billing_history_user_occurred</code></td>
+      <td>
+        <code>(user_id, occurred_at DESC, id DESC)</code> — backs the cursor-paginated
+        billing-history endpoint
+      </td>
+    </tr>
+    <tr>
+      <td><code>idx_billing_history_invoice_pi</code></td>
+      <td>
+        UNIQUE PARTIAL INDEX
+        <code>(stripe_payment_intent_id) WHERE kind='invoice' AND … IS NOT NULL</code> — drives
+        DB-side refund-to-invoice resolution
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>idx_credit_ledger_source_purchase</code>,
+        <code>idx_credit_ledger_source_billing_history</code>
+      </td>
+      <td>Partial indexes on the migration 007 FK columns; refund handler resolves grants here</td>
+    </tr>
+    <tr>
+      <td><code>idx_purchases_user</code>, <code>idx_user_subscriptions_user</code></td>
+      <td>Per-user lookup for the billing endpoints</td>
+    </tr>
+    <tr>
       <td>
         <code>idx_campaigns_created_by</code>, <code>idx_campaign_members_user</code>,
         <code>idx_campaign_members_campaign</code>, <code>idx_sessions_campaign</code>,
         <code>idx_session_preps_campaign</code>, <code>idx_pipeline_runs_world</code>,
         <code>idx_pipeline_runs_campaign</code>, <code>idx_random_tables_world</code>,
         <code>idx_characters_campaign</code>, <code>idx_characters_user</code>,
-        <code>idx_world_snapshots_campaign</code>, <code>idx_purchases_user</code>
+        <code>idx_world_snapshots_campaign</code>
       </td>
       <td>Single-column FK lookup indexes</td>
     </tr>
@@ -372,11 +541,14 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
 <h3>Schema-parity test</h3>
 
 <p>
-  <code>backend/src/db/__tests__/migrate-schema.test.ts</code> runs the three migrations against a
+  <code>backend/src/db/__tests__/migrate-schema.test.ts</code> runs all seven migrations against a
   clean DB and asserts the full set: every table name, every <code>idx_*</code> index name, every
-  CHECK constraint, every FK <code>ON DELETE</code> rule, and the partial-unique predicate on
-  <code>idx_sessions_one_active</code>. A transcription typo or a future schema-drift PR fails the
-  test with a clear diff.
+  CHECK constraint (including migration 007's
+  <code>credit_ledger_source_link_chk</code> per-source-type CASE), every FK
+  <code>ON DELETE</code> rule, the partial-unique predicates on
+  <code>idx_sessions_one_active</code> and <code>idx_billing_history_invoice_pi</code>, and the
+  presence of migration 007's three recreated tables. A transcription typo or a future schema-drift
+  PR fails the test with a clear diff.
 </p>
 
 <h2>Source</h2>
@@ -385,5 +557,9 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
   <code>backend/migrations/001_initial_schema.sql</code>,
   <code>backend/migrations/002_indexes.sql</code>,
   <code>backend/migrations/003_srd_reference_data.sql</code>,
+  <code>backend/migrations/004_credit_ledger_invariants.sql</code>,
+  <code>backend/migrations/005_drop_profile_columns_users.sql</code>,
+  <code>backend/migrations/006_drop_billing_config_tables.sql</code>,
+  <code>backend/migrations/007_recreate_billing_tables.sql</code>,
   <code>backend/src/db/__tests__/migrate-schema.test.ts</code>.
 </p>

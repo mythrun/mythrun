@@ -9,13 +9,14 @@ digraph repository {
   ranksep=0.7;
 
   subgraph cluster_callers {
-    label="callers (future)";
+    label="callers";
     style="dashed";
     color="ember";
     fontcolor="ember";
 
-    routes  [label="Fastify routes\n(Auth, Billing, …)"];
-    workers [label="BullMQ workers\n(prep, scribe)"];
+    routes  [label="Fastify routes\n(users, invites,\nbilling, requireOnboarded)"];
+    webhook [label="Stripe webhook\ndispatcher\n(open tx → handlers)"];
+    workers [label="BullMQ workers\n(prep, scribe — future)"];
   }
 
   subgraph cluster_factory {
@@ -24,10 +25,24 @@ digraph repository {
     color="ember";
     fontcolor="ember";
 
-    users     [label="users.ts\ncreate, getById,\ngetByCognitoSub,\ngetByEmail, update"];
+    users     [label="users.ts\ncreate, getById,\ngetByCognitoSub,\ngetByCognitoSubWithTimeout,\ngetByUsername, update"];
     worlds    [label="worlds.ts\ncreate, getById,\nlistByUser, update,\nupdateStatus,\nincrementForkCount"];
-    camps     [label="campaigns.ts\ncreate, getById,\nlistByUser, update"];
+    camps     [label="campaigns.ts\ncreate, getById,\nlistByUser, update,\naddMember, getMembership,\ngetOwner, listMembers"];
     sessions  [label="sessions.ts\ncreate, getById,\ngetActiveByCampaign,\nlistByCampaign,\nupdate"];
+    credits   [label="credits.ts\nbalance, grant,\natomicDebit,\nlistEntries\n(users-row lock)\n+ grantInTx +\nrecordClawback (standalone)"];
+    invites   [label="invites.ts\ncreate, getByCode,\ngetCodePreview,\nlistForCampaign,\nrevoke, acceptInvite\n(load-bearing tx)"];
+  }
+
+  subgraph cluster_billing_ns {
+    label="billing namespaces  (transaction-scoped, ClientLike)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    se   [label="stripe-events.ts\nrecordOrSkip\n(idempotency)"];
+    pur  [label="purchases.ts\ninsertMany,\ngetByPaymentIntent,\nmarkRefunded"];
+    us   [label="user-subscriptions.ts\nupsertFromStripe\n(strict-> stale filter),\nmarkCanceled,\ngetActiveForUser"];
+    bh   [label="billing-history.ts\nappend, find,\nlistByUser (cursor),\nmarkRefunded"];
   }
 
   subgraph cluster_seams {
@@ -35,15 +50,25 @@ digraph repository {
     style="dotted";
 
     uuid    [label="uuidv7.ts\nuuidv7(): string"];
-    types   [label="types.ts\nUser, World,\nCampaign, Session\n+ Update inputs"];
-    mappers [label="mappers.ts\nsnake → camel\nnarrowing helpers\n(toAuthProvider, …)"];
+    types   [label="types.ts\nUser, World,\nCampaign, Session,\nCampaignMember,\nCampaignInvite\n+ Update inputs"];
+    mappers [label="mappers.ts\nsnake → camel\nnarrowing helpers"];
   }
 
   pool   [label="pg.Pool\n(boot-gate path)\nor stub Pool\n(fallback path)", color="ember", fontcolor="ember"];
-  db     [label="Postgres\nusers, worlds,\ncampaigns, sessions\n+ campaign_members JOIN", color="ember", fontcolor="ember"];
+  db     [label="Postgres\nusers, worlds,\ncampaigns, sessions,\ncampaign_members,\ncampaign_invites,\ncredit_ledger", color="ember", fontcolor="ember"];
 
-  routes  -> users    [label="repo.users.create"];
+  routes  -> users    [label="repo.users.create\n.getByCognitoSubWithTimeout"];
   routes  -> worlds   [label="repo.worlds.…"];
+  routes  -> credits  [label="repo.credits.atomicDebit"];
+  routes  -> invites  [label="repo.invites.acceptInvite\n.create / .revoke"];
+  routes  -> camps    [label="repo.campaigns.\nlistMembers / addMember"];
+  routes  -> us       [label="userSubscriptions.\ngetActiveForUser"];
+  routes  -> bh       [label="billingHistory.\nlistByUser"];
+  webhook -> se       [label="recordOrSkip"];
+  webhook -> pur      [label="insertMany /\nmarkRefunded"];
+  webhook -> us       [label="upsertFromStripe /\nmarkCanceled"];
+  webhook -> bh       [label="append /\nmarkRefunded"];
+  webhook -> credits  [label="grantInTx /\nrecordClawback"];
   workers -> camps    [label="repo.campaigns.…"];
   workers -> sessions [label="repo.sessions.…"];
 
@@ -51,21 +76,33 @@ digraph repository {
   worlds   -> uuid    [label="", style=dashed];
   camps    -> uuid    [label="", style=dashed];
   sessions -> uuid    [label="", style=dashed];
+  credits  -> uuid    [label="", style=dashed];
+  invites  -> uuid    [label="", style=dashed];
 
   users    -> mappers [label="toUser", style=dashed];
   worlds   -> mappers [label="toWorld", style=dashed];
-  camps    -> mappers [label="toCampaign", style=dashed];
+  camps    -> mappers [label="toCampaign\ntoCampaignMember", style=dashed];
   sessions -> mappers [label="toSession", style=dashed];
+  credits  -> mappers [label="toCreditEntry", style=dashed];
+  invites  -> mappers [label="toCampaignInvite", style=dashed];
 
   users    -> pool    [label="pool.query\nINSERT … RETURNING *\nUPDATE … COALESCE\nSELECT …"];
   worlds   -> pool    [label=""];
   camps    -> pool    [label=""];
   sessions -> pool    [label=""];
+  credits  -> pool    [label="BEGIN; SET LOCAL …\nSELECT … FOR UPDATE\nINSERT;  COMMIT"];
+  invites  -> pool    [label="BEGIN; lock invite\nmembership-first;\nexpiry; cap; INSERT;\nuses++; COMMIT"];
 
   pool    -> db       [label="parameterized SQL"];
+  se   -> db [label="webhook tx", style=dashed];
+  pur  -> db [label="", style=dashed];
+  us   -> db [label="", style=dashed];
+  bh   -> db [label="", style=dashed];
 
   types -> users    [label="", style=dotted];
   types -> worlds   [label="", style=dotted];
   types -> camps    [label="", style=dotted];
   types -> sessions [label="", style=dotted];
+  types -> credits  [label="", style=dotted];
+  types -> invites  [label="", style=dotted];
 }

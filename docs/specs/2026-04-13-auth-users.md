@@ -133,12 +133,14 @@ The frontend's "Continue with Google" and "Continue with Discord" buttons link d
 
 ## 4. User Onboarding
 
+> **MYT-38 implementation note (2026-05-02):** the implementation diverged from the original §4 sketch on the identity model. The `users.email`, `users.avatar_url`, and `users.auth_provider` columns were dropped in migration 005; only `username` and `display_name` are stored. Cognito remains the sole authentication-provider record (the OAuth claims still flow through, but Mythrun doesn't persist them). The first-login signal flipped from `404` on `/me` to `403 {code: 'username_required'}` from the `requireOnboarded` plugin (the user's session is authenticated; they're authorized for nothing until onboarded). See `docs/superpowers/specs/2026-05-01-myt-38-user-onboarding-design.md` for the rationale.
+
 ### First Login Detection
 
 After the OAuth callback, the frontend calls `GET /api/users/me`. Two scenarios:
 
 1. **User exists in our database** → return user object, proceed to app
-2. **User does not exist** (first login) → return 404, frontend shows username selection
+2. **User does not exist** (first login) → return 403 `{code: 'username_required'}` from the `requireOnboarded` preHandler hook; frontend shows username selection
 
 ### Username Selection Flow
 
@@ -427,10 +429,11 @@ Sets `expires_at = now()` on the invite row. The link stops working immediately.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| POST | `/api/campaigns/:id/invite` | Owner | Create an invite link |
+| POST | `/api/campaigns/:id/invites` | Owner | Create an invite link |
 | GET | `/api/campaigns/:id/invites` | Owner | List active invites |
-| DELETE | `/api/campaigns/:id/invite/:inviteId` | Owner | Revoke an invite |
-| POST | `/api/invites/:code/accept` | Any user | Accept an invite and join campaign |
+| DELETE | `/api/campaigns/:id/invites/:inviteCode` | Owner | Revoke an invite |
+| GET | `/api/invites/:inviteCode/preview` | Public | Pre-OAuth lookup for join page (campaign name + owner) |
+| POST | `/api/invites/:inviteCode/accept` | Any user | Accept an invite and join campaign |
 | GET | `/api/campaigns/:id/members` | Member | List campaign members |
 | DELETE | `/api/campaigns/:id/members/:userId` | Owner | Remove a member |
 | POST | `/api/campaigns/:id/leave` | Member (not owner) | Leave a campaign |

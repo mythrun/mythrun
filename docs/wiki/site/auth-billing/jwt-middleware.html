@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html" class="active">JWT middleware</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html" class="active">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › JWT middleware</div>
         <article>
@@ -315,22 +315,29 @@
 <p>
   <code>request.user</code> is <code>{ sub, cognitoUsername, scopes }</code> — three fields, all
   derived from the verified access-token payload, all frozen. <code>sub</code> is Cognito's stable
-  per-user identifier (the canonical key for cross-system reference once MYT-38's onboarding creates
-  the matching <code>users</code> row). <code>cognitoUsername</code> is the federated identity's
-  internal username (<code>Google_&lt;sub&gt;</code> / <code>Discord_&lt;snowflake&gt;</code>) and
-  is treated as opaque — never substring-parsed for provider routing. <code>scopes</code> is the
-  OAuth scope string parsed once at the boundary into a frozen array, so handlers do
-  <code>scopes.includes('admin')</code> rather than <code>scope.includes('admin')</code> — the
-  latter would substring-match <code>'administrator'</code>, which is a real authorization bug
-  class.
+  per-user identifier and the canonical key for cross-system reference; the
+  <a href="./onboarding.html">onboarding flow</a> creates the matching <code>users</code> row on
+  first call to <code>POST /api/users/register</code>, and the <code>requireOnboarded</code> hook
+  gates every default-auth route on that row's existence. <code>cognitoUsername</code> is the
+  federated identity's internal username (<code>Google_&lt;sub&gt;</code> /
+  <code>Discord_&lt;snowflake&gt;</code>) and is treated as opaque — never substring-parsed for
+  provider routing. <code>scopes</code> is the OAuth scope string parsed once at the boundary into a
+  frozen array, so handlers do <code>scopes.includes('admin')</code> rather than
+  <code>scope.includes('admin')</code> — the latter would substring-match
+  <code>'administrator'</code>, which is a real authorization bug class.
 </p>
 
 <aside class="wiki-rationale">
   <strong>No <code>email</code>, no <code>name</code>, no internal user UUID</strong> — those live
-  in the <code>users</code> table that MYT-39's <code>loadCurrentUser</code> plugin will lift onto
-  <code>request.dbUser</code>. Today's middleware is the first half of a two-stage attach: validate
-  the token and surface its claims; defer the DB lookup. A protected handler that needs the email or
-  the internal id is wrong about its layer, not blocked on a missing field.
+  in the <code>users</code> table that the
+  <a href="./onboarding.html#the-requireonboarded-gate-and-its-allowlist"
+    ><code>requireOnboarded</code></a
+  >
+  hook gates protected routes on. Today's middleware is the first half of a two-stage attach:
+  validate the token and surface its claims; defer the DB lookup to the onboarding gate. A protected
+  handler that needs the internal user id reaches through
+  <code>repo.users.getByCognitoSub(request.user.sub)</code>; the
+  <a href="./onboarding.html">onboarding routes</a> are the only ones in flight today that do so.
 </aside>
 
 <p>
@@ -341,18 +348,56 @@
 <ul>
   <li>
     <code>config: { auth: 'public' }</code> — skip validation entirely; no
-    <code>request.user</code> attached. Used by <code>/health</code> and <code>/health/ready</code>.
+    <code>request.user</code> attached. Used by <code>/health</code>, <code>/health/ready</code>,
+    the invite preview, the SKU listing, and the Stripe webhook. Pinned by the
+    <a href="#the-public-route-allowlist">public-route allowlist hook</a>.
   </li>
   <li>
     <code>config: { auth: 'jwt-no-db' }</code> — verify the JWT, attach the claims, do not look up
-    the <code>users</code> row. Reserved for MYT-38's <code>POST /api/users/register</code>: the row
-    doesn't exist yet at first call.
+    the <code>users</code> row. Used by
+    <a href="./onboarding.html"><code>POST /api/users/register</code></a> and
+    <code>GET /api/users/check-username</code>: the row doesn't exist yet at first call. The
+    <code>requireOnboarded</code> hook enforces a boot-time allowlist that pins which routes may use
+    this opt-out — see the
+    <a href="./onboarding.html#the-requireonboarded-gate-and-its-allowlist">Onboarding</a> page.
   </li>
   <li>
-    <code>auth</code> unset (the default) — verify and attach. After MYT-39 lands, this case will
-    also lift the DB row and run the <code>suspended_at</code> gate.
+    <code>auth</code> unset (the default) — verify, attach, and run the
+    <a href="./onboarding.html"><code>requireOnboarded</code></a> DB-row gate. A future
+    <code>suspended_at</code> check folds in alongside that gate when the suspension surface ships.
   </li>
 </ul>
+
+<h3 id="the-public-route-allowlist">The public-route allowlist</h3>
+
+<p>
+  <code>backend/src/auth/public-route-allowlist.ts</code> exports a closed
+  <code>PUBLIC_ROUTE_ALLOWLIST</code> set of <code>${METHOD} ${URL}</code> strings and a
+  <code>registerPublicRouteAllowlistHook(app)</code> function that installs an
+  <code>onRoute</code> hook. The hook fires once per route registration; if the route's
+  <code>config.auth</code> is <code>'public'</code> and its <code>${method} ${url}</code> isn't in
+  the allowlist, it throws. Fastify's <code>app.ready()</code> propagates the throw and the deploy
+  fails. The hook is registered first inside <code>buildApp</code> — even before the
+  <code>/health</code> route — because <code>onRoute</code> only fires for routes registered after
+  the hook on the same scope.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Boot-time enforcement, not a code-review checklist</strong> — relying on reviewers to flag
+  every <code>config: { auth: 'public' }</code> introduction is fragile: a public route that ships
+  by mistake is a security incident, and code review fatigue makes the omission plausible. A
+  boot-time hook fails the deploy on the first run; the deploy can't ship a public route that wasn't
+  authored alongside the allowlist entry. The five entries today cover the two health probes, the
+  invite preview, the SKU listing, and the Stripe webhook — adding a sixth is two file edits in the
+  same PR, both visible in the diff.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Skip auto-generated HEAD routes</strong> — Fastify auto-generates a HEAD route for every
+  GET registration. The <code>onRoute</code> hook fires for it, but HEAD semantics are identical to
+  GET and need no separate allowlist entry. The hook detects the auto-generated HEAD by the presence
+  of a non-null <code>onSend</code> array on the route options and skips it.
+</aside>
 
 <p>
   Protected handlers narrow <code>request.user</code> from optional to required via
@@ -710,10 +755,10 @@
   <code>loadAuthConfig</code>. The <a href="../runtime/index.html">backend runtime</a> page
   describes the <code>buildApp</code> + <code>server.ts</code> wiring that <code>registerAuth</code>
   composes against; this page is the auth-specific deepening of that surface.
-  <code>requireUser</code> is the seam every protected handler MYT-38 onwards reaches through;
-  MYT-39's <code>loadCurrentUser</code> plugin will layer a second request property
-  (<code>request.dbUser</code>) on top of <code>request.user</code> without changing this
-  middleware's contract.
+  <code>requireUser</code> is the seam every protected handler reaches through.
+  <a href="./onboarding.html"><code>requireOnboarded</code></a> registers as the next plugin and
+  layers the DB-row gate on top of this middleware's contract; the onboarding + invite routes are
+  today's consumers.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -776,12 +821,15 @@
     </tr>
     <tr>
       <td><code>'jwt-no-db'</code></td>
-      <td>Verify token, attach claims, no DB lookup.</td>
-      <td>(reserved for MYT-38 <code>POST /api/users/register</code>)</td>
+      <td>Verify token, attach claims, no DB lookup. Allowlist-bound at boot.</td>
+      <td><code>POST /api/users/register</code>, <code>GET /api/users/check-username</code></td>
     </tr>
     <tr>
       <td>unset (default)</td>
-      <td>Verify and attach. Today identical to <code>'jwt-no-db'</code>.</td>
+      <td>
+        Verify, attach, then run <code>requireOnboarded</code>'s DB-row gate (200 ms-bounded).
+        Missing row → 403 <code>username_required</code>.
+      </td>
       <td>every other route</td>
     </tr>
   </tbody>
@@ -895,7 +943,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-claims-only-authuser">The claims-only AuthUser</a></li><li style="padding-left:0"><a href="#hydrate-at-boot-in-the-jwt-plugin">Hydrate-at-boot in the JWT plugin</a></li><li style="padding-left:0"><a href="#the-bypass-mode-multi-layer-defense">The bypass-mode multi-layer defense</a></li><li style="padding-left:12px"><a href="#layer-1-loadenv-refuses-ambiguity">Layer 1 — loadEnv refuses ambiguity</a></li><li style="padding-left:12px"><a href="#layer-2a-bypass-plugin-s-node-env-allow-list">Layer 2a — bypass plugin's NODE_ENV allow-list</a></li><li style="padding-left:12px"><a href="#layer-2b-the-ecs-task-metadata-http-probe">Layer 2b — the ECS task-metadata HTTP probe</a></li><li style="padding-left:12px"><a href="#layer-3-cognito-vars-must-be-empty-in-opts-and-raw-env">Layer 3 — Cognito vars must be empty in opts and raw env</a></li><li style="padding-left:12px"><a href="#layer-4-loud-structured-log-warning-at-registration">Layer 4 — loud structured-log warning at registration</a></li><li style="padding-left:12px"><a href="#layer-5-terraform-serving-module-force-pins-the-env">Layer 5 — Terraform serving module force-pins the env</a></li><li style="padding-left:12px"><a href="#layer-6-tests-verify-every-gate">Layer 6 — tests verify every gate</a></li><li style="padding-left:0"><a href="#the-404-fall-through-guard">The 404 fall-through guard</a></li><li style="padding-left:0"><a href="#boot-wiring-across-both-startup-paths">Boot wiring across both startup paths</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#enable-bypass-mode-locally">Enable bypass mode locally</a></li><li style="padding-left:12px"><a href="#read-the-auth-events-at-incident-time">Read the auth events at incident time</a></li><li style="padding-left:12px"><a href="#verify-the-deploy-gate-rejects-bypass">Verify the deploy gate rejects bypass</a></li><li style="padding-left:12px"><a href="#rotate-after-a-cognito-pool-recreate">Roll the API after a Cognito User Pool recreate</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#environment-variables-read-by-loadauthconfig">Environment variables read by loadAuthConfig</a></li><li style="padding-left:12px"><a href="#per-route-config-auth-values">Per-route config.auth values</a></li><li style="padding-left:12px"><a href="#structured-log-events">Structured log events</a></li><li style="padding-left:12px"><a href="#source-files">Source files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-claims-only-authuser">The claims-only AuthUser</a></li><li style="padding-left:12px"><a href="#the-public-route-allowlist">The public-route allowlist</a></li><li style="padding-left:0"><a href="#hydrate-at-boot-in-the-jwt-plugin">Hydrate-at-boot in the JWT plugin</a></li><li style="padding-left:0"><a href="#the-bypass-mode-multi-layer-defense">The bypass-mode multi-layer defense</a></li><li style="padding-left:12px"><a href="#layer-1-loadenv-refuses-ambiguity">Layer 1 — loadEnv refuses ambiguity</a></li><li style="padding-left:12px"><a href="#layer-2a-bypass-plugin-s-node-env-allow-list">Layer 2a — bypass plugin's NODE_ENV allow-list</a></li><li style="padding-left:12px"><a href="#layer-2b-the-ecs-task-metadata-http-probe">Layer 2b — the ECS task-metadata HTTP probe</a></li><li style="padding-left:12px"><a href="#layer-3-cognito-vars-must-be-empty-in-opts-and-raw-env">Layer 3 — Cognito vars must be empty in opts and raw env</a></li><li style="padding-left:12px"><a href="#layer-4-loud-structured-log-warning-at-registration">Layer 4 — loud structured-log warning at registration</a></li><li style="padding-left:12px"><a href="#layer-5-terraform-serving-module-force-pins-the-env">Layer 5 — Terraform serving module force-pins the env</a></li><li style="padding-left:12px"><a href="#layer-6-tests-verify-every-gate">Layer 6 — tests verify every gate</a></li><li style="padding-left:0"><a href="#the-404-fall-through-guard">The 404 fall-through guard</a></li><li style="padding-left:0"><a href="#boot-wiring-across-both-startup-paths">Boot wiring across both startup paths</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#enable-bypass-mode-locally">Enable bypass mode locally</a></li><li style="padding-left:12px"><a href="#read-the-auth-events-at-incident-time">Read the auth events at incident time</a></li><li style="padding-left:12px"><a href="#verify-the-deploy-gate-rejects-bypass">Verify the deploy gate rejects bypass</a></li><li style="padding-left:12px"><a href="#rotate-after-a-cognito-pool-recreate">Roll the API after a Cognito User Pool recreate</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#environment-variables-read-by-loadauthconfig">Environment variables read by loadAuthConfig</a></li><li style="padding-left:12px"><a href="#per-route-config-auth-values">Per-route config.auth values</a></li><li style="padding-left:12px"><a href="#structured-log-events">Structured log events</a></li><li style="padding-left:12px"><a href="#source-files">Source files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

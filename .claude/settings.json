@@ -12,6 +12,15 @@
         ]
       },
       {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-spec-write.sh"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__linear-server__save_issue",
         "hooks": [
           {

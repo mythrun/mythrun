@@ -198,6 +198,10 @@ CREATE TABLE users (
 );
 
 -- Credit Ledger (replaces simple session_credits integer)
+-- MYT-42 adds source_purchase_id / source_billing_history_id FK columns +
+-- credit_ledger_source_link_chk to enforce that grant rows reference the
+-- writing entity (purchase or billing_history row); migration 004 already
+-- carries the polarity CHECK + credit_ledger_debit_no_expiry_chk.
 CREATE TABLE credit_ledger (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -205,8 +209,21 @@ CREATE TABLE credit_ledger (
   amount INTEGER NOT NULL,
   source_type TEXT NOT NULL CHECK (source_type IN ('purchase', 'subscription', 'gift', 'trial', 'refund', 'debit')),
   source_id UUID,
+  source_purchase_id UUID REFERENCES purchases(id),               -- MYT-42; populated on à-la-carte grant rows
+  source_billing_history_id UUID REFERENCES billing_history(id),  -- MYT-42; populated on subscription grant rows
   granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at TIMESTAMPTZ
+  expires_at TIMESTAMPTZ,
+  -- credit_ledger_source_link_chk (MYT-42): grant rows MUST link to exactly
+  -- one of source_purchase_id or source_billing_history_id (or NEITHER for
+  -- trial / gift / debit rows). Enforced via a partial CHECK; see migration
+  -- 007 for the full constraint expression.
+  CONSTRAINT credit_ledger_source_link_chk CHECK (
+    -- (positive grants from purchases / invoices populate exactly one link)
+    (source_type IN ('purchase')             AND source_purchase_id IS NOT NULL AND source_billing_history_id IS NULL)
+    OR (source_type IN ('subscription')      AND source_billing_history_id IS NOT NULL AND source_purchase_id IS NULL)
+    -- (trial / gift / debit / refund-positive: neither link is required)
+    OR (source_type IN ('trial', 'gift', 'refund', 'debit'))
+  )
 );
 CREATE INDEX idx_credit_ledger_user_type ON credit_ledger(user_id, credit_type, expires_at);
 
@@ -519,12 +536,12 @@ CREATE TABLE session_usage (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Purchases
+-- Purchases (re-shaped by MYT-42 migration 007 — lookup_key replaces session_pack_size)
 CREATE TABLE purchases (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id),
   stripe_payment_intent_id TEXT NOT NULL UNIQUE,
-  session_pack_size INTEGER NOT NULL,
+  lookup_key TEXT NOT NULL,  -- closed enum: lookup_keys.ts contract
   amount_cents INTEGER NOT NULL,
   currency TEXT NOT NULL DEFAULT 'usd',
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'refunded')),
@@ -555,45 +572,84 @@ CREATE TABLE moderation_flags (
   resolved_at TIMESTAMPTZ
 );
 
--- Subscription Tiers (configuration)
-CREATE TABLE subscription_tiers (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  stripe_price_id TEXT NOT NULL,
-  session_credits_per_month INTEGER NOT NULL,
-  world_gen_credits_per_month INTEGER NOT NULL,
-  price_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- Subscription tier metadata is in `backend/src/billing/lookup-keys.ts`;
+-- Stripe is the source of truth for prices. No DB-resident config table.
 
--- User Subscriptions
+-- User Subscriptions (re-shaped by MYT-42 migration 007 — tier_lookup_key
+-- replaces tier_id FK; status enum expanded; cancel/cancellation/event-time
+-- columns added for monotonic-write enforcement and Customer Portal cancel
+-- flow integration).
 CREATE TABLE user_subscriptions (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  tier_id TEXT NOT NULL REFERENCES subscription_tiers(id),
+  tier_lookup_key TEXT NOT NULL,  -- closed enum enforced at write-time by MYT-42 webhook handler
   stripe_subscription_id TEXT NOT NULL UNIQUE,
-  status TEXT NOT NULL CHECK (status IN ('active', 'past_due', 'canceled', 'unpaid')),
+  -- Expanded status enum (MYT-42): adds 'incomplete', 'incomplete_expired',
+  -- 'trialing', 'paused' to cover Stripe's full subscription state machine
+  -- per dahlia. The webhook handler maps Stripe statuses 1:1.
+  status TEXT NOT NULL CHECK (status IN (
+    'active', 'past_due', 'canceled', 'unpaid',
+    'incomplete', 'incomplete_expired', 'trialing', 'paused'
+  )),
   current_period_start TIMESTAMPTZ NOT NULL,
   current_period_end TIMESTAMPTZ NOT NULL,
+  cancel_at TIMESTAMPTZ,                    -- MYT-42: populated when user requests cancel-at-period-end via Portal
+  cancellation_details JSONB,               -- MYT-42: { reason, comment, feedback } from Stripe's cancellation_details
+  -- stripe_event_created_at (MYT-42): timestamp from event.created on the
+  -- writing webhook event. Used to enforce monotonic upsert: a stale
+  -- subscription.updated event (created_at < current row's
+  -- stripe_event_created_at) MUST NOT overwrite later state. See MYT-42
+  -- §5.3 / §5.4.3 for the upsert recipe.
+  stripe_event_created_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Monotonic period CHECK (MYT-42): current_period_end MUST exceed
+  -- current_period_start. Defends against payload corruption / Customer
+  -- Portal misconfig.
+  CONSTRAINT user_subscriptions_period_chk CHECK (current_period_end > current_period_start)
 );
 CREATE INDEX idx_user_subscriptions_user ON user_subscriptions(user_id);
 
--- Session Packs (configuration)
-CREATE TABLE session_packs (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  session_credits INTEGER NOT NULL,
-  world_gen_credits INTEGER NOT NULL DEFAULT 0,
-  stripe_price_id TEXT NOT NULL,
-  price_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Purchases (re-shaped by MYT-42 migration 007: composite UNIQUE on
+-- (stripe_event_id, kind) for cross-retry idempotency)
+CREATE TABLE purchases (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  lookup_key TEXT NOT NULL,                 -- closed enum enforced at write-time
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  amount_paid_cents INTEGER NOT NULL,       -- captured from line_item.amount_total
+  currency TEXT NOT NULL,                   -- 'usd' at launch
+  stripe_event_id TEXT NOT NULL,            -- the checkout.session.completed event.id
+  stripe_session_id TEXT NOT NULL UNIQUE,   -- Stripe Checkout Session ID (cs_*)
+  kind TEXT NOT NULL DEFAULT 'purchase',    -- 'purchase' | (future kinds)
+  occurred_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT purchases_event_kind_uniq UNIQUE (stripe_event_id, kind)
 );
+CREATE INDEX idx_purchases_user_occurred ON purchases(user_id, occurred_at DESC);
+
+-- Billing History (new in MYT-42 migration 007; unified ledger over
+-- invoices, purchases, refunds. Populates Customer Portal-style billing
+-- timeline for /api/billing/history.)
+CREATE TABLE billing_history (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('invoice', 'purchase', 'refund')),
+  status TEXT NOT NULL,                     -- 'paid' | 'refunded' | 'pending' | etc.
+  amount_cents INTEGER NOT NULL,            -- always positive; signed by `kind`
+  currency TEXT NOT NULL,
+  lookup_key TEXT,                          -- nullable for refund rows
+  stripe_event_id TEXT NOT NULL,
+  stripe_object_id TEXT NOT NULL,           -- in_*, cs_*, re_* depending on kind
+  expires_at TIMESTAMPTZ,                   -- for invoice rows: subscription period end
+  occurred_at TIMESTAMPTZ NOT NULL,         -- event.created or invoice.status_transitions.paid_at
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT billing_history_event_kind_uniq UNIQUE (stripe_event_id, kind)
+);
+CREATE INDEX idx_billing_history_user_occurred ON billing_history(user_id, occurred_at DESC, id DESC);
+
+-- À-la-carte SKU metadata is in `backend/src/billing/lookup-keys.ts`.
+-- No DB-resident pack table.
 
 -- Stripe Event Idempotency
 CREATE TABLE stripe_events (
@@ -757,9 +813,9 @@ export type Repository = ReturnType<typeof createRepository>
 
 Each namespace corresponds to a table group. Methods listed are the initial surface — sub-specs will add methods as needed.
 
-**`repo.users`**: `create`, `getById`, `getByCognitoSub`, `getByEmail`, `update`, `softDelete`
+**`repo.users`**: `create` (now accepts a `ClientLike` for tx-scoped invocation, per MYT-42), `getById`, `getByCognitoSub`, `getByEmail`, `update`, `softDelete`
 
-**`repo.creditLedger`**: `grant` (insert positive amount), `debit` (insert negative amount), `getBalance` (SUM with expiry filter), `getHistory`
+**`repo.credits`** (a.k.a. `creditLedger` in earlier drafts): `grant` (positive-amount, opens its own tx), **`grantInTx`** (positive-amount, follows a caller-supplied tx — MYT-42 wires the trial grant through this), `atomicDebit` (consumes credits with locking), **`recordClawback`** (the only sanctioned writer of negative-polarity / `source_type='debit'` rows outside `atomicDebit`; MYT-42 wires the refund clawback through this), `getBalance` (SUM with expiry filter), `listEntries` / `getHistory`. See MYT-40 spec §"Repo surface" for the canonical method list and MYT-42 spec §7 + §5.4.5 for the new method consumers.
 
 **`repo.worlds`**: `create`, `getById`, `listByUser`, `update`, `updateStatus`, `incrementForkCount`, `fork(sourceWorldId, newWorldId)`
 
@@ -797,17 +853,15 @@ Each namespace corresponds to a table group. Methods listed are the initial surf
 
 **`repo.sessionUsage`**: `create`, `update` (accumulate tokens), `getBySession`
 
-**`repo.purchases`**: `create`, `getByPaymentIntent`, `updateStatus`, `listByUser`
+**`repo.purchases`** (shipped in MYT-42): `create`, `getById`, `getByStripeEventId`, `listByUser`. Composite UNIQUE on `(stripe_event_id, kind)` for idempotency across `checkout.session.completed` retries; see MYT-42 spec §6.
 
 **`repo.statBlocks`**: `create`, `getById`, `getActions`, `addAction`
 
-**`repo.userSubscriptions`**: `create`, `getByUser`, `getByStripeId`, `update`
+**`repo.userSubscriptions`** (shipped in MYT-42): `create`, `getActiveForUser`, `getByStripeId`, `upsert` (used by `handleSubscriptionUpsert` for both `customer.subscription.created` and `…updated`), `applyPendingUpdate` (used by `customer.subscription.pending_update_applied`). Schema gains expanded status enum, `cancel_at`, `cancellation_details`, `stripe_event_created_at` for monotonic-write enforcement (MYT-42 spec §6).
 
-**`repo.subscriptionTiers`**: `getById`, `listActive`
+**`repo.stripeEvents`** (shipped in MYT-42): `insertIfAbsent` (returns true if inserted, false if already processed — the canonical idempotency primitive). PK on `event_id`.
 
-**`repo.sessionPacks`**: `getById`, `listActive`
-
-**`repo.stripeEvents`**: `exists` (check if event already processed), `record` (mark event as processed)
+**`repo.billingHistory`** (shipped in MYT-42): `record` (insert a `kind ∈ {'invoice','purchase','refund'}` row with `status`, `expires_at`, `occurred_at`), `listForUser` (cursor-paginated, see MYT-42 §4.1 history pagination), `getByStripeEventId`. The `(stripe_event_id, kind)` UNIQUE prevents duplicate inserts across webhook retries.
 
 **`repo.srd`**: `getMonster`, `getSpell`, `getCondition`, `searchMonsters`, `searchSpells`
 
@@ -839,7 +893,7 @@ Where each deferred namespace lands (tracked via beads labeled `repo-deferred` �
 | Namespaces | Triggered by |
 |---|---|
 | `campaignMembers`, `campaignInvites` | MYT-39 (access control + invites) |
-| `purchases`, `userSubscriptions`, `subscriptionTiers`, `sessionPacks`, `stripeEvents` | MYT-42 (Stripe webhook + checkout) |
+| ~~`purchases`, `userSubscriptions`, `stripeEvents`~~ | **Shipped in MYT-42** (Stripe webhook + checkout). Plus `billingHistory` (new namespace added by MYT-42). MYT-41 dropped `subscriptionTiers` and `sessionPacks` — that metadata lives in `backend/src/billing/lookup-keys.ts`. |
 | `entities`, `proseKernels`, `facts`, `relationships`, `entityHierarchy`, `randomTables` | Prep Pipeline milestone |
 | `pipelineRuns`, `snapshots`, `sessionPreps`, `statBlocks` | Prep Pipeline milestone |
 | `sessionMessages`, `sessionParticipants` | Session Runtime + Combat L1 milestone |
@@ -849,6 +903,16 @@ Where each deferred namespace lands (tracked via beads labeled `repo-deferred` �
 | `settings` | First consumer (no trigger yet; lowest priority) |
 
 A future agent picking up any of these tickets adds the namespace inline as part of that ticket's implementation. The spec §5.2 method lists are the contract.
+
+### Caller obligations
+
+The repo enforces correctness for what it owns; certain invariants depend on callers honoring contracts:
+
+- **No write to `credit_ledger` may happen outside `repo.credits.*`.** Direct INSERTs from migrations (other than seed migrations), admin scripts, or future repo namespaces bypass the lock discipline AND the polarity rules (migration 004's CHECKs are the safety net, not the primary enforcement). MYT-42 honors this rule:
+  - The trial grant at user-registration routes through `repo.credits.grantInTx` (caller-supplied tx) — the trial credit row is inserted in the same transaction as the `users` row, but the row is written by the credits repo, not by `users.create`.
+  - Refund clawbacks route through `repo.credits.recordClawback` — the only sanctioned writer of negative-polarity / `source_type='debit'` rows outside `atomicDebit`. The webhook handler does NOT call `INSERT INTO credit_ledger` directly.
+  - See MYT-40 spec §"Caller obligations" + MYT-42 spec §7 / §5.4.5 for the canonical recipes.
+- Other caller obligations on `repo.credits.*` (idempotency keys for `grant`, never-reused `sourceId`s for `atomicDebit`, no `balance()` for billable gating) are documented in MYT-40 spec §"Caller obligations".
 
 ---
 

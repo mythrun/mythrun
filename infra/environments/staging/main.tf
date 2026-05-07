@@ -115,6 +115,11 @@ module "serving" {
   cognito_issuer_url       = module.auth.issuer_url
   cognito_hosted_ui_domain = module.auth.hosted_ui_domain
 
+  # MYT-38: frontend SPA origin. The app validator allowlists
+  # staging.mythrun.com when NODE_ENV=production, so this is the canonical
+  # value for the staging environment.
+  frontend_base_url = "https://staging.mythrun.com"
+
   # Staging uses module defaults (256/512, 14-day log retention) per Week 0 §7.2.
 }
 

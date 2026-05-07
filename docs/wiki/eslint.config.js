@@ -4,7 +4,10 @@ export default [
   ...rootConfig,
   {
     ignores: [
-      'site/**',
+      // Glob `site*` covers stale generated output (`site 2/`, `site 4/`,
+      // etc.) — Docusaurus produces a numeric-suffixed copy when it can't
+      // replace `site/` (e.g., a finder window holds it open).
+      'site*/**',
       'content/**',
       'layout/**',
       'diagrams/**',

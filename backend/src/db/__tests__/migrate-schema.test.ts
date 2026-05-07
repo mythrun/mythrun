@@ -14,6 +14,7 @@ const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
 
 const EXPECTED_TABLES = [
   '_migrations',
+  'billing_history',
   'campaign_invites',
   'campaign_members',
   'campaigns',
@@ -34,7 +35,6 @@ const EXPECTED_TABLES = [
   'random_tables',
   'relationships',
   'session_messages',
-  'session_packs',
   'session_participants',
   'session_preps',
   'session_usage',
@@ -46,7 +46,6 @@ const EXPECTED_TABLES = [
   'stat_block_actions',
   'stat_blocks',
   'stripe_events',
-  'subscription_tiers',
   'user_subscriptions',
   'users',
   'world_marketplace',
@@ -55,11 +54,15 @@ const EXPECTED_TABLES = [
 ] as const
 
 const EXPECTED_IDX_NAMES = [
+  'idx_billing_history_invoice_pi',
+  'idx_billing_history_user_occurred',
   'idx_campaign_members_campaign',
   'idx_campaign_members_user',
   'idx_campaigns_created_by',
   'idx_characters_campaign',
   'idx_characters_user',
+  'idx_credit_ledger_source_billing_history',
+  'idx_credit_ledger_source_purchase',
   'idx_credit_ledger_user_type',
   'idx_entities_world',
   'idx_entities_world_type',
@@ -84,10 +87,17 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   readonly table_name: string
   readonly check_clause: string
 }[] = [
+  { table_name: 'billing_history', check_clause: `CHECK ((((kind = 'purchase'::text) AND (source_id_stripe ~~ 'pi_%'::text)) OR ((kind = 'invoice'::text) AND (source_id_stripe ~~ 'in_%'::text)) OR ((kind = 'refund'::text) AND (source_id_stripe ~~ 're_%'::text))))` },
+  { table_name: 'billing_history', check_clause: `CHECK ((kind = ANY (ARRAY['purchase'::text, 'invoice'::text, 'refund'::text])))` },
+  { table_name: 'billing_history', check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))` },
   { table_name: 'campaign_members', check_clause: `CHECK ((role = ANY (ARRAY['owner'::text, 'player'::text])))` },
   { table_name: 'campaigns', check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))` },
   { table_name: 'character_skills', check_clause: `CHECK ((proficiency_level = ANY (ARRAY['none'::text, 'proficient'::text, 'expertise'::text])))` },
   { table_name: 'credit_ledger', check_clause: `CHECK ((credit_type = ANY (ARRAY['session'::text, 'world_gen'::text])))` },
+  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type <> 'debit'::text) OR (source_id IS NOT NULL)))` },
+  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type <> 'debit'::text) OR (expires_at IS NULL)))` },
+  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type = 'debit'::text) = (amount < 0)))` },
+  { table_name: 'credit_ledger', check_clause: `CHECK (\nCASE source_type\n    WHEN 'debit'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'trial'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'gift'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    WHEN 'purchase'::text THEN ((source_purchase_id IS NOT NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'subscription'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    ELSE false\nEND)` },
   { table_name: 'credit_ledger', check_clause: `CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))` },
   { table_name: 'entities', check_clause: `CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))` },
   { table_name: 'facts', check_clause: `CHECK ((access_level = ANY (ARRAY['public'::text, 'private'::text, 'secret'::text])))` },
@@ -96,11 +106,12 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   { table_name: 'moderation_flags', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'reviewed'::text, 'actioned'::text, 'dismissed'::text])))` },
   { table_name: 'moderation_flags', check_clause: `CHECK ((target_type = ANY (ARRAY['world'::text, 'session_message'::text, 'user'::text])))` },
   { table_name: 'pipeline_runs', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text])))` },
-  { table_name: 'purchases', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'failed'::text, 'refunded'::text])))` },
+  { table_name: 'purchases', check_clause: `CHECK ((quantity > 0))` },
+  { table_name: 'purchases', check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))` },
   { table_name: 'sessions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'ended'::text, 'crashed'::text])))` },
   { table_name: 'stat_block_actions', check_clause: `CHECK ((action_type = ANY (ARRAY['action'::text, 'reaction'::text, 'bonus_action'::text, 'legendary'::text])))` },
-  { table_name: 'user_subscriptions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text])))` },
-  { table_name: 'users', check_clause: `CHECK ((auth_provider = ANY (ARRAY['google'::text, 'discord'::text])))` },
+  { table_name: 'user_subscriptions', check_clause: `CHECK ((current_period_end > current_period_start))` },
+  { table_name: 'user_subscriptions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text, 'incomplete'::text, 'incomplete_expired'::text, 'trialing'::text, 'paused'::text])))` },
   { table_name: 'worlds', check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))` },
   { table_name: 'worlds', check_clause: `CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))` },
 ]
@@ -111,6 +122,7 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   readonly foreign_table_name: string
   readonly delete_rule: string
 }[] = [
+  { table_name: 'billing_history', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
   { table_name: 'campaign_invites', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
   { table_name: 'campaign_invites', column_name: 'created_by', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
   { table_name: 'campaign_members', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
@@ -125,7 +137,9 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   { table_name: 'characters', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
   { table_name: 'characters', column_name: 'entity_id', foreign_table_name: 'entities', delete_rule: 'SET NULL' },
   { table_name: 'characters', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'credit_ledger', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
+  { table_name: 'credit_ledger', column_name: 'source_billing_history_id', foreign_table_name: 'billing_history', delete_rule: 'RESTRICT' },
+  { table_name: 'credit_ledger', column_name: 'source_purchase_id', foreign_table_name: 'purchases', delete_rule: 'RESTRICT' },
+  { table_name: 'credit_ledger', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'RESTRICT' },
   { table_name: 'entities', column_name: 'stat_block_id', foreign_table_name: 'stat_blocks', delete_rule: 'SET NULL' },
   { table_name: 'entities', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
   { table_name: 'entity_hierarchy', column_name: 'child_entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
@@ -152,7 +166,6 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   { table_name: 'session_usage', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
   { table_name: 'sessions', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
   { table_name: 'stat_block_actions', column_name: 'stat_block_id', foreign_table_name: 'stat_blocks', delete_rule: 'CASCADE' },
-  { table_name: 'user_subscriptions', column_name: 'tier_id', foreign_table_name: 'subscription_tiers', delete_rule: 'NO ACTION' },
   { table_name: 'user_subscriptions', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
   { table_name: 'world_marketplace', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
   { table_name: 'world_snapshots', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
@@ -193,13 +206,17 @@ describe('schema-parity (integration)', () => {
     await resetSchema(pool)
   })
 
-  it('applies all three migrations and pins the schema contract', async () => {
+  it('applies all migrations and pins the schema contract', async () => {
     const applied = await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })
 
     expect(applied.map((m) => m.version)).toEqual([
       '001_initial_schema.sql',
       '002_indexes.sql',
       '003_srd_reference_data.sql',
+      '004_credit_ledger_invariants.sql',
+      '005_drop_profile_columns_users.sql',
+      '006_drop_billing_config_tables.sql',
+      '007_recreate_billing_tables.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -248,6 +265,40 @@ describe('schema-parity (integration)', () => {
         ORDER BY tc.table_name, kcu.column_name`,
     )
     expect(fks.rows).toEqual(EXPECTED_FK_DELETE_RULES)
+
+    // Migration 005: minimal-claims users — email/avatar_url/auth_provider dropped,
+    // case-sensitive UNIQUE on users.username replaced with UNIQUE LOWER(username).
+    const userColumns = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'users'
+         ORDER BY column_name`,
+    )
+    const userColumnNames = userColumns.rows.map((r) => r.column_name)
+    expect(userColumnNames).not.toContain('email')
+    expect(userColumnNames).not.toContain('avatar_url')
+    expect(userColumnNames).not.toContain('auth_provider')
+    expect(userColumnNames).toContain('display_name')
+    expect(userColumnNames).toContain('username')
+
+    const userIndexes = await pool.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+         WHERE schemaname = 'public' AND tablename = 'users'
+         ORDER BY indexname`,
+    )
+    const userIndexNames = userIndexes.rows.map((r) => r.indexname)
+    expect(userIndexNames).toContain('users_username_lower_key')
+    expect(userIndexNames).not.toContain('users_username_key')
+
+    // Migration 006: legacy billing-config tables are gone. Migration 007
+    // recreates `purchases` and `user_subscriptions` with the new lookup_key
+    // shape, so only `subscription_tiers` and `session_packs` stay dropped.
+    const droppedTables = ['subscription_tiers', 'session_packs']
+    const tableExists = await pool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
+      [droppedTables],
+    )
+    expect(tableExists.rows).toEqual([])
 
     // Idempotency — second run is a no-op.
     const second = await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })

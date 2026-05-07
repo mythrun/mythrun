@@ -9,6 +9,8 @@ import { waitFor } from './boot/wait-for.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
 import { createRepo } from './repo/index.js'
+import { getStripeClient } from './billing/stripe-client.js'
+import { probeStripeContract } from './billing/probe.js'
 
 // Build a RegisterAuthOptions from a loaded Env without emitting `undefined`
 // fields explicitly — exactOptionalPropertyTypes forbids `userPoolId: undefined`
@@ -72,7 +74,10 @@ async function fallbackStart(): Promise<void> {
     redisBatch: { quit: () => Promise.resolve('OK') } as unknown as Redis,
     repo: createRepo(stubPool),
   }
-  const app = await buildApp(stubDeps, authOpts)
+  const app = await buildApp(stubDeps, authOpts, {
+    frontendBaseUrl: env.frontendBaseUrl,
+    env,
+  })
   await app.listen({ port: env.port, host: '0.0.0.0' })
   const handleShutdown = createShutdown(app, stubDeps)
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
@@ -129,11 +134,22 @@ export async function main(): Promise<void> {
     })
     console.log('✓ Redis (batch) ready')
 
+    // MYT-41: Stripe contract verification. The probe lists the lookup_keys
+    // in LOOKUP_KEYS, asserts each resolves to an active price with the
+    // expected shape, and throws a typed error on mismatch / auth failure /
+    // exhausted transient retries. The outer try/catch turns the throw into
+    // a non-zero process exit; ECS rolls back the deploy.
+    const stripeClient = getStripeClient(env)
+    const probeLogger = console as unknown as import('pino').Logger
+    await probeStripeContract(stripeClient, probeLogger)
+    console.log('✓ Stripe contract verified')
+
     const repo = createRepo(pgRef)
     const authOpts = buildAuthOpts(env)
     const app = await buildApp(
       { pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo },
       authOpts,
+      { frontendBaseUrl: env.frontendBaseUrl, env },
     )
     await app.listen({ port: env.port, host: '0.0.0.0' })
 

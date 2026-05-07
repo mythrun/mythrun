@@ -18,12 +18,14 @@
     "db:migrate:compiled": "node dist/db/migrate.js"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^10.3.0",
     "aws-jwt-verify": "^5.1.1",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.1.0",
     "ioredis": "^5.4.0",
     "pg": "^8.13.0",
     "pino": "^10.3.1",
+    "stripe": "^22.1.0",
     "uuidv7": "^1.0.2"
   },
   "devDependencies": {

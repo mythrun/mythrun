@@ -1,4 +1,5 @@
 <!-- source: backend/src/ -->
+<!-- source: backend/eslint-rules/ -->
 <!-- source: backend/package.json -->
 <!-- source: backend/tsconfig.json -->
 <!-- source: backend/tsconfig.build.json -->
@@ -14,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:41ccf0f709d2c2b081f380b199da491fce70f92d57587d633a8bc56ad7b4f3ec -->
-<!-- last-ticket: MYT-35 -->
+<!-- source-hash: sha256:ab6a849c173e7ebbd589c37208508d1e47c78c5726428e829e4071aadf22f46b -->
+<!-- last-ticket: MYT-42 -->
 
 <h1>Backend</h1>
 
@@ -52,28 +53,79 @@
 <p>
   The <code>backend/</code> workspace is <code>@mythrun/backend</code>. Production dependencies are
   <code>fastify</code>, <code>pg</code>, and <code>ioredis</code>; dev dependencies are
-  <code>tsx</code>, <code>typescript</code>, and <code>vitest</code>. The source tree is shallow but
-  no longer flat: <code>app.ts</code> / <code>server.ts</code> / <code>app-deps.ts</code> /
-  <code>worker.ts</code> at the root, with subdirectories for <code>boot/</code>,
-  <code>config/</code>, <code>db/</code>, <code>redis/</code>, <code>repo/</code>, and
-  <code>routes/</code>. Each has a colocated <code>__tests__/</code>.
+  <code>tsx</code>, <code>typescript</code>, <code>vitest</code>, and the <code>stripe</code> SDK
+  (used at boot for the <a href="../auth-billing/stripe-contract.html">Stripe contract probe</a>).
+  The source tree is shallow but no longer flat: <code>app.ts</code> / <code>server.ts</code> /
+  <code>app-deps.ts</code> / <code>worker.ts</code> at the root, with subdirectories for
+  <code>auth/</code>, <code>billing/</code>, <code>boot/</code>, <code>config/</code>,
+  <code>db/</code>, <code>redis/</code>, <code>repo/</code>, and <code>routes/</code>. Each has a
+  colocated <code>__tests__/</code>. ESLint rules custom to Mythrun live one level up at
+  <code>backend/eslint-rules/</code> — currently the two AST tripwires that ban Stripe
+  price/product/subscription mutations from app code (see
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> for details).
 </p>
 
 <h2>The app factory and the dependency-injection shape</h2>
 
 <p>
-  <code>app.ts</code> exports <code>buildApp(deps: AppDeps)</code> — a pure factory that returns a
-  Fastify instance with two health routes registered — and
-  <code>createShutdown(app, clients)</code>, a pure function that returns a signal handler.
-  <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares the injection shape:
+  <code>app.ts</code> exports <code>buildApp(deps, authOpts, config)</code> — a pure async factory
+  that returns a Fastify instance — and <code>createShutdown(app, clients)</code>, a pure function
+  that returns a signal handler. <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares
+  the injection shape:
   <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, repo: Repo }</code>.
   <code>Repo</code> is the closure-factory bundle from
   <a href="../data/repository.html">the repository layer</a> — composed over the same
-  <code>pg</code> by <code>server.ts</code> on both boot paths. Nothing in <code>app.ts</code> has
-  side effects on import — no listener, no signal hooks, no connection opens. The first
-  Auth/Billing plugin will <code>app.decorate('repo', deps.repo)</code> and add the matching
-  <code>declare module 'fastify'</code> augmentation so route handlers reach
-  <code>req.server.repo.users.getByCognitoSub(...)</code> directly.
+  <code>pg</code> by <code>server.ts</code> on both boot paths. <code>authOpts</code> drives
+  <a href="../auth-billing/jwt-middleware.html"><code>registerAuth</code></a
+  >'s real-vs-bypass dispatch; <code>config</code> carries the validated
+  <code>frontendBaseUrl</code> the invite routes consume to compose share links. Nothing in
+  <code>app.ts</code> has side effects on import — no listener, no signal hooks, no connection
+  opens.
+</p>
+
+<p>
+  Plugins register in a fixed order inside <code>buildApp</code>:
+  <a href="../auth-billing/jwt-middleware.html#the-public-route-allowlist"
+    >the public-route allowlist hook</a
+  >
+  registers first so every subsequent route registration is checked against the closed set of public
+  paths; then liveness <code>/health</code> and the <code>/health/ready</code> route; then a custom
+  404 handler; then <code>registerAuth</code> attaches <code>request.user</code>;
+  <code>@fastify/rate-limit</code> registers with <code>global: false</code> so individual routes
+  opt in via <code>config.rateLimit</code>; then
+  <a href="../auth-billing/onboarding.html"><code>requireOnboarded</code></a> gates every
+  default-auth route on a real <code>users</code> row;
+  <a href="../auth-billing/billing-webhook.html">the encapsulated webhook plugin</a> registers next
+  so its child-scope raw-body parser is isolated; then <code>usersRoutes</code> and
+  <code>invitesRoutes</code> register the
+  <a href="../auth-billing/onboarding.html">first-login + invite surface</a>; finally
+  <a href="../auth-billing/billing-routes.html"><code>billingRoutes</code></a> registers the seven
+  player-facing billing routes. The order is load-bearing — the allowlist hook has to precede every
+  public-route registration; auth attaches <code>request.user</code> before
+  <code>requireOnboarded</code> reads it; the webhook plugin registers before the JSON-using routes
+  so its encapsulated parser doesn't escape its child scope.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Public-route allowlist as an <code>onRoute</code> hook, not a per-route review</strong>
+  — Fastify lets a route opt out of authentication via <code>config.auth: 'public'</code>. Five
+  routes in the system today legitimately need it (the two health checks, the invite preview, the
+  SKU listing, and the Stripe webhook); a sixth public route shipped by mistake would be a security
+  incident. The hook iterates every registered route at boot and throws if one is marked public but
+  not in the allowlist — the <code>app.ready()</code> call propagates the throw and the deploy
+  fails. Adding a public route is now a deliberate code change in two places (the route file and the
+  allowlist), which forces a security-review touchpoint into the diff.
+</aside>
+
+<p>
+  The Fastify instance carries a few non-default settings: <code>trustProxy: 1</code> so
+  <code>request.ip</code> reads the ALB's <code>X-Forwarded-For</code> with the real client value
+  (required for accurate rate-limit keys); a custom <code>genReqId</code> that picks up the ALB's
+  <code>X-Amzn-Trace-Id</code> when present; pino <code>redact</code> for
+  <code>Authorization</code> + <code>Cookie</code> + <code>Set-Cookie</code> headers; and a
+  <code>req</code> serializer that strips the query string from logged URLs (forward defense against
+  MYT-39's WebSocket <code>?ticket=&lt;nonce&gt;</code> handshake). <code>pluginTimeout</code> is
+  bumped to 30 s so the JWT plugin's hydrate-at-boot has headroom past Fastify's 10 s default.
 </p>
 
 <h2>Two health endpoints, two different consumers</h2>
@@ -92,10 +144,9 @@
   <code>Promise.race</code> timeout. All three pass → <code>200 {"ready":true}</code>; any fail →
   <code>503 {"ready":false, "failed":[...]}</code> with one structured
   <code>app.log.warn({ probe, err }, 'health-ready probe failed')</code> per failed probe so
-  CloudWatch can be filtered. The
-  <a href="../infra/serving.html">ALB target group</a> uses this endpoint. If it flaps, the ALB
-  stops routing while the container keeps running and may self-heal — Redis reconnects, pg pool
-  recovers — without an ECS task replacement.
+  CloudWatch can be filtered. The <a href="../infra/serving.html">ALB target group</a> uses this
+  endpoint. If it flaps, the ALB stops routing while the container keeps running and may self-heal —
+  Redis reconnects, pg pool recovers — without an ECS task replacement.
 </p>
 
 <aside class="wiki-rationale">
@@ -112,7 +163,8 @@
   <code>Promise.race</code> guarantees the HTTP response returns fast, but does NOT cancel the
   underlying <code>pg.query</code> / <code>ioredis.ping</code> — those run until the client's own
   timeout. A wedged pg under load would deplete the pool; the container's
-  <code>HEALTHCHECK</code> watchdog is the recovery path for that scenario, not <code>/health/ready</code>.
+  <code>HEALTHCHECK</code> watchdog is the recovery path for that scenario, not
+  <code>/health/ready</code>.
 </aside>
 
 <aside class="wiki-rationale">
@@ -158,10 +210,11 @@
 <p>
   <code>server.ts</code> has two startup paths. <code>BOOT_GATE_ENABLED=1</code> (or
   <code>true</code>) runs the full boot gate: load + validate env, open a pg <code>Pool</code> and
-  two <code>Redis</code> clients, probe each sequentially with retry-backoff, compose
-  <code>createRepo(pg)</code>, then <code>app.listen</code>. Anything else — including the default
-  when the var is unset — runs <code>fallbackStart</code>: no env validation, no client creation,
-  stub deps (including <code>createRepo(stubPool)</code> over a stub whose
+  two <code>Redis</code> clients, sequentially probe each of the three with retry-backoff, run a
+  <a href="../auth-billing/stripe-contract.html">read-only Stripe contract probe</a> after the data
+  probes pass, compose <code>createRepo(pg)</code>, then <code>app.listen</code>. Anything else —
+  including the default when the var is unset — runs <code>fallbackStart</code>: no env validation,
+  no client creation, stub deps (including <code>createRepo(stubPool)</code> over a stub whose
   <code>query</code> throws) passed to <code>buildApp</code>, listen immediately. Today
   <code>.env.development</code> sets the flag locally and the staging
   <a href="../infra/serving.html">ECS task definition</a> sets it via the serving module's
@@ -172,12 +225,12 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Per-env opt-in, not a default-on flag</strong> — keeping <code>BOOT_GATE_ENABLED</code>
-  unset by default let staging deploy green at <code>/health</code> while the data layer was being
-  built, and lets the MYT-28 entrypoint stay the safe fallback when an environment is misconfigured
-  (a missing secret, a dropped SG rule). The cost is that prod composition has to remember to flip
-  it on; a follow-up bead tracks a Terraform-side guard so prod can't silently launch with the gate
-  off.
+  <strong>Per-env opt-in, not a default-on flag</strong> — keeping
+  <code>BOOT_GATE_ENABLED</code> unset by default let staging deploy green at
+  <code>/health</code> while the data layer was being built, and lets the MYT-28 entrypoint stay the
+  safe fallback when an environment is misconfigured (a missing secret, a dropped SG rule). The cost
+  is that prod composition has to remember to flip it on; a follow-up bead tracks a Terraform-side
+  guard so prod can't silently launch with the gate off.
 </aside>
 
 <p>
@@ -194,7 +247,10 @@
   labeled error naming which service failed. Probes are sequential, not parallel: three local
   services starting under <code>docker compose up -d --wait</code> reach healthy at the same moment,
   so serial vs parallel produce identical wall time and the serial shape gives a clean "the
-  <em>Postgres</em> probe failed" error instead of a collapsed-Promise.all mess.
+  <em>Postgres</em> probe failed" error instead of a collapsed-Promise.all mess. The Stripe contract
+  probe runs after all three data probes succeed and uses its own retry policy (three attempts with
+  exponential backoff plus jitter) tuned to Stripe's rate-limit shape; see
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a>.
 </p>
 
 <aside class="wiki-rationale">
@@ -259,13 +315,13 @@
 <h2>The worker entrypoint scaffold</h2>
 
 <p>
-  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic
-  today, but in the build and on the task definition. It exports <code>main()</code> so tests can
-  import without executing, and runs <code>main()</code> only when invoked directly via
+  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic today,
+  but in the build and on the task definition. It exports <code>main()</code> so tests can import
+  without executing, and runs <code>main()</code> only when invoked directly via
   <code>node dist/worker.js</code> (the entry-point guard uses <code>pathToFileURL</code> to be
-  cross-platform). At startup it loads env, opens a redis-batch client, calls
-  <code>ping()</code> to surface connection failures synchronously, registers SIGTERM/SIGINT
-  handlers that <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
+  cross-platform). At startup it loads env, opens a redis-batch client, calls <code>ping()</code> to
+  surface connection failures synchronously, registers SIGTERM/SIGINT handlers that
+  <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
   <code>Promise&lt;never&gt;</code> to keep the event loop alive.
 </p>
 
@@ -281,14 +337,19 @@
 <h2>The env loader accepts two shapes</h2>
 
 <p>
-  <code>config/env.ts</code> exports <code>loadEnv()</code> returning a frozen
-  <code>Env { databaseUrl, redisRealtimeUrl, redisBatchUrl, port }</code>. Dev
-  <code>.env.development</code> provides <code>DATABASE_URL</code>, <code>REDIS_REALTIME_URL</code>,
-  and <code>REDIS_BATCH_URL</code> directly. Production's
+  <code>config/env.ts</code> exports <code>loadEnv()</code> returning a frozen <code>Env</code> with
+  database / redis URLs, port, auth-mode + Cognito fields, <code>frontendBaseUrl</code>, and the two
+  Stripe secrets. Dev <code>.env.development</code> provides <code>DATABASE_URL</code>,
+  <code>REDIS_REALTIME_URL</code>, and <code>REDIS_BATCH_URL</code> directly. Production's
   <a href="../infra/serving.html">ECS task definition</a> sets the component form instead —
   <code>DB_HOST</code>, <code>DB_PORT</code>, <code>DB_USER</code>, <code>DB_NAME</code>,
   <code>DB_PASSWORD</code>, <code>REDIS_HOST</code>, <code>REDIS_PORT</code>,
   <code>REDIS_AUTH_TOKEN</code> — and the loader constructs the URLs from those components.
+  <code>STRIPE_SECRET_KEY</code> is validated to start with <code>rk_</code> (Stripe restricted
+  keys; full-permission <code>sk_*</code> keys are rejected); <code>STRIPE_WEBHOOK_SECRET</code>
+  is required and consumed by the
+  <a href="../auth-billing/billing-webhook.html">webhook plugin</a> at request time. See
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> for the full reasoning.
 </p>
 
 <aside class="wiki-rationale">
@@ -359,8 +420,12 @@
   <code>dist/</code> carries only runtime code. ESLint sits at the repo root and runs against every
   workspace: <code>typescript-eslint</code> strict + stylistic type-checked presets, a repo-specific
   ban on default exports, a 400-line module cap, a 50-line function cap, and
-  <code>any</code>/non-null-assertion bans. <code>eslint-config-prettier</code> is applied last so
-  Prettier owns formatting.
+  <code>any</code>/non-null-assertion bans. The two repo-local rules under
+  <code>backend/eslint-rules/</code> register under a <code>mythrun</code> plugin namespace at
+  <code>error</code> severity — they enforce the no-Stripe-price-mutation contract from the
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> page, and a config-wiring smoke
+  test catches the failure mode where a rule ships but isn't registered.
+  <code>eslint-config-prettier</code> is applied last so Prettier owns formatting.
 </p>
 
 <p>
@@ -402,10 +467,11 @@
   <code>/health/ready</code>, on purpose — see "Two health endpoints" above. The
   <code>start-period</code> bump matters only for local <code>docker compose up --wait</code>
   cold-starts when the boot gate is on; in Fargate the
-  <a href="../infra/serving.html">task definition</a>'s own <code>healthCheck.startPeriod = 60</code>
-  is the binding knob. Two <code>.dockerignore</code> files work together — the root one is
-  authoritative for repo-root build contexts, <code>backend/.dockerignore</code> is a narrower
-  duplicate kept alongside the Dockerfile as a readable hint.
+  <a href="../infra/serving.html">task definition</a>'s own
+  <code>healthCheck.startPeriod = 60</code> is the binding knob. Two
+  <code>.dockerignore</code> files work together — the root one is authoritative for repo-root build
+  contexts, <code>backend/.dockerignore</code> is a narrower duplicate kept alongside the Dockerfile
+  as a readable hint.
 </p>
 
 <h2>Operating this piece</h2>
@@ -579,9 +645,9 @@
       <td><code>BOOT_GATE_ENABLED</code></td>
       <td>unset</td>
       <td>
-        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging passes
-        <code>1</code> via the serving module's <code>extra_env</code>; prod is unset until its
-        workspace is composed at Launch.
+        Accepts <code>1</code> or <code>true</code>. Dev sets it; staging passes <code>1</code> via
+        the serving module's <code>extra_env</code>; prod is unset until its workspace is composed
+        at Launch.
       </td>
     </tr>
     <tr>
@@ -606,6 +672,50 @@
         <code>redis://</code> otherwise.
       </td>
     </tr>
+    <tr>
+      <td><code>AUTH_MODE</code></td>
+      <td>—</td>
+      <td>
+        <code>real</code> or <code>bypass</code>. Bypass is dev-only and walled off behind six
+        layers of defense; see <a href="../auth-billing/jwt-middleware.html">JWT middleware</a>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>COGNITO_USER_POOL_ID</code> / <code>COGNITO_APP_CLIENT_ID</code> /
+        <code>COGNITO_ISSUER_URL</code> / <code>COGNITO_HOSTED_UI_DOMAIN</code>
+      </td>
+      <td>—</td>
+      <td>All four required when <code>AUTH_MODE=real</code>.</td>
+    </tr>
+    <tr>
+      <td><code>FRONTEND_BASE_URL</code></td>
+      <td>—</td>
+      <td>
+        Origin of the SPA, used to compose invite-link URLs. Validated against an explicit host
+        allowlist (<code>mythrun.com</code>, <code>staging.mythrun.com</code>, plus
+        <code>localhost</code>/<code>127.0.0.1</code> in dev/test); pathname must be
+        <code>/</code> with no query or hash.
+      </td>
+    </tr>
+    <tr>
+      <td><code>STRIPE_SECRET_KEY</code></td>
+      <td>—</td>
+      <td>
+        Required. Must start with <code>rk_</code> (restricted key); full-permission
+        <code>sk_*</code> keys are rejected. See
+        <a href="../auth-billing/stripe-contract.html">Stripe contract</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>STRIPE_WEBHOOK_SECRET</code></td>
+      <td>—</td>
+      <td>
+        Required, any non-empty string. Consumed at request time by the
+        <a href="../auth-billing/billing-webhook.html">webhook plugin</a>; signature mismatch fails
+        closed.
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -624,7 +734,10 @@
     </tr>
     <tr>
       <td><code>src/app.ts</code></td>
-      <td><code>buildApp(deps)</code>, <code>createShutdown(app, clients)</code>.</td>
+      <td>
+        <code>buildApp(deps, authOpts, config)</code>, <code>createShutdown(app, clients)</code>;
+        plugin-registration order pinned here.
+      </td>
     </tr>
     <tr>
       <td><code>src/app-deps.ts</code></td>
@@ -658,8 +771,44 @@
       <td><code>registerReadyRoute(app, deps)</code>.</td>
     </tr>
     <tr>
+      <td><code>src/billing/</code></td>
+      <td>
+        <code>lookup-keys.ts</code>, <code>stripe-client.ts</code>, <code>probe.ts</code>,
+        <code>sku-cache.ts</code>, <code>customer.ts</code>, <code>errors.ts</code>, plus eight
+        <code>webhook-*.ts</code> handler files and <code>webhook.ts</code> dispatcher. Explainers:
+        <a href="../auth-billing/stripe-contract.html">Stripe contract</a>,
+        <a href="../auth-billing/billing-webhook.html">Billing webhook</a>,
+        <a href="../auth-billing/billing-routes.html">Billing routes</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/auth/public-route-allowlist.ts</code></td>
+      <td>
+        <code>PUBLIC_ROUTE_ALLOWLIST</code> closed set + <code>onRoute</code> hook that throws on a
+        public-marked route not in the allowlist.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/routes/webhook.ts</code></td>
+      <td>Encapsulated Stripe webhook plugin. Raw-body parser scoped to the child context.</td>
+    </tr>
+    <tr>
+      <td><code>src/routes/billing.ts</code></td>
+      <td>Seven player-facing billing routes registered as one Fastify plugin.</td>
+    </tr>
+    <tr>
+      <td><code>backend/eslint-rules/</code></td>
+      <td>
+        <code>no-stripe-price-mutations.cjs</code>,
+        <code>no-stripe-subscription-price-mutation.cjs</code>. AST tripwires registered under the
+        <code>mythrun</code> plugin namespace by the repo-root <code>eslint.config.js</code>.
+      </td>
+    </tr>
+    <tr>
       <td><code>src/worker.ts</code></td>
-      <td><code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.</td>
+      <td>
+        <code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.
+      </td>
     </tr>
   </tbody>
 </table>
@@ -685,10 +834,39 @@
       <td><code>GET</code></td>
       <td><code>/health/ready</code></td>
       <td>
-        <code>200 {"ready":true}</code> all probes pass; <code>503 {"ready":false,"failed":[…]}</code>
+        <code>200 {"ready":true}</code> all probes pass;
+        <code>503 {"ready":false,"failed":[…]}</code>
         otherwise.
       </td>
       <td>ALB target group (readiness).</td>
+    </tr>
+    <tr>
+      <td colspan="2">
+        <code>/api/users/*</code> (3 routes), <code>/api/campaigns/:id/invites/*</code>,
+        <code>/api/invites/:code/*</code>, <code>/api/campaigns/:id/members</code>
+      </td>
+      <td colspan="2">
+        First-login + invite system. Documented on the
+        <a href="../auth-billing/onboarding.html">Onboarding &amp; invites</a> page.
+      </td>
+    </tr>
+    <tr>
+      <td colspan="2"><code>/api/billing/*</code> (7 routes)</td>
+      <td colspan="2">
+        Player-facing billing surface (skus, balance, subscription, history, checkout, portal,
+        upgrade-tier). See
+        <a href="../auth-billing/billing-routes.html">Billing routes</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/webhooks/stripe</code></td>
+      <td>signature-verified, dispatched</td>
+      <td>
+        Stripe webhook ingress. Encapsulated child plugin owns the raw-body parser and signature
+        verification. See
+        <a href="../auth-billing/billing-webhook.html">Billing webhook</a>.
+      </td>
     </tr>
   </tbody>
 </table>
@@ -779,7 +957,7 @@
 <h2>Source</h2>
 
 <p>
-  <code>backend/</code>, <code>docker-compose.yml</code>,
+  <code>backend/</code>, <code>backend/eslint-rules/</code>, <code>docker-compose.yml</code>,
   <code>docker-compose.override.yml.example</code>, <code>pnpm-workspace.yaml</code>,
   <code>package.json</code>, <code>.npmrc</code>, <code>.nvmrc</code>, <code>.dockerignore</code>,
   <code>.gitignore</code>, <code>eslint.config.js</code>.

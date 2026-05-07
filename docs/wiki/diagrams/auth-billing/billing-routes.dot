@@ -1,0 +1,78 @@
+digraph billing_routes {
+  // The seven HTTP routes that comprise the player-facing billing surface
+  // at MYT-42: one public catalogue endpoint, four authenticated reads,
+  // two authenticated writes that orchestrate Stripe (Checkout +
+  // Customer Portal), plus the proration-driven tier upgrade.
+  rankdir=LR;
+  compound=true;
+  ranksep=0.9;
+
+  client [label="HTTP client\n(JWT-authenticated\nexcept /skus)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_routes {
+    label="routes/billing.ts  (one plugin, seven routes)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    skus     [label="GET /api/billing/skus\nPUBLIC (allowlisted)\nCache-Control: 5min\nreads SKU cache"];
+    balance  [label="GET /api/billing/balance\nsession + world_gen +\nactive subscription summary"];
+    sub      [label="GET /api/billing/subscription\nfull active subscription\nor null"];
+    history  [label="GET /api/billing/history\ncursor-paginated\n(t, i) base64url cursor"];
+    checkout [label="POST /api/billing/checkout\ncart validation\n(unknown / duplicate /\nmixed / tier-shape)\n→ Stripe Checkout Session"];
+    portal   [label="POST /api/billing/portal\nlazy customer create\n→ Customer Portal session"];
+    upgrade  [label="POST /api/billing/upgrade-tier\npayment_behavior:\npending_if_incomplete\nproration_date=period_start"];
+  }
+
+  subgraph cluster_cache {
+    label="module-level state";
+    style="dotted";
+
+    sku_cache [label="SkuCache\nbyLookupKey + byPriceId +\npublicListing\npopulated by boot probe"];
+  }
+
+  subgraph cluster_helpers {
+    label="billing helpers";
+    style="dotted";
+
+    customer [label="findOrCreateStripeCustomer\n3-phase prefetch-then-write\n(spec §9)"];
+  }
+
+  subgraph cluster_repo {
+    label="repo (closure factory + table-scoped namespaces)";
+    style="dotted";
+
+    credits        [label="repo.credits.balance"];
+    user_subs      [label="userSubscriptions.\ngetActiveForUser"];
+    billing_hist   [label="billingHistory.listByUser\n(cursor pagination)"];
+  }
+
+  stripe [label="Stripe\nCheckout +\nCustomer Portal +\nSubscriptions API", color="ember", fontcolor="ember"];
+
+  // Per-route flow
+  client -> skus     [label="public", style=dashed];
+  client -> balance  [label="JWT + onboarded"];
+  client -> sub      [label=""];
+  client -> history  [label="?cursor=..."];
+  client -> checkout [label="{items, success, cancel}"];
+  client -> portal   [label="{return_url}"];
+  client -> upgrade  [label="{target_tier_lookup_key}"];
+
+  skus     -> sku_cache    [label="publicListing", style=dashed];
+  checkout -> sku_cache    [label="byLookupKey →\nstripe_price_id", style=dashed];
+  upgrade  -> sku_cache    [label="target + current\nunit_amount_cents", style=dashed];
+
+  balance  -> credits      [label="session + world_gen", style=dashed];
+  balance  -> user_subs    [label="active sub", style=dashed];
+  sub      -> user_subs    [label="", style=dashed];
+  history  -> billing_hist [label="", style=dashed];
+  upgrade  -> user_subs    [label="getActiveForUser", style=dashed];
+
+  checkout -> customer [label="lazy create", style=dashed];
+  portal   -> customer [label="lazy create", style=dashed];
+  customer -> stripe   [label="customers.create\nidempotency-keyed", style=dashed];
+
+  checkout -> stripe [label="checkout.sessions.create\nmetadata.userId on session\n+ subscription_data"];
+  portal   -> stripe [label="billingPortal.\nsessions.create"];
+  upgrade  -> stripe [label="subscriptions.retrieve\n+ subscriptions.update"];
+}

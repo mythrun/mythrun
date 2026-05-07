@@ -1,0 +1,462 @@
+<!-- source: backend/src/routes/billing.ts -->
+<!-- source: backend/src/billing/customer.ts -->
+<!-- source: backend/src/billing/sku-cache.ts -->
+<!-- source: backend/src/billing/errors.ts -->
+<!-- source: backend/src/repo/users.ts -->
+<!-- source: backend/src/repo/user-subscriptions.ts -->
+<!-- source: backend/src/repo/billing-history.ts -->
+<!-- source: backend/src/repo/purchases.ts -->
+<!-- source-hash: sha256:fb79883231caa3624e1717c082b27b294072d582f455f9f952b8228f0f6ec027 -->
+<!-- last-ticket: MYT-42 -->
+
+<h1>Billing routes</h1>
+
+<p class="lead">
+  The seven HTTP routes that comprise the player-facing billing surface: one public catalogue
+  endpoint, three authenticated reads (balance, current subscription, paginated history), one Stripe
+  Checkout creator, one Customer Portal launcher, and one in-period tier upgrade that uses Stripe's
+  <code>pending_if_incomplete</code> proration to make the upgrade non-gameable.
+</p>
+
+<!-- @diagram: auth-billing/billing-routes -->
+
+<h2>How it fits together</h2>
+
+<p>
+  All seven routes live in <code>backend/src/routes/billing.ts</code> as one Fastify plugin,
+  registered last in <code>buildApp</code> so it inherits the auth and onboarded chain. The plugin
+  shares three module-level seams: the SKU cache populated by the
+  <a href="./stripe-contract.html">boot probe</a>, the <code>findOrCreateStripeCustomer</code>
+  helper that lazily creates Stripe Customer records on first checkout, and the four billing-table
+  repository namespaces that read the audit feed and subscription state.
+</p>
+
+<p>
+  Six routes require a JWT and a real <code>users</code> row (the
+  <a href="./onboarding.html"><code>requireOnboarded</code></a> gate). One route —
+  <code>GET /api/billing/skus</code> — is on the
+  <a href="./jwt-middleware.html#the-public-route-allowlist">public-route allowlist</a> because it
+  serves the marketing-page pricing tile pre-signin. Per-route rate limits cap the SKU endpoint at
+  60/min and the write endpoints at 30/min to bound the cost of an attacker spinning up Stripe
+  Checkout sessions.
+</p>
+
+<h3>Read endpoints</h3>
+
+<p>
+  <strong><code>GET /api/billing/skus</code></strong> serves the SKU cache's
+  <code>publicListing</code> projection — <code>lookup_key</code>, display name, type, credit
+  allocation, price. The <code>stripe_price_id</code> is deliberately stripped from the public shape
+  (principle of least disclosure on an unauthenticated endpoint). A 5-minute
+  <code>Cache-Control</code> header lets edge caches absorb traffic spikes; the data only changes
+  when the boot probe re-runs against a Stripe-side catalog change.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two SKU projections, one cache</strong> — webhook handlers and the checkout route need the
+  <code>stripe_price_id</code> reverse map (price ID → lookup key, lookup key → price ID for cart
+  resolution); the public route does not. The cache holds both as separate maps and the public
+  endpoint reads <code>publicListing</code> only. A future leak in the public response shape can't
+  expose <code>stripe_price_id</code> because the field isn't in the projection at all.
+</aside>
+
+<p>
+  <strong><code>GET /api/billing/balance</code></strong> returns
+  <code>{ session, world_gen, active_subscription }</code> — two credit-balance numbers (each a SUM
+  over the credit ledger) plus a summary of the user's active subscription if one exists. The three
+  reads run in parallel via <code>Promise.all</code>. The <code>active_subscription</code> shape is
+  a small projection of the underlying row (<code>tier_lookup_key</code>,
+  <code>current_period_end</code>, <code>cancel_at_period_end</code>, <code>status</code>) — enough
+  for the UI to render "Sojourner, renews in 3 days" without exposing internal columns.
+</p>
+
+<p>
+  <strong><code>GET /api/billing/subscription</code></strong> returns the same
+  <code>active_subscription</code> projection but with the additional fields the account-management
+  UI needs (<code>stripe_subscription_id</code>, <code>current_period_start</code>,
+  <code>cancel_at</code>). One row or null; cancelled subscriptions are not surfaced.
+</p>
+
+<p>
+  <strong><code>GET /api/billing/history</code></strong> is the cursor-paginated audit feed backed
+  by <code>billing_history</code>. The cursor is a base64url-encoded
+  <code>{ t: occurred_at_iso, i: row_id }</code> pair — the row id breaks ties when two events share
+  the same Stripe timestamp. Page size is 50; the response includes
+  <code>nextCursor: null</code> when the feed is exhausted. An invalid cursor (decode failure, shape
+  mismatch) returns 400 <code>invalid_cursor</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>(timestamp, id) cursor, not offset pagination</strong> — Stripe events arrive in
+  near-real-time and the audit feed grows append-only. Offset pagination drifts on every new row
+  written between page fetches (page 2 starts on what was the bottom of page 1). A (timestamp, id)
+  cursor is stable: the second page picks up exactly where the first left off, even if a hundred new
+  rows landed in between. The composite is necessary because two webhook events from one Stripe
+  customer can carry the same second-precision timestamp.
+</aside>
+
+<h3>Write endpoints</h3>
+
+<p>
+  <strong><code>POST /api/billing/checkout</code></strong> takes a cart shape (<code
+    >{ items: [{ lookup_key, quantity }], success_url, cancel_url }</code
+  >), validates it against four cart rules, resolves the items against the SKU cache, ensures the
+  user has a Stripe Customer record (lazy-creating one if not), and creates a Stripe Checkout
+  Session. The response is <code>{ checkout_session_id, url }</code> — the SPA redirects the user to
+  that URL. Stripe handles payment collection; on success Stripe fires
+  <code>checkout.session.completed</code> at the <a href="./billing-webhook.html">webhook</a>, which
+  produces the credit grant and audit row.
+</p>
+
+<p>The four cart rules:</p>
+
+<ol>
+  <li>Every <code>lookup_key</code> exists in <code>LOOKUP_KEYS</code>.</li>
+  <li>No duplicate <code>lookup_key</code> in the same cart.</li>
+  <li>
+    Tier and à-la-carte items don't mix in the same cart (a recurring item can't sit alongside
+    one-time items).
+  </li>
+  <li>A tier cart is exactly one item with quantity 1 (no quantity-2 subscription).</li>
+</ol>
+
+<p>
+  Each rule maps to a distinct error code (<code>unknown_lookup_key</code>,
+  <code>duplicate_lookup_key</code>, <code>mixed_cart</code>, <code>tier_cart_shape</code>) so the
+  SPA can show a precise message without parsing free-form text.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Server-side cart rules, not just client-side</strong> — the SPA does its own client-side
+  validation, but the server is the only enforcement point that survives a malicious client. Stripe
+  will happily create a Checkout Session for a five-tier cart; preventing that has to happen here.
+  The rules are also where the spec's "no client-supplied price IDs" promise lives: the client sends
+  <code>lookup_key</code> strings, the server resolves them through the SKU cache to the actual
+  Stripe price IDs that go on the Checkout Session.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>findOrCreateStripeCustomer</code> runs OUTSIDE any held DB tx</strong> — the helper
+  makes a Stripe SDK call to <code>customers.create</code> with an idempotency key. That call has
+  multi-second tail latency under Stripe outage. Holding a <code>PoolClient</code> across it would
+  pin the connection for the call's duration; the route opens no surrounding tx and invokes the
+  helper as a top-level await. The helper itself is internally three phases (read short tx → Stripe
+  call → write short tx with FOR UPDATE) and absorbs concurrent racers via Stripe's idempotency-key
+  cache.
+</aside>
+
+<p>
+  <strong><code>POST /api/billing/portal</code></strong> takes a <code>{ return_url }</code> body,
+  lazy-creates the Stripe Customer if needed, and creates a Customer Portal session. The response is
+  <code>{ url }</code>. The Portal is where users self-manage payment methods, see their invoices,
+  and downgrade or cancel their subscription. Tier <em>upgrades</em> within the current billing
+  period don't go through the Portal — see the upgrade route below.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Customer Portal handles downgrades and cancels; the API handles upgrades</strong> —
+  Stripe's Customer Portal can switch between plans, but its proration knob isn't tunable per
+  switch. The asymmetry that makes Mythrun's pricing fair (upgrades prorate from period start;
+  downgrades take effect at period end) requires
+  <code>proration_date = current_period_start</code> on the upgrade path, which Portal doesn't
+  expose. The boot probe verifies the Portal config carries the asymmetric
+  <code>schedule_at_period_end.conditions</code> rule for downgrades. See
+  <a href="./stripe-contract.html#the-boot-probe-and-its-four-error-classes"
+    >probe and its error classes</a
+  >.
+</aside>
+
+<p id="tier-upgrade">
+  <strong><code>POST /api/billing/upgrade-tier</code></strong> takes a
+  <code>{ target_tier_lookup_key }</code> body and orchestrates an in-period upgrade through
+  Stripe's <code>pending_if_incomplete</code> payment behavior. The handler validates the target is
+  a strict upgrade against the current tier (matching <code>unit_amount_cents</code>), retrieves the
+  live subscription, refuses if a prior upgrade is already mid-flight (a populated
+  <code>pending_update</code>), then calls <code>subscriptions.update</code> with
+  <code>payment_behavior: 'pending_if_incomplete'</code>,
+  <code>proration_date: current_period_start</code>, and
+  <code>proration_behavior: 'always_invoice'</code>.
+</p>
+
+<p>
+  Stripe's response carries either a populated <code>pending_update</code> (the proration didn't
+  settle synchronously — SCA / ACH / decline; the handler returns
+  <code>502 upgrade_payment_pending</code>) or a null <code>pending_update</code> (the proration
+  settled, items advanced; the handler returns <code>200</code> with the proration invoice ID). The
+  <code>pending_update_applied</code> webhook is what produces the credit grant — see
+  <a href="./billing-webhook.html#customersubscriptionpending_update_applied"
+    >the corresponding handler</a
+  >.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>pending_if_incomplete</code>, not <code>error_if_incomplete</code> or
+    <code>default_incomplete</code></strong
+  >
+  — the three behaviors differ on what happens when the proration invoice can't settle
+  synchronously. <code>error_if_incomplete</code> rejects the whole upgrade if SCA is needed;
+  <code>default_incomplete</code> immediately advances items with a payment-pending status;
+  <code>pending_if_incomplete</code> records a pending_update on the subscription, leaves the items
+  at the pre-upgrade tier, and waits for the proration to settle before advancing. The user sees
+  their old tier until the bank confirms; if SCA fails or the card declines, the subscription is
+  unchanged. No "we charged you but haven't given you the upgrade" gap.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>proration_date = current_period_start</code></strong> — period-start proration
+  charges the tier difference for the entire current period, regardless of when in the period the
+  upgrade happens. The alternative — proration from the upgrade timestamp — creates a gameable loop:
+  a user upgrades on day 29 of a 30-day cycle for one day's-worth of premium credits, then cancels
+  at period end, and ratchets through tiers paying a fraction of each. Period-start proration
+  eliminates the lever; an upgrade is a full-tier-difference charge with no time-based discount.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Idempotency key omits <code>period_start</code></strong> — the key is
+  <code>upgrade:${userId}:${sub_id}:${target_tier}</code>. A naive shape would include the period
+  start, but a user clicking the upgrade button right at a period boundary would generate two
+  distinct keys (the first request's period vs the second's), which would let Stripe charge twice.
+  The early-exit on <code>tier_unchanged</code> handles the post-COMMIT replay case where Stripe's
+  24-hour idempotency cache has expired but our DB shows the new tier already.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="diagnose-a-stuck-tier-upgrade">Diagnose a stuck tier upgrade</h3>
+<ol>
+  <li>
+    Symptom: a user reports clicking upgrade and seeing
+    <code>upgrade_payment_pending</code>, but their tier hasn't advanced after several minutes.
+  </li>
+  <li>
+    Pull the user's active subscription from Stripe Dashboard or via
+    <code>GET /api/billing/subscription</code> as the user. If <code>pending_update</code> is still
+    populated on the Stripe-side subscription, the proration invoice hasn't settled yet — SCA, ACH,
+    or a card retry is in flight.
+  </li>
+  <li>
+    Filter CloudWatch for <code>billing.upgrade_*</code> events around the user's request:
+    <pre><code>filter event like /billing.upgrade/ or event like /billing.handler/
+| fields @timestamp, event, userId, stripe_subscription_id, latest_invoice_id
+| sort @timestamp desc
+| limit 50</code></pre>
+  </li>
+  <li>
+    If the proration eventually settles, <code>pending_update_applied</code> fires; the handler
+    advances the subscription row and grants credits. If it expires,
+    <code>pending_update_expired</code> fires; the user is left on the original tier and the SPA's
+    next balance fetch shows no change.
+  </li>
+  <li>
+    Manual intervention is rarely the answer here — the user's bank or card is the bottleneck.
+    Direct the user to retry from a different payment method via the Customer Portal.
+  </li>
+</ol>
+
+<h3 id="reconcile-a-checkout-with-no-credit-grant">Reconcile a checkout with no credit grant</h3>
+<ol>
+  <li>Symptom: a user reports a Stripe charge but no credits in their account.</li>
+  <li>
+    Look up the user's most recent rows in <code>billing_history</code> and
+    <code>credit_ledger</code>. If <code>billing_history</code> has the row but
+    <code>credit_ledger</code> doesn't, the handler returned <code>'validation_failed'</code> or
+    threw — both surface as paging-grade log lines.
+  </li>
+  <li>
+    If <code>billing_history</code> doesn't have the row at all, the webhook never fired or failed
+    signature verification. Check the Stripe Dashboard's webhook attempts UI for the event delivery
+    status; rotate the signing secret if signature failures are frequent (see
+    <a href="./billing-webhook.html#rotate-the-stripe-webhook-secret"
+      >webhook signing secret rotation</a
+    >).
+  </li>
+  <li>
+    For a one-off reconciliation grant, write a credit_ledger row directly with
+    <code>source_type='gift'</code> and a free-text <code>source_id</code> linking to the support
+    ticket. Don't backfill via the webhook handler — the dispatcher's idempotency check would skip
+    the redelivery.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The routes share the SKU cache populated by the
+  <a href="./stripe-contract.html">Stripe contract</a> boot probe; checkout and tier-upgrade both
+  need <code>byLookupKey</code> for cart resolution. The
+  <a href="./billing-webhook.html">webhook</a> is the asynchronous counterpart to checkout and
+  upgrade — Stripe fires events at the webhook when the operations complete, and the handlers there
+  produce the credit grants and audit rows. <code>findOrCreateStripeCustomer</code> sits in
+  <code>backend/src/repo/users.ts</code>; the helper's three-phase shape is documented on the
+  <a href="../data/repository.html">repository layer</a> page. Cart rule failures and upgrade
+  preconditions return errors from the closed <code>BillingErrorCode</code> union in
+  <code>backend/src/billing/errors.ts</code> so the SPA can branch on
+  <code>response.code</code> without parsing prose.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Routes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Path</th>
+      <th>Auth</th>
+      <th>Rate limit</th>
+      <th>Body / Query</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/skus</code></td>
+      <td>public</td>
+      <td>60/min</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/balance</code></td>
+      <td>JWT + onboarded</td>
+      <td>60/min</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/subscription</code></td>
+      <td>JWT + onboarded</td>
+      <td>60/min</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/history</code></td>
+      <td>JWT + onboarded</td>
+      <td>60/min</td>
+      <td><code>?cursor=&lt;base64url&gt;</code></td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/billing/checkout</code></td>
+      <td>JWT + onboarded</td>
+      <td>30/min</td>
+      <td><code>{ items: [{ lookup_key, quantity }], success_url, cancel_url }</code></td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/billing/portal</code></td>
+      <td>JWT + onboarded</td>
+      <td>30/min</td>
+      <td><code>{ return_url }</code></td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/billing/upgrade-tier</code></td>
+      <td>JWT + onboarded</td>
+      <td>30/min</td>
+      <td><code>{ target_tier_lookup_key }</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Error codes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Code</th>
+      <th>HTTP</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>body_invalid</code></td>
+      <td>400</td>
+      <td>Structural body validation failed (missing field, wrong type, empty array).</td>
+    </tr>
+    <tr>
+      <td><code>unknown_lookup_key</code></td>
+      <td>400</td>
+      <td>Lookup key not in <code>LOOKUP_KEYS</code>; offending key in detail.</td>
+    </tr>
+    <tr>
+      <td><code>duplicate_lookup_key</code></td>
+      <td>400</td>
+      <td>Same lookup key appears twice in one cart.</td>
+    </tr>
+    <tr>
+      <td><code>mixed_cart</code></td>
+      <td>400</td>
+      <td>Recurring + one-time items in the same cart.</td>
+    </tr>
+    <tr>
+      <td><code>tier_cart_shape</code></td>
+      <td>400</td>
+      <td>Tier cart isn't exactly one item with quantity 1.</td>
+    </tr>
+    <tr>
+      <td><code>invalid_cursor</code></td>
+      <td>400</td>
+      <td>History cursor failed decode or shape check.</td>
+    </tr>
+    <tr>
+      <td><code>no_active_subscription</code></td>
+      <td>400</td>
+      <td>Tier upgrade attempted without a subscription to upgrade.</td>
+    </tr>
+    <tr>
+      <td><code>tier_unchanged</code></td>
+      <td>400</td>
+      <td>Target tier price equals current tier price.</td>
+    </tr>
+    <tr>
+      <td><code>not_an_upgrade</code></td>
+      <td>400</td>
+      <td>Target tier is cheaper than current, or target is not a recurring tier.</td>
+    </tr>
+    <tr>
+      <td><code>unauthenticated</code></td>
+      <td>401</td>
+      <td>No JWT or invalid JWT (set by the auth middleware).</td>
+    </tr>
+    <tr>
+      <td><code>username_required</code></td>
+      <td>403</td>
+      <td>JWT valid but no <code>users</code> row (set by <code>requireOnboarded</code>).</td>
+    </tr>
+    <tr>
+      <td><code>upgrade_already_pending</code></td>
+      <td>409</td>
+      <td>Subscription already has a <code>pending_update</code> in flight.</td>
+    </tr>
+    <tr>
+      <td><code>stripe_unavailable</code></td>
+      <td>502</td>
+      <td>Stripe SDK call threw (network, 5xx, timeout).</td>
+    </tr>
+    <tr>
+      <td><code>upgrade_payment_pending</code></td>
+      <td>502</td>
+      <td>Proration didn't settle synchronously; webhook will eventually fire.</td>
+    </tr>
+    <tr>
+      <td><code>sku_cache_unavailable</code></td>
+      <td>503</td>
+      <td>Boot probe didn't populate the cache (defensive — should be unreachable in deploy).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/routes/billing.ts</code>, <code>backend/src/billing/customer.ts</code>,
+  <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/billing/errors.ts</code>,
+  <code>backend/src/repo/users.ts</code> (<code>findOrCreateStripeCustomer</code>),
+  <code>backend/src/repo/user-subscriptions.ts</code>,
+  <code>backend/src/repo/billing-history.ts</code>, <code>backend/src/repo/purchases.ts</code>.
+</p>

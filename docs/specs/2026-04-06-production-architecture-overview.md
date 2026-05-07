@@ -376,18 +376,8 @@ CREATE TABLE session_participants (
 ```
 
 #### `purchases`
-```sql
-CREATE TABLE purchases (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id),
-  stripe_payment_intent_id TEXT NOT NULL UNIQUE,
-  session_pack_size INTEGER NOT NULL,
-  amount_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'refunded')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
+
+Schema lives in `docs/specs/2026-04-13-backend-core.md` (canonical). MYT-42 ships migration 007 that re-creates this table with `lookup_key TEXT NOT NULL` (closed enum from `backend/src/billing/lookup-keys.ts`) replacing the legacy `session_pack_size INTEGER`.
 
 #### `session_usage`
 ```sql
@@ -512,7 +502,7 @@ User ──creates──> World ──(fork)──> World (personalized copy)
 User ──creates──> Campaign ──references──> World (the fork)
 User ──member of──> Campaign (via campaign_members, role: owner|player)
 User ──has──> Character (per campaign)
-User ──has──> session_credits, purchases
+User ──has──> purchases
 Campaign ──has──> Sessions
 Session ──has──> session_participants (multiple users + characters)
 Session ──has──> session_usage (cost tracking)
@@ -548,7 +538,7 @@ Every query that touches campaign/world data is filtered by ownership:
 
 - **Read campaign data**: User must be in `campaign_members` for that campaign
 - **Modify campaign** (delete, reset, settings): User must have `role = 'owner'`
-- **Start a session**: User must be a member; campaign owner must have `session_credits > 0` (or `free_trial_used = false`)
+- **Start a session**: User must be a member; campaign owner must have a positive session-credit balance (`SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='session' AND (expires_at IS NULL OR expires_at > now())`). Trial credits are granted at registration as part of that balance, not a separate gate.
 - **Read world data**: Allowed if the world is public (`is_public = true`) OR the user owns a campaign that references the world
 - **Modify world data**: Only via campaign pipeline stages (no direct world editing for shared worlds)
 
@@ -572,10 +562,8 @@ VALUES (gen_random_uuid(), $1, -1, 'debit', now());
 Full flow:
 1. Verify the requesting user is a campaign member
 2. Look up the campaign owner
-3. Check balance > 0 (or `free_trial_used = false` for trial)
-4. Insert debit row (or set `free_trial_used = true`)
-5. If balance was 0 and trial used: return 402 Payment Required
-6. Create `session_usage` row with `budget_limit_tokens`
+3. Compute owner's session-credit balance (`SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='session' AND (expires_at IS NULL OR expires_at > now())`). Trial credits are part of that balance, granted at registration (not at session-start).
+4. If balance > 0: insert debit row, create `session_usage` row with `budget_limit_tokens`. Else: return 402 Payment Required.
 
 ---
 
@@ -746,10 +734,9 @@ Pipeline execution moves from fire-and-forget promises to a proper job queue (Bu
 
 **Session start gate:**
 1. Verify user is a `campaign_member`
-2. Atomic decrement of campaign owner's `session_credits` (see section 4.6)
-3. If free trial: set `free_trial_used = true`, create `session_usage` with reduced `budget_limit_tokens`
-4. If neither: return 402 Payment Required
-5. Create `session_usage` row with `budget_limit_tokens`
+2. Atomic decrement of campaign owner's session-credit balance via the credit_ledger debit recipe (see section 4.6). Balance check: `SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='session' AND (expires_at IS NULL OR expires_at > now())`. Trial credits are part of that balance, not a separate gate.
+3. If balance is zero: return 402 Payment Required
+4. Create `session_usage` row with `budget_limit_tokens`
 
 **During session:**
 - Token usage accumulated per LLM call in Redis (`session:{campaignId}:usage` Hash, fields `input_tokens` and `output_tokens` incremented via HINCRBY)
@@ -758,17 +745,18 @@ Pipeline execution moves from fire-and-forget promises to a proper job queue (Bu
 - Token counts persisted to `session_usage` table on session end
 
 **Free trial session specifics:**
+- Trial credit is granted at registration (parent billing spec §7); the session-start path is unchanged.
 - Uses a pre-built demo world (no world-gen cost)
 - Time-capped at 45-60 minutes
 - Reduced token budget
 - At wind-down, ST is instructed to end on a narrative cliffhanger (not a satisfying conclusion)
-- After trial ends, user is prompted to purchase session packs to continue
+- After trial ends, user is prompted to purchase à-la-carte SKUs or subscribe to a tier.
 
 **Stripe integration:**
-- `POST /api/billing/checkout` -- creates a Stripe checkout session for a session pack. Server maps a pack identifier (e.g., `"pack_5"`) to a Stripe Price ID server-side. Price is never sent from the client.
-- `POST /webhooks/stripe` -- handles `checkout.session.completed`, credits user's `session_credits`. Credit allocation happens ONLY in the webhook handler, never on the success redirect.
-- `GET /api/billing/portal` -- returns a Stripe customer portal URL for managing payment methods
-- Session pack sizes and pricing are configurable (e.g., 5 sessions for $20, 12 sessions for $40)
+- `POST /api/billing/checkout` -- creates a Stripe checkout session. Body: `{ items: [{ lookup_key, quantity }] }`. Server resolves each `lookup_key` to a Stripe Price (validated by the boot probe per MYT-41). Price is never sent from the client.
+- `POST /webhooks/stripe` -- handles `checkout.session.completed`, credits user's session/world-gen credits. Credit allocation happens ONLY in the webhook handler, never on the success redirect.
+- `GET /api/billing/portal` -- returns a Stripe customer portal URL for managing subscription, payment methods, and invoice history.
+- À-la-carte SKUs (`sku_session`, `sku_world`) are configurable in Stripe Dashboard, referenced from code by `lookup_key` per `backend/src/billing/lookup-keys.ts`. No fixed-size packs; sessions and worlds are sold one-at-a-time.
 
 ---
 

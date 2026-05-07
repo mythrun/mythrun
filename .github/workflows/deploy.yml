@@ -176,7 +176,7 @@ jobs:
 
       - name: Render new task definition with digest image
         id: taskdef
-        uses: aws-actions/amazon-ecs-render-task-definition@77954e213ba1f9f9cb016b86a1d4f6fcdea0d57e  # v1.8.4
+        uses: aws-actions/amazon-ecs-render-task-definition@6853cfae8c3a7d978fbf68b5a55453395541dfbb  # v1.8.5
         with:
           task-definition: task-def.json
           container-name: ${{ env.CONTAINER_NAME }}
@@ -184,7 +184,7 @@ jobs:
 
       - name: Deploy new revision
         # Does NOT check rolloutState — see the explicit poll step below.
-        uses: aws-actions/amazon-ecs-deploy-task-definition@fc8fc60f3a60ffd500fcb13b209c59d221ac8c8c  # v2.6.1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@a310a830f5c14e583e35d84e4e1ec7dd177c3c9c  # v2.6.2
         with:
           task-definition: ${{ steps.taskdef.outputs.task-definition }}
           cluster: ${{ env.ECS_CLUSTER }}

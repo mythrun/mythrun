@@ -27,10 +27,8 @@ function silentLogger(): ReturnType<typeof pino> {
 
 const baseUserInput = {
   cognitoSub: 'g_owner',
-  email: 'owner@x.com',
   displayName: 'Owner',
   username: 'owner',
-  authProvider: 'google' as const,
 }
 
 async function addCampaignMember(
@@ -73,7 +71,7 @@ describe('campaigns repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
     const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'My Campaign' })
     expect(c.id).toMatch(/^[0-9a-f-]{36}$/)
@@ -93,8 +91,8 @@ describe('campaigns repo (integration)', () => {
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
 
-    const owner = await users.create(baseUserInput)
-    const player = await users.create({ ...baseUserInput, cognitoSub: 'g_p', email: 'p@x.com', username: 'player' })
+    const owner = await users.create(pool, baseUserInput)
+    const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player' })
     const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
 
     const c1 = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'C1' })
@@ -111,7 +109,7 @@ describe('campaigns repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
     const a = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'A' })
     await new Promise((r) => setTimeout(r, 5))
@@ -126,7 +124,7 @@ describe('campaigns repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
-    const owner = await users.create(baseUserInput)
+    const owner = await users.create(pool, baseUserInput)
     const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
     const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'A' })
     await new Promise((r) => setTimeout(r, 5))
@@ -134,5 +132,104 @@ describe('campaigns repo (integration)', () => {
     expect(updated.name).toBe('A renamed')
     expect(updated.status).toBe('active')
     expect(updated.updatedAt.getTime()).toBeGreaterThan(c.updatedAt.getTime())
+  })
+
+  describe('member methods', () => {
+    it('addMember inserts a new row with default invite_accepted=true', async () => {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M1' })
+      const m = await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      expect(m.role).toBe('owner')
+      expect(m.inviteAccepted).toBe(true)
+      expect(m.campaignId).toBe(c.id)
+      expect(m.userId).toBe(owner.id)
+    })
+
+    it('addMember is idempotent: collision returns the existing row', async () => {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M2' })
+      const first = await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      const second = await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      expect(second.id).toBe(first.id)
+    })
+
+    it('getMembership returns the row for an existing member', async () => {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M3' })
+      await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      const m = await campaigns.getMembership(c.id, owner.id)
+      expect(m?.role).toBe('owner')
+    })
+
+    it('getMembership returns null for a non-member', async () => {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M4' })
+      const m = await campaigns.getMembership(c.id, '019dccef-0000-7000-8000-000000000000')
+      expect(m).toBeNull()
+    })
+
+    it('getOwner returns the owner row', async () => {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player' })
+      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M5' })
+      await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      await campaigns.addMember({ campaignId: c.id, userId: player.id, role: 'player' })
+      const o = await campaigns.getOwner(c.id)
+      expect(o?.userId).toBe(owner.id)
+      expect(o?.role).toBe('owner')
+    })
+
+    it('listMembers returns members joined with username + displayName, ordered by joinedAt ASC', async () => {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player', displayName: 'Player' })
+      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M6' })
+      await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      await new Promise((r) => setTimeout(r, 5))
+      await campaigns.addMember({ campaignId: c.id, userId: player.id, role: 'player' })
+      const list = await campaigns.listMembers(c.id)
+      expect(list.map((m) => m.userId)).toEqual([owner.id, player.id])
+      expect(list[0]?.username).toBe('owner')
+      expect(list[1]?.displayName).toBe('Player')
+      expect(list[1]?.characterId).toBeNull()
+    })
+
+    it('listMembers excludes suspended users', async () => {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player' })
+      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M7' })
+      await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      await campaigns.addMember({ campaignId: c.id, userId: player.id, role: 'player' })
+      await pool.query('UPDATE users SET suspended_at = now() WHERE id = $1', [player.id])
+      const list = await campaigns.listMembers(c.id)
+      expect(list.map((m) => m.userId)).toEqual([owner.id])
+    })
   })
 })

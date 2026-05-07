@@ -60,7 +60,7 @@ jobs:
         # failure-threshold: error — DL3018 (apk version pin) is suppressed
         # inline in the Dockerfile via `hadolint ignore=DL3018`. Other
         # warnings are advisory; only errors block.
-        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf  # v3.1.0
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5  # v3.3.0
         with:
           dockerfile: infra/bootstrap-db/Dockerfile
           failure-threshold: error
@@ -99,7 +99,7 @@ jobs:
           echo "$BUMP_LINE" > /tmp/bootstrap_image_tag.line
 
       - name: Upload bump line as artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: bootstrap-image-tag-line
           path: /tmp/bootstrap_image_tag.line

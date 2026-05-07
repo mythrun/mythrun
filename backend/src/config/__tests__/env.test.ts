@@ -267,6 +267,7 @@ describe('loadEnv auth-mode parsing', () => {
     vi.stubEnv('COGNITO_APP_CLIENT_ID', 'cli')
     vi.stubEnv('COGNITO_ISSUER_URL', 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test')
     vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', 'mythrun.auth.us-east-1.amazoncognito.com')
+    vi.stubEnv('FRONTEND_BASE_URL', 'https://mythrun.com')
     const env = loadEnv()
     expect(env.authMode).toBe('real')
     expect(env.cognitoUserPoolId).toBe('us-east-1_test')
@@ -279,5 +280,131 @@ describe('loadEnv auth-mode parsing', () => {
     vi.stubEnv('COGNITO_ISSUER_URL', 'https://x.example.com')
     vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', 'd.example.com')
     expect(() => loadEnv()).toThrow(/AUTH_MODE=real requires/)
+  })
+})
+
+// Staging requires AUTH_MODE=real with all Cognito vars (bypass is forbidden
+// outside development/test). Tests that exercise NODE_ENV=staging or
+// production must stub these so the auth-mode cross-checks pass before
+// reaching the frontendBaseUrl validator.
+const STAGING_AUTH = (): void => {
+  vi.stubEnv('AUTH_MODE', 'real')
+  vi.stubEnv('BOOT_GATE_ENABLED', '1')
+  vi.stubEnv('COGNITO_USER_POOL_ID', 'us-east-1_test')
+  vi.stubEnv('COGNITO_APP_CLIENT_ID', 'cli')
+  vi.stubEnv('COGNITO_ISSUER_URL', 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test')
+  vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', 'mythrun.auth.us-east-1.amazoncognito.com')
+}
+
+describe('frontendBaseUrl', () => {
+  beforeEach(() => {
+    SAFE_BASE()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('passes when set to https://staging.mythrun.com in staging', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'staging')
+    vi.stubEnv('FRONTEND_BASE_URL', 'https://staging.mythrun.com')
+    const env = loadEnv()
+    expect(env.frontendBaseUrl).toBe('https://staging.mythrun.com')
+  })
+
+  it('passes when set to http://localhost:5173 in development', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('FRONTEND_BASE_URL', 'http://localhost:5173')
+    const env = loadEnv()
+    expect(env.frontendBaseUrl).toBe('http://localhost:5173')
+  })
+
+  it('throws when host is not in the allowlist', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'staging')
+    vi.stubEnv('FRONTEND_BASE_URL', 'https://attacker.example.com')
+    expect(() => loadEnv()).toThrow(/frontendBaseUrl host/i)
+  })
+
+  it('throws when localhost in production', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('FRONTEND_BASE_URL', 'http://localhost:5173')
+    expect(() => loadEnv()).toThrow(/frontendBaseUrl host/i)
+  })
+
+  it('throws when unset in staging', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'staging')
+    vi.stubEnv('FRONTEND_BASE_URL', '')
+    expect(() => loadEnv()).toThrow(/FRONTEND_BASE_URL is required/i)
+  })
+
+  it('throws on path component', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'staging')
+    vi.stubEnv('FRONTEND_BASE_URL', 'https://staging.mythrun.com/redirect')
+    expect(() => loadEnv()).toThrow(/pathname/i)
+  })
+
+  it('throws on query string', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'staging')
+    vi.stubEnv('FRONTEND_BASE_URL', 'https://staging.mythrun.com/?next=foo')
+    expect(() => loadEnv()).toThrow(/query string|pathname/i)
+  })
+
+  it('throws on hash fragment', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'staging')
+    vi.stubEnv('FRONTEND_BASE_URL', 'https://staging.mythrun.com/#bar')
+    expect(() => loadEnv()).toThrow(/hash|pathname/i)
+  })
+
+  it('throws on invalid URL', () => {
+    STAGING_AUTH()
+    vi.stubEnv('NODE_ENV', 'staging')
+    vi.stubEnv('FRONTEND_BASE_URL', 'not-a-url')
+    expect(() => loadEnv()).toThrow(/valid URL/i)
+  })
+})
+
+describe('loadEnv — Stripe fields', () => {
+  beforeEach(() => {
+    SAFE_BASE()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('accepts a restricted-key (rk_) prefix and exposes stripeSecretKey + stripeWebhookSecret', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'rk_test_abc123')
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'whsec_real_value')
+    const env = loadEnv()
+    expect(env.stripeSecretKey).toBe('rk_test_abc123')
+    expect(env.stripeWebhookSecret).toBe('whsec_real_value')
+  })
+
+  it('rejects a full-permission (sk_) secret key', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_full_permission')
+    expect(() => loadEnv()).toThrow(/STRIPE_SECRET_KEY must be a Stripe restricted key/)
+  })
+
+  it("accepts 'PLACEHOLDER' as the webhook secret (pre-MYT-42 window)", () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'rk_test_abc123')
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'PLACEHOLDER')
+    const env = loadEnv()
+    expect(env.stripeWebhookSecret).toBe('PLACEHOLDER')
+  })
+
+  it('rejects an empty STRIPE_SECRET_KEY', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', '')
+    expect(() => loadEnv()).toThrow(/STRIPE_SECRET_KEY/)
+  })
+
+  it('rejects an empty STRIPE_WEBHOOK_SECRET', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'rk_test_abc123')
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', '')
+    expect(() => loadEnv()).toThrow(/STRIPE_WEBHOOK_SECRET/)
   })
 })

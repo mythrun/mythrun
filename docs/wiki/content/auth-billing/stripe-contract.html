@@ -1,0 +1,613 @@
+<!-- source: backend/src/billing/lookup-keys.ts -->
+<!-- source: backend/src/billing/stripe-client.ts -->
+<!-- source: backend/src/billing/probe.ts -->
+<!-- source: backend/src/billing/sku-cache.ts -->
+<!-- source: backend/src/config/env.ts -->
+<!-- source: backend/src/server.ts -->
+<!-- source: backend/eslint-rules/no-stripe-price-mutations.cjs -->
+<!-- source: backend/eslint-rules/no-stripe-subscription-price-mutation.cjs -->
+<!-- source: eslint.config.js -->
+<!-- source-hash: sha256:776fe0ef41a984514b5427a9d61bb47efef9396bbd8108084208f7c14c3a1d5e -->
+<!-- last-ticket: MYT-42 -->
+
+<h1>Stripe contract</h1>
+
+<p class="lead">
+  How Mythrun pins its commercial relationship with Stripe: a closed enum of
+  <code>lookup_key</code>s in code, a cached SDK client pinned to one API version, a read-only boot
+  probe that fails closed if Stripe's catalog drifts, and a restricted-key boundary that makes
+  mutation impossible on the wire. No <code>price_*</code> ID is hardcoded in backend code; price
+  stays in Stripe.
+</p>
+
+<!-- @diagram: auth-billing/stripe-contract -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Six files in <code>backend/src/billing/</code> and <code>backend/eslint-rules/</code> hold the
+  whole surface: <code>lookup-keys.ts</code> declares every SKU as a closed TypeScript enum,
+  <code>stripe-client.ts</code> caches the SDK client pinned to one <code>apiVersion</code>,
+  <code>probe.ts</code> verifies on every boot that Stripe's live catalog matches the enum and
+  populates the module-level <code>sku-cache.ts</code> the rest of the system reads, and two ESLint
+  rules under <code>backend/eslint-rules/</code> reject any source pattern that would mutate the
+  catalog from the SDK. Two env vars (<code>STRIPE_SECRET_KEY</code>,
+  <code>STRIPE_WEBHOOK_SECRET</code>) wire it to the running container; the boot gate calls the
+  probe between <code>waitFor(pg, redis×2)</code> and <code>app.listen</code>, so a contract
+  mismatch turns the deploy red and triggers an ECS rollback before traffic ever reaches the new
+  tasks. The <a href="./billing-webhook.html">webhook plugin</a> is what consumes the
+  <code>STRIPE_WEBHOOK_SECRET</code> at request time; everything Stripe-call-shaped on the request
+  path resolves through the cached client and the cached SKU snapshot.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Lookup keys, not price IDs</strong> — Stripe price objects are immutable: changing a
+  price's amount means archiving the old one and creating a new <code>price_*</code> ID. If backend
+  code referenced prices by ID, every price-amount change would be a code-and-deploy ceremony to
+  swap the constant. Lookup keys are a stable indirection: backend code says
+  <code>tier_wayfarer</code>, Stripe holds the active price under that lookup key, and operators
+  re-point the lookup key to a new price object in the Dashboard whenever the dollar amount needs to
+  change. The probe is what guarantees the indirection still resolves on every boot.
+</aside>
+
+<h3>The closed enum and what it carries</h3>
+
+<p>
+  <code>lookup-keys.ts</code> exports a <code>LOOKUP_KEYS</code> object literal with five entries:
+  three subscription tiers (<code>tier_wayfarer</code>, <code>tier_sojourner</code>,
+  <code>tier_mythwright</code>) and two a-la-carte SKUs (<code>sku_session</code>,
+  <code>sku_world</code>). Each entry is a <code>LookupKeySpec</code> declaring the lookup key
+  itself, a display name that matches the Stripe product name, the price type (<code
+    >recurring</code
+  >
+  for tiers, <code>one_time</code> for SKUs), and the credit-allocation contract — how many sessions
+  and worlds a successful purchase or billing cycle grants. The TypeScript union type
+  <code>LookupKey</code> is derived from the same five strings, so any code path that takes a lookup
+  key gets compile-time narrowing across the closed set.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Allocation lives in TypeScript, not in a database table</strong> — migration 006 dropped
+  the <code>subscription_tiers</code> and <code>session_packs</code> config tables that earlier
+  designs anchored the allocation against. A DB-resident config is right when operators need to
+  change values without a deploy; for Mythrun's pricing surface (five SKUs, hand-curated by Miklos,
+  no operator-tunable knob), the cost-of-change is dominated by the spec patch and the social
+  decision, not the table-edit ceremony. A checked-in TS enum gives type safety, code-review for
+  every change, and grep-ability across the codebase. If the surface ever grows beyond hand-curation
+  the contract can move back into a table without breaking consumers — they all flow through
+  <code>LOOKUP_KEYS</code>.
+</aside>
+
+<h3>The cached SDK client</h3>
+
+<p>
+  <code>stripe-client.ts</code> exports <code>getStripeClient(env)</code> — a module-level cache
+  that constructs one <code>Stripe</code> instance the first time it's called and returns it on
+  every subsequent call. The instance is pinned to <code>apiVersion: '2026-04-22.dahlia'</code>, the
+  Stripe API release line in force at MYT-41 design time. Bumping that version is a deliberate spec
+  patch: it changes webhook payload shapes and field names, the SDK type-narrows
+  <code>apiVersion</code> to a literal union of valid values, and the boot probe re-runs against the
+  new shape. Routine maintenance reviews Stripe's API changelog every six months; bumps happen only
+  when there's a feature Mythrun needs or a breaking change with a sunset date.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Pinned <code>apiVersion</code>, not "use whatever Stripe's account default is"</strong> —
+  Stripe lets you set a per-account default API version in the Dashboard, but that's an action at a
+  distance: a Dashboard click could silently change the shape of webhook payloads and SDK responses
+  the deployed binary saw the previous day. Pinning in code means the wire format is whatever the
+  binary was built against, full stop. Upgrading is a code change reviewed and rolled like any
+  other.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Module-level cache, no rotation API</strong> — the cache is process-scoped on purpose.
+  Rotating the Stripe key requires rolling the ECS service after Secrets Manager updates so the new
+  process picks up the new value at boot. There is no in-process "swap clients" path because there
+  is no in-process secret-rotation requirement, and adding one would split the contract surface.
+  Tests that need a different env mock the SDK at the import boundary (Vitest's
+  <code>vi.mock</code>); they do not reach into this cache.
+</aside>
+
+<h3>The boot probe and its four error classes</h3>
+
+<p>
+  <code>probe.ts</code> exports <code>probeStripeContract(stripe, logger)</code>. It runs
+  <code>stripe.prices.list</code> once with the closed-enum lookup keys as the filter,
+  <code>active: true</code>, and <code>expand: ['data.product']</code> so the response includes
+  whether each price's parent product is active. The probe verifies, for each lookup key, that the
+  Stripe response contains exactly one active price whose currency is <code>usd</code>, whose type
+  matches the enum (<code>recurring</code> vs <code>one_time</code>), whose
+  <code>unit_amount</code> is positive, whose <code>billing_scheme</code> is <code>per_unit</code>,
+  whose <code>transform_quantity</code> is <code>null</code>, whose <code>tax_behavior</code> is
+  <code>unspecified</code>, whose product is active, and — for tiers — whose
+  <code>recurring</code> shape is monthly licensed (<code>interval = 'month'</code>,
+  <code>interval_count = 1</code>, <code>usage_type = 'licensed'</code>). Each verified entry is
+  recorded in the module-level <a href="#the-sku-cache-and-its-public-projection">SKU cache</a> so
+  the rest of the system can resolve <code>lookup_key</code> ↔ <code>price_id</code> without hitting
+  Stripe at request time. The probe then performs a second contract check against the account's
+  default <a href="#the-customer-portal-config-probe">Customer Portal configuration</a>
+  to verify the asymmetric upgrade-immediate / downgrade-at-renewal shape downgrades depend on.
+</p>
+
+<p>The probe distinguishes four failure modes by throwing different typed errors:</p>
+
+<ul>
+  <li>
+    <code>BillingProbeAuthError</code> — Stripe replied 401/403. The fix is to rotate
+    <code>STRIPE_SECRET_KEY</code>; retrying won't help. Thrown immediately on
+    <code>StripeAuthenticationError</code> or <code>StripePermissionError</code>, no backoff.
+  </li>
+  <li>
+    <code>BillingProbeError</code> — Stripe replied with a price set that doesn't match the
+    contract. The error message lists every mismatch (missing lookup key, wrong currency, archived
+    product, duplicate active price under one lookup key, etc.). The fix is in the Stripe Dashboard,
+    not in code. Thrown after a single successful round-trip; no retry would change the answer.
+  </li>
+  <li>
+    <code>BillingProbeStripeAPIChangeError</code> — Stripe returned <code>has_more: true</code> on a
+    query bounded by the enum size. With at most five lookup keys, that's structurally impossible
+    against today's <code>prices.list</code> API; the only way it fires is if Stripe changes the API
+    contract. The fix is a code change to handle the new shape.
+  </li>
+  <li>
+    <code>BillingProbeTransientError</code> — Stripe replied with a 5xx, a network timeout, or a
+    rate-limit error. The probe retries up to three times with exponential backoff (<code
+      >1s, 2s, 4s</code
+    >) plus up to one second of jitter; only after the budget is exhausted does this error throw.
+    The fix is usually waiting; the throw still fails the deploy because starting a binary that
+    can't reach Stripe is worse than deferring the rollover.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Four error classes, not one generic "probe failed"</strong> — a single error class would
+  put the operator in front of a stack trace and force them to read it to know which knob to turn.
+  The four classes encode the actual decision tree on the error type: auth → rotate the secret;
+  contract → fix the Dashboard; API change → write code; transient → wait, then retry. Each class
+  carries a <code>bootId</code> (a UUID generated per probe invocation) so a CloudWatch query can
+  reconstruct one boot's probe events end-to-end across the four log lines the probe emits
+  (<code>billing.probe_started</code>, <code>billing.probe_transient_retry</code>,
+  <code>billing.probe_passed</code> / <code>billing.probe_failed</code> /
+  <code>billing.probe_auth_failed</code> / <code>billing.probe_transient_failed</code>).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Duplicate detection fails loud, not silent last-wins</strong> — if the Stripe Dashboard
+  ends up with two active prices under the same lookup key (a tired operator forgot to archive the
+  old one before creating the new), the SDK happily returns both. A naive
+  <code>map[lookup_key] = price</code> reduction would silently take whichever came last, and the
+  charged amount on the next purchase would be a coin flip. The probe counts occurrences first,
+  reports any lookup key with <code>n > 1</code> as a mismatch, and skips it from the per-price
+  contract checks so the diagnostic stays clean.
+</aside>
+
+<h3>The SKU cache and its public projection</h3>
+
+<p>
+  <code>sku-cache.ts</code> is a module-level snapshot the probe writes into on a successful pass: a
+  <code>byLookupKey</code> map and a <code>byPriceId</code> reverse map (both keyed on the
+  <code>SkuInternalEntry</code> shape, which carries <code>stripe_price_id</code> alongside the
+  display fields), plus a <code>publicListing</code> array of the same entries with
+  <code>stripe_price_id</code> stripped. The cache is process-scoped and never refreshed within a
+  process — a price drift in Stripe is caught at the next deploy boundary, when the new tasks re-run
+  the probe.
+</p>
+
+<p>
+  Three consumers read the cache:
+  <a href="./billing-routes.html">the <code>/api/billing/skus</code> route</a> serves the public
+  listing as a marketing-page payload; <a href="./billing-webhook.html">webhook handlers</a> use
+  <code>byPriceId</code> to resolve the <code>lookup_key</code> from a Stripe-side
+  <code>price.id</code> they receive on <code>invoice.paid</code>; the checkout and tier-upgrade
+  routes use <code>byLookupKey</code> to resolve the cart items' price IDs and to compare tier
+  amounts.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Internal vs public projection split</strong> — every Stripe price has an internal
+  <code>price_*</code> ID that the SDK needs and the marketing page does not. Returning the full
+  internal entry on the public route would expose a piece of catalogue plumbing on an
+  unauthenticated endpoint. Two projections — one with the price ID, one without — make the
+  least-disclosure principle structurally enforced rather than convention-enforced.
+</aside>
+
+<h3>The Customer Portal config probe</h3>
+
+<p>
+  After the prices-list pass, the probe runs a second contract check against
+  <code>stripe.billingPortal.configurations.list({ active: true, is_default: true })</code>. It
+  expects exactly one default config back and verifies three fields:
+  <code>features.subscription_update.proration_behavior === 'create_prorations'</code>,
+  <code>schedule_at_period_end.conditions</code> includes a
+  <code>{ type: 'decreasing_item_amount' }</code> entry (the asymmetry that defers downgrades to
+  period end while leaving upgrades to take effect immediately), and the per-tier
+  <code>products</code> allowlist isn't empty. A mismatch throws
+  <code>BillingProbePortalConfigError</code>; the deploy fails the same way a price-list mismatch
+  would.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The Portal carries downgrades; the API carries upgrades</strong> — Mythrun routes upgrades
+  through <code>POST /api/billing/upgrade-tier</code> because the upgrade path needs
+  <code>proration_date = current_period_start</code> to make the upgrade non-gameable, and the
+  Portal's <code>create_prorations</code> behavior doesn't expose that knob. Downgrades go through
+  Portal Switch Plan with <code>schedule_at_period_end</code>, which defers the change until the
+  period boundary so a user who downgrades on day 1 keeps their paid tier until day 30. The probe
+  verifies the Portal config carries this asymmetric shape; without it, downgrades would take effect
+  immediately and the user would lose tier access they'd already paid for.
+</aside>
+
+<h3>The boot-gate wiring</h3>
+
+<p>
+  <code>server.ts</code>'s boot-gate path runs the probe in a fixed sequence: load env (which
+  validates <code>STRIPE_SECRET_KEY</code>'s <code>rk_</code> prefix), open the pg pool and two
+  Redis clients, sequentially <code>waitFor</code> all three to return healthy, construct the cached
+  Stripe client, await <code>probeStripeContract</code>, then build the Fastify app and listen.
+  Anything thrown by the probe propagates out of <code>main()</code>'s try block, lands in the
+  catch, runs <code>closePartials</code> over the pg + redis clients, sets
+  <code>process.exitCode = 1</code>, and arms the five-second watchdog. The deploy pipeline sees the
+  non-zero exit, ECS marks the task unhealthy, and the
+  <a href="../infra/ci-cd.html">CircuitBreaker</a> rolls the deployment back. New tasks never go
+  into rotation with a broken billing contract.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Probe runs after data probes, before <code>app.listen</code></strong> — running it earlier
+  would race against pg/redis becoming reachable; running it later would mean the listening socket
+  is open before the probe has run, so a fast health check could mark a contract-broken task
+  healthy. Between <code>waitFor</code> and <code>listen</code> is the one slot where every
+  prerequisite is true and the failure-mode is "task crashes before serving traffic," which is
+  exactly what the deploy pipeline is shaped to roll back from.
+</aside>
+
+<h3>The restricted-key boundary</h3>
+
+<p>
+  <code>config/env.ts</code> rejects any <code>STRIPE_SECRET_KEY</code> that doesn't start with
+  <code>rk_</code>. Mythrun deploys with Stripe restricted keys (read on Prices, write on
+  Subscriptions and Customer-Portal sessions, nothing else); full-permission keys
+  (<code>sk_*</code>) are forbidden in deployed environments. The actual price-mutation boundary is
+  the restricted key itself — Stripe rejects any <code>prices.create</code>,
+  <code>products.update</code>, etc. at the API edge regardless of what the SDK call looks like —
+  but the env-load check catches the foot-gun where someone misrotates a full-permission key into
+  Secrets Manager. With a <code>sk_*</code> key in place, the boot probe (which is read-only) would
+  still pass, and the defense-in-depth stack would silently degrade to "we trust app code not to
+  mutate prices" instead of "Stripe rejects mutations at the network layer."
+</p>
+
+<p>
+  <code>STRIPE_WEBHOOK_SECRET</code> follows a softer rule: any non-empty value is accepted at
+  env-load. The actual gate is at the
+  <a href="./billing-webhook.html">webhook plugin's signature verification</a>:
+  <code>stripe.webhooks.constructEvent</code> is invoked unconditionally on every delivery; any
+  signature mismatch fails closed and returns 400. There is no bypass branch for the literal string
+  anywhere — a misconfigured secret produces a webhook that rejects every event Stripe sends, which
+  surfaces in the Stripe Dashboard's webhook attempts UI within minutes.
+</p>
+
+<h3>The ESLint AST tripwires</h3>
+
+<p>
+  <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code> is an AST rule that
+  pattern-matches <code>stripe.&lt;namespace&gt;.&lt;method&gt;(...)</code> calls and rejects any in
+  the banned set: <code>prices.create</code>, <code>prices.update</code>,
+  <code>products.create</code>, <code>products.update</code>, <code>products.del</code>,
+  <code>coupons.create</code>, <code>coupons.update</code>, <code>coupons.del</code>,
+  <code>promotionCodes.create</code>, <code>promotionCodes.update</code>.
+  <code>no-stripe-subscription-price-mutation.cjs</code> closes the
+  price-change-via-subscription-item-update backdoor: any call shaped like
+  <code>stripe.subscriptions.update(id, { items: [{ price: 'price_X' }] })</code> trips the rule.
+  Quantity-only item updates and other subscription-update fields
+  (<code>cancel_at_period_end</code>, <code>metadata</code>, <code>pause_collection</code>) remain
+  allowed — the restricted key needs Subscriptions: write for the cancel flows.
+</p>
+
+<p>
+  Both rules are registered under the <code>mythrun</code> plugin namespace in
+  <code>eslint.config.js</code> at <code>error</code> severity, so a violation fails
+  <code>pnpm lint</code> in CI. A config-wiring smoke test under
+  <code>backend/eslint-rules/__tests__/</code> spawns a child eslint pointed at a banned-pattern
+  fixture and expects a non-zero exit with the rule name in the output — catches the failure mode
+  where a rule ships but isn't registered.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Code-review tripwire on top of the restricted key, not instead of it</strong> — the
+  restricted key is the actual security boundary; the ESLint rules are a redundant
+  catch-it-at-review layer. Pattern-evasion paths the rules don't catch (bracket access
+  <code>stripe['products']['create'](...)</code>, alias rebinding, <code>(stripe as any)</code>
+  casts) are documented at the top of each rule. None of those paths get past the restricted key.
+  The rules' value is "an honest mistake in a PR shows up as a lint failure on the diff," not "this
+  is what makes mutation impossible."
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</h3>
+<ol>
+  <li>
+    Mint a new restricted key in the Stripe Dashboard with the same scope (<code>Prices: read</code
+    >, <code>Products: read</code>, <code>Subscriptions: write</code>,
+    <code>Checkout sessions: write</code>, <code>Billing portal: write</code>,
+    <code>Customers: read+write</code>, <code>Webhooks endpoints: read</code>; nothing in the
+    Prices: write or Products: write columns).
+  </li>
+  <li>
+    Write the new value to the per-env Secrets Manager shell:
+    <code
+      >aws secretsmanager put-secret-value --secret-id mythrun/&lt;env&gt;/stripe-secret-key
+      --secret-string &lt;value&gt;</code
+    >. The shell has <code>ignore_changes = [secret_string]</code> on its Terraform version, so this
+    write is safe and out-of-band — Terraform won't try to overwrite it.
+  </li>
+  <li>
+    Roll the API service so running tasks pick up the new secret on their next boot:
+    <code
+      >aws ecs update-service --cluster mythrun --service mythrun-&lt;env&gt;-api
+      --force-new-deployment</code
+    >. The boot probe re-runs against the new key. If the new key's permissions are wrong, you'll
+    see <code>BillingProbeAuthError</code> in CloudWatch and the deployment will roll back.
+  </li>
+  <li>
+    Once the rollover completes, revoke the old key in the Stripe Dashboard. Don't reverse the order
+    — revoking before the rollover finishes will fail a probe mid-flight.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-failed-billing-probe">Diagnose a failed billing probe</h3>
+<ol>
+  <li>
+    Find the <code>billing.probe_failed</code> / <code>billing.probe_auth_failed</code> /
+    <code>billing.probe_transient_failed</code> log line in CloudWatch — every probe carries a
+    <code>bootId</code> UUID for cross-line correlation:
+    <pre><code>filter event like /billing.probe/
+| fields @timestamp, event, bootId, mismatchCount, mismatches, err
+| sort @timestamp desc
+| limit 50</code></pre>
+  </li>
+  <li>
+    <code>billing.probe_auth_failed</code> → the restricted key is wrong, expired, or its scope
+    doesn't include Prices: read. Mint a new key (see above) or check the Dashboard for the
+    permissions on the existing one.
+  </li>
+  <li>
+    <code>billing.probe_failed</code> with a <code>mismatches</code> array → Stripe's catalog
+    drifted from the contract. Each mismatch names the lookup key and what's wrong (missing,
+    duplicate, wrong currency, archived product, etc.). The fix is in the Stripe Dashboard: archive
+    duplicates, reactivate products, repoint lookup keys to active prices.
+  </li>
+  <li>
+    <code>billing.probe_transient_failed</code> after three retries → Stripe is having a bad minute,
+    or the VPC's NAT egress is degraded. Check
+    <a href="https://status.stripe.com">status.stripe.com</a>; re-run the deploy once Stripe
+    recovers.
+  </li>
+  <li>
+    <code>BillingProbeStripeAPIChangeError</code> → Stripe changed the <code>prices.list</code> API
+    contract. This requires a code change in <code>probe.ts</code> to handle the new shape; check
+    Stripe's API changelog for the breaking change and bump <code>STRIPE_API_VERSION</code> in
+    <code>stripe-client.ts</code> alongside the fix.
+  </li>
+</ol>
+
+<h3 id="add-a-new-tier-or-sku">Add a new tier or SKU</h3>
+<ol>
+  <li>
+    Pick a lookup key that follows the existing convention (<code>tier_*</code> for recurring,
+    <code>sku_*</code> for one-time). Add the entry to <code>LOOKUP_KEYS</code> in
+    <code>backend/src/billing/lookup-keys.ts</code> with the display name, type, and
+    credit-allocation contract.
+  </li>
+  <li>
+    In the Stripe Dashboard (test mode first, then production after launch), create the product, a
+    price under it, and set the price's <code>lookup_key</code> to match the enum value. Confirm the
+    price is monthly licensed for tiers, USD, no tax handling, no quantity transformation.
+  </li>
+  <li>
+    Run <code>pnpm dev</code> locally with the test-mode key in
+    <code>backend/.env.development</code>. The boot probe should log
+    <code>billing.probe_passed</code> with the new count. If it logs
+    <code>billing.probe_failed</code>, the Dashboard shape doesn't match — fix it there.
+  </li>
+  <li>
+    Ship the code change through the normal deploy pipeline. The probe re-runs against staging's
+    Stripe account on every deploy, then against production's. A drift between the two surfaces as a
+    probe failure on the second deploy.
+  </li>
+  <li>
+    If <code>LOOKUP_KEYS</code> ever grows past 100 entries, the probe needs pagination — there's a
+    static guardrail at the top of <code>probe.ts</code> that throws a load-time error well before
+    the Stripe API's 100-element <code>lookup_keys</code> filter cap silently truncates.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The two Stripe secrets live in <a href="../infra/data.html">Secrets Manager</a> as per-env shells
+  and are wired into the API task definition by the
+  <a href="../infra/serving.html">serving module</a>; rotating them follows the
+  <a href="../infra/serving.html#rotate-the-manual-secret-values">manual-secret rotation runbook</a>
+  on the serving page. The boot probe runs inside the
+  <a href="../runtime/index.html#the-boot-gate-on-in-staging">backend's boot gate</a>; a probe throw
+  uses the same fail-closed-and-rollback path as a pg/Redis probe failure. The
+  <a href="./billing-webhook.html">webhook plugin</a> is the request-time consumer of
+  <code>STRIPE_WEBHOOK_SECRET</code> and the <code>byPriceId</code> reverse map, and the
+  <a href="./billing-routes.html">billing routes</a> consume the cached SKU listing for the public
+  catalogue and resolve cart items via <code>byLookupKey</code>. The
+  <a href="../data/schema.html">schema</a>'s migration 007 holds the four billing tables the webhook
+  handlers write to (<code>purchases</code>, <code>user_subscriptions</code>,
+  <code>billing_history</code>, plus the new FK columns on <code>credit_ledger</code>); the
+  <a href="../data/repository.html">repository layer</a> exposes the matching namespaces.
+</p>
+
+<h2>Appendix: inputs &amp; outputs</h2>
+
+<h3>Lookup keys</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Lookup key</th>
+      <th>Type</th>
+      <th>Sessions</th>
+      <th>Worlds</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>tier_wayfarer</code></td>
+      <td>recurring (monthly)</td>
+      <td>4 / cycle</td>
+      <td>1 / cycle</td>
+    </tr>
+    <tr>
+      <td><code>tier_sojourner</code></td>
+      <td>recurring (monthly)</td>
+      <td>8 / cycle</td>
+      <td>2 / cycle</td>
+    </tr>
+    <tr>
+      <td><code>tier_mythwright</code></td>
+      <td>recurring (monthly)</td>
+      <td>16 / cycle</td>
+      <td>4 / cycle</td>
+    </tr>
+    <tr>
+      <td><code>sku_session</code></td>
+      <td>one_time</td>
+      <td>1 / purchase</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <td><code>sku_world</code></td>
+      <td>one_time</td>
+      <td>1 / purchase</td>
+      <td>1 / purchase</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Probe error classes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Error</th>
+      <th>Trigger</th>
+      <th>Retry?</th>
+      <th>Fix</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>BillingProbeAuthError</code></td>
+      <td>401 / 403 from Stripe</td>
+      <td>No</td>
+      <td>Rotate <code>STRIPE_SECRET_KEY</code></td>
+    </tr>
+    <tr>
+      <td><code>BillingProbeError</code></td>
+      <td>Catalog mismatch (missing, duplicate, wrong shape)</td>
+      <td>No</td>
+      <td>Fix Stripe Dashboard</td>
+    </tr>
+    <tr>
+      <td><code>BillingProbeStripeAPIChangeError</code></td>
+      <td><code>has_more: true</code> on enum-bounded query</td>
+      <td>No</td>
+      <td>Code change in <code>probe.ts</code></td>
+    </tr>
+    <tr>
+      <td><code>BillingProbeTransientError</code></td>
+      <td>5xx / timeout / rate-limit, after 3 attempts</td>
+      <td>3 attempts with 1/2/4s + jitter</td>
+      <td>Wait for Stripe; redeploy</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Environment variables</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Var</th>
+      <th>Validation</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>STRIPE_SECRET_KEY</code></td>
+      <td>Required, must start with <code>rk_</code></td>
+      <td>Restricted key only. Full-permission <code>sk_*</code> keys rejected at env load.</td>
+    </tr>
+    <tr>
+      <td><code>STRIPE_WEBHOOK_SECRET</code></td>
+      <td>Required, any non-empty string</td>
+      <td>
+        Consumed by the <a href="./billing-webhook.html">webhook plugin</a> at request time;
+        signature mismatch fails closed.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Probe log events</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>Level</th>
+      <th>Fields (in addition to <code>bootId</code>)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>billing.probe_started</code></td>
+      <td>info</td>
+      <td><code>count</code> (number of lookup keys)</td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_transient_retry</code></td>
+      <td>warn</td>
+      <td><code>attempt</code>, <code>nextDelayMs</code>, <code>err</code></td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_passed</code></td>
+      <td>info</td>
+      <td><code>count</code></td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_failed</code></td>
+      <td>error</td>
+      <td><code>mismatchCount</code>, <code>mismatches</code> (array of human-readable diffs)</td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_auth_failed</code></td>
+      <td>error</td>
+      <td><code>err</code> (the message of the underlying StripeAuthenticationError)</td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_transient_failed</code></td>
+      <td>error</td>
+      <td><code>attempts</code>, <code>err</code> (last error after retry exhaustion)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/billing/lookup-keys.ts</code>,
+  <code>backend/src/billing/stripe-client.ts</code>, <code>backend/src/billing/probe.ts</code>,
+  <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/config/env.ts</code>,
+  <code>backend/src/server.ts</code>,
+  <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code>,
+  <code>backend/eslint-rules/no-stripe-subscription-price-mutation.cjs</code>,
+  <code>eslint.config.js</code>.
+</p>

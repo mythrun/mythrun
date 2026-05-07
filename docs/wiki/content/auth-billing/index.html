@@ -4,12 +4,23 @@
   session credit is metered, and how Stripe fits in.
 </p>
 <p>
-  Two pages in this section so far: <a href="./identity.html">Identity</a> — the Cognito User Pool,
-  the PKCE public App Client, the Hosted UI domain, and the Google + Discord OIDC providers that
-  back federated sign-in; and <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify
-  plugin family that validates Cognito access tokens at the edge, the bypass mode for local dev with
-  its six-layer defense against accidental activation, and the <code>requireUser</code> narrowing
-  helper protected handlers reach through. The user-bootstrap-on-first-login flow, the
-  <code>loadCurrentUser</code> DB-lookup plugin, the credits ledger, and Stripe webhooks all land as
-  those layers ship.
+  Six pages in this section: <a href="./identity.html">Identity</a> — the Cognito User Pool, the
+  PKCE public App Client, the Hosted UI domain, and the Google + Discord OIDC providers that back
+  federated sign-in; <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify plugin family
+  that validates Cognito access tokens at the edge, the boot-time public-route allowlist hook, the
+  bypass mode for local dev, and the <code>requireUser</code> narrowing helper protected handlers
+  reach through; <a href="./onboarding.html">Onboarding &amp; invites</a> — the first-login flow
+  that creates the <code>users</code> row, the <code>requireOnboarded</code> gate, and the six
+  invite routes that let a DM-owner pull others into a campaign by sharing a 12-character code;
+  <a href="./stripe-contract.html">Stripe contract</a> — the closed enum of
+  <code>lookup_key</code>s, the cached SDK client pinned to one API version, the read-only boot
+  probe (prices + Customer Portal config) that fails closed if Stripe's catalog drifts, the
+  module-level SKU cache the rest of the system reads, and the restricted-key boundary that makes
+  price mutation impossible on the wire; <a href="./billing-webhook.html">Billing webhook</a> — the
+  encapsulated Stripe-webhook plugin with its raw-body parser, the api-version-gated dispatcher, and
+  the eight per-event handlers that turn Stripe deliveries into Mythrun state (purchases,
+  subscription state, audit feed, credit grants, refund clawbacks); and
+  <a href="./billing-routes.html">Billing routes</a> — the seven HTTP routes that comprise the
+  player-facing billing surface (skus, balance, subscription, history, checkout, portal, and the
+  <code>pending_if_incomplete</code> tier upgrade).
 </p>
