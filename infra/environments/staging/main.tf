@@ -141,6 +141,11 @@ module "auth" {
   # production mythrun.com URLs onto a separate prod App Client.
   callback_urls = ["http://localhost:5173/auth/callback"]
   logout_urls   = ["http://localhost:5173"]
+
+  # Native Cognito test user for staging smoke testing. Generated password
+  # lives in Secrets Manager at mythrun/staging/smoke-test-credentials.
+  # Production composition leaves this at the default (false).
+  smoke_test_user_enabled = true
 }
 
 # ======== Bootstrap-DB Task Definition ========

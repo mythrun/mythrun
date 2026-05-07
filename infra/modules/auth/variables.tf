@@ -35,3 +35,9 @@ variable "logout_urls" {
     error_message = "logout_urls must contain at least one URL — Cognito's App Client requires a non-empty allowlist."
   }
 }
+
+variable "smoke_test_user_enabled" {
+  description = "Provisions a native Cognito test user (smoke-test@mythrun.com) plus a Secrets Manager entry holding its credentials. Staging-only — production composition leaves this at the default. See infra/modules/auth/smoke-test.tf."
+  type        = bool
+  default     = false
+}
