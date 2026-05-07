@@ -14,6 +14,7 @@ export interface Env {
   readonly frontendBaseUrl: string
   readonly stripeSecretKey: string
   readonly stripeWebhookSecret: string
+  readonly anthropicApiKey: string
 }
 
 // Dev (.env.development) sets DATABASE_URL / REDIS_REALTIME_URL /
@@ -145,6 +146,24 @@ function validateStripeSecretKey(raw: string | undefined): string {
   return raw
 }
 
+// All Anthropic API keys carry the sk-ant- prefix (test and live). Misconfiguring
+// the env (pasting a Stripe key, a half-rotated value, or an empty string from
+// a missing secret) would surface as a runtime 401 from the Anthropic SDK only
+// once the first LLM call fires — long after boot. Catching prefix mismatch at
+// env-load makes the failure mode loud, immediate, and obvious.
+function validateAnthropicApiKey(raw: string | undefined): string {
+  if (raw === undefined || raw.length === 0) {
+    throw new Error('ANTHROPIC_API_KEY is required')
+  }
+  if (!raw.startsWith('sk-ant-')) {
+    throw new Error(
+      `ANTHROPIC_API_KEY must have sk-ant- prefix; got prefix '${raw.slice(0, 7)}'. ` +
+        `Pull a key from Anthropic Console (test keys are fine for non-prod).`,
+    )
+  }
+  return raw
+}
+
 // PLACEHOLDER literal is permitted in the MYT-41 → MYT-42 window. MYT-42's
 // webhook handler verifies via stripe.webhooks.constructEvent unconditionally;
 // any signature mismatch fails closed regardless of whether the secret is
@@ -227,6 +246,7 @@ export function loadEnv(): Env {
   )
   const stripeSecretKey = validateStripeSecretKey(process.env.STRIPE_SECRET_KEY)
   const stripeWebhookSecret = validateStripeWebhookSecret(process.env.STRIPE_WEBHOOK_SECRET)
+  const anthropicApiKey = validateAnthropicApiKey(process.env.ANTHROPIC_API_KEY)
   return Object.freeze({
     databaseUrl: buildDatabaseUrl(),
     redisRealtimeUrl: buildRedisUrl('realtime'),
@@ -236,5 +256,6 @@ export function loadEnv(): Env {
     frontendBaseUrl,
     stripeSecretKey,
     stripeWebhookSecret,
+    anthropicApiKey,
   })
 }

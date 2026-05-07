@@ -408,3 +408,28 @@ describe('loadEnv — Stripe fields', () => {
     expect(() => loadEnv()).toThrow(/STRIPE_WEBHOOK_SECRET/)
   })
 })
+
+describe('loadEnv — ANTHROPIC_API_KEY', () => {
+  beforeEach(() => {
+    SAFE_BASE()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('throws when ANTHROPIC_API_KEY is missing', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    expect(() => loadEnv()).toThrow('ANTHROPIC_API_KEY is required')
+  })
+
+  it('throws when ANTHROPIC_API_KEY does not have sk-ant- prefix', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'wrong-prefix-abc')
+    expect(() => loadEnv()).toThrow(/ANTHROPIC_API_KEY must have sk-ant- prefix/)
+  })
+
+  it('accepts a key with sk-ant- prefix and exposes anthropicApiKey', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test-key')
+    const env = loadEnv()
+    expect(env.anthropicApiKey).toBe('sk-ant-test-key')
+  })
+})

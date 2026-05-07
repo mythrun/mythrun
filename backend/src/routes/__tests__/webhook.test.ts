@@ -49,6 +49,7 @@ function buildStubEnv(webhookSecret: string): Env {
     frontendBaseUrl: 'http://localhost:5173',
     stripeSecretKey: 'rk_test_unit_test_secret_key',
     stripeWebhookSecret: webhookSecret,
+    anthropicApiKey: 'sk-ant-unit-test-key',
   })
 }
 

@@ -21,6 +21,7 @@ export function makeStubEnv(overrides: Partial<Env> = {}): Env {
     frontendBaseUrl: 'http://localhost:5173',
     stripeSecretKey: 'rk_test_stub_secret_key',
     stripeWebhookSecret: 'PLACEHOLDER',
+    anthropicApiKey: 'sk-ant-stub-test-key',
     ...overrides,
   })
 }
