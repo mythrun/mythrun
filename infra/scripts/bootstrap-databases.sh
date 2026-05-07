@@ -18,6 +18,8 @@
 #   --reset-password  Alias of --secret-only: rotate password + write secret.
 #                     Use when the stored secret is known-wrong (drift) rather
 #                     than missing.
+#   --grant-only      DB + user + secret all exist but the user lacks CREATE on
+#                     schema public (Postgres 15+ default ACL). Idempotent.
 #
 # Required env vars (injected via ECS task role):
 #   AWS_REGION                us-east-1
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --user-only)      set_mode "user-only"; shift ;;
     --secret-only)    set_mode "secret-only"; shift ;;
     --reset-password) set_mode "reset-password"; shift ;;
+    --grant-only)     set_mode "grant-only"; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -152,6 +155,8 @@ GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
 REVOKE ALL PRIVILEGES ON DATABASE $DB_NAME FROM PUBLIC;
 SQL
 
+  grant_public_schema_create
+
   aws secretsmanager put-secret-value \
     --secret-id "$APP_SECRET_ID" \
     --secret-string "$pw" \
@@ -168,9 +173,25 @@ create_user_only() {
 CREATE USER $DB_USER WITH PASSWORD :'app_pw';
 GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
 SQL
+  grant_public_schema_create
   aws secretsmanager put-secret-value \
     --secret-id "$APP_SECRET_ID" --secret-string "$pw" --region "$AWS_REGION" >/dev/null
   echo "Created user $DB_USER and populated $APP_SECRET_ID"
+}
+
+# Postgres 15+ requires explicit CREATE on schema public for non-owner users
+# (the default ACL revoked PUBLIC's CREATE rights). Without this grant the
+# migration runner can't even create its `_migrations` tracking table —
+# observed as `permission denied for schema public` (SQLSTATE 42501).
+#
+# The grant must be issued while connected to the target database (per-DB
+# schema), so we open a fresh psql connection against $DB_NAME rather than
+# reusing PSQL_MASTER (which targets the maintenance `postgres` DB).
+grant_public_schema_create() {
+  psql --host="$RDS_HOST" --port="$RDS_PORT" --username="$MASTER_USER" \
+    --dbname="$DB_NAME" --no-password --tuples-only --no-align <<SQL
+GRANT USAGE, CREATE ON SCHEMA public TO $DB_USER;
+SQL
 }
 
 rotate_password() {
@@ -202,4 +223,6 @@ case "$MODE" in
   user-only)    create_user_only ;;
   secret-only)  rotate_password ;;
   reset-password) rotate_password ;;
+  grant-only)   grant_public_schema_create
+                echo "Granted USAGE, CREATE on schema public to $DB_USER in $DB_NAME." ;;
 esac
