@@ -1,0 +1,55 @@
+digraph llm {
+  // The LLM layer at backend/src/llm/. Mythrun-owned code is a thin shell
+  // around Vercel AI SDK v6: tier-named model constants, a logging +
+  // error-normalization middleware, a typed error taxonomy, a prompt-template
+  // loader, and the first call site (classifyProfanity). Everything else —
+  // retries, structured output, request/response serialization — is the SDK.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  caller [label="caller\n(routes/users.ts,\nfuture FT/ST/Scribe)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_owned {
+    label="backend/src/llm/  (Mythrun-owned)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    profanity [label="profanity.ts\nclassifyProfanity(text)\ngenerateText + Output.object"];
+    schema    [label="schemas/profanity.ts\nProfanitySchema (Zod)\n{ profane, reason? }"];
+    prompts   [label="prompts.ts + prompts/auth/profanity.txt\nloadPrompt(area, name, vars)\ncached at first read"];
+
+    models    [label="models.ts\nHAIKU / SONNET / OPUS\nwrapLanguageModel(...)"];
+    middleware [label="middleware.ts\nlogAndNormalizeMiddleware\nwraps doGenerate"];
+    logger     [label="logger.ts\npino { component: 'llm' }"];
+    errors     [label="errors.ts\n7 typed classes +\nmapToMythrunError"];
+  }
+
+  subgraph cluster_sdk {
+    label="Vercel AI SDK v6  (vendored)";
+    style="dotted";
+
+    sdk_text  [label="generateText\n+ Output.object({schema})\nretries, validation"];
+    sdk_anth  [label="@ai-sdk/anthropic\nreads ANTHROPIC_API_KEY"];
+  }
+
+  anthropic [label="Anthropic API\nclaude-haiku-4-5\nclaude-sonnet-4-6\nclaude-opus-4-7", color="ember", fontcolor="ember"];
+
+  // Caller path
+  caller    -> profanity   [label="classifyProfanity(text)"];
+  profanity -> schema      [label="ProfanitySchema", style=dashed];
+  profanity -> prompts     [label="loadPrompt('auth','profanity')", style=dashed];
+  profanity -> sdk_text    [label="model: HAIKU\noutput: Output.object\nsystem + prompt"];
+
+  // Model wrapping
+  sdk_text -> models       [label="model resolution"];
+  models   -> middleware   [label="wraps doGenerate"];
+  middleware -> logger     [label="event: 'llm.call' /\n'llm.error'", style=dashed];
+  middleware -> errors     [label="mapToMythrunError(err)", style=dashed];
+
+  // SDK to provider
+  sdk_text -> sdk_anth     [label="provider call"];
+  sdk_anth -> anthropic    [label="HTTPS"];
+}

@@ -56,10 +56,10 @@ digraph onboarding {
   }
 
   subgraph cluster_llm {
-    label="profanity (stub today; Haiku in MYT-44)";
+    label="profanity (Haiku via the LLM client)";
     style="dotted";
 
-    profanity [label="classifyProfanity(text)\nreserved set + seed substring\n→ MYT-44 fast-path"];
+    profanity [label="classifyProfanity(text)\ngenerateText + Output.object\n→ { profane, reason? }"];
   }
 
   pg [label="Postgres\nusers, campaigns,\ncampaign_members,\ncampaign_invites", color="ember", fontcolor="ember"];

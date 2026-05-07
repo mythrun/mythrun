@@ -6,11 +6,10 @@
 <!-- source: backend/src/repo/invites-errors.ts -->
 <!-- source: backend/src/repo/campaigns.ts -->
 <!-- source: backend/src/llm/profanity.ts -->
-<!-- source: backend/src/llm/profanity-seed-en.txt -->
 <!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
 <!-- source: backend/src/app.ts -->
-<!-- source-hash: sha256:8fceec68eca1525bb467cfb280fe2c05f376609234f12458c5188990d7f4b189 -->
-<!-- last-ticket: MYT-38 -->
+<!-- source-hash: sha256:15f5cd46c65d053d4978187687d6f9bfb81bbca507168f48e00f4bf1090066e5 -->
+<!-- last-ticket: MYT-44 -->
 
 <h1>Onboarding &amp; Invites</h1>
 
@@ -35,7 +34,7 @@
   that builds on it.
 </p>
 
-<p>Two HTTP route groups, one Fastify hook, one repo namespace, and one stub LLM call:</p>
+<p>Two HTTP route groups, one Fastify hook, one repo namespace, and one Haiku-backed classifier:</p>
 
 <ul>
   <li>
@@ -63,8 +62,9 @@
     the load-bearing transaction at the heart of the join flow.
   </li>
   <li>
-    <strong><code>classifyProfanity</code></strong> — a static reserved-name + seed-substring stub
-    today, with the production Haiku call landing in MYT-44.
+    <strong><code>classifyProfanity</code></strong> — a single Haiku call against the
+    <a href="../runtime/llm.html">LLM client</a> that flags both offensive content and impersonation
+    in one round-trip.
   </li>
 </ul>
 
@@ -158,11 +158,11 @@
 <p>
   A unique-violation on <code>users_username_lower_key</code> (the case-insensitive expression index
   from <a href="../data/schema.html">migration 005</a>) means "this username is taken." The handler
-  generates a <code>${requested}${100..999}</code> suggestion, runs it through the profanity check
-  up to 3 times, and returns 409 with <code>{ code: 'username_taken', suggestion }</code>.
-  Generating a non-profane suggestion deterministically requires the loop because seed-substring
-  matches occasionally fire on the digit-suffixed shape; three attempts is enough for the static
-  stub and will tighten when MYT-44's Haiku swap lands.
+  generates a <code>${requested}${100..999}</code> suggestion, runs it through
+  <code>classifyProfanity</code> up to 3 times, and returns 409 with
+  <code>{ code: 'username_taken', suggestion }</code>. The retry budget exists because Haiku
+  occasionally rejects a digit-suffixed variant as borderline-offensive even when the original
+  passed; three rerolls reaches a clean candidate in nearly every observed case.
 </p>
 
 <aside class="wiki-rationale">
@@ -178,9 +178,9 @@
 <p>
   Same validation pipeline as register, minus the create. Returns
   <code>{ available: true }</code> or
-  <code>{ available: false, reason: 'format' | 'reserved' | 'profane' | 'taken' }</code>. The route
-  exists for the SPA's "as-you-type" feedback on the username picker — the user shouldn't have to
-  POST a register attempt to learn that <code>admin</code> is reserved.
+  <code>{ available: false, reason: 'format' | 'offensive' | 'impersonation' | 'taken' }</code>. The
+  route exists for the SPA's "as-you-type" feedback on the username picker — the user shouldn't have
+  to POST a register attempt to learn that <code>admin</code> is rejected.
 </p>
 
 <aside class="wiki-rationale">
@@ -329,41 +329,65 @@
   namespace ships.
 </p>
 
-<h2>The profanity stub</h2>
+<h2>The profanity classifier</h2>
 
 <p>
   <code>backend/src/llm/profanity.ts</code> exports
-  <code>classifyProfanity(text): Promise&lt;ProfanityResult&gt;</code> with two layers:
+  <code>classifyProfanity(text): Promise&lt;ProfanityResult&gt;</code> — a single Haiku call against
+  the <a href="../runtime/llm.html">LLM client</a> that classifies the input across two rejection
+  categories:
 </p>
 
 <ul>
   <li>
-    <strong>RESERVED_USERNAMES</strong> — a small case-insensitive exact-match set of names that
-    impersonate Mythrun, its vendors, or system roles (<code>admin</code>, <code>support</code>,
-    <code>mythrun</code>, <code>anthropic</code>, <code>stripe</code>, <code>aws</code>,
-    <code>cognito</code>, <code>root</code>, <code>noreply</code>, <code>me</code>,
-    <code>null</code>, <code>undefined</code>, …). Hits return
-    <code>{ profane: true, reason: 'reserved' }</code>.
+    <code>{ profane: true, reason: 'offensive' }</code> — profanity, slurs, sexual content, hate
+    speech, or explicit references to violence.
   </li>
   <li>
-    <strong>profanity-seed-en.txt</strong> — a curated subset of the Shutterstock
-    <code>LDNOOBW</code> English list, loaded at module import. Each line is lowercase and
-    substring-matched. Hits return <code>{ profane: true, reason: 'profane' }</code>.
+    <code>{ profane: true, reason: 'impersonation' }</code> — a system role (<code>admin</code>,
+    <code>support</code>, <code>moderator</code>, <code>root</code>), the Mythrun brand or staff, or
+    a technical identifier (<code>noreply</code>, <code>null</code>, <code>undefined</code>,
+    <code>system</code>).
+  </li>
+  <li>
+    <code>{ profane: false }</code> otherwise. <code>reason</code> is omitted on the clean path.
   </li>
 </ul>
 
+<p>
+  Implementation is ten lines of body: load the system prompt from
+  <code>prompts/auth/profanity.txt</code>, call <code>generateText</code> with
+  <code>output: Output.object({ schema: ProfanitySchema })</code> against <code>HAIKU</code>, return
+  <code>result.output</code>. The schema is a tiny Zod object the SDK validates on the way back; an
+  unparseable response surfaces as <code>LlmStructuredOutputError</code> at the route layer (502).
+  The call is unconditionally awaited from the route handler before any database work, and runs
+  outside any open transaction so the 200-800 ms LLM latency doesn't pin a connection.
+</p>
+
 <aside class="wiki-rationale">
-  <strong>Two layers and a Promise return shape today, even though the body is sync</strong> —
-  MYT-44 swaps the body for an Anthropic Haiku call (per ZFC: when in doubt, call Haiku), and Haiku
-  is async by nature. Shipping the contract as a Promise now means the swap is a one-file change
-  instead of a route-by-route refactor. The static layers stay as the fast-path defense even after
-  Haiku lands — exact-match reserved names and obvious slurs don't need an LLM round-trip.
+  <strong>One Haiku call, no static fallback list</strong> — the previous MYT-38 stub kept a small
+  reserved-username set and a substring-matched LDNOOBW seed list. Both were ZFC-violating
+  heuristics — pattern-matching delegated to local code instead of to the model. The single Haiku
+  call covers both rejection categories in one round-trip; the prompt instructs the model to prefer
+  <code>'offensive'</code> when both categories apply. Cost is trivial (~50 input + ~10 output
+  tokens, ~$0.0001 per registration at Haiku pricing); 10K registrations/month is ~$1.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Reason vocabulary changed alongside the rewire</strong> — the old enum (<code
+    >'reserved'</code
+  >
+  | <code>'profane'</code>) named the static-list mechanism. The new enum (<code>'offensive'</code>
+  | <code>'impersonation'</code>) names the conceptual category the model decided on. This is a
+  breaking change for any consumer that branches on the value, but only the route layer reads it
+  today, and routes were updated in lock-step.
 </aside>
 
 <p>
-  The full <code>LDNOOBW</code> English list folds in before public launch; today's seed is
-  intentionally minimal (the project is pre-launch, no real users, no exposure surface for the
-  gaps). <code>tracking bead myth-urh6</code> tracks the swap.
+  The function is gated behind the LLM client's
+  <a href="../runtime/llm.html#configuration-anthropic_api_key"><code>ANTHROPIC_API_KEY</code></a>
+  env var; integration tests <code>vi.mock('../llm/profanity.js')</code> to avoid hitting the live
+  API.
 </p>
 
 <h2>Rate limits per route</h2>
@@ -523,9 +547,9 @@
   the minimal-claims user shape and the case-insensitive username index this layer relies on. The
   <a href="../runtime/index.html">backend runtime</a> page describes the
   <code>buildApp</code> wiring that registers <code>requireOnboarded</code>, the rate-limit plugin,
-  and these route groups in order. Future work: MYT-44 replaces the profanity stub with a Haiku
-  call; MYT-45 swaps rate-limit storage to Redis; the SPA's first-login screen and invite-landing
-  page consume these endpoints.
+  and these route groups in order. The <a href="../runtime/llm.html">LLM client</a> page describes
+  the wrapper layer <code>classifyProfanity</code> sits on. Future work: MYT-45 swaps rate-limit
+  storage to Redis; the SPA's first-login screen and invite-landing page consume these endpoints.
 </p>
 
 <h2>Appendix: HTTP surface</h2>
@@ -560,7 +584,9 @@
       <td>10/min</td>
       <td>
         <code>{ available: true }</code> or
-        <code>{ available: false, reason: 'format' | 'reserved' | 'profane' | 'taken' }</code>
+        <code
+          >{ available: false, reason: 'format' | 'offensive' | 'impersonation' | 'taken' }</code
+        >
       </td>
     </tr>
     <tr>
@@ -734,6 +760,6 @@
   <code>backend/src/auth/require-onboarded.ts</code>,
   <code>backend/src/auth/onboarding-errors.ts</code>, <code>backend/src/repo/invites.ts</code>,
   <code>backend/src/repo/invites-errors.ts</code>, <code>backend/src/repo/campaigns.ts</code>,
-  <code>backend/src/llm/profanity.ts</code>, <code>backend/src/llm/profanity-seed-en.txt</code>,
+  <code>backend/src/llm/profanity.ts</code>,
   <code>backend/migrations/005_drop_profile_columns_users.sql</code>.
 </p>

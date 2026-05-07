@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:6b74eb8ba731b3a84a51accac4944313a100ad85b2cdc188bacca2a782f40278 -->
-<!-- last-ticket: MYT-42 -->
+<!-- source-hash: sha256:d6f0bb8e5260b8720c218d7eb36af63ac2f69c6b5b273280887a927cc39c4e36 -->
+<!-- last-ticket: MYT-44 -->
 
 <h1>Backend</h1>
 
@@ -613,10 +613,14 @@
   <code>loadEnv</code>'s component-form branch consumes and that the boot gate — once enabled —
   probes. The <a href="../data/repository.html">repository layer</a> is the <code>repo</code> dep on
   <code>AppDeps</code> — composed over the same <code>pg</code> the boot gate opens, threaded into
-  <code>buildApp</code>, the seam every future route handler will reach the database through.
-  Cognitive-tier code (Fast Thinker, Slow Thinker, Scribe, DM Trigger) lands as additional modules
-  under <code>backend/src/</code>; they'll share this server's lifecycle,
-  <code>AppDeps</code> shape, and Dockerfile.
+  <code>buildApp</code>, the seam every future route handler will reach the database through. The
+  <a href="./llm.html">LLM client</a> at <code>backend/src/llm/</code> is the first cognitive-stack
+  module — a thin shell over Vercel AI SDK v6 with tier-named model constants, logging +
+  error-normalization middleware, a typed error taxonomy, and a file-based prompt loader.
+  <code>config/env.ts</code> validates <code>ANTHROPIC_API_KEY</code> at boot alongside the database
+  and Stripe secrets. The remaining cognitive tiers (Fast Thinker, Slow Thinker, Scribe, DM Trigger)
+  land as additional modules under <code>backend/src/</code> on top of that foundation; they'll
+  share this server's lifecycle, <code>AppDeps</code> shape, and Dockerfile.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -714,6 +718,14 @@
         Required, any non-empty string. Consumed at request time by the
         <a href="../auth-billing/billing-webhook.html">webhook plugin</a>; signature mismatch fails
         closed.
+      </td>
+    </tr>
+    <tr>
+      <td><code>ANTHROPIC_API_KEY</code></td>
+      <td>—</td>
+      <td>
+        Required. Must start with <code>sk-ant-</code>. Read directly by
+        <code>@ai-sdk/anthropic</code>; see <a href="./llm.html">LLM client</a>.
       </td>
     </tr>
   </tbody>
