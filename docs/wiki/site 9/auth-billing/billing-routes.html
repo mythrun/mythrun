@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Billing routes · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="auth-billing" data-page="billing-routes">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html" class="active">Billing routes</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Billing routes</div>
+        <article>
+<h1>Billing routes</h1>
+
+<p class="lead">
+  The seven HTTP routes that comprise the player-facing billing surface: one public catalogue
+  endpoint, three authenticated reads (balance, current subscription, paginated history), one Stripe
+  Checkout creator, one Customer Portal launcher, and one in-period tier upgrade that uses Stripe's
+  <code>pending_if_incomplete</code> proration to make the upgrade non-gameable.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1535pt" height="631pt"
+ viewBox="14.00 14.00 1521.00 616.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 612.4)">
+<title>billing_routes</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-598 1502.36,-598 1502.36,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_routes</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="360.52,-8 360.52,-586 673.57,-586 673.57,-8 360.52,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="517.05" y="-572.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">routes/billing.ts &#160;(one plugin, seven routes)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_cache</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="921.16,-469 921.16,-560 1117.87,-560 1117.87,-469 921.16,-469"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-546.1" font-family="Courier,monospace" font-size="11.00">module&#45;level state</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_helpers</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="914.56,-210 914.56,-288 1124.47,-288 1124.47,-210 914.56,-210"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-274.1" font-family="Courier,monospace" font-size="11.00">billing helpers</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_repo</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="853.59,-288 853.59,-469 1186.44,-469 1186.44,-288 853.59,-288"/>
+<text xml:space="preserve" text-anchor="middle" x="1020.02" y="-455.1" font-family="Courier,monospace" font-size="11.00">repo (closure factory + table&#45;scoped namespaces)</text>
+</g>
+<!-- client -->
+<g id="node1" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="150.5,-321.44 0,-321.44 0,-264.56 150.5,-264.56 150.5,-321.44"/>
+<text xml:space="preserve" text-anchor="middle" x="75.25" y="-302.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">HTTP client</text>
+<text xml:space="preserve" text-anchor="middle" x="75.25" y="-289.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(JWT&#45;authenticated</text>
+<text xml:space="preserve" text-anchor="middle" x="75.25" y="-276.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">except /skus)</text>
+</g>
+<!-- skus -->
+<g id="node2" class="node">
+<title>skus</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="601.7,-565.04 431.4,-565.04 431.4,-494.96 601.7,-494.96 601.7,-565.04"/>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-546.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/billing/skus</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-533.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PUBLIC (allowlisted)</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-520.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Cache&#45;Control: 5min</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-506.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reads SKU cache</text>
+</g>
+<!-- client&#45;&gt;skus -->
+<g id="edge1" class="edge">
+<title>client&#45;&gt;skus</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M103.14,-321.94C123.82,-343.2 153.81,-371.93 183.5,-393 255.98,-444.43 277.99,-453.02 360.52,-486 380.16,-493.85 401.72,-500.9 422.34,-506.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="421.66,-509.29 429.07,-508.87 423.02,-504.58 421.66,-509.29"/>
+<text xml:space="preserve" text-anchor="middle" x="255.51" y="-474.77" font-family="Courier,monospace" font-size="10.00">public</text>
+</g>
+<!-- balance -->
+<g id="node3" class="node">
+<title>balance</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="621.5,-402.44 411.59,-402.44 411.59,-345.56 621.5,-345.56 621.5,-402.44"/>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-383.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/billing/balance</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-370.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session + world_gen +</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-357.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">active subscription summary</text>
+</g>
+<!-- client&#45;&gt;balance -->
+<g id="edge2" class="edge">
+<title>client&#45;&gt;balance</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M150.77,-306.74C219.74,-319.46 323.25,-338.54 402.42,-353.14"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="401.86,-355.53 409.18,-354.39 402.74,-350.71 401.86,-355.53"/>
+<text xml:space="preserve" text-anchor="middle" x="255.51" y="-341.35" font-family="Courier,monospace" font-size="10.00">JWT + onboarded</text>
+</g>
+<!-- sub -->
+<g id="node4" class="node">
+<title>sub</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="628.1,-477.44 404.99,-477.44 404.99,-420.56 628.1,-420.56 628.1,-477.44"/>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-458.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/billing/subscription</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-445.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">full active subscription</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-432.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">or null</text>
+</g>
+<!-- client&#45;&gt;sub -->
+<g id="edge3" class="edge">
+<title>client&#45;&gt;sub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M122.68,-322.18C141.17,-333.06 162.91,-344.95 183.5,-354 251.66,-383.98 331.83,-407.23 396.32,-423.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="395.36,-425.51 402.74,-424.8 396.53,-420.75 395.36,-425.51"/>
+</g>
+<!-- history -->
+<g id="node5" class="node">
+<title>history</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="611.6,-240.44 421.49,-240.44 421.49,-183.56 611.6,-183.56 611.6,-240.44"/>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-221.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/billing/history</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-208.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cursor&#45;paginated</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-195.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(t, i) base64url cursor</text>
+</g>
+<!-- client&#45;&gt;history -->
+<g id="edge4" class="edge">
+<title>client&#45;&gt;history</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M150.77,-279.26C222.69,-266 332.18,-245.81 412.44,-231.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="412.87,-233.42 419.31,-229.74 411.98,-228.6 412.87,-233.42"/>
+<text xml:space="preserve" text-anchor="middle" x="255.51" y="-274.28" font-family="Courier,monospace" font-size="10.00">?cursor=...</text>
+</g>
+<!-- checkout -->
+<g id="node6" class="node">
+<title>checkout</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="621.5,-165.64 411.59,-165.64 411.59,-82.36 621.5,-82.36 621.5,-165.64"/>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-147.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/billing/checkout</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-133.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cart validation</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-120.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(unknown / duplicate /</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-107.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mixed / tier&#45;shape)</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-94.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ Stripe Checkout Session</text>
+</g>
+<!-- client&#45;&gt;checkout -->
+<g id="edge5" class="edge">
+<title>client&#45;&gt;checkout</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M122.7,-263.85C141.18,-252.98 162.92,-241.08 183.5,-232 254.49,-200.65 337.52,-173.65 402.8,-154.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="403.3,-156.89 409.33,-152.58 401.92,-152.19 403.3,-156.89"/>
+<text xml:space="preserve" text-anchor="middle" x="255.51" y="-235" font-family="Courier,monospace" font-size="10.00">{items, success, cancel}</text>
+</g>
+<!-- portal -->
+<g id="node7" class="node">
+<title>portal</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="621.5,-64.44 411.59,-64.44 411.59,-7.56 621.5,-7.56 621.5,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/billing/portal</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">lazy customer create</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ Customer Portal session</text>
+</g>
+<!-- client&#45;&gt;portal -->
+<g id="edge6" class="edge">
+<title>client&#45;&gt;portal</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M94.7,-263.95C114.07,-235.22 146.79,-191.4 183.5,-162 247.2,-110.98 333.8,-79.03 402.59,-60.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="403.02,-62.5 409.14,-58.3 401.74,-57.77 403.02,-62.5"/>
+<text xml:space="preserve" text-anchor="middle" x="255.51" y="-165" font-family="Courier,monospace" font-size="10.00">{return_url}</text>
+</g>
+<!-- upgrade -->
+<g id="node8" class="node">
+<title>upgrade</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="631.4,-328.04 401.69,-328.04 401.69,-257.96 631.4,-257.96 631.4,-328.04"/>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-309.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/billing/upgrade&#45;tier</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-296.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">payment_behavior:</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-283.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pending_if_incomplete</text>
+<text xml:space="preserve" text-anchor="middle" x="516.55" y="-269.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">proration_date=period_start</text>
+</g>
+<!-- client&#45;&gt;upgrade -->
+<g id="edge7" class="edge">
+<title>client&#45;&gt;upgrade</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M150.77,-293C216.9,-293 314.8,-293 392.54,-293"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="392.14,-295.45 399.14,-293 392.14,-290.55 392.14,-295.45"/>
+<text xml:space="preserve" text-anchor="middle" x="255.51" y="-296" font-family="Courier,monospace" font-size="10.00">{target_tier_lookup_key}</text>
+</g>
+<!-- sku_cache -->
+<g id="node9" class="node">
+<title>sku_cache</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1117.87,-539.04 921.16,-539.04 921.16,-468.96 1117.87,-468.96 1117.87,-539.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-520.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SkuCache</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-507.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">byLookupKey + byPriceId +</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-494.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">publicListing</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-480.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">populated by boot probe</text>
+</g>
+<!-- skus&#45;&gt;sku_cache -->
+<g id="edge8" class="edge">
+<title>skus&#45;&gt;sku_cache</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M602.25,-525.6C687.61,-521.17 819.59,-514.32 912,-509.53"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="911.86,-511.99 918.72,-509.18 911.6,-507.1 911.86,-511.99"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-523.09" font-family="Courier,monospace" font-size="10.00">publicListing</text>
+</g>
+<!-- credits -->
+<g id="node11" class="node">
+<title>credits</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1101.37,-448 937.66,-448 937.66,-412 1101.37,-412 1101.37,-448"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-426.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">repo.credits.balance</text>
+</g>
+<!-- balance&#45;&gt;credits -->
+<g id="edge11" class="edge">
+<title>balance&#45;&gt;credits</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M621.96,-385.67C712.47,-395.79 842.11,-410.28 928.23,-419.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.91,-422.34 935.14,-420.68 928.45,-417.47 927.91,-422.34"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-410.02" font-family="Courier,monospace" font-size="10.00">session + world_gen</text>
+</g>
+<!-- user_subs -->
+<g id="node12" class="node">
+<title>user_subs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1094.77,-393.84 944.27,-393.84 944.27,-350.16 1094.77,-350.16 1094.77,-393.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-375.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">userSubscriptions.</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-362.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getActiveForUser</text>
+</g>
+<!-- balance&#45;&gt;user_subs -->
+<g id="edge12" class="edge">
+<title>balance&#45;&gt;user_subs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M621.96,-373.58C714.83,-373.21 848.89,-372.68 934.86,-372.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="934.74,-374.78 941.73,-372.31 934.72,-369.88 934.74,-374.78"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-376.24" font-family="Courier,monospace" font-size="10.00">active sub</text>
+</g>
+<!-- sub&#45;&gt;user_subs -->
+<g id="edge13" class="edge">
+<title>sub&#45;&gt;user_subs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M628.66,-451.52C687.06,-449.87 759.09,-443.05 820.59,-423 836.89,-417.68 837.57,-409.13 853.59,-403 879.37,-393.14 908.66,-386.33 935.33,-381.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="935.6,-384.1 942.1,-380.53 934.79,-379.27 935.6,-384.1"/>
+</g>
+<!-- billing_hist -->
+<g id="node13" class="node">
+<title>billing_hist</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1117.87,-331.84 921.16,-331.84 921.16,-288.16 1117.87,-288.16 1117.87,-331.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-313.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">billingHistory.listByUser</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-300.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(cursor pagination)</text>
+</g>
+<!-- history&#45;&gt;billing_hist -->
+<g id="edge14" class="edge">
+<title>history&#45;&gt;billing_hist</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M612.11,-217.28C673.31,-223.17 753.75,-235.63 820.59,-262 836.99,-268.47 837.17,-277.59 853.59,-284 872.02,-291.19 892.34,-296.4 912.24,-300.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="911.63,-302.55 918.95,-301.37 912.5,-297.72 911.63,-302.55"/>
+</g>
+<!-- checkout&#45;&gt;sku_cache -->
+<g id="edge9" class="edge">
+<title>checkout&#45;&gt;sku_cache</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M622.17,-142.09C641.34,-149.57 659.66,-160.12 673.57,-175 714.28,-218.55 666.33,-261.02 706.57,-305 742.82,-344.62 783.95,-305.74 820.59,-345 858.33,-385.44 813.78,-426.6 853.59,-465 869.65,-480.49 890.66,-490.22 912.28,-496.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="911.44,-498.56 918.83,-497.93 912.66,-493.82 911.44,-498.56"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-360" font-family="Courier,monospace" font-size="10.00">byLookupKey →</text>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-348" font-family="Courier,monospace" font-size="10.00">stripe_price_id</text>
+</g>
+<!-- customer -->
+<g id="node10" class="node">
+<title>customer</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1124.47,-266.44 914.56,-266.44 914.56,-209.56 1124.47,-209.56 1124.47,-266.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-247.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">findOrCreateStripeCustomer</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-234.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">3&#45;phase prefetch&#45;then&#45;write</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-221.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(spec §9)</text>
+</g>
+<!-- checkout&#45;&gt;customer -->
+<g id="edge16" class="edge">
+<title>checkout&#45;&gt;customer</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M621.96,-147.76C704.93,-166.64 820.78,-193 905.85,-212.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="905.1,-214.7 912.47,-213.87 906.19,-209.93 905.1,-214.7"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-194.21" font-family="Courier,monospace" font-size="10.00">lazy create</text>
+</g>
+<!-- stripe -->
+<g id="node14" class="node">
+<title>stripe</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1498.36,-167.04 1354.46,-167.04 1354.46,-96.96 1498.36,-96.96 1498.36,-167.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1426.41" y="-148.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Stripe</text>
+<text xml:space="preserve" text-anchor="middle" x="1426.41" y="-135.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Checkout +</text>
+<text xml:space="preserve" text-anchor="middle" x="1426.41" y="-122.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Customer Portal +</text>
+<text xml:space="preserve" text-anchor="middle" x="1426.41" y="-108.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Subscriptions API</text>
+</g>
+<!-- checkout&#45;&gt;stripe -->
+<g id="edge19" class="edge">
+<title>checkout&#45;&gt;stripe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M621.96,-114.88C649.46,-112.86 679.11,-111.02 706.57,-110 919.7,-102.12 973.39,-100.21 1186.44,-110 1239.53,-112.44 1299.04,-117.91 1345.4,-122.78"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1344.87,-125.19 1352.09,-123.5 1345.39,-120.32 1344.87,-125.19"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-137" font-family="Courier,monospace" font-size="10.00">checkout.sessions.create</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-125" font-family="Courier,monospace" font-size="10.00">metadata.userId on session</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-113" font-family="Courier,monospace" font-size="10.00">+ subscription_data</text>
+</g>
+<!-- portal&#45;&gt;customer -->
+<g id="edge17" class="edge">
+<title>portal&#45;&gt;customer</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M621.89,-56.84C639.38,-61.44 657.16,-66.82 673.57,-73 742.79,-99.08 764.64,-102.62 820.59,-151 839.35,-167.22 833.03,-182.13 853.59,-196 869.2,-206.54 887.26,-214.43 905.58,-220.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="904.87,-222.68 912.28,-222.39 906.3,-218 904.87,-222.68"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-154" font-family="Courier,monospace" font-size="10.00">lazy create</text>
+</g>
+<!-- portal&#45;&gt;stripe -->
+<g id="edge20" class="edge">
+<title>portal&#45;&gt;stripe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M622.11,-36.42C754.25,-38.26 988.35,-45.83 1186.44,-75 1240.07,-82.9 1299.34,-97 1345.44,-109.2"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1344.74,-111.55 1352.14,-110.99 1346.01,-106.82 1344.74,-111.55"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-90" font-family="Courier,monospace" font-size="10.00">billingPortal.</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-78" font-family="Courier,monospace" font-size="10.00">sessions.create</text>
+</g>
+<!-- upgrade&#45;&gt;sku_cache -->
+<g id="edge10" class="edge">
+<title>upgrade&#45;&gt;sku_cache</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M631.93,-311.66C647.16,-317.87 661.62,-326.09 673.57,-337 703.81,-364.59 676.38,-395.35 706.57,-423 756.69,-468.89 787.84,-447.84 853.59,-465 872.52,-469.94 892.75,-474.95 912.32,-479.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="911.51,-481.97 918.89,-481.22 912.65,-477.21 911.51,-481.97"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-473.45" font-family="Courier,monospace" font-size="10.00">target + current</text>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-461.45" font-family="Courier,monospace" font-size="10.00">unit_amount_cents</text>
+</g>
+<!-- upgrade&#45;&gt;user_subs -->
+<g id="edge15" class="edge">
+<title>upgrade&#45;&gt;user_subs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M631.93,-268.56C691.42,-261.7 763.43,-262.93 820.59,-293 843.5,-305.05 831.89,-326.87 853.59,-341 877.6,-356.63 907.49,-364.83 935.21,-369"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="934.67,-371.39 941.94,-369.92 935.33,-366.54 934.67,-371.39"/>
+<text xml:space="preserve" text-anchor="middle" x="763.58" y="-296" font-family="Courier,monospace" font-size="10.00">getActiveForUser</text>
+</g>
+<!-- upgrade&#45;&gt;stripe -->
+<g id="edge21" class="edge">
+<title>upgrade&#45;&gt;stripe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M631.86,-261.25C645.93,-257.2 660.1,-253.05 673.57,-249 739.26,-229.24 758.15,-230.42 820.59,-202 836.2,-194.9 837.29,-187.33 853.59,-182 899.12,-167.11 1198.89,-146.38 1345.26,-136.98"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1345.18,-139.44 1352.01,-136.55 1344.87,-134.55 1345.18,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-197" font-family="Courier,monospace" font-size="10.00">subscriptions.retrieve</text>
+<text xml:space="preserve" text-anchor="middle" x="1019.52" y="-185" font-family="Courier,monospace" font-size="10.00">+ subscriptions.update</text>
+</g>
+<!-- customer&#45;&gt;stripe -->
+<g id="edge18" class="edge">
+<title>customer&#45;&gt;stripe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1124.93,-225.5C1183.62,-216.77 1257.69,-202.86 1321.46,-182 1330.83,-178.94 1340.43,-175.2 1349.84,-171.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1350.61,-173.51 1356.03,-168.45 1348.63,-169.02 1350.61,-173.51"/>
+<text xml:space="preserve" text-anchor="middle" x="1270.45" y="-222.72" font-family="Courier,monospace" font-size="10.00">customers.create</text>
+<text xml:space="preserve" text-anchor="middle" x="1270.45" y="-210.72" font-family="Courier,monospace" font-size="10.00">idempotency&#45;keyed</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  All seven routes live in <code>backend/src/routes/billing.ts</code> as one Fastify plugin,
+  registered last in <code>buildApp</code> so it inherits the auth and onboarded chain. The plugin
+  shares three module-level seams: the SKU cache populated by the
+  <a href="./stripe-contract.html">boot probe</a>, the <code>findOrCreateStripeCustomer</code>
+  helper that lazily creates Stripe Customer records on first checkout, and the four billing-table
+  repository namespaces that read the audit feed and subscription state.
+</p>
+
+<p>
+  Six routes require a JWT and a real <code>users</code> row (the
+  <a href="./onboarding.html"><code>requireOnboarded</code></a> gate). One route —
+  <code>GET /api/billing/skus</code> — is on the
+  <a href="./jwt-middleware.html#the-public-route-allowlist">public-route allowlist</a> because it
+  serves the marketing-page pricing tile pre-signin. Per-route rate limits cap the SKU endpoint at
+  60/min and the write endpoints at 30/min to bound the cost of an attacker spinning up Stripe
+  Checkout sessions.
+</p>
+
+<h3 id="read-endpoints">Read endpoints</h3>
+
+<p>
+  <strong><code>GET /api/billing/skus</code></strong> serves the SKU cache's
+  <code>publicListing</code> projection — <code>lookup_key</code>, display name, type, credit
+  allocation, price. The <code>stripe_price_id</code> is deliberately stripped from the public shape
+  (principle of least disclosure on an unauthenticated endpoint). A 5-minute
+  <code>Cache-Control</code> header lets edge caches absorb traffic spikes; the data only changes
+  when the boot probe re-runs against a Stripe-side catalog change.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two SKU projections, one cache</strong> — webhook handlers and the checkout route need the
+  <code>stripe_price_id</code> reverse map (price ID → lookup key, lookup key → price ID for cart
+  resolution); the public route does not. The cache holds both as separate maps and the public
+  endpoint reads <code>publicListing</code> only. A future leak in the public response shape can't
+  expose <code>stripe_price_id</code> because the field isn't in the projection at all.
+</aside>
+
+<p>
+  <strong><code>GET /api/billing/balance</code></strong> returns
+  <code>{ session, world_gen, active_subscription }</code> — two credit-balance numbers (each a SUM
+  over the credit ledger) plus a summary of the user's active subscription if one exists. The three
+  reads run in parallel via <code>Promise.all</code>. The <code>active_subscription</code> shape is
+  a small projection of the underlying row (<code>tier_lookup_key</code>,
+  <code>current_period_end</code>, <code>cancel_at_period_end</code>, <code>status</code>) — enough
+  for the UI to render "Sojourner, renews in 3 days" without exposing internal columns.
+</p>
+
+<p>
+  <strong><code>GET /api/billing/subscription</code></strong> returns the same
+  <code>active_subscription</code> projection but with the additional fields the account-management
+  UI needs (<code>stripe_subscription_id</code>, <code>current_period_start</code>,
+  <code>cancel_at</code>). One row or null; cancelled subscriptions are not surfaced.
+</p>
+
+<p>
+  <strong><code>GET /api/billing/history</code></strong> is the cursor-paginated audit feed backed
+  by <code>billing_history</code>. The cursor is a base64url-encoded
+  <code>{ t: occurred_at_iso, i: row_id }</code> pair — the row id breaks ties when two events share
+  the same Stripe timestamp. Page size is 50; the response includes
+  <code>nextCursor: null</code> when the feed is exhausted. An invalid cursor (decode failure, shape
+  mismatch) returns 400 <code>invalid_cursor</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>(timestamp, id) cursor, not offset pagination</strong> — Stripe events arrive in
+  near-real-time and the audit feed grows append-only. Offset pagination drifts on every new row
+  written between page fetches (page 2 starts on what was the bottom of page 1). A (timestamp, id)
+  cursor is stable: the second page picks up exactly where the first left off, even if a hundred new
+  rows landed in between. The composite is necessary because two webhook events from one Stripe
+  customer can carry the same second-precision timestamp.
+</aside>
+
+<h3 id="write-endpoints">Write endpoints</h3>
+
+<p>
+  <strong><code>POST /api/billing/checkout</code></strong> takes a cart shape (<code
+    >{ items: [{ lookup_key, quantity }], success_url, cancel_url }</code
+  >), validates it against four cart rules, resolves the items against the SKU cache, ensures the
+  user has a Stripe Customer record (lazy-creating one if not), and creates a Stripe Checkout
+  Session. The response is <code>{ checkout_session_id, url }</code> — the SPA redirects the user to
+  that URL. Stripe handles payment collection; on success Stripe fires
+  <code>checkout.session.completed</code> at the <a href="./billing-webhook.html">webhook</a>, which
+  produces the credit grant and audit row.
+</p>
+
+<p>The four cart rules:</p>
+
+<ol>
+  <li>Every <code>lookup_key</code> exists in <code>LOOKUP_KEYS</code>.</li>
+  <li>No duplicate <code>lookup_key</code> in the same cart.</li>
+  <li>
+    Tier and à-la-carte items don't mix in the same cart (a recurring item can't sit alongside
+    one-time items).
+  </li>
+  <li>A tier cart is exactly one item with quantity 1 (no quantity-2 subscription).</li>
+</ol>
+
+<p>
+  Each rule maps to a distinct error code (<code>unknown_lookup_key</code>,
+  <code>duplicate_lookup_key</code>, <code>mixed_cart</code>, <code>tier_cart_shape</code>) so the
+  SPA can show a precise message without parsing free-form text.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Server-side cart rules, not just client-side</strong> — the SPA does its own client-side
+  validation, but the server is the only enforcement point that survives a malicious client. Stripe
+  will happily create a Checkout Session for a five-tier cart; preventing that has to happen here.
+  The rules are also where the spec's "no client-supplied price IDs" promise lives: the client sends
+  <code>lookup_key</code> strings, the server resolves them through the SKU cache to the actual
+  Stripe price IDs that go on the Checkout Session.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>findOrCreateStripeCustomer</code> runs OUTSIDE any held DB tx</strong> — the helper
+  makes a Stripe SDK call to <code>customers.create</code> with an idempotency key. That call has
+  multi-second tail latency under Stripe outage. Holding a <code>PoolClient</code> across it would
+  pin the connection for the call's duration; the route opens no surrounding tx and invokes the
+  helper as a top-level await. The helper itself is internally three phases (read short tx → Stripe
+  call → write short tx with FOR UPDATE) and absorbs concurrent racers via Stripe's idempotency-key
+  cache.
+</aside>
+
+<p>
+  <strong><code>POST /api/billing/portal</code></strong> takes a <code>{ return_url }</code> body,
+  lazy-creates the Stripe Customer if needed, and creates a Customer Portal session. The response is
+  <code>{ url }</code>. The Portal is where users self-manage payment methods, see their invoices,
+  and downgrade or cancel their subscription. Tier <em>upgrades</em> within the current billing
+  period don't go through the Portal — see the upgrade route below.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Customer Portal handles downgrades and cancels; the API handles upgrades</strong> —
+  Stripe's Customer Portal can switch between plans, but its proration knob isn't tunable per
+  switch. The asymmetry that makes Mythrun's pricing fair (upgrades prorate from period start;
+  downgrades take effect at period end) requires
+  <code>proration_date = current_period_start</code> on the upgrade path, which Portal doesn't
+  expose. The boot probe verifies the Portal config carries the asymmetric
+  <code>schedule_at_period_end.conditions</code> rule for downgrades. See
+  <a href="./stripe-contract.html#the-boot-probe-and-its-four-error-classes"
+    >probe and its error classes</a
+  >.
+</aside>
+
+<p id="tier-upgrade">
+  <strong><code>POST /api/billing/upgrade-tier</code></strong> takes a
+  <code>{ target_tier_lookup_key }</code> body and orchestrates an in-period upgrade through
+  Stripe's <code>pending_if_incomplete</code> payment behavior. The handler validates the target is
+  a strict upgrade against the current tier (matching <code>unit_amount_cents</code>), retrieves the
+  live subscription, refuses if a prior upgrade is already mid-flight (a populated
+  <code>pending_update</code>), then calls <code>subscriptions.update</code> with
+  <code>payment_behavior: 'pending_if_incomplete'</code>,
+  <code>proration_date: current_period_start</code>, and
+  <code>proration_behavior: 'always_invoice'</code>.
+</p>
+
+<p>
+  Stripe's response carries either a populated <code>pending_update</code> (the proration didn't
+  settle synchronously — SCA / ACH / decline; the handler returns
+  <code>502 upgrade_payment_pending</code>) or a null <code>pending_update</code> (the proration
+  settled, items advanced; the handler returns <code>200</code> with the proration invoice ID). The
+  <code>pending_update_applied</code> webhook is what produces the credit grant — see
+  <a href="./billing-webhook.html#customersubscriptionpending_update_applied"
+    >the corresponding handler</a
+  >.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>pending_if_incomplete</code>, not <code>error_if_incomplete</code> or
+    <code>default_incomplete</code></strong
+  >
+  — the three behaviors differ on what happens when the proration invoice can't settle
+  synchronously. <code>error_if_incomplete</code> rejects the whole upgrade if SCA is needed;
+  <code>default_incomplete</code> immediately advances items with a payment-pending status;
+  <code>pending_if_incomplete</code> records a pending_update on the subscription, leaves the items
+  at the pre-upgrade tier, and waits for the proration to settle before advancing. The user sees
+  their old tier until the bank confirms; if SCA fails or the card declines, the subscription is
+  unchanged. No "we charged you but haven't given you the upgrade" gap.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>proration_date = current_period_start</code></strong> — period-start proration
+  charges the tier difference for the entire current period, regardless of when in the period the
+  upgrade happens. The alternative — proration from the upgrade timestamp — creates a gameable loop:
+  a user upgrades on day 29 of a 30-day cycle for one day's-worth of premium credits, then cancels
+  at period end, and ratchets through tiers paying a fraction of each. Period-start proration
+  eliminates the lever; an upgrade is a full-tier-difference charge with no time-based discount.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Idempotency key omits <code>period_start</code></strong> — the key is
+  <code>upgrade:${userId}:${sub_id}:${target_tier}</code>. A naive shape would include the period
+  start, but a user clicking the upgrade button right at a period boundary would generate two
+  distinct keys (the first request's period vs the second's), which would let Stripe charge twice.
+  The early-exit on <code>tier_unchanged</code> handles the post-COMMIT replay case where Stripe's
+  24-hour idempotency cache has expired but our DB shows the new tier already.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="diagnose-a-stuck-tier-upgrade">Diagnose a stuck tier upgrade</h3>
+<ol>
+  <li>
+    Symptom: a user reports clicking upgrade and seeing
+    <code>upgrade_payment_pending</code>, but their tier hasn't advanced after several minutes.
+  </li>
+  <li>
+    Pull the user's active subscription from Stripe Dashboard or via
+    <code>GET /api/billing/subscription</code> as the user. If <code>pending_update</code> is still
+    populated on the Stripe-side subscription, the proration invoice hasn't settled yet — SCA, ACH,
+    or a card retry is in flight.
+  </li>
+  <li>
+    Filter CloudWatch for <code>billing.upgrade_*</code> events around the user's request:
+    <pre><code>filter event like /billing.upgrade/ or event like /billing.handler/
+| fields @timestamp, event, userId, stripe_subscription_id, latest_invoice_id
+| sort @timestamp desc
+| limit 50</code></pre>
+  </li>
+  <li>
+    If the proration eventually settles, <code>pending_update_applied</code> fires; the handler
+    advances the subscription row and grants credits. If it expires,
+    <code>pending_update_expired</code> fires; the user is left on the original tier and the SPA's
+    next balance fetch shows no change.
+  </li>
+  <li>
+    Manual intervention is rarely the answer here — the user's bank or card is the bottleneck.
+    Direct the user to retry from a different payment method via the Customer Portal.
+  </li>
+</ol>
+
+<h3 id="reconcile-a-checkout-with-no-credit-grant">Reconcile a checkout with no credit grant</h3>
+<ol>
+  <li>Symptom: a user reports a Stripe charge but no credits in their account.</li>
+  <li>
+    Look up the user's most recent rows in <code>billing_history</code> and
+    <code>credit_ledger</code>. If <code>billing_history</code> has the row but
+    <code>credit_ledger</code> doesn't, the handler returned <code>'validation_failed'</code> or
+    threw — both surface as paging-grade log lines.
+  </li>
+  <li>
+    If <code>billing_history</code> doesn't have the row at all, the webhook never fired or failed
+    signature verification. Check the Stripe Dashboard's webhook attempts UI for the event delivery
+    status; rotate the signing secret if signature failures are frequent (see
+    <a href="./billing-webhook.html#rotate-the-stripe-webhook-secret"
+      >webhook signing secret rotation</a
+    >).
+  </li>
+  <li>
+    For a one-off reconciliation grant, write a credit_ledger row directly with
+    <code>source_type='gift'</code> and a free-text <code>source_id</code> linking to the support
+    ticket. Don't backfill via the webhook handler — the dispatcher's idempotency check would skip
+    the redelivery.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The routes share the SKU cache populated by the
+  <a href="./stripe-contract.html">Stripe contract</a> boot probe; checkout and tier-upgrade both
+  need <code>byLookupKey</code> for cart resolution. The
+  <a href="./billing-webhook.html">webhook</a> is the asynchronous counterpart to checkout and
+  upgrade — Stripe fires events at the webhook when the operations complete, and the handlers there
+  produce the credit grants and audit rows. <code>findOrCreateStripeCustomer</code> sits in
+  <code>backend/src/repo/users.ts</code>; the helper's three-phase shape is documented on the
+  <a href="../data/repository.html">repository layer</a> page. Cart rule failures and upgrade
+  preconditions return errors from the closed <code>BillingErrorCode</code> union in
+  <code>backend/src/billing/errors.ts</code> so the SPA can branch on
+  <code>response.code</code> without parsing prose.
+</p>
+
+<h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
+
+<h3 id="routes">Routes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Path</th>
+      <th>Auth</th>
+      <th>Rate limit</th>
+      <th>Body / Query</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/skus</code></td>
+      <td>public</td>
+      <td>60/min</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/balance</code></td>
+      <td>JWT + onboarded</td>
+      <td>60/min</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/subscription</code></td>
+      <td>JWT + onboarded</td>
+      <td>60/min</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/billing/history</code></td>
+      <td>JWT + onboarded</td>
+      <td>60/min</td>
+      <td><code>?cursor=&lt;base64url&gt;</code></td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/billing/checkout</code></td>
+      <td>JWT + onboarded</td>
+      <td>30/min</td>
+      <td><code>{ items: [{ lookup_key, quantity }], success_url, cancel_url }</code></td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/billing/portal</code></td>
+      <td>JWT + onboarded</td>
+      <td>30/min</td>
+      <td><code>{ return_url }</code></td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/billing/upgrade-tier</code></td>
+      <td>JWT + onboarded</td>
+      <td>30/min</td>
+      <td><code>{ target_tier_lookup_key }</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="error-codes">Error codes</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Code</th>
+      <th>HTTP</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>body_invalid</code></td>
+      <td>400</td>
+      <td>Structural body validation failed (missing field, wrong type, empty array).</td>
+    </tr>
+    <tr>
+      <td><code>unknown_lookup_key</code></td>
+      <td>400</td>
+      <td>Lookup key not in <code>LOOKUP_KEYS</code>; offending key in detail.</td>
+    </tr>
+    <tr>
+      <td><code>duplicate_lookup_key</code></td>
+      <td>400</td>
+      <td>Same lookup key appears twice in one cart.</td>
+    </tr>
+    <tr>
+      <td><code>mixed_cart</code></td>
+      <td>400</td>
+      <td>Recurring + one-time items in the same cart.</td>
+    </tr>
+    <tr>
+      <td><code>tier_cart_shape</code></td>
+      <td>400</td>
+      <td>Tier cart isn't exactly one item with quantity 1.</td>
+    </tr>
+    <tr>
+      <td><code>invalid_cursor</code></td>
+      <td>400</td>
+      <td>History cursor failed decode or shape check.</td>
+    </tr>
+    <tr>
+      <td><code>no_active_subscription</code></td>
+      <td>400</td>
+      <td>Tier upgrade attempted without a subscription to upgrade.</td>
+    </tr>
+    <tr>
+      <td><code>tier_unchanged</code></td>
+      <td>400</td>
+      <td>Target tier price equals current tier price.</td>
+    </tr>
+    <tr>
+      <td><code>not_an_upgrade</code></td>
+      <td>400</td>
+      <td>Target tier is cheaper than current, or target is not a recurring tier.</td>
+    </tr>
+    <tr>
+      <td><code>unauthenticated</code></td>
+      <td>401</td>
+      <td>No JWT or invalid JWT (set by the auth middleware).</td>
+    </tr>
+    <tr>
+      <td><code>username_required</code></td>
+      <td>403</td>
+      <td>JWT valid but no <code>users</code> row (set by <code>requireOnboarded</code>).</td>
+    </tr>
+    <tr>
+      <td><code>upgrade_already_pending</code></td>
+      <td>409</td>
+      <td>Subscription already has a <code>pending_update</code> in flight.</td>
+    </tr>
+    <tr>
+      <td><code>stripe_unavailable</code></td>
+      <td>502</td>
+      <td>Stripe SDK call threw (network, 5xx, timeout).</td>
+    </tr>
+    <tr>
+      <td><code>upgrade_payment_pending</code></td>
+      <td>502</td>
+      <td>Proration didn't settle synchronously; webhook will eventually fire.</td>
+    </tr>
+    <tr>
+      <td><code>sku_cache_unavailable</code></td>
+      <td>503</td>
+      <td>Boot probe didn't populate the cache (defensive — should be unreachable in deploy).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/routes/billing.ts</code>, <code>backend/src/billing/customer.ts</code>,
+  <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/billing/errors.ts</code>,
+  <code>backend/src/repo/users.ts</code> (<code>findOrCreateStripeCustomer</code>),
+  <code>backend/src/repo/user-subscriptions.ts</code>,
+  <code>backend/src/repo/billing-history.ts</code>, <code>backend/src/repo/purchases.ts</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#read-endpoints">Read endpoints</a></li><li style="padding-left:12px"><a href="#write-endpoints">Write endpoints</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-tier-upgrade">Diagnose a stuck tier upgrade</a></li><li style="padding-left:12px"><a href="#reconcile-a-checkout-with-no-credit-grant">Reconcile a checkout with no credit grant</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#routes">Routes</a></li><li style="padding-left:12px"><a href="#error-codes">Error codes</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

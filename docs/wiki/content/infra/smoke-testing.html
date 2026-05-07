@@ -1,0 +1,172 @@
+<!-- source: infra/modules/auth/smoke-test.tf -->
+<!-- source: infra/modules/auth/variables.tf -->
+<!-- source: infra/environments/staging/main.tf -->
+<!-- source: backend/scripts/smoke/staging.sh -->
+<!-- source: package.json -->
+<!-- source-hash: sha256:0774783509aa31b7274659860c9d053427a6a0164ec3546849d4e119b259ceff -->
+<!-- last-ticket: MYT-44 -->
+
+<h1>Smoke testing</h1>
+
+<p class="lead">
+  How we exercise the deployed staging API end-to-end. A single Cognito test user provisioned
+  by Terraform, credentials in Secrets Manager, and a bash script that authenticates and hits
+  a small set of routes that prove the cognitive stack is reachable. Designed for a daily-cron
+  shape: one command, no operator typing, idempotent re-runs.
+</p>
+
+<h2>How it fits together</h2>
+
+<p>
+  Three pieces compose the staging smoke. <code>infra/modules/auth/smoke-test.tf</code>
+  provisions a native (non-federated) Cognito user <code>smoke-test@mythrun.com</code> with a
+  Terraform-generated 32-character password that meets Cognito's policy. The password lives in
+  Secrets Manager at <code>mythrun/staging/smoke-test-credentials</code> as a JSON-encoded
+  <code>{username, password}</code> object. <code>backend/scripts/smoke/staging.sh</code>
+  reads the secret, authenticates against Cognito via the <code>USER_AUTH</code> flow with a
+  <code>PASSWORD</code> challenge inline (single API call, no challenge round-trip), and then
+  hits the API with the resulting access token. <code>pnpm smoke:staging</code> at the repo
+  root is the operator-facing entry point.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Native Cognito user, not federated</strong> &mdash; we don't have Mythrun-controlled
+  Google or Discord test accounts and don't want to depend on a third-party provider for our
+  smoke. A native user gives us end-to-end ownership of the credential. The user pool's
+  <code>username_attributes = ["email"]</code> requires the username be a valid email shape;
+  no actual mailbox exists at <code>smoke-test@mythrun.com</code>, but
+  <code>email_verified = true</code> is set at provisioning so Cognito doesn't try to validate.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Pre-provisioned, not throwaway-per-run</strong> &mdash; the alternative is to have the
+  smoke script create a fresh user each run. That requires the script to hold IAM write
+  permissions on Cognito (admin-create-user + admin-set-user-password + admin-delete-user). A
+  pre-provisioned user with read-only-secret access keeps the smoke's IAM footprint tight: it
+  only needs <code>secretsmanager:GetSecretValue</code> on the credentials secret and
+  <code>cognito-idp:InitiateAuth</code> (which the public client allows by design).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why we use null_resource for user CRUD</strong> &mdash; the
+  <code>hashicorp/aws</code> Terraform provider doesn't have an
+  <code>aws_cognito_user_pool_user</code> resource. Cognito user CRUD is SDK-only. We use a
+  <code>null_resource</code> with a <code>local-exec</code> provisioner that runs
+  <code>aws cognito-idp admin-create-user</code> + <code>admin-set-user-password --permanent</code>.
+  The provisioner is idempotent: <code>admin-create-user</code> errors with
+  <code>UsernameExistsException</code> on re-runs, which we swallow via
+  <code>grep -v UsernameExistsException || true</code>; the password set always succeeds.
+  Triggers re-run on either user-id change or password rotation.
+</aside>
+
+<h3>What the script verifies</h3>
+
+<p>
+  The current scope is narrow: classifyProfanity reachability against the live Anthropic API.
+  Two cases short-circuit in the route handler before any database query, so they verify the
+  LLM stack independently of database state.
+</p>
+
+<ol>
+  <li>
+    <code>GET /health/ready</code> returns 200 (the container is serving traffic on the new
+    revision).
+  </li>
+  <li>
+    <code>GET /api/users/check-username?username=fucknugget</code> returns
+    <code>{available: false, reason: 'offensive'}</code> &mdash; Haiku classifies the offensive
+    name and the route emits the rejection without touching the database.
+  </li>
+  <li>
+    <code>GET /api/users/check-username?username=mythrun_admin</code> returns
+    <code>{available: false, reason: 'impersonation'}</code> &mdash; Haiku classifies the
+    impersonation attempt similarly.
+  </li>
+</ol>
+
+<p>
+  Each Haiku call shows up in CloudWatch as a structured log line emitted by the LLM
+  middleware: <code>event: 'llm.call'</code> with <code>model: 'claude-haiku-4-5-20251001'</code>,
+  token counts, and latency. Total cost per smoke run is ~$0.0002 at current Haiku pricing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Registration and clean-username paths are intentionally not in the smoke yet</strong>
+  &mdash; both exit through <code>repo.users.getByUsername</code>, which fails with
+  <code>relation "users" does not exist</code> until migrations are applied to staging
+  Postgres (tracked in <code>myth-6gmk</code>). When migrations land, those paths get added
+  to the script and verify the LLM + DB integration end-to-end.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3>Run the staging smoke</h3>
+
+<ol>
+  <li>From the repo root, run <code>pnpm smoke:staging</code>. Expected output: green
+  checkmarks on each step and a final &ldquo;Smoke passed&rdquo; line.</li>
+  <li>If a step fails, the script exits non-zero and prints the request body that didn't match
+  expectations. CloudWatch <code>/mythrun/staging/api</code> has the corresponding server-side
+  log line.</li>
+</ol>
+
+<h3>Rotate the smoke-test credentials</h3>
+
+<ol>
+  <li>From <code>infra/environments/staging/</code>, run
+  <code>terraform apply -replace=module.auth.random_password.smoke_test[0]</code>.</li>
+  <li>Terraform regenerates the password, updates Secrets Manager, and runs the
+  <code>null_resource</code> provisioner to set the new password as permanent on the Cognito
+  user.</li>
+  <li>Re-run <code>pnpm smoke:staging</code> to confirm the new credentials work.</li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The smoke exercises the <a href="../runtime/llm.html">LLM client</a> through the onboarding
+  routes wired up in <a href="../auth-billing/onboarding.html">Onboarding &amp; invites</a>.
+  The Cognito user pool itself is documented under
+  <a href="../auth-billing/identity.html">Identity</a>; the smoke test user is one extra row
+  alongside the federated users that flow in via Google and Discord.
+</p>
+
+<h2>Appendix: configuration</h2>
+
+<table>
+  <thead>
+    <tr><th>Knob</th><th>Where</th><th>Default</th><th>Purpose</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>smoke_test_user_enabled</code></td>
+      <td><code>module &quot;auth&quot;</code> input</td>
+      <td><code>false</code></td>
+      <td>Gates all smoke-test resources. Staging sets <code>true</code>; production composition leaves the default.</td>
+    </tr>
+    <tr>
+      <td><code>API_BASE</code></td>
+      <td>Script env var</td>
+      <td><code>https://staging-api.mythrun.com</code></td>
+      <td>Override to run against a different deployment.</td>
+    </tr>
+    <tr>
+      <td><code>OFFENSIVE_USERNAME</code></td>
+      <td>Script env var</td>
+      <td><code>fucknugget</code></td>
+      <td>Test input for the offensive classification path. Must be something Haiku will reliably classify as offensive.</td>
+    </tr>
+    <tr>
+      <td><code>IMPERSONATION_USERNAME</code></td>
+      <td>Script env var</td>
+      <td><code>mythrun_admin</code></td>
+      <td>Test input for the impersonation path.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="source">
+  Source:
+  <code>infra/modules/auth/smoke-test.tf</code> &middot;
+  <code>backend/scripts/smoke/staging.sh</code>
+</p>
