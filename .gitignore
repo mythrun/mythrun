@@ -24,3 +24,6 @@ docker-compose.override.yml
 
 # Local scratch / agent-authored ephemeral files (checklists, reports, etc.)
 tmp/
+
+# macOS Finder duplicates of docs/wiki/site/ (these accumulate via Finder copy-paste).
+docs/wiki/site [0-9]*/
