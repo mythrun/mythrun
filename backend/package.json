@@ -18,7 +18,9 @@
     "db:migrate:compiled": "node dist/db/migrate.js"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.76",
     "@fastify/rate-limit": "^10.3.0",
+    "ai": "^6.0.176",
     "aws-jwt-verify": "^5.1.1",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.1.0",
