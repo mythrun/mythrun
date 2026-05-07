@@ -119,6 +119,8 @@ export function logAndNormalizeMiddleware(modelId: string): LanguageModelV4Middl
 
 **Logging shape:** Every successful call emits `event: 'llm.call'` at info level with `{ model, inputTokens, outputTokens, totalTokens, latencyMs, finishReason, sessionId?, userId? }`. Failed calls emit `event: 'llm.error'` with the original error preserved as `err`. MYT-43 will subscribe to these log events to write the `session_usage` table; this ticket only emits.
 
+**Cost is deliberately not logged here.** Cost is derived data — `(tokens / 1e6) × ratePerMillion` — and Anthropic exposes no programmatic pricing API to query at runtime. Hardcoding rates in this module would create a second source of truth that drifts from MYT-43's rate map. Instead: middleware emits raw tokens + the model ID, and downstream consumers (CloudWatch dashboards, MYT-43's `session_usage` writer) compute cost from rate maps maintained where they're already needed. The `model` field is the discriminator that lets retrospective analysis attribute spend to Haiku vs Sonnet vs Opus correctly.
+
 **`sessionId` / `userId` threading:** Callers pass these through `providerOptions.mythrun = { sessionId, userId }`. The middleware reads them out of `params.providerOptions.mythrun` and includes them in the log line. Calls without context fields just have undefined for those keys. The `mythrun` namespace in `providerOptions` avoids collision with provider-specific options like `providerOptions.anthropic.cacheControl`.
 
 ### 4.3 `errors.ts`
