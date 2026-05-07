@@ -28,6 +28,15 @@
             "command": ".claude/hooks/post-linear-close.sh"
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-brainstorm-skill.sh"
+          }
+        ]
       }
     ]
   }
