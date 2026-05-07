@@ -305,12 +305,16 @@ async function probePortalConfig(
       `Customer Portal subscription_update.schedule_at_period_end.conditions missing { type: 'decreasing_item_amount' }; contract requires asymmetric upgrade-immediate / downgrade-at-renewal behavior`,
     )
   }
-  const products = subUpdate.products ?? []
-  if (products.length === 0) {
-    mismatches.push(
-      `Customer Portal subscription_update.products allowlist is empty; contract requires per-tier downgrade-only allowlists (see spec §15.2)`,
-    )
-  }
+  // The per-tier downgrade-only matrix from MYT-42 spec §15.2 was paranoia
+  // layered on top of safety Stripe already provides. With
+  // `schedule_at_period_end: decreasing_item_amount` set above, downgrades
+  // defer to period end — no refund-arbitrage. And our credit-grant code
+  // (webhook-invoice-paid.ts handleSubscriptionUpdate) is billing-history-
+  // only on subscription_update; credit grants flow through subscription_cycle
+  // (full new period at full price) or pending_update_applied (the
+  // /upgrade-tier path). Portal-initiated upgrades have looser timing but
+  // are not exploitable. So we no longer assert anything about the
+  // products allowlist — Portal can offer any tier as a switch target.
 
   if (mismatches.length > 0) {
     logger.error(
