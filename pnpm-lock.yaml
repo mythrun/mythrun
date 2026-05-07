@@ -27,6 +27,9 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.76
         version: 3.0.76(zod@4.4.3)
+      '@ai-sdk/provider':
+        specifier: ^3.0.10
+        version: 3.0.10
       '@fastify/rate-limit':
         specifier: ^10.3.0
         version: 10.3.0
