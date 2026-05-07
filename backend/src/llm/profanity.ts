@@ -1,4 +1,4 @@
-import { generateObject } from 'ai'
+import { generateText, Output } from 'ai'
 import { HAIKU } from './models.js'
 import { ProfanitySchema, type ProfanityResult } from './schemas/profanity.js'
 import { loadPrompt } from './prompts.js'
@@ -16,14 +16,19 @@ import { loadPrompt } from './prompts.js'
  * Mythrun-typed LLM errors (the middleware layer in models.ts maps them
  * from Vercel's APICallError / TooManyRequestsError /
  * AI_NoObjectGeneratedError before they leave the SDK call frame).
+ *
+ * Uses `generateText` with `Output.object({ schema })` — the v6-canonical
+ * pattern. `generateObject` is deprecated in v6 in favor of this unified
+ * `generateText` + output shape that supports tool-calling alongside
+ * structured output.
  */
 export async function classifyProfanity(text: string): Promise<ProfanityResult> {
-  const result = await generateObject({
+  const result = await generateText({
     model: HAIKU,
-    schema: ProfanitySchema,
+    output: Output.object({ schema: ProfanitySchema }),
     system: loadPrompt('auth', 'profanity'),
     prompt: text,
     maxRetries: 3,
   })
-  return result.object
+  return result.output
 }

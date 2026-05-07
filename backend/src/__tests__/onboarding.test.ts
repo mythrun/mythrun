@@ -5,6 +5,11 @@ import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { InjectOptions, LightMyRequestResponse } from 'fastify'
+
+vi.mock('../llm/profanity.js', () => ({
+  classifyProfanity: vi.fn(),
+}))
+
 import { createPgPool } from '../db/postgres.js'
 import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
@@ -12,7 +17,10 @@ import { resetData } from '../repo/__tests__/_helpers/reset-data.js'
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo } from '../repo/index.js'
+import { classifyProfanity } from '../llm/profanity.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+
+const classifyProfanityMock = vi.mocked(classifyProfanity)
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -79,6 +87,10 @@ describe('onboarding routes (integration)', () => {
     // even if more than 256 tests ever run in this file.
     currentTestIp = `10.0.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
     await resetData(pool)
+    // Default: clean. Tests that exercise the rejection path override
+    // with mockResolvedValueOnce / mockResolvedValue below.
+    classifyProfanityMock.mockReset()
+    classifyProfanityMock.mockResolvedValue({ profane: false })
   })
 
   describe('POST /api/users/register', () => {
@@ -106,24 +118,26 @@ describe('onboarding routes (integration)', () => {
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'format' })
     })
 
-    it('reserved username → 400 username_invalid reserved', async () => {
+    it('impersonation username → 400 username_invalid impersonation', async () => {
+      classifyProfanityMock.mockResolvedValueOnce({ profane: true, reason: 'impersonation' })
       const res = await inject({
         method: 'POST',
         url: '/api/users/register',
         payload: { username: 'admin', displayName: 'X' },
       })
       expect(res.statusCode).toBe(400)
-      expect(res.json()).toEqual({ code: 'username_invalid', reason: 'reserved' })
+      expect(res.json()).toEqual({ code: 'username_invalid', reason: 'impersonation' })
     })
 
-    it('profane username → 400 username_invalid profane', async () => {
+    it('offensive username → 400 username_invalid offensive', async () => {
+      classifyProfanityMock.mockResolvedValueOnce({ profane: true, reason: 'offensive' })
       const res = await inject({
         method: 'POST',
         url: '/api/users/register',
         payload: { username: 'shitstorm', displayName: 'X' },
       })
       expect(res.statusCode).toBe(400)
-      expect(res.json()).toEqual({ code: 'username_invalid', reason: 'profane' })
+      expect(res.json()).toEqual({ code: 'username_invalid', reason: 'offensive' })
     })
 
     it('idempotent replay (same sub+username) → 200 created:false', async () => {
@@ -162,14 +176,18 @@ describe('onboarding routes (integration)', () => {
       expect(body.requestedUsername).toBe('bob')
     })
 
-    it('display_name profane → 400 display_name_invalid', async () => {
+    it('display_name offensive → 400 display_name_invalid', async () => {
+      // First call (username 'alice') is clean; second call (displayName) is offensive.
+      classifyProfanityMock.mockReset()
+      classifyProfanityMock.mockResolvedValueOnce({ profane: false })
+      classifyProfanityMock.mockResolvedValueOnce({ profane: true, reason: 'offensive' })
       const res = await inject({
         method: 'POST',
         url: '/api/users/register',
         payload: { username: 'alice', displayName: 'shitstorm' },
       })
       expect(res.statusCode).toBe(400)
-      expect(res.json()).toEqual({ code: 'display_name_invalid', reason: 'profane' })
+      expect(res.json()).toEqual({ code: 'display_name_invalid', reason: 'offensive' })
     })
   })
 
@@ -186,10 +204,11 @@ describe('onboarding routes (integration)', () => {
       expect(res.json()).toEqual({ available: false, reason: 'format' })
     })
 
-    it('reserved → {available:false, reason:reserved}', async () => {
+    it('impersonation → {available:false, reason:impersonation}', async () => {
+      classifyProfanityMock.mockResolvedValueOnce({ profane: true, reason: 'impersonation' })
       const res = await inject({ method: 'GET', url: '/api/users/check-username?username=admin' })
       expect(res.statusCode).toBe(200)
-      expect(res.json()).toEqual({ available: false, reason: 'reserved' })
+      expect(res.json()).toEqual({ available: false, reason: 'impersonation' })
     })
 
     it('taken → {available:false, reason:taken}', async () => {

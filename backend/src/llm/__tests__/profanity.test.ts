@@ -5,7 +5,7 @@ vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return {
     ...actual,
-    generateObject: vi.fn(),
+    generateText: vi.fn(),
   }
 })
 
@@ -33,11 +33,11 @@ describe('classifyProfanity', () => {
     vi.clearAllMocks()
   })
 
-  it('calls generateObject with HAIKU + ProfanitySchema + system prompt', async () => {
-    const { generateObject } = await import('ai')
-    const generateObjectMock = vi.mocked(generateObject)
-    generateObjectMock.mockResolvedValue({
-      object: { profane: false },
+  it('calls generateText with HAIKU + Output.object(ProfanitySchema) + system prompt', async () => {
+    const { generateText } = await import('ai')
+    const generateTextMock = vi.mocked(generateText)
+    generateTextMock.mockResolvedValue({
+      output: { profane: false },
       usage: { inputTokens: 50, outputTokens: 5, totalTokens: 55 },
       finishReason: 'stop',
     } as never)
@@ -46,22 +46,21 @@ describe('classifyProfanity', () => {
     const result = await classifyProfanity('gandalf')
 
     expect(result).toEqual({ profane: false })
-    expect(generateObjectMock).toHaveBeenCalledOnce()
-    // generateObject's first-arg type is a discriminated union (schema vs
-    // output:'no-schema' branches), which TS can't narrow from an introspected
-    // mock call. We assert the runtime shape via an index-signature view.
-    const callArgs = generateObjectMock.mock.calls[0]![0]! as unknown as Record<string, unknown>
-    expect(callArgs.schema).toBe(ProfanitySchema)
+    expect(generateTextMock).toHaveBeenCalledOnce()
+    // generateText's first-arg type is broad; introspect the mock call via
+    // an index-signature view rather than fight the discriminated union.
+    const callArgs = generateTextMock.mock.calls[0]?.[0] as unknown as Record<string, unknown>
     expect(callArgs.prompt).toBe('gandalf')
     expect(typeof callArgs.system).toBe('string')
     expect(callArgs.system as string).toContain('Reject the username')
     expect(callArgs.maxRetries).toBe(3)
+    expect(callArgs.output).toBeDefined()
   })
 
-  it('returns the parsed object verbatim from generateObject', async () => {
-    const { generateObject } = await import('ai')
-    vi.mocked(generateObject).mockResolvedValue({
-      object: { profane: true, reason: 'offensive' },
+  it('returns the output verbatim from generateText', async () => {
+    const { generateText } = await import('ai')
+    vi.mocked(generateText).mockResolvedValue({
+      output: { profane: true, reason: 'offensive' },
       usage: { inputTokens: 50, outputTokens: 8, totalTokens: 58 },
       finishReason: 'stop',
     } as never)
@@ -72,9 +71,9 @@ describe('classifyProfanity', () => {
   })
 
   it('returns impersonation result when model classifies as such', async () => {
-    const { generateObject } = await import('ai')
-    vi.mocked(generateObject).mockResolvedValue({
-      object: { profane: true, reason: 'impersonation' },
+    const { generateText } = await import('ai')
+    vi.mocked(generateText).mockResolvedValue({
+      output: { profane: true, reason: 'impersonation' },
       usage: { inputTokens: 50, outputTokens: 9, totalTokens: 59 },
       finishReason: 'stop',
     } as never)
@@ -84,9 +83,9 @@ describe('classifyProfanity', () => {
     expect(result).toEqual({ profane: true, reason: 'impersonation' })
   })
 
-  it('propagates errors from generateObject', async () => {
-    const { generateObject } = await import('ai')
-    vi.mocked(generateObject).mockRejectedValue(new Error('boom'))
+  it('propagates errors from generateText', async () => {
+    const { generateText } = await import('ai')
+    vi.mocked(generateText).mockRejectedValue(new Error('boom'))
 
     const { classifyProfanity } = await import('../profanity.js')
     await expect(classifyProfanity('something')).rejects.toThrow('boom')

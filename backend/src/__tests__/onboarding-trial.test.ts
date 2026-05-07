@@ -22,6 +22,11 @@ import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { InjectOptions, LightMyRequestResponse } from 'fastify'
+
+vi.mock('../llm/profanity.js', () => ({
+  classifyProfanity: vi.fn(),
+}))
+
 import { createPgPool } from '../db/postgres.js'
 import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
@@ -30,7 +35,10 @@ import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo } from '../repo/index.js'
 import * as creditsRepo from '../repo/credits.js'
+import { classifyProfanity } from '../llm/profanity.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+
+const classifyProfanityMock = vi.mocked(classifyProfanity)
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -93,6 +101,9 @@ describe('onboarding trial-credit (integration)', () => {
     currentTestIp = `10.1.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
     await resetData(pool)
     vi.restoreAllMocks()
+    // Re-establish the classifyProfanity mock default after restoreAllMocks
+    // wipes it. All trial-credit tests register with clean usernames/displays.
+    classifyProfanityMock.mockResolvedValue({ profane: false })
   })
 
   it('grants exactly one trial credit row on successful register', async () => {

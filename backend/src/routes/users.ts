@@ -92,7 +92,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       if (usernameProfanity.profane) {
         return reply.code(400).send({
           code: 'username_invalid',
-          reason: usernameProfanity.reason ?? 'profane',
+          reason: usernameProfanity.reason ?? 'offensive',
         })
       }
 
@@ -100,7 +100,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       if (displayProfanity.profane) {
         return reply.code(400).send({
           code: 'display_name_invalid',
-          reason: 'profane',
+          reason: displayProfanity.reason ?? 'offensive',
         })
       }
 
