@@ -55,6 +55,112 @@
 
 <div id="schema-tables-container">
   <h2 class="schema-cluster" id="identity-amp-billing">Identity &amp; billing</h2>
+<details class="schema-table" data-table-name="billing_history" id="schema-table-billing_history">
+  <summary>
+    <span class="schema-table-name">billing_history</span>
+    <span class="schema-table-meta">12 columns · 2 indexes · 3 CHECKs · 8 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="kind">
+        <td><code>kind</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="source_id_stripe">
+        <td><code>source_id_stripe</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="stripe_payment_intent_id">
+        <td><code>stripe_payment_intent_id</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="lookup_key">
+        <td><code>lookup_key</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="amount_cents">
+        <td><code>amount_cents</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="currency">
+        <td><code>currency</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'usd'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'completed'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="expires_at">
+        <td><code>expires_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="occurred_at">
+        <td><code>occurred_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_billing_history_invoice_pi</code> — (stripe_payment_intent_id) WHERE (kind = 'invoice'::text) AND (stripe_payment_intent_id IS NOT NULL)</li>
+    <li><code>idx_billing_history_user_occurred</code> — <code>CREATE INDEX idx_billing_history_user_occurred ON billing_history USING btree (user_id, occurred_at DESC, id DESC)</code></li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((((kind = 'purchase'::text) AND (source_id_stripe ~~ 'pi_%'::text)) OR ((kind = 'invoice'::text) AND (source_id_stripe ~~ 'in_%'::text)) OR ((kind = 'refund'::text) AND (source_id_stripe ~~ 're_%'::text))))</code></li>
+    <li><code>CHECK ((kind = ANY (ARRAY['purchase'::text, 'invoice'::text, 'refund'::text])))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))</code></li>
+  </ul>
+</details>
 <details class="schema-table" data-table-name="credit_ledger" id="schema-table-credit_ledger">
   <summary>
     <span class="schema-table-name">credit_ledger</span>
@@ -2802,113 +2908,6 @@ END)</code></li>
     </tbody>
   </table>
 </details>
-<h2 class="schema-cluster" id="other">Other</h2>
-<details class="schema-table" data-table-name="billing_history" id="schema-table-billing_history">
-  <summary>
-    <span class="schema-table-name">billing_history</span>
-    <span class="schema-table-meta">12 columns · 2 indexes · 3 CHECKs · 8 FKs</span>
-  </summary>
-  <table class="schema-columns">
-    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
-    <tbody>
-      <tr data-column-name="id">
-        <td><code>id</code></td>
-        <td><code>uuid</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="user_id">
-        <td><code>user_id</code></td>
-        <td><code>uuid</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td><code>users(id)</code> ON DELETE CASCADE</td>
-      </tr>
-      <tr data-column-name="kind">
-        <td><code>kind</code></td>
-        <td><code>text</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="source_id_stripe">
-        <td><code>source_id_stripe</code></td>
-        <td><code>text</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="stripe_payment_intent_id">
-        <td><code>stripe_payment_intent_id</code></td>
-        <td><code>text</code></td>
-        <td>YES</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="lookup_key">
-        <td><code>lookup_key</code></td>
-        <td><code>text</code></td>
-        <td>YES</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="amount_cents">
-        <td><code>amount_cents</code></td>
-        <td><code>integer</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="currency">
-        <td><code>currency</code></td>
-        <td><code>text</code></td>
-        <td>NO</td>
-        <td><code>'usd'::text</code></td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="status">
-        <td><code>status</code></td>
-        <td><code>text</code></td>
-        <td>NO</td>
-        <td><code>'completed'::text</code></td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="expires_at">
-        <td><code>expires_at</code></td>
-        <td><code>timestamptz</code></td>
-        <td>YES</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="occurred_at">
-        <td><code>occurred_at</code></td>
-        <td><code>timestamptz</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="created_at">
-        <td><code>created_at</code></td>
-        <td><code>timestamptz</code></td>
-        <td>NO</td>
-        <td><code>now()</code></td>
-        <td>—</td>
-      </tr>
-    </tbody>
-  </table>
-  <h4>Indexes</h4>
-  <ul class="schema-list">
-    <li><code>idx_billing_history_invoice_pi</code> — (stripe_payment_intent_id) WHERE (kind = 'invoice'::text) AND (stripe_payment_intent_id IS NOT NULL)</li>
-    <li><code>idx_billing_history_user_occurred</code> — <code>CREATE INDEX idx_billing_history_user_occurred ON billing_history USING btree (user_id, occurred_at DESC, id DESC)</code></li>
-  </ul>
-  <h4>CHECK constraints</h4>
-  <ul class="schema-list">
-    <li><code>CHECK ((((kind = 'purchase'::text) AND (source_id_stripe ~~ 'pi_%'::text)) OR ((kind = 'invoice'::text) AND (source_id_stripe ~~ 'in_%'::text)) OR ((kind = 'refund'::text) AND (source_id_stripe ~~ 're_%'::text))))</code></li>
-    <li><code>CHECK ((kind = ANY (ARRAY['purchase'::text, 'invoice'::text, 'refund'::text])))</code></li>
-    <li><code>CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))</code></li>
-  </ul>
-</details>
 </div>
 
 <h2 id="integration-points">Integration points</h2>
@@ -2923,7 +2922,7 @@ END)</code></li>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#other">Other</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
