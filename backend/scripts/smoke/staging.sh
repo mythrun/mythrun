@@ -89,16 +89,41 @@ HEALTH_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$API_BASE/health/ready"
 [[ "$HEALTH_STATUS" == "200" ]] || fail "/health/ready returned $HEALTH_STATUS"
 ok "/health/ready returned 200"
 
-# Note on coverage: registration + clean-username paths require the staging
-# Postgres `users` table, which only exists after migrations have been applied.
-# Until that's wired up, this smoke covers the LLM-isolating paths only —
-# the offensive + impersonation classifyProfanity branches short-circuit in
-# the route handler before any DB query (see backend/src/routes/users.ts:225).
-# That's enough to verify Haiku is reachable, returns valid structured output,
-# and the middleware logs `event:'llm.call'`. Once migrations run in staging,
-# expand this to cover registration + clean username (DB-touching paths).
+# ─── Step 4: Idempotent registration ─────────────────────────────────────────
+# First run: creates the users row. Subsequent runs: returns 200 idempotent
+# (per MYT-38 spec — same Cognito sub returns the existing user record).
+# Either way, classifyProfanity fires on the username + display name.
+REGISTER_USERNAME="smoketester$$"
+REGISTER_DISPLAY="Smoke Tester"
 
-# ─── Step 4: classifyProfanity smoke — offensive ─────────────────────────────
+info "POST $API_BASE/api/users/register (username: $REGISTER_USERNAME)"
+REG_TMP=$(mktemp)
+REG_STATUS=$(curl -sS -o "$REG_TMP" -w "%{http_code}" -X POST "$API_BASE/api/users/register" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"$REGISTER_USERNAME\",\"displayName\":\"$REGISTER_DISPLAY\"}")
+REG_BODY=$(cat "$REG_TMP")
+rm -f "$REG_TMP"
+
+case "$REG_STATUS" in
+  200|201) ok "Registration succeeded ($REG_STATUS) — fresh path" ;;
+  409)     ok "Registration returned 409 (already-onboarded) — idempotent path" ;;
+  *)       fail "Registration returned $REG_STATUS: $REG_BODY" ;;
+esac
+
+# ─── Step 5: classifyProfanity smoke — clean username ────────────────────────
+# Falls through the LLM (profane:false) into users.getByUsername, which
+# requires the migrations to have created the `users` table. With $$ as a
+# suffix, this username is unlikely to collide with the registration we just
+# did; should return available:true.
+info "GET /api/users/check-username?username=$CLEAN_USERNAME (clean)"
+CLEAN_RESP=$(curl -sS "$API_BASE/api/users/check-username?username=$CLEAN_USERNAME" \
+  -H "$AUTH_HEADER")
+CLEAN_AVAILABLE=$(echo "$CLEAN_RESP" | jq -r '.available')
+[[ "$CLEAN_AVAILABLE" == "true" ]] || fail "Clean username returned available=$CLEAN_AVAILABLE; body: $CLEAN_RESP"
+ok "Clean username → available: true (Haiku non-profane + DB lookup OK)"
+
+# ─── Step 6: classifyProfanity smoke — offensive ─────────────────────────────
 info "GET /api/users/check-username?username=$OFFENSIVE_USERNAME (offensive)"
 OFFENSIVE_RESP=$(curl -sS "$API_BASE/api/users/check-username?username=$OFFENSIVE_USERNAME" \
   -H "$AUTH_HEADER")
@@ -113,7 +138,7 @@ if [[ "$OFFENSIVE_REASON" != "offensive" ]]; then
 fi
 ok "Offensive username → available: false, reason: offensive"
 
-# ─── Step 5: classifyProfanity smoke — impersonation ─────────────────────────
+# ─── Step 7: classifyProfanity smoke — impersonation ─────────────────────────
 info "GET /api/users/check-username?username=$IMPERSONATION_USERNAME (impersonation)"
 IMPERSONATION_RESP=$(curl -sS "$API_BASE/api/users/check-username?username=$IMPERSONATION_USERNAME" \
   -H "$AUTH_HEADER")
@@ -129,6 +154,5 @@ fi
 ok "Impersonation username → available: false, reason: impersonation"
 
 # ─── Done ────────────────────────────────────────────────────────────────────
-printf "\n${GREEN}Smoke passed.${NC} 2 Haiku calls fired (cost ≈ \$0.0002).\n"
+printf "\n${GREEN}Smoke passed.${NC} ~5 Haiku calls fired (cost ≈ \$0.0005).\n"
 printf "Watch CloudWatch /mythrun/staging/api for event:'llm.call' lines.\n"
-printf "${YELLOW}Note:${NC} registration + clean-username paths skipped until migrations are applied to staging Postgres.\n"
