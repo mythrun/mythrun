@@ -36,6 +36,7 @@
     "@types/node": "^24.0.0",
     "@types/pg": "^8.11.0",
     "dotenv": "^17.4.2",
+    "ioredis-mock": "^8.13.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
