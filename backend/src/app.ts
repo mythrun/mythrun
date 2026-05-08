@@ -6,12 +6,14 @@ import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { AppDeps } from './app-deps.js'
 import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
+import { accessControlAllowlist } from './auth/access-control-allowlist.js'
 import { registerPublicRouteAllowlistHook } from './auth/public-route-allowlist.js'
 import { requireOnboarded } from './auth/require-onboarded.js'
 import type { Env } from './config/env.js'
 import { registerReadyRoute } from './routes/health-ready.js'
 import { usersRoutes } from './routes/users.js'
 import { invitesRoutes } from './routes/invites.js'
+import { sessionsRoutes } from './routes/sessions.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
 
@@ -131,10 +133,19 @@ export const buildApp = async (
     timeWindow: '1 minute',
   })
 
-  // requireOnboarded gates protected routes on a real users row. Public +
+  // requireOnboarded gates protected routes on a real users row +
+  // suspended_at check, attaches frozen request.dbUser. Public +
   // jwt-no-db opt out; jwt-no-db is allowlist-bound and boot fails if a
   // non-allowlisted route uses it.
   await app.register(requireOnboarded, { pool: deps.pg })
+
+  // accessControlAllowlist (MYT-39 §4) — boot-time gate that fails
+  // app.ready() if any route uses requireCampaignMember/requireWorldCreator
+  // together with config.auth: 'public' or 'jwt-no-db' (which would
+  // short-circuit requireOnboarded and leave request.dbUser undefined).
+  // Registered AFTER requireOnboarded so the allowlist's onRoute hook
+  // sees every subsequent route registration.
+  await app.register(accessControlAllowlist)
 
   // Webhook plugin (MYT-42 Task 15). Registered BEFORE any sibling JSON
   // route the parent scope cares about, so the encapsulated raw-body
@@ -147,6 +158,14 @@ export const buildApp = async (
   await app.register(invitesRoutes, {
     pool: deps.pg,
     frontendBaseUrl: config.frontendBaseUrl,
+  })
+
+  // Sessions plugin (MYT-39 §6). Currently only POST /api/sessions/:id/ws-ticket;
+  // additional session-scoped routes land in the Session Runtime milestone.
+  await app.register(sessionsRoutes, {
+    pool: deps.pg,
+    redisRealtime: deps.redisRealtime,
+    redisKeyPrefix: deps.redisKeyPrefix,
   })
 
   // Billing plugin (MYT-42 Tasks 25–31). Registered last as a direct

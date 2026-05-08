@@ -24,6 +24,10 @@ interface Opts {
   readonly redisKeyPrefix: string
 }
 
+// FastifyPluginAsync requires an async function shape; the body has no
+// top-level await (only app.post is synchronous), matching the precedent
+// in auth/require-onboarded.ts and other plugin files.
+// eslint-disable-next-line @typescript-eslint/require-await
 export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const repo = createRepo(opts.pool)
 
@@ -60,9 +64,16 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     async (request) => {
       const sessionId = request.params.id
       const dbUser = requireDbUser(request)
-      // resolvedCampaignId is set by the upstream preHandler; non-null
-      // assertion is safe — if step 1 returned 404 we wouldn't reach here.
-      const campaignId = request.resolvedCampaignId!
+      // resolvedCampaignId is set by the upstream preHandler. If it's
+      // missing here, something has gone catastrophically wrong with the
+      // hook chain — surface as 500 with a clear operator message rather
+      // than continuing with a malformed payload.
+      const campaignId = request.resolvedCampaignId
+      if (campaignId === undefined) {
+        throw new Error(
+          'sessions ws-ticket: request.resolvedCampaignId missing — upstream preHandler did not run',
+        )
+      }
       const { ticket, expiresAt } = await mintWsTicket(
         { redis: opts.redisRealtime, keyPrefix: opts.redisKeyPrefix },
         { userId: dbUser.id, sessionId, campaignId },

@@ -19,7 +19,7 @@
 //
 // Spec: docs/superpowers/specs/2026-05-08-myt-39-access-control-ws-ticket-design.md §4
 
-import type { preHandlerHookHandler } from 'fastify'
+import type { preHandlerAsyncHookHandler } from 'fastify'
 import type { Repo } from '../repo/index.js'
 import type { CampaignMemberRole } from '../repo/types.js'
 import { requireDbUser } from './require-db-user.js'
@@ -34,14 +34,14 @@ export const ACCESS_CONTROL_MARKER = Symbol('mythrun.access-control')
  *  offender identifier even though the hook itself is the same shape. */
 export type AccessControlKind = 'requireCampaignMember' | 'requireWorldCreator'
 
-interface MarkedHook extends preHandlerHookHandler {
+type MarkedHook = preHandlerAsyncHookHandler & {
   [ACCESS_CONTROL_MARKER]?: AccessControlKind
 }
 
 function markHook(
-  hook: preHandlerHookHandler,
+  hook: preHandlerAsyncHookHandler,
   kind: AccessControlKind,
-): preHandlerHookHandler {
+): preHandlerAsyncHookHandler {
   ;(hook as MarkedHook)[ACCESS_CONTROL_MARKER] = kind
   return hook
 }
@@ -49,8 +49,8 @@ function markHook(
 export function requireCampaignMember(
   repo: Repo,
   role?: CampaignMemberRole,
-): preHandlerHookHandler {
-  const hook: preHandlerHookHandler = async (request, reply) => {
+): preHandlerAsyncHookHandler {
+  const hook: preHandlerAsyncHookHandler = async (request, reply) => {
     const dbUser = requireDbUser(request)
     const campaignId =
       request.resolvedCampaignId ??
@@ -61,7 +61,7 @@ export function requireCampaignMember(
       )
     }
     const member = await repo.campaigns.getMembership(campaignId, dbUser.id)
-    if (!member || !member.inviteAccepted) {
+    if (!member?.inviteAccepted) {
       return reply.code(403).send({ code: 'not_campaign_member' })
     }
     if (role && member.role !== role) {
@@ -72,8 +72,8 @@ export function requireCampaignMember(
   return markHook(hook, 'requireCampaignMember')
 }
 
-export function requireWorldCreator(repo: Repo): preHandlerHookHandler {
-  const hook: preHandlerHookHandler = async (request, reply) => {
+export function requireWorldCreator(repo: Repo): preHandlerAsyncHookHandler {
+  const hook: preHandlerAsyncHookHandler = async (request, reply) => {
     const dbUser = requireDbUser(request)
     const worldId = (request.params as { worldId?: string }).worldId
     if (!worldId) {

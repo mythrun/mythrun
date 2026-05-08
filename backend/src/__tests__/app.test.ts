@@ -16,6 +16,7 @@ vi.mock('../repo/users.js', () => ({
               cognitoSub: 'bypass:dev-1',
               username: 'bypass',
               displayName: 'Bypass',
+              suspendedAt: null,
             }
           : null,
       ),
@@ -39,6 +40,7 @@ const makeStubDeps = (): AppDeps => {
     pg: mockPool,
     redisRealtime: {} as Redis,
     redisBatch: {} as Redis,
+    redisKeyPrefix: 'test:use1:',
     repo: createRepo(mockPool),
   }
 }

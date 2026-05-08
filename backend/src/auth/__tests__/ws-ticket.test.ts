@@ -13,7 +13,7 @@ describe('mintWsTicket', () => {
   let redis: Redis
 
   beforeEach(() => {
-    redis = new IoRedisMock() as unknown as Redis
+    redis = new IoRedisMock()
   })
   afterEach(async () => {
     await redis.quit()
@@ -33,8 +33,8 @@ describe('mintWsTicket', () => {
       { userId: 'u-1', sessionId: 's-1', campaignId: 'c-1' },
     )
     const raw = await redis.get(`${KEY_PREFIX}${ticket}`)
-    expect(raw).not.toBeNull()
-    const parsed = JSON.parse(raw!) as Record<string, string>
+    if (raw === null) throw new Error('expected stored ticket value')
+    const parsed = JSON.parse(raw) as Record<string, string>
     expect(parsed).toEqual({ userId: 'u-1', sessionId: 's-1', campaignId: 'c-1' })
   })
 
@@ -77,7 +77,7 @@ describe('consumeWsTicket', () => {
   let redis: Redis
 
   beforeEach(() => {
-    redis = new IoRedisMock() as unknown as Redis
+    redis = new IoRedisMock()
   })
   afterEach(async () => {
     await redis.quit()

@@ -70,6 +70,7 @@ describe('onboarding routes (integration)', () => {
       pg: pool,
       redisRealtime: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
       redisBatch: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
+      redisKeyPrefix: "test:use1:",
       repo: createRepo(pool),
     }
     app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })

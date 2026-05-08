@@ -94,7 +94,7 @@ describe('POST /api/sessions/:id/ws-ticket', () => {
   let redis: Redis
 
   beforeEach(() => {
-    redis = new IoRedisMock() as unknown as Redis
+    redis = new IoRedisMock()
     getMembershipMock.mockReset()
     getSessionByIdMock.mockReset()
   })
@@ -128,13 +128,14 @@ describe('POST /api/sessions/:id/ws-ticket', () => {
     app = await build({ user: fakeUser, redis })
     const res = await app.inject({ method: 'POST', url: '/api/sessions/s-1/ws-ticket' })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { ticket: string; expiresAt: string }
+    const body: { ticket: string; expiresAt: string } = res.json()
     expect(body.ticket).toMatch(/^[0-9a-f]{64}$/)
     expect(Date.parse(body.expiresAt)).not.toBeNaN()
 
     const stored = await redis.get(`${KEY_PREFIX}${body.ticket}`)
-    expect(stored).not.toBeNull()
-    expect(JSON.parse(stored!) as Record<string, string>).toEqual({
+    if (stored === null) throw new Error('expected stored ticket value')
+    const parsed = JSON.parse(stored) as Record<string, string>
+    expect(parsed).toEqual({
       userId: 'u-1',
       sessionId: 's-1',
       campaignId: 'c-1',

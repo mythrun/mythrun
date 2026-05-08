@@ -35,6 +35,7 @@ export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
     pg,
     redisRealtime,
     redisBatch,
+    redisKeyPrefix: 'test:use1:',
     repo: createRepo(pg),
   }
 }

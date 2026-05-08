@@ -72,6 +72,7 @@ async function fallbackStart(): Promise<void> {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
     redisBatch: { quit: () => Promise.resolve('OK') } as unknown as Redis,
+    redisKeyPrefix: env.redisKeyPrefix,
     repo: createRepo(stubPool),
   }
   const app = await buildApp(stubDeps, authOpts, {
@@ -147,7 +148,13 @@ export async function main(): Promise<void> {
     const repo = createRepo(pgRef)
     const authOpts = buildAuthOpts(env)
     const app = await buildApp(
-      { pg: pgRef, redisRealtime: rTRRef, redisBatch: rTBRef, repo },
+      {
+        pg: pgRef,
+        redisRealtime: rTRRef,
+        redisBatch: rTBRef,
+        redisKeyPrefix: env.redisKeyPrefix,
+        repo,
+      },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
     )
