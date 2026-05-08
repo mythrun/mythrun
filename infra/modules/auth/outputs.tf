@@ -19,13 +19,3 @@ output "issuer_url" {
   description = "OIDC issuer URL for JWT validation in MYT-37. Constructed from data.aws_region.current.region + the User Pool ID. JWT middleware verifies the iss claim against this exact string and derives the JWKS URL as $${issuer_url}/.well-known/jwks.json."
   value       = "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com/${aws_cognito_user_pool.main.id}"
 }
-
-output "user_pool_arn" {
-  description = "Cognito User Pool ARN. Consumed by IAM policies that need to scope cognito-idp actions (e.g., the GitHub Actions smoke role)."
-  value       = aws_cognito_user_pool.main.arn
-}
-
-output "smoke_test_credentials_secret_arn" {
-  description = "Secrets Manager ARN for the smoke-test user's credentials JSON. Null when smoke_test_user_enabled = false."
-  value       = var.smoke_test_user_enabled ? aws_secretsmanager_secret.smoke_test_credentials[0].arn : null
-}
