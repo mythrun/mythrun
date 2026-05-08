@@ -24,10 +24,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
+  "lint-staged": {
+    "*.{ts,tsx,mts,cts,js,cjs,mjs,html,yml,yaml,json,md}": "prettier --write"
+  },
   "devDependencies": {
-    "prettier": "^3.3.0",
     "eslint": "^9.15.0",
-    "typescript-eslint": "^8.15.0",
-    "eslint-config-prettier": "^10.1.8"
+    "eslint-config-prettier": "^10.1.8",
+    "lint-staged": "^17.0.3",
+    "prettier": "^3.3.0",
+    "typescript-eslint": "^8.15.0"
   }
 }
