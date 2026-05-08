@@ -22,18 +22,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 describe('eslint config wiring (smoke)', () => {
   it('banned fixture fails project lint', () => {
     const backendRoot = resolve(__dirname, '../..')
-    const fixture = resolve(
-      backendRoot,
-      'eslint-rules/__tests__/fixtures/banned.fixture.mjs',
-    )
+    const fixture = resolve(backendRoot, 'eslint-rules/__tests__/fixtures/banned.fixture.mjs')
     // Run from backend/ so pnpm exec finds the workspace package context.
     // The flat-config in eslint.config.js (repo root) is auto-discovered
     // by walking up from `cwd`.
-    const result = spawnSync(
-      'pnpm',
-      ['exec', 'eslint', '--no-ignore', fixture],
-      { cwd: backendRoot, encoding: 'utf-8' },
-    )
+    const result = spawnSync('pnpm', ['exec', 'eslint', '--no-ignore', fixture], {
+      cwd: backendRoot,
+      encoding: 'utf-8',
+    })
     expect(result.status).not.toBe(0)
     const combined = (result.stdout ?? '') + (result.stderr ?? '')
     expect(combined).toMatch(/no-stripe-price-mutations/)

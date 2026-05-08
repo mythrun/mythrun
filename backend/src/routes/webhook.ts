@@ -36,81 +36,71 @@ export interface WebhookRoutesOpts {
 export const webhookRoutes: FastifyPluginAsync<WebhookRoutesOpts> =
   // eslint-disable-next-line @typescript-eslint/require-await
   async (scope, opts) => {
-  // Encapsulation-scoped parser. removeContentTypeParser on the inherited
-  // default JSON parser FIRST, then register the buffer pass-through.
-  scope.removeContentTypeParser('application/json')
-  scope.addContentTypeParser(
-    'application/json',
-    { parseAs: 'buffer', bodyLimit: 256 * 1024 },
-    (_req, body, done) => {
-      done(null, body)
-    },
-  )
-
-  scope.post(
-    '/webhooks/stripe',
-    {
-      config: {
-        auth: 'public',
-        rateLimit: { max: 1500, timeWindow: '1 minute' },
+    // Encapsulation-scoped parser. removeContentTypeParser on the inherited
+    // default JSON parser FIRST, then register the buffer pass-through.
+    scope.removeContentTypeParser('application/json')
+    scope.addContentTypeParser(
+      'application/json',
+      { parseAs: 'buffer', bodyLimit: 256 * 1024 },
+      (_req, body, done) => {
+        done(null, body)
       },
-    },
-    async (request, reply) => {
-      // 1. Signature header gate.
-      const sig = request.headers['stripe-signature']
-      if (!sig || typeof sig !== 'string') {
-        return reply.code(400).send({ code: 'missing_signature' })
-      }
+    )
 
-      // 2. Defense-in-depth: assert the parser delivered a Buffer. If a
-      // future refactor accidentally drops the encapsulated parser
-      // registration, request.body would be a parsed object — which would
-      // (a) leak secrets via JSON-canonicalization mismatch on the HMAC
-      // and (b) silently undermine signature verification. Fail loudly
-      // instead of silently calling constructEvent on a non-Buffer.
-      if (!Buffer.isBuffer(request.body)) {
-        request.log.error(
-          { bodyType: typeof request.body },
-          'webhook_parser_misconfigured',
-        )
-        return reply.code(500).send({ code: 'internal' })
-      }
-      const rawBody: Buffer = request.body
+    scope.post(
+      '/webhooks/stripe',
+      {
+        config: {
+          auth: 'public',
+          rateLimit: { max: 1500, timeWindow: '1 minute' },
+        },
+      },
+      async (request, reply) => {
+        // 1. Signature header gate.
+        const sig = request.headers['stripe-signature']
+        if (!sig || typeof sig !== 'string') {
+          return reply.code(400).send({ code: 'missing_signature' })
+        }
 
-      // 3. Stripe SDK client (cached at module level).
-      const stripe = getStripeClient(opts.env)
+        // 2. Defense-in-depth: assert the parser delivered a Buffer. If a
+        // future refactor accidentally drops the encapsulated parser
+        // registration, request.body would be a parsed object — which would
+        // (a) leak secrets via JSON-canonicalization mismatch on the HMAC
+        // and (b) silently undermine signature verification. Fail loudly
+        // instead of silently calling constructEvent on a non-Buffer.
+        if (!Buffer.isBuffer(request.body)) {
+          request.log.error({ bodyType: typeof request.body }, 'webhook_parser_misconfigured')
+          return reply.code(500).send({ code: 'internal' })
+        }
+        const rawBody: Buffer = request.body
 
-      // 4. Verify signature. constructEvent throws on any mismatch; we
-      // log only `err.message` and `err.type` (per Ephesus I6 round 7
-      // redaction concern: dumping the full err object would log the
-      // offending signature value). Returns 400 with the
-      // 'invalid_signature' billing error code so Stripe's redelivery
-      // dashboard surfaces the rejection cleanly.
-      let event: Stripe.Event
-      try {
-        event = stripe.webhooks.constructEvent(
-          rawBody,
-          sig,
-          opts.env.stripeWebhookSecret,
-        )
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        const errType =
-          typeof err === 'object' && err !== null && 'type' in err
-            ? (err as { type?: unknown }).type
-            : undefined
-        request.log.warn(
-          { err: { message, type: errType } },
-          'stripe_webhook_signature_invalid',
-        )
-        return reply.code(400).send({ code: 'invalid_signature' })
-      }
+        // 3. Stripe SDK client (cached at module level).
+        const stripe = getStripeClient(opts.env)
 
-      // 5. Dispatch (Task 16 fills in the stub body).
-      await dispatchEvent(event, stripe, opts.pool, request.log)
+        // 4. Verify signature. constructEvent throws on any mismatch; we
+        // log only `err.message` and `err.type` (per Ephesus I6 round 7
+        // redaction concern: dumping the full err object would log the
+        // offending signature value). Returns 400 with the
+        // 'invalid_signature' billing error code so Stripe's redelivery
+        // dashboard surfaces the rejection cleanly.
+        let event: Stripe.Event
+        try {
+          event = stripe.webhooks.constructEvent(rawBody, sig, opts.env.stripeWebhookSecret)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          const errType =
+            typeof err === 'object' && err !== null && 'type' in err
+              ? (err as { type?: unknown }).type
+              : undefined
+          request.log.warn({ err: { message, type: errType } }, 'stripe_webhook_signature_invalid')
+          return reply.code(400).send({ code: 'invalid_signature' })
+        }
 
-      // 6. Acknowledge.
-      return reply.code(200).send({ received: true })
-    },
-  )
-}
+        // 5. Dispatch (Task 16 fills in the stub body).
+        await dispatchEvent(event, stripe, opts.pool, request.log)
+
+        // 6. Acknowledge.
+        return reply.code(200).send({ received: true })
+      },
+    )
+  }

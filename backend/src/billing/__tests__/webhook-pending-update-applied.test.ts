@@ -125,9 +125,10 @@ interface PuaInvoiceFixture {
 }
 
 // Stripe SDK stub — handler's prefetcher hits stripe.invoices.retrieve.
-function makeStripeWithInvoice(opts: {
-  invoice?: PuaInvoiceFixture
-}): { stripe: Stripe; calls: { invoiceRetrieves: string[] } } {
+function makeStripeWithInvoice(opts: { invoice?: PuaInvoiceFixture }): {
+  stripe: Stripe
+  calls: { invoiceRetrieves: string[] }
+} {
   const calls = { invoiceRetrieves: [] as string[] }
   const stub = {
     invoices: {
@@ -143,10 +144,7 @@ function makeStripeWithInvoice(opts: {
   return { stripe: stub as unknown as Stripe, calls }
 }
 
-function makePuaEvent(
-  subscription: PuaSubscriptionFixture,
-  eventCreated?: number,
-): Stripe.Event {
+function makePuaEvent(subscription: PuaSubscriptionFixture, eventCreated?: number): Stripe.Event {
   return {
     id: `evt_test_${uuidv7()}`,
     object: 'event',
@@ -459,7 +457,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
     const sub_id = `sub_pua_orph_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_pua_orph_${uuidv7().slice(0, 12)}`
     const orphanCustomer = `cus_pua_orph_${uuidv7().slice(0, 8)}`
-    const orphanUserId = uuidv7()  // not in users
+    const orphanUserId = uuidv7() // not in users
 
     const subscription = buildSubscriptionFixture({
       sub_id,
@@ -498,9 +496,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
 
     // stripe_events committed; orphan paged.
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
-    const paged = entries.find(
-      (e) => e.level === 'error' && e.msg === 'billing.upgrade_orphan',
-    )
+    const paged = entries.find((e) => e.level === 'error' && e.msg === 'billing.upgrade_orphan')
     expect(paged).toBeDefined()
 
     // No writes — sub_id has no row, invoice_id has no row.
@@ -522,7 +518,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
       newTier: 'tier_mythwright',
       newPriceId: PRICE_ID_TIER_MYTHWRIGHT,
       newUnitAmount: 6000,
-      latestInvoiceId: null,  // shouldn't happen for pending_update_applied; defensive
+      latestInvoiceId: null, // shouldn't happen for pending_update_applied; defensive
       metadataUserId: userId,
     })
     // Stripe stub provides no invoice fixture — prefetcher must not call retrieve.
@@ -595,9 +591,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
     // Both the per-handler msg and dispatcher's sentinel logged.
     expect(
-      entries.some(
-        (e) => e.level === 'error' && e.msg === 'billing.upgrade_unexpected_line_shape',
-      ),
+      entries.some((e) => e.level === 'error' && e.msg === 'billing.upgrade_unexpected_line_shape'),
     ).toBe(true)
     expect(
       entries.some(
@@ -615,7 +609,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
     const { id: userId, cus } = await createPendingUpdateUser(pool)
     const sub_id = `sub_pua_unkn_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_pua_unkn_${uuidv7().slice(0, 12)}`
-    const stalePriceId = 'price_stripe_old_archived_xyz'  // not in SKU cache
+    const stalePriceId = 'price_stripe_old_archived_xyz' // not in SKU cache
 
     const subscription = buildSubscriptionFixture({
       sub_id,
@@ -652,9 +646,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
 
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
     expect(
-      entries.some(
-        (e) => e.level === 'error' && e.msg === 'billing.upgrade_unknown_price_id',
-      ),
+      entries.some((e) => e.level === 'error' && e.msg === 'billing.upgrade_unknown_price_id'),
     ).toBe(true)
     expect(
       entries.some(

@@ -141,10 +141,7 @@ export async function handleSubscriptionDeleted(
   //    deletion-before-creation race). Log INFO + return 'ok' so the dispatcher
   //    COMMITs the stripe_events row and Stripe stops retrying.
   if (rowsUpdated === 0) {
-    log.info(
-      { ...ids, user_id: user.id },
-      'billing.subscription_deleted_unknown_id',
-    )
+    log.info({ ...ids, user_id: user.id }, 'billing.subscription_deleted_unknown_id')
     return 'ok'
   }
 

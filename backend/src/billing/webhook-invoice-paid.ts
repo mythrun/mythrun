@@ -101,11 +101,7 @@ export async function prefetchInvoicePaid(
  * and Stripe redelivers).
  */
 function asInvoicePaidPrefetch(prefetch: unknown): InvoicePaidPrefetch {
-  if (
-    typeof prefetch !== 'object' ||
-    prefetch === null ||
-    !('subscription' in prefetch)
-  ) {
+  if (typeof prefetch !== 'object' || prefetch === null || !('subscription' in prefetch)) {
     throw new Error('invoice.paid: prefetch shape unexpected')
   }
   return prefetch as InvoicePaidPrefetch
@@ -205,9 +201,7 @@ interface SubscriptionFields {
  * returns 'validation_failed' (Mythrun never exposes multi-item subs;
  * admin error).
  */
-function readSubscriptionFields(
-  subscription: Stripe.Subscription,
-): SubscriptionFields | null {
+function readSubscriptionFields(subscription: Stripe.Subscription): SubscriptionFields | null {
   if (subscription.items.data.length !== 1) return null
   const item = subscription.items.data[0]
   if (!item) return null
@@ -253,11 +247,14 @@ function lookupKeyForPriceId(priceId: string): string | null {
  */
 type NewLookupKeyResolution =
   | { readonly ok: true; readonly lookupKey: string }
-  | { readonly ok: false; readonly reason:
-      | 'no_positive_line'
-      | 'multiple_positive_lines'
-      | 'unknown_price_id'
-      | 'price_details_missing' }
+  | {
+      readonly ok: false
+      readonly reason:
+        | 'no_positive_line'
+        | 'multiple_positive_lines'
+        | 'unknown_price_id'
+        | 'price_details_missing'
+    }
 
 function deriveNewLookupKeyForUpdate(invoice: Stripe.Invoice): NewLookupKeyResolution {
   const positives: Stripe.InvoiceLineItem[] = []
@@ -433,7 +430,12 @@ function prepareSubscriptionUpdate(
   log: FastifyBaseLogger,
   ids: InvoiceLogIds,
 ):
-  | { readonly ok: true; readonly lookupKey: string; readonly subtotal: number; readonly expiresAt: Date }
+  | {
+      readonly ok: true
+      readonly lookupKey: string
+      readonly subtotal: number
+      readonly expiresAt: Date
+    }
   | { readonly ok: false } {
   const fields = readSubscriptionFields(subscription)
   if (!fields) {
@@ -445,7 +447,10 @@ function prepareSubscriptionUpdate(
   }
   const newKeyResolution = deriveNewLookupKeyForUpdate(invoice)
   if (!newKeyResolution.ok) {
-    log.error({ ...ids, reason: newKeyResolution.reason }, 'billing.invoice_update_lookup_key_unresolved')
+    log.error(
+      { ...ids, reason: newKeyResolution.reason },
+      'billing.invoice_update_lookup_key_unresolved',
+    )
     return { ok: false }
   }
   const subtotal = invoice.subtotal_excluding_tax
@@ -659,7 +664,14 @@ export async function handleInvoicePaid(
   // 2. Zero/negative amount invoices: audit-only, no validation, no grant.
   if (amountPaid <= 0) {
     return await handleAuditOnly(
-      event, invoice, invoiceId, paymentIntentId, userId, client, log, ids,
+      event,
+      invoice,
+      invoiceId,
+      paymentIntentId,
+      userId,
+      client,
+      log,
+      ids,
       'zero_or_negative_amount',
     )
   }
@@ -667,23 +679,54 @@ export async function handleInvoicePaid(
   // 3. Branch on billing_reason.
   if (billingReason === 'subscription_cycle') {
     return await handleCycleOrCreate(
-      event, invoice, invoiceId, paymentIntentId, subscription, userId, client, log, ids,
+      event,
+      invoice,
+      invoiceId,
+      paymentIntentId,
+      subscription,
+      userId,
+      client,
+      log,
+      ids,
     )
   }
   if (billingReason === 'subscription_create') {
     return await handleSubscriptionCreate(
-      event, invoice, invoiceId, paymentIntentId, subscription, userId, client, log, ids,
+      event,
+      invoice,
+      invoiceId,
+      paymentIntentId,
+      subscription,
+      userId,
+      client,
+      log,
+      ids,
     )
   }
   if (billingReason === 'subscription_update') {
     return await handleSubscriptionUpdate(
-      event, invoice, invoiceId, paymentIntentId, subscription, userId, client, log, ids,
+      event,
+      invoice,
+      invoiceId,
+      paymentIntentId,
+      subscription,
+      userId,
+      client,
+      log,
+      ids,
     )
   }
 
   // 4. Other billing_reason values: audit-only.
   return await handleAuditOnly(
-    event, invoice, invoiceId, paymentIntentId, userId, client, log, ids,
+    event,
+    invoice,
+    invoiceId,
+    paymentIntentId,
+    userId,
+    client,
+    log,
+    ids,
     'unhandled_billing_reason',
   )
 }

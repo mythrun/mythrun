@@ -91,8 +91,8 @@ export async function grantInTx(tx: ClientLike, input: GrantInput): Promise<Cred
 export interface NewClawbackRow {
   readonly userId: string
   readonly creditType: CreditType
-  readonly amount: number  // strictly negative
-  readonly sourceId: string  // originating grant row's UUID
+  readonly amount: number // strictly negative
+  readonly sourceId: string // originating grant row's UUID
 }
 
 export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
@@ -332,11 +332,8 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
       }
     },
 
-    listEntries: async (
-      userId: string,
-      opts: ListEntriesOpts = {},
-    ): Promise<CreditEntry[]> => {
-      const limit = opts.limit === null ? null : opts.limit ?? DEFAULT_LIST_LIMIT
+    listEntries: async (userId: string, opts: ListEntriesOpts = {}): Promise<CreditEntry[]> => {
+      const limit = opts.limit === null ? null : (opts.limit ?? DEFAULT_LIST_LIMIT)
       const params: unknown[] = [userId]
       let typeClause = ''
       if (opts.type) {

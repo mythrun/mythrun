@@ -143,10 +143,7 @@ interface UserSubscriptionRow {
   readonly cancellation_details: unknown
 }
 
-async function fetchUserSubscription(
-  p: Pool,
-  sub_id: string,
-): Promise<UserSubscriptionRow | null> {
+async function fetchUserSubscription(p: Pool, sub_id: string): Promise<UserSubscriptionRow | null> {
   const r = await p.query<UserSubscriptionRow>(
     `SELECT status, cancel_at_period_end, cancel_at, cancellation_details
        FROM user_subscriptions
@@ -374,9 +371,7 @@ describe('billing.webhook customer.subscription.deleted (handleSubscriptionDelet
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
 
     // INFO log emitted with the spec'd shape.
-    const unknownLog = entries.find(
-      (e) => e.msg === 'billing.subscription_deleted_unknown_id',
-    )
+    const unknownLog = entries.find((e) => e.msg === 'billing.subscription_deleted_unknown_id')
     expect(unknownLog).toBeDefined()
     if (!unknownLog) throw new Error('expected billing.subscription_deleted_unknown_id log')
     expect(unknownLog.level).toBe('info')

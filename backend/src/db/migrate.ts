@@ -23,10 +23,7 @@ const FORBIDDEN_RE = /^(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|END)\s*;?\s*$/
  * PL/pgSQL bodies (`DO $$ BEGIN ... END $$`, `CREATE FUNCTION ... AS $$ ... $$`)
  * contain literal BEGIN/END and must not be falsely rejected.
  */
-export function validateNoTransactionStatements(
-  filename: string,
-  contents: string,
-): void {
+export function validateNoTransactionStatements(filename: string, contents: string): void {
   // Strip dollar-quoted runs in place by replacing them with newlines so line
   // numbers are preserved for error messages.
   const stripped = stripDollarQuoted(contents)
@@ -149,9 +146,7 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
       return appliedSoFar
     }
 
-    const appliedRows = await client.query<{ version: string }>(
-      'SELECT version FROM _migrations',
-    )
+    const appliedRows = await client.query<{ version: string }>('SELECT version FROM _migrations')
     const applied = new Set(appliedRows.rows.map((r) => r.version))
     const pending = files.filter((f) => !applied.has(f))
 
@@ -165,8 +160,7 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
           event: 'migrate.drift_missing_files',
           runId,
           missing,
-          hint:
-            'applied migrations are missing on disk. If this is the MYT-32→MYT-33 transition, run `pnpm db:reset && pnpm db:migrate`. Otherwise, investigate before continuing — a previously-applied migration was deleted or renamed.',
+          hint: 'applied migrations are missing on disk. If this is the MYT-32→MYT-33 transition, run `pnpm db:reset && pnpm db:migrate`. Otherwise, investigate before continuing — a previously-applied migration was deleted or renamed.',
         },
         'migrate.drift_missing_files',
       )
@@ -244,10 +238,7 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
         throw wrapped
       }
       const durationMs = Math.round(performance.now() - start)
-      logger.info(
-        { event: 'migrate.applied', runId, version: file, durationMs },
-        'migrate.applied',
-      )
+      logger.info({ event: 'migrate.applied', runId, version: file, durationMs }, 'migrate.applied')
       appliedSoFar.push({ version: file, durationMs })
     }
 
@@ -260,7 +251,11 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
       try {
         await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY.toString()])
         logger.info(
-          { event: 'migrate.lock_released', runId, holdMs: Math.round(performance.now() - lockStart) },
+          {
+            event: 'migrate.lock_released',
+            runId,
+            holdMs: Math.round(performance.now() - lockStart),
+          },
           'migrate.lock_released',
         )
       } catch (unlockErr) {
@@ -299,10 +294,9 @@ async function acquireAdvisoryLockWithHeartbeat(
   abortSignal: AbortSignal | undefined,
 ): Promise<void> {
   const lockArg = LOCK_KEY.toString()
-  const tryRes = await client.query<{ ok: boolean }>(
-    'SELECT pg_try_advisory_lock($1) AS ok',
-    [lockArg],
-  )
+  const tryRes = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [
+    lockArg,
+  ])
   if (tryRes.rows[0]?.ok) return
 
   const lockStart = performance.now()
@@ -327,10 +321,9 @@ async function acquireAdvisoryLockWithHeartbeat(
       lastHeartbeatAt = now
     }
     await new Promise((r) => setTimeout(r, 500))
-    const again = await client.query<{ ok: boolean }>(
-      'SELECT pg_try_advisory_lock($1) AS ok',
-      [lockArg],
-    )
+    const again = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [
+      lockArg,
+    ])
     if (again.rows[0]?.ok) return
   }
 }
@@ -401,10 +394,7 @@ function fallbackRunId(): string {
  * AFTER `loadEnv()` has run — the logger is constructed BEFORE env loads
  * so it can log loadEnv's own failure.
  */
-function stripPgConnectionFields(
-  obj: Record<string, unknown>,
-  password: string | undefined,
-): void {
+function stripPgConnectionFields(obj: Record<string, unknown>, password: string | undefined): void {
   delete obj.connectionParameters
   delete obj.connectionString
   if (password) {
@@ -543,13 +533,16 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
     const code = (cause as { code?: string }).code
     let hint: string | undefined
     if (code === '42501') {
-      hint = 'insufficient_privilege. Common causes: (1) migration role lacks rds_superuser for CREATE EXTENSION (see spec §8.4); (2) role lacks USAGE/CREATE on target schema; (3) RLS policy blocks the statement.'
+      hint =
+        'insufficient_privilege. Common causes: (1) migration role lacks rds_superuser for CREATE EXTENSION (see spec §8.4); (2) role lacks USAGE/CREATE on target schema; (3) RLS policy blocks the statement.'
     } else if (code === '28P01') {
-      hint = 'auth failed. Verify MIGRATE_DATABASE_URL / DATABASE_URL credentials match the role secret.'
+      hint =
+        'auth failed. Verify MIGRATE_DATABASE_URL / DATABASE_URL credentials match the role secret.'
     } else if (code === '3D000') {
       hint = 'database does not exist. For local dev, run `pnpm db:up`. For RDS, verify the dbname.'
     } else if (code === 'ECONNREFUSED') {
-      hint = 'Postgres unreachable. For local dev, run `pnpm db:up`. For staging/prod, check the security group.'
+      hint =
+        'Postgres unreachable. For local dev, run `pnpm db:up`. For staging/prod, check the security group.'
     } else if (code === 'ENOTFOUND') {
       hint = 'hostname could not be resolved. Verify the DB host in the URL.'
     } else if (code === 'ETIMEDOUT') {

@@ -22,15 +22,41 @@ describe('repo.purchases', () => {
     await withTx(async (tx) => {
       const user = await createTestUser(tx)
       await purchases.insertMany(tx, [
-        { id: uuidv7(), user_id: user.id, stripe_payment_intent_id: 'pi_test_1', lookup_key: 'sku_session', quantity: 3, amount_cents: 1500, currency: 'usd' },
-        { id: uuidv7(), user_id: user.id, stripe_payment_intent_id: 'pi_test_1', lookup_key: 'sku_world',   quantity: 1, amount_cents: 1000, currency: 'usd' },
+        {
+          id: uuidv7(),
+          user_id: user.id,
+          stripe_payment_intent_id: 'pi_test_1',
+          lookup_key: 'sku_session',
+          quantity: 3,
+          amount_cents: 1500,
+          currency: 'usd',
+        },
+        {
+          id: uuidv7(),
+          user_id: user.id,
+          stripe_payment_intent_id: 'pi_test_1',
+          lookup_key: 'sku_world',
+          quantity: 1,
+          amount_cents: 1000,
+          currency: 'usd',
+        },
       ])
       const got = await purchases.getByPaymentIntent(tx, 'pi_test_1')
       expect(got).toHaveLength(2)
       // Inserting (pi_test_1, sku_session) again raises 23505
-      await expect(purchases.insertMany(tx, [
-        { id: uuidv7(), user_id: user.id, stripe_payment_intent_id: 'pi_test_1', lookup_key: 'sku_session', quantity: 1, amount_cents: 500, currency: 'usd' },
-      ])).rejects.toThrow(/duplicate key/)
+      await expect(
+        purchases.insertMany(tx, [
+          {
+            id: uuidv7(),
+            user_id: user.id,
+            stripe_payment_intent_id: 'pi_test_1',
+            lookup_key: 'sku_session',
+            quantity: 1,
+            amount_cents: 500,
+            currency: 'usd',
+          },
+        ]),
+      ).rejects.toThrow(/duplicate key/)
     })
   })
 
@@ -39,11 +65,18 @@ describe('repo.purchases', () => {
       const user = await createTestUser(tx)
       const ids = [uuidv7(), uuidv7(), uuidv7()]
       const lookupKeys: string[] = ['sku_session', 'sku_world', 'sku_session_pack_3']
-      await purchases.insertMany(tx, ids.map((id, i) => ({
-        id, user_id: user.id, stripe_payment_intent_id: 'pi_test_2',
-        lookup_key: lookupKeys[i] ?? 'sku_fallback',
-        quantity: 1, amount_cents: 500, currency: 'usd',
-      })))
+      await purchases.insertMany(
+        tx,
+        ids.map((id, i) => ({
+          id,
+          user_id: user.id,
+          stripe_payment_intent_id: 'pi_test_2',
+          lookup_key: lookupKeys[i] ?? 'sku_fallback',
+          quantity: 1,
+          amount_cents: 500,
+          currency: 'usd',
+        })),
+      )
       const got = await purchases.getByPaymentIntent(tx, 'pi_test_2')
       const sorted = [...ids].sort()
       expect(got.map((r) => r.id)).toEqual(sorted)
@@ -54,11 +87,21 @@ describe('repo.purchases', () => {
     await withTx(async (tx) => {
       const user = await createTestUser(tx)
       const id = uuidv7()
-      await purchases.insertMany(tx, [{ id, user_id: user.id, stripe_payment_intent_id: 'pi_test_3', lookup_key: 'sku_session', quantity: 1, amount_cents: 500, currency: 'usd' }])
+      await purchases.insertMany(tx, [
+        {
+          id,
+          user_id: user.id,
+          stripe_payment_intent_id: 'pi_test_3',
+          lookup_key: 'sku_session',
+          quantity: 1,
+          amount_cents: 500,
+          currency: 'usd',
+        },
+      ])
       const r1 = await purchases.markRefunded(tx, id)
       expect(r1.rowsAffected).toBe(1)
       const r2 = await purchases.markRefunded(tx, id)
-      expect(r2.rowsAffected).toBe(0)  // status='completed' predicate filters out the already-refunded row
+      expect(r2.rowsAffected).toBe(0) // status='completed' predicate filters out the already-refunded row
     })
   })
 })

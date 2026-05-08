@@ -29,9 +29,39 @@ export interface LookupKeySpec {
 }
 
 export const LOOKUP_KEYS = {
-  tier_wayfarer:   { lookupKey: 'tier_wayfarer',   displayName: 'Wayfarer',   type: 'recurring', sessionsGranted: 4,  worldsGranted: 1 },
-  tier_sojourner:  { lookupKey: 'tier_sojourner',  displayName: 'Sojourner',  type: 'recurring', sessionsGranted: 8,  worldsGranted: 2 },
-  tier_mythwright: { lookupKey: 'tier_mythwright', displayName: 'Mythwright', type: 'recurring', sessionsGranted: 16, worldsGranted: 4 },
-  sku_session:     { lookupKey: 'sku_session',     displayName: 'Session',    type: 'one_time',  sessionsGranted: 1,  worldsGranted: 0 },
-  sku_world:       { lookupKey: 'sku_world',       displayName: 'World',      type: 'one_time',  sessionsGranted: 1,  worldsGranted: 1 },
+  tier_wayfarer: {
+    lookupKey: 'tier_wayfarer',
+    displayName: 'Wayfarer',
+    type: 'recurring',
+    sessionsGranted: 4,
+    worldsGranted: 1,
+  },
+  tier_sojourner: {
+    lookupKey: 'tier_sojourner',
+    displayName: 'Sojourner',
+    type: 'recurring',
+    sessionsGranted: 8,
+    worldsGranted: 2,
+  },
+  tier_mythwright: {
+    lookupKey: 'tier_mythwright',
+    displayName: 'Mythwright',
+    type: 'recurring',
+    sessionsGranted: 16,
+    worldsGranted: 4,
+  },
+  sku_session: {
+    lookupKey: 'sku_session',
+    displayName: 'Session',
+    type: 'one_time',
+    sessionsGranted: 1,
+    worldsGranted: 0,
+  },
+  sku_world: {
+    lookupKey: 'sku_world',
+    displayName: 'World',
+    type: 'one_time',
+    sessionsGranted: 1,
+    worldsGranted: 1,
+  },
 } as const satisfies Record<LookupKey, LookupKeySpec>

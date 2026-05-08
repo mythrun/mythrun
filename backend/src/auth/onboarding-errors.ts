@@ -31,7 +31,10 @@ export class UsernameTakenError extends Error {
 
 export class AlreadyOnboardedError extends Error {
   readonly code = 'ALREADY_ONBOARDED'
-  constructor(readonly currentUsername: string, readonly requestedUsername: string) {
+  constructor(
+    readonly currentUsername: string,
+    readonly requestedUsername: string,
+  ) {
     super(`Caller already onboarded as ${currentUsername}; requested ${requestedUsername}`)
     this.name = 'AlreadyOnboardedError'
   }

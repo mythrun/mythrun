@@ -87,33 +87,111 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   readonly table_name: string
   readonly check_clause: string
 }[] = [
-  { table_name: 'billing_history', check_clause: `CHECK ((((kind = 'purchase'::text) AND (source_id_stripe ~~ 'pi_%'::text)) OR ((kind = 'invoice'::text) AND (source_id_stripe ~~ 'in_%'::text)) OR ((kind = 'refund'::text) AND (source_id_stripe ~~ 're_%'::text))))` },
-  { table_name: 'billing_history', check_clause: `CHECK ((kind = ANY (ARRAY['purchase'::text, 'invoice'::text, 'refund'::text])))` },
-  { table_name: 'billing_history', check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))` },
-  { table_name: 'campaign_members', check_clause: `CHECK ((role = ANY (ARRAY['owner'::text, 'player'::text])))` },
-  { table_name: 'campaigns', check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))` },
-  { table_name: 'character_skills', check_clause: `CHECK ((proficiency_level = ANY (ARRAY['none'::text, 'proficient'::text, 'expertise'::text])))` },
-  { table_name: 'credit_ledger', check_clause: `CHECK ((credit_type = ANY (ARRAY['session'::text, 'world_gen'::text])))` },
-  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type <> 'debit'::text) OR (source_id IS NOT NULL)))` },
-  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type <> 'debit'::text) OR (expires_at IS NULL)))` },
-  { table_name: 'credit_ledger', check_clause: `CHECK (((source_type = 'debit'::text) = (amount < 0)))` },
-  { table_name: 'credit_ledger', check_clause: `CHECK (\nCASE source_type\n    WHEN 'debit'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'trial'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'gift'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    WHEN 'purchase'::text THEN ((source_purchase_id IS NOT NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'subscription'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    ELSE false\nEND)` },
-  { table_name: 'credit_ledger', check_clause: `CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))` },
-  { table_name: 'entities', check_clause: `CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))` },
-  { table_name: 'facts', check_clause: `CHECK ((access_level = ANY (ARRAY['public'::text, 'private'::text, 'secret'::text])))` },
-  { table_name: 'facts', check_clause: `CHECK ((narrative_status = ANY (ARRAY['undelivered'::text, 'delivered'::text, 'developed'::text, 'resolved'::text])))` },
-  { table_name: 'moderation_flags', check_clause: `CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))` },
-  { table_name: 'moderation_flags', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'reviewed'::text, 'actioned'::text, 'dismissed'::text])))` },
-  { table_name: 'moderation_flags', check_clause: `CHECK ((target_type = ANY (ARRAY['world'::text, 'session_message'::text, 'user'::text])))` },
-  { table_name: 'pipeline_runs', check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text])))` },
+  {
+    table_name: 'billing_history',
+    check_clause: `CHECK ((((kind = 'purchase'::text) AND (source_id_stripe ~~ 'pi_%'::text)) OR ((kind = 'invoice'::text) AND (source_id_stripe ~~ 'in_%'::text)) OR ((kind = 'refund'::text) AND (source_id_stripe ~~ 're_%'::text))))`,
+  },
+  {
+    table_name: 'billing_history',
+    check_clause: `CHECK ((kind = ANY (ARRAY['purchase'::text, 'invoice'::text, 'refund'::text])))`,
+  },
+  {
+    table_name: 'billing_history',
+    check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))`,
+  },
+  {
+    table_name: 'campaign_members',
+    check_clause: `CHECK ((role = ANY (ARRAY['owner'::text, 'player'::text])))`,
+  },
+  {
+    table_name: 'campaigns',
+    check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))`,
+  },
+  {
+    table_name: 'character_skills',
+    check_clause: `CHECK ((proficiency_level = ANY (ARRAY['none'::text, 'proficient'::text, 'expertise'::text])))`,
+  },
+  {
+    table_name: 'credit_ledger',
+    check_clause: `CHECK ((credit_type = ANY (ARRAY['session'::text, 'world_gen'::text])))`,
+  },
+  {
+    table_name: 'credit_ledger',
+    check_clause: `CHECK (((source_type <> 'debit'::text) OR (source_id IS NOT NULL)))`,
+  },
+  {
+    table_name: 'credit_ledger',
+    check_clause: `CHECK (((source_type <> 'debit'::text) OR (expires_at IS NULL)))`,
+  },
+  {
+    table_name: 'credit_ledger',
+    check_clause: `CHECK (((source_type = 'debit'::text) = (amount < 0)))`,
+  },
+  {
+    table_name: 'credit_ledger',
+    check_clause: `CHECK (\nCASE source_type\n    WHEN 'debit'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'trial'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'gift'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    WHEN 'purchase'::text THEN ((source_purchase_id IS NOT NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'subscription'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    ELSE false\nEND)`,
+  },
+  {
+    table_name: 'credit_ledger',
+    check_clause: `CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))`,
+  },
+  {
+    table_name: 'entities',
+    check_clause: `CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))`,
+  },
+  {
+    table_name: 'facts',
+    check_clause: `CHECK ((access_level = ANY (ARRAY['public'::text, 'private'::text, 'secret'::text])))`,
+  },
+  {
+    table_name: 'facts',
+    check_clause: `CHECK ((narrative_status = ANY (ARRAY['undelivered'::text, 'delivered'::text, 'developed'::text, 'resolved'::text])))`,
+  },
+  {
+    table_name: 'moderation_flags',
+    check_clause: `CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))`,
+  },
+  {
+    table_name: 'moderation_flags',
+    check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'reviewed'::text, 'actioned'::text, 'dismissed'::text])))`,
+  },
+  {
+    table_name: 'moderation_flags',
+    check_clause: `CHECK ((target_type = ANY (ARRAY['world'::text, 'session_message'::text, 'user'::text])))`,
+  },
+  {
+    table_name: 'pipeline_runs',
+    check_clause: `CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text])))`,
+  },
   { table_name: 'purchases', check_clause: `CHECK ((quantity > 0))` },
-  { table_name: 'purchases', check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))` },
-  { table_name: 'sessions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'ended'::text, 'crashed'::text])))` },
-  { table_name: 'stat_block_actions', check_clause: `CHECK ((action_type = ANY (ARRAY['action'::text, 'reaction'::text, 'bonus_action'::text, 'legendary'::text])))` },
-  { table_name: 'user_subscriptions', check_clause: `CHECK ((current_period_end > current_period_start))` },
-  { table_name: 'user_subscriptions', check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text, 'incomplete'::text, 'incomplete_expired'::text, 'trialing'::text, 'paused'::text])))` },
-  { table_name: 'worlds', check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))` },
-  { table_name: 'worlds', check_clause: `CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))` },
+  {
+    table_name: 'purchases',
+    check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))`,
+  },
+  {
+    table_name: 'sessions',
+    check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'ended'::text, 'crashed'::text])))`,
+  },
+  {
+    table_name: 'stat_block_actions',
+    check_clause: `CHECK ((action_type = ANY (ARRAY['action'::text, 'reaction'::text, 'bonus_action'::text, 'legendary'::text])))`,
+  },
+  {
+    table_name: 'user_subscriptions',
+    check_clause: `CHECK ((current_period_end > current_period_start))`,
+  },
+  {
+    table_name: 'user_subscriptions',
+    check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text, 'incomplete'::text, 'incomplete_expired'::text, 'trialing'::text, 'paused'::text])))`,
+  },
+  {
+    table_name: 'worlds',
+    check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))`,
+  },
+  {
+    table_name: 'worlds',
+    check_clause: `CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))`,
+  },
 ]
 
 const EXPECTED_FK_DELETE_RULES: readonly {
@@ -122,55 +200,300 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   readonly foreign_table_name: string
   readonly delete_rule: string
 }[] = [
-  { table_name: 'billing_history', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
-  { table_name: 'campaign_invites', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
-  { table_name: 'campaign_invites', column_name: 'created_by', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'campaign_members', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
-  { table_name: 'campaign_members', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
-  { table_name: 'campaigns', column_name: 'created_by', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'campaigns', column_name: 'source_world_id', foreign_table_name: 'worlds', delete_rule: 'SET NULL' },
-  { table_name: 'campaigns', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
-  { table_name: 'character_equipment', column_name: 'character_id', foreign_table_name: 'characters', delete_rule: 'CASCADE' },
-  { table_name: 'character_features', column_name: 'character_id', foreign_table_name: 'characters', delete_rule: 'CASCADE' },
-  { table_name: 'character_skills', column_name: 'character_id', foreign_table_name: 'characters', delete_rule: 'CASCADE' },
-  { table_name: 'character_spells', column_name: 'character_id', foreign_table_name: 'characters', delete_rule: 'CASCADE' },
-  { table_name: 'characters', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
-  { table_name: 'characters', column_name: 'entity_id', foreign_table_name: 'entities', delete_rule: 'SET NULL' },
-  { table_name: 'characters', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'credit_ledger', column_name: 'source_billing_history_id', foreign_table_name: 'billing_history', delete_rule: 'RESTRICT' },
-  { table_name: 'credit_ledger', column_name: 'source_purchase_id', foreign_table_name: 'purchases', delete_rule: 'RESTRICT' },
-  { table_name: 'credit_ledger', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'RESTRICT' },
-  { table_name: 'entities', column_name: 'stat_block_id', foreign_table_name: 'stat_blocks', delete_rule: 'SET NULL' },
-  { table_name: 'entities', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
-  { table_name: 'entity_hierarchy', column_name: 'child_entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
-  { table_name: 'entity_hierarchy', column_name: 'parent_entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
-  { table_name: 'facts', column_name: 'entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
-  { table_name: 'moderation_flags', column_name: 'reporter_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'pipeline_runs', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
-  { table_name: 'pipeline_runs', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'pipeline_runs', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
-  { table_name: 'prose_kernels', column_name: 'entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
-  { table_name: 'purchases', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'random_table_entries', column_name: 'table_id', foreign_table_name: 'random_tables', delete_rule: 'CASCADE' },
-  { table_name: 'random_tables', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
-  { table_name: 'relationships', column_name: 'source_entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
-  { table_name: 'relationships', column_name: 'target_entity_id', foreign_table_name: 'entities', delete_rule: 'CASCADE' },
-  { table_name: 'session_messages', column_name: 'session_id', foreign_table_name: 'sessions', delete_rule: 'CASCADE' },
-  { table_name: 'session_participants', column_name: 'character_id', foreign_table_name: 'characters', delete_rule: 'NO ACTION' },
-  { table_name: 'session_participants', column_name: 'session_id', foreign_table_name: 'sessions', delete_rule: 'CASCADE' },
-  { table_name: 'session_participants', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'session_preps', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
-  { table_name: 'session_preps', column_name: 'snapshot_id', foreign_table_name: 'world_snapshots', delete_rule: 'SET NULL' },
-  { table_name: 'session_usage', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'NO ACTION' },
-  { table_name: 'session_usage', column_name: 'session_id', foreign_table_name: 'sessions', delete_rule: 'CASCADE' },
-  { table_name: 'session_usage', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'sessions', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
-  { table_name: 'stat_block_actions', column_name: 'stat_block_id', foreign_table_name: 'stat_blocks', delete_rule: 'CASCADE' },
-  { table_name: 'user_subscriptions', column_name: 'user_id', foreign_table_name: 'users', delete_rule: 'CASCADE' },
-  { table_name: 'world_marketplace', column_name: 'world_id', foreign_table_name: 'worlds', delete_rule: 'CASCADE' },
-  { table_name: 'world_snapshots', column_name: 'campaign_id', foreign_table_name: 'campaigns', delete_rule: 'CASCADE' },
-  { table_name: 'worlds', column_name: 'created_by', foreign_table_name: 'users', delete_rule: 'NO ACTION' },
-  { table_name: 'worlds', column_name: 'source_world_id', foreign_table_name: 'worlds', delete_rule: 'SET NULL' },
+  {
+    table_name: 'billing_history',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'campaign_invites',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'campaign_invites',
+    column_name: 'created_by',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'campaign_members',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'campaign_members',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'campaigns',
+    column_name: 'created_by',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'campaigns',
+    column_name: 'source_world_id',
+    foreign_table_name: 'worlds',
+    delete_rule: 'SET NULL',
+  },
+  {
+    table_name: 'campaigns',
+    column_name: 'world_id',
+    foreign_table_name: 'worlds',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_equipment',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_features',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_skills',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_spells',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'characters',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'characters',
+    column_name: 'entity_id',
+    foreign_table_name: 'entities',
+    delete_rule: 'SET NULL',
+  },
+  {
+    table_name: 'characters',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'credit_ledger',
+    column_name: 'source_billing_history_id',
+    foreign_table_name: 'billing_history',
+    delete_rule: 'RESTRICT',
+  },
+  {
+    table_name: 'credit_ledger',
+    column_name: 'source_purchase_id',
+    foreign_table_name: 'purchases',
+    delete_rule: 'RESTRICT',
+  },
+  {
+    table_name: 'credit_ledger',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'RESTRICT',
+  },
+  {
+    table_name: 'entities',
+    column_name: 'stat_block_id',
+    foreign_table_name: 'stat_blocks',
+    delete_rule: 'SET NULL',
+  },
+  {
+    table_name: 'entities',
+    column_name: 'world_id',
+    foreign_table_name: 'worlds',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'entity_hierarchy',
+    column_name: 'child_entity_id',
+    foreign_table_name: 'entities',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'entity_hierarchy',
+    column_name: 'parent_entity_id',
+    foreign_table_name: 'entities',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'facts',
+    column_name: 'entity_id',
+    foreign_table_name: 'entities',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'moderation_flags',
+    column_name: 'reporter_id',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'pipeline_runs',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'pipeline_runs',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'pipeline_runs',
+    column_name: 'world_id',
+    foreign_table_name: 'worlds',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'prose_kernels',
+    column_name: 'entity_id',
+    foreign_table_name: 'entities',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'purchases',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'random_table_entries',
+    column_name: 'table_id',
+    foreign_table_name: 'random_tables',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'random_tables',
+    column_name: 'world_id',
+    foreign_table_name: 'worlds',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'relationships',
+    column_name: 'source_entity_id',
+    foreign_table_name: 'entities',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'relationships',
+    column_name: 'target_entity_id',
+    foreign_table_name: 'entities',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'session_messages',
+    column_name: 'session_id',
+    foreign_table_name: 'sessions',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'session_participants',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'session_participants',
+    column_name: 'session_id',
+    foreign_table_name: 'sessions',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'session_participants',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'session_preps',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'session_preps',
+    column_name: 'snapshot_id',
+    foreign_table_name: 'world_snapshots',
+    delete_rule: 'SET NULL',
+  },
+  {
+    table_name: 'session_usage',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'session_usage',
+    column_name: 'session_id',
+    foreign_table_name: 'sessions',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'session_usage',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'sessions',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'stat_block_actions',
+    column_name: 'stat_block_id',
+    foreign_table_name: 'stat_blocks',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'user_subscriptions',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'world_marketplace',
+    column_name: 'world_id',
+    foreign_table_name: 'worlds',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'world_snapshots',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'worlds',
+    column_name: 'created_by',
+    foreign_table_name: 'users',
+    delete_rule: 'NO ACTION',
+  },
+  {
+    table_name: 'worlds',
+    column_name: 'source_world_id',
+    foreign_table_name: 'worlds',
+    delete_rule: 'SET NULL',
+  },
 ]
 
 function makeSilentLogger(): ReturnType<typeof pino> {
@@ -179,7 +502,10 @@ function makeSilentLogger(): ReturnType<typeof pino> {
       // discard log output
     },
   }
-  return pino({ base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } }, sink)
+  return pino(
+    { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
+    sink,
+  )
 }
 
 async function resetSchema(pool: Pool): Promise<void> {
@@ -207,7 +533,11 @@ describe('schema-parity (integration)', () => {
   })
 
   it('applies all migrations and pins the schema contract', async () => {
-    const applied = await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })
+    const applied = await runMigrations({
+      pool,
+      migrationsDir: REAL_MIGRATIONS_DIR,
+      logger: makeSilentLogger(),
+    })
 
     expect(applied.map((m) => m.version)).toEqual([
       '001_initial_schema.sql',
@@ -301,7 +631,11 @@ describe('schema-parity (integration)', () => {
     expect(tableExists.rows).toEqual([])
 
     // Idempotency — second run is a no-op.
-    const second = await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })
+    const second = await runMigrations({
+      pool,
+      migrationsDir: REAL_MIGRATIONS_DIR,
+      logger: makeSilentLogger(),
+    })
     expect(second).toEqual([])
   })
 })

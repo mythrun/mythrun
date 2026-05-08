@@ -136,9 +136,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
           sourcePurchaseId: null,
           sourceBillingHistoryId: null,
         })
-        await client.query('UPDATE users SET free_trial_used = true WHERE id = $1', [
-          user.id,
-        ])
+        await client.query('UPDATE users SET free_trial_used = true WHERE id = $1', [user.id])
         await client.query('COMMIT')
         inTransaction = false
 

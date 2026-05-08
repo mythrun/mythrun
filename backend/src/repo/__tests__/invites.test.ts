@@ -10,10 +10,7 @@ import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
 import { createInvitesRepo } from '../invites.js'
-import {
-  InviteCapReachedError,
-  InviteTimeoutError,
-} from '../invites-errors.js'
+import { InviteCapReachedError, InviteTimeoutError } from '../invites-errors.js'
 import { resetData } from './_helpers/reset-data.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -288,8 +285,16 @@ describe('invites repo — concurrency (separate pool)', () => {
     const fastInvites = createInvitesRepo(pool, { lockTimeoutMs: 200 })
     const invitesRepo = createInvitesRepo(pool)
 
-    const owner = await users.create(pool, { cognitoSub: 'sub-lock-o', username: 'locko', displayName: 'O' })
-    const player = await users.create(pool, { cognitoSub: 'sub-lock-p', username: 'lockp', displayName: 'P' })
+    const owner = await users.create(pool, {
+      cognitoSub: 'sub-lock-o',
+      username: 'locko',
+      displayName: 'O',
+    })
+    const player = await users.create(pool, {
+      cognitoSub: 'sub-lock-p',
+      username: 'lockp',
+      displayName: 'P',
+    })
     const w = await worldsRepo.create({ createdBy: owner.id, name: 'W', concept: 'c' })
     const c = await campaignsRepo.create({ worldId: w.id, createdBy: owner.id, name: 'C' })
     await campaignsRepo.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })

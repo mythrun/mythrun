@@ -10,11 +10,26 @@ interface CapturedLogCall {
   readonly msg: string
 }
 
-function makeLog(): { calls: CapturedLogCall[]; logger: { info: (o: object, msg: string) => void; warn: (o: object, msg: string) => void; error: (o: object, msg: string) => void; debug: (o: object, msg: string) => void; fatal: (o: object, msg: string) => void; trace: (o: object, msg: string) => void; child: () => unknown; level: string; silent: () => void } } {
-  const calls: CapturedLogCall[] = []
-  const push = (level: CapturedLogCall['level']) => (obj: object, msg: string): void => {
-    calls.push({ level, obj: obj as Record<string, unknown>, msg })
+function makeLog(): {
+  calls: CapturedLogCall[]
+  logger: {
+    info: (o: object, msg: string) => void
+    warn: (o: object, msg: string) => void
+    error: (o: object, msg: string) => void
+    debug: (o: object, msg: string) => void
+    fatal: (o: object, msg: string) => void
+    trace: (o: object, msg: string) => void
+    child: () => unknown
+    level: string
+    silent: () => void
   }
+} {
+  const calls: CapturedLogCall[] = []
+  const push =
+    (level: CapturedLogCall['level']) =>
+    (obj: object, msg: string): void => {
+      calls.push({ level, obj: obj as Record<string, unknown>, msg })
+    }
   return {
     calls,
     logger: {
@@ -73,7 +88,12 @@ describe('webhook handler — customer.subscription.pending_update_expired', () 
   it('logs INFO billing.upgrade_expired with subscription_id, customer_id, latest_invoice_id, target_tier_lookup_key — and performs ZERO DB writes', async () => {
     const { calls, logger } = makeLog()
     const event = makeEvent()
-    const result = await handlePendingUpdateExpired(event, undefined, noopClient, logger as unknown as FastifyBaseLogger)
+    const result = await handlePendingUpdateExpired(
+      event,
+      undefined,
+      noopClient,
+      logger as unknown as FastifyBaseLogger,
+    )
     expect(result).toBe('ok')
     expect(calls).toHaveLength(1)
     const first = calls[0]
@@ -89,7 +109,12 @@ describe('webhook handler — customer.subscription.pending_update_expired', () 
   it('handles null latest_invoice without throwing', async () => {
     const { logger } = makeLog()
     const event = makeEvent({ latest_invoice: null })
-    const result = await handlePendingUpdateExpired(event, undefined, noopClient, logger as unknown as FastifyBaseLogger)
+    const result = await handlePendingUpdateExpired(
+      event,
+      undefined,
+      noopClient,
+      logger as unknown as FastifyBaseLogger,
+    )
     expect(result).toBe('ok')
   })
 })

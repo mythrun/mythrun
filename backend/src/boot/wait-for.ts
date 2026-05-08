@@ -28,7 +28,9 @@ export async function waitFor(opts: WaitForOptions): Promise<void> {
     }
   }
   const cause = lastError instanceof Error ? lastError.message : String(lastError)
-  throw new Error(`waitFor(${label}): exhausted ${String(totalAttempts)} attempts; last error: ${cause}`)
+  throw new Error(
+    `waitFor(${label}): exhausted ${String(totalAttempts)} attempts; last error: ${cause}`,
+  )
 }
 
 function sleepWithAbort(ms: number, signal: AbortSignal | undefined): Promise<void> {

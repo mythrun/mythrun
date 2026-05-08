@@ -80,7 +80,10 @@ async function seedOtherOwnedCampaign(
   return { userId: owner.id, worldId: world.id, campaignId: campaign.id }
 }
 
-async function seedBypassOwnedCampaign(repo: Repo, pool: Pool): Promise<{
+async function seedBypassOwnedCampaign(
+  repo: Repo,
+  pool: Pool,
+): Promise<{
   readonly bypassUserId: string
   readonly campaignId: string
 }> {
@@ -136,12 +139,25 @@ describe('invite routes (integration)', () => {
     repo = createRepo(pool)
     const deps: AppDeps = {
       pg: pool,
-      redisRealtime: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
-      redisBatch: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
-      redisKeyPrefix: "test:use1:",
+      redisRealtime: {
+        ping: () => Promise.resolve('PONG'),
+        quit: () => Promise.resolve('OK'),
+      } as unknown as Redis,
+      redisBatch: {
+        ping: () => Promise.resolve('PONG'),
+        quit: () => Promise.resolve('OK'),
+      } as unknown as Redis,
+      redisKeyPrefix: 'test:use1:',
       repo,
     }
-    app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: FRONTEND_BASE_URL, env: makeStubEnv({ frontendBaseUrl: FRONTEND_BASE_URL }) })
+    app = await buildApp(
+      deps,
+      { mode: 'bypass' },
+      {
+        frontendBaseUrl: FRONTEND_BASE_URL,
+        env: makeStubEnv({ frontendBaseUrl: FRONTEND_BASE_URL }),
+      },
+    )
   })
 
   afterAll(async () => {

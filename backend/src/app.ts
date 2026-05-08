@@ -62,11 +62,7 @@ export const buildApp = async (
     },
     logger: {
       redact: {
-        paths: [
-          'req.headers.authorization',
-          'req.headers.cookie',
-          'res.headers["set-cookie"]',
-        ],
+        paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
         censor: '[REDACTED]',
       },
       serializers: {
@@ -76,10 +72,7 @@ export const buildApp = async (
           // ?ticket=<nonce>) don't leak the token into CloudWatch.
           // Path is preserved so operators can tell which route was hit.
           const rawUrl: unknown = request.url
-          const url =
-            typeof rawUrl === 'string'
-              ? (rawUrl.split('?')[0] ?? rawUrl)
-              : undefined
+          const url = typeof rawUrl === 'string' ? (rawUrl.split('?')[0] ?? rawUrl) : undefined
           const remotePort = request.socket.remotePort
           // Build the result with conditional spread so we don't emit
           // explicit `undefined` properties — exactOptionalPropertyTypes
@@ -186,10 +179,7 @@ export interface ShutdownClients {
   readonly redisBatch: Redis
 }
 
-export const createShutdown = (
-  app: FastifyInstance,
-  clients: ShutdownClients,
-): ShutdownHandler => {
+export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): ShutdownHandler => {
   return async (signal) => {
     try {
       app.log.info({ signal }, 'shutting down')

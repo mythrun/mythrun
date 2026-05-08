@@ -10,9 +10,7 @@ import type { AuthUser } from './types.js'
 
 export function requireUser(request: { user?: AuthUser | undefined }): AuthUser {
   if (!request.user) {
-    throw new Error(
-      'requireUser: request.user is undefined — was this route marked public?',
-    )
+    throw new Error('requireUser: request.user is undefined — was this route marked public?')
   }
   return request.user
 }

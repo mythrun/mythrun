@@ -21,9 +21,9 @@
 // code-review tripwire on top.
 
 const BANNED = {
-  prices:         new Set(['create', 'update']),
-  products:       new Set(['create', 'update', 'del']),
-  coupons:        new Set(['create', 'update', 'del']),
+  prices: new Set(['create', 'update']),
+  products: new Set(['create', 'update', 'del']),
+  coupons: new Set(['create', 'update', 'del']),
   promotionCodes: new Set(['create', 'update']),
 }
 
@@ -34,7 +34,7 @@ module.exports = {
     schema: [],
     messages: {
       banned:
-        "Stripe price/product/coupon mutations are forbidden — use Dashboard / CLI. The restricted API key blocks these at the network level; this rule catches them at code review.",
+        'Stripe price/product/coupon mutations are forbidden — use Dashboard / CLI. The restricted API key blocks these at the network level; this rule catches them at code review.',
     },
   },
   create(context) {

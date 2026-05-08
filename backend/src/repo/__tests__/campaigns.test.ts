@@ -22,7 +22,10 @@ function silentLogger(): ReturnType<typeof pino> {
       // discard log output
     },
   }
-  return pino({ base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } }, sink)
+  return pino(
+    { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
+    sink,
+  )
 }
 
 const baseUserInput = {
@@ -73,7 +76,11 @@ describe('campaigns repo (integration)', () => {
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
     const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'My Campaign' })
+    const c = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: 'My Campaign',
+    })
     expect(c.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(c.worldId).toBe(world.id)
     expect(c.createdBy).toBe(owner.id)
@@ -92,7 +99,11 @@ describe('campaigns repo (integration)', () => {
     const campaigns = createCampaignsRepo(pool)
 
     const owner = await users.create(pool, baseUserInput)
-    const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player' })
+    const player = await users.create(pool, {
+      ...baseUserInput,
+      cognitoSub: 'g_p',
+      username: 'player',
+    })
     const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
 
     const c1 = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'C1' })
@@ -157,7 +168,11 @@ describe('campaigns repo (integration)', () => {
       const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
       const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M2' })
       const first = await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
-      const second = await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+      const second = await campaigns.addMember({
+        campaignId: c.id,
+        userId: owner.id,
+        role: 'owner',
+      })
       expect(second.id).toBe(first.id)
     })
 
@@ -189,7 +204,11 @@ describe('campaigns repo (integration)', () => {
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
-      const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player' })
+      const player = await users.create(pool, {
+        ...baseUserInput,
+        cognitoSub: 'g_p',
+        username: 'player',
+      })
       const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
       const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M5' })
       await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
@@ -204,7 +223,12 @@ describe('campaigns repo (integration)', () => {
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
-      const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player', displayName: 'Player' })
+      const player = await users.create(pool, {
+        ...baseUserInput,
+        cognitoSub: 'g_p',
+        username: 'player',
+        displayName: 'Player',
+      })
       const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
       const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M6' })
       await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
@@ -222,7 +246,11 @@ describe('campaigns repo (integration)', () => {
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
-      const player = await users.create(pool, { ...baseUserInput, cognitoSub: 'g_p', username: 'player' })
+      const player = await users.create(pool, {
+        ...baseUserInput,
+        cognitoSub: 'g_p',
+        username: 'player',
+      })
       const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
       const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M7' })
       await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })

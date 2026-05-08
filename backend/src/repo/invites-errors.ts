@@ -20,7 +20,10 @@ export class InviteRevokedError extends Error {
 
 export class InviteCapReachedError extends Error {
   readonly code = 'INVITE_CAP_REACHED'
-  constructor(readonly campaignId: string, readonly activeInvites: number) {
+  constructor(
+    readonly campaignId: string,
+    readonly activeInvites: number,
+  ) {
     super(`Invite cap reached for campaign ${campaignId} (${String(activeInvites)} active)`)
     this.name = 'InviteCapReachedError'
   }
@@ -28,7 +31,10 @@ export class InviteCapReachedError extends Error {
 
 export class CampaignFullError extends Error {
   readonly code = 'CAMPAIGN_FULL'
-  constructor(readonly campaignId: string, readonly activeMembers: number) {
+  constructor(
+    readonly campaignId: string,
+    readonly activeMembers: number,
+  ) {
     super(`Campaign ${campaignId} is full (${String(activeMembers)} members)`)
     this.name = 'CampaignFullError'
   }

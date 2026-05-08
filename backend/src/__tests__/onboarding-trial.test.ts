@@ -82,12 +82,22 @@ describe('onboarding trial-credit (integration)', () => {
 
     const deps: AppDeps = {
       pg: pool,
-      redisRealtime: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
-      redisBatch: { ping: () => Promise.resolve('PONG'), quit: () => Promise.resolve('OK') } as unknown as Redis,
-      redisKeyPrefix: "test:use1:",
+      redisRealtime: {
+        ping: () => Promise.resolve('PONG'),
+        quit: () => Promise.resolve('OK'),
+      } as unknown as Redis,
+      redisBatch: {
+        ping: () => Promise.resolve('PONG'),
+        quit: () => Promise.resolve('OK'),
+      } as unknown as Redis,
+      redisKeyPrefix: 'test:use1:',
       repo: createRepo(pool),
     }
-    app = await buildApp(deps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
+    app = await buildApp(
+      deps,
+      { mode: 'bypass' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
+    )
   })
 
   afterAll(async () => {
@@ -190,11 +200,9 @@ describe('onboarding trial-credit (integration)', () => {
     // already inserted the row. The handler's catch+ROLLBACK must undo
     // the users INSERT — at the end of this test no users row and no
     // credit_ledger row should exist for the would-be user.
-    const grantSpy = vi
-      .spyOn(creditsRepo, 'grantInTx')
-      .mockImplementation(() => {
-        throw new Error('simulated grant failure')
-      })
+    const grantSpy = vi.spyOn(creditsRepo, 'grantInTx').mockImplementation(() => {
+      throw new Error('simulated grant failure')
+    })
 
     const res = await inject({
       method: 'POST',
@@ -206,13 +214,9 @@ describe('onboarding trial-credit (integration)', () => {
     expect(res.statusCode).toBe(500)
     expect(grantSpy).toHaveBeenCalledOnce()
 
-    const users = await pool.query<{ id: string }>(
-      "SELECT id FROM users WHERE username = 'alice'",
-    )
+    const users = await pool.query<{ id: string }>("SELECT id FROM users WHERE username = 'alice'")
     expect(users.rowCount).toBe(0)
-    const ledger = await pool.query<{ id: string }>(
-      "SELECT id FROM credit_ledger",
-    )
+    const ledger = await pool.query<{ id: string }>('SELECT id FROM credit_ledger')
     expect(ledger.rowCount).toBe(0)
   })
 })

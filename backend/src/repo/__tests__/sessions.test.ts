@@ -22,7 +22,10 @@ function silentLogger(): ReturnType<typeof pino> {
       // discard log output
     },
   }
-  return pino({ base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } }, sink)
+  return pino(
+    { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
+    sink,
+  )
 }
 
 const baseUserInput = {

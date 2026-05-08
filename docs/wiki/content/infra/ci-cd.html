@@ -1,6 +1,6 @@
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/dependabot.yml -->
-<!-- source-hash: sha256:fa40f6723aae95f2413c1f66a1449747c7629ffacae6617bf753970ba4dea961 -->
+<!-- source-hash: sha256:88699bc90a93b5cd029f4eb199b27b01c100a8a86295ef2eb61add5075eed920 -->
 <!-- last-ticket: MYT-35 -->
 
 <h1>CI/CD</h1>
@@ -148,26 +148,29 @@
 <h2>Why Terraform env-var changes need a CI run</h2>
 
 <p>
-  The serving module's <a href="serving.html#per-env-task-definitions-and-services">ECS services
-  ignore changes to <code>task_definition</code></a>. That split — Terraform owns the service,
-  CI owns the revision — is what keeps the two systems out of each other's way during normal
-  deploys, but it has a non-obvious operational consequence: a <code>terraform apply</code> that
-  changes an env var or a secret reference REGISTERS a new task-def revision and then the live
-  service quietly stays on whatever CI last deployed. To engage the change, run CI.
+  The serving module's
+  <a href="serving.html#per-env-task-definitions-and-services"
+    >ECS services ignore changes to <code>task_definition</code></a
+  >. That split — Terraform owns the service, CI owns the revision — is what keeps the two systems
+  out of each other's way during normal deploys, but it has a non-obvious operational consequence: a
+  <code>terraform apply</code> that changes an env var or a secret reference REGISTERS a new
+  task-def revision and then the live service quietly stays on whatever CI last deployed. To engage
+  the change, run CI.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Don't force-roll onto a TF-registered revision</strong> — TF's task-def template pins
-  the container image to <code>:placeholder</code> because Terraform doesn't know the real ECR
-  digest. CI's <code>amazon-ecs-render-task-definition</code> step is what fetches the latest
-  active revision (the one TF just registered with the new env var) and renders the real digest
-  into a fresh revision before <code>update-service</code>. <code
+  <strong>Don't force-roll onto a TF-registered revision</strong> — TF's task-def template pins the
+  container image to <code>:placeholder</code> because Terraform doesn't know the real ECR digest.
+  CI's <code>amazon-ecs-render-task-definition</code> step is what fetches the latest active
+  revision (the one TF just registered with the new env var) and renders the real digest into a
+  fresh revision before <code>update-service</code>.
+  <code
     >aws ecs update-service --task-definition mythrun-staging-api:&lt;TF-rev&gt;
     --force-new-deployment</code
   >
   attempts to pull <code>:placeholder</code> and fails with <code>CannotPullContainerError</code>;
-  the live service stays on the old (no-env-var) revision while the new deployment loops on the
-  pull error. The MYT-35 boot-gate rollout caught this in production-of-staging; the fix is always
+  the live service stays on the old (no-env-var) revision while the new deployment loops on the pull
+  error. The MYT-35 boot-gate rollout caught this in production-of-staging; the fix is always
   "trigger CI, don't manually roll the service onto the TF rev."
 </aside>
 
@@ -175,8 +178,8 @@
   In practice, after a TF apply that changes env vars or secret references on the serving module:
   <code>gh workflow run Deploy</code>, watch the run, confirm the deployed task-def revision is
   strictly greater than the TF-registered one (CI adds a fresh revision rather than reusing TF's
-  <code>:placeholder</code>-image revision). The same pattern applies to the
-  emergency-rollback path described on the
+  <code>:placeholder</code>-image revision). The same pattern applies to the emergency-rollback path
+  described on the
   <a href="../runtime/index.html#diagnose-a-failed-boot-gate">Backend</a>
   page.
 </p>
@@ -269,9 +272,9 @@
   Terraform creates each ECS service with <code>desired_count = 0</code> and
   <code>image = ":placeholder"</code>, then ignores changes to <code>desired_count</code> and
   <code>task_definition</code>. This decouples infra from the first deploy — Terraform sets the
-  service shape, CI does the first revision flip. Today's <code>deploy.yml</code> workflow
-  automates the sequence below; the steps are documented for future prod bring-up and for any
-  future scenario where a service has been reset to <code>:placeholder</code>.
+  service shape, CI does the first revision flip. Today's <code>deploy.yml</code> workflow automates
+  the sequence below; the steps are documented for future prod bring-up and for any future scenario
+  where a service has been reset to <code>:placeholder</code>.
 </p>
 <ol>
   <li>
@@ -287,12 +290,12 @@
     >.
   </li>
   <li>
-    Patch <code>containerDefinitions[0].image</code> to point at the real SHA. Strip the
-    read-only fields the API rejects on register: <code>taskDefinitionArn</code>,
-    <code>revision</code>, <code>status</code>, <code>requiresAttributes</code>,
-    <code>compatibilities</code>, <code>registeredAt</code>, <code>registeredBy</code>.
-    The <code>aws-actions/amazon-ecs-deploy-task-definition</code> action handles this
-    field-stripping correctly — prefer it over hand-rolled <code>jq</code>.
+    Patch <code>containerDefinitions[0].image</code> to point at the real SHA. Strip the read-only
+    fields the API rejects on register: <code>taskDefinitionArn</code>, <code>revision</code>,
+    <code>status</code>, <code>requiresAttributes</code>, <code>compatibilities</code>,
+    <code>registeredAt</code>, <code>registeredBy</code>. The
+    <code>aws-actions/amazon-ecs-deploy-task-definition</code> action handles this field-stripping
+    correctly — prefer it over hand-rolled <code>jq</code>.
   </li>
   <li>
     Register the patched definition:
@@ -310,8 +313,8 @@
 <aside class="wiki-rationale">
   <strong>Why <code>--task-definition</code> is load-bearing</strong> — without it, the service
   keeps the <code>:placeholder</code> revision and only forces a new deployment of that broken
-  image. <code>--force-new-deployment</code> on its own does NOT switch revisions; it just rolls
-  the current one. The first deploy of a fresh service must always combine
+  image. <code>--force-new-deployment</code> on its own does NOT switch revisions; it just rolls the
+  current one. The first deploy of a fresh service must always combine
   <code>--task-definition</code>, <code>--desired-count 1</code>, and the force flag.
 </aside>
 
@@ -323,13 +326,13 @@
     Edit the serving-module input or per-env workspace (e.g. add a key to <code>extra_env</code>),
     <code>terraform plan</code>, <code>terraform apply</code>. Expect a
     <code>+/- aws_ecs_task_definition.api</code> replacement (and the worker analogue) — TF
-    registers a new revision with the change and a <code>:placeholder</code> image; the live
-    service does not roll because of <code>ignore_changes = [task_definition]</code>.
+    registers a new revision with the change and a <code>:placeholder</code> image; the live service
+    does not roll because of <code>ignore_changes = [task_definition]</code>.
   </li>
   <li>
-    Confirm no Deploy workflow is in flight: <code
-      >gh run list --workflow Deploy --status in_progress --limit 5</code
-    >. A concurrent CI run could land a revision that bypasses the TF change.
+    Confirm no Deploy workflow is in flight:
+    <code>gh run list --workflow Deploy --status in_progress --limit 5</code>. A concurrent CI run
+    could land a revision that bypasses the TF change.
   </li>
   <li>
     Trigger CI: <code>gh workflow run Deploy</code>. CI's
@@ -346,12 +349,17 @@
   </li>
 </ol>
 <aside class="wiki-rationale">
-  <strong>Never <code>aws ecs update-service --task-definition mythrun-…:&lt;TF-rev&gt;
-  --force-new-deployment</code></strong> — TF revisions carry the <code>:placeholder</code> image.
-  That command attempts to pull a non-existent tag, fails with
-  <code>CannotPullContainerError</code>, and the failed deployment loops while the live service
-  stays on the previous (real-image, no-change) revision. CI is the only path that pairs the new
-  env var with a real image digest.
+  <strong
+    >Never
+    <code
+      >aws ecs update-service --task-definition mythrun-…:&lt;TF-rev&gt;
+      --force-new-deployment</code
+    ></strong
+  >
+  — TF revisions carry the <code>:placeholder</code> image. That command attempts to pull a
+  non-existent tag, fails with <code>CannotPullContainerError</code>, and the failed deployment
+  loops while the live service stays on the previous (real-image, no-change) revision. CI is the
+  only path that pairs the new env var with a real image digest.
 </aside>
 
 <h3 id="recover-from-pull-through-cache-cold-start">

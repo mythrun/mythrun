@@ -49,7 +49,7 @@ describe('renderSchema', () => {
   it('falls back to raw indexdef for expression-based indexes', () => {
     // pipeline_runs idx_pipeline_runs_unique has columns=[] expression=raw.
     expect(html).toContain('idx_pipeline_runs_unique')
-    expect(html).toContain("COALESCE(world_id, campaign_id)")
+    expect(html).toContain('COALESCE(world_id, campaign_id)')
   })
 
   it('renders CHECK constraint clauses verbatim', () => {

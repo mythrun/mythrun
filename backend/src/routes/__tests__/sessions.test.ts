@@ -4,12 +4,7 @@ import IoRedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
-import type {
-  CampaignMember,
-  CampaignMemberRole,
-  Session,
-  User,
-} from '../../repo/types.js'
+import type { CampaignMember, CampaignMemberRole, Session, User } from '../../repo/types.js'
 
 // Mock the repo factory so routes/sessions.ts uses our stubs.
 const getMembershipMock = vi.fn()
@@ -75,10 +70,7 @@ function attachDbUserPlugin(user: User | undefined) {
 const fakePool = {} as Pool
 const KEY_PREFIX = 'staging:use1:ws:ticket:'
 
-async function build(opts: {
-  user: User | undefined
-  redis: Redis
-}): Promise<FastifyInstance> {
+async function build(opts: { user: User | undefined; redis: Redis }): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
   await app.register(attachDbUserPlugin(opts.user))
   await app.register(sessionsRoutes, {

@@ -113,10 +113,7 @@ function buildInsertParams(row: NewBillingHistoryRow): unknown[] {
  * idempotency; conflicts surface as a 23505 unique-violation. RETURNING *
  * always yields exactly one row on success.
  */
-async function appendPlain(
-  tx: ClientLike,
-  row: NewBillingHistoryRow,
-): Promise<BillingHistoryRow> {
+async function appendPlain(tx: ClientLike, row: NewBillingHistoryRow): Promise<BillingHistoryRow> {
   const result = await tx.query<BillingHistoryRow>(
     `INSERT INTO billing_history (${INSERT_COLUMNS})
      VALUES (${INSERT_PLACEHOLDERS})
@@ -336,10 +333,7 @@ export const billingHistory = {
    * makes a re-run of the same id a no-op (returns rowsAffected=0). Used by
    * §5.4.5 refund handler after the negative credit_ledger entry lands.
    */
-  async markRefunded(
-    tx: ClientLike,
-    id: string,
-  ): Promise<{ readonly rowsAffected: number }> {
+  async markRefunded(tx: ClientLike, id: string): Promise<{ readonly rowsAffected: number }> {
     const result = await tx.query(
       `UPDATE billing_history SET status = 'refunded' WHERE id = $1 AND status = 'completed'`,
       [id],

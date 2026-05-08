@@ -31,7 +31,11 @@ describe('GET /health/ready', () => {
   })
 
   it('returns 200 {ready:true} when all probes succeed', async () => {
-    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
+    app = await buildApp(
+      makeStubDeps(),
+      { mode: 'bypass' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
+    )
     const res = await app.inject({ method: 'GET', url: '/health/ready' })
     expect(res.statusCode).toBe(200)
     expect(res.json<ReadyBody>()).toEqual({ ready: true })

@@ -64,11 +64,17 @@ describe('credits repo (integration)', () => {
       const credits = createCreditsRepo(pool)
       const u = await users.create(pool, baseUserInput)
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
         expiresAt: new Date(Date.now() - 86_400_000),
       })
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 3, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 3,
+        sourceType: 'gift',
         expiresAt: new Date(Date.now() + 86_400_000),
       })
       expect(await credits.balance(u.id, 'session')).toBe(3)
@@ -175,7 +181,9 @@ describe('credits repo (integration)', () => {
         expect(entry.userId).toBe(u.id)
         await client.query('COMMIT')
       } catch (err) {
-        await client.query('ROLLBACK').catch(() => { /* ignore */ })
+        await client.query('ROLLBACK').catch(() => {
+          /* ignore */
+        })
         throw err
       } finally {
         client.release()
@@ -214,7 +222,9 @@ describe('credits repo (integration)', () => {
 
         await client.query('COMMIT')
       } catch (err) {
-        await client.query('ROLLBACK').catch(() => { /* ignore */ })
+        await client.query('ROLLBACK').catch(() => {
+          /* ignore */
+        })
         throw err
       } finally {
         client.release()
@@ -283,7 +293,10 @@ describe('credits repo (integration)', () => {
       const u = await users.create(pool, baseUserInput)
       // Pre-grant some credits so the post-clawback balance is sensible.
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
       })
 
       const sourceId = uuidv7()
@@ -299,7 +312,9 @@ describe('credits repo (integration)', () => {
         })
         await client.query('COMMIT')
       } catch (err) {
-        await client.query('ROLLBACK').catch(() => { /* ignore */ })
+        await client.query('ROLLBACK').catch(() => {
+          /* ignore */
+        })
         throw err
       } finally {
         client.release()
@@ -334,7 +349,10 @@ describe('credits repo (integration)', () => {
       const credits = createCreditsRepo(pool)
       const u = await users.create(pool, baseUserInput)
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
       })
 
       const sourceId = uuidv7()
@@ -398,7 +416,10 @@ describe('credits repo (integration)', () => {
 
       const sourceId = uuidv7()
       const entry = await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId,
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId,
       })
 
       expect(entry.amount).toBe(-1)
@@ -416,7 +437,10 @@ describe('credits repo (integration)', () => {
       const { InsufficientCreditsError } = await import('../credits-errors.js')
       await expect(
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 2, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 2,
+          sourceId: uuidv7(),
         }),
       ).rejects.toBeInstanceOf(InsufficientCreditsError)
 
@@ -432,7 +456,10 @@ describe('credits repo (integration)', () => {
       const { InsufficientCreditsError } = await import('../credits-errors.js')
       await expect(
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
         }),
       ).rejects.toBeInstanceOf(InsufficientCreditsError)
       expect(await credits.balance(u.id, 'session')).toBe(0)
@@ -447,7 +474,10 @@ describe('credits repo (integration)', () => {
       const { InsufficientCreditsError } = await import('../credits-errors.js')
       await expect(
         credits.atomicDebit({
-          userId: u.id, creditType: 'world_gen', amount: 1, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'world_gen',
+          amount: 1,
+          sourceId: uuidv7(),
         }),
       ).rejects.toBeInstanceOf(InsufficientCreditsError)
       expect(await credits.balance(u.id, 'session')).toBe(5)
@@ -459,7 +489,10 @@ describe('credits repo (integration)', () => {
       const u = await users.create(pool, baseUserInput)
       await expect(
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 0, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 0,
+          sourceId: uuidv7(),
         }),
       ).rejects.toThrow(/amount must be > 0/)
     })
@@ -470,7 +503,10 @@ describe('credits repo (integration)', () => {
       const u = await users.create(pool, baseUserInput)
       await expect(
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId: '',
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: '',
         }),
       ).rejects.toThrow(/sourceId required/)
     })
@@ -482,7 +518,10 @@ describe('credits repo (integration)', () => {
       const { UserNotFoundError } = await import('../credits-errors.js')
       await expect(
         credits.atomicDebit({
-          userId: fakeId, creditType: 'session', amount: 1, sourceId: uuidv7(),
+          userId: fakeId,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
         }),
       ).rejects.toBeInstanceOf(UserNotFoundError)
     })
@@ -495,10 +534,16 @@ describe('credits repo (integration)', () => {
 
       const sourceId = uuidv7()
       const first = await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId,
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId,
       })
       const second = await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId,
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId,
       })
 
       expect(second.id).toBe(first.id)
@@ -521,13 +566,19 @@ describe('credits repo (integration)', () => {
 
       const sourceId = uuidv7()
       await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId,
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId,
       })
 
       const { IdempotencyConflictError } = await import('../credits-errors.js')
       await expect(
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 2, sourceId,
+          userId: u.id,
+          creditType: 'session',
+          amount: 2,
+          sourceId,
         }),
       ).rejects.toBeInstanceOf(IdempotencyConflictError)
 
@@ -546,10 +597,16 @@ describe('credits repo (integration)', () => {
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId: uuidv7(),
       })
       await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId: uuidv7(),
       })
 
       expect(await credits.balance(u.id, 'session')).toBe(3)
@@ -564,10 +621,16 @@ describe('credits repo (integration)', () => {
 
       const sharedSourceId = uuidv7()
       await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId: sharedSourceId,
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId: sharedSourceId,
       })
       await credits.atomicDebit({
-        userId: u.id, creditType: 'world_gen', amount: 1, sourceId: sharedSourceId,
+        userId: u.id,
+        creditType: 'world_gen',
+        amount: 1,
+        sourceId: sharedSourceId,
       })
 
       expect(await credits.balance(u.id, 'session')).toBe(4)
@@ -581,10 +644,23 @@ describe('credits repo (integration)', () => {
       const credits = createCreditsRepo(pool)
       const u = await users.create(pool, baseUserInput)
 
-      const a = await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
-      const b = await credits.grant({ userId: u.id, creditType: 'session', amount: 3, sourceType: 'gift' })
+      const a = await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
+      })
+      const b = await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 3,
+        sourceType: 'gift',
+      })
       const c = await credits.atomicDebit({
-        userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId: uuidv7(),
       })
 
       const entries = await credits.listEntries(u.id)
@@ -613,7 +689,10 @@ describe('credits repo (integration)', () => {
       const credits = createCreditsRepo(pool)
       const u = await users.create(pool, baseUserInput)
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
         expiresAt: new Date(Date.now() - 86_400_000),
       })
       const all = await credits.listEntries(u.id)
@@ -701,11 +780,14 @@ describe('credits repo (integration)', () => {
       const credits = createCreditsRepo(pool)
       const u = await users.create(pool, baseUserInput)
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceType: 'gift',
       })
-      await expect(
-        pool.query('DELETE FROM users WHERE id = $1', [u.id]),
-      ).rejects.toThrow(/credit_ledger_user_id_fkey/)
+      await expect(pool.query('DELETE FROM users WHERE id = $1', [u.id])).rejects.toThrow(
+        /credit_ledger_user_id_fkey/,
+      )
     })
 
     it('idempotency SELECT plan uses the partial unique index (EXPLAIN)', async () => {
@@ -769,17 +851,26 @@ describe('credits repo — concurrency (separate pool)', () => {
         username: `race${String(i)}`,
       })
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceType: 'gift',
       })
 
       const { InsufficientCreditsError } = await import('../credits-errors.js')
 
       const results = await Promise.allSettled([
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
         }),
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
         }),
       ])
 
@@ -808,18 +899,23 @@ describe('credits repo — concurrency (separate pool)', () => {
 
       const results = await Promise.allSettled([
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
         }),
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
         }),
       ])
 
       expect(results.every((r) => r.status === 'rejected')).toBe(true)
       expect(
         results.every(
-          (r): boolean =>
-            r.status === 'rejected' && r.reason instanceof InsufficientCreditsError,
+          (r): boolean => r.status === 'rejected' && r.reason instanceof InsufficientCreditsError,
         ),
       ).toBe(true)
 
@@ -843,16 +939,25 @@ describe('credits repo — concurrency (separate pool)', () => {
         username: `same${String(i)}`,
       })
       await credits.grant({
-        userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift',
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'gift',
       })
 
       const sourceId = uuidv7()
       const [r1, r2] = await Promise.all([
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId,
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId,
         }),
         credits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId,
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId,
         }),
       ])
 
@@ -895,7 +1000,10 @@ describe('credits repo — concurrency (separate pool)', () => {
       const start = Date.now()
       try {
         await fastCredits.atomicDebit({
-          userId: u.id, creditType: 'session', amount: 1, sourceId: uuidv7(),
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
         })
       } catch (e) {
         caught = e
@@ -934,25 +1042,37 @@ describe('credits repo — concurrency (separate pool)', () => {
     // UserNotFoundError — userId doesn't exist.
     await credits
       .atomicDebit({ userId: fakeId, creditType: 'session', amount: 1, sourceId: uuidv7() })
-      .catch(() => { /* expected */ })
+      .catch(() => {
+        /* expected */
+      })
 
     // InsufficientCreditsError — request more than available.
     await credits
       .atomicDebit({ userId: u.id, creditType: 'session', amount: 99, sourceId: uuidv7() })
-      .catch(() => { /* expected */ })
+      .catch(() => {
+        /* expected */
+      })
 
     // Successful debit (consumes the 1 credit).
     const okSourceId = uuidv7()
     await credits.atomicDebit({
-      userId: u.id, creditType: 'session', amount: 1, sourceId: okSourceId,
+      userId: u.id,
+      creditType: 'session',
+      amount: 1,
+      sourceId: okSourceId,
     })
 
     // IdempotencyConflictError — same sourceId with different amount.
     await credits
       .atomicDebit({
-        userId: u.id, creditType: 'session', amount: 2, sourceId: okSourceId,
+        userId: u.id,
+        creditType: 'session',
+        amount: 2,
+        sourceId: okSourceId,
       })
-      .catch(() => { /* expected */ })
+      .catch(() => {
+        /* expected */
+      })
 
     // After all that activity, no connection should be stuck "idle in transaction".
     // The query joins on the test database to scope the assertion to this run.

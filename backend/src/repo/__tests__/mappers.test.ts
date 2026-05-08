@@ -88,7 +88,9 @@ describe('toWorld', () => {
   })
 
   it('throws on unexpected moderation_status', () => {
-    expect(() => toWorld({ ...worldRow, moderation_status: 'pending' })).toThrow(/unexpected moderation_status/)
+    expect(() => toWorld({ ...worldRow, moderation_status: 'pending' })).toThrow(
+      /unexpected moderation_status/,
+    )
   })
 })
 
@@ -121,7 +123,9 @@ describe('toCampaign', () => {
   })
 
   it('throws on unexpected status', () => {
-    expect(() => toCampaign({ ...campaignRow, status: 'paused' })).toThrow(/unexpected campaign status/)
+    expect(() => toCampaign({ ...campaignRow, status: 'paused' })).toThrow(
+      /unexpected campaign status/,
+    )
   })
 })
 
@@ -154,6 +158,8 @@ describe('toSession', () => {
   })
 
   it('throws on unexpected status', () => {
-    expect(() => toSession({ ...sessionRow, status: 'paused' })).toThrow(/unexpected session status/)
+    expect(() => toSession({ ...sessionRow, status: 'paused' })).toThrow(
+      /unexpected session status/,
+    )
   })
 })

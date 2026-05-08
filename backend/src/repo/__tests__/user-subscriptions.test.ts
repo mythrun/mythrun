@@ -21,7 +21,9 @@ beforeEach(async () => {
  * Build an UpsertFromStripeRow with sane defaults; tests override only the
  * fields they care about. Keeps each test focused on the contract it exercises.
  */
-function makeRow(overrides: Partial<UpsertFromStripeRow> & Pick<UpsertFromStripeRow, 'user_id'>): UpsertFromStripeRow {
+function makeRow(
+  overrides: Partial<UpsertFromStripeRow> & Pick<UpsertFromStripeRow, 'user_id'>,
+): UpsertFromStripeRow {
   return {
     id: uuidv7(),
     user_id: overrides.user_id,
@@ -220,7 +222,11 @@ describe('repo.userSubscriptions', () => {
           status: 'active',
         }),
       )
-      const details = { reason: 'cancellation_requested', comment: 'too expensive', feedback: 'too_expensive' }
+      const details = {
+        reason: 'cancellation_requested',
+        comment: 'too expensive',
+        feedback: 'too_expensive',
+      }
       await userSubscriptions.markCanceled(tx, 'sub_details', {
         cancel_at_period_end: true,
         cancel_at: null,

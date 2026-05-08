@@ -1,4 +1,10 @@
-import { CLUSTER_ORDER, type ClusterName, type IndexMeta, type SchemaMetadata, type TableMeta } from './schemaTypes.ts'
+import {
+  CLUSTER_ORDER,
+  type ClusterName,
+  type IndexMeta,
+  type SchemaMetadata,
+  type TableMeta,
+} from './schemaTypes.ts'
 
 function escapeHtml(s: string): string {
   return s
@@ -58,7 +64,9 @@ function renderTable(table: TableMeta): string {
   parts.push(`    <span class="schema-table-meta">${counts.join(' · ')}</span>`)
   parts.push(`  </summary>`)
   parts.push(`  <table class="schema-columns">`)
-  parts.push(`    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>`)
+  parts.push(
+    `    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>`,
+  )
   parts.push(`    <tbody>`)
   for (const col of table.columns) {
     parts.push(renderColumnRow(col))

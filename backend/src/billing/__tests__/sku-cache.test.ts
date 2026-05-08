@@ -59,8 +59,10 @@ describe('sku-cache', () => {
     expect(Object.keys(asPublic)).not.toContain('stripe_price_id')
     // Belt-and-suspenders: the type-level keys exposed by SkuPublicListing
     // should NOT contain any obviously-internal field name.
-    type ForbiddenInPublic = Extract<keyof SkuPublicListing,
-      'stripe_price_id' | 'userId' | 'email' | 'tenant' | 'internal' | 'env' | 'secret'>
+    type ForbiddenInPublic = Extract<
+      keyof SkuPublicListing,
+      'stripe_price_id' | 'userId' | 'email' | 'tenant' | 'internal' | 'env' | 'secret'
+    >
     const _typecheck: ForbiddenInPublic extends never ? true : false = true
     expect(_typecheck).toBe(true)
   })

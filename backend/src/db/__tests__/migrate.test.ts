@@ -113,9 +113,7 @@ describe('runMigrations (integration)', () => {
     expect(first.map((m) => m.version)).toEqual(['001_a.sql', '002_b.sql'])
     const second = await runMigrations({ pool, migrationsDir: fixtureDir, logger })
     expect(second).toEqual([])
-    const rows = await pool.query<{ count: string }>(
-      `SELECT count(*)::text FROM _migrations`,
-    )
+    const rows = await pool.query<{ count: string }>(`SELECT count(*)::text FROM _migrations`)
     expect(rows.rows[0]?.count).toBe('2')
   })
 
@@ -148,9 +146,9 @@ describe('runMigrations (integration)', () => {
       '003_c.sql': 'CREATE TABLE c (id INT)',
     })
     const { logger } = makeSpyLogger()
-    await expect(
-      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
-    ).rejects.toThrow(/002_broken\.sql/)
+    await expect(runMigrations({ pool, migrationsDir: fixtureDir, logger })).rejects.toThrow(
+      /002_broken\.sql/,
+    )
 
     const tables = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('a','c')`,
@@ -168,9 +166,7 @@ describe('runMigrations (integration)', () => {
       '002_writes_then_fails.sql': 'CREATE TABLE x (id INT); SELECT 1/0;',
     })
     const { logger } = makeSpyLogger()
-    await expect(
-      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
-    ).rejects.toThrow()
+    await expect(runMigrations({ pool, migrationsDir: fixtureDir, logger })).rejects.toThrow()
     const xExists = await pool.query<{ count: string }>(
       `SELECT count(*)::text FROM information_schema.tables WHERE table_schema='public' AND table_name='x'`,
     )
@@ -197,9 +193,9 @@ describe('runMigrations (integration)', () => {
       '001_bad.sql': 'CREATE TABLE x (id INT);\nCOMMIT;',
     })
     const { logger } = makeSpyLogger()
-    await expect(
-      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
-    ).rejects.toThrow(/forbidden top-level transaction statement/)
+    await expect(runMigrations({ pool, migrationsDir: fixtureDir, logger })).rejects.toThrow(
+      /forbidden top-level transaction statement/,
+    )
     const rows = await pool.query<{ count: string }>(`SELECT count(*)::text FROM _migrations`)
     expect(rows.rows[0]?.count).toBe('0')
   })
@@ -222,18 +218,16 @@ $$ LANGUAGE plpgsql;`,
     await pool.query(
       'CREATE TABLE IF NOT EXISTS _migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())',
     )
-    await pool.query(
-      "INSERT INTO _migrations (version) VALUES ('001_a.sql'), ('003_c.sql')",
-    )
+    await pool.query("INSERT INTO _migrations (version) VALUES ('001_a.sql'), ('003_c.sql')")
     fixtureDir = makeFixtureDir({
       '001_a.sql': 'CREATE TABLE a (id INT)',
       '002_b.sql': 'CREATE TABLE b (id INT)',
       '003_c.sql': 'CREATE TABLE c (id INT)',
     })
     const { logger } = makeSpyLogger()
-    await expect(
-      runMigrations({ pool, migrationsDir: fixtureDir, logger }),
-    ).rejects.toThrow(/out-of-order.*002_b\.sql/)
+    await expect(runMigrations({ pool, migrationsDir: fixtureDir, logger })).rejects.toThrow(
+      /out-of-order.*002_b\.sql/,
+    )
     const exists = await pool.query<{ count: string }>(
       `SELECT count(*)::text FROM information_schema.tables WHERE table_schema='public' AND table_name='b'`,
     )

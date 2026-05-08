@@ -30,9 +30,7 @@ export const handlePendingUpdateExpired: EventHandler = async (event, _prefetch,
 
   const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id
   const latestInvoiceId =
-    typeof sub.latest_invoice === 'string'
-      ? sub.latest_invoice
-      : (sub.latest_invoice?.id ?? null)
+    typeof sub.latest_invoice === 'string' ? sub.latest_invoice : (sub.latest_invoice?.id ?? null)
   const targetTierLookupKey = sub.items.data[0]?.price.lookup_key ?? null
 
   log.info(

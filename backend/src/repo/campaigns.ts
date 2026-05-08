@@ -25,7 +25,15 @@ export function createCampaignsRepo(pool: Pool) {
             COALESCE($6, 'setup'),
             COALESCE($7, 'en')
          ) RETURNING *`,
-        [id, input.worldId, input.sourceWorldId ?? null, input.createdBy, input.name, input.status ?? null, input.language ?? null],
+        [
+          id,
+          input.worldId,
+          input.sourceWorldId ?? null,
+          input.createdBy,
+          input.name,
+          input.status ?? null,
+          input.language ?? null,
+        ],
       )
       const row = result.rows[0]
       if (!row) throw new Error('campaigns.create: INSERT returned no row')

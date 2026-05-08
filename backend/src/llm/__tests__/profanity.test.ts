@@ -15,12 +15,14 @@ describe('ProfanitySchema', () => {
   })
   it('parses {profane: true, reason: "offensive"}', () => {
     expect(ProfanitySchema.parse({ profane: true, reason: 'offensive' })).toEqual({
-      profane: true, reason: 'offensive',
+      profane: true,
+      reason: 'offensive',
     })
   })
   it('parses {profane: true, reason: "impersonation"}', () => {
     expect(ProfanitySchema.parse({ profane: true, reason: 'impersonation' })).toEqual({
-      profane: true, reason: 'impersonation',
+      profane: true,
+      reason: 'impersonation',
     })
   })
   it('rejects unknown reason values', () => {

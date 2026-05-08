@@ -51,10 +51,7 @@ export interface RefundPrefetch {
  * §5.3 prefetch-then-write discipline). Optional-chains the charge
  * retrieve; a missing charge is not an error here.
  */
-export async function prefetchRefund(
-  event: Stripe.Event,
-  stripe: Stripe,
-): Promise<RefundPrefetch> {
+export async function prefetchRefund(event: Stripe.Event, stripe: Stripe): Promise<RefundPrefetch> {
   const refund = event.data.object as Stripe.Refund
   const chargeRef = refund.charge
   if (chargeRef === null) return { charge: null }
@@ -69,11 +66,7 @@ export async function prefetchRefund(
  * and Stripe redelivers).
  */
 function asRefundPrefetch(prefetch: unknown): RefundPrefetch {
-  if (
-    typeof prefetch !== 'object' ||
-    prefetch === null ||
-    !('charge' in prefetch)
-  ) {
+  if (typeof prefetch !== 'object' || prefetch === null || !('charge' in prefetch)) {
     throw new Error('refund.created/refund.updated: prefetch shape unexpected')
   }
   return prefetch as RefundPrefetch
@@ -158,7 +151,7 @@ function partialRefundCheckAllowsProceed(
   log: FastifyBaseLogger,
   ids: RefundLogIds,
 ): boolean {
-  if (charge === null) return true  // fall through to step 1 paths
+  if (charge === null) return true // fall through to step 1 paths
   if (charge.amount_refunded === charge.amount_captured) return true
   log.error(
     {
@@ -201,10 +194,7 @@ type ResolutionResult =
  * Step 1 (lock-free): resolve originating Mythrun entity. Returns the
  * discriminated result the caller branches on.
  */
-async function resolveOrigin(
-  client: ClientLike,
-  refund: Stripe.Refund,
-): Promise<ResolutionResult> {
+async function resolveOrigin(client: ClientLike, refund: Stripe.Refund): Promise<ResolutionResult> {
   const paymentIntentId = readPaymentIntentId(refund)
   if (paymentIntentId === null) return { kind: 'unknown_origin' }
 
@@ -230,10 +220,7 @@ async function resolveOrigin(
 
   // Subscription path (§5.4.5 line 689; round-8 Carthage C1 — DB-side
   // resolution via the partial index `idx_billing_history_invoice_pi`).
-  const invoiceRow = await billingHistory.findInvoiceByPaymentIntent(
-    client,
-    paymentIntentId,
-  )
+  const invoiceRow = await billingHistory.findInvoiceByPaymentIntent(client, paymentIntentId)
   if (invoiceRow !== null) {
     if (invoiceRow.status === 'refunded') return { kind: 'already_refunded' }
     return {
@@ -368,10 +355,7 @@ async function loadSubscriptionGrants(
  * rows in practice; one round-trip per row is the simplest correct shape
  * and still finishes well within the dispatcher's 5s statement timeout.
  */
-async function insertClawbackRow(
-  client: ClientLike,
-  row: OriginGrantRow,
-): Promise<void> {
+async function insertClawbackRow(client: ClientLike, row: OriginGrantRow): Promise<void> {
   const id = uuidv7()
   await client.query(
     `INSERT INTO credit_ledger
@@ -499,10 +483,7 @@ export async function handleRefundEvent(
   }
 
   // resolution.kind === 'subscription'
-  const stillCompleted = await refetchBillingHistoryUnderLock(
-    client,
-    resolution.billingHistoryId,
-  )
+  const stillCompleted = await refetchBillingHistoryUnderLock(client, resolution.billingHistoryId)
   if (stillCompleted === null) {
     log.info(ids, 'billing.refund_already_applied')
     return 'ok'

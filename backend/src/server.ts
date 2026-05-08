@@ -173,7 +173,9 @@ export async function main(): Promise<void> {
     await closePartials(pg, rTR, rTB)
     // Watchdog: if any client kept the event loop alive past closePartials,
     // force-exit. unref() so this doesn't block exit when cleanup succeeds.
-    setTimeout(() => { process.exit(1) }, 5000).unref()
+    setTimeout(() => {
+      process.exit(1)
+    }, 5000).unref()
     process.exitCode = 1
   }
 }

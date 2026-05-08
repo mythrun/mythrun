@@ -27,11 +27,7 @@ function interpolate(template: string, vars: Record<string, string>): string {
  * fresh; subsequent reads of the same `area/name` pair reuse the cached
  * template (the file contents are not re-checked).
  */
-export function loadPrompt(
-  area: string,
-  name: string,
-  vars?: Record<string, string>,
-): string {
+export function loadPrompt(area: string, name: string, vars?: Record<string, string>): string {
   const key = `${area}/${name}`
   let template = cache.get(key)
   if (template === undefined) {

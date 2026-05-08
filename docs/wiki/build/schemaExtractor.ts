@@ -180,7 +180,11 @@ function formatType(col: RawColumnRow): string {
 const COLUMN_LIST_RE = /\(([^)]+)\)(?:\s+WHERE\s+\((.+)\))?/i
 const PREDICATE_RE = /\bWHERE\s+\((.+)\)\s*$/i
 
-function parseIndexDef(rawDef: string): { columns: string[]; predicate: string | null; expression: string | null } {
+function parseIndexDef(rawDef: string): {
+  columns: string[]
+  predicate: string | null
+  expression: string | null
+} {
   // pg's indexdef looks like:
   //   CREATE [UNIQUE] INDEX <name> ON <schema>.<table> USING btree (col1, col2) [WHERE (...)]
   // For simple column lists, the parens after USING-something contain comma-separated

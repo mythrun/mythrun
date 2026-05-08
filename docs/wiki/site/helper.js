@@ -213,8 +213,7 @@
         matches++
       })
 
-      counter.textContent =
-        'Showing ' + String(matches) + ' of ' + String(totalTables) + ' tables'
+      counter.textContent = 'Showing ' + String(matches) + ' of ' + String(totalTables) + ' tables'
     }
 
     search.addEventListener('input', applyFilter)

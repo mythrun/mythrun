@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write           # OIDC to AWS
+  id-token: write # OIDC to AWS
   contents: read
 
 concurrency:
@@ -35,7 +35,7 @@ jobs:
     env:
       IMAGE_TAG: bootstrap-db-${{ github.sha }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Pre-flight — verify required vars are set
         # Matches deploy.yml's pattern. vars.AWS_ACCOUNT_ID lives in the
@@ -47,20 +47,20 @@ jobs:
           fi
 
       - name: Assume AWS role via OIDC
-        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722 # v4.1.0
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@19d944daaa35f0fa1d3f7f8af1d3f2e5de25c5b7  # v2.1.4
+        uses: aws-actions/amazon-ecr-login@19d944daaa35f0fa1d3f7f8af1d3f2e5de25c5b7 # v2.1.4
 
       - name: Lint Dockerfile (hadolint)
         # failure-threshold: error — DL3018 (apk version pin) is suppressed
         # inline in the Dockerfile via `hadolint ignore=DL3018`. Other
         # warnings are advisory; only errors block.
-        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5  # v3.3.0
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
           dockerfile: infra/bootstrap-db/Dockerfile
           failure-threshold: error
@@ -99,7 +99,7 @@ jobs:
           echo "$BUMP_LINE" > /tmp/bootstrap_image_tag.line
 
       - name: Upload bump line as artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bootstrap-image-tag-line
           path: /tmp/bootstrap_image_tag.line

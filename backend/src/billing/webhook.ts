@@ -130,10 +130,7 @@ function lookupPrefetcher(eventType: string): PrefetchFn | undefined {
  * Identical timeout discipline to the main dispatch tx — a slow holder
  * on the row index can't pin the PoolClient.
  */
-async function recordEventOnlyTx(
-  pool: Pool,
-  event: Stripe.Event,
-): Promise<void> {
+async function recordEventOnlyTx(pool: Pool, event: Stripe.Event): Promise<void> {
   const client = await pool.connect()
   try {
     await client.query(
@@ -206,10 +203,7 @@ export async function dispatchEvent(
     if (!handler) {
       // Unknown event type: COMMIT the stripe_events row (acknowledges
       // the delivery so Stripe stops retrying) and exit cleanly.
-      log.info(
-        { event_type: event.type, event_id: event.id },
-        'stripe_webhook_unknown_type',
-      )
+      log.info({ event_type: event.type, event_id: event.id }, 'stripe_webhook_unknown_type')
       await client.query('COMMIT')
       return
     }
@@ -222,10 +216,7 @@ export async function dispatchEvent(
       // when returning the sentinel (spec §5.3 line 487, §13 regression
       // test). Logging at error level so paging-grade alarms can fire
       // on the pattern.
-      log.error(
-        { event_id: event.id },
-        'billing.handler_validation_failed_committed',
-      )
+      log.error({ event_id: event.id }, 'billing.handler_validation_failed_committed')
     }
   } catch (err) {
     try {
@@ -469,7 +460,9 @@ async function handleCheckoutCompletedSubscription(
   }
   const item = subscription.items.data[0]
   if (!item) {
-    throw new Error(`checkout.session.completed: subscription items.data[0] missing (sub=${subscription.id})`)
+    throw new Error(
+      `checkout.session.completed: subscription items.data[0] missing (sub=${subscription.id})`,
+    )
   }
   const tierLookupKey = item.price.lookup_key
   if (typeof tierLookupKey !== 'string' || tierLookupKey.length === 0) {

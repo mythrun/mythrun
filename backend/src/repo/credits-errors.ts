@@ -26,7 +26,7 @@ export class IdempotencyConflictError extends Error {
   constructor(
     readonly userId: string,
     readonly sourceId: string,
-    readonly existingAmount: number,    // absolute value
+    readonly existingAmount: number, // absolute value
     readonly requestedAmount: number,
   ) {
     super(

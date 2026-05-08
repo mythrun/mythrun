@@ -93,7 +93,9 @@ describe('server boot gate', () => {
     delete cleaned.REDIS_PORT
     delete cleaned.REDIS_AUTH_TOKEN
     process.env = { ...cleaned, ...REQUIRED_ENV }
-    vi.spyOn(process, 'exit').mockImplementation(((() => undefined) as unknown) as typeof process.exit)
+    vi.spyOn(process, 'exit').mockImplementation(
+      (() => undefined) as unknown as typeof process.exit,
+    )
   })
 
   afterEach(() => {

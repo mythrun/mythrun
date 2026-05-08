@@ -191,13 +191,9 @@ describe('billing.webhook.dispatchEvent', () => {
     const event = makeEvent()
     const counter = { n: 0 }
     const { log } = makeLogger()
-    await withHandlerOverride(
-      'checkout.session.completed',
-      countingOk(counter),
-      async () => {
-        await dispatchEvent(event, makeStripe(), pool, log)
-      },
-    )
+    await withHandlerOverride('checkout.session.completed', countingOk(counter), async () => {
+      await dispatchEvent(event, makeStripe(), pool, log)
+    })
     expect(counter.n).toBe(1)
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
   })
@@ -206,14 +202,10 @@ describe('billing.webhook.dispatchEvent', () => {
     const event = makeEvent()
     const counter = { n: 0 }
     const { log } = makeLogger()
-    await withHandlerOverride(
-      'checkout.session.completed',
-      countingOk(counter),
-      async () => {
-        await dispatchEvent(event, makeStripe(), pool, log)
-        await dispatchEvent(event, makeStripe(), pool, log)
-      },
-    )
+    await withHandlerOverride('checkout.session.completed', countingOk(counter), async () => {
+      await dispatchEvent(event, makeStripe(), pool, log)
+      await dispatchEvent(event, makeStripe(), pool, log)
+    })
     expect(counter.n).toBe(1)
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
   })
@@ -223,41 +215,31 @@ describe('billing.webhook.dispatchEvent', () => {
     const { log, entries } = makeLogger()
     await dispatchEvent(event, makeStripe(), pool, log)
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
-    expect(
-      entries.some((e) => e.level === 'info' && e.msg === 'stripe_webhook_unknown_type'),
-    ).toBe(true)
+    expect(entries.some((e) => e.level === 'info' && e.msg === 'stripe_webhook_unknown_type')).toBe(
+      true,
+    )
   })
 
   it('api_version mismatch → handler NOT invoked, stripe_events row IS committed (fail-closed), error logged', async () => {
     const event = makeEvent({ api_version: '2020-08-27' })
     const counter = { n: 0 }
     const { log, entries } = makeLogger()
-    await withHandlerOverride(
-      'checkout.session.completed',
-      countingOk(counter),
-      async () => {
-        await dispatchEvent(event, makeStripe(), pool, log)
-      },
-    )
+    await withHandlerOverride('checkout.session.completed', countingOk(counter), async () => {
+      await dispatchEvent(event, makeStripe(), pool, log)
+    })
     expect(counter.n).toBe(0)
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
     expect(
-      entries.some(
-        (e) => e.level === 'error' && e.msg === 'stripe_webhook_api_version_mismatch',
-      ),
+      entries.some((e) => e.level === 'error' && e.msg === 'stripe_webhook_api_version_mismatch'),
     ).toBe(true)
   })
 
   it("handler returns 'validation_failed' → COMMIT stripe_events, error log emitted", async () => {
     const event = makeEvent()
     const { log, entries } = makeLogger()
-    await withHandlerOverride(
-      'checkout.session.completed',
-      handlerValidationFailed,
-      async () => {
-        await dispatchEvent(event, makeStripe(), pool, log)
-      },
-    )
+    await withHandlerOverride('checkout.session.completed', handlerValidationFailed, async () => {
+      await dispatchEvent(event, makeStripe(), pool, log)
+    })
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
     expect(
       entries.some(
@@ -279,13 +261,9 @@ describe('billing.webhook.dispatchEvent', () => {
     const event = makeEvent()
     const { log } = makeLogger()
     const boom = new Error('handler exploded')
-    await withHandlerOverride(
-      'checkout.session.completed',
-      handlerThrowing(boom),
-      async () => {
-        await expect(dispatchEvent(event, makeStripe(), pool, log)).rejects.toBe(boom)
-      },
-    )
+    await withHandlerOverride('checkout.session.completed', handlerThrowing(boom), async () => {
+      await expect(dispatchEvent(event, makeStripe(), pool, log)).rejects.toBe(boom)
+    })
     expect(await countStripeEventRow(pool, event.id)).toBe(0)
   })
 
@@ -435,18 +413,16 @@ async function countUserSubs(p: Pool, sub_id: string): Promise<number> {
 }
 
 async function countBillingHistoryFor(p: Pool, user_id: string): Promise<number> {
-  const r = await p.query<{ id: string }>(
-    'SELECT id FROM billing_history WHERE user_id = $1',
-    [user_id],
-  )
+  const r = await p.query<{ id: string }>('SELECT id FROM billing_history WHERE user_id = $1', [
+    user_id,
+  ])
   return r.rows.length
 }
 
 async function countCreditLedgerFor(p: Pool, user_id: string): Promise<number> {
-  const r = await p.query<{ id: string }>(
-    'SELECT id FROM credit_ledger WHERE user_id = $1',
-    [user_id],
-  )
+  const r = await p.query<{ id: string }>('SELECT id FROM credit_ledger WHERE user_id = $1', [
+    user_id,
+  ])
   return r.rows.length
 }
 
@@ -608,9 +584,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
 
     // Paging-grade error log emitted with the IDs spec §5.4.1 mandates.
-    const paged = entries.find(
-      (e) => e.level === 'error' && e.msg === 'billing.checkout_orphan',
-    )
+    const paged = entries.find((e) => e.level === 'error' && e.msg === 'billing.checkout_orphan')
     expect(paged).toBeDefined()
     if (!paged) throw new Error('expected billing.checkout_orphan log')
     expect(paged.obj.session_id).toBe(session.id)
@@ -753,7 +727,11 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
 const PRICE_ID_SKU_SESSION = 'price_test_sku_session'
 const PRICE_ID_SKU_WORLD = 'price_test_sku_world'
 
-function makeSkuEntry(lookup_key: LookupKey, stripe_price_id: string, unit_amount_cents: number): SkuInternalEntry {
+function makeSkuEntry(
+  lookup_key: LookupKey,
+  stripe_price_id: string,
+  unit_amount_cents: number,
+): SkuInternalEntry {
   const spec = LOOKUP_KEYS[lookup_key]
   return {
     lookup_key,

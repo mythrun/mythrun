@@ -34,12 +34,17 @@ export function createUsersRepo(pool: Pool) {
     },
 
     getByCognitoSub: async (sub: string): Promise<User | null> => {
-      const result = await pool.query<UserDbRow>('SELECT * FROM users WHERE cognito_sub = $1', [sub])
+      const result = await pool.query<UserDbRow>('SELECT * FROM users WHERE cognito_sub = $1', [
+        sub,
+      ])
       const row = result.rows[0]
       return row ? toUser(row) : null
     },
 
-    getByCognitoSubWithTimeout: async (sub: string, statementTimeoutMs: number): Promise<User | null> => {
+    getByCognitoSubWithTimeout: async (
+      sub: string,
+      statementTimeoutMs: number,
+    ): Promise<User | null> => {
       const client: PoolClient = await pool.connect()
       let inTransaction = false
       try {
@@ -51,10 +56,9 @@ export function createUsersRepo(pool: Pool) {
         )
         inTransaction = true
 
-        const result = await client.query<UserDbRow>(
-          'SELECT * FROM users WHERE cognito_sub = $1',
-          [sub],
-        )
+        const result = await client.query<UserDbRow>('SELECT * FROM users WHERE cognito_sub = $1', [
+          sub,
+        ])
         await client.query('COMMIT')
         inTransaction = false
 

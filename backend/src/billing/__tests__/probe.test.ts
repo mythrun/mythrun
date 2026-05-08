@@ -17,13 +17,11 @@ interface PriceFixture {
   billing_scheme: 'per_unit' | 'tiered'
   transform_quantity: null | { divide_by: number; round: 'up' | 'down' }
   tax_behavior: 'unspecified' | 'inclusive' | 'exclusive' | null
-  recurring:
-    | null
-    | {
-        interval: 'month' | 'year' | 'week' | 'day'
-        interval_count: number
-        usage_type: 'licensed' | 'metered'
-      }
+  recurring: null | {
+    interval: 'month' | 'year' | 'week' | 'day'
+    interval_count: number
+    usage_type: 'licensed' | 'metered'
+  }
   product: { id: string; active: boolean }
 }
 
@@ -59,15 +57,34 @@ function skuFixture(overrides: Partial<PriceFixture> = {}): PriceFixture {
 
 function allFiveFixtures(): PriceFixture[] {
   return [
-    tierFixture({ id: 'price_w', lookup_key: 'tier_wayfarer', product: { id: 'p_w', active: true } }),
-    tierFixture({ id: 'price_s', lookup_key: 'tier_sojourner', product: { id: 'p_s', active: true } }),
-    tierFixture({ id: 'price_m', lookup_key: 'tier_mythwright', product: { id: 'p_m', active: true } }),
-    skuFixture({ id: 'price_se', lookup_key: 'sku_session', product: { id: 'p_se', active: true } }),
+    tierFixture({
+      id: 'price_w',
+      lookup_key: 'tier_wayfarer',
+      product: { id: 'p_w', active: true },
+    }),
+    tierFixture({
+      id: 'price_s',
+      lookup_key: 'tier_sojourner',
+      product: { id: 'p_s', active: true },
+    }),
+    tierFixture({
+      id: 'price_m',
+      lookup_key: 'tier_mythwright',
+      product: { id: 'p_m', active: true },
+    }),
+    skuFixture({
+      id: 'price_se',
+      lookup_key: 'sku_session',
+      product: { id: 'p_se', active: true },
+    }),
     skuFixture({ id: 'price_wo', lookup_key: 'sku_world', product: { id: 'p_wo', active: true } }),
   ]
 }
 
-function listOk(data: PriceFixture[], hasMore = false): { data: PriceFixture[]; has_more: boolean } {
+function listOk(
+  data: PriceFixture[],
+  hasMore = false,
+): { data: PriceFixture[]; has_more: boolean } {
   return { data, has_more: hasMore }
 }
 
@@ -129,9 +146,10 @@ function portalConfigFixture(overrides: Partial<PortalConfigFixture> = {}): Port
   }
 }
 
-function portalListOk(
-  configs: PortalConfigFixture[],
-): { data: PortalConfigFixture[]; has_more: boolean } {
+function portalListOk(configs: PortalConfigFixture[]): {
+  data: PortalConfigFixture[]
+  has_more: boolean
+} {
   return { data: configs, has_more: false }
 }
 
@@ -139,10 +157,7 @@ interface MakeStripeOptions {
   portalList?: ReturnType<typeof vi.fn>
 }
 
-function makeStripe(
-  list: ReturnType<typeof vi.fn>,
-  options: MakeStripeOptions = {},
-): Stripe {
+function makeStripe(list: ReturnType<typeof vi.fn>, options: MakeStripeOptions = {}): Stripe {
   const portalList =
     options.portalList ?? vi.fn().mockResolvedValue(portalListOk([portalConfigFixture()]))
   return {
@@ -206,9 +221,7 @@ describe('probeStripeContract', () => {
     )
     const list = vi.fn().mockResolvedValue(listOk(fixtures))
     const { logger } = makeLogger()
-    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(
-      /currency 'eur'/,
-    )
+    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(/currency 'eur'/)
   })
 
   it('unit_amount = 0 → BillingProbeError', async () => {
@@ -237,7 +250,9 @@ describe('probeStripeContract', () => {
     )
     const list = vi.fn().mockResolvedValue(listOk(fixtures))
     const { logger } = makeLogger()
-    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(/transform_quantity/)
+    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(
+      /transform_quantity/,
+    )
   })
 
   it("tax_behavior = 'inclusive' → BillingProbeError", async () => {
@@ -257,7 +272,9 @@ describe('probeStripeContract', () => {
     )
     const list = vi.fn().mockResolvedValue(listOk(fixtures))
     const { logger } = makeLogger()
-    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(/recurring\.interval/)
+    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(
+      /recurring\.interval/,
+    )
   })
 
   it('recurring.interval_count = 3 (quarterly) → BillingProbeError', async () => {
@@ -296,7 +313,11 @@ describe('probeStripeContract', () => {
   it('duplicate active lookup_key → BillingProbeError (no silent last-wins)', async () => {
     const fixtures = [
       ...allFiveFixtures(),
-      tierFixture({ id: 'price_dup', lookup_key: 'tier_wayfarer', product: { id: 'p_dup', active: true } }),
+      tierFixture({
+        id: 'price_dup',
+        lookup_key: 'tier_wayfarer',
+        product: { id: 'p_dup', active: true },
+      }),
     ]
     const list = vi.fn().mockResolvedValue(listOk(fixtures))
     const { logger } = makeLogger()
@@ -378,7 +399,9 @@ describe('probeStripeContract', () => {
     const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
     const { logger, entries } = makeLogger()
     await probeStripeContract(makeStripe(list), logger)
-    const ids = new Set(entries.map((e) => e.bootId).filter((v): v is string => typeof v === 'string'))
+    const ids = new Set(
+      entries.map((e) => e.bootId).filter((v): v is string => typeof v === 'string'),
+    )
     expect(ids.size).toBe(1)
   })
 
@@ -441,9 +464,9 @@ describe('probeStripeContract', () => {
     await expect(
       probeStripeContract(makeStripe(list, { portalList }), logger),
     ).rejects.toBeInstanceOf(BillingProbePortalConfigError)
-    await expect(
-      probeStripeContract(makeStripe(list, { portalList }), logger),
-    ).rejects.toThrow(/proration_behavior/)
+    await expect(probeStripeContract(makeStripe(list, { portalList }), logger)).rejects.toThrow(
+      /proration_behavior/,
+    )
     // cache must NOT be populated when portal probe fails
     expect(getSkuCache()).toBeNull()
   })
@@ -464,9 +487,9 @@ describe('probeStripeContract', () => {
     await expect(
       probeStripeContract(makeStripe(list, { portalList }), logger),
     ).rejects.toBeInstanceOf(BillingProbePortalConfigError)
-    await expect(
-      probeStripeContract(makeStripe(list, { portalList }), logger),
-    ).rejects.toThrow(/decreasing_item_amount/)
+    await expect(probeStripeContract(makeStripe(list, { portalList }), logger)).rejects.toThrow(
+      /decreasing_item_amount/,
+    )
     expect(getSkuCache()).toBeNull()
   })
 
@@ -477,9 +500,9 @@ describe('probeStripeContract', () => {
     await expect(
       probeStripeContract(makeStripe(list, { portalList }), logger),
     ).rejects.toBeInstanceOf(BillingProbePortalConfigError)
-    await expect(
-      probeStripeContract(makeStripe(list, { portalList }), logger),
-    ).rejects.toThrow(/no active default Customer Portal configuration/)
+    await expect(probeStripeContract(makeStripe(list, { portalList }), logger)).rejects.toThrow(
+      /no active default Customer Portal configuration/,
+    )
     expect(getSkuCache()).toBeNull()
   })
 })

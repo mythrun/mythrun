@@ -27,9 +27,9 @@ describe('loadPrompt', () => {
     const path = resolve(promptsDir, 'auth', 'test_interp.txt')
     writeFileSync(path, 'Hello {{name}}, welcome to {{app}}!')
     try {
-      expect(
-        loadPrompt('auth', 'test_interp', { name: 'Miklos', app: 'Mythrun' }),
-      ).toBe('Hello Miklos, welcome to Mythrun!')
+      expect(loadPrompt('auth', 'test_interp', { name: 'Miklos', app: 'Mythrun' })).toBe(
+        'Hello Miklos, welcome to Mythrun!',
+      )
     } finally {
       rmSync(path)
     }
@@ -67,9 +67,7 @@ describe('loadPrompt', () => {
     const path = resolve(promptsDir, 'auth', 'test_unmatched.txt')
     writeFileSync(path, 'Has {{a}} and {{b}}')
     try {
-      expect(loadPrompt('auth', 'test_unmatched', { a: 'X' })).toBe(
-        'Has X and {{b}}',
-      )
+      expect(loadPrompt('auth', 'test_unmatched', { a: 'X' })).toBe('Has X and {{b}}')
     } finally {
       rmSync(path)
     }

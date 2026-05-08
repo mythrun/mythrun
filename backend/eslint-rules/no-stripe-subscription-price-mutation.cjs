@@ -24,7 +24,7 @@ module.exports = {
     schema: [],
     messages: {
       banned:
-        "stripe.subscriptions.update with items[].price is forbidden — tier-switching goes through Customer Portal exclusively (per MYT-41 spec §6). Other update fields (cancel_at_period_end, metadata, pause_collection, items[].quantity) are fine.",
+        'stripe.subscriptions.update with items[].price is forbidden — tier-switching goes through Customer Portal exclusively (per MYT-41 spec §6). Other update fields (cancel_at_period_end, metadata, pause_collection, items[].quantity) are fine.',
     },
   },
   create(context) {

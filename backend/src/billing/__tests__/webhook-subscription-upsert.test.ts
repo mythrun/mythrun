@@ -129,8 +129,7 @@ const PERIOD_END_SEC = Math.floor(new Date('2026-06-01T00:00:00Z').getTime() / 1
 function buildSubscriptionFixture(opts: BuildSubscriptionOpts): SubscriptionFixture {
   const periodStart = opts.periodStart ?? PERIOD_START_SEC
   const periodEnd = opts.periodEnd ?? PERIOD_END_SEC
-  const tierLookupKey =
-    opts.tierLookupKey === undefined ? 'tier_wayfarer' : opts.tierLookupKey
+  const tierLookupKey = opts.tierLookupKey === undefined ? 'tier_wayfarer' : opts.tierLookupKey
   const priceId = opts.priceId ?? 'price_test_wayfarer'
   const itemCount = opts.itemCount ?? 1
   const items: SubscriptionItemFixture[] = []
@@ -187,10 +186,7 @@ interface UserSubscriptionRow {
   readonly stripe_event_created_at: Date
 }
 
-async function fetchUserSubscription(
-  p: Pool,
-  sub_id: string,
-): Promise<UserSubscriptionRow | null> {
+async function fetchUserSubscription(p: Pool, sub_id: string): Promise<UserSubscriptionRow | null> {
   const r = await p.query<UserSubscriptionRow>(
     `SELECT user_id, tier_lookup_key, status,
             current_period_start, current_period_end,
@@ -328,11 +324,7 @@ describe('billing.webhook customer.subscription.created/updated (handleSubscript
       tierLookupKey: 'tier_sojourner',
       status: 'active',
     })
-    const freshEvent = makeSubscriptionEvent(
-      freshSubscription,
-      'customer.subscription.created',
-      T2,
-    )
+    const freshEvent = makeSubscriptionEvent(freshSubscription, 'customer.subscription.created', T2)
     await dispatchEvent(freshEvent, makeStripe(), pool, makeLogger().log)
 
     const beforeRow = await fetchUserSubscription(pool, sub_id)
@@ -351,11 +343,7 @@ describe('billing.webhook customer.subscription.created/updated (handleSubscript
       tierLookupKey: 'tier_wayfarer', // different on purpose
       status: 'past_due',
     })
-    const staleEvent = makeSubscriptionEvent(
-      staleSubscription,
-      'customer.subscription.updated',
-      T1,
-    )
+    const staleEvent = makeSubscriptionEvent(staleSubscription, 'customer.subscription.updated', T1)
     const { log, entries } = makeLogger()
 
     await dispatchEvent(staleEvent, makeStripe(), pool, log)
@@ -436,9 +424,7 @@ describe('billing.webhook customer.subscription.created/updated (handleSubscript
 
     // Dispatcher emits its own validation_failed paging log on top of the
     // handler's paging log.
-    const sentinel = entries.find(
-      (e) => e.msg === 'billing.handler_validation_failed_committed',
-    )
+    const sentinel = entries.find((e) => e.msg === 'billing.handler_validation_failed_committed')
     expect(sentinel).toBeDefined()
 
     // userId referenced via row creation; the load-bearing assertion is

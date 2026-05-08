@@ -44,8 +44,7 @@ import Stripe from 'stripe'
  */
 
 const RAW_KEY = process.env.STRIPE_TEST_FULL_KEY
-const apiKey =
-  typeof RAW_KEY === 'string' && RAW_KEY.startsWith('sk_test_') ? RAW_KEY : null
+const apiKey = typeof RAW_KEY === 'string' && RAW_KEY.startsWith('sk_test_') ? RAW_KEY : null
 
 const describeMaybe = apiKey !== null ? describe : describe.skip
 
@@ -74,7 +73,7 @@ describeMaybe('pre-ship: payment_behavior pending_if_incomplete', () => {
     if (wId === undefined || mId === undefined) {
       throw new Error(
         'tier_wayfarer or tier_mythwright price not found on test-mode account; ' +
-        'run the MYT-41 product/price Terraform against test-mode first',
+          'run the MYT-41 product/price Terraform against test-mode first',
       )
     }
     wayfarerId = wId

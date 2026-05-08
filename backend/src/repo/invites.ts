@@ -63,7 +63,9 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
         // Lock the campaigns row first per the lock-order convention
         // (campaigns → invites → members). This serializes concurrent
         // creates so the cap check is correct.
-        await client.query('SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE', [input.campaignId])
+        await client.query('SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE', [
+          input.campaignId,
+        ])
 
         // Cap check (active invites only).
         const cap = await client.query<{ count: string }>(
@@ -114,7 +116,11 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
         throw new InviteCreationError(INVITE_CODE_RETRIES)
       } catch (err) {
         if (inTransaction) {
-          try { await client.query('ROLLBACK') } catch { /* ignore */ }
+          try {
+            await client.query('ROLLBACK')
+          } catch {
+            /* ignore */
+          }
         }
         throw err
       } finally {
@@ -186,7 +192,10 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
       return { notFoundOrWrongCampaign: true }
     },
 
-    acceptInvite: async (input: { code: string; userId: string }): Promise<
+    acceptInvite: async (input: {
+      code: string
+      userId: string
+    }): Promise<
       | { campaignId: string; alreadyMember: boolean }
       | { notFound: true }
       | { revoked: true }
@@ -280,17 +289,18 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
         }
 
         // Step 6: Increment uses ONLY on the rowCount === 1 path.
-        await client.query(
-          `UPDATE campaign_invites SET uses = uses + 1 WHERE id = $1`,
-          [invite.id],
-        )
+        await client.query(`UPDATE campaign_invites SET uses = uses + 1 WHERE id = $1`, [invite.id])
 
         await client.query('COMMIT')
         inTransaction = false
         return { campaignId, alreadyMember: false }
       } catch (err) {
         if (inTransaction) {
-          try { await client.query('ROLLBACK') } catch { /* ignore */ }
+          try {
+            await client.query('ROLLBACK')
+          } catch {
+            /* ignore */
+          }
         }
         // Map pg timeout errors to InviteTimeoutError.
         if (typeof err === 'object' && err !== null && 'code' in err) {

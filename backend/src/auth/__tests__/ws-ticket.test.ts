@@ -1,11 +1,7 @@
 import IoRedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  WS_TICKET_TTL_SECONDS,
-  consumeWsTicket,
-  mintWsTicket,
-} from '../ws-ticket.js'
+import { WS_TICKET_TTL_SECONDS, consumeWsTicket, mintWsTicket } from '../ws-ticket.js'
 
 const KEY_PREFIX = 'staging:use1:ws:ticket:'
 
@@ -103,16 +99,12 @@ describe('consumeWsTicket', () => {
   })
 
   it('non-existent ticket returns null', async () => {
-    expect(
-      await consumeWsTicket({ redis, keyPrefix: KEY_PREFIX }, 'never-existed'),
-    ).toBeNull()
+    expect(await consumeWsTicket({ redis, keyPrefix: KEY_PREFIX }, 'never-existed')).toBeNull()
   })
 
   it('corrupt JSON payload returns null', async () => {
     await redis.set(`${KEY_PREFIX}corrupt`, '{not json', 'EX', 30)
-    expect(
-      await consumeWsTicket({ redis, keyPrefix: KEY_PREFIX }, 'corrupt'),
-    ).toBeNull()
+    expect(await consumeWsTicket({ redis, keyPrefix: KEY_PREFIX }, 'corrupt')).toBeNull()
   })
 
   it('payload missing required campaignId returns null', async () => {
@@ -122,9 +114,7 @@ describe('consumeWsTicket', () => {
       'EX',
       30,
     )
-    expect(
-      await consumeWsTicket({ redis, keyPrefix: KEY_PREFIX }, 'incomplete'),
-    ).toBeNull()
+    expect(await consumeWsTicket({ redis, keyPrefix: KEY_PREFIX }, 'incomplete')).toBeNull()
   })
 
   it('payload with extra fields parses cleanly (forward compat)', async () => {

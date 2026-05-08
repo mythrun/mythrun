@@ -14,7 +14,12 @@ import { randomUUID } from 'node:crypto'
 import Stripe from 'stripe'
 import type { Logger } from 'pino'
 import { LOOKUP_KEYS, type LookupKey } from './lookup-keys.js'
-import { setSkuCache, type SkuCache, type SkuInternalEntry, type SkuPublicListing } from './sku-cache.js'
+import {
+  setSkuCache,
+  type SkuCache,
+  type SkuInternalEntry,
+  type SkuPublicListing,
+} from './sku-cache.js'
 
 const PROBE_TIMEOUT_MS = 7000
 const PROBE_MAX_ATTEMPTS = 3
@@ -31,16 +36,26 @@ if (Object.keys(LOOKUP_KEYS).length > 100) {
 
 export class BillingProbeError extends Error {
   readonly code = 'BILLING_PROBE_FAILED'
-  constructor(readonly mismatches: readonly string[], readonly bootId: string) {
-    super(`Stripe billing probe failed (contract mismatch) [boot=${bootId}]:\n  ${mismatches.join('\n  ')}`)
+  constructor(
+    readonly mismatches: readonly string[],
+    readonly bootId: string,
+  ) {
+    super(
+      `Stripe billing probe failed (contract mismatch) [boot=${bootId}]:\n  ${mismatches.join('\n  ')}`,
+    )
     this.name = 'BillingProbeError'
   }
 }
 
 export class BillingProbeAuthError extends Error {
   readonly code = 'BILLING_PROBE_AUTH'
-  constructor(readonly cause: unknown, readonly bootId: string) {
-    super(`Stripe billing probe failed at authentication [boot=${bootId}]: ${String(cause)} — rotate STRIPE_SECRET_KEY`)
+  constructor(
+    readonly cause: unknown,
+    readonly bootId: string,
+  ) {
+    super(
+      `Stripe billing probe failed at authentication [boot=${bootId}]: ${String(cause)} — rotate STRIPE_SECRET_KEY`,
+    )
     this.name = 'BillingProbeAuthError'
   }
 }
@@ -48,22 +63,33 @@ export class BillingProbeAuthError extends Error {
 export class BillingProbeStripeAPIChangeError extends Error {
   readonly code = 'BILLING_PROBE_API_CHANGE'
   constructor(readonly bootId: string) {
-    super(`Stripe billing probe got has_more=true on a lookup_keys-bounded query [boot=${bootId}]; Stripe API contract changed.`)
+    super(
+      `Stripe billing probe got has_more=true on a lookup_keys-bounded query [boot=${bootId}]; Stripe API contract changed.`,
+    )
     this.name = 'BillingProbeStripeAPIChangeError'
   }
 }
 
 export class BillingProbeTransientError extends Error {
   readonly code = 'BILLING_PROBE_TRANSIENT'
-  constructor(readonly cause: unknown, readonly attempts: number, readonly bootId: string) {
-    super(`Stripe billing probe failed transiently after ${String(attempts)} attempts [boot=${bootId}]: ${String(cause)}`)
+  constructor(
+    readonly cause: unknown,
+    readonly attempts: number,
+    readonly bootId: string,
+  ) {
+    super(
+      `Stripe billing probe failed transiently after ${String(attempts)} attempts [boot=${bootId}]: ${String(cause)}`,
+    )
     this.name = 'BillingProbeTransientError'
   }
 }
 
 export class BillingProbePortalConfigError extends Error {
   readonly code = 'BILLING_PROBE_PORTAL_CONFIG'
-  constructor(readonly mismatches: readonly string[], readonly bootId: string) {
+  constructor(
+    readonly mismatches: readonly string[],
+    readonly bootId: string,
+  ) {
     super(
       `Stripe billing probe failed (Customer Portal config drift) [boot=${bootId}]:\n  ${mismatches.join('\n  ')}`,
     )
@@ -71,14 +97,14 @@ export class BillingProbePortalConfigError extends Error {
   }
 }
 
-export async function probeStripeContract(
-  stripe: Stripe,
-  logger: Logger,
-): Promise<void> {
+export async function probeStripeContract(stripe: Stripe, logger: Logger): Promise<void> {
   const bootId = randomUUID()
   const lookupKeys = Object.keys(LOOKUP_KEYS) as LookupKey[]
 
-  logger.info({ event: 'billing.probe_started', bootId, count: lookupKeys.length }, 'Stripe billing probe started')
+  logger.info(
+    { event: 'billing.probe_started', bootId, count: lookupKeys.length },
+    'Stripe billing probe started',
+  )
 
   const result = await fetchPricesWithRetry(stripe, lookupKeys, logger, bootId)
 
@@ -248,11 +274,7 @@ function populateSkuCache(
   setSkuCache(snapshot)
 }
 
-async function probePortalConfig(
-  stripe: Stripe,
-  logger: Logger,
-  bootId: string,
-): Promise<void> {
+async function probePortalConfig(stripe: Stripe, logger: Logger, bootId: string): Promise<void> {
   let result: Stripe.ApiList<Stripe.BillingPortal.Configuration>
   try {
     result = await stripe.billingPortal.configurations.list(
@@ -286,7 +308,12 @@ async function probePortalConfig(
   if (!config) {
     mismatches.push('no active default Customer Portal configuration found')
     logger.error(
-      { event: 'billing.probe_portal_failed', bootId, mismatchCount: mismatches.length, mismatches },
+      {
+        event: 'billing.probe_portal_failed',
+        bootId,
+        mismatchCount: mismatches.length,
+        mismatches,
+      },
       'Stripe billing probe Customer Portal config drift',
     )
     throw new BillingProbePortalConfigError(mismatches, bootId)
@@ -318,7 +345,12 @@ async function probePortalConfig(
 
   if (mismatches.length > 0) {
     logger.error(
-      { event: 'billing.probe_portal_failed', bootId, mismatchCount: mismatches.length, mismatches },
+      {
+        event: 'billing.probe_portal_failed',
+        bootId,
+        mismatchCount: mismatches.length,
+        mismatches,
+      },
       'Stripe billing probe Customer Portal config drift',
     )
     throw new BillingProbePortalConfigError(mismatches, bootId)
@@ -362,9 +394,7 @@ async function fetchPricesWithRetry(
       lastErr = err
       if (attempt === PROBE_MAX_ATTEMPTS) break
       const base =
-        PROBE_BACKOFF_MS[attempt - 1] ??
-        PROBE_BACKOFF_MS[PROBE_BACKOFF_MS.length - 1] ??
-        1000
+        PROBE_BACKOFF_MS[attempt - 1] ?? PROBE_BACKOFF_MS[PROBE_BACKOFF_MS.length - 1] ?? 1000
       const jitter = Math.floor(Math.random() * PROBE_JITTER_MS)
       logger.warn(
         {

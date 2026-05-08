@@ -2,12 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Repo } from '../../repo/index.js'
-import type {
-  CampaignMember,
-  CampaignMemberRole,
-  User,
-  World,
-} from '../../repo/types.js'
+import type { CampaignMember, CampaignMemberRole, User, World } from '../../repo/types.js'
 import { requireCampaignMember, requireWorldCreator } from '../access-control.js'
 
 const fakeUser: User = {
@@ -37,10 +32,7 @@ function attachDbUserPlugin(user: User | undefined) {
   )
 }
 
-function makeRepo(overrides: {
-  membership?: CampaignMember | null
-  world?: World | null
-}): Repo {
+function makeRepo(overrides: { membership?: CampaignMember | null; world?: World | null }): Repo {
   return {
     campaigns: {
       getMembership: vi.fn().mockResolvedValue(overrides.membership ?? null),
@@ -51,10 +43,7 @@ function makeRepo(overrides: {
   } as unknown as Repo
 }
 
-const memberRow = (
-  role: CampaignMemberRole,
-  inviteAccepted = true,
-): CampaignMember => ({
+const memberRow = (role: CampaignMemberRole, inviteAccepted = true): CampaignMember => ({
   id: 'cm-1',
   campaignId: 'c-1',
   userId: 'u-1',
@@ -100,14 +89,10 @@ describe('requireCampaignMember', () => {
     app = Fastify({ logger: false })
     await app.register(attachDbUserPlugin(fakeUser))
     let attached: unknown
-    app.get(
-      '/c/:campaignId/x',
-      { preHandler: requireCampaignMember(repo) },
-      (req) => {
-        attached = (req as unknown as { campaignMember?: unknown }).campaignMember
-        return { ok: true }
-      },
-    )
+    app.get('/c/:campaignId/x', { preHandler: requireCampaignMember(repo) }, (req) => {
+      attached = (req as unknown as { campaignMember?: unknown }).campaignMember
+      return { ok: true }
+    })
     const res = await app.inject({ method: 'GET', url: '/c/c-1/x' })
     expect(res.statusCode).toBe(200)
     expect(attached).toMatchObject({ campaignId: 'c-1', userId: 'u-1', role: 'player' })
@@ -117,11 +102,9 @@ describe('requireCampaignMember', () => {
     const repo = makeRepo({ membership: memberRow('owner') })
     app = Fastify({ logger: false })
     await app.register(attachDbUserPlugin(fakeUser))
-    app.get(
-      '/c/:campaignId/x',
-      { preHandler: requireCampaignMember(repo, 'owner') },
-      () => ({ ok: true }),
-    )
+    app.get('/c/:campaignId/x', { preHandler: requireCampaignMember(repo, 'owner') }, () => ({
+      ok: true,
+    }))
     const res = await app.inject({ method: 'GET', url: '/c/c-1/x' })
     expect(res.statusCode).toBe(200)
   })
@@ -130,11 +113,9 @@ describe('requireCampaignMember', () => {
     const repo = makeRepo({ membership: memberRow('player') })
     app = Fastify({ logger: false })
     await app.register(attachDbUserPlugin(fakeUser))
-    app.get(
-      '/c/:campaignId/x',
-      { preHandler: requireCampaignMember(repo, 'owner') },
-      () => ({ ok: true }),
-    )
+    app.get('/c/:campaignId/x', { preHandler: requireCampaignMember(repo, 'owner') }, () => ({
+      ok: true,
+    }))
     const res = await app.inject({ method: 'GET', url: '/c/c-1/x' })
     expect(res.statusCode).toBe(403)
     expect(res.json()).toEqual({ code: 'not_campaign_owner' })
@@ -144,11 +125,7 @@ describe('requireCampaignMember', () => {
     const repo = makeRepo({ membership: null })
     app = Fastify({ logger: false })
     await app.register(attachDbUserPlugin(fakeUser))
-    app.get(
-      '/c/:campaignId/x',
-      { preHandler: requireCampaignMember(repo) },
-      () => ({ ok: true }),
-    )
+    app.get('/c/:campaignId/x', { preHandler: requireCampaignMember(repo) }, () => ({ ok: true }))
     const res = await app.inject({ method: 'GET', url: '/c/c-1/x' })
     expect(res.statusCode).toBe(403)
     expect(res.json()).toEqual({ code: 'not_campaign_member' })
@@ -158,11 +135,7 @@ describe('requireCampaignMember', () => {
     const repo = makeRepo({ membership: memberRow('player', false) })
     app = Fastify({ logger: false })
     await app.register(attachDbUserPlugin(fakeUser))
-    app.get(
-      '/c/:campaignId/x',
-      { preHandler: requireCampaignMember(repo) },
-      () => ({ ok: true }),
-    )
+    app.get('/c/:campaignId/x', { preHandler: requireCampaignMember(repo) }, () => ({ ok: true }))
     const res = await app.inject({ method: 'GET', url: '/c/c-1/x' })
     expect(res.statusCode).toBe(403)
   })
@@ -201,11 +174,7 @@ describe('requireCampaignMember', () => {
     const repo = makeRepo({ membership: memberRow('player') })
     app = Fastify({ logger: false })
     await app.register(attachDbUserPlugin(undefined))
-    app.get(
-      '/c/:campaignId/x',
-      { preHandler: requireCampaignMember(repo) },
-      () => ({ ok: true }),
-    )
+    app.get('/c/:campaignId/x', { preHandler: requireCampaignMember(repo) }, () => ({ ok: true }))
     const res = await app.inject({ method: 'GET', url: '/c/c-1/x' })
     expect(res.statusCode).toBe(500)
   })

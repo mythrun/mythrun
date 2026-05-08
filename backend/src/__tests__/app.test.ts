@@ -61,8 +61,7 @@ describe('buildApp', () => {
     vi.stubEnv('COGNITO_HOSTED_UI_DOMAIN', '')
     // Force the bypass plugin's Layer 2b ECS task-metadata probe to fail
     // (i.e. "we are not on ECS"), so registration proceeds.
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.reject(new Error('ECONNREFUSED'))
+    globalThis.fetch = (): Promise<Response> => Promise.reject(new Error('ECONNREFUSED'))
     // The SKU cache is module-level and sticky across tests in this file.
     // Reset before each test so /api/billing/skus tests start from a known
     // empty-cache state.

@@ -53,8 +53,7 @@ export function requireCampaignMember(
   const hook: preHandlerAsyncHookHandler = async (request, reply) => {
     const dbUser = requireDbUser(request)
     const campaignId =
-      request.resolvedCampaignId ??
-      (request.params as { campaignId?: string }).campaignId
+      request.resolvedCampaignId ?? (request.params as { campaignId?: string }).campaignId
     if (!campaignId) {
       throw new Error(
         'requireCampaignMember: route has no :campaignId param and no request.resolvedCampaignId',

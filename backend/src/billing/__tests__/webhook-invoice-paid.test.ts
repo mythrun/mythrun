@@ -91,9 +91,10 @@ interface SubscriptionFixture {
   }
 }
 
-function makeStripeWithSubscription(opts: {
-  subscription?: SubscriptionFixture
-}): { stripe: Stripe; calls: { subscriptionRetrieves: string[] } } {
+function makeStripeWithSubscription(opts: { subscription?: SubscriptionFixture }): {
+  stripe: Stripe
+  calls: { subscriptionRetrieves: string[] }
+} {
   const calls = { subscriptionRetrieves: [] as string[] }
   const stub = {
     subscriptions: {
@@ -583,7 +584,7 @@ describe('billing.webhook invoice.paid', () => {
         data: [
           {
             id: 'il_credit',
-            amount: -750,  // credit for the old tier (Wayfarer prorated unused)
+            amount: -750, // credit for the old tier (Wayfarer prorated unused)
             pricing: {
               type: 'price_details',
               price_details: { price: PRICE_ID_TIER_WAYFARER },
@@ -591,7 +592,7 @@ describe('billing.webhook invoice.paid', () => {
           },
           {
             id: 'il_charge',
-            amount: 1500,  // charge for the new tier (Sojourner prorated)
+            amount: 1500, // charge for the new tier (Sojourner prorated)
             pricing: {
               type: 'price_details',
               price_details: { price: PRICE_ID_TIER_SOJOURNER },
@@ -657,7 +658,7 @@ describe('billing.webhook invoice.paid', () => {
       invoiceId: invoice_id,
       customer: cus,
       billingReason: 'manual',
-      amountPaid: 1234,  // arbitrary; intentionally NOT matching tier price
+      amountPaid: 1234, // arbitrary; intentionally NOT matching tier price
       subtotalExcludingTax: 1234,
       subscription: sub_id,
       paymentIntent: pi,
@@ -684,11 +685,9 @@ describe('billing.webhook invoice.paid', () => {
     expect(ledger).toHaveLength(0)
 
     // INFO log emitted.
-    expect(
-      entries.some(
-        (e) => e.level === 'info' && e.msg === 'billing.invoice_audit_only',
-      ),
-    ).toBe(true)
+    expect(entries.some((e) => e.level === 'info' && e.msg === 'billing.invoice_audit_only')).toBe(
+      true,
+    )
     // No paging errors.
     expect(entries.filter((e) => e.level === 'error')).toEqual([])
   })
@@ -713,7 +712,7 @@ describe('billing.webhook invoice.paid', () => {
     const invoice = buildInvoice({
       invoiceId: invoice_id,
       customer: cus,
-      billingReason: 'subscription_cycle',  // zero-amount renewal (e.g., 100% coupon)
+      billingReason: 'subscription_cycle', // zero-amount renewal (e.g., 100% coupon)
       amountPaid: 0,
       subtotalExcludingTax: 0,
       subscription: sub_id,
@@ -740,9 +739,7 @@ describe('billing.webhook invoice.paid', () => {
       ),
     ).toBe(false)
     // INFO audit log emitted with the zero-amount reason.
-    const audit = entries.find(
-      (e) => e.level === 'info' && e.msg === 'billing.invoice_audit_only',
-    )
+    const audit = entries.find((e) => e.level === 'info' && e.msg === 'billing.invoice_audit_only')
     expect(audit).toBeDefined()
     expect((audit?.obj as { reason?: string } | undefined)?.reason).toBe('zero_or_negative_amount')
   })
@@ -754,7 +751,7 @@ describe('billing.webhook invoice.paid', () => {
     const invoice_id = `in_orph_${uuidv7().slice(0, 12)}`
     const pi = `pi_orph_${uuidv7().slice(0, 12)}`
     const orphanCustomer = `cus_orph_${uuidv7().slice(0, 8)}`
-    const orphanUserId = uuidv7()  // not in users
+    const orphanUserId = uuidv7() // not in users
 
     const subscription = buildSubscriptionFixture({
       sub_id,
@@ -784,9 +781,7 @@ describe('billing.webhook invoice.paid', () => {
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
 
     // Paging-grade error log.
-    const paged = entries.find(
-      (e) => e.level === 'error' && e.msg === 'billing.invoice_orphan',
-    )
+    const paged = entries.find((e) => e.level === 'error' && e.msg === 'billing.invoice_orphan')
     expect(paged).toBeDefined()
     if (!paged) throw new Error('expected billing.invoice_orphan log')
     expect(paged.obj.invoice_id).toBe(invoice_id)
@@ -835,9 +830,7 @@ describe('billing.webhook invoice.paid', () => {
 
     // INFO log emitted.
     expect(
-      entries.some(
-        (e) => e.level === 'info' && e.msg === 'billing.invoice_non_subscription',
-      ),
+      entries.some((e) => e.level === 'info' && e.msg === 'billing.invoice_non_subscription'),
     ).toBe(true)
 
     // No paging errors.

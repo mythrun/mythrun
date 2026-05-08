@@ -37,7 +37,8 @@ function makeRow(
     id: overrides.id ?? uuidv7(),
     user_id: overrides.user_id,
     kind,
-    source_id_stripe: overrides.source_id_stripe ?? `${defaultPrefix}default_${uuidv7().slice(0, 8)}`,
+    source_id_stripe:
+      overrides.source_id_stripe ?? `${defaultPrefix}default_${uuidv7().slice(0, 8)}`,
     stripe_payment_intent_id: overrides.stripe_payment_intent_id ?? null,
     lookup_key: overrides.lookup_key ?? null,
     amount_cents: overrides.amount_cents ?? 1000,
@@ -282,7 +283,7 @@ describe('repo.billingHistory', () => {
           }),
         )
       }
-      const sortedDesc = [...ids].sort().reverse()  // newest id first
+      const sortedDesc = [...ids].sort().reverse() // newest id first
 
       const page1 = await billingHistory.listByUser(tx, user.id, { limit: 2 })
       expect(page1.rows).toHaveLength(2)

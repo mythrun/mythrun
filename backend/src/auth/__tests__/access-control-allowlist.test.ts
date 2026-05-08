@@ -54,11 +54,9 @@ describe('accessControlAllowlist', () => {
   it('app.ready() succeeds with default-auth + requireCampaignMember', async () => {
     app = Fastify({ logger: false })
     await app.register(accessControlAllowlist)
-    app.post(
-      '/c/:campaignId/x',
-      { preHandler: requireCampaignMember(fakeRepo) },
-      () => ({ ok: true }),
-    )
+    app.post('/c/:campaignId/x', { preHandler: requireCampaignMember(fakeRepo) }, () => ({
+      ok: true,
+    }))
     await expect(app.ready()).resolves.toBeDefined()
   })
 

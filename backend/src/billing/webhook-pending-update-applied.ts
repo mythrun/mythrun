@@ -75,9 +75,7 @@ export async function prefetchPendingUpdateApplied(
 ): Promise<PendingUpdateAppliedPrefetch> {
   const sub = event.data.object as Stripe.Subscription
   const latestInvoiceId =
-    typeof sub.latest_invoice === 'string'
-      ? sub.latest_invoice
-      : sub.latest_invoice?.id ?? null
+    typeof sub.latest_invoice === 'string' ? sub.latest_invoice : (sub.latest_invoice?.id ?? null)
   if (latestInvoiceId === null) return { invoice: null }
   const invoice = await stripe.invoices.retrieve(latestInvoiceId)
   return { invoice }
@@ -89,11 +87,7 @@ export async function prefetchPendingUpdateApplied(
  * and Stripe redelivers).
  */
 function asPendingUpdateAppliedPrefetch(prefetch: unknown): PendingUpdateAppliedPrefetch {
-  if (
-    typeof prefetch !== 'object' ||
-    prefetch === null ||
-    !('invoice' in prefetch)
-  ) {
+  if (typeof prefetch !== 'object' || prefetch === null || !('invoice' in prefetch)) {
     throw new Error('customer.subscription.pending_update_applied: prefetch shape unexpected')
   }
   return prefetch as PendingUpdateAppliedPrefetch
@@ -248,9 +242,11 @@ function splitInvoiceLines(invoice: Stripe.Invoice): SplitLines {
  * unknown lookup_key here is a programming error (the SKU cache only emits
  * keys from `LOOKUP_KEYS`).
  */
-function lookupKeySpec(
-  key: LookupKey,
-): { readonly priceCents: number; readonly sessionsGranted: number; readonly worldsGranted: number } {
+function lookupKeySpec(key: LookupKey): {
+  readonly priceCents: number
+  readonly sessionsGranted: number
+  readonly worldsGranted: number
+} {
   const spec = LOOKUP_KEYS[key]
   // priceCents is NOT carried on LOOKUP_KEYS itself (the price lives in
   // Stripe per the lookup-keys.ts comment); we pull it from the SKU cache,
@@ -261,9 +257,7 @@ function lookupKeySpec(
   }
   const entry = cache.byLookupKey.get(key)
   if (!entry) {
-    throw new Error(
-      `pending_update_applied: SKU cache missing entry for lookup_key=${key}`,
-    )
+    throw new Error(`pending_update_applied: SKU cache missing entry for lookup_key=${key}`)
   }
   return {
     priceCents: entry.price.unit_amount_cents,
@@ -295,9 +289,7 @@ interface SubscriptionFields {
  * Returns `null` on multi-item or missing fields — caller returns
  * 'validation_failed' (Mythrun never exposes multi-item subs).
  */
-function readSubscriptionFields(
-  subscription: Stripe.Subscription,
-): SubscriptionFields | null {
+function readSubscriptionFields(subscription: Stripe.Subscription): SubscriptionFields | null {
   if (subscription.items.data.length !== 1) return null
   const item = subscription.items.data[0]
   if (!item) return null
@@ -375,10 +367,7 @@ export async function handlePendingUpdateApplied(
   //    OLD price rides the negative line, the NEW price rides the positive.
   const split = splitInvoiceLines(invoice)
   if (split.negatives.length !== 1 || split.positives.length !== 1) {
-    log.error(
-      { ...ids, line_amounts: split.allAmounts },
-      'billing.upgrade_unexpected_line_shape',
-    )
+    log.error({ ...ids, line_amounts: split.allAmounts }, 'billing.upgrade_unexpected_line_shape')
     return 'validation_failed'
   }
   const negative = split.negatives[0]
@@ -386,9 +375,7 @@ export async function handlePendingUpdateApplied(
   if (!negative || !positive) {
     // Defensive: length === 1 but [0] missing is unreachable; satisfies
     // strict-TS exhaustive narrowing without `as`.
-    throw new Error(
-      `pending_update_applied: line split inconsistent for invoice=${invoice.id}`,
-    )
+    throw new Error(`pending_update_applied: line split inconsistent for invoice=${invoice.id}`)
   }
 
   // 5. Reverse-resolve OLD/NEW lookup_keys.

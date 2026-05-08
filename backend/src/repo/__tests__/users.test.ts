@@ -86,9 +86,9 @@ describe('users repo (integration)', () => {
 
   it('update throws when the user does not exist', async () => {
     const repo = createUsersRepo(pool)
-    await expect(repo.update('019dccef-0000-7000-8000-000000000000', { displayName: 'X' })).rejects.toThrow(
-      /no user with id/,
-    )
+    await expect(
+      repo.update('019dccef-0000-7000-8000-000000000000', { displayName: 'X' }),
+    ).rejects.toThrow(/no user with id/)
   })
 
   it('getByUsername is case-insensitive', async () => {
@@ -174,10 +174,10 @@ describe('users repo (integration)', () => {
       // already wrote a different cus_* value to the row before this call's
       // Phase-3 lock can take effect.
       const create = vi.fn().mockImplementation(async () => {
-        await pool.query(
-          'UPDATE users SET stripe_customer_id = $2 WHERE id = $1',
-          [created.id, 'cus_concurrent_racer'],
-        )
+        await pool.query('UPDATE users SET stripe_customer_id = $2 WHERE id = $1', [
+          created.id,
+          'cus_concurrent_racer',
+        ])
         return { id: 'cus_test_loser' }
       })
       const client: StripeCustomersClient = { customers: { create } }

@@ -30,11 +30,11 @@ import { LOOKUP_KEYS, type LookupKey, type LookupKeySpec } from './lookup-keys.j
 import type { HandlerResult } from './webhook-types.js'
 
 interface PaymentLineResolution {
-  readonly id: string  // line_item id, for log context only
+  readonly id: string // line_item id, for log context only
   readonly quantity: number
-  readonly amountTotal: number  // line.amount_total (per-line, post-tax/discount)
-  readonly currency: string  // line.price.currency
-  readonly priceId: string  // line.price.id
+  readonly amountTotal: number // line.amount_total (per-line, post-tax/discount)
+  readonly currency: string // line.price.currency
+  readonly priceId: string // line.price.id
   readonly entry: SkuInternalEntry
   readonly spec: LookupKeySpec
 }
@@ -51,10 +51,7 @@ function resolvePaymentLine(
 ): PaymentLineResolution | null {
   const price = line.price
   if (!price || typeof price.id !== 'string' || price.id.length === 0) {
-    log.error(
-      { ...logCtx, line_id: line.id },
-      'billing.checkout_unknown_price_id',
-    )
+    log.error({ ...logCtx, line_id: line.id }, 'billing.checkout_unknown_price_id')
     return null
   }
   const cache = getSkuCache()
@@ -62,9 +59,7 @@ function resolvePaymentLine(
     // Boot-time invariant: the SKU cache is populated before the route
     // accepts traffic per §10. A null cache here is a programming error;
     // fail loudly so the dispatch tx ROLLBACKs and Stripe redelivers.
-    throw new Error(
-      'checkout.session.completed payment mode: SKU cache not initialized',
-    )
+    throw new Error('checkout.session.completed payment mode: SKU cache not initialized')
   }
   const entry = cache.byPriceId.get(price.id)
   if (!entry) {
@@ -187,8 +182,7 @@ export async function handleCheckoutCompletedPayment(
   //    NOT NULL). For payment-mode sessions Stripe always sets payment_intent;
   //    a null here is a Stripe-side anomaly we can't recover from. Page +
   //    return validation_failed instead of crashing the tx.
-  const paymentIntent =
-    typeof session.payment_intent === 'string' ? session.payment_intent : null
+  const paymentIntent = typeof session.payment_intent === 'string' ? session.payment_intent : null
   if (paymentIntent === null) {
     log.error(ids, 'billing.checkout_payment_no_payment_intent')
     return 'validation_failed'

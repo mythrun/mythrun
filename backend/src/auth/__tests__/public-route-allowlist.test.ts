@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import Fastify from 'fastify'
-import { registerPublicRouteAllowlistHook, PUBLIC_ROUTE_ALLOWLIST } from '../public-route-allowlist.js'
+import {
+  registerPublicRouteAllowlistHook,
+  PUBLIC_ROUTE_ALLOWLIST,
+} from '../public-route-allowlist.js'
 
 describe('public-route allowlist', () => {
   it('contains the expected 5 entries', () => {

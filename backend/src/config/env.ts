@@ -78,9 +78,7 @@ function buildRedisUrl(role: 'realtime' | 'batch'): string {
   const port = process.env.REDIS_PORT
   const authToken = process.env.REDIS_AUTH_TOKEN
   if (!host || !port) {
-    throw new Error(
-      `Missing redis config: provide ${envKey}, or REDIS_HOST + REDIS_PORT`,
-    )
+    throw new Error(`Missing redis config: provide ${envKey}, or REDIS_HOST + REDIS_PORT`)
   }
   // Prod ElastiCache uses TLS (rediss://) with REDIS_AUTH_TOKEN; dev
   // uses plain redis:// without auth. Detect via auth-token presence.
@@ -178,14 +176,20 @@ function validateAnthropicApiKey(raw: string | undefined): string {
 // the literal 'PLACEHOLDER' or a real whsec_*. No bypass branch.
 function validateStripeWebhookSecret(raw: string | undefined): string {
   if (!raw || raw.trim() === '') {
-    throw new Error('STRIPE_WEBHOOK_SECRET is required (use PLACEHOLDER until MYT-42 wires the handler)')
+    throw new Error(
+      'STRIPE_WEBHOOK_SECRET is required (use PLACEHOLDER until MYT-42 wires the handler)',
+    )
   }
   return raw
 }
 
 function loadAuthConfig(): Pick<
   Env,
-  'authMode' | 'cognitoUserPoolId' | 'cognitoAppClientId' | 'cognitoIssuerUrl' | 'cognitoHostedUiDomain'
+  | 'authMode'
+  | 'cognitoUserPoolId'
+  | 'cognitoAppClientId'
+  | 'cognitoIssuerUrl'
+  | 'cognitoHostedUiDomain'
 > {
   const authModeRaw = process.env.AUTH_MODE
   if (authModeRaw !== 'real' && authModeRaw !== 'bypass') {
@@ -205,9 +209,7 @@ function loadAuthConfig(): Pick<
 
   // Cross-check 2: real + production requires the boot gate on.
   if (authMode === 'real' && nodeEnvRaw === 'production' && process.env.BOOT_GATE_ENABLED !== '1') {
-    throw new Error(
-      'loadEnv: AUTH_MODE=real with NODE_ENV=production requires BOOT_GATE_ENABLED=1',
-    )
+    throw new Error('loadEnv: AUTH_MODE=real with NODE_ENV=production requires BOOT_GATE_ENABLED=1')
   }
 
   if (authMode === 'real') {

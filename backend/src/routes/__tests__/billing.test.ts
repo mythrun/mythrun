@@ -189,8 +189,12 @@ function makeMockRepo(opts: MockRepoOpts = {}): ReturnType<typeof createRepo> {
 
 function stubPool(): Pool {
   return {
-    query: (): never => { throw new Error('stubPool: unexpected pool.query call') },
-    connect: (): never => { throw new Error('stubPool: unexpected pool.connect call') },
+    query: (): never => {
+      throw new Error('stubPool: unexpected pool.query call')
+    },
+    connect: (): never => {
+      throw new Error('stubPool: unexpected pool.connect call')
+    },
   } as unknown as Pool
 }
 
@@ -364,7 +368,12 @@ describe('billingRoutes — GET /api/billing/balance (MYT-42 Task 26)', () => {
     const body = res.json<{
       session: number
       world_gen: number
-      active_subscription: { tier_lookup_key: string; current_period_end: string; cancel_at_period_end: boolean; status: string } | null
+      active_subscription: {
+        tier_lookup_key: string
+        current_period_end: string
+        cancel_at_period_end: boolean
+        status: string
+      } | null
     }>()
     expect(body.session).toBe(3)
     expect(body.world_gen).toBe(1)
@@ -440,7 +449,11 @@ describe('billingRoutes — GET /api/billing/subscription (MYT-42 Task 27)', () 
 
   it('returns 200 with full subscription shape when active sub exists', async () => {
     mockCreateRepo.mockReturnValue(makeMockRepo())
-    const subWithCancelAt = { ...FIXTURE_SUB_ROW, cancel_at: new Date('2026-06-01T00:00:00.000Z'), cancel_at_period_end: true }
+    const subWithCancelAt = {
+      ...FIXTURE_SUB_ROW,
+      cancel_at: new Date('2026-06-01T00:00:00.000Z'),
+      cancel_at_period_end: true,
+    }
     mockedUserSubscriptions.getActiveForUser.mockResolvedValue(subWithCancelAt)
     app = await buildAuthedTestApp()
 
@@ -868,9 +881,7 @@ describe('billingRoutes — POST /api/billing/checkout (MYT-42 Task 29)', () => 
     expect(call.params.success_url).toBe(SUCCESS_URL)
     expect(call.params.cancel_url).toBe(CANCEL_URL)
     expect(call.params.metadata).toEqual({ userId: BYPASS_USER_ID })
-    expect(call.params.line_items).toEqual([
-      { price: 'price_test_tier_wayfarer', quantity: 1 },
-    ])
+    expect(call.params.line_items).toEqual([{ price: 'price_test_tier_wayfarer', quantity: 1 }])
     // subscription_data carries the userId fallback for webhook customer-id misses.
     expect(call.params.subscription_data).toEqual({ metadata: { userId: BYPASS_USER_ID } })
 
@@ -1088,10 +1099,13 @@ interface PortalStubBag {
 
 function installPortalStub(): PortalStubBag {
   const createCalls: PortalCreateCall[] = []
-  let createImpl: (params: { customer: string; return_url: string }) => Promise<{ url: string }> =
-    (params) => {
-      return Promise.resolve({ url: `https://billing.stripe.com/p/session_test?customer=${params.customer}` })
-    }
+  let createImpl: (params: { customer: string; return_url: string }) => Promise<{ url: string }> = (
+    params,
+  ) => {
+    return Promise.resolve({
+      url: `https://billing.stripe.com/p/session_test?customer=${params.customer}`,
+    })
+  }
 
   const stripeStub = {
     billingPortal: {
@@ -1251,7 +1265,9 @@ interface UpgradeStripeStubBag {
   readonly retrieveCalls: SubscriptionsRetrieveCall[]
   readonly updateCalls: SubscriptionsUpdateCall[]
   setRetrieveImpl(impl: (id: string) => Promise<Stripe.Subscription>): void
-  setUpdateImpl(impl: (id: string, params: Stripe.SubscriptionUpdateParams) => Promise<Stripe.Subscription>): void
+  setUpdateImpl(
+    impl: (id: string, params: Stripe.SubscriptionUpdateParams) => Promise<Stripe.Subscription>,
+  ): void
 }
 
 /**
@@ -1297,15 +1313,15 @@ function installUpgradeStripeStub(): UpgradeStripeStubBag {
   const updateCalls: SubscriptionsUpdateCall[] = []
   let retrieveImpl: (id: string) => Promise<Stripe.Subscription> = (id) =>
     Promise.resolve(makeSubscriptionFixture({ id }))
-  let updateImpl: (id: string, params: Stripe.SubscriptionUpdateParams) => Promise<Stripe.Subscription> = (id) =>
+  let updateImpl: (
+    id: string,
+    params: Stripe.SubscriptionUpdateParams,
+  ) => Promise<Stripe.Subscription> = (id) =>
     Promise.resolve(makeSubscriptionFixture({ id, latestInvoice: 'in_test_proration_01' }))
 
   const stripeStub = {
     subscriptions: {
-      retrieve: (
-        id: string,
-        opts?: { expand?: string[] },
-      ): Promise<Stripe.Subscription> => {
+      retrieve: (id: string, opts?: { expand?: string[] }): Promise<Stripe.Subscription> => {
         retrieveCalls.push({ id, opts })
         return retrieveImpl(id)
       },

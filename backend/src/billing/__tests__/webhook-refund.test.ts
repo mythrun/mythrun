@@ -85,9 +85,10 @@ interface ChargeFixture {
   readonly payment_intent: string | null
 }
 
-function makeStripeWithCharge(opts: {
-  charge?: ChargeFixture
-}): { stripe: Stripe; calls: { chargeRetrieves: string[] } } {
+function makeStripeWithCharge(opts: { charge?: ChargeFixture }): {
+  stripe: Stripe
+  calls: { chargeRetrieves: string[] }
+} {
   const calls = { chargeRetrieves: [] as string[] }
   const stub = {
     charges: {
@@ -191,7 +192,10 @@ interface PurchaseReadRow {
   readonly lookup_key: string
 }
 
-async function fetchPurchasesForUser(p: Pool, user_id: string): Promise<readonly PurchaseReadRow[]> {
+async function fetchPurchasesForUser(
+  p: Pool,
+  user_id: string,
+): Promise<readonly PurchaseReadRow[]> {
   const r = await p.query<PurchaseReadRow>(
     `SELECT id, status, stripe_payment_intent_id, lookup_key
        FROM purchases
@@ -224,8 +228,11 @@ async function seedAlaCartePurchaseWithGrants(
   userId: string,
   paymentIntentId: string,
   rows: readonly { lookupKey: string; sessionAmount: number; worldAmount: number }[],
-): Promise<readonly { purchaseId: string; sessionGrantId: string | null; worldGrantId: string | null }[]> {
-  const out: { purchaseId: string; sessionGrantId: string | null; worldGrantId: string | null }[] = []
+): Promise<
+  readonly { purchaseId: string; sessionGrantId: string | null; worldGrantId: string | null }[]
+> {
+  const out: { purchaseId: string; sessionGrantId: string | null; worldGrantId: string | null }[] =
+    []
   const client = await p.connect()
   try {
     await client.query('BEGIN')
@@ -296,7 +303,11 @@ async function seedSubscriptionInvoiceWithGrants(
   sessionAmount: number,
   worldAmount: number,
   expiresAt: Date,
-): Promise<{ billingHistoryId: string; sessionGrantId: string | null; worldGrantId: string | null }> {
+): Promise<{
+  billingHistoryId: string
+  sessionGrantId: string | null
+  worldGrantId: string | null
+}> {
   let billingHistoryId = ''
   let sessionGrantId: string | null = null
   let worldGrantId: string | null = null
@@ -384,9 +395,7 @@ describe('billing.webhook refund', () => {
     await dispatchEvent(event, stripe, pool, log)
 
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
-    expect(
-      entries.some((e) => e.level === 'info' && e.msg === 'billing.refund_pending'),
-    ).toBe(true)
+    expect(entries.some((e) => e.level === 'info' && e.msg === 'billing.refund_pending')).toBe(true)
     // No clawback, no billing_history row.
     expect((await fetchCreditLedgerForUser(pool, userId)).length).toBe(0)
     expect((await fetchBillingHistoryForUser(pool, userId)).length).toBe(0)
@@ -419,9 +428,7 @@ describe('billing.webhook refund', () => {
 
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
     expect(
-      entries.some(
-        (e) => e.level === 'info' && e.msg === 'billing.refund_terminal_non_success',
-      ),
+      entries.some((e) => e.level === 'info' && e.msg === 'billing.refund_terminal_non_success'),
     ).toBe(true)
     expect((await fetchCreditLedgerForUser(pool, userId)).length).toBe(0)
   })
@@ -447,7 +454,7 @@ describe('billing.webhook refund', () => {
       id: refund.charge ?? '',
       object: 'charge',
       amount_captured: 1500,
-      amount_refunded: 750,  // partial refund
+      amount_refunded: 750, // partial refund
       payment_intent: pi,
     }
     const { stripe } = makeStripeWithCharge({ charge })
@@ -649,9 +656,7 @@ describe('billing.webhook refund', () => {
     expect(calls.chargeRetrieves).toEqual([])
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
     expect(
-      entries.some(
-        (e) => e.level === 'info' && e.msg === 'billing.refund_unknown_origin',
-      ),
+      entries.some((e) => e.level === 'info' && e.msg === 'billing.refund_unknown_origin'),
     ).toBe(true)
     expect((await fetchCreditLedgerForUser(pool, userId)).length).toBe(0)
     expect((await fetchBillingHistoryForUser(pool, userId)).length).toBe(0)
@@ -694,9 +699,7 @@ describe('billing.webhook refund', () => {
 
     expect(await countStripeEventRow(pool, event2.id)).toBe(1)
     expect(
-      entries2.some(
-        (e) => e.level === 'info' && e.msg === 'billing.refund_already_applied',
-      ),
+      entries2.some((e) => e.level === 'info' && e.msg === 'billing.refund_already_applied'),
     ).toBe(true)
 
     // No additional clawback rows beyond the first delivery's 1 debit.
@@ -739,9 +742,7 @@ describe('billing.webhook refund', () => {
     // stripe_events row was rolled back so Stripe redelivers.
     expect(await countStripeEventRow(pool, event.id)).toBe(0)
     expect(
-      entries.some(
-        (e) => e.level === 'warn' && e.msg === 'billing.refund_resolution_miss',
-      ),
+      entries.some((e) => e.level === 'warn' && e.msg === 'billing.refund_resolution_miss'),
     ).toBe(true)
     expect((await fetchCreditLedgerForUser(pool, userId)).length).toBe(0)
   })
@@ -795,9 +796,7 @@ describe('billing.webhook refund', () => {
     const ledgerAfter2 = await fetchCreditLedgerForUser(pool, userId)
     expect(ledgerAfter2.filter((r) => r.source_type === 'debit').length).toBe(2)
     expect(
-      entries2.some(
-        (e) => e.level === 'info' && e.msg === 'billing.refund_already_applied',
-      ),
+      entries2.some((e) => e.level === 'info' && e.msg === 'billing.refund_already_applied'),
     ).toBe(true)
   })
 })

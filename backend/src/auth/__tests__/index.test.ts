@@ -46,16 +46,16 @@ describe('registerAuth', () => {
 
   it('throws if real mode without userPoolId', async () => {
     app = Fastify({ logger: false })
-    await expect(
-      registerAuth(app, { mode: 'real', appClientId: 'c' }),
-    ).rejects.toThrow(/real mode requires userPoolId and appClientId/)
+    await expect(registerAuth(app, { mode: 'real', appClientId: 'c' })).rejects.toThrow(
+      /real mode requires userPoolId and appClientId/,
+    )
   })
 
   it('throws if real mode without appClientId', async () => {
     app = Fastify({ logger: false })
-    await expect(
-      registerAuth(app, { mode: 'real', userPoolId: 'us-east-1_x' }),
-    ).rejects.toThrow(/real mode requires userPoolId and appClientId/)
+    await expect(registerAuth(app, { mode: 'real', userPoolId: 'us-east-1_x' })).rejects.toThrow(
+      /real mode requires userPoolId and appClientId/,
+    )
   })
 
   it('passes Cognito values through to bypass plugin Layer 3', async () => {

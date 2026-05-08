@@ -13,9 +13,9 @@ describe('guardTestDatabase', () => {
   })
 
   it('throws on disallowed db name', async () => {
-    await expect(
-      guardTestDatabase('postgresql://u:p@127.0.0.1:5432/production'),
-    ).rejects.toThrow(/Refusing/)
+    await expect(guardTestDatabase('postgresql://u:p@127.0.0.1:5432/production')).rejects.toThrow(
+      /Refusing/,
+    )
   })
 
   it('accepts localhost mythrun', async () => {

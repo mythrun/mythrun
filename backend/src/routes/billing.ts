@@ -110,12 +110,7 @@ function decodeCursor(raw: string | undefined): HistoryCursor | 'invalid' | unde
     return 'invalid'
   }
 
-  if (
-    typeof parsed !== 'object' ||
-    parsed === null ||
-    !('t' in parsed) ||
-    !('i' in parsed)
-  ) {
+  if (typeof parsed !== 'object' || parsed === null || !('t' in parsed) || !('i' in parsed)) {
     return 'invalid'
   }
 
@@ -142,10 +137,7 @@ async function handleHistory(
     return reply.code(400).send({ code: 'invalid_cursor' })
   }
 
-  const listOpts =
-    cursorResult !== undefined
-      ? { cursor: cursorResult, limit: 50 }
-      : { limit: 50 }
+  const listOpts = cursorResult !== undefined ? { cursor: cursorResult, limit: 50 } : { limit: 50 }
   const { rows, nextCursor } = await billingHistory.listByUser(pool, userId, listOpts)
 
   const encodedNextCursor =
@@ -401,9 +393,7 @@ async function withStripeUnavailable<T>(
   }
 }
 
-function isReplied(
-  result: unknown,
-): result is { readonly _replied: FastifyReply } {
+function isReplied(result: unknown): result is { readonly _replied: FastifyReply } {
   return typeof result === 'object' && result !== null && '_replied' in result
 }
 
@@ -448,15 +438,22 @@ async function handlePortal(
   // 3. Find or lazy-create the Stripe customer.
   const stripe = getStripeClient(env)
   const cusResult = await withStripeUnavailable(
-    request, reply, userId, 'findOrCreateStripeCustomer',
+    request,
+    reply,
+    userId,
+    'findOrCreateStripeCustomer',
     () => findOrCreateStripeCustomer(pool, stripe, userId),
   )
   if (isReplied(cusResult)) return cusResult._replied
 
   // 4. Create the portal session.
   const portalResult = await withStripeUnavailable(
-    request, reply, userId, 'billingPortal.sessions.create',
-    () => stripe.billingPortal.sessions.create({ customer: cusResult, return_url: parsed.return_url }),
+    request,
+    reply,
+    userId,
+    'billingPortal.sessions.create',
+    () =>
+      stripe.billingPortal.sessions.create({ customer: cusResult, return_url: parsed.return_url }),
   )
   if (isReplied(portalResult)) return portalResult._replied
 
@@ -497,8 +494,13 @@ async function handleCheckout(
   // create, OUTSIDE any held DB tx. The helper internally splits into a short
   // read tx + Stripe call + short write tx.
   const stripe = getStripeClient(env)
-  const cusResult = await withStripeUnavailable(request, reply, userId, 'findOrCreateStripeCustomer',
-    () => findOrCreateStripeCustomer(pool, stripe, userId))
+  const cusResult = await withStripeUnavailable(
+    request,
+    reply,
+    userId,
+    'findOrCreateStripeCustomer',
+    () => findOrCreateStripeCustomer(pool, stripe, userId),
+  )
   if (isReplied(cusResult)) return cusResult._replied
 
   // 6. Build + create the Checkout Session.
@@ -510,8 +512,13 @@ async function handleCheckout(
     successUrl: parsed.success_url,
     cancelUrl: parsed.cancel_url,
   })
-  const sessionResult = await withStripeUnavailable(request, reply, userId, 'checkout.sessions.create',
-    () => stripe.checkout.sessions.create(params))
+  const sessionResult = await withStripeUnavailable(
+    request,
+    reply,
+    userId,
+    'checkout.sessions.create',
+    () => stripe.checkout.sessions.create(params),
+  )
   if (isReplied(sessionResult)) return sessionResult._replied
 
   return reply.code(200).send({ checkout_session_id: sessionResult.id, url: sessionResult.url })
@@ -613,7 +620,11 @@ interface UpgradeTierTargets {
  */
 type TierResolveOutcome =
   | { readonly ok: true; readonly targets: UpgradeTierTargets }
-  | { readonly ok: false; readonly status: 400; readonly code: 'unknown_lookup_key' | 'tier_unchanged' | 'not_an_upgrade' }
+  | {
+      readonly ok: false
+      readonly status: 400
+      readonly code: 'unknown_lookup_key' | 'tier_unchanged' | 'not_an_upgrade'
+    }
   | { readonly ok: false; readonly status: 503; readonly code: 'sku_cache_unavailable' }
 
 function resolveUpgradeTiers(
@@ -737,8 +748,7 @@ async function handleUpgradeTier(
   // 6. Issue the upgrade with pending_if_incomplete + proration_date=period_start.
   // idempotency-key composes (userId, sub_id, target_tier) — period_start is
   // DELIBERATELY OMITTED per Petra I1 round 8 (see file-top comment + §4.6).
-  const idempotencyKey =
-    `upgrade:${userId}:${activeSub.stripe_subscription_id}:${parsed.target_tier_lookup_key}`
+  const idempotencyKey = `upgrade:${userId}:${activeSub.stripe_subscription_id}:${parsed.target_tier_lookup_key}`
 
   // The mythrun/no-stripe-subscription-price-mutation rule was written under
   // the MYT-41 design where ALL tier switches went through Customer Portal.
@@ -791,41 +801,67 @@ async function handleUpgradeTier(
 export const billingRoutes: FastifyPluginAsync<BillingRoutesOpts> = async (scope, opts) => {
   const repo = createRepo(opts.pool)
 
-  scope.get('/api/billing/skus', {
-    config: { auth: 'public', rateLimit: { max: 60, timeWindow: '1 minute' } },
-  }, async (_request, reply) => {
-    const cache = getSkuCache()
-    if (cache === null) {
-      // Defensive only — the boot probe gates app.ready() so any request
-      // reaching this route should see a populated cache.
-      return reply.code(503).send({ code: 'sku_cache_unavailable' })
-    }
-    return reply
-      .header('Cache-Control', 'public, max-age=300')
-      .send(cache.publicListing)
-  })
+  scope.get(
+    '/api/billing/skus',
+    {
+      config: { auth: 'public', rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    async (_request, reply) => {
+      const cache = getSkuCache()
+      if (cache === null) {
+        // Defensive only — the boot probe gates app.ready() so any request
+        // reaching this route should see a populated cache.
+        return reply.code(503).send({ code: 'sku_cache_unavailable' })
+      }
+      return reply.header('Cache-Control', 'public, max-age=300').send(cache.publicListing)
+    },
+  )
 
-  scope.get('/api/billing/balance', {
-    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-  }, (request, reply) => handleBalance(opts.pool, repo, request, reply))
+  scope.get(
+    '/api/billing/balance',
+    {
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    (request, reply) => handleBalance(opts.pool, repo, request, reply),
+  )
 
-  scope.get('/api/billing/subscription', {
-    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-  }, (request, reply) => handleSubscription(opts.pool, repo, request, reply))
+  scope.get(
+    '/api/billing/subscription',
+    {
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    (request, reply) => handleSubscription(opts.pool, repo, request, reply),
+  )
 
-  scope.get('/api/billing/history', {
-    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-  }, (request, reply) => handleHistory(opts.pool, repo, request, reply))
+  scope.get(
+    '/api/billing/history',
+    {
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    (request, reply) => handleHistory(opts.pool, repo, request, reply),
+  )
 
-  scope.post('/api/billing/checkout', {
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-  }, (request, reply) => handleCheckout(opts.pool, repo, opts.env, request, reply))
+  scope.post(
+    '/api/billing/checkout',
+    {
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
+    (request, reply) => handleCheckout(opts.pool, repo, opts.env, request, reply),
+  )
 
-  scope.post('/api/billing/portal', {
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-  }, (request, reply) => handlePortal(opts.pool, repo, opts.env, request, reply))
+  scope.post(
+    '/api/billing/portal',
+    {
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
+    (request, reply) => handlePortal(opts.pool, repo, opts.env, request, reply),
+  )
 
-  scope.post('/api/billing/upgrade-tier', {
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-  }, (request, reply) => handleUpgradeTier(opts.pool, repo, opts.env, request, reply))
+  scope.post(
+    '/api/billing/upgrade-tier',
+    {
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
+    (request, reply) => handleUpgradeTier(opts.pool, repo, opts.env, request, reply),
+  )
 }

@@ -31,8 +31,7 @@ export async function main(): Promise<void> {
 // — the entry-point guard would return false under `tsx watch` because
 // process.argv[1] points at the tsx loader, not at this file.
 const isEntryPoint =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isEntryPoint) {
   await main()
 }

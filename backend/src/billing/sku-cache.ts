@@ -22,7 +22,7 @@ import type { LookupKey } from './lookup-keys.js'
  */
 export interface SkuInternalEntry {
   readonly lookup_key: LookupKey
-  readonly stripe_price_id: string  // e.g. price_1ABCxyz — internal-only
+  readonly stripe_price_id: string // e.g. price_1ABCxyz — internal-only
   readonly displayName: string
   readonly type: 'recurring' | 'one_time'
   readonly sessionsGranted: number

@@ -34,9 +34,7 @@ export const PUBLIC_ROUTE_ALLOWLIST: ReadonlySet<string> = new Set([
 export function registerPublicRouteAllowlistHook(app: FastifyInstance): void {
   app.addHook('onRoute', (routeOptions) => {
     if (routeOptions.config?.auth !== 'public') return
-    const methods = Array.isArray(routeOptions.method)
-      ? routeOptions.method
-      : [routeOptions.method]
+    const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method]
     for (const m of methods) {
       // Fastify auto-generates a HEAD route for every GET registration.
       // The auto-generated HEAD fires onRoute with a non-null onSend array;

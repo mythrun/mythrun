@@ -103,7 +103,10 @@ export function createWorldsRepo(pool: Pool) {
       return toWorld(row)
     },
 
-    updateStatus: async (id: string, status: 'generating' | 'complete' | 'failed'): Promise<World> => {
+    updateStatus: async (
+      id: string,
+      status: 'generating' | 'complete' | 'failed',
+    ): Promise<World> => {
       const result = await pool.query<WorldDbRow>(
         `UPDATE worlds SET status = $2, updated_at = now() WHERE id = $1 RETURNING *`,
         [id, status],

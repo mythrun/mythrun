@@ -6,7 +6,10 @@ describe('installSignalHandlers', () => {
 
   beforeEach(() => {
     listeners = []
-    vi.spyOn(process, 'on').mockImplementation(((sig: NodeJS.Signals, fn: NodeJS.SignalsListener) => {
+    vi.spyOn(process, 'on').mockImplementation(((
+      sig: NodeJS.Signals,
+      fn: NodeJS.SignalsListener,
+    ) => {
       listeners.push({ signal: sig, fn })
       return process
     }) as unknown as typeof process.on)

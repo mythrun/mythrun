@@ -21,7 +21,11 @@ function fakeJwtPlugin(attachUser: { sub: string } | undefined) {
       // eslint-disable-next-line @typescript-eslint/require-await
       app.addHook('preHandler', async (request) => {
         if (attachUser) {
-          ;(request as unknown as { user?: { sub: string; cognitoUsername: string; scopes: readonly string[] } }).user = {
+          ;(
+            request as unknown as {
+              user?: { sub: string; cognitoUsername: string; scopes: readonly string[] }
+            }
+          ).user = {
             sub: attachUser.sub,
             cognitoUsername: 'fake',
             scopes: [],
@@ -99,7 +103,11 @@ describe('requireOnboarded plugin', () => {
   })
 
   it('user row present → next handler runs', async () => {
-    getByCognitoSubWithTimeout.mockResolvedValue({ id: 'user-row', cognitoSub: 'u-1', suspendedAt: null })
+    getByCognitoSubWithTimeout.mockResolvedValue({
+      id: 'user-row',
+      cognitoSub: 'u-1',
+      suspendedAt: null,
+    })
     app = Fastify({ logger: false })
     await app.register(fakeJwtPlugin({ sub: 'u-1' }))
     await app.register(requireOnboarded, { pool: fakePool })

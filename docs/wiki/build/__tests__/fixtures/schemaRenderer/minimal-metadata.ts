@@ -48,7 +48,8 @@ export const minimalMetadata: SchemaMetadata = {
           unique: false,
           predicate: null,
           expression: null,
-          rawDef: 'CREATE INDEX idx_facts_entity ON wiki_schema_introspect.facts USING btree (entity_id)',
+          rawDef:
+            'CREATE INDEX idx_facts_entity ON wiki_schema_introspect.facts USING btree (entity_id)',
         },
       ],
       checks: [

@@ -196,10 +196,7 @@ export async function handleSubscriptionUpsert(
     // (admin-created sub against a price that was never wired into the
     // SKU cache); pages + commits the stripe_events row so Stripe stops
     // retrying.
-    log.error(
-      { ...ids, price_id: item.price.id },
-      'billing.subscription_missing_lookup_key',
-    )
+    log.error({ ...ids, price_id: item.price.id }, 'billing.subscription_missing_lookup_key')
     return 'validation_failed'
   }
 

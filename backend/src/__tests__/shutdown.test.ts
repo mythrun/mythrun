@@ -42,16 +42,18 @@ describe('createShutdown', () => {
   })
 
   it('drains in order: app.close → pg.end → redis.quit (both), then exit(0)', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
+    const app = await buildApp(
+      {} as AppDeps,
+      { mode: 'bypass' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
+    )
     const clients = makeMockClients()
     const callOrder: string[] = []
 
-    vi.spyOn(app, 'close').mockImplementation(
-      (() => {
-        callOrder.push('app.close')
-        return Promise.resolve()
-      }) as unknown as typeof app.close,
-    )
+    vi.spyOn(app, 'close').mockImplementation((() => {
+      callOrder.push('app.close')
+      return Promise.resolve()
+    }) as unknown as typeof app.close)
     clients.pg.end.mockImplementation(() => {
       callOrder.push('pg.end')
       return Promise.resolve()
@@ -86,11 +88,14 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if app.close throws', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
-    const clients = makeMockClients()
-    vi.spyOn(app, 'close').mockImplementation(
-      (() => Promise.reject(new Error('boom'))) as unknown as typeof app.close,
+    const app = await buildApp(
+      {} as AppDeps,
+      { mode: 'bypass' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
+    const clients = makeMockClients()
+    vi.spyOn(app, 'close').mockImplementation((() =>
+      Promise.reject(new Error('boom'))) as unknown as typeof app.close)
 
     const handler = createShutdown(app, {
       pg: clients.pg as unknown as Pool,
@@ -103,11 +108,14 @@ describe('createShutdown', () => {
   })
 
   it('exits with code 1 if pg.end throws (after app.close succeeded)', async () => {
-    const app = await buildApp({} as AppDeps, { mode: 'bypass' }, { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() })
-    const clients = makeMockClients()
-    vi.spyOn(app, 'close').mockImplementation(
-      (() => Promise.resolve()) as unknown as typeof app.close,
+    const app = await buildApp(
+      {} as AppDeps,
+      { mode: 'bypass' },
+      { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
+    const clients = makeMockClients()
+    vi.spyOn(app, 'close').mockImplementation((() =>
+      Promise.resolve()) as unknown as typeof app.close)
     clients.pg.end.mockRejectedValue(new Error('pg boom'))
 
     const handler = createShutdown(app, {

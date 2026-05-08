@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  isValidMigrationFilename,
-  validateNoTransactionStatements,
-} from '../migrate.js'
+import { isValidMigrationFilename, validateNoTransactionStatements } from '../migrate.js'
 
 describe('isValidMigrationFilename', () => {
   it('accepts NNN_lowercase_snake.sql', () => {

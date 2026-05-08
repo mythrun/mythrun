@@ -12,10 +12,7 @@
 // behavior, not a mocked verifier.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import Fastify, {
-  type FastifyInstance,
-  type FastifyPluginAsync,
-} from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyPluginAsync } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
 import Stripe from 'stripe'
 import type { Pool } from 'pg'

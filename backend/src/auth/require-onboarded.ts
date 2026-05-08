@@ -43,7 +43,9 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
   app.addHook('onRoute', (routeOptions) => {
     const cfg = routeOptions.config as { auth?: string } | undefined
     if (cfg?.auth === 'jwt-no-db') {
-      const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method]
+      const methods = Array.isArray(routeOptions.method)
+        ? routeOptions.method
+        : [routeOptions.method]
       for (const m of methods) {
         if (m.toUpperCase() === 'HEAD') continue
         observed.push({ method: m, url: routeOptions.url })

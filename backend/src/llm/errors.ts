@@ -61,10 +61,9 @@ export function mapToMythrunError(err: unknown): Error {
   // The AI_NoObjectGeneratedError class lives in the `ai` package and is
   // matched by name to avoid a brittle deep import.
   if (err instanceof Error && err.name === 'AI_NoObjectGeneratedError') {
-    return new LlmStructuredOutputError(
-      'llm returned unparseable structured output',
-      { cause: err },
-    )
+    return new LlmStructuredOutputError('llm returned unparseable structured output', {
+      cause: err,
+    })
   }
   if (err instanceof APICallError) {
     const status = err.statusCode

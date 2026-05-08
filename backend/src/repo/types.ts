@@ -150,19 +150,13 @@ export interface SessionUpdate {
 
 export type CreditType = 'session' | 'world_gen'
 
-export type CreditSourceType =
-  | 'purchase'
-  | 'subscription'
-  | 'gift'
-  | 'trial'
-  | 'refund'
-  | 'debit'
+export type CreditSourceType = 'purchase' | 'subscription' | 'gift' | 'trial' | 'refund' | 'debit'
 
 export interface CreditEntry {
   readonly id: string
   readonly userId: string
   readonly creditType: CreditType
-  readonly amount: number              // positive = grant, negative = debit
+  readonly amount: number // positive = grant, negative = debit
   readonly sourceType: CreditSourceType
   readonly sourceId: string | null
   readonly grantedAt: Date
@@ -172,7 +166,7 @@ export interface CreditEntry {
 export interface GrantInput {
   readonly userId: string
   readonly creditType: CreditType
-  readonly amount: number              // must be > 0
+  readonly amount: number // must be > 0
   readonly sourceType: Exclude<CreditSourceType, 'debit'>
   readonly sourceId?: string | null
   readonly expiresAt?: Date | null
@@ -196,12 +190,12 @@ export interface GrantInput {
 export interface DebitInput {
   readonly userId: string
   readonly creditType: CreditType
-  readonly amount: number              // must be > 0; recorded as negative in ledger
-  readonly sourceId: string            // REQUIRED — the per-user idempotency key
+  readonly amount: number // must be > 0; recorded as negative in ledger
+  readonly sourceId: string // REQUIRED — the per-user idempotency key
 }
 
 export interface ListEntriesOpts {
-  readonly limit?: number | null       // null/omit → no LIMIT clause
+  readonly limit?: number | null // null/omit → no LIMIT clause
   readonly type?: CreditType
 }
 
