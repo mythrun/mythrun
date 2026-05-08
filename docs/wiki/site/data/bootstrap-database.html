@@ -75,8 +75,25 @@
       <td><code>bootstrap_db_run_task_secret_only</code></td>
       <td>DB + user exist; rotate password + write secret</td>
     </tr>
+    <tr>
+      <td><code>OK</code> but migrations 500 with <code>permission denied for schema public</code></td>
+      <td><code>--grant-only</code> override</td>
+      <td>DB + user + secret present but the app role lacks <code>CREATE</code> on schema <code>public</code> (Postgres 15+ default ACL). Idempotent.</td>
+    </tr>
   </tbody>
 </table>
+
+<aside class="wiki-rationale">
+  <strong>Why the schema-grant step is separate from the DB+user grant</strong> &mdash;
+  Postgres distinguishes between database-level privileges (granted at <code>CREATE USER</code>
+  + <code>GRANT ALL PRIVILEGES ON DATABASE</code>) and schema-level privileges. Postgres 15+
+  revoked <code>PUBLIC</code>'s default <code>CREATE</code> on schema <code>public</code>;
+  non-owner users now need an explicit grant. The script's
+  <code>create_db_and_user</code> and <code>create_user_only</code> paths run
+  <code>GRANT USAGE, CREATE ON SCHEMA public</code> on the target database after creating
+  the user. The <code>--grant-only</code> mode exists for the rare case where the user pre-dates
+  this fix (database state from before commit <code>21456e7</code>).
+</aside>
 
 <h2 id="first-time-setup-runbook">First-time setup runbook</h2>
 

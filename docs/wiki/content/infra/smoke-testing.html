@@ -3,7 +3,7 @@
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: backend/scripts/smoke/staging.sh -->
 <!-- source: package.json -->
-<!-- source-hash: sha256:0774783509aa31b7274659860c9d053427a6a0164ec3546849d4e119b259ceff -->
+<!-- source-hash: sha256:4e10b1d84aad40b6aa021c8f639f4823f64ded51003345948d5d074e14a7c3f7 -->
 <!-- last-ticket: MYT-44 -->
 
 <h1>Smoke testing</h1>
@@ -62,9 +62,8 @@
 <h3>What the script verifies</h3>
 
 <p>
-  The current scope is narrow: classifyProfanity reachability against the live Anthropic API.
-  Two cases short-circuit in the route handler before any database query, so they verify the
-  LLM stack independently of database state.
+  Five HTTP requests against the live deployed API, exercising both the classifyProfanity
+  call site (Haiku reachability) and the underlying users repository:
 </p>
 
 <ol>
@@ -73,30 +72,43 @@
     revision).
   </li>
   <li>
+    <code>POST /api/users/register</code> with a generated <code>smoketester$$</code> username.
+    First run: 201 fresh path. Subsequent runs: 409 idempotent (same Cognito sub returns the
+    existing user record per MYT-38 spec). Either way, classifyProfanity fires twice (once on
+    the username, once on the display name).
+  </li>
+  <li>
+    <code>GET /api/users/check-username?username=gandalf$$</code> returns
+    <code>{available: true}</code> &mdash; Haiku classifies non-profane and the route reaches
+    <code>users.getByUsername</code>, which finds nothing.
+  </li>
+  <li>
     <code>GET /api/users/check-username?username=fucknugget</code> returns
     <code>{available: false, reason: 'offensive'}</code> &mdash; Haiku classifies the offensive
-    name and the route emits the rejection without touching the database.
+    name and the route emits the rejection.
   </li>
   <li>
     <code>GET /api/users/check-username?username=mythrun_admin</code> returns
     <code>{available: false, reason: 'impersonation'}</code> &mdash; Haiku classifies the
-    impersonation attempt similarly.
+    impersonation attempt.
   </li>
 </ol>
 
 <p>
-  Each Haiku call shows up in CloudWatch as a structured log line emitted by the LLM
+  Five Haiku calls show up in CloudWatch as structured log lines emitted by the LLM
   middleware: <code>event: 'llm.call'</code> with <code>model: 'claude-haiku-4-5-20251001'</code>,
-  token counts, and latency. Total cost per smoke run is ~$0.0002 at current Haiku pricing.
+  token counts, and latency. Total cost per smoke run is ~$0.0005 at current Haiku pricing.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Registration and clean-username paths are intentionally not in the smoke yet</strong>
-  &mdash; both exit through <code>repo.users.getByUsername</code>, which fails with
-  <code>relation "users" does not exist</code> until migrations are applied to staging
-  Postgres (tracked in <code>myth-6gmk</code>). When migrations land, those paths get added
-  to the script and verify the LLM + DB integration end-to-end.
+  <strong>Why the smoke is not yet on a cron</strong> &mdash; today it's manual:
+  <code>pnpm smoke:staging</code>. A scheduled GitHub Actions run is the obvious next step
+  but needs CloudWatch alarm wiring before it's worth automating; an unwatched green/red
+  signal is operational noise. Until alarms exist, the script lives where any human or
+  agent can run it on demand: pre-deploy, post-deploy, after a flaky-feeling outage, or
+  during a billing-rate change to verify spend is what we expect.
 </aside>
+
 
 <h2>Operating this piece</h2>
 
