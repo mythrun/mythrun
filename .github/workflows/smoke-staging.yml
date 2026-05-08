@@ -34,6 +34,12 @@ env:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    # The github-actions-staging IAM role's trust policy pins the OIDC
+    # token's :sub claim to "repo:mythrun/mythrun:environment:staging".
+    # Declaring the environment here is what makes the assume-role step
+    # succeed; without it the JWT's sub claim doesn't match and AWS STS
+    # returns "Request ARN is invalid".
+    environment: staging
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
