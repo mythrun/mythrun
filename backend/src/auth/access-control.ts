@@ -12,9 +12,10 @@
 // these factories are never wired onto a route with config.auth: 'public'
 // or 'jwt-no-db' — that would short-circuit requireOnboarded and leave
 // request.dbUser undefined. The plugin identifies guarded routes by
-// inspecting `handler.name`, so the inner functions returned here are
-// declared as `async function requireCampaignMember/...` (named) rather
-// than arrow functions.
+// reading the ACCESS_CONTROL_MARKER property on each hook in the
+// preHandler array (more robust than reflecting on `function.name`,
+// which TS emit can disambiguate by appending a numeric suffix when an
+// inner named-function-expression shares the outer factory's name).
 //
 // Spec: docs/superpowers/specs/2026-05-08-myt-39-access-control-ws-ticket-design.md §4
 
@@ -23,11 +24,33 @@ import type { Repo } from '../repo/index.js'
 import type { CampaignMemberRole } from '../repo/types.js'
 import { requireDbUser } from './require-db-user.js'
 
+/** Marker property the boot-time `accessControlAllowlist` plugin reads
+ *  to identify access-control-guarded routes. Set on the hook returned
+ *  by each factory. Symbol-keyed so it can't collide with anything
+ *  Fastify internally puts on the function. */
+export const ACCESS_CONTROL_MARKER = Symbol('mythrun.access-control')
+
+/** Discriminant on the marker — lets the allowlist message a useful
+ *  offender identifier even though the hook itself is the same shape. */
+export type AccessControlKind = 'requireCampaignMember' | 'requireWorldCreator'
+
+interface MarkedHook extends preHandlerHookHandler {
+  [ACCESS_CONTROL_MARKER]?: AccessControlKind
+}
+
+function markHook(
+  hook: preHandlerHookHandler,
+  kind: AccessControlKind,
+): preHandlerHookHandler {
+  ;(hook as MarkedHook)[ACCESS_CONTROL_MARKER] = kind
+  return hook
+}
+
 export function requireCampaignMember(
   repo: Repo,
   role?: CampaignMemberRole,
 ): preHandlerHookHandler {
-  return async function requireCampaignMember(request, reply) {
+  const hook: preHandlerHookHandler = async (request, reply) => {
     const dbUser = requireDbUser(request)
     const campaignId =
       request.resolvedCampaignId ??
@@ -46,10 +69,11 @@ export function requireCampaignMember(
     }
     request.campaignMember = member
   }
+  return markHook(hook, 'requireCampaignMember')
 }
 
 export function requireWorldCreator(repo: Repo): preHandlerHookHandler {
-  return async function requireWorldCreator(request, reply) {
+  const hook: preHandlerHookHandler = async (request, reply) => {
     const dbUser = requireDbUser(request)
     const worldId = (request.params as { worldId?: string }).worldId
     if (!worldId) {
@@ -64,4 +88,5 @@ export function requireWorldCreator(repo: Repo): preHandlerHookHandler {
     }
     request.world = world
   }
+  return markHook(hook, 'requireWorldCreator')
 }
