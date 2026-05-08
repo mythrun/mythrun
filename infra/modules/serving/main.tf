@@ -126,6 +126,11 @@ locals {
     { name = "PORT", value = "3000" },
     { name = "AWS_REGION", value = "us-east-1" },
     { name = "REGION_PREFIX", value = "use1" },
+    # MYT-39: env+region prefix on Redis keys. staging+prod share one
+    # ElastiCache cluster; the prefix prevents cross-environment key
+    # namespace overlap. Pulled from the module's environment variable
+    # (validated to "staging" | "production" in variables.tf).
+    { name = "MYTHRUN_ENV", value = var.environment },
     # DB_* consistent across HOST/PORT/USER/NAME/PASSWORD. App constructs
     # DATABASE_URL at startup per Infra §2.3.
     { name = "DB_HOST", value = var.rds_host },
