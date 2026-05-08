@@ -350,6 +350,22 @@ data "aws_iam_policy_document" "gh_actions_staging" {
   # rds:CreateDBSnapshot intentionally omitted. Infra §5.5 specifies pre-deploy
   # snapshots for production only; staging has deletion_protection disabled.
   # The production GH role (at Launch) will carry this permission.
+
+  # Smoke-test credentials read — scoped to the single secret slot, not all
+  # of staging Secrets Manager. The smoke workflow reads the JSON-encoded
+  # {username, password} blob and authenticates against Cognito as that user.
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.auth.smoke_test_credentials_secret_arn]
+  }
+
+  # Cognito InitiateAuth for the smoke flow. The user pool client is public
+  # (PKCE-only, no client secret), so this isn't a credential-protection
+  # boundary — it's a runtime-API IAM gate. Scoped to the staging user pool.
+  statement {
+    actions   = ["cognito-idp:InitiateAuth"]
+    resources = [module.auth.user_pool_arn]
+  }
 }
 
 resource "aws_iam_role_policy" "github_actions_staging" {

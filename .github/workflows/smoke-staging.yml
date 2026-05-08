@@ -1,0 +1,55 @@
+# Daily smoke test against staging — exercises the deployed API end-to-end
+# (Cognito auth + LLM classifyProfanity reachability + DB lookup paths).
+#
+# Triggers:
+#   - workflow_dispatch: ad-hoc manual run from the Actions tab. Use after a
+#     deploy you want to verify, or to spot-check a flaky-feeling state.
+#   - schedule: daily at 14:00 UTC (07:00 PT). The result lands in the
+#     Actions UI and (eventually) wires into a CloudWatch alarm or paging
+#     notification — until that alarm exists, a green/red signal here is
+#     informational, not paging-grade.
+#
+# Cost: ~$0.0005 in Anthropic tokens per run (~5 Haiku calls).
+
+name: smoke-staging
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 14 * * *'
+
+permissions:
+  id-token: write           # OIDC to AWS
+  contents: read
+
+concurrency:
+  # Don't run two smokes against staging concurrently — the registration
+  # path uses $$ (PID) as a username suffix; in CI the PID is constant
+  # across concurrent runs and would collide.
+  group: smoke-staging
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install jq
+        # ubuntu-latest already has jq, but make it explicit so a runner-image
+        # change doesn't silently break the smoke.
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y jq
+          fi
+
+      - name: Run smoke
+        run: bash backend/scripts/smoke/staging.sh
