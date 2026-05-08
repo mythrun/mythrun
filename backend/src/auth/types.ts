@@ -1,10 +1,16 @@
 // backend/src/auth/types.ts
 //
-// AuthUser shape + Fastify module augmentation.
+// AuthUser shape + Fastify module augmentation. This is the canonical
+// declaration site for FastifyContextConfig.auth and FastifyRequest
+// auth-related fields. The previously-duplicated declaration at
+// backend/src/types/fastify.d.ts (which carried a stale 'jwt' literal)
+// was deleted in MYT-39 — see the design doc §3 file layout.
 //
-// Spec: docs/superpowers/specs/2026-04-30-myt-37-jwt-middleware-design.md §3.
+// Spec: docs/superpowers/specs/2026-04-30-myt-37-jwt-middleware-design.md §3
+//       docs/superpowers/specs/2026-05-08-myt-39-access-control-ws-ticket-design.md §4.4
 
 import type { CognitoAccessTokenPayload } from 'aws-jwt-verify/jwt-model'
+import type { CampaignMember, User, World } from '../repo/types.js'
 
 export interface AuthUser {
   /** Cognito sub claim — stable per-user identifier across token refreshes.
@@ -46,15 +52,40 @@ declare module 'fastify' {
      *  than dereferencing `request.user.sub` directly, which would throw
      *  at runtime if a route accidentally lands here without auth. */
     user?: AuthUser
+
+    /** OPTIONAL — populated by `requireOnboarded` after the cognito_sub →
+     *  users-row lookup succeeds and `suspended_at IS NULL`. Public and
+     *  jwt-no-db routes don't have it. Frozen at attach time so a buggy
+     *  or malicious downstream hook can't swap fields in place. Narrow
+     *  via `requireDbUser(request)` helper. */
+    dbUser?: User
+
+    /** OPTIONAL — populated by `requireCampaignMember` after the membership
+     *  check passes. Handlers can read this to skip a redo of the same
+     *  query. */
+    campaignMember?: CampaignMember
+
+    /** OPTIONAL — populated by `requireWorldCreator` after the ownership
+     *  check passes. */
+    world?: World
+
+    /** OPTIONAL — set by upstream resolvers (e.g. session→campaign in
+     *  `routes/sessions.ts`) to feed `requireCampaignMember` when the
+     *  route's URL doesn't directly carry `:campaignId`. Used in preference
+     *  to a `request.params` mutation, which would make the route's typed
+     *  `Params` shape a partial truth at the type level. */
+    resolvedCampaignId?: string
   }
 
   interface FastifyContextConfig {
     /** Per-route auth opt-out / opt-in.
-     *  - 'public' — skip validation entirely; no request.user attached.
-     *  - 'jwt-no-db' — verify JWT, attach claims; no DB lookup. Used by
-     *    MYT-38's /api/users/register since the user row doesn't exist yet.
-     *  - undefined (default) — default-require. Today: same as 'jwt-no-db'.
-     *    After MYT-39: also DB lookup + suspended_at check. */
+     *  - 'public' — skip JWT validation entirely; no request.user attached.
+     *  - 'jwt-no-db' — verify JWT, attach claims; no users-row DB lookup.
+     *    Used by jwt-no-db routes (e.g. /api/users/register) where the row
+     *    doesn't exist yet. Allowlist-bound at boot via
+     *    JWT_NO_DB_ALLOWLIST in require-onboarded.ts.
+     *  - undefined (default) — JWT verify + users-row lookup +
+     *    suspended_at check + frozen request.dbUser attach. */
     auth?: 'public' | 'jwt-no-db'
   }
 
