@@ -90,6 +90,17 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
     if (!row) {
       return reply.code(403).send({ code: 'username_required' })
     }
+    if (row.suspendedAt !== null) {
+      // Closes the up-to-1h ban-lag window between admin-suspending a
+      // user and their access token expiring. Source spec
+      // 2026-04-13-auth-users.md §6 line 284 commits MYT-39 to this.
+      return reply.code(403).send({ code: 'account_suspended' })
+    }
+    // Frozen so a buggy / malicious downstream hook can't swap fields
+    // in place. TS `readonly` is structural-only; runtime freeze is the
+    // actual guarantee. Per
+    // docs/superpowers/specs/2026-05-08-myt-39-access-control-ws-ticket-design.md §4.
+    request.dbUser = Object.freeze(row)
   })
 }
 

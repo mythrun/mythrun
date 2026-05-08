@@ -99,7 +99,7 @@ describe('requireOnboarded plugin', () => {
   })
 
   it('user row present → next handler runs', async () => {
-    getByCognitoSubWithTimeout.mockResolvedValue({ id: 'user-row', cognitoSub: 'u-1' })
+    getByCognitoSubWithTimeout.mockResolvedValue({ id: 'user-row', cognitoSub: 'u-1', suspendedAt: null })
     app = Fastify({ logger: false })
     await app.register(fakeJwtPlugin({ sub: 'u-1' }))
     await app.register(requireOnboarded, { pool: fakePool })
@@ -107,6 +107,60 @@ describe('requireOnboarded plugin', () => {
     const res = await app.inject({ method: 'GET', url: '/api/me' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ hit: true })
+  })
+
+  it('attaches frozen request.dbUser when row exists and suspended_at is null', async () => {
+    const row = {
+      id: 'u-1',
+      cognitoSub: 'sub-1',
+      username: 'tester',
+      displayName: 'Tester',
+      stripeCustomerId: null,
+      freeTrialUsed: false,
+      suspendedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    getByCognitoSubWithTimeout.mockResolvedValue(row)
+
+    app = Fastify({ logger: false })
+    await app.register(fakeJwtPlugin({ sub: 'sub-1' }))
+    await app.register(requireOnboarded, { pool: fakePool })
+
+    let attached: unknown
+    app.get('/check', (req) => {
+      attached = (req as unknown as { dbUser?: unknown }).dbUser
+      return { ok: true }
+    })
+
+    const res = await app.inject({ method: 'GET', url: '/check' })
+    expect(res.statusCode).toBe(200)
+    expect(attached).toMatchObject({ id: 'u-1', cognitoSub: 'sub-1' })
+    expect(Object.isFrozen(attached)).toBe(true)
+  })
+
+  it('returns 403 account_suspended when suspended_at is set', async () => {
+    const row = {
+      id: 'u-1',
+      cognitoSub: 'sub-1',
+      username: 'tester',
+      displayName: 'Tester',
+      stripeCustomerId: null,
+      freeTrialUsed: false,
+      suspendedAt: new Date('2026-01-01'),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    getByCognitoSubWithTimeout.mockResolvedValue(row)
+
+    app = Fastify({ logger: false })
+    await app.register(fakeJwtPlugin({ sub: 'sub-1' }))
+    await app.register(requireOnboarded, { pool: fakePool })
+    app.get('/check', () => ({ ok: true }))
+
+    const res = await app.inject({ method: 'GET', url: '/check' })
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toEqual({ code: 'account_suspended' })
   })
 
   it('boot succeeds when only allowlisted routes use jwt-no-db', async () => {
