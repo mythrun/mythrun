@@ -581,22 +581,23 @@ Every HTTP route and WebSocket upgrade passes through auth middleware:
 
 **Public routes** (no auth): `GET /health`, `/auth/callback/*` (OAuth callbacks), `POST /webhooks/stripe` (verified by Stripe signature).
 
-**Ownership checks** are per-route, not in middleware. The middleware establishes identity; the handler checks authorization:
+**Ownership checks** are factored into a per-route preHandler (`requireCampaignMember`) that runs once per request — see Auth & Users spec §8 for the full design. The middleware establishes identity (`request.dbUser`, attached by `requireOnboarded`); the preHandler checks authorization and decorates `request.campaignMember`:
 ```
-const member = await repo.campaignMembers.get(campaignId, request.user.id)
-if (!member) return reply.code(403)
-if (needsOwner && member.role !== 'owner') return reply.code(403)
+const member = await repo.campaigns.getMembership(campaignId, request.dbUser.id)
+if (!member?.inviteAccepted) return reply.code(403).send({ code: 'not_campaign_member' })
+if (role && member.role !== role) return reply.code(403).send({ code: `not_campaign_${role}` })
 ```
 
 ### 5.2 WebSocket Protocol (Multiplayer)
 
 **Connection flow (ticket-based auth):**
-1. Client calls `POST /api/ws/ticket` with JWT in `Authorization: Bearer` header
-2. Server generates a cryptographic nonce, stores it in Redis with 10-second TTL mapped to the user's auth context
-3. Server returns `{ ticket: "<nonce>" }`
-4. Client connects to `wss://host/ws/session/:campaignId?ticket=<nonce>`
-5. Server looks up the nonce in Redis, retrieves user context, **deletes the nonce immediately**
-6. If nonce is expired, missing, or already consumed: reject connection
+1. Client calls `POST /api/sessions/:id/ws-ticket` with JWT in `Authorization: Bearer` header (sessionId in URL)
+2. Server validates JWT + onboarded user + suspended_at + campaign membership, then generates a 256-bit nonce, stores it in Redis (`${MYTHRUN_ENV}:${REGION_PREFIX}:ws:ticket:<nonce>`) with **30-second TTL** mapped to `{userId, sessionId, campaignId}`
+3. Server returns `{ ticket, expiresAt }` — `expiresAt` is informational only
+4. Client connects to `wss://host/ws/session/:sessionId?ticket=<nonce>`
+5. Server calls `consumeWsTicket` which atomically `GETDEL`s the key and returns the bound payload (or null)
+6. Server re-validates campaign membership with `repo.campaigns.getMembership(payload.campaignId, payload.userId)` — the ticket alone proves membership at *mint time*, not upgrade time
+7. If `consumeWsTicket` returns null (consumed, expired, missing): reject the upgrade with 401. If it throws (Redis transient): respond 503 — operationally distinguishable.
 
 This prevents JWT leakage into ALB access logs, CloudWatch logs, and browser history. The nonce is single-use and short-lived.
 

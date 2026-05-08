@@ -124,13 +124,14 @@ If all players disconnect (close browser, lose internet):
 
 ### Connection Flow
 
-1. Client calls `POST /api/ws/ticket` → gets single-use nonce (from Auth spec)
-2. Client connects: `wss://api.mythrun.com/ws/session/:campaignId?ticket=<nonce>`
-3. Server validates ticket, extracts user context, deletes ticket
-4. Server checks: user is a campaign member, session is active
-5. Server subscribes to Redis channel `session:{campaignId}` (if not already subscribed for another client on this container)
-6. Server sends `session_ready` (or `session_reconnect` if reconnecting)
-7. Server broadcasts `player_joined` to all clients via pub/sub
+1. Client calls `POST /api/sessions/:id/ws-ticket` (sessionId in URL) → gets `{ticket, expiresAt}` with the ticket bound to `{userId, sessionId, campaignId}` (from Auth spec §7)
+2. Client connects: `wss://api.mythrun.com/ws/session/:sessionId?ticket=<nonce>`
+3. Server validates ticket via `consumeWsTicket` (atomic GETDEL) — returns the bound payload or null
+4. Server re-validates campaign membership via `repo.campaigns.getMembership(payload.campaignId, payload.userId)` — the ticket alone proves membership at *mint time*, not upgrade time
+5. Server checks session is active
+6. Server subscribes to Redis channel `session:{campaignId}` (if not already subscribed for another client on this container)
+7. Server sends `session_ready` (or `session_reconnect` if reconnecting)
+8. Server broadcasts `player_joined` to all clients via pub/sub
 
 ### Connection Registry
 
@@ -491,8 +492,8 @@ The client treats all events with the same seq as part of one atomic message.
 2. Client shows "Reconnecting..." overlay
 3. Client attempts reconnection with exponential backoff: 1s, 2s, 4s, 8s, max 30s
 4. On each attempt:
-   a. Get a new WS ticket (`POST /api/ws/ticket`)
-   b. Connect with `?ticket=<nonce>&lastSeq=<N>` where N is the client's `lastSeenSeq`
+   a. Get a new WS ticket (`POST /api/sessions/:id/ws-ticket`)
+   b. Connect to `wss://.../ws/session/:sessionId?ticket=<nonce>&lastSeq=<N>` where N is the client's `lastSeenSeq`
 5. Server validates ticket and checks session state:
    - **Redis state exists**: load session metadata, send `session_reconnect` with messages after `lastSeq`
    - **Redis state missing, Postgres checkpoint exists**: load from checkpoint, rebuild Redis state, send `session_reconnect` (may be missing last few minutes of messages)
