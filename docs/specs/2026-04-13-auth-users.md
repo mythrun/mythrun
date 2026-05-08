@@ -276,12 +276,14 @@ JWTs are stateless — once issued, they can't be revoked until expiry. For imme
 
 1. A `suspended_at TIMESTAMPTZ` column on the `users` table
 2. The JWT middleware checks `suspended_at` on every request (it's already doing a DB lookup for the user row)
-3. If `suspended_at` is set, return 403 with `{ error: 'Account suspended' }`
+3. If `suspended_at` is set, return 403 with `{ code: 'account_suspended' }`
 4. Active WebSocket connections for the suspended user are terminated immediately via a Redis pub/sub message on a `user:{userId}:suspend` channel
 
 This means a banned user's existing access token still "works" cryptographically, but our middleware rejects it. Latency: one database query (which we're already doing).
 
-> **Spec correction (2026-04-30):** This section's "we're already doing a DB lookup" reasoning is invalidated by MYT-37's claims-only JWT plugin architecture. The JWT plugin does NOT do a per-request DB lookup. `suspended_at` enforcement runs in the future `loadCurrentUser` plugin (MYT-39), which is a separate Fastify hook that runs after the JWT plugin on protected routes. The end-result for handlers is the same — a banned user's request returns 403 — but the latency story changes: the DB lookup is opt-in per route (via the absence of `config.auth = 'jwt-no-db'` or `'public'`), not unconditional. See MYT-37 design §2 for the architectural rationale and `myth-suspended-token-revocation` for the up-to-1-hour ban-lag window before MYT-39 ships.
+> **Spec correction (2026-04-30):** This section's "we're already doing a DB lookup" reasoning is invalidated by MYT-37's claims-only JWT plugin architecture. The JWT plugin does NOT do a per-request DB lookup. `suspended_at` enforcement runs in the `requireOnboarded` plugin, which is a separate Fastify hook that runs after the JWT plugin on protected routes. The end-result for handlers is the same — a banned user's request returns 403 — but the latency story changes: the DB lookup is opt-in per route (via the absence of `config.auth = 'jwt-no-db'` or `'public'`), not unconditional. See MYT-37 design §2 for the architectural rationale.
+
+> **✓ Implemented in MYT-39 (2026-05-08):** `requireOnboarded` rejects requests where the resolved users-row has `suspended_at IS NOT NULL` via 403 `{code: 'account_suspended'}`. The 1h ban-lag window between admin-suspending a user and their access-token expiring is now closed.
 
 ### WebSocket Token Re-validation
 
@@ -298,26 +300,27 @@ This catches: expired tokens, revoked users, and stale connections from users wh
 
 ## 7. Ticket-Based WebSocket Auth
 
-As specified in the architecture overview (section 5.2):
+As specified in the architecture overview (section 5.2). MYT-39 ships the HTTP mint half + atomic-consume helper; the actual WebSocket upgrade handler lands in the Session Runtime milestone.
 
 ### Flow
 
-1. Client calls `POST /api/ws/ticket` with JWT in `Authorization: Bearer` header
-2. Server validates the JWT (normal auth middleware)
+1. Client calls `POST /api/sessions/:id/ws-ticket` (where `:id` is a sessionId) with JWT in `Authorization: Bearer` header
+2. Server validates the JWT, the users-row + `suspended_at` (`requireOnboarded`), and campaign membership for the session's parent campaign (`requireCampaignMember`)
 3. Server generates a 32-byte cryptographic nonce: `crypto.randomBytes(32).toString('hex')`
-4. Server stores in Redis: `ws:ticket:{nonce}` -> `{ userId, username, displayName }` with **10-second TTL**
-5. Server returns `{ ticket: nonce }`
-6. Client connects: `wss://api.mythrun.com/ws/session/:campaignId?ticket={nonce}`
+4. Server stores in Redis: `${MYTHRUN_ENV}:${REGION_PREFIX}:ws:ticket:{nonce}` → `{ userId, sessionId, campaignId }` with **30-second TTL**
+5. Server returns `{ ticket, expiresAt }` — `expiresAt` is informational only; the WS upgrade is the authority
+6. Client connects: `wss://api.mythrun.com/ws/session/:sessionId?ticket={nonce}`
 7. On WebSocket upgrade, server:
    a. Extracts ticket from query params
-   b. Looks up `ws:ticket:{nonce}` in Redis
-   c. If found: reads user context, **deletes the key immediately** (single-use)
-   d. If not found or expired: reject the upgrade (destroy socket)
+   b. Calls `consumeWsTicket(deps, ticket)` — atomic Redis `GETDEL`
+   c. If returns payload: trust the bound `{userId, sessionId, campaignId}`. Re-validate membership via `repo.campaigns.getMembership(payload.campaignId, payload.userId)` (the ticket alone proves membership at *mint time*, not upgrade time).
+   d. If returns null: reject the upgrade with 401 (single-use consumed, expired, or never existed — these are deliberately indistinguishable)
+   e. If `consumeWsTicket` throws (Redis transient): respond 503 — operationally distinguishable from null; SPA backs off and retries
 8. Proceeds with normal WebSocket connection setup using the authenticated user context
 
 ### Why Not JWT in Query Params
 
-JWTs in URLs appear in ALB access logs, CloudWatch logs, proxy logs, and browser history. A ticket is single-use (consumed on first use) and short-lived (10s TTL). Even if it appears in logs, it's already been consumed and is useless.
+JWTs in URLs appear in ALB access logs, CloudWatch logs, proxy logs, and browser history. A ticket is single-use (consumed on first use) and short-lived (30s TTL). Even if it appears in logs, it's already been consumed and is useless.
 
 ---
 
@@ -325,27 +328,37 @@ JWTs in URLs appear in ALB access logs, CloudWatch logs, proxy logs, and browser
 
 ### Campaign Membership Check
 
-A Fastify preHandler hook for all routes under `/api/campaigns/:campaignId/*` and `/api/prep/:campaignId/*`:
+A Fastify preHandler hook for all routes under `/api/campaigns/:campaignId/*` and `/api/prep/:campaignId/*`. The factory shape allows an optional role gate; the standalone `requireCampaignOwner` from earlier drafts collapses to `requireCampaignMember(repo, 'owner')`:
 
 ```typescript
-async function requireCampaignMember(request, reply) {
-  const { campaignId } = request.params
-  const member = await repo.campaignMembers.get(campaignId, request.user.id)
-  if (!member || !member.invite_accepted) {
-    return reply.code(403).send({ error: 'Not a member of this campaign' })
-  }
-  request.campaignMember = member  // Attached for downstream use
-}
-
-async function requireCampaignOwner(request, reply) {
-  await requireCampaignMember(request, reply)
-  if (request.campaignMember.role !== 'owner') {
-    return reply.code(403).send({ error: 'Owner access required' })
+function requireCampaignMember(repo, role?) {
+  return async (request, reply) => {
+    const member = await repo.campaigns.getMembership(
+      request.resolvedCampaignId ?? request.params.campaignId,
+      request.dbUser.id,
+    )
+    if (!member?.inviteAccepted) {
+      return reply.code(403).send({ code: 'not_campaign_member' })
+    }
+    if (role && member.role !== role) {
+      return reply.code(403).send({ code: `not_campaign_${role}` })
+    }
+    request.campaignMember = member
   }
 }
 ```
 
-This runs **once per request** (not per handler), solving the N+1 ownership check problem flagged in the system design interview.
+`request.dbUser` is set by the upstream `requireOnboarded` plugin after the cognito_sub → users-row lookup + `suspended_at` check. This runs **once per request** (not per handler), solving the N+1 ownership check problem flagged in the system design interview.
+
+### Path-param naming convention
+
+Routes guarded by access-control middleware honor a fixed param-name convention:
+
+- Campaign-rooted routes use `:campaignId` (e.g. `/api/campaigns/:campaignId/...`).
+- World-rooted routes use `:worldId`.
+- Routes whose URL carries a different identifier (e.g. `/api/sessions/:id/ws-ticket`, where `:id` is a sessionId) resolve the parent campaign via an upstream preHandler that sets `request.resolvedCampaignId`. `requireCampaignMember` reads `request.resolvedCampaignId` first, falling back to `request.params.campaignId`.
+
+The boot-time `accessControlAllowlist` plugin (registered after `requireOnboarded`) fails `app.ready()` if any route uses `requireCampaignMember` / `requireWorldCreator` together with `config.auth: 'public'` or `'jwt-no-db'` — that combination would short-circuit `requireOnboarded` and leave `request.dbUser` undefined.
 
 ### Access Control Matrix
 
@@ -371,6 +384,8 @@ Worlds have a different access model than campaigns:
 - **Public worlds** (`is_public = true`): readable by anyone, forkable by anyone
 - **Private worlds** (`is_public = false`): readable only by users who own a campaign that references the world
 - **World modification**: only happens through campaign pipeline stages (Scribe, continuity check). No direct world editing API.
+
+> **Launch scope (MYT-39):** Only `requireWorldCreator` is wired at launch — a strict creator-only check (`world.created_by === user.id`). The broader public-or-campaign-referenced matrix above lands when world-sharing flows ship. The factory name `requireWorldAccess` is reserved for that future helper so a future implementer doesn't see `requireWorldCreator` and assume the matrix is in place.
 
 ---
 
@@ -423,9 +438,11 @@ Sets `expires_at = now()` on the invite row. The link stops working immediately.
 | DELETE | `/api/users/me` | JWT | Soft-delete account (GDPR) |
 | POST | `/api/auth/refresh` | Refresh token cookie | Exchange refresh token for new access token |
 | POST | `/api/auth/logout` | JWT | Clear refresh token cookie, revoke Cognito tokens |
-| POST | `/api/ws/ticket` | JWT | Get single-use WebSocket upgrade ticket |
+| POST | `/api/sessions/:id/ws-ticket` | JWT + member | Get single-use WebSocket upgrade ticket bound to `{userId, sessionId, campaignId}`, 30s TTL |
 
 ### Campaign Membership Routes
+
+> **TODO MYT-40 — param rename `:id` → `:campaignId`.** The existing routes below shipped pre-MYT-39 with `:id` as the campaign URL param. MYT-39 introduces the `:campaignId` convention for routes guarded by `requireCampaignMember` (the middleware reads `request.params.campaignId` by name). When the campaign-membership routes adopt `requireCampaignMember` in MYT-40, the param name needs to be renamed in the route registrations (source-tree change only; the URL shape on the wire stays `/api/campaigns/<uuid>/...`).
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
