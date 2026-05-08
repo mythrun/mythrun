@@ -1,0 +1,89 @@
+digraph access_control_ws_ticket {
+  // Per-resource access control + the WebSocket ticket exchange.
+  // requireOnboarded attaches a frozen request.dbUser; access-control
+  // factories read it and check membership / world ownership against
+  // the repo. The ws-ticket route is the first consumer — and currently
+  // only consumer — of requireCampaignMember; it mints a single-use
+  // 30-second Redis ticket the future WS upgrade handler will consume
+  // via consumeWsTicket. A boot-time accessControlAllowlist plugin
+  // refuses any wiring that would put access-control onto a public or
+  // jwt-no-db route.
+  rankdir=LR;
+  compound=true;
+
+  client [label="HTTP client\n(JWT-authenticated)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_chain {
+    label="per-request hook chain";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    auth      [label="registerAuth\nattach request.user"];
+    onboarded [label="requireOnboarded\nattach frozen request.dbUser\n403 if suspended"];
+    resolve   [label="upstream resolver\nsessionId → campaignId\nrequest.resolvedCampaignId"];
+    member    [label="requireCampaignMember(repo, role?)\nrepo.campaigns.getMembership\n403 not_campaign_member\n403 not_campaign_<role>"];
+    creator   [label="requireWorldCreator(repo)\nrepo.worlds.getById\n404 world_not_found\n403 not_world_creator"];
+  }
+
+  subgraph cluster_route {
+    label="POST /api/sessions/:id/ws-ticket";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    handler [label="handler\nmintWsTicket(deps, payload)\n→ { ticket, expiresAt }", color="ember", fontcolor="ember"];
+    rate    [label="rateLimit\n30/min per dbUser.id\n(not per-IP)"];
+  }
+
+  subgraph cluster_ticket {
+    label="ws-ticket helpers  (auth/ws-ticket.ts)";
+    style="dotted";
+
+    mint    [label="mintWsTicket\nrandomBytes(32) → 64-char hex\nSET <prefix><nonce> EX 30"];
+    consume [label="consumeWsTicket\nGETDEL <prefix><nonce>\nvalidate JSON shape\n→ payload | null"];
+  }
+
+  subgraph cluster_boot {
+    label="boot-time gate  (auth/access-control-allowlist.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    gate [label="onRoute → onReady\nfail app.ready() if any\naccess-control hook lands\non auth: public | jwt-no-db"];
+  }
+
+  redis [label="Redis (realtime)\nkey: ${MYTHRUN_ENV}:${REGION_PREFIX}:ws:ticket:<nonce>\nvalue: { userId, sessionId, campaignId }\nTTL 30s", color="ember", fontcolor="ember"];
+
+  pg [label="Postgres\ncampaign_members\nworlds, sessions", color="ember", fontcolor="ember"];
+
+  ws_future [label="future WS upgrade handler\n(Session Runtime milestone)\ncalls consumeWsTicket\nre-validates membership", style="dashed", color="ember", fontcolor="ember"];
+
+  // Per-request flow
+  client -> auth         [label="Bearer JWT"];
+  auth   -> onboarded    [label="request.user"];
+  onboarded -> resolve   [label="request.dbUser\n(frozen)"];
+  resolve -> member      [label="resolvedCampaignId"];
+  member  -> rate        [label="passes"];
+  rate    -> handler     [label="under cap"];
+  handler -> mint        [label="userId, sessionId,\ncampaignId"];
+
+  // World-rooted routes (none today; reserved surface)
+  onboarded -> creator   [label="(:worldId routes)\nMYT-40+", style=dashed];
+
+  // Repo + storage
+  member  -> pg          [label="getMembership", style=dashed];
+  creator -> pg          [label="getById", style=dashed];
+  resolve -> pg          [label="sessions.getById", style=dashed];
+  mint    -> redis       [label="SET ... EX 30"];
+
+  // Boot-time gate: validates route registration shape
+  gate -> member         [label="onRoute scans\npreHandler arrays\nfor ACCESS_CONTROL_MARKER", style=dashed];
+  gate -> creator        [label="", style=dashed];
+
+  // Future consumer (out of scope here)
+  client     -> ws_future [label="WS upgrade\n?ticket=<nonce>", style=dashed];
+  ws_future  -> consume   [label="consume", style=dashed];
+  consume    -> redis     [label="GETDEL", style=dashed];
+  ws_future  -> pg        [label="re-validate\nmembership", style=dashed];
+}

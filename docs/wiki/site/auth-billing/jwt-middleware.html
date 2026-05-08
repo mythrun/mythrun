@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html" class="active">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html" class="active">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/access-control-ws-ticket.html">Access control & WS ticket</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › JWT middleware</div>
         <article>
@@ -363,8 +363,10 @@
   </li>
   <li>
     <code>auth</code> unset (the default) — verify, attach, and run the
-    <a href="./onboarding.html"><code>requireOnboarded</code></a> DB-row gate. A future
-    <code>suspended_at</code> check folds in alongside that gate when the suspension surface ships.
+    <a href="./onboarding.html"><code>requireOnboarded</code></a> chain: cognito-sub lookup +
+    <code>suspended_at</code> check + frozen <code>request.dbUser</code> attach. The
+    <a href="./access-control-ws-ticket.html">access-control middleware</a> reads
+    <code>request.dbUser</code> on routes that gate further on per-resource authorization.
   </li>
 </ul>
 
@@ -616,10 +618,11 @@
   <code>redact</code> is set to mask <code>req.headers.authorization</code>,
   <code>req.headers.cookie</code>, and <code>res.headers["set-cookie"]</code> with a censor token,
   and a custom <code>req</code> serializer strips the query string from logged URLs. The
-  query-string strip is a forward defense against MYT-39's WebSocket
-  <code>?ticket=&lt;nonce&gt;</code> handshake — without it, a one-shot ticket would land in
-  CloudWatch the first time a connection upgrade got logged. The path is preserved so an operator
-  can still tell which route was hit.
+  query-string strip is what keeps the
+  <a href="./access-control-ws-ticket.html">WebSocket ticket nonce</a> out of CloudWatch — without
+  it, a one-shot ticket attached as <code>?ticket=&lt;nonce&gt;</code> on the WS upgrade would land
+  in logs the first time a connection got recorded. The path is preserved so an operator can still
+  tell which route was hit.
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>

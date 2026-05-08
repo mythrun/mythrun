@@ -8,8 +8,8 @@
 <!-- source: backend/src/llm/profanity.ts -->
 <!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
 <!-- source: backend/src/app.ts -->
-<!-- source-hash: sha256:745fdac369ece0a6db11f03e414eb506dcea1720d53947d63bb273c629216bf8 -->
-<!-- last-ticket: MYT-44 -->
+<!-- source-hash: sha256:3e2549db918fe2b09ef7d093b4d0489366456d4dcf53da492559b15f145d003b -->
+<!-- last-ticket: MYT-39 -->
 
 <h1>Onboarding &amp; Invites</h1>
 
@@ -40,7 +40,10 @@
   <li>
     <strong><code>requireOnboarded</code> hook</strong> — a Fastify plugin that on every protected
     request issues a 200 ms-bounded <code>SELECT</code> against <code>users</code>; missing row →
-    403 with <code>{ code: 'username_required' }</code>.
+    403 <code>{ code: 'username_required' }</code>; suspended row → 403
+    <code>{ code: 'account_suspended' }</code>; otherwise the row is attached as a frozen
+    <code>request.dbUser</code> for downstream
+    <a href="./access-control-ws-ticket.html">access-control middleware</a> to read.
   </li>
   <li>
     <strong><code>POST /api/users/register</code></strong> +
@@ -76,8 +79,29 @@
   <code>request.user</code> and runs after the per-route limiter. It installs a
   <code>preHandler</code> hook that branches three ways: <code>config.auth === 'public'</code> →
   return; <code>config.auth === 'jwt-no-db'</code> → return; default → look up the row by
-  <code>cognito_sub</code> and 403 if it's missing.
+  <code>cognito_sub</code>, refuse a missing row with <code>403 username_required</code>, refuse a
+  row with non-null <code>suspended_at</code> with <code>403 account_suspended</code>, and otherwise
+  attach <code>Object.freeze(row)</code> to <code>request.dbUser</code> so downstream handlers and
+  access-control middleware can read it without re-querying.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Suspend enforcement is per-request, not delayed by token TTL</strong> — Cognito access
+  tokens have a 1-hour lifetime; without this synchronous check, an admin who suspends a user would
+  have to wait up to an hour for the suspension to bite. The cost is one extra column on the read
+  the gate already does (the <code>users</code> SELECT widens to include <code>suspended_at</code>),
+  and the consumer model becomes simple: any non-401 protected request reaching a handler can trust
+  that <code>request.dbUser</code> is a non-suspended row.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>Object.freeze</code> the attached row, not just <code>readonly</code></strong> —
+  TypeScript's <code>readonly</code> is structural-only; nothing at runtime stops a downstream hook
+  from rewriting <code>request.dbUser.id</code> in place. Freezing makes the runtime guarantee match
+  the type. The cost is one syscall per request; the payoff is that the
+  <a href="./access-control-ws-ticket.html">access-control factories</a> can read
+  <code>request.dbUser.id</code> as ground truth without a defensive re-fetch.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Two opt-out values, not one</strong> — <code>'public'</code> means "no auth at all"
@@ -596,7 +620,7 @@
       <td>—</td>
       <td>
         <code>{ user }</code> · 403 <code>username_required</code> if the row hasn't been created
-        yet
+        yet · 403 <code>account_suspended</code> if the row's <code>suspended_at</code> is set
       </td>
     </tr>
     <tr>

@@ -41,6 +41,7 @@ export const structure: Section[] = [
       { slug: 'identity', title: 'Identity' },
       { slug: 'jwt-middleware', title: 'JWT middleware' },
       { slug: 'onboarding', title: 'Onboarding & invites' },
+      { slug: 'access-control-ws-ticket', title: 'Access control & WS ticket' },
       { slug: 'stripe-contract', title: 'Stripe contract' },
       { slug: 'billing-webhook', title: 'Billing webhook' },
       { slug: 'billing-routes', title: 'Billing routes' },

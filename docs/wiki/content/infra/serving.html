@@ -4,8 +4,8 @@
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/environments/staging/outputs.tf -->
 <!-- source: infra/environments/staging/variables.tf -->
-<!-- source-hash: sha256:d9c42d25045e481513ce0509656f5669fa348899e995e608eb60c0a0df0e610c -->
-<!-- last-ticket: MYT-35 -->
+<!-- source-hash: sha256:cc07481bbad319b75847f58402c455add5a669abba55cd74cf8b3198b3bd01c1 -->
+<!-- last-ticket: MYT-39 -->
 
 <h1>Serving</h1>
 
@@ -160,12 +160,12 @@
 
 <aside class="wiki-rationale">
   <strong>The flip side: TF env-var changes don't roll the service</strong> — because of
-  <code>ignore_changes = [task_definition]</code>, a <code>terraform apply</code> that adds an
-  env var or rotates a secret reference REGISTERS a new task-def revision but the live service
-  keeps pointing at whatever CI last deployed. Engaging the new revision needs a CI run (which
-  re-renders the real ECR digest into a fresh revision and calls <code>update-service</code>).
-  See <a href="ci-cd.html">CI/CD</a> for why force-rolling onto the TF-registered revision directly
-  is the wrong move.
+  <code>ignore_changes = [task_definition]</code>, a <code>terraform apply</code> that adds an env
+  var or rotates a secret reference REGISTERS a new task-def revision but the live service keeps
+  pointing at whatever CI last deployed. Engaging the new revision needs a CI run (which re-renders
+  the real ECR digest into a fresh revision and calls <code>update-service</code>). See
+  <a href="ci-cd.html">CI/CD</a> for why force-rolling onto the TF-registered revision directly is
+  the wrong move.
 </aside>
 
 <aside class="wiki-rationale">
@@ -202,11 +202,15 @@
   <a href="data.html#bootstrap-databases">bootstrap-databases.sh</a> populates;
   <code>REDIS_AUTH_TOKEN</code> is the cross-env <code>mythrun/shared/redis-auth</code>. Environment
   variables (<code>DB_HOST</code>, <code>REDIS_HOST</code>, <code>NODE_ENV</code>,
-  <code>PORT</code>, and friends) are plain values the app composes into a
-  <code>DATABASE_URL</code> at startup. A per-env <code>extra_env</code> input on the module
-  appends additional name/value pairs onto <code>common_env</code> — staging passes
-  <code>BOOT_GATE_ENABLED=1</code> through it; production will set the same when its workspace
-  lands at Launch.
+  <code>PORT</code>, <code>REGION_PREFIX</code>, <code>MYTHRUN_ENV</code>, and friends) are plain
+  values the app composes into a <code>DATABASE_URL</code> at startup. <code>MYTHRUN_ENV</code> is
+  wired from <code>var.environment</code> and feeds the
+  <a href="../auth-billing/access-control-ws-ticket.html">Redis key prefix</a> the app concatenates
+  as <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code> — load-bearing because staging and production
+  share one ElastiCache cluster and would otherwise collide in keyspace. A per-env
+  <code>extra_env</code> input on the module appends additional name/value pairs onto
+  <code>common_env</code> — staging passes <code>BOOT_GATE_ENABLED=1</code> through it; production
+  will set the same when its workspace lands at Launch.
 </p>
 
 <aside class="wiki-rationale">
@@ -234,12 +238,12 @@
 <p>
   The per-env target group is a Fargate-compatible (<code>target_type = "ip"</code>) group that
   health-checks <code>/health/ready</code> on <code>:3000</code> — the
-  <a href="../runtime/index.html">backend's readiness route</a>, which probes the data layer (pg
-  + both Redis instances) on every check. <code>healthy_threshold</code> is <code>2</code> (AWS
+  <a href="../runtime/index.html">backend's readiness route</a>, which probes the data layer (pg +
+  both Redis instances) on every check. <code>healthy_threshold</code> is <code>2</code> (AWS
   rejects the spec's original value of <code>1</code>); the <code>deregistration_delay</code> of
-  <code>120</code> seconds matches the container <code>stopTimeout</code> so in-flight LLM calls
-  get grace during rolling deploys; stickiness is off because session state lives in Redis;
-  slow-start is explicitly disabled.
+  <code>120</code> seconds matches the container <code>stopTimeout</code> so in-flight LLM calls get
+  grace during rolling deploys; stickiness is off because session state lives in Redis; slow-start
+  is explicitly disabled.
 </p>
 
 <aside class="wiki-rationale">

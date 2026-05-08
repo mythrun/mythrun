@@ -549,10 +549,11 @@
   (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
   pool and exposes the typed methods for that table. The return type is exported as
   <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
-  <code>AppDeps</code> carries it alongside <code>pg</code> and the two Redis clients, and
-  <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
-  boot paths. A second class of namespaces — the four billing-table modules
-  (<code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>,
+  <code>AppDeps</code> carries it alongside <code>pg</code>, the two Redis clients, and the derived
+  <code>redisKeyPrefix</code> (<code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>) every Redis-keyed
+  subsystem prepends to its keys; <code>server.ts</code> threads <code>createRepo(pgRef)</code> into
+  <code>buildApp</code> on both boot paths. A second class of namespaces — the four billing-table
+  modules (<code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>,
   <code>billingHistory</code>) — exports plain object literals whose methods take a
   <code>ClientLike</code> the caller has already opened. Those namespaces don't bind to a pool; they
   operate inside a transaction the

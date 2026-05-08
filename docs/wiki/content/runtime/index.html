@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:2aa65aeab141be2bdd22a89a7206a1ee3610029a01d01ab71fc3a97f03550e48 -->
-<!-- last-ticket: MYT-44 -->
+<!-- source-hash: sha256:aa0cfc906c3b386e5a384499b06e6573e1e7fb7e7a5aa934508977937cf28c71 -->
+<!-- last-ticket: MYT-39 -->
 
 <h1>Backend</h1>
 
@@ -72,10 +72,16 @@
   that returns a Fastify instance — and <code>createShutdown(app, clients)</code>, a pure function
   that returns a signal handler. <code>AppDeps</code> lives in <code>app-deps.ts</code> and declares
   the injection shape:
-  <code>{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, repo: Repo }</code>.
-  <code>Repo</code> is the closure-factory bundle from
+  <code
+    >{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, redisKeyPrefix: string, repo: Repo }</code
+  >. <code>Repo</code> is the closure-factory bundle from
   <a href="../data/repository.html">the repository layer</a> — composed over the same
-  <code>pg</code> by <code>server.ts</code> on both boot paths. <code>authOpts</code> drives
+  <code>pg</code> by <code>server.ts</code> on both boot paths. <code>redisKeyPrefix</code> is the
+  <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code> namespace envelope every Redis-keyed subsystem
+  prepends to its own keys; today only the
+  <a href="../auth-billing/access-control-ws-ticket.html">WS ticket store</a> consumes it, but
+  staging and production share a single ElastiCache cluster, so the prefix is mandatory the moment
+  any key lands. <code>authOpts</code> drives
   <a href="../auth-billing/jwt-middleware.html"><code>registerAuth</code></a
   >'s real-vs-bypass dispatch; <code>config</code> carries the validated
   <code>frontendBaseUrl</code> the invite routes consume to compose share links. Nothing in
@@ -94,16 +100,24 @@
   <code>@fastify/rate-limit</code> registers with <code>global: false</code> so individual routes
   opt in via <code>config.rateLimit</code>; then
   <a href="../auth-billing/onboarding.html"><code>requireOnboarded</code></a> gates every
-  default-auth route on a real <code>users</code> row;
+  default-auth route on a real <code>users</code> row plus the suspend check, attaching the frozen
+  <code>request.dbUser</code>; then the
+  <a href="../auth-billing/access-control-ws-ticket.html">access-control allowlist plugin</a>
+  installs the boot-time gate that fails <code>app.ready()</code> if any later route wires
+  <code>requireCampaignMember</code> / <code>requireWorldCreator</code> onto a public or
+  <code>jwt-no-db</code> route;
   <a href="../auth-billing/billing-webhook.html">the encapsulated webhook plugin</a> registers next
   so its child-scope raw-body parser is isolated; then <code>usersRoutes</code> and
   <code>invitesRoutes</code> register the
-  <a href="../auth-billing/onboarding.html">first-login + invite surface</a>; finally
+  <a href="../auth-billing/onboarding.html">first-login + invite surface</a>; then
+  <code>sessionsRoutes</code> registers the
+  <a href="../auth-billing/access-control-ws-ticket.html">WS ticket mint endpoint</a>; finally
   <a href="../auth-billing/billing-routes.html"><code>billingRoutes</code></a> registers the seven
   player-facing billing routes. The order is load-bearing — the allowlist hook has to precede every
   public-route registration; auth attaches <code>request.user</code> before
-  <code>requireOnboarded</code> reads it; the webhook plugin registers before the JSON-using routes
-  so its encapsulated parser doesn't escape its child scope.
+  <code>requireOnboarded</code> reads it; <code>requireOnboarded</code> attaches
+  <code>request.dbUser</code> before the access-control middleware reads it; the webhook plugin
+  registers before the JSON-using routes so its encapsulated parser doesn't escape its child scope.
 </p>
 
 <aside class="wiki-rationale">
@@ -123,9 +137,10 @@
   (required for accurate rate-limit keys); a custom <code>genReqId</code> that picks up the ALB's
   <code>X-Amzn-Trace-Id</code> when present; pino <code>redact</code> for
   <code>Authorization</code> + <code>Cookie</code> + <code>Set-Cookie</code> headers; and a
-  <code>req</code> serializer that strips the query string from logged URLs (forward defense against
-  MYT-39's WebSocket <code>?ticket=&lt;nonce&gt;</code> handshake). <code>pluginTimeout</code> is
-  bumped to 30 s so the JWT plugin's hydrate-at-boot has headroom past Fastify's 10 s default.
+  <code>req</code> serializer that strips the query string from logged URLs — the defense that keeps
+  the <a href="../auth-billing/access-control-ws-ticket.html">WS ticket nonce</a> out of CloudWatch
+  when it rides along on a connection-upgrade URL. <code>pluginTimeout</code> is bumped to 30 s so
+  the JWT plugin's hydrate-at-boot has headroom past Fastify's 10 s default.
 </p>
 
 <h2>Two health endpoints, two different consumers</h2>
@@ -655,6 +670,17 @@
       </td>
     </tr>
     <tr>
+      <td><code>MYTHRUN_ENV</code> / <code>REGION_PREFIX</code></td>
+      <td>—</td>
+      <td>
+        One of <code>production</code> / <code>staging</code> / <code>development</code>;
+        <code>REGION_PREFIX</code> is currently <code>use1</code>. Concatenated into
+        <code>env.redisKeyPrefix</code> as <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>; mandatory
+        because staging and production share one ElastiCache cluster. See
+        <a href="../auth-billing/access-control-ws-ticket.html">access-control &amp; WS ticket</a>.
+      </td>
+    </tr>
+    <tr>
       <td>
         <code>DATABASE_URL</code> <em>or</em> <code>DB_HOST</code> / <code>DB_PORT</code> /
         <code>DB_USER</code> / <code>DB_NAME</code> / <code>DB_PASSWORD</code>
@@ -809,6 +835,24 @@
       <td>Seven player-facing billing routes registered as one Fastify plugin.</td>
     </tr>
     <tr>
+      <td><code>src/routes/sessions.ts</code></td>
+      <td>
+        <code>POST /api/sessions/:id/ws-ticket</code> mint route. See
+        <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/auth/access-control.ts</code>, <code>src/auth/access-control-allowlist.ts</code>,
+        <code>src/auth/ws-ticket.ts</code>,
+        <code>src/auth/require-db-user.ts</code>
+      </td>
+      <td>
+        Per-resource preHandler factories, the boot-time wiring gate, ws-ticket mint/consume
+        helpers, and the <code>request.dbUser</code> narrowing helper.
+      </td>
+    </tr>
+    <tr>
       <td><code>backend/eslint-rules/</code></td>
       <td>
         <code>no-stripe-price-mutations.cjs</code>,
@@ -868,6 +912,14 @@
         Player-facing billing surface (skus, balance, subscription, history, checkout, portal,
         upgrade-tier). See
         <a href="../auth-billing/billing-routes.html">Billing routes</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/sessions/:id/ws-ticket</code></td>
+      <td>signed-in member mints a 30 s single-use ticket</td>
+      <td>
+        <a href="../auth-billing/access-control-ws-ticket.html">Access control &amp; WS ticket</a>.
       </td>
     </tr>
     <tr>

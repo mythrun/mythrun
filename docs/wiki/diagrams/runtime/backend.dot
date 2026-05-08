@@ -18,7 +18,7 @@ digraph backend {
       label="backend/  (@mythrun/backend)";
       style="dotted";
 
-      appdeps [label="src/app-deps.ts\nAppDeps { pg, redisRealtime, redisBatch, repo }"];
+      appdeps [label="src/app-deps.ts\nAppDeps { pg, redisRealtime, redisBatch,\nredisKeyPrefix, repo }"];
       app     [label="src/app.ts\nbuildApp(deps)\ncreateShutdown(app, deps)"];
       server  [label="src/server.ts\nboot gate | fallbackStart"];
       worker  [label="src/worker.ts\nmain() — redis-batch ping\n+ signal handlers"];

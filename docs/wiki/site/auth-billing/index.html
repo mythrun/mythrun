@@ -22,23 +22,29 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html" class="active">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html" class="active">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/access-control-ws-ticket.html">Access control & WS ticket</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing</div>
         <article><h1>Auth &amp; Billing</h1>
 <p class="lead">
-  How a player becomes a signed-in user, how that identity travels with their requests, how their
-  session credit is metered, and how Stripe fits in.
+  How a player becomes a signed-in user, how that identity travels with their requests, how
+  per-resource authorization gates protected routes, how their session credit is metered, and how
+  Stripe fits in.
 </p>
 <p>
-  Six pages in this section: <a href="./identity.html">Identity</a> — the Cognito User Pool, the
+  Seven pages in this section: <a href="./identity.html">Identity</a> — the Cognito User Pool, the
   PKCE public App Client, the Hosted UI domain, and the Google + Discord OIDC providers that back
   federated sign-in; <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify plugin family
   that validates Cognito access tokens at the edge, the boot-time public-route allowlist hook, the
   bypass mode for local dev, and the <code>requireUser</code> narrowing helper protected handlers
   reach through; <a href="./onboarding.html">Onboarding &amp; invites</a> — the first-login flow
-  that creates the <code>users</code> row, the <code>requireOnboarded</code> gate, and the six
-  invite routes that let a DM-owner pull others into a campaign by sharing a 12-character code;
+  that creates the <code>users</code> row, the <code>requireOnboarded</code> gate that attaches a
+  frozen <code>request.dbUser</code> and refuses suspended accounts, and the six invite routes that
+  let a DM-owner pull others into a campaign by sharing a 12-character code;
+  <a href="./access-control-ws-ticket.html">Access control &amp; WS ticket</a> — the per-resource
+  preHandler factories (<code>requireCampaignMember</code>, <code>requireWorldCreator</code>), the
+  boot-time allowlist that fails the deploy on a misconfigured wiring, and the single-use 30-second
+  Redis ticket the SPA fetches before opening a WebSocket;
   <a href="./stripe-contract.html">Stripe contract</a> — the closed enum of
   <code>lookup_key</code>s, the cached SDK client pinned to one API version, the read-only boot
   probe (prices + Customer Portal config) that fails closed if Stripe's catalog drifts, the
