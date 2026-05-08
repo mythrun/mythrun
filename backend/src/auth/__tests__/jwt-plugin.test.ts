@@ -130,16 +130,16 @@ describe('jwtPlugin', () => {
     app.get('/parent-route', () => ({ ok: true }))
     const res = await app.inject({ method: 'GET', url: '/parent-route' })
     expect(res.statusCode).toBe(401)
-    expect(res.json()).toEqual({ error: 'Missing Bearer token' })
+    expect(res.json()).toEqual({ code: 'unauthenticated' })
   })
 
-  it('returns 401 with "Missing Bearer token" on no Authorization header', async () => {
+  it('returns 401 unauthenticated on no Authorization header', async () => {
     app = Fastify({ logger: false })
     await app.register(jwtPlugin, OPTS)
     app.get('/protected', () => ({ ok: true }))
     const res = await app.inject({ method: 'GET', url: '/protected' })
     expect(res.statusCode).toBe(401)
-    expect(res.json()).toEqual({ error: 'Missing Bearer token' })
+    expect(res.json()).toEqual({ code: 'unauthenticated' })
   })
 
   it('returns 401 on Bearer with empty token', async () => {
@@ -152,7 +152,7 @@ describe('jwtPlugin', () => {
       headers: { authorization: 'Bearer    ' },
     })
     expect(res.statusCode).toBe(401)
-    expect(res.json()).toEqual({ error: 'Empty Bearer token' })
+    expect(res.json()).toEqual({ code: 'unauthenticated' })
   })
 
   it('returns 401 on lowercase scheme', async () => {
@@ -179,7 +179,7 @@ describe('jwtPlugin', () => {
       headers: { authorization: 'Bearer expired-token' },
     })
     expect(res.statusCode).toBe(401)
-    expect(res.json()).toEqual({ error: 'Invalid token' })
+    expect(res.json()).toEqual({ code: 'unauthenticated' })
   })
 
   it('returns 401 on missing sub claim', async () => {

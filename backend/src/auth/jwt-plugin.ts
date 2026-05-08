@@ -84,11 +84,11 @@ const jwtPluginImpl: FastifyPluginAsync<JwtPluginOptions> = async (app, opts) =>
 
     const header = request.headers.authorization
     if (!header?.startsWith('Bearer ')) {
-      return reply.code(401).send({ error: 'Missing Bearer token' })
+      return reply.code(401).send({ code: 'unauthenticated' })
     }
     const token = header.slice('Bearer '.length).trim()
     if (token.length === 0) {
-      return reply.code(401).send({ error: 'Empty Bearer token' })
+      return reply.code(401).send({ code: 'unauthenticated' })
     }
 
     let payload
@@ -102,16 +102,16 @@ const jwtPluginImpl: FastifyPluginAsync<JwtPluginOptions> = async (app, opts) =>
         },
         'JWT verification failed',
       )
-      return reply.code(401).send({ error: 'Invalid token' })
+      return reply.code(401).send({ code: 'unauthenticated' })
     }
 
     if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
       request.log.warn({ event: 'auth.jwt_missing_sub' }, 'JWT missing sub claim')
-      return reply.code(401).send({ error: 'Invalid token' })
+      return reply.code(401).send({ code: 'unauthenticated' })
     }
     if (typeof payload.username !== 'string' || payload.username.length === 0) {
       request.log.warn({ event: 'auth.jwt_missing_username' }, 'JWT missing username claim')
-      return reply.code(401).send({ error: 'Invalid token' })
+      return reply.code(401).send({ code: 'unauthenticated' })
     }
 
     const user: AuthUser = {
