@@ -12,6 +12,14 @@ export interface Env {
   readonly cognitoIssuerUrl?: string
   readonly cognitoHostedUiDomain?: string
   readonly frontendBaseUrl: string
+  readonly mythrunEnv: 'production' | 'staging' | 'development'
+  /**
+   * Namespace prefix for Redis keys, shape: `${MYTHRUN_ENV}:${REGION_PREFIX}:`
+   * (e.g. `production:use1:`). Staging and prod share an ElastiCache cluster,
+   * so per-env prefixing is mandatory to keep their keyspaces disjoint.
+   * Per-feature suffixes (e.g. `ws:ticket:`) are appended by their callers.
+   */
+  readonly redisKeyPrefix: string
   readonly stripeSecretKey: string
   readonly stripeWebhookSecret: string
   readonly anthropicApiKey: string
@@ -247,6 +255,25 @@ export function loadEnv(): Env {
   const stripeSecretKey = validateStripeSecretKey(process.env.STRIPE_SECRET_KEY)
   const stripeWebhookSecret = validateStripeWebhookSecret(process.env.STRIPE_WEBHOOK_SECRET)
   const anthropicApiKey = validateAnthropicApiKey(process.env.ANTHROPIC_API_KEY)
+  // MYTHRUN_ENV + REGION_PREFIX feed the Redis key prefix. Staging and prod
+  // share one ElastiCache cluster (per the MYT-39 §5.5 design); per-env
+  // prefixing keeps their keyspaces disjoint. REGION_PREFIX is wired into
+  // the ECS task definition (currently `use1`); MYTHRUN_ENV is set per env.
+  const mythrunEnvRaw = process.env.MYTHRUN_ENV
+  if (
+    mythrunEnvRaw !== 'production' &&
+    mythrunEnvRaw !== 'staging' &&
+    mythrunEnvRaw !== 'development'
+  ) {
+    throw new Error(
+      `loadEnv: MYTHRUN_ENV must be one of {'production','staging','development'}, got ${JSON.stringify(mythrunEnvRaw)}`,
+    )
+  }
+  const regionPrefix = process.env.REGION_PREFIX
+  if (!regionPrefix || regionPrefix.length === 0) {
+    throw new Error('loadEnv: REGION_PREFIX is required (e.g. "use1")')
+  }
+  const redisKeyPrefix = `${mythrunEnvRaw}:${regionPrefix}:`
   return Object.freeze({
     databaseUrl: buildDatabaseUrl(),
     redisRealtimeUrl: buildRedisUrl('realtime'),
@@ -254,6 +281,8 @@ export function loadEnv(): Env {
     port,
     ...authConfig,
     frontendBaseUrl,
+    mythrunEnv: mythrunEnvRaw,
+    redisKeyPrefix,
     stripeSecretKey,
     stripeWebhookSecret,
     anthropicApiKey,

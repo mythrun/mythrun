@@ -16,6 +16,8 @@ export function makeStubEnv(overrides: Partial<Env> = {}): Env {
     databaseUrl: 'postgresql://stub/db',
     redisRealtimeUrl: 'redis://stub:6379',
     redisBatchUrl: 'redis://stub:6379',
+    redisKeyPrefix: 'test:use1:',
+    mythrunEnv: 'development' as const,
     port: 0,
     authMode: 'bypass' as const,
     frontendBaseUrl: 'http://localhost:5173',

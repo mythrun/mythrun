@@ -6,6 +6,8 @@ const URL_FORM = {
   REDIS_REALTIME_URL: 'redis://h:6379',
   REDIS_BATCH_URL: 'redis://h:6380',
   PORT: '3000',
+  MYTHRUN_ENV: 'development',
+  REGION_PREFIX: 'use1',
 } as const
 
 const COMPONENT_FORM = {
@@ -18,6 +20,8 @@ const COMPONENT_FORM = {
   REDIS_PORT: '6379',
   REDIS_AUTH_TOKEN: 'redis-secret',
   PORT: '3000',
+  MYTHRUN_ENV: 'staging',
+  REGION_PREFIX: 'use1',
 } as const
 
 const ORIGINAL_ENV = { ...process.env }
@@ -36,6 +40,8 @@ function clearAll(): void {
   delete process.env.REDIS_HOST
   delete process.env.REDIS_PORT
   delete process.env.REDIS_AUTH_TOKEN
+  delete process.env.MYTHRUN_ENV
+  delete process.env.REGION_PREFIX
 }
 
 describe('loadEnv (URL form — dev)', () => {
@@ -211,6 +217,8 @@ const SAFE_BASE = (): void => {
   vi.stubEnv('DATABASE_URL', 'postgresql://x:y@localhost:5432/test')
   vi.stubEnv('REDIS_REALTIME_URL', 'redis://localhost:6379')
   vi.stubEnv('REDIS_BATCH_URL', 'redis://localhost:6380')
+  vi.stubEnv('MYTHRUN_ENV', 'development')
+  vi.stubEnv('REGION_PREFIX', 'use1')
 }
 
 describe('loadEnv auth-mode parsing', () => {
@@ -431,5 +439,39 @@ describe('loadEnv — ANTHROPIC_API_KEY', () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test-key')
     const env = loadEnv()
     expect(env.anthropicApiKey).toBe('sk-ant-test-key')
+  })
+})
+
+describe('redisKeyPrefix', () => {
+  beforeEach(() => {
+    SAFE_BASE()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('derives from MYTHRUN_ENV + REGION_PREFIX', () => {
+    vi.stubEnv('MYTHRUN_ENV', 'production')
+    vi.stubEnv('REGION_PREFIX', 'use1')
+    const env = loadEnv()
+    expect(env.redisKeyPrefix).toBe('production:use1:')
+  })
+
+  it('rejects missing MYTHRUN_ENV', () => {
+    vi.stubEnv('MYTHRUN_ENV', '')
+    vi.stubEnv('REGION_PREFIX', 'use1')
+    expect(() => loadEnv()).toThrow(/MYTHRUN_ENV/)
+  })
+
+  it('rejects missing REGION_PREFIX', () => {
+    vi.stubEnv('MYTHRUN_ENV', 'production')
+    vi.stubEnv('REGION_PREFIX', '')
+    expect(() => loadEnv()).toThrow(/REGION_PREFIX/)
+  })
+
+  it('rejects invalid MYTHRUN_ENV value', () => {
+    vi.stubEnv('MYTHRUN_ENV', 'prod')
+    vi.stubEnv('REGION_PREFIX', 'use1')
+    expect(() => loadEnv()).toThrow(/MYTHRUN_ENV must be one of/)
   })
 })

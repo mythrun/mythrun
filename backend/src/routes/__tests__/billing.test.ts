@@ -203,6 +203,8 @@ function stubEnv(): Env {
     databaseUrl: 'postgresql://stub/db',
     redisRealtimeUrl: 'redis://stub:6379',
     redisBatchUrl: 'redis://stub:6379',
+    redisKeyPrefix: 'test:use1:',
+    mythrunEnv: 'development',
     port: 0,
     authMode: 'bypass',
     frontendBaseUrl: 'http://localhost:5173',
