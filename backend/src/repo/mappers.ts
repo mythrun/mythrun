@@ -7,6 +7,7 @@ import type {
   CreditSourceType,
   CreditType,
   Session,
+  SessionUsage,
   User,
   World,
 } from './types.js'
@@ -45,6 +46,7 @@ export interface WorldDbRow {
   readonly status: string
   readonly language: string
   readonly moderation_status: string
+  readonly is_demo: boolean
   readonly created_at: Date
   readonly updated_at: Date
 }
@@ -144,6 +146,7 @@ export function toWorld(row: WorldDbRow): World {
     status: toWorldStatus(row.status),
     language: row.language,
     moderationStatus: toModerationStatus(row.moderation_status),
+    isDemo: row.is_demo,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -174,6 +177,37 @@ export function toSession(row: SessionDbRow): Session {
     summary: row.summary,
     stRunningSummary: row.st_running_summary,
     handoff: row.handoff,
+  }
+}
+
+// ─── Session Usage (MYT-43) ──────────────────────────────────────────────────
+
+export interface SessionUsageDbRow {
+  readonly id: string
+  readonly session_id: string
+  readonly campaign_id: string
+  readonly user_id: string
+  readonly input_tokens: number
+  readonly output_tokens: number
+  readonly cache_write_tokens: number
+  readonly cache_read_tokens: number
+  /** pg returns NUMERIC as a string; we Number()-cast in toSessionUsage. */
+  readonly estimated_cost_usd: string
+  readonly created_at: Date
+}
+
+export function toSessionUsage(row: SessionUsageDbRow): SessionUsage {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    campaignId: row.campaign_id,
+    userId: row.user_id,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    cacheWriteTokens: row.cache_write_tokens,
+    cacheReadTokens: row.cache_read_tokens,
+    estimatedCostUsd: Number(row.estimated_cost_usd),
+    createdAt: row.created_at,
   }
 }
 

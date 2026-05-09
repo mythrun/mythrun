@@ -77,10 +77,12 @@ const EXPECTED_IDX_NAMES = [
   'idx_relationships_target',
   'idx_session_messages_session_seq',
   'idx_session_preps_campaign',
+  'idx_session_usage_one_per_session',
   'idx_sessions_campaign',
   'idx_sessions_one_active',
   'idx_user_subscriptions_user',
   'idx_world_snapshots_campaign',
+  'idx_worlds_one_demo',
 ] as const
 
 const EXPECTED_CHECK_CONSTRAINTS: readonly {
@@ -547,6 +549,7 @@ describe('schema-parity (integration)', () => {
       '005_drop_profile_columns_users.sql',
       '006_drop_billing_config_tables.sql',
       '007_recreate_billing_tables.sql',
+      '008_billing_metering.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

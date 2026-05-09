@@ -66,6 +66,7 @@ const worldRow: WorldDbRow = {
   status: 'generating',
   language: 'en',
   moderation_status: 'unreviewed',
+  is_demo: false,
   created_at: FIXED_DATE,
   updated_at: FIXED_DATE,
 }

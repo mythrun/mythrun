@@ -72,6 +72,7 @@ const worldRow = (createdBy: string): World => ({
   status: 'complete',
   language: 'en',
   moderationStatus: 'unreviewed',
+  isDemo: false,
   createdAt: new Date(),
   updatedAt: new Date(),
 })

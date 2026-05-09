@@ -53,6 +53,7 @@ export interface World {
   readonly status: 'generating' | 'complete' | 'failed'
   readonly language: string
   readonly moderationStatus: 'unreviewed' | 'approved' | 'flagged' | 'removed'
+  readonly isDemo: boolean
   readonly createdAt: Date
   readonly updatedAt: Date
 }
@@ -146,6 +147,21 @@ export interface SessionUpdate {
   readonly handoff?: string | null
 }
 
+// ─── Session Usage (MYT-43) ──────────────────────────────────────────────────
+
+export interface SessionUsage {
+  readonly id: string
+  readonly sessionId: string
+  readonly campaignId: string
+  readonly userId: string
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly cacheWriteTokens: number
+  readonly cacheReadTokens: number
+  readonly estimatedCostUsd: number
+  readonly createdAt: Date
+}
+
 // ─── Credits ─────────────────────────────────────────────────────────────────
 
 export type CreditType = 'session' | 'world_gen'
@@ -198,6 +214,32 @@ export interface ListEntriesOpts {
   readonly limit?: number | null // null/omit → no LIMIT clause
   readonly type?: CreditType
 }
+
+// ─── Atomic Debit / Try-Debit (MYT-43) ────────────────────────────────────────
+
+/** Returned by `atomicDebit`. `consumedSourceType` is the source_type of
+ *  the FIFO-oldest unexpired positive credit row at debit time. Under the
+ *  trial/paid mutual-exclusion invariant maintained by grantInTx's auto-
+ *  burn, all unexpired positive credits at any moment are the same
+ *  source-type-class. The Session Runtime reads this to decide trial-mode
+ *  vs full-mode. */
+export interface AtomicDebitResult {
+  readonly entry: CreditEntry
+  readonly consumedSourceType: 'trial' | 'purchase' | 'subscription' | 'gift' | 'refund'
+}
+
+/** Returned by `tryDebitForSession`. The `ok: false` branch carries a
+ *  `code: 'insufficient_credits'` discriminator + `available` and `required`
+ *  amounts; the consuming HTTP route responds 402 Payment Required + this
+ *  body. Other errors (UserNotFoundError, etc.) still throw. */
+export type TryDebitResult =
+  | { readonly ok: true; readonly consumedSourceType: AtomicDebitResult['consumedSourceType'] }
+  | {
+      readonly ok: false
+      readonly code: 'insufficient_credits'
+      readonly available: number
+      readonly required: number
+    }
 
 // ─── Campaign Members ─────────────────────────────────────────────────────────
 
