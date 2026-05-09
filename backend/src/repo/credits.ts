@@ -10,6 +10,7 @@ import type {
   DebitInput,
   GrantInput,
   ListEntriesOpts,
+  TryDebitResult,
 } from './types.js'
 import {
   DEBIT_LOCK_TIMEOUT_MS,
@@ -203,6 +204,124 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
        SET LOCAL statement_timeout = '${String(stmtTimeoutMs)}ms';`,
     )
 
+  // Closure-bound atomicDebit so tryDebitForSession can reuse it without
+  // routing through `this`. Defined above the return literal so both the
+  // returned `atomicDebit` field and `tryDebitForSession` reference the
+  // same const.
+  const atomicDebit = async (input: DebitInput): Promise<AtomicDebitResult> => {
+    if (input.amount <= 0) {
+      throw new Error('atomicDebit: amount must be > 0')
+    }
+    if (!input.sourceId || input.sourceId.length === 0) {
+      throw new Error('atomicDebit: sourceId required (use the per-user idempotency key)')
+    }
+
+    const client = await pool.connect()
+    let inTransaction = false
+    try {
+      await beginAndConfigure(client)
+      inTransaction = true
+
+      // Lock anchor — serializes all concurrent debits + grants for this user.
+      const userCheck = await client.query<{ id: string }>(
+        'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+        [input.userId],
+      )
+      if (userCheck.rowCount === 0) {
+        await client.query('ROLLBACK')
+        inTransaction = false
+        throw new UserNotFoundError(input.userId)
+      }
+
+      // Idempotency check — return prior row if same (user, credit_type, source_id).
+      const priorResult = await client.query<CreditEntryDbRow>(
+        `SELECT * FROM credit_ledger
+            WHERE user_id = $1 AND credit_type = $2
+              AND source_type = 'debit' AND source_id = $3`,
+        [input.userId, input.creditType, input.sourceId],
+      )
+      const priorRow = priorResult.rows[0]
+      if (priorRow) {
+        const priorAmount = Math.abs(priorRow.amount)
+        if (priorAmount !== input.amount) {
+          await client.query('ROLLBACK')
+          inTransaction = false
+          throw new IdempotencyConflictError(
+            input.userId,
+            input.sourceId,
+            priorAmount,
+            input.amount,
+          )
+        }
+        // Idempotency hit — prior debit row exists. Look up the source_type
+        // of the FIFO-oldest unexpired positive credit to match the
+        // contract on the success path. Under mutual exclusion this is the
+        // same source-type-class that was consumed originally.
+        const priorSourceType = await readConsumedSourceType(client, input)
+        await client.query('COMMIT')
+        inTransaction = false
+        return { entry: toCreditEntry(priorRow), consumedSourceType: priorSourceType }
+      }
+
+      // Balance check — only spendable (unexpired) credits count.
+      const balanceResult = await client.query<{ balance: string }>(
+        `SELECT COALESCE(SUM(amount), 0)::text AS balance
+             FROM credit_ledger
+            WHERE user_id = $1 AND credit_type = $2
+              AND (expires_at IS NULL OR expires_at > now())`,
+        [input.userId, input.creditType],
+      )
+      const balanceRow = balanceResult.rows[0]
+      const available = balanceRow ? Number(balanceRow.balance) : 0
+      if (available < input.amount) {
+        await client.query('ROLLBACK')
+        inTransaction = false
+        throw new InsufficientCreditsError(input.userId, input.creditType, available, input.amount)
+      }
+
+      // Read the source_type of the FIFO-oldest unexpired positive credit
+      // BEFORE writing the debit row. Under mutual exclusion, this is
+      // what the debit logically consumes. The Session Runtime reads
+      // this to decide trial-mode vs full-mode.
+      const consumedSourceType = await readConsumedSourceType(client, input)
+
+      // Insert the debit row.
+      const id = uuidv7()
+      const insertResult = await client.query<CreditEntryDbRow>(
+        `INSERT INTO credit_ledger
+             (id, user_id, credit_type, amount, source_type, source_id)
+           VALUES ($1, $2, $3, $4, 'debit', $5)
+           RETURNING *`,
+        [id, input.userId, input.creditType, -input.amount, input.sourceId],
+      )
+      await client.query('COMMIT')
+      inTransaction = false
+
+      const row = insertResult.rows[0]
+      if (!row) throw new Error('atomicDebit: INSERT returned no row')
+      return { entry: toCreditEntry(row), consumedSourceType }
+    } catch (err) {
+      if (inTransaction) {
+        try {
+          await client.query('ROLLBACK')
+        } catch {
+          // Ignore — connection may already be in failed state.
+        }
+      }
+      // Map pg timeout errors to DebitTimeoutError.
+      if (typeof err === 'object' && err !== null && 'code' in err) {
+        const pgCode = (err as { code?: string }).code
+        if (pgCode === '55P03' || pgCode === '57014') {
+          const { DebitTimeoutError } = await import('./credits-errors.js')
+          throw new DebitTimeoutError(input.userId, pgCode)
+        }
+      }
+      throw err
+    } finally {
+      client.release()
+    }
+  }
+
   return {
     balance: async (userId: string, type: CreditType): Promise<number> => {
       const result = await pool.query<{ balance: string }>(
@@ -316,122 +435,35 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
       return toCreditEntry(existingRow)
     },
 
-    atomicDebit: async (input: DebitInput): Promise<AtomicDebitResult> => {
-      if (input.amount <= 0) {
-        throw new Error('atomicDebit: amount must be > 0')
-      }
-      if (!input.sourceId || input.sourceId.length === 0) {
-        throw new Error('atomicDebit: sourceId required (use the per-user idempotency key)')
-      }
+    atomicDebit,
 
-      const client = await pool.connect()
-      let inTransaction = false
+    /**
+     * Wrap atomicDebit with a typed result for the "out of credits" path.
+     * Always debits 1 session credit; the per-session $/cost is observability-
+     * only (Stripe charges a fixed $/session at the consumer surface).
+     *
+     * The HTTP route that consumes this responds 402 Payment Required +
+     * {code, available, required} on the !ok path. See design §7.4.
+     */
+    tryDebitForSession: async (userId: string, sessionId: string): Promise<TryDebitResult> => {
       try {
-        await beginAndConfigure(client)
-        inTransaction = true
-
-        // Lock anchor — serializes all concurrent debits + grants for this user.
-        const userCheck = await client.query<{ id: string }>(
-          'SELECT id FROM users WHERE id = $1 FOR UPDATE',
-          [input.userId],
-        )
-        if (userCheck.rowCount === 0) {
-          await client.query('ROLLBACK')
-          inTransaction = false
-          throw new UserNotFoundError(input.userId)
-        }
-
-        // Idempotency check — return prior row if same (user, credit_type, source_id).
-        const priorResult = await client.query<CreditEntryDbRow>(
-          `SELECT * FROM credit_ledger
-            WHERE user_id = $1 AND credit_type = $2
-              AND source_type = 'debit' AND source_id = $3`,
-          [input.userId, input.creditType, input.sourceId],
-        )
-        const priorRow = priorResult.rows[0]
-        if (priorRow) {
-          const priorAmount = Math.abs(priorRow.amount)
-          if (priorAmount !== input.amount) {
-            await client.query('ROLLBACK')
-            inTransaction = false
-            throw new IdempotencyConflictError(
-              input.userId,
-              input.sourceId,
-              priorAmount,
-              input.amount,
-            )
-          }
-          // Idempotency hit — prior debit row exists. Look up the source_type
-          // of the FIFO-oldest unexpired positive credit to match the
-          // contract on the success path. Under mutual exclusion this is the
-          // same source-type-class that was consumed originally.
-          const priorSourceType = await readConsumedSourceType(client, input)
-          await client.query('COMMIT')
-          inTransaction = false
-          return { entry: toCreditEntry(priorRow), consumedSourceType: priorSourceType }
-        }
-
-        // Balance check — only spendable (unexpired) credits count.
-        const balanceResult = await client.query<{ balance: string }>(
-          `SELECT COALESCE(SUM(amount), 0)::text AS balance
-             FROM credit_ledger
-            WHERE user_id = $1 AND credit_type = $2
-              AND (expires_at IS NULL OR expires_at > now())`,
-          [input.userId, input.creditType],
-        )
-        const balanceRow = balanceResult.rows[0]
-        const available = balanceRow ? Number(balanceRow.balance) : 0
-        if (available < input.amount) {
-          await client.query('ROLLBACK')
-          inTransaction = false
-          throw new InsufficientCreditsError(
-            input.userId,
-            input.creditType,
-            available,
-            input.amount,
-          )
-        }
-
-        // Read the source_type of the FIFO-oldest unexpired positive credit
-        // BEFORE writing the debit row. Under mutual exclusion, this is
-        // what the debit logically consumes. The Session Runtime reads
-        // this to decide trial-mode vs full-mode.
-        const consumedSourceType = await readConsumedSourceType(client, input)
-
-        // Insert the debit row.
-        const id = uuidv7()
-        const insertResult = await client.query<CreditEntryDbRow>(
-          `INSERT INTO credit_ledger
-             (id, user_id, credit_type, amount, source_type, source_id)
-           VALUES ($1, $2, $3, $4, 'debit', $5)
-           RETURNING *`,
-          [id, input.userId, input.creditType, -input.amount, input.sourceId],
-        )
-        await client.query('COMMIT')
-        inTransaction = false
-
-        const row = insertResult.rows[0]
-        if (!row) throw new Error('atomicDebit: INSERT returned no row')
-        return { entry: toCreditEntry(row), consumedSourceType }
+        const result = await atomicDebit({
+          userId,
+          creditType: 'session',
+          amount: 1,
+          sourceId: sessionId,
+        })
+        return { ok: true, consumedSourceType: result.consumedSourceType }
       } catch (err) {
-        if (inTransaction) {
-          try {
-            await client.query('ROLLBACK')
-          } catch {
-            // Ignore — connection may already be in failed state.
-          }
-        }
-        // Map pg timeout errors to DebitTimeoutError.
-        if (typeof err === 'object' && err !== null && 'code' in err) {
-          const pgCode = (err as { code?: string }).code
-          if (pgCode === '55P03' || pgCode === '57014') {
-            const { DebitTimeoutError } = await import('./credits-errors.js')
-            throw new DebitTimeoutError(input.userId, pgCode)
+        if (err instanceof InsufficientCreditsError) {
+          return {
+            ok: false,
+            code: 'insufficient_credits',
+            available: err.available,
+            required: err.requested,
           }
         }
         throw err
-      } finally {
-        client.release()
       }
     },
 

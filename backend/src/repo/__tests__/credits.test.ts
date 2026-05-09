@@ -833,6 +833,62 @@ describe('credits repo (integration)', () => {
     })
   })
 
+  describe('tryDebitForSession (MYT-43)', () => {
+    it('sufficient balance returns ok=true with consumedSourceType', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'trial' })
+
+      const result = await credits.tryDebitForSession(u.id, uuidv7())
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.consumedSourceType).toBe('trial')
+      }
+    })
+
+    it('insufficient balance returns ok=false with insufficient_credits code', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+
+      const result = await credits.tryDebitForSession(u.id, uuidv7())
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.code).toBe('insufficient_credits')
+        expect(result.available).toBe(0)
+        expect(result.required).toBe(1)
+      }
+    })
+
+    it('non-existent user throws UserNotFoundError (not wrapped)', async () => {
+      const credits = createCreditsRepo(pool)
+      const { UserNotFoundError } = await import('../credits-errors.js')
+      await expect(credits.tryDebitForSession(uuidv7(), uuidv7())).rejects.toBeInstanceOf(
+        UserNotFoundError,
+      )
+    })
+
+    it('idempotency: same sessionId twice → only one debit row written', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'trial' })
+
+      const sessionId = uuidv7()
+      const r1 = await credits.tryDebitForSession(u.id, sessionId)
+      const r2 = await credits.tryDebitForSession(u.id, sessionId)
+      expect(r1.ok).toBe(true)
+      expect(r2.ok).toBe(true)
+
+      const debits = await pool.query(
+        `SELECT * FROM credit_ledger WHERE user_id = $1 AND source_type = 'debit' AND source_id = $2`,
+        [u.id, sessionId],
+      )
+      expect(debits.rows).toHaveLength(1)
+    })
+  })
+
   describe('schema invariants (migration 004)', () => {
     it('polarity CHECK rejects positive amount with source_type=debit', async () => {
       const users = createUsersRepo(pool)
