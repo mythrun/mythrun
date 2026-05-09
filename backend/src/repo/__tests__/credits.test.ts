@@ -730,6 +730,109 @@ describe('credits repo (integration)', () => {
     })
   })
 
+  describe('grantInTx — trial-burn (MYT-43)', () => {
+    async function insertPurchase(userId: string, paymentIntentSuffix: string): Promise<string> {
+      const id = uuidv7()
+      await pool.query(
+        `INSERT INTO purchases (id, user_id, stripe_payment_intent_id, lookup_key, quantity, amount_cents, status)
+         VALUES ($1, $2, $3, 'sku_session', 1, 500, 'completed')`,
+        [id, userId, `pi_${paymentIntentSuffix}`],
+      )
+      return id
+    }
+
+    it('granting "purchase" when trial credit exists → trial credit burned', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'trial' })
+      const purchaseId = await insertPurchase(u.id, 'burn1')
+      await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'purchase',
+        sourcePurchaseId: purchaseId,
+      })
+
+      // Balance: -1 (burn) + 1 (trial) + 5 (purchase) = 5
+      expect(await credits.balance(u.id, 'session')).toBe(5)
+
+      const burnRows = await pool.query<{ amount: number }>(
+        `SELECT amount FROM credit_ledger WHERE user_id = $1 AND source_type = 'debit' AND amount < 0`,
+        [u.id],
+      )
+      expect(burnRows.rows).toHaveLength(1)
+      expect(burnRows.rows[0]!.amount).toBe(-1)
+    })
+
+    it('granting "gift" when trial credit exists → NO burn', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'trial' })
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 2, sourceType: 'gift' })
+
+      expect(await credits.balance(u.id, 'session')).toBe(3) // 1 trial + 2 gift, no burn
+      const burnRows = await pool.query(
+        `SELECT 1 FROM credit_ledger WHERE user_id = $1 AND source_type = 'debit'`,
+        [u.id],
+      )
+      expect(burnRows.rows).toHaveLength(0)
+    })
+
+    it('granting "purchase" with no trial credit → no burn row written', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      const purchaseId = await insertPurchase(u.id, 'noburn')
+      await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'purchase',
+        sourcePurchaseId: purchaseId,
+      })
+
+      const burnRows = await pool.query(
+        `SELECT 1 FROM credit_ledger WHERE user_id = $1 AND source_type = 'debit'`,
+        [u.id],
+      )
+      expect(burnRows.rows).toHaveLength(0)
+    })
+
+    it('second "purchase" grant after first burn → ON CONFLICT no-ops the second burn', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'trial' })
+      const purchaseId1 = await insertPurchase(u.id, 'p1')
+      const purchaseId2 = await insertPurchase(u.id, 'p2')
+      await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'purchase',
+        sourcePurchaseId: purchaseId1,
+      })
+      await credits.grant({
+        userId: u.id,
+        creditType: 'session',
+        amount: 5,
+        sourceType: 'purchase',
+        sourcePurchaseId: purchaseId2,
+      })
+
+      // Balance: -1 (one burn) + 1 (trial) + 5 + 5 = 10
+      expect(await credits.balance(u.id, 'session')).toBe(10)
+      const burnRows = await pool.query(
+        `SELECT 1 FROM credit_ledger WHERE user_id = $1 AND source_type = 'debit'`,
+        [u.id],
+      )
+      expect(burnRows.rows).toHaveLength(1) // ON CONFLICT idempotent
+    })
+  })
+
   describe('schema invariants (migration 004)', () => {
     it('polarity CHECK rejects positive amount with source_type=debit', async () => {
       const users = createUsersRepo(pool)

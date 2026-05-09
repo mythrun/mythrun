@@ -1,4 +1,5 @@
 import { type Pool, type PoolClient } from 'pg'
+import { uuidv5 } from './uuidv5.js'
 import { uuidv7 } from './uuidv7.js'
 import { toCreditEntry, type CreditEntryDbRow } from './mappers.js'
 import type { ClientLike } from './_types.js'
@@ -22,6 +23,46 @@ import {
 export interface CreditsRepoOpts {
   readonly debitLockTimeoutMs?: number
   readonly debitStatementTimeoutMs?: number
+}
+
+/** Mythrun-pinned namespace UUID for trial-burn source_ids. Generated
+ *  once and never changes; rotating it would orphan existing burn rows
+ *  from their idempotency check. */
+const TRIAL_BURN_NAMESPACE = '019700e0-0000-7000-8000-000000000003'
+
+/**
+ * Sum unexpired trial credits for `(userId, creditType)` and write a
+ * negative-amount debit row burning them. Idempotent: source_id is a
+ * deterministic UUIDv5 of `(userId, creditType)`, so webhook redelivery
+ * sees the existing burn row and ON CONFLICTs to a no-op while the new
+ * paid grant lands its own row.
+ *
+ * Caller MUST hold the users-row FOR UPDATE lock (atomicDebit + grantInTx
+ * both establish this). Function is a no-op when trial balance is zero.
+ */
+async function burnUnexpiredTrialCredits(
+  tx: ClientLike,
+  userId: string,
+  creditType: CreditType,
+): Promise<void> {
+  const trialSum = await tx.query<{ trial_balance: string }>(
+    `SELECT COALESCE(SUM(amount), 0)::text AS trial_balance
+       FROM credit_ledger
+      WHERE user_id = $1 AND credit_type = $2
+        AND source_type = 'trial' AND amount > 0
+        AND (expires_at IS NULL OR expires_at > now())`,
+    [userId, creditType],
+  )
+  const balance = Number(trialSum.rows[0]?.trial_balance ?? 0)
+  if (balance <= 0) return
+
+  const burnSourceId = uuidv5(`${userId}:${creditType}`, TRIAL_BURN_NAMESPACE)
+  await tx.query(
+    `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, source_id)
+     VALUES ($1, $2, $3, $4, 'debit', $5)
+     ON CONFLICT (user_id, credit_type, source_id) WHERE source_type = 'debit' DO NOTHING`,
+    [uuidv7(), userId, creditType, -balance, burnSourceId],
+  )
 }
 
 /**
@@ -89,6 +130,13 @@ export async function grantInTx(tx: ClientLike, input: GrantInput): Promise<Cred
   )
   if (userCheck.rowCount === 0) {
     throw new UserNotFoundError(input.userId)
+  }
+
+  // MYT-43 trial-burn: when granting a paid credit, burn any unexpired
+  // trial credits in the same transaction. Maintains the trial/paid
+  // mutual-exclusion invariant the Session Runtime relies on.
+  if (input.sourceType === 'purchase' || input.sourceType === 'subscription') {
+    await burnUnexpiredTrialCredits(tx, input.userId, input.creditType)
   }
 
   const id = uuidv7()
