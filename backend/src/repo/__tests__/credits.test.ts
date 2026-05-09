@@ -415,7 +415,7 @@ describe('credits repo (integration)', () => {
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       const sourceId = uuidv7()
-      const entry = await credits.atomicDebit({
+      const { entry } = await credits.atomicDebit({
         userId: u.id,
         creditType: 'session',
         amount: 1,
@@ -533,13 +533,13 @@ describe('credits repo (integration)', () => {
       await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
 
       const sourceId = uuidv7()
-      const first = await credits.atomicDebit({
+      const { entry: first } = await credits.atomicDebit({
         userId: u.id,
         creditType: 'session',
         amount: 1,
         sourceId,
       })
-      const second = await credits.atomicDebit({
+      const { entry: second } = await credits.atomicDebit({
         userId: u.id,
         creditType: 'session',
         amount: 1,
@@ -667,7 +667,7 @@ describe('credits repo (integration)', () => {
       const ids = entries.map((e) => e.id)
       expect(entries.length).toBe(3)
       // Most recent first.
-      expect(ids[0]).toBe(c.id)
+      expect(ids[0]).toBe(c.entry.id)
       expect(ids).toContain(a.id)
       expect(ids).toContain(b.id)
     })
@@ -699,6 +699,34 @@ describe('credits repo (integration)', () => {
       expect(all.length).toBe(1)
       // Balance excludes expired.
       expect(await credits.balance(u.id, 'session')).toBe(0)
+    })
+
+    it('returns consumedSourceType="trial" when only trial credit exists', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'trial' })
+      const result = await credits.atomicDebit({
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId: uuidv7(),
+      })
+      expect(result.consumedSourceType).toBe('trial')
+    })
+
+    it('returns consumedSourceType="gift" when only gift credit exists', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+      const result = await credits.atomicDebit({
+        userId: u.id,
+        creditType: 'session',
+        amount: 1,
+        sourceId: uuidv7(),
+      })
+      expect(result.consumedSourceType).toBe('gift')
     })
   })
 
@@ -961,7 +989,7 @@ describe('credits repo — concurrency (separate pool)', () => {
         }),
       ])
 
-      expect(r1.id).toBe(r2.id)
+      expect(r1.entry.id).toBe(r2.entry.id)
       expect(await credits.balance(u.id, 'session')).toBe(4)
 
       const debitCount = await pool.query<{ count: string }>(

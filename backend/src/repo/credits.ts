@@ -2,7 +2,14 @@ import { type Pool, type PoolClient } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import { toCreditEntry, type CreditEntryDbRow } from './mappers.js'
 import type { ClientLike } from './_types.js'
-import type { CreditEntry, CreditType, DebitInput, GrantInput, ListEntriesOpts } from './types.js'
+import type {
+  AtomicDebitResult,
+  CreditEntry,
+  CreditType,
+  DebitInput,
+  GrantInput,
+  ListEntriesOpts,
+} from './types.js'
 import {
   DEBIT_LOCK_TIMEOUT_MS,
   DEBIT_STATEMENT_TIMEOUT_MS,
@@ -15,6 +22,43 @@ import {
 export interface CreditsRepoOpts {
   readonly debitLockTimeoutMs?: number
   readonly debitStatementTimeoutMs?: number
+}
+
+/**
+ * Read the source_type of the FIFO-oldest unexpired positive credit row
+ * for `(userId, creditType)`. Used by atomicDebit to populate
+ * `consumedSourceType` on its result. Under the trial/paid mutual-
+ * exclusion invariant, all unexpired positives at any moment are the
+ * same source-type-class; this query returns that class.
+ *
+ * Caller MUST run this inside a transaction that has already verified
+ * (a) the user row is locked FOR UPDATE, and (b) the balance check
+ * passed (so at least one positive unexpired row exists). If no row
+ * is found, throws "ledger inconsistency" — this is unreachable on the
+ * happy path; firing means schema or invariant has drifted.
+ */
+async function readConsumedSourceType(
+  client: ClientLike,
+  input: { userId: string; creditType: CreditType },
+): Promise<AtomicDebitResult['consumedSourceType']> {
+  const result = await client.query<{ source_type: string }>(
+    `SELECT source_type FROM credit_ledger
+      WHERE user_id = $1 AND credit_type = $2
+        AND amount > 0
+        AND (expires_at IS NULL OR expires_at > now())
+      ORDER BY granted_at ASC, id ASC
+      LIMIT 1`,
+    [input.userId, input.creditType],
+  )
+  const row = result.rows[0]
+  if (!row) {
+    throw new Error(
+      `atomicDebit: balance check passed but no positive unexpired ` +
+        `credit row found for user ${input.userId} (${input.creditType}). ` +
+        `Possible ledger inconsistency.`,
+    )
+  }
+  return row.source_type as AtomicDebitResult['consumedSourceType']
 }
 
 /**
@@ -224,7 +268,7 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
       return toCreditEntry(existingRow)
     },
 
-    atomicDebit: async (input: DebitInput): Promise<CreditEntry> => {
+    atomicDebit: async (input: DebitInput): Promise<AtomicDebitResult> => {
       if (input.amount <= 0) {
         throw new Error('atomicDebit: amount must be > 0')
       }
@@ -269,9 +313,14 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
               input.amount,
             )
           }
+          // Idempotency hit — prior debit row exists. Look up the source_type
+          // of the FIFO-oldest unexpired positive credit to match the
+          // contract on the success path. Under mutual exclusion this is the
+          // same source-type-class that was consumed originally.
+          const priorSourceType = await readConsumedSourceType(client, input)
           await client.query('COMMIT')
           inTransaction = false
-          return toCreditEntry(priorRow)
+          return { entry: toCreditEntry(priorRow), consumedSourceType: priorSourceType }
         }
 
         // Balance check — only spendable (unexpired) credits count.
@@ -295,6 +344,12 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
           )
         }
 
+        // Read the source_type of the FIFO-oldest unexpired positive credit
+        // BEFORE writing the debit row. Under mutual exclusion, this is
+        // what the debit logically consumes. The Session Runtime reads
+        // this to decide trial-mode vs full-mode.
+        const consumedSourceType = await readConsumedSourceType(client, input)
+
         // Insert the debit row.
         const id = uuidv7()
         const insertResult = await client.query<CreditEntryDbRow>(
@@ -309,7 +364,7 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
 
         const row = insertResult.rows[0]
         if (!row) throw new Error('atomicDebit: INSERT returned no row')
-        return toCreditEntry(row)
+        return { entry: toCreditEntry(row), consumedSourceType }
       } catch (err) {
         if (inTransaction) {
           try {
