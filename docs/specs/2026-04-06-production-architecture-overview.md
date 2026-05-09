@@ -379,7 +379,7 @@ CREATE TABLE session_participants (
 
 Schema lives in `docs/specs/2026-04-13-backend-core.md` (canonical). MYT-42 ships migration 007 that re-creates this table with `lookup_key TEXT NOT NULL` (closed enum from `backend/src/billing/lookup-keys.ts`) replacing the legacy `session_pack_size INTEGER`.
 
-#### `session_usage`
+#### `session_usage` (post-MYT-43)
 ```sql
 CREATE TABLE session_usage (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -388,11 +388,14 @@ CREATE TABLE session_usage (
   user_id UUID NOT NULL REFERENCES users(id),
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   estimated_cost_usd NUMERIC(10,6) NOT NULL DEFAULT 0,
-  budget_limit_tokens INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX idx_session_usage_one_per_session ON session_usage (session_id);
 ```
+One row per session; `recordUsage` UPSERTs cumulatively per LLM call. Replaces the pre-MYT-43 token-budget-enforcement model (the dropped `budget_limit_tokens` column).
 
 #### `world_marketplace` (schema-ready, not built at launch)
 ```sql
@@ -563,7 +566,7 @@ Full flow:
 1. Verify the requesting user is a campaign member
 2. Look up the campaign owner
 3. Compute owner's session-credit balance (`SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='session' AND (expires_at IS NULL OR expires_at > now())`). Trial credits are part of that balance, granted at registration (not at session-start).
-4. If balance > 0: insert debit row, create `session_usage` row with `budget_limit_tokens`. Else: return 402 Payment Required.
+4. If balance > 0: insert debit row (the first call to `repo.sessions.recordUsage` lazily inserts the `session_usage` row on first LLM call). Else: return 402 Payment Required + `{code: 'insufficient_credits', available, required}`.
 
 ---
 
@@ -735,15 +738,14 @@ Pipeline execution moves from fire-and-forget promises to a proper job queue (Bu
 
 **Session start gate:**
 1. Verify user is a `campaign_member`
-2. Atomic decrement of campaign owner's session-credit balance via the credit_ledger debit recipe (see section 4.6). Balance check: `SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='session' AND (expires_at IS NULL OR expires_at > now())`. Trial credits are part of that balance, not a separate gate.
-3. If balance is zero: return 402 Payment Required
-4. Create `session_usage` row with `budget_limit_tokens`
+2. `repo.credits.tryDebitForSession(userId, sessionId)` — atomic decrement of campaign owner's session-credit balance + returns `consumedSourceType` (trial vs paid) for trial-mode UX. Trial credits are part of that balance, not a separate gate.
+3. If `ok: false`: return 402 Payment Required + `{code: 'insufficient_credits', available, required}`
+4. The `session_usage` row is lazily inserted on the first LLM call via `recordUsage`; no explicit start-row insert is needed.
 
-**During session:**
-- Token usage accumulated per LLM call in Redis (`session:{campaignId}:usage` Hash, fields `input_tokens` and `output_tokens` incremented via HINCRBY)
-- At 80% of `budget_limit_tokens`: send `session_budget_warning` to all clients
-- At 90%: ST triggers graceful wind-down (normal sessions) or narrative cliffhanger (free trial)
-- Token counts persisted to `session_usage` table on session end
+**During session (post-MYT-43):**
+- Each LLM call invokes `repo.sessions.recordUsage(sessionId, model, deltas)` which UPSERTs the per-session row in `session_usage` and returns the running totals.
+- Wrap-up signaling (cost cap / FT context cap / ST narrative wrap) is computed inline by the Session Runtime from `recordUsage`'s return value — no separate Redis counter, no separate threshold-read round-trip. Cost cap is the **primary** session-end mechanism (signals ST, doesn't hard-halt).
+- Per-call writes scale fine: ~7 ops/sec at 500 concurrent sessions.
 
 **Free trial session specifics:**
 - Trial credit is granted at registration (parent billing spec §7); the session-start path is unchanged.

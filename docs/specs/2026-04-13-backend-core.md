@@ -523,7 +523,10 @@ CREATE TABLE session_preps (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Session Usage (cost tracking)
+-- Session Usage (cost tracking — re-shaped by MYT-43 migration 008)
+-- One row per session, mutated cumulatively by recordUsage. The pre-MYT-43
+-- column `budget_limit_tokens INTEGER NOT NULL` was for the abandoned
+-- token-budget enforcement model; replaced by cost-cap + FT-context-cap.
 CREATE TABLE session_usage (
   id UUID PRIMARY KEY,
   session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -531,10 +534,12 @@ CREATE TABLE session_usage (
   user_id UUID NOT NULL REFERENCES users(id),
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   estimated_cost_usd NUMERIC(10,6) NOT NULL DEFAULT 0,
-  budget_limit_tokens INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX idx_session_usage_one_per_session ON session_usage (session_id);
 
 -- Purchases (re-shaped by MYT-42 migration 007 — lookup_key replaces session_pack_size)
 CREATE TABLE purchases (

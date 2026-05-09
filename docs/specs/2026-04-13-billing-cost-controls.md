@@ -280,9 +280,46 @@ Credit allocation happens ONLY in the webhook handler, never on the checkout suc
 
 ## 6. Session Budget and Token Metering
 
-### Token Budget
+> **✓ Superseded in MYT-43:** the model-blind token-budget model below is replaced by **cost-cap + FT-context-cap + Slow-Thinker narrative wrap**. A model-blind token cap gives ~19× cost variance across model mixes (Opus-heavy at 500K = $37.50; Haiku-heavy = $2). Cost is the meaningful enforcement metric. The original table is preserved here as historical context; the active model is in §6.1 below.
 
-Each session is allocated a token budget when it starts. The budget is defined per credit type (session credits from tier subscriptions may have a different budget than session credits from à-la-carte SKUs — for launch, identical).
+### 6.1 Active model (post-MYT-43)
+
+Each session has three end-conditions, all of which converge to the **same Slow-Thinker-driven graceful-close path**:
+
+1. **Cost cap.** When accumulated `estimated_cost_usd` approaches the configured cap (e.g., 80% of $3 = $2.40), the ST receives a wrap-up signal and steers the next narrative beats toward a graceful close. The cost cap is the **primary** session-end mechanism — it's expected to fire on most sessions, not as an emergency backstop. The cap value is a config setting (env var or `settings` table), not a hardcoded constant.
+2. **FT context cap.** The Fast Thinker's input context size is checked before each call; when it approaches the model's context limit (~80% of 250K for Sonnet), the same wrap-up signal fires.
+3. **Narrative wrap.** The Slow Thinker can also decide a wrap is appropriate given current state + minimum wall-clock time elapsed.
+
+All three signals end the session via the same ST-driven path (no hard halt that bypasses narrative). The data plane that enables this is in MYT-43; the live signaling logic lives in Session Runtime.
+
+### 6.2 Live cost tracking
+
+Cost tracking is Postgres-only — no Redis layer.
+
+1. LLM call completes → returns `{ input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens }`.
+2. Session controller calls `repo.sessions.recordUsage(sessionId, model, deltas)`, which UPSERTs the per-session row in `session_usage` and returns the running totals.
+3. ST wrap-up trigger reads the returned `estimated_cost_usd` against the cost cap inline (no extra DB round-trip).
+
+At Mythrun's call rate (~7 ops/sec at 500 concurrent sessions), Postgres handles per-call writes with no headroom concern — see MYT-43 design §1 for the scaling envelope.
+
+### 6.3 Cost Estimation
+
+Four-rate pricing (per MYT-43 §5):
+
+```typescript
+// USD per million tokens — see backend/src/billing/model-pricing.ts
+{ 'claude-opus-4-7':           { input: 5.00, output: 25.00, cacheWrite: 6.25, cacheRead: 0.50 },
+  'claude-sonnet-4-6':         { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 },
+  'claude-haiku-4-5-20251001': { input: 1.00, output:  5.00, cacheWrite: 1.25, cacheRead: 0.10 } }
+```
+
+The `cacheWrite` rate corresponds to Anthropic's **5-minute** cache (Mythrun does not use the 1-hour cache; `computeCostUsd` throws if 1-hour tokens are passed in). Cost is **observability-grade approximate**, not billing-grade exact — Stripe charges users a fixed $/session price; this number powers internal cost-cap signaling, dashboards, and CloudWatch alarms.
+
+A daily CI job (`.github/workflows/llm-pricing-drift.yml`) fetches Anthropic's pricing docs and alarms on any drift between the hardcoded constants and the published rates.
+
+### 6.4 Historical token-budget model (superseded)
+
+> The table below was the pre-MYT-43 enforcement model. Kept for spec-history continuity; not active.
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
@@ -290,33 +327,6 @@ Each session is allocated a token budget when it starts. The budget is defined p
 | Warning threshold | 80% (400,000 tokens) | Gives players ~20 more turns to wrap up |
 | Wind-down threshold | 90% (450,000 tokens) | ST instructed to guide session to natural pause |
 | Hard cap | 120% (600,000 tokens) | Absolute maximum — cancel stream if exceeded |
-
-These values are configurable in the `settings` table, not hardcoded.
-
-### Token Accumulation
-
-During a session, every LLM call reports its token usage. The flow:
-
-1. LLM call completes → returns `{ input_tokens, output_tokens }`
-2. Session controller increments Redis counters: `INCRBY session:{campaignId}:usage:input {input_tokens}`, `INCRBY session:{campaignId}:usage:output {output_tokens}`
-3. After incrementing, read the current output total
-4. If output total > 80% of budget → send `session_budget_warning` to all clients
-5. If output total > 90% of budget → inject wind-down instruction into ST's next evaluation
-6. Redis counters are checkpointed to `session_usage` Postgres table every 5 minutes (per the session state checkpoint strategy)
-
-### Cost Estimation
-
-For display purposes (not billing — billing is per session credit, not per token):
-
-```typescript
-const MODEL_PRICING = {  // $/MTok
-  opus:   { input: 15, output: 75 },
-  sonnet: { input: 3, output: 15 },
-  haiku:  { input: 0.80, output: 4 },
-}
-```
-
-The `session_usage.estimated_cost_usd` is calculated on session end by summing `(input_tokens * input_price + output_tokens * output_price) / 1_000_000` across all model tiers used during the session.
 
 ---
 
@@ -334,9 +344,13 @@ The `session_usage.estimated_cost_usd` is calculated on session end by summing `
 
 Trial credit is granted at registration, not at session-start. On `POST /api/users/register`, the same transaction that creates the `users` row inserts a `credit_ledger` row (`credit_type='session', amount=1, source_type='trial', source_id=NULL, source_purchase_id=NULL, source_billing_history_id=NULL, expires_at=NULL`) and sets `users.free_trial_used = true`. The `source_type='trial'` value is the **signal MYT-42 emits** — it's how downstream code identifies the row consumed at session-start as the trial credit (vs. a paid session credit).
 
-Sessions consume the trial credit via the standard atomic-debit recipe (§2), but **MYT-43 MUST honor the trial-FIRST consumption invariant**: for users who have BOTH trial credit and paid credits in their balance, the atomic-debit recipe consumes the trial row before any paid row, so the trial UX (reduced budget, demo world, time cap) runs on the trial credit and not on a paid credit. The recipe redesign that exposes `consumedSourceType` from atomic-debit is deferred to MYT-43 (per MYT-42 §7.6 hand-off); MYT-42 pins only the trial-FIRST invariant and the `source_type='trial'` signal.
+> **✓ Superseded in MYT-43:** the original "trial-FIRST consumption" invariant is replaced by **mutual exclusion via auto-burn**. Trial and paid credits never coexist in a user's balance. On the user's first paid grant (`source_type='purchase'` or `'subscription'`), `grantInTx` writes a debit row burning any unexpired trial credits in the same transaction. After the burn, the user's balance is paid credits only; the next session's `atomicDebit` consumes a paid row. `atomicDebit.consumedSourceType === 'trial'` is the trial-mode signal (used pre-burn only).
+>
+> The burn `source_id` is a deterministic UUIDv5 derived from `(userId, creditType)`, so webhook redelivery is idempotent — the second burn ON CONFLICTs to no-op while the new paid grant lands its own row.
 
-No special trial-mode session machinery; the time-cap, reduced token budget, and demo-world choices below are session-runtime concerns owned by MYT-43, decoupled from credit-grant timing.
+Sessions consume credits via the standard atomic-debit recipe (§2). The Session Runtime reads `atomicDebit.consumedSourceType` to decide trial-mode vs full-mode UX; under mutual exclusion, this is unambiguous.
+
+No special trial-mode session machinery; the time-cap, reduced token budget, and demo-world choices below are session-runtime concerns, decoupled from credit-grant timing.
 
 1. `users.free_trial_used` flag (set true at registration; subsequent registrations of an existing-by-username user MUST NOT re-grant).
 2. When a trial-credit session starts:
@@ -366,19 +380,23 @@ The demo world is created manually (or via the pipeline once and then frozen). I
 The `session_usage` table captures per-session costs:
 
 ```sql
--- Already in Backend Core schema
+-- Post-migration 008 (MYT-43)
 CREATE TABLE session_usage (
   id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id),
+  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   campaign_id UUID NOT NULL REFERENCES campaigns(id),
   user_id UUID NOT NULL REFERENCES users(id),  -- the owner who paid
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   estimated_cost_usd NUMERIC(10,6) NOT NULL DEFAULT 0,
-  budget_limit_tokens INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX idx_session_usage_one_per_session ON session_usage (session_id);
 ```
+
+One row per session, mutated cumulatively. `recordUsage` UPSERTs on `session_id` and returns the running totals for inline cost-cap evaluation by the Session Runtime. The pre-MYT-43 schema had a `budget_limit_tokens INTEGER NOT NULL` column for the abandoned model-blind token-budget enforcement; that column is dropped in migration 008.
 
 ### Per-World-Gen Cost Tracking
 
@@ -465,7 +483,7 @@ The server creates the Stripe Checkout Session with:
 | **User starts session right as credits expire** | The `FOR UPDATE` lock in the debit transaction prevents race conditions. If credits expired between page load and session start, the debit fails gracefully. |
 | **Refund after credits are spent** | Negative credit_ledger entry. If balance goes negative, user can't start new sessions until balance is positive (next month's grant or a new purchase). |
 | **Subscription payment fails** | Stripe retries automatically (3 attempts over ~2 weeks). During `past_due` status, no new credits are granted but existing credits still work. After final failure, subscription is canceled. |
-| **User has both subscription and à-la-carte credits** | Both contribute to balance. Debit ordering is implementation-defined; MYT-43 picks the consumption-priority strategy. **Trial-FIRST invariant**: users with both trial and paid credits MUST consume trial before any paid row (per §7). |
+| **User has both subscription and à-la-carte credits** | Both contribute to balance. Debit consumes FIFO-oldest unexpired row first (no ordering preference between paid sources). **Mutual-exclusion invariant** (post-MYT-43): trial and paid credits never coexist — auto-burn at first paid grant maintains. The `trial-FIRST consumption` invariant from earlier drafts is superseded; see §7. |
 | **Owner leaves mid-session** | Session continues using already-debited credit. No new debit occurs. If owner loses credits mid-session (impossible — debit happens at start), the session finishes normally. |
 | **Campaign ownership transfer** | New owner's credits are used for future sessions. Past session costs stay attributed to the original owner. |
 | **Refund makes balance negative** | Clawback inserts a negative-polarity row (`source_type='debit'`, `expires_at=NULL`) via `repo.credits.recordClawback`; `SUM(amount)` may go negative. New session-start fails `InsufficientCreditsError`. Operator alarm `billing.refund_makes_balance_negative` per MYT-42 spec §15.5 (Decision 5 of round-2 review). User can recover by purchasing more credits or waiting for next subscription cycle. |
