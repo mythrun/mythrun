@@ -128,4 +128,37 @@ describe('worlds repo (integration)', () => {
     const bumped2 = await worlds.incrementForkCount(w.id)
     expect(bumped2.forkCount).toBe(2)
   })
+
+  describe('getDemo (MYT-43)', () => {
+    it('returns the seeded demo world', async () => {
+      const worlds = createWorldsRepo(pool)
+      const result = await worlds.getDemo()
+      expect(result).not.toBeNull()
+      expect(result!.isDemo).toBe(true)
+      expect(result!.id).toBe('019700e0-0000-7000-8000-000000000002')
+      expect(result!.name).toBe('Demo Adventure')
+    })
+
+    it('returns null when no demo world exists', async () => {
+      const worlds = createWorldsRepo(pool)
+      // Temporarily flip the demo flag off; resetData restores it next run.
+      await pool.query(
+        `UPDATE worlds SET is_demo = false WHERE id = '019700e0-0000-7000-8000-000000000002'`,
+      )
+      try {
+        const result = await worlds.getDemo()
+        expect(result).toBeNull()
+      } finally {
+        await pool.query(
+          `UPDATE worlds SET is_demo = true WHERE id = '019700e0-0000-7000-8000-000000000002'`,
+        )
+      }
+    })
+
+    it('toWorld correctly maps is_demo', async () => {
+      const worlds = createWorldsRepo(pool)
+      const result = await worlds.getDemo()
+      expect(result!.isDemo).toBe(true)
+    })
+  })
 })

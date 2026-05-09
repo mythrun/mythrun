@@ -52,6 +52,23 @@ export function createWorldsRepo(pool: Pool) {
       return row ? toWorld(row) : null
     },
 
+    /**
+     * Return the singleton demo world (the trial-mode fork-source). The
+     * partial unique index `idx_worlds_one_demo` guarantees at most one
+     * row with `is_demo=true`. Returns null if no demo world is currently
+     * flagged — operationally this means migration 008's seed was wiped or
+     * the demo was retired without a replacement.
+     *
+     * Spec: docs/superpowers/specs/2026-05-08-myt-43-billing-metering-design.md §9
+     */
+    getDemo: async (): Promise<World | null> => {
+      const result = await pool.query<WorldDbRow>(
+        `SELECT * FROM worlds WHERE is_demo = true LIMIT 1`,
+      )
+      const row = result.rows[0]
+      return row ? toWorld(row) : null
+    },
+
     listByUser: async (userId: string): Promise<World[]> => {
       const result = await pool.query<WorldDbRow>(
         `SELECT * FROM worlds WHERE created_by = $1 ORDER BY created_at DESC`,
