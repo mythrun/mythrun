@@ -66,6 +66,34 @@ const TABLES = [
 
 export async function resetData(pool: Pool): Promise<void> {
   await pool.query(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`)
+  await reseedSystemRows(pool)
+}
+
+/**
+ * Re-insert MYT-43's seeded system rows (system user + demo world) after
+ * a destructive reset. Migration 008 seeds these so production has them
+ * post-migrate; the test reset path needs to re-create them so the
+ * post-reset state matches the post-migrate state.
+ *
+ * UUIDs match migration 008 verbatim — the system-user UUID is referenced
+ * by the demo world's created_by FK; the demo-world UUID is the
+ * forkable-by-trial-flow target. Tests that look up either by ID rely on
+ * these literal values.
+ */
+const SYSTEM_USER_ID = '019700e0-0000-7000-8000-000000000001'
+const DEMO_WORLD_ID = '019700e0-0000-7000-8000-000000000002'
+
+async function reseedSystemRows(pool: Pool): Promise<void> {
+  await pool.query(
+    `INSERT INTO users (id, cognito_sub, display_name, username, free_trial_used, suspended_at)
+     VALUES ($1, 'system:mythrun', 'Mythrun System', 'system', true, '1970-01-01 00:00:00+00'::timestamptz)`,
+    [SYSTEM_USER_ID],
+  )
+  await pool.query(
+    `INSERT INTO worlds (id, created_by, name, concept, status, language, is_public, is_demo)
+     VALUES ($1, $2, 'Demo Adventure', 'Trial-mode demo world. Narrative content authored separately.', 'complete', 'en', false, true)`,
+    [DEMO_WORLD_ID, SYSTEM_USER_ID],
+  )
 }
 
 /**
@@ -85,5 +113,7 @@ export async function resetData(pool: Pool): Promise<void> {
  */
 export async function resetCreditsData(pool: Pool): Promise<void> {
   await pool.query('DELETE FROM credit_ledger')
-  await pool.query('DELETE FROM users')
+  // Preserve the MYT-43 system user — the demo world's created_by FK
+  // references it. Deleting it would fail FK RESTRICT against worlds.
+  await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
 }
