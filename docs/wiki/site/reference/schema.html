@@ -1149,7 +1149,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="worlds" id="schema-table-worlds">
   <summary>
     <span class="schema-table-name">worlds</span>
-    <span class="schema-table-meta">21 columns · 0 indexes · 2 CHECKs · 16 FKs</span>
+    <span class="schema-table-meta">22 columns · 1 index · 2 CHECKs · 16 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1301,8 +1301,19 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="is_demo">
+        <td><code>is_demo</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_worlds_one_demo</code> — UNIQUE (is_demo) WHERE is_demo = true</li>
+  </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
     <li><code>CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))</code></li>
@@ -2042,7 +2053,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="session_usage" id="schema-table-session_usage">
   <summary>
     <span class="schema-table-name">session_usage</span>
-    <span class="schema-table-meta">9 columns · 0 indexes · 0 CHECKs · 24 FKs</span>
+    <span class="schema-table-meta">10 columns · 1 index · 0 CHECKs · 24 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -2096,13 +2107,6 @@ END)</code></li>
         <td><code>0</code></td>
         <td>—</td>
       </tr>
-      <tr data-column-name="budget_limit_tokens">
-        <td><code>budget_limit_tokens</code></td>
-        <td><code>integer</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
       <tr data-column-name="created_at">
         <td><code>created_at</code></td>
         <td><code>timestamptz</code></td>
@@ -2110,8 +2114,26 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="cache_write_tokens">
+        <td><code>cache_write_tokens</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="cache_read_tokens">
+        <td><code>cache_read_tokens</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_session_usage_one_per_session</code> — UNIQUE (session_id)</li>
+  </ul>
 </details>
 <details class="schema-table" data-table-name="sessions" id="schema-table-sessions">
   <summary>

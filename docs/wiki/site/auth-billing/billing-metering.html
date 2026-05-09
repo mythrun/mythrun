@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Billing metering · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="auth-billing" data-page="billing-metering">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html" class="active">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/access-control-ws-ticket.html">Access control & WS ticket</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li><li><a href="../auth-billing/billing-metering.html" class="active">Billing metering</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Billing metering</div>
+        <article>
+<h1>Billing metering</h1>
+
+<p class="lead">
+  How a live session's LLM cost is tracked, how trial and paid credit are kept mutually exclusive,
+  how the demo world is wired as the trial entry-point, and how the rate map stays aligned with
+  Anthropic's published pricing.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1572pt" height="713pt"
+ viewBox="14.00 14.00 1557.00 698.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 694.4)">
+<title>billing_metering</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-680 1538.92,-680 1538.92,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_metering</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="503.15,-93 503.15,-297 1214.8,-297 1214.8,-93 503.15,-93"/>
+<text xml:space="preserve" text-anchor="middle" x="858.98" y="-283.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">per&#45;session cost metering</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_credits</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="522.95,-435 522.95,-668 1526.92,-668 1526.92,-435 522.95,-435"/>
+<text xml:space="preserve" text-anchor="middle" x="1024.94" y="-654.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">credit ledger primitives</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_demo</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="516.35,-305 516.35,-435 1195,-435 1195,-305 516.35,-305"/>
+<text xml:space="preserve" text-anchor="middle" x="855.68" y="-421.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">trial entry&#45;point</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_drift</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="8,-8 8,-86 1175.2,-86 1175.2,-8 8,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="591.6" y="-72.1" font-family="Courier,monospace" font-size="11.00">daily pricing drift check</text>
+</g>
+<!-- caller -->
+<g id="node1" class="node">
+<title>caller</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="247.61,-310.44 57.51,-310.44 57.51,-253.56 247.61,-253.56 247.61,-310.44"/>
+<text xml:space="preserve" text-anchor="middle" x="152.56" y="-291.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">caller</text>
+<text xml:space="preserve" text-anchor="middle" x="152.56" y="-278.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(future Session Runtime,</text>
+<text xml:space="preserve" text-anchor="middle" x="152.56" y="-265.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dashboards, receipts)</text>
+</g>
+<!-- record -->
+<g id="node2" class="node">
+<title>record</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="765.86,-176.64 503.15,-176.64 503.15,-93.36 765.86,-93.36 765.86,-176.64"/>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-158.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">repo.sessions.recordUsage</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-144.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(sessionId, model, deltas)</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-131.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INSERT … ON CONFLICT (session_id)</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-118.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DO UPDATE — running totals</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-105.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">returns the post&#45;UPSERT row</text>
+</g>
+<!-- caller&#45;&gt;record -->
+<g id="edge1" class="edge">
+<title>caller&#45;&gt;record</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M220.92,-252.96C251.48,-240.37 288.29,-226.02 322.12,-215 377.78,-196.87 440.08,-180.17 494.26,-166.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="494.56,-169.22 500.77,-165.17 493.39,-164.46 494.56,-169.22"/>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-230" font-family="Courier,monospace" font-size="10.00">per LLM call</text>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-218" font-family="Courier,monospace" font-size="10.00">(sessionId, model, deltas)</text>
+</g>
+<!-- summary -->
+<g id="node3" class="node">
+<title>summary</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="739.46,-276.04 529.55,-276.04 529.55,-205.96 739.46,-205.96 739.46,-276.04"/>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-257.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">repo.sessions.budgetSummary</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-244.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(sessionId)</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-231.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">plain SELECT</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-217.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">for receipts / dashboards</text>
+</g>
+<!-- caller&#45;&gt;summary -->
+<g id="edge2" class="edge">
+<title>caller&#45;&gt;summary</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M248.3,-266.32C272.33,-262.79 298.13,-259.39 322.12,-257 387.58,-250.48 461.06,-246.54 520.19,-244.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="520.1,-246.66 527,-243.95 519.91,-241.77 520.1,-246.66"/>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-272" font-family="Courier,monospace" font-size="10.00">receipts /</text>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-260" font-family="Courier,monospace" font-size="10.00">dashboards</text>
+</g>
+<!-- trydebit -->
+<g id="node9" class="node">
+<title>trydebit</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="746.06,-615.44 522.95,-615.44 522.95,-558.56 746.06,-558.56 746.06,-615.44"/>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-596.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tryDebitForSession</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-583.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(userId, sessionId)</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-570.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ ok | insufficient_credits</text>
+</g>
+<!-- caller&#45;&gt;trydebit -->
+<g id="edge6" class="edge">
+<title>caller&#45;&gt;trydebit</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M188.61,-310.84C249.75,-360.23 381.05,-462.33 503.15,-531 518,-539.35 534.34,-547.28 550.29,-554.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="549.02,-556.52 556.42,-557.1 551,-552.04 549.02,-556.52"/>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-528.55" font-family="Courier,monospace" font-size="10.00">session&#45;start</text>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-516.55" font-family="Courier,monospace" font-size="10.00">(typed result)</text>
+</g>
+<!-- getDemo -->
+<g id="node12" class="node">
+<title>getDemo</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="719.66,-341 549.35,-341 549.35,-305 719.66,-305 719.66,-341"/>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-319.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">repo.worlds.getDemo()</text>
+</g>
+<!-- caller&#45;&gt;getDemo -->
+<g id="edge12" class="edge">
+<title>caller&#45;&gt;getDemo</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M248.1,-290.08C332.72,-297.3 456.07,-307.84 540.29,-315.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="539.83,-317.46 547.01,-315.61 540.25,-312.57 539.83,-317.46"/>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-323.57" font-family="Courier,monospace" font-size="10.00">trial flow</text>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-311.57" font-family="Courier,monospace" font-size="10.00">(future SR fork)</text>
+</g>
+<!-- pricing -->
+<g id="node4" class="node">
+<title>pricing</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1208.2,-176.64 978.49,-176.64 978.49,-93.36 1208.2,-93.36 1208.2,-176.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-158.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">billing/model&#45;pricing.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-144.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">MODEL_PRICING + computeCostUsd</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-131.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">4 rates (input / output /</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-118.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cacheWrite / cacheRead)</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-105.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">1h cache → throws</text>
+</g>
+<!-- record&#45;&gt;pricing -->
+<g id="edge3" class="edge">
+<title>record&#45;&gt;pricing</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M766.42,-135C830.25,-135 906.6,-135 969.35,-135"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="969.29,-137.45 976.29,-135 969.29,-132.55 969.29,-137.45"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-138" font-family="Courier,monospace" font-size="10.00">computeCostUsd</text>
+</g>
+<!-- usage -->
+<g id="node5" class="node">
+<title>usage</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1214.8,-276.04 971.89,-276.04 971.89,-205.96 1214.8,-205.96 1214.8,-276.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-257.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_usage</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-244.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(one row per session_id)</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-231.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">input / output / cacheW / cacheR</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-217.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">estimated_cost_usd</text>
+</g>
+<!-- record&#45;&gt;usage -->
+<g id="edge4" class="edge">
+<title>record&#45;&gt;usage</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M766.42,-165.38C827.99,-179.66 901.19,-196.65 962.61,-210.9"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="962.06,-213.28 969.43,-212.48 963.17,-208.51 962.06,-213.28"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-209.71" font-family="Courier,monospace" font-size="10.00">UPSERT</text>
+</g>
+<!-- summary&#45;&gt;usage -->
+<g id="edge5" class="edge">
+<title>summary&#45;&gt;usage</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M740.03,-241C806.21,-241 892.3,-241 962.81,-241"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="962.51,-243.45 969.51,-241 962.51,-238.55 962.51,-243.45"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-244" font-family="Courier,monospace" font-size="10.00">SELECT</text>
+</g>
+<!-- grant -->
+<g id="node6" class="node">
+<title>grant</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="742.76,-516.44 526.25,-516.44 526.25,-459.56 742.76,-459.56 742.76,-516.44"/>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-497.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">grantInTx</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-484.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(paid grant: trial&#45;burn)</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-471.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(trial/gift/refund: no burn)</text>
+</g>
+<!-- burn -->
+<g id="node7" class="node">
+<title>burn</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1191.7,-491.44 994.99,-491.44 994.99,-434.56 1191.7,-434.56 1191.7,-491.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-472.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">burnUnexpiredTrialCredits</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-459.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UUIDv5 source_id</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-446.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">idempotent ON CONFLICT</text>
+</g>
+<!-- grant&#45;&gt;burn -->
+<g id="edge9" class="edge">
+<title>grant&#45;&gt;burn</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M743.48,-482.09C816.62,-478.09 912.84,-472.82 985.7,-468.84"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="985.8,-471.28 992.65,-468.46 985.53,-466.39 985.8,-471.28"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-482.2" font-family="Courier,monospace" font-size="10.00">if purchase | subscription</text>
+</g>
+<!-- ledger -->
+<g id="node10" class="node">
+<title>ledger</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1526.92,-584.04 1402.83,-584.04 1402.83,-513.96 1526.92,-513.96 1526.92,-584.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1464.87" y="-565.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credit_ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="1464.87" y="-552.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(append&#45;only)</text>
+<text xml:space="preserve" text-anchor="middle" x="1464.87" y="-539.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">trial OR paid,</text>
+<text xml:space="preserve" text-anchor="middle" x="1464.87" y="-525.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">never both</text>
+</g>
+<!-- grant&#45;&gt;ledger -->
+<g id="edge11" class="edge">
+<title>grant&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M743.4,-500.3C864.16,-513.53 1065.72,-534 1239.8,-544 1291.34,-546.96 1349.63,-548.19 1393.84,-548.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1393.65,-551.15 1400.67,-548.77 1393.7,-546.25 1393.65,-551.15"/>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-545.37" font-family="Courier,monospace" font-size="10.00">INSERT grant</text>
+</g>
+<!-- burn&#45;&gt;ledger -->
+<g id="edge10" class="edge">
+<title>burn&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1192.37,-477.51C1247.4,-486.69 1317.02,-500.03 1377.83,-517 1383.19,-518.5 1388.69,-520.18 1394.2,-521.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1393.11,-524.19 1400.52,-524.09 1394.66,-519.55 1393.11,-524.19"/>
+<text xml:space="preserve" text-anchor="middle" x="1308.82" y="-532" font-family="Courier,monospace" font-size="10.00">INSERT debit</text>
+<text xml:space="preserve" text-anchor="middle" x="1308.82" y="-520" font-family="Courier,monospace" font-size="10.00">(UUIDv5 source_id)</text>
+</g>
+<!-- debit -->
+<g id="node8" class="node">
+<title>debit</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1171.9,-646.44 1014.8,-646.44 1014.8,-589.56 1171.9,-589.56 1171.9,-646.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-627.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">atomicDebit</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-614.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">returns {entry,</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-601.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">consumedSourceType}</text>
+</g>
+<!-- debit&#45;&gt;ledger -->
+<g id="edge8" class="edge">
+<title>debit&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1172.26,-603.45C1237.82,-591.21 1330.72,-573.86 1393.93,-562.06"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1394.04,-564.53 1400.47,-560.84 1393.14,-559.72 1394.04,-564.53"/>
+<text xml:space="preserve" text-anchor="middle" x="1308.82" y="-604.68" font-family="Courier,monospace" font-size="10.00">INSERT debit</text>
+<text xml:space="preserve" text-anchor="middle" x="1308.82" y="-592.68" font-family="Courier,monospace" font-size="10.00">+ FIFO source_type read</text>
+</g>
+<!-- trydebit&#45;&gt;debit -->
+<g id="edge7" class="edge">
+<title>trydebit&#45;&gt;debit</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M746.68,-594.54C826.24,-599.94 931.85,-607.11 1005.31,-612.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1005.14,-614.54 1012.29,-612.57 1005.47,-609.65 1005.14,-614.54"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-622.97" font-family="Courier,monospace" font-size="10.00">amount=1,</text>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-610.97" font-family="Courier,monospace" font-size="10.00">sourceId=sessionId</text>
+</g>
+<!-- demoworld -->
+<g id="node11" class="node">
+<title>demoworld</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1195,-383.84 991.69,-383.84 991.69,-340.16 1195,-340.16 1195,-383.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-365.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds.is_demo = true</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-352.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(partial UNIQUE: one demo)</text>
+</g>
+<!-- getDemo&#45;&gt;demoworld -->
+<g id="edge13" class="edge">
+<title>getDemo&#45;&gt;demoworld</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M720.36,-330.24C794.31,-336.56 902,-345.75 982.51,-352.62"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="982.2,-355.06 989.39,-353.21 982.62,-350.17 982.2,-355.06"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-352.39" font-family="Courier,monospace" font-size="10.00">SELECT … is_demo=true</text>
+</g>
+<!-- sysuser -->
+<g id="node13" class="node">
+<title>sysuser</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="752.66,-413.84 516.35,-413.84 516.35,-370.16 752.66,-370.16 752.66,-413.84"/>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-395.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">system user</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-382.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(seeded, suspended_at sentinel)</text>
+</g>
+<!-- sysuser&#45;&gt;demoworld -->
+<g id="edge14" class="edge">
+<title>sysuser&#45;&gt;demoworld</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M753.15,-384.27C823.76,-379.64 913,-373.78 982.22,-369.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="982.36,-371.68 989.18,-368.77 982.03,-366.79 982.36,-371.68"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-384.44" font-family="Courier,monospace" font-size="10.00">created_by</text>
+</g>
+<!-- cron -->
+<g id="node14" class="node">
+<title>cron</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="297.12,-64.44 8,-64.44 8,-7.56 297.12,-7.56 297.12,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="152.56" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GitHub Actions</text>
+<text xml:space="preserve" text-anchor="middle" x="152.56" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.github/workflows/llm&#45;pricing&#45;drift.yml</text>
+<text xml:space="preserve" text-anchor="middle" x="152.56" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">14:00 UTC daily</text>
+</g>
+<!-- script -->
+<g id="node15" class="node">
+<title>script</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="749.36,-64.44 519.65,-64.44 519.65,-7.56 749.36,-7.56 749.36,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">scripts/check&#45;pricing&#45;drift.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fetch docs → Haiku extract</text>
+<text xml:space="preserve" text-anchor="middle" x="634.51" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sanity&#45;bound + diff</text>
+</g>
+<!-- cron&#45;&gt;script -->
+<g id="edge15" class="edge">
+<title>cron&#45;&gt;script</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M297.56,-36C365.34,-36 445.35,-36 510.28,-36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="510.12,-38.45 517.12,-36 510.12,-33.55 510.12,-38.45"/>
+<text xml:space="preserve" text-anchor="middle" x="400.13" y="-39" font-family="Courier,monospace" font-size="10.00">invoke</text>
+</g>
+<!-- script&#45;&gt;pricing -->
+<g id="edge17" class="edge">
+<title>script&#45;&gt;pricing</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M749.9,-60.79C816.82,-75.29 901.31,-93.6 969.62,-108.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="968.73,-110.72 976.09,-109.81 969.77,-105.93 968.73,-110.72"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-105.98" font-family="Courier,monospace" font-size="10.00">diff</text>
+</g>
+<!-- docs -->
+<g id="node16" class="node">
+<title>docs</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1175.2,-58.84 1011.5,-58.84 1011.5,-15.16 1175.2,-15.16 1175.2,-58.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-40.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">platform.claude.com/</text>
+<text xml:space="preserve" text-anchor="middle" x="1093.35" y="-27.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">docs/.../pricing</text>
+</g>
+<!-- script&#45;&gt;docs -->
+<g id="edge16" class="edge">
+<title>script&#45;&gt;docs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M749.9,-36.25C828,-36.42 930.01,-36.64 1002.32,-36.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1002.17,-39.25 1009.18,-36.82 1002.18,-34.35 1002.17,-39.25"/>
+<text xml:space="preserve" text-anchor="middle" x="868.88" y="-39.68" font-family="Courier,monospace" font-size="10.00">fetch HTML</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Mythrun charges users a fixed price per session at the consumer surface (Stripe handles the
+  money). Internally, every LLM call inside a session has a real Anthropic-side cost, and the
+  Session Runtime needs that running total to know when to start ramping the narrative toward a
+  graceful close. The data plane that ships in MYT-43 is four concerns wrapped into one cluster:
+  per-session cost metering, the credit-consumption primitive that powers session start, the trial /
+  paid mutual-exclusion rule, and the demo world that acts as the trial entry-point. A daily
+  drift-check workflow keeps the rate map honest.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Postgres-only metering, no Redis live counter</strong> — earlier drafts followed a
+  &ldquo;Redis live counter, Postgres 5-min checkpoint&rdquo; pattern from the source spec.
+  Re-evaluation: at ~7 LLM calls per second across 500 concurrent sessions (and a 1&ndash;3 ms
+  Postgres read against a 200&ndash;2000 ms LLM round-trip), Redis was paying complexity cost
+  (cross-source consistency, lossy checkpoint windows, crash-recovery reconciliation) for benefits
+  we don't need. The metering path now writes per call to <code>session_usage</code> and reads the
+  running totals back from the same UPSERT — no extra round-trip, no Redis layer. Redis still earns
+  its keep elsewhere (WS session-state cache, the WS-ticket store, rate-limit backing); it just
+  doesn't fit the cost-tracking workload.
+</aside>
+
+<h2 id="per-session-cost-metering">Per-session cost metering</h2>
+
+<p>
+  <a href="../data/repository.html"><code>repo.sessions.recordUsage</code></a> is the seam every LLM
+  call's accounting flows through. The signature is
+  <code>recordUsage(sessionId, model, deltas)</code> where <code>deltas</code> carries
+  <code>inputTokens</code>, <code>outputTokens</code>, and the optional
+  <code>cacheWriteTokens</code> / <code>cacheReadTokens</code>. The function computes the call's USD
+  contribution at write time, then runs an UPSERT against <code>session_usage</code> keyed on
+  <code>session_id</code>: the first call inserts a row, every subsequent call increments the
+  running totals on the existing row. The post-update row is returned, so the caller has the
+  cumulative <code>estimated_cost_usd</code> immediately and can compute &ldquo;did we just cross
+  80% of the cost cap?&rdquo; inline.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One row per session, not one row per LLM call</strong> — per-call rows would give a fully
+  detailed audit but add a hot-path INSERT per turn, multiply the analytics surface, and inflate the
+  simplest receipt query (&ldquo;what did this session cost?&rdquo;) from a SELECT to a
+  SUM-over-thousands-of-rows. The single-row UPSERT is the cheapest shape that still answers every
+  question the Session Runtime, dashboards, and end-of-session receipts need; the per-model
+  breakdown is deferred to a future analytics table if it ever earns its keep. The
+  <code>idx_session_usage_one_per_session</code> partial unique index pins the contract at the DB
+  layer.
+</aside>
+
+<p>
+  <code>session_usage</code> keeps three input-side token classes as separate columns —
+  <code>input_tokens</code> (base prompt), <code>cache_write_tokens</code> (5-min cache write),
+  <code>cache_read_tokens</code> (cache read) — alongside <code>output_tokens</code> and
+  <code>estimated_cost_usd</code>. Migration 008 dropped the abandoned
+  <code>budget_limit_tokens</code> column: token-budget enforcement is replaced by cost-cap +
+  Fast-Thinker context-cap + Slow-Thinker narrative wrap, all of which the Session Runtime emits
+  through the same ST-driven graceful-close path.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Cost cap, not a model-blind token budget</strong> — a 500K-token cap means $37.50 of Opus
+  or $2.50 of Haiku — a ~15&times; cost variance for the &ldquo;same&rdquo; budget. Cost is the
+  metric that matches what we actually pay Anthropic and what the player paid Stripe for the
+  session. The cap value lives as a global setting (env var or <code>settings</code> row) read by
+  the Session Runtime at startup; not a per-row column on <code>session_usage</code>, because every
+  session has the same cap and a per-row column would be redundant noise.
+</aside>
+
+<p>
+  <a href="../data/repository.html"><code>repo.sessions.budgetSummary</code></a> is the read-side
+  for non-hot-path consumers (receipts, dashboards, end-of-session reports, future crash-recovery
+  state). Plain SELECT, returns the row or <code>null</code> for sessions with no LLM calls yet. The
+  Session Runtime hot path deliberately does <em>not</em> call <code>budgetSummary</code> — it uses
+  <code>recordUsage</code>'s return value, saving one round-trip per turn.
+</p>
+
+<p>
+  Bad <code>sessionId</code> is a tripwire, not a silent no-op: <code>recordUsage</code> throws
+  <code>SessionNotFoundError</code> when the SELECT-FROM clause matches zero sessions rows. The hot
+  path should never see this; firing means an upstream bug routed an LLM call to a deleted or
+  fictional session. <code>recordUsage</code> is also <em>non-idempotent under retry</em> — a
+  retried call double-counts. The Session Runtime is responsible for not retrying after a partial
+  failure; if real retry-safety is ever needed, a per-call <code>reportingId</code> + composite
+  unique constraint is the documented next step.
+</p>
+
+<h2 id="the-pricing-constants-and-the-4-rate-model">The pricing constants and the 4-rate model</h2>
+
+<p>
+  <code>backend/src/billing/model-pricing.ts</code> exports <code>MODEL_PRICING</code> — USD per
+  million tokens for each model we use, across all four rate categories Anthropic publishes: base
+  input, output, 5-minute cache write (1.25&times; input), cache read at any TTL (0.10&times;
+  input). <code>computeCostUsd(model, deltas)</code> is the pure function that weights each delta by
+  its rate and returns dollars. The constants live in the billing module, not the LLM module,
+  because cost is a billing concern; the LLM client logs token counts only and leaves the rate-map
+  as the billing module's responsibility.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>5-minute cache only; 1-hour cache rate not tracked</strong> — Anthropic offers two cache
+  TTLs (5-minute ephemeral and 1-hour extended). Their write costs differ: 1.25&times; input for
+  5-min, 2&times; input for 1-hour. A typical 3-hour Mythrun session at one turn per minute reads
+  the cache &gt;100 times after a single write, and TTL refreshes on every read at no charge — so
+  the 5-min cache stays warm across the whole session. The 1-hour cache only wins for pathological
+  pause patterns. We track the 5-min rate; <code>computeCostUsd</code> <em>throws</em> if a 1-hour
+  cache token count is ever passed in, so a regression here fails loud rather than silently
+  mis-charging by treating 1-hour writes as 5-min-rate writes.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Approximate cost, not billing</strong> — Stripe charges the user a fixed $/session; these
+  rates power internal cost-cap signaling, dashboards, and CloudWatch alarms. Drift up to a few
+  percent is acceptable directionally. The
+  <a href="../runtime/llm.html"><code>event: 'llm.call'</code></a> log line still carries raw token
+  counts as the durable signal — the Mythrun-wide rate map can change without rewriting log history.
+</aside>
+
+<h2 id="trial-and-paid-mutual-exclusion-not-trial-first">Trial and paid: mutual exclusion, not trial-FIRST</h2>
+
+<p>
+  A user's credit ledger contains <em>either</em> unexpired trial credits <em>or</em> unexpired paid
+  credits, never both at the same time. The invariant is maintained by auto-burning the trial credit
+  on the first paid grant. This replaces the source spec's earlier &ldquo;trial-FIRST
+  consumption&rdquo; rule that asked the debit recipe to drain trial credit first.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why mutual exclusion beats trial-FIRST</strong> — trial-FIRST means a user who buys credit
+  while still inside their trial would experience trial-mode (45-min cap, demo world, reduced
+  budget) on their first paid session, then full-mode after the trial drained. That's a bad UX: the
+  user paid, and the next session should unambiguously be the full experience. Burning the trial at
+  purchase time pins the contract: paid grant → trial gone, every subsequent debit consumes paid
+  credit. The rule lives at the grant call site, not the debit call site, so callers of
+  <code>atomicDebit</code> don't have to reason about FIFO ordering across source types.
+</aside>
+
+<p>
+  The trial-burn happens inside
+  <a href="../data/repository.html"><code>grantInTx</code></a> when the grant's
+  <code>sourceType</code> is <code>'purchase'</code> or <code>'subscription'</code> (other source
+  types — <code>gift</code>, <code>trial</code>, <code>refund</code> — do not burn). The helper sums
+  the unexpired trial balance for the same <code>(userId, creditType)</code>, then writes a single
+  negative-amount debit row for that exact balance. The burn's <code>source_id</code> is a
+  deterministic UUIDv5 derived from <code>(userId, creditType)</code> against a Mythrun-pinned
+  namespace UUID; webhook redelivery sees the existing burn row, the
+  <code>ON CONFLICT … DO NOTHING</code> clause makes the second attempt a no-op, and the new paid
+  grant lands its own row regardless.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>UUIDv5, not a string-keyed source_id</strong> — <code>credit_ledger.source_id</code> is
+  declared <code>UUID</code> per migration 001, so a string like
+  <code>'trial-burn:&lt;userId&gt;:&lt;creditType&gt;'</code> would fail with
+  <code>invalid input syntax for type uuid</code> on the first burn call. UUIDv5 (RFC 4122 &sect;4.3
+  — SHA-1 of namespace-bytes &#x7c;&#x7c; name-bytes, with version + variant bits set) is the
+  standard way to derive a deterministic UUID from input. The implementation is a ~15-line helper at
+  <code>backend/src/repo/uuidv5.ts</code>, single-purpose; we don't depend on the
+  <code>uuid</code> npm package because UUIDv5 is the only flavor we need from it (UUIDv7 already
+  lives in <code>repo/uuidv7.ts</code>). The namespace UUID
+  (<code>019700e0-0000-7000-8000-000000000003</code>) is generated once and never changes — rotating
+  it would orphan existing burn rows from their idempotency check.
+</aside>
+
+<h3 id="the-trial-mode-signal-consumedsourcetype">The trial-mode signal: <code>consumedSourceType</code></h3>
+
+<p>
+  Under mutual exclusion, all unexpired positive credits at any moment are the same source-type
+  class. <a href="../data/repository.html"><code>atomicDebit</code></a> reads the
+  <code>source_type</code> of the FIFO-oldest unexpired positive credit before writing the debit,
+  and returns it as <code>consumedSourceType</code> on the result. The Session Runtime reads
+  <code>consumedSourceType === 'trial'</code> as the trial-mode signal — no separate &ldquo;is this
+  user on trial?&rdquo; lookup. The result shape is <code>{ entry, consumedSourceType }</code>;
+  tests + handlers narrow on the discriminator.
+</p>
+
+<p>
+  <a href="../data/repository.html"><code>tryDebitForSession(userId, sessionId)</code></a> is the
+  thin wrapper the Session Runtime's session-start route will call. It debits exactly one session
+  credit (the per-session $/cost is observability-only — Stripe charges a fixed $/session at the
+  consumer surface), keys the debit's <code>source_id</code> off <code>sessionId</code> for per-user
+  idempotency, and translates the <code>InsufficientCreditsError</code> path into a typed
+  <code>{ ok: false, code: 'insufficient_credits', available, required }</code> result the route
+  layer maps to <code>402 Payment Required</code>. Other errors (<code>UserNotFoundError</code>,
+  <code>IdempotencyConflictError</code>, <code>DebitTimeoutError</code>) still throw — the typed
+  result is for the &ldquo;you're out of credits&rdquo; gentle-UX path only.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>402 Payment Required, not 403 or 409</strong> — 402 is the literal-meaning HTTP status for
+  &ldquo;you can't have this resource until you pay.&rdquo; Frontends match on status to render the
+  gentle out-of-credits UX (purchase prompts) vs. the error UX (other 4xx/5xx). The body shape
+  <code>{code: 'insufficient_credits', available, required}</code> matches the rest of the
+  codebase's <code>{code: '&lt;snake_case&gt;'}</code> convention. The route that consumes
+  <code>tryDebitForSession</code> is out of scope for MYT-43; it lands when the Session Runtime
+  ships the session-create endpoint.
+</aside>
+
+<h2 id="the-demo-world-trial-entry-point">The demo world: trial entry-point</h2>
+
+<p>
+  Trial-mode sessions need a world to play in. <code>worlds.is_demo</code> is the at-most-one-demo
+  flag, enforced by the partial unique index <code>idx_worlds_one_demo</code> (only rows with
+  <code>is_demo=true</code> participate in uniqueness; retired demo rows with
+  <code>is_demo=false</code> can accumulate freely). Migration 008 seeds one placeholder demo world
+  owned by a new <code>system</code> users row.
+  <a href="../data/repository.html"><code>repo.worlds.getDemo()</code></a> returns the singleton
+  row.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The system user is permanently suspended</strong> — the seeded <code>system</code> users
+  row owns the demo world (and any future platform-seeded content). It has no Cognito identity; the
+  <code>cognito_sub</code> is set to the literal <code>'system:mythrun'</code>, which can't collide
+  with a real Cognito-issued sub. The <code>suspended_at</code> column is set to a 1970 sentinel
+  timestamp so the row can never authenticate even if a future bug routed a JWT to that
+  <code>cognito_sub</code> — the <a href="./onboarding.html">requireOnboarded</a> gate refuses any
+  user with a non-null <code>suspended_at</code>.
+</aside>
+
+<p>
+  The placeholder demo world ships with a stub concept (&ldquo;Trial-mode demo world. Narrative
+  content authored separately.&rdquo;) and <code>is_public=false</code> — it's a fork-source, not a
+  browsable public world. Real narrative content (concept, tone, themes, NPCs, opening situation)
+  lands later as an UPDATE to the same row; that authoring task is out of MYT-43's scope and tracked
+  outside Linear. The Session Runtime's fork-on-trial-start logic is also separate; MYT-43 ships
+  only the schema, the seed, and the helper.
+</p>
+
+<h2 id="the-daily-pricing-drift-check">The daily pricing-drift check</h2>
+
+<p>
+  <code>MODEL_PRICING</code> is hardcoded — Anthropic exposes no programmatic pricing API to query
+  at runtime, and a third-party JSON like LiteLLM's would put us behind someone else's SLA with no
+  commitment to schema stability. The <code>.github/workflows/llm-pricing-drift.yml</code> workflow
+  runs daily at 14:00 UTC (~9am Eastern). It fetches the public Anthropic pricing docs page, sends
+  the rendered text to Haiku with a Zod-validated structured-output schema
+  (<code>scripts/check-pricing-drift.ts</code>), sanity-bounds the result, and diffs against
+  <code>MODEL_PRICING</code> with a 1e-6 USD/MTok epsilon. Any difference exits non-zero and the
+  existing CI alarm pipeline pages on it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Multiplier-based sanity bounds, not just absolutes</strong> — an order-of-magnitude
+  hallucination (Haiku returning $25 for input where it's actually $5) is one failure mode;
+  wrong-cache-tier confusion (Haiku returning the 1-hour cache write rate where the docs say 5-min)
+  is the subtler one. Multiplier ranges (<code>cacheWrite</code> must be 1.0&times;&ndash;2.5&times;
+  input, <code>cacheRead</code> must be 0.05&times;&ndash;0.20&times; input) catch the wrong-tier
+  shape that absolute bounds would miss. If a multiplier check fires, the script exits 2 and a human
+  reviews the page before any code change.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A separate Anthropic API key for the drift check</strong> — the workflow reads
+  <code>secrets.ANTHROPIC_API_KEY_DRIFT_CHECK</code>, distinct from the production
+  <code>ANTHROPIC_API_KEY</code>. Cost is trivial (~1 Haiku call per day at ~3K input + ~500 output
+  tokens ≈ $0.005/day = ~$1.80/year), and isolating the key keeps the prod key's blast radius zero
+  if this CI key ever leaks. Rotating the drift-check key is operationally independent.
+</aside>
+
+<p>
+  The Haiku prompt template lives at
+  <code>backend/src/llm/prompts/billing/pricing-extract.txt</code> per the project's
+  prompts-as-files convention. It instructs Haiku to extract by display name, ignore the 1-hour
+  cache write rate, and produce the four required rates per model. The script then maps display
+  names back to <code>MODEL_PRICING</code> slugs via the <code>MODEL_DISPLAY_NAMES</code> table
+  (Anthropic's docs page lists models by display name like &ldquo;Claude Opus 4.7&rdquo; — not by
+  slug like <code>claude-opus-4-7</code>).
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="bump-model-pricing-after-a-rate-change">
+  Bump <code>MODEL_PRICING</code> after a rate change
+</h3>
+<ol>
+  <li>
+    The
+    <a
+      href="https://github.com/Miklos24/mythrun/actions/workflows/llm-pricing-drift.yml"
+      rel="noopener"
+      >LLM pricing drift check</a
+    >
+    workflow has reported drift. Read the workflow output: it lists each drifted rate as
+    <code>&lt;slug&gt;.&lt;rate&gt;: ours=X docs=Y delta=Z</code>.
+  </li>
+  <li>
+    Cross-check against the
+    <a href="https://platform.claude.com/docs/en/about-claude/pricing" rel="noopener"
+      >Anthropic pricing docs</a
+    >
+    by hand. The workflow's Haiku extractor is fallible; a human eyeballs the page before any code
+    change.
+  </li>
+  <li>
+    Edit <code>backend/src/billing/model-pricing.ts</code> with the new rates. Keep the constant's
+    structure intact (input / output / cacheWrite / cacheRead per model).
+  </li>
+  <li>
+    Run <code>pnpm --filter backend test src/billing/__tests__/model-pricing.test.ts</code> to
+    confirm the per-rate sanity tests still pass.
+  </li>
+  <li>
+    Trigger the workflow manually (<code>gh workflow run "LLM pricing drift check"</code>) to verify
+    the fix passes before merging.
+  </li>
+</ol>
+
+<h3 id="add-a-new-model-to-tracking">Add a new model to tracking</h3>
+<ol>
+  <li>
+    A new model lands in <code>backend/src/llm/models.ts</code> as a tier constant. Decide which
+    tier (<code>HAIKU</code> / <code>SONNET</code> / <code>OPUS</code>) it replaces or adds to.
+  </li>
+  <li>
+    In <code>backend/src/billing/model-pricing.ts</code>, add an entry to
+    <code>MODEL_PRICING</code> keyed on the model's slug, with the four published rates from
+    Anthropic's docs page.
+  </li>
+  <li>
+    Add an entry to <code>MODEL_DISPLAY_NAMES</code> mapping the display name on the docs page (e.g.
+    &ldquo;Claude Sonnet 4.7&rdquo;) to the slug. Without this mapping, the daily drift check will
+    report the model as &ldquo;new on docs page (informational)&rdquo; and skip diffing — the model
+    needs both halves to be tracked.
+  </li>
+  <li>
+    Run the drift check manually (<code
+      >pnpm --filter backend exec tsx scripts/check-pricing-drift.ts</code
+    >, with <code>ANTHROPIC_API_KEY</code> set in the env) and confirm it reports OK.
+  </li>
+</ol>
+
+<h3 id="recover-from-a-drift-false-positive">Recover from a drift false positive</h3>
+<ol>
+  <li>
+    The workflow reports drift but the rate hasn't actually changed. Inspect the workflow log: if
+    the diff is &lt; 1e-6 USD/MTok, the epsilon's working as intended and there's no real drift. If
+    the diff is bigger, the Haiku extractor is hallucinating or the docs page has a new layout.
+  </li>
+  <li>
+    If the page layout changed, the <code>PAGE_MARKER</code> sanity check (<code>'MTok'</code>
+    string presence) would normally catch it and exit 1. If it passed but the extracted values are
+    wrong, tighten the prompt at
+    <code>backend/src/llm/prompts/billing/pricing-extract.txt</code> with explicit examples of the
+    new layout and re-run the workflow.
+  </li>
+  <li>
+    Don't suppress the alarm by widening the epsilon. The workflow exists to catch real changes; a
+    wider epsilon hides them. If a single rate is flapping in the 1e-5 range, that's floating-point
+    noise from the docs page's rendering; the right fix is to round
+    <code>MODEL_PRICING</code> to match.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The <a href="../data/repository.html">repository layer</a> is where <code>recordUsage</code> /
+  <code>budgetSummary</code> / <code>tryDebitForSession</code> / <code>getDemo</code> /
+  <code>grantInTx</code> / <code>atomicDebit</code> live; the per-method contracts and the
+  credit-ledger story are documented there. The <a href="../data/schema.html">schema page</a> covers
+  the <code>session_usage</code>, <code>credit_ledger</code>, and <code>worlds</code> tables
+  migration 008 modifies. The <a href="../runtime/llm.html">LLM client</a> emits the
+  <code>event: 'llm.call'</code> log line with token counts; this page's <code>recordUsage</code> is
+  where those tokens become a durable cost record. The
+  <a href="./billing-webhook.html">billing webhook</a>'s subscription and purchase handlers call
+  <code>grantInTx</code>, which means trial-burn fires inside their transactions on the first paid
+  grant. The Session Runtime (next milestone) consumes <code>recordUsage</code>'s return value to
+  compute the cost-cap wrap-up signal, calls <code>tryDebitForSession</code> at session-start, and
+  reads <code>consumedSourceType === 'trial'</code> as the trial-mode entry signal.
+</p>
+
+<h2 id="appendix-file-map">Appendix: file map</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>backend/migrations/008_billing_metering.sql</code></td>
+      <td>
+        Drops <code>session_usage.budget_limit_tokens</code>; adds <code>cache_write_tokens</code> +
+        <code>cache_read_tokens</code>; pins <code>idx_session_usage_one_per_session</code>; adds
+        <code>worlds.is_demo</code> + <code>idx_worlds_one_demo</code>; seeds the system user +
+        placeholder demo world.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/billing/model-pricing.ts</code></td>
+      <td>
+        <code>MODEL_PRICING</code> (4 rates per model), <code>MODEL_DISPLAY_NAMES</code>,
+        <code>computeCostUsd</code> (1-hour cache rejection), <code>UsageDeltas</code> +
+        <code>Model</code> types.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/repo/sessions.ts</code></td>
+      <td>
+        <code>recordUsage</code> (UPSERT + return running totals),
+        <code>budgetSummary</code> (read-side).
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/repo/sessions-errors.ts</code></td>
+      <td>
+        <code>SessionNotFoundError</code> — thrown by <code>recordUsage</code> on a missing session.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/repo/credits.ts</code></td>
+      <td>
+        <code>grantInTx</code> with trial-burn on paid grants, <code>atomicDebit</code> returning
+        <code>consumedSourceType</code>, <code>tryDebitForSession</code> typed wrapper.
+        <code>burnUnexpiredTrialCredits</code> + <code>readConsumedSourceType</code> module-locals.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/repo/worlds.ts</code></td>
+      <td><code>getDemo</code> — singleton demo-world lookup.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/repo/uuidv5.ts</code></td>
+      <td>
+        Deterministic-by-input UUIDv5 generator (RFC 4122 &sect;4.3). Used for trial-burn
+        <code>source_id</code> derivation.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/prompts/billing/pricing-extract.txt</code></td>
+      <td>Haiku system prompt for the daily drift extractor.</td>
+    </tr>
+    <tr>
+      <td><code>backend/scripts/check-pricing-drift.ts</code></td>
+      <td>
+        Daily drift-check entrypoint: fetch docs &rarr; Haiku extract &rarr; sanity bounds &rarr;
+        diff &rarr; exit 0/1/2/3 by outcome.
+      </td>
+    </tr>
+    <tr>
+      <td><code>.github/workflows/llm-pricing-drift.yml</code></td>
+      <td>Daily 14:00 UTC cron + manual <code>workflow_dispatch</code> for the drift check.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="drift-check-exit-codes">Drift-check exit codes</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Code</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>0</code></td>
+      <td>All rates match within epsilon.</td>
+    </tr>
+    <tr>
+      <td><code>1</code></td>
+      <td>
+        Fetch failed, page-format unexpected (no <code>MTok</code> marker), or unhandled error.
+      </td>
+    </tr>
+    <tr>
+      <td><code>2</code></td>
+      <td>Extracted rate outside sanity bounds (Haiku hallucination guard).</td>
+    </tr>
+    <tr>
+      <td><code>3</code></td>
+      <td>Drift detected — rates differ from <code>MODEL_PRICING</code> beyond epsilon.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/migrations/008_billing_metering.sql</code>,
+  <code>backend/src/billing/model-pricing.ts</code>,
+  <code>backend/src/repo/{sessions,sessions-errors,credits,worlds,uuidv5}.ts</code>,
+  <code>backend/scripts/check-pricing-drift.ts</code>,
+  <code>backend/src/llm/prompts/billing/pricing-extract.txt</code>,
+  <code>.github/workflows/llm-pricing-drift.yml</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#per-session-cost-metering">Per-session cost metering</a></li><li style="padding-left:0"><a href="#the-pricing-constants-and-the-4-rate-model">The pricing constants and the 4-rate model</a></li><li style="padding-left:0"><a href="#trial-and-paid-mutual-exclusion-not-trial-first">Trial and paid: mutual exclusion, not trial-FIRST</a></li><li style="padding-left:12px"><a href="#the-trial-mode-signal-consumedsourcetype">The trial-mode signal: consumedSourceType</a></li><li style="padding-left:0"><a href="#the-demo-world-trial-entry-point">The demo world: trial entry-point</a></li><li style="padding-left:0"><a href="#the-daily-pricing-drift-check">The daily pricing-drift check</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#bump-model-pricing-after-a-rate-change">Bump MODEL_PRICING after a rate change</a></li><li style="padding-left:12px"><a href="#add-a-new-model-to-tracking">Add a new model to tracking</a></li><li style="padding-left:12px"><a href="#recover-from-a-drift-false-positive">Recover from a drift false positive</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-file-map">Appendix: file map</a></li><li style="padding-left:12px"><a href="#drift-check-exit-codes">Drift-check exit codes</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

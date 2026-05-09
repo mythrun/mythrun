@@ -230,6 +230,18 @@
   invoice-paid handler grants the credit when the invoice is paid.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>First paid grant burns the user's trial credit (MYT-43)</strong> — when
+  <code>grantInTx</code> is called with <code>source_type</code> in
+  <code>'purchase' | 'subscription'</code>, it sums the user's unexpired trial-credit balance and
+  writes a single deterministic-ID debit row burning it, in the same transaction as the paid grant.
+  The handler doesn't have to reason about it; the seam lives one level down. The
+  <a href="./billing-metering.html#trial-and-paid-mutual-exclusion-not-trial-first"
+    >billing-metering page</a
+  >
+  covers the mutual-exclusion invariant in full.
+</aside>
+
 <h3><code>invoice.paid</code></h3>
 
 <p>

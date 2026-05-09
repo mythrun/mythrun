@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:b31c51e065872601cf8255b350f0a166db9cb7242d5ddea8deb89be70a791cdc -->
-<!-- last-ticket: MYT-39 -->
+<!-- source-hash: sha256:b7cec30b1906e88d912efafa2a955f51a78a241711bde7fa2550730a8364cfd6 -->
+<!-- last-ticket: MYT-43 -->
 
 <h1>Repository layer</h1>
 
@@ -310,11 +310,17 @@
 
 <p>
   <strong><code>worlds</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>listByUser</code>, <code>update</code>, <code>updateStatus</code>,
+  <code>getDemo</code>, <code>listByUser</code>, <code>update</code>, <code>updateStatus</code>,
   <code>incrementForkCount</code>. <code>updateStatus</code> is a one-purpose UPDATE on
   <code>status</code> alone; the prep pipeline calls it many times per run, and a dedicated method
   keeps pipeline tracing legible. <code>listByUser</code> is the simple ownership filter
   <code>WHERE created_by = $1 ORDER BY created_at DESC</code> — no JOIN.
+  <code>getDemo</code> returns the singleton row whose <code>is_demo=true</code> flag is pinned by
+  the partial unique index <code>idx_worlds_one_demo</code> from migration 008; the
+  <a href="../auth-billing/billing-metering.html#the-demo-world-trial-entry-point"
+    >trial entry-point</a
+  >
+  uses it as the fork source for new-user sessions.
 </p>
 
 <p>
@@ -342,10 +348,14 @@
 
 <p>
   <strong><code>sessions</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>.
-  <code>getActiveByCampaign</code> uses <code>LIMIT 1</code> defensively — the partial-unique index
+  <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>,
+  <code>recordUsage</code>, <code>budgetSummary</code>. <code>getActiveByCampaign</code> uses
+  <code>LIMIT 1</code> defensively — the partial-unique index
   <code>idx_sessions_one_active</code> guarantees at most one active row per campaign, but the
   <code>LIMIT 1</code> at the SQL site makes the contract self-documenting.
+  <code>recordUsage</code> + <code>budgetSummary</code> are the per-session cost-tracking primitives
+  MYT-43 added; the cluster has its own narrative on the
+  <a href="../auth-billing/billing-metering.html">billing-metering page</a>.
 </p>
 
 <aside class="wiki-rationale">
@@ -353,14 +363,63 @@
   <code>sessions</code> table doesn't have an <code>updated_at</code> column at all (only
   <code>started_at</code> + <code>ended_at</code>, which carry the lifecycle a session row needs).
   The "every UPDATE bumps <code>updated_at</code>" rule applies wherever the column exists; this one
-  is the documented exception.
+  is the documented exception. <code>session_usage</code> rows are the same: their
+  <code>created_at</code> stamps the first <code>recordUsage</code> call; subsequent UPSERTs
+  increment counters in place without touching it.
+</aside>
+
+<h3 id="recordusage-budgetsummary"><code>recordUsage</code> and <code>budgetSummary</code></h3>
+
+<p>
+  <code>recordUsage(sessionId, model, deltas)</code> writes per LLM call. The function computes the
+  call's USD contribution at write time via
+  <a href="../auth-billing/billing-metering.html#the-pricing-constants-and-the-4-rate-model"
+    ><code>computeCostUsd</code></a
+  >, then runs an UPSERT against <code>session_usage</code> keyed on <code>session_id</code>: first
+  call inserts a row, subsequent calls increment the running totals. The post-update row is
+  returned, so the Session Runtime can compute the wrap-up signal (&ldquo;did we just cross 80% of
+  the cost cap?&rdquo;) inline without a second round-trip. <code>session_usage</code> keeps three
+  input-side token classes as separate columns (<code>input_tokens</code>,
+  <code>cache_write_tokens</code>, <code>cache_read_tokens</code>) alongside
+  <code>output_tokens</code> and <code>estimated_cost_usd</code>; the
+  <a href="./schema.html">schema page</a> covers the column shape.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>UPSERT keyed on <code>session_id</code>, not append-per-call</strong> — per-call rows
+  would inflate the simplest receipt query (&ldquo;what did this session cost?&rdquo;) from a SELECT
+  to a SUM-over-thousands-of-rows and add a hot-path INSERT per turn. The single-row UPSERT is the
+  cheapest shape that still answers every consumer question; per-model breakdown is deferred until a
+  real analytics consumer earns it. The <code>idx_session_usage_one_per_session</code> partial
+  unique index from migration 008 makes the <code>ON CONFLICT (session_id) DO UPDATE</code> work and
+  prevents accidental dup rows.
 </aside>
 
 <p>
+  <code>budgetSummary(sessionId)</code> is the read-side for non-hot-path consumers (receipts,
+  dashboards, end-of-session reports). Plain SELECT, returns the row or <code>null</code> for
+  sessions with no LLM calls yet. The Session Runtime hot path doesn't call it — it uses
+  <code>recordUsage</code>'s return value, saving one round-trip per turn.
+</p>
+
+<p>
+  Bad <code>sessionId</code> is a tripwire, not a silent no-op: <code>recordUsage</code>'s
+  SELECT-FROM clause returns zero rows if the session was deleted or never existed, and the function
+  throws <code>SessionNotFoundError</code> from <code>backend/src/repo/sessions-errors.ts</code>.
+  The hot path should never see this; it's a caught-loud signal for upstream bugs that route an LLM
+  call to a fictional session. <code>recordUsage</code> is also
+  <em>non-idempotent under retry</em> — a retried call double-counts. The Session Runtime is
+  responsible for not retrying after partial failure; per-call <code>reportingId</code> + composite
+  unique constraint is the documented path if real retry-safety is ever needed.
+</p>
+
+<p>
   <strong><code>credits</code></strong> — <code>balance</code>, <code>grant</code>,
-  <code>atomicDebit</code>, <code>listEntries</code>. The full credit-ledger story has its own
-  section below; the short version is "balance is a SUM over an append-only ledger; debits go
-  through a transaction-scoped lock anchored on the user row, not on the ledger."
+  <code>atomicDebit</code>, <code>tryDebitForSession</code>, <code>listEntries</code>, plus
+  standalone <code>grantInTx</code> + <code>recordClawback</code> exports for transaction
+  composition. The full credit-ledger story has its own section below; the short version is "balance
+  is a SUM over an append-only ledger; debits go through a transaction-scoped lock anchored on the
+  user row, not on the ledger."
 </p>
 
 <p>
@@ -397,7 +456,40 @@
   own short tx with the user-row lock. <code>atomicDebit(input)</code> writes a negative-amount
   entry with <code>source_type = 'debit'</code>; the amount is a positive integer in the input,
   recorded as <code>-amount</code> in the row so polarity invariants hold at the DB layer. Both
-  methods take the per-user transaction lock described next.
+  methods take the per-user transaction lock described next. <code>atomicDebit</code> returns
+  <code>{ entry, consumedSourceType }</code> — the second field is the source-type class of the
+  oldest unexpired positive credit at debit time, used by the Session Runtime as the trial-mode
+  signal under MYT-43's mutual-exclusion invariant.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Trial-burn fires inside <code>grantInTx</code>, not inside <code>atomicDebit</code></strong
+  >
+  — earlier drafts considered a "trial-FIRST consumption" rule that made <code>atomicDebit</code>
+  drain trial credit before paid credit. Replaced by mutual exclusion at grant time: when
+  <code>grantInTx</code> is called with <code>sourceType</code> in
+  <code>'purchase' | 'subscription'</code>, it sums the unexpired trial balance for the same
+  <code>(userId, creditType)</code> and writes a single negative-amount debit row burning it. The
+  burn's <code>source_id</code> is a deterministic UUIDv5 derived from
+  <code>(userId, creditType)</code> against a Mythrun-pinned namespace
+  (<code>backend/src/repo/uuidv5.ts</code>); webhook redelivery is idempotent via
+  <code>ON CONFLICT … DO NOTHING</code>. The
+  <a href="../auth-billing/billing-metering.html#trial-and-paid-mutual-exclusion-not-trial-first"
+    >billing-metering page</a
+  >
+  covers the UX motivation.
+</aside>
+
+<p>
+  <code>tryDebitForSession(userId, sessionId)</code> is the wrapper the future Session Runtime's
+  session-start route will call. It debits exactly one session credit, keys idempotency off
+  <code>sessionId</code>, and translates <code>InsufficientCreditsError</code> into a typed
+  <code>{ ok: false, code: 'insufficient_credits', available, required }</code> result the route
+  layer maps to <code>402 Payment Required</code>. Other errors (<code>UserNotFoundError</code>,
+  <code>IdempotencyConflictError</code>, <code>DebitTimeoutError</code>) still throw — the typed
+  result is for the gentle out-of-credits UX path only. The success branch carries the same
+  <code>consumedSourceType</code> the wrapped <code>atomicDebit</code> returns.
 </p>
 
 <aside class="wiki-rationale">
@@ -408,13 +500,14 @@
   — the closure's <code>grant</code> opens its own connection and tx, which is the right shape for
   one-off grants from route handlers (a manual gift) but the wrong shape for the
   <a href="../auth-billing/billing-webhook.html">webhook dispatcher</a>'s already-open tx. The
-  standalone <code>grantInTx(tx, input)</code> takes a <code>ClientLike</code> and runs only the
-  INSERT (still re-acquires the user-row lock — Postgres allows tuple-lock re-entrancy on the same
-  xid). <code>recordClawback(tx, input)</code> is its negative-amount sibling for refund events:
-  writes <code>source_type = 'refund'</code> with a negative <code>amount</code> and an FK to the
-  originating <code>billing_history</code> row. Both let the webhook handlers compose one
-  transaction across the <code>stripe_events</code> idempotency check, the audit row write, and the
-  credit grant — a single COMMIT covers all three.
+  standalone <code>grantInTx(tx, input)</code> takes a <code>ClientLike</code> and runs the user-row
+  FOR UPDATE lock, the trial-burn for paid grants, and the grant INSERT — all on the caller's
+  connection (Postgres tuple-lock re-entrancy lets the lock re-acquire safely on the same xid).
+  <code>recordClawback(tx, input)</code> is its negative-amount sibling for refund events: writes
+  <code>source_type = 'debit'</code> with a negative <code>amount</code> and the originating grant
+  row's UUID as the idempotency key. Both let the webhook handlers compose one transaction across
+  the <code>stripe_events</code> idempotency check, the audit row write, and the credit grant — a
+  single COMMIT covers all three.
 </aside>
 
 <aside class="wiki-rationale">
@@ -470,6 +563,9 @@
   fired — sqlstate <code>55P03</code> or <code>57014</code> mapped to one error class). Every error
   path <code>ROLLBACK</code>s the transaction explicitly so connections never leak in
   <code>idle in transaction</code> state; the integration test asserts this on every error class.
+  The sessions namespace has its own typed error: <code>SessionNotFoundError</code> from
+  <code>sessions-errors.ts</code>, thrown by <code>recordUsage</code> when the SELECT-FROM clause
+  matches zero session rows.
 </p>
 
 <p>
@@ -618,21 +714,30 @@
       <td><code>uuidv7(): string</code> — wrapper around the <code>uuidv7</code> package.</td>
     </tr>
     <tr>
+      <td><code>src/repo/uuidv5.ts</code></td>
+      <td>
+        <code>uuidv5(name, namespace): string</code> — RFC 4122 §4.3 deterministic UUID. Used by the
+        credits trial-burn to derive a stable <code>source_id</code> from
+        <code>(userId, creditType)</code>.
+      </td>
+    </tr>
+    <tr>
       <td><code>src/repo/types.ts</code></td>
       <td>
-        <code>User</code>, <code>World</code>, <code>Campaign</code>, <code>Session</code>,
-        <code>CampaignMember</code>, <code>CampaignInvite</code>,
-        <code>CampaignInvitePreview</code>; <code>CreateXxxInput</code> + <code>XxxUpdate</code> for
-        each mutable row type.
+        <code>User</code>, <code>World</code> (with <code>isDemo</code>), <code>Campaign</code>,
+        <code>Session</code>, <code>SessionUsage</code>, <code>CampaignMember</code>,
+        <code>CampaignInvite</code>, <code>CampaignInvitePreview</code>;
+        <code>AtomicDebitResult</code> + <code>TryDebitResult</code> credit-debit shapes;
+        <code>CreateXxxInput</code> + <code>XxxUpdate</code> for each mutable row type.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/mappers.ts</code></td>
       <td>
         <code>UserDbRow</code> / <code>WorldDbRow</code> / <code>CampaignDbRow</code> /
-        <code>SessionDbRow</code> / <code>CampaignMemberDbRow</code> /
-        <code>CampaignInviteDbRow</code>; matching <code>toXxx</code> functions; narrowing helpers
-        for CHECK-constrained text columns.
+        <code>SessionDbRow</code> / <code>SessionUsageDbRow</code> /
+        <code>CampaignMemberDbRow</code> / <code>CampaignInviteDbRow</code>; matching
+        <code>toXxx</code> functions; narrowing helpers for CHECK-constrained text columns.
       </td>
     </tr>
     <tr>
@@ -649,8 +754,8 @@
       <td><code>src/repo/worlds.ts</code></td>
       <td>
         <code>createWorldsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
-        <code>listByUser</code>, <code>update</code>, <code>updateStatus</code>,
-        <code>incrementForkCount</code>.
+        <code>getDemo</code>, <code>listByUser</code>, <code>update</code>,
+        <code>updateStatus</code>, <code>incrementForkCount</code>.
       </td>
     </tr>
     <tr>
@@ -686,17 +791,25 @@
       <td><code>src/repo/sessions.ts</code></td>
       <td>
         <code>createSessionsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
-        <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>.
+        <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>,
+        <code>recordUsage</code>, <code>budgetSummary</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/sessions-errors.ts</code></td>
+      <td>
+        <code>SessionNotFoundError</code> — thrown by <code>recordUsage</code> on a missing session.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/credits.ts</code></td>
       <td>
         <code>createCreditsRepo(pool, opts?)</code> — <code>balance</code>, <code>grant</code>,
-        <code>atomicDebit</code>, <code>listEntries</code>; standalone
-        <code>grantInTx(tx, input)</code> + <code>recordClawback(tx, input)</code> for
-        webhook-handler composition. Lock and statement timeouts are overridable via
-        <code>opts</code> for tests that exercise the timeout paths.
+        <code>atomicDebit</code> (returns <code>{entry, consumedSourceType}</code>),
+        <code>tryDebitForSession</code> (typed insufficient-credits result),
+        <code>recordClawback</code>, <code>listEntries</code>; standalone
+        <code>grantInTx(tx, input)</code> with paid-grant trial-burn for webhook composition. Lock
+        and statement timeouts overridable via <code>opts</code> for tests.
       </td>
     </tr>
     <tr>

@@ -307,14 +307,18 @@
 
 <p>
   Two pieces are deliberately not in the log line. <strong>Cost</strong> isn't logged here because
-  Anthropic exposes no programmatic pricing API to query at runtime; hardcoding rates would create a
-  second source of truth that drifts from MYT-43's <code>session_usage</code> rate map. Downstream
-  consumers (the MYT-43 spend-attribution writer, CloudWatch dashboards) compute cost from
-  <code>tokens × ratePerMillion</code> against a rate map maintained where it's already needed. The
-  <code>model</code> field is the discriminator that lets retrospective analysis split spend across
-  Haiku / Sonnet / Opus correctly. <strong>Provider-specific finish-reason detail</strong> is also
-  dropped — the SDK exposes <code>finishReason</code> as <code>{ unified, raw }</code>, and the
-  middleware logs only <code>unified</code> (one of <code>stop</code> / <code>length</code> /
+  Anthropic exposes no programmatic pricing API to query at runtime; hardcoding rates here would
+  create a second source of truth that drifts from the
+  <a href="../auth-billing/billing-metering.html">billing-metering</a>
+  <code>MODEL_PRICING</code> map. Downstream consumers — the
+  <a href="../data/repository.html#recordusage-budgetsummary"><code>recordUsage</code></a> writer,
+  the CloudWatch dashboards — compute cost from <code>tokens × ratePerMillion</code> against the
+  rate map at <code>backend/src/billing/model-pricing.ts</code>, which is itself kept honest by the
+  daily LLM pricing-drift workflow. The <code>model</code> field on each log line is the
+  discriminator that lets retrospective analysis split spend across Haiku / Sonnet / Opus correctly.
+  <strong>Provider-specific finish-reason detail</strong> is also dropped — the SDK exposes
+  <code>finishReason</code> as <code>{ unified, raw }</code>, and the middleware logs only
+  <code>unified</code> (one of <code>stop</code> / <code>length</code> /
   <code>content-filter</code> / <code>tool-calls</code> / <code>error</code> / <code>other</code>).
   Log queries stay grep-friendly across providers; debugging sessions that need the raw value pull
   it from the SDK directly.
@@ -547,9 +551,11 @@
   contract. The cognitive tiers planned in the Session Runtime milestone (Fast Thinker, Slow
   Thinker, Scribe, DM Trigger Classifier) will all use this same surface — calling Vercel's
   <code>generateText</code> / <code>streamText</code> against tier constants, threading
-  <code>providerOptions.mythrun = { sessionId, userId }</code> for log attribution. The MYT-43
-  spend-attribution ticket consumes <code>event: 'llm.call'</code> log lines to write the
-  <code>session_usage</code> table; the rate map lives there, not here.
+  <code>providerOptions.mythrun = { sessionId, userId }</code> for log attribution. The
+  <a href="../auth-billing/billing-metering.html">billing-metering</a> data plane consumes the token
+  counts the SDK surfaces — its <code>recordUsage</code> writer turns them into a durable
+  per-session <code>estimated_cost_usd</code> using the <code>MODEL_PRICING</code> rate map. The
+  rate map lives there, not here.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -604,6 +610,16 @@
     <tr>
       <td><code>backend/src/llm/prompts/auth/profanity.txt</code></td>
       <td>System prompt template for the username classifier.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/prompts/billing/pricing-extract.txt</code></td>
+      <td>
+        System prompt template for the daily Anthropic-pricing drift extractor; consumed by
+        <code>scripts/check-pricing-drift.ts</code>. See
+        <a href="../auth-billing/billing-metering.html#the-daily-pricing-drift-check"
+          >billing-metering</a
+        >.
+      </td>
     </tr>
   </tbody>
 </table>

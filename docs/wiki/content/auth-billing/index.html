@@ -5,7 +5,7 @@
   Stripe fits in.
 </p>
 <p>
-  Seven pages in this section: <a href="./identity.html">Identity</a> — the Cognito User Pool, the
+  Eight pages in this section: <a href="./identity.html">Identity</a> — the Cognito User Pool, the
   PKCE public App Client, the Hosted UI domain, and the Google + Discord OIDC providers that back
   federated sign-in; <a href="./jwt-middleware.html">JWT middleware</a> — the Fastify plugin family
   that validates Cognito access tokens at the edge, the boot-time public-route allowlist hook, the
@@ -25,8 +25,12 @@
   price mutation impossible on the wire; <a href="./billing-webhook.html">Billing webhook</a> — the
   encapsulated Stripe-webhook plugin with its raw-body parser, the api-version-gated dispatcher, and
   the eight per-event handlers that turn Stripe deliveries into Mythrun state (purchases,
-  subscription state, audit feed, credit grants, refund clawbacks); and
+  subscription state, audit feed, credit grants, refund clawbacks);
   <a href="./billing-routes.html">Billing routes</a> — the seven HTTP routes that comprise the
   player-facing billing surface (skus, balance, subscription, history, checkout, portal, and the
-  <code>pending_if_incomplete</code> tier upgrade).
+  <code>pending_if_incomplete</code> tier upgrade); and
+  <a href="./billing-metering.html">Billing metering</a> — the per-session cost-tracking data plane
+  (<code>recordUsage</code> + <code>budgetSummary</code>), the trial / paid mutual-exclusion rule
+  (auto-burn the trial on first paid grant), the demo world that serves as the trial entry-point,
+  and the daily pricing-drift workflow that keeps the rate map honest.
 </p>

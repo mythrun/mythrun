@@ -45,6 +45,7 @@ export const structure: Section[] = [
       { slug: 'stripe-contract', title: 'Stripe contract' },
       { slug: 'billing-webhook', title: 'Billing webhook' },
       { slug: 'billing-routes', title: 'Billing routes' },
+      { slug: 'billing-metering', title: 'Billing metering' },
     ],
   },
   {

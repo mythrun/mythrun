@@ -5,8 +5,9 @@
 <!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
 <!-- source: backend/migrations/006_drop_billing_config_tables.sql -->
 <!-- source: backend/migrations/007_recreate_billing_tables.sql -->
-<!-- source-hash: sha256:500631d035ab6af38755b4729e50c22fc77966a5e3d2fba2566a3208b7443813 -->
-<!-- last-ticket: MYT-42 -->
+<!-- source: backend/migrations/008_billing_metering.sql -->
+<!-- source-hash: sha256:d7e60285e6dfdc03b20a2430b30489d25163b146e20e70c02705506169be469a -->
+<!-- last-ticket: MYT-43 -->
 
 <h1>Schema</h1>
 
@@ -22,7 +23,7 @@
 <h2>How it fits together</h2>
 
 <p>
-  The schema is the union of seven migration files in <code>backend/migrations/</code>:
+  The schema is the union of eight migration files in <code>backend/migrations/</code>:
   <code>001_initial_schema.sql</code> ships every <code>CREATE TABLE</code> in topological FK order,
   <code>002_indexes.sql</code> adds the named performance and uniqueness indexes,
   <code>003_srd_reference_data.sql</code> creates the three empty SRD tables,
@@ -32,12 +33,17 @@
   minimal-claims shape and switches its UNIQUE on <code>username</code> to be case-insensitive,
   <code>006_drop_billing_config_tables.sql</code> drops the four legacy billing-config tables now
   that the tier and pack credit-allocation contract has moved into a checked-in TS file at
-  <a href="../auth-billing/stripe-contract.html">Stripe contract</a>, and
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a>,
   <code>007_recreate_billing_tables.sql</code> recreates <code>purchases</code> +
   <code>user_subscriptions</code> with the new <code>lookup_key</code> shape, adds the
   <code>billing_history</code> audit feed, and adds two FK columns on <code>credit_ledger</code>
-  that link grants back to their originating purchase or invoice row. The
-  <a href="./migrations.html">migrations runner</a> applies all seven end-to-end on a fresh
+  that link grants back to their originating purchase or invoice row, and
+  <code>008_billing_metering.sql</code> reshapes <code>session_usage</code> for the cost-cap
+  metering model (drops the abandoned <code>budget_limit_tokens</code>, adds
+  <code>cache_write_tokens</code> + <code>cache_read_tokens</code>, pins one row per session), adds
+  <code>worlds.is_demo</code> with at-most-one-demo enforcement, and seeds a
+  <code>system</code> users row + placeholder demo world for the trial flow. The
+  <a href="./migrations.html">migrations runner</a> applies all eight end-to-end on a fresh
   database. The diagram clusters tables by the story they tell — read it left to right.
 </p>
 
@@ -189,6 +195,11 @@
   <code>worlds.source_world_id</code> is a self-reference for forks: a copy of someone else's shared
   world starts as a child row pointing back at its origin. <code>ON DELETE SET NULL</code>
   preserves the fork even if the origin is deleted; the link goes nullish, the world stands alone.
+  <code>worlds.is_demo</code> (added in migration 008) flags the singleton demo world that the trial
+  flow forks from; the partial unique index <code>idx_worlds_one_demo</code> pins at-most-one-demo
+  at the DB layer, while retired demo rows can accumulate freely with <code>is_demo=false</code>.
+  The placeholder demo seed is owned by the new <code>system</code> users row whose
+  <code>suspended_at</code> sentinel makes it permanently unable to authenticate.
 </p>
 
 <p>
@@ -226,7 +237,9 @@
   replay is deterministic; <code>session_participants</code> records who was present.
   <code>world_snapshots</code> is a point-in-time freeze of world state used by
   <code>session_preps</code> (the FT context + ST playbook the runtime loads at session start).
-  <code>session_usage</code> tracks per-session token spend for the budget caps.
+  <code>session_usage</code> tracks per-session token spend and the running USD cost (the cap signal
+  the Slow Thinker uses to ramp toward a graceful close); see the
+  <a href="../auth-billing/billing-metering.html">billing-metering</a> page for the call shape.
 </p>
 
 <aside class="wiki-rationale">

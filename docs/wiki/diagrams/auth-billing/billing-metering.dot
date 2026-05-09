@@ -1,0 +1,85 @@
+digraph billing_metering {
+  // The per-session cost-metering data plane: every LLM call writes into
+  // session_usage via repo.sessions.recordUsage; the running totals come
+  // back inline so the Session Runtime can decide wrap-up signals without
+  // an extra round-trip. Trial / paid coexist via mutual exclusion — the
+  // first paid grant auto-burns the trial. The daily drift workflow keeps
+  // MODEL_PRICING aligned with Anthropic's published rates.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  caller [label="caller\n(future Session Runtime,\ndashboards, receipts)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_metering {
+    label="per-session cost metering";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    record   [label="repo.sessions.recordUsage\n(sessionId, model, deltas)\nINSERT … ON CONFLICT (session_id)\nDO UPDATE — running totals\nreturns the post-UPSERT row"];
+    summary  [label="repo.sessions.budgetSummary\n(sessionId)\nplain SELECT\nfor receipts / dashboards"];
+    pricing  [label="billing/model-pricing.ts\nMODEL_PRICING + computeCostUsd\n4 rates (input / output /\ncacheWrite / cacheRead)\n1h cache → throws"];
+    usage    [label="session_usage\n(one row per session_id)\ninput / output / cacheW / cacheR\nestimated_cost_usd"];
+  }
+
+  subgraph cluster_credits {
+    label="credit ledger primitives";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    grant    [label="grantInTx\n(paid grant: trial-burn)\n(trial/gift/refund: no burn)"];
+    burn     [label="burnUnexpiredTrialCredits\nUUIDv5 source_id\nidempotent ON CONFLICT"];
+    debit    [label="atomicDebit\nreturns {entry,\nconsumedSourceType}"];
+    trydebit [label="tryDebitForSession\n(userId, sessionId)\n→ ok | insufficient_credits"];
+    ledger   [label="credit_ledger\n(append-only)\ntrial OR paid,\nnever both"];
+  }
+
+  subgraph cluster_demo {
+    label="trial entry-point";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    demoworld [label="worlds.is_demo = true\n(partial UNIQUE: one demo)"];
+    getDemo   [label="repo.worlds.getDemo()"];
+    sysuser   [label="system user\n(seeded, suspended_at sentinel)"];
+  }
+
+  subgraph cluster_drift {
+    label="daily pricing drift check";
+    style="dotted";
+
+    cron     [label="GitHub Actions\n.github/workflows/llm-pricing-drift.yml\n14:00 UTC daily"];
+    script   [label="scripts/check-pricing-drift.ts\nfetch docs → Haiku extract\nsanity-bound + diff"];
+    docs     [label="platform.claude.com/\ndocs/.../pricing", color="ember", fontcolor="ember"];
+  }
+
+  // Caller → metering
+  caller   -> record   [label="per LLM call\n(sessionId, model, deltas)"];
+  caller   -> summary  [label="receipts /\ndashboards"];
+
+  record   -> pricing  [label="computeCostUsd", style=dashed];
+  record   -> usage    [label="UPSERT"];
+  summary  -> usage    [label="SELECT"];
+
+  // Caller → credits
+  caller   -> trydebit [label="session-start\n(typed result)"];
+  trydebit -> debit    [label="amount=1,\nsourceId=sessionId"];
+  debit    -> ledger   [label="INSERT debit\n+ FIFO source_type read"];
+  grant    -> burn     [label="if purchase | subscription"];
+  burn     -> ledger   [label="INSERT debit\n(UUIDv5 source_id)"];
+  grant    -> ledger   [label="INSERT grant"];
+
+  // Caller → demo world
+  caller   -> getDemo  [label="trial flow\n(future SR fork)"];
+  getDemo  -> demoworld [label="SELECT … is_demo=true"];
+  sysuser  -> demoworld [label="created_by", style=dashed];
+
+  // Drift loop
+  cron     -> script   [label="invoke"];
+  script   -> docs     [label="fetch HTML"];
+  script   -> pricing  [label="diff", style=dashed];
+}

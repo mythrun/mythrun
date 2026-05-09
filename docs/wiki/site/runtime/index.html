@@ -1099,11 +1099,13 @@
       <td><code>src/billing/</code></td>
       <td>
         <code>lookup-keys.ts</code>, <code>stripe-client.ts</code>, <code>probe.ts</code>,
-        <code>sku-cache.ts</code>, <code>customer.ts</code>, <code>errors.ts</code>, plus eight
+        <code>sku-cache.ts</code>, <code>customer.ts</code>, <code>errors.ts</code>,
+        <code>model-pricing.ts</code> (MYT-43 rate map + <code>computeCostUsd</code>), plus eight
         <code>webhook-*.ts</code> handler files and <code>webhook.ts</code> dispatcher. Explainers:
         <a href="../auth-billing/stripe-contract.html">Stripe contract</a>,
         <a href="../auth-billing/billing-webhook.html">Billing webhook</a>,
-        <a href="../auth-billing/billing-routes.html">Billing routes</a>.
+        <a href="../auth-billing/billing-routes.html">Billing routes</a>,
+        <a href="../auth-billing/billing-metering.html">Billing metering</a>.
       </td>
     </tr>
     <tr>
