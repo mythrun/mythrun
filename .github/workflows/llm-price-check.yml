@@ -1,21 +1,22 @@
-# Daily check that backend/src/billing/model-pricing.ts matches Anthropic's
-# published rates. Fetches the pricing docs page, extracts rates via Haiku
-# (Zod-validated + sanity-bounded), and exits non-zero if any rate drifts.
+# Daily price check: verify backend/src/billing/model-pricing.ts matches
+# Anthropic's published rates. Fetches the pricing docs page, extracts rates
+# via Haiku (Zod-validated + sanity-bounded), and exits non-zero if any rate
+# has drifted.
 #
-# Requires repo secret ANTHROPIC_API_KEY_DRIFT_CHECK — a separate Anthropic
+# Requires repo secret ANTHROPIC_API_KEY_PRICE_CHECK — a separate Anthropic
 # key scoped to this use case (keeps prod-key blast radius zero if this CI
 # key ever leaks). Add via Settings → Secrets and variables → Actions.
 #
 # Spec: docs/superpowers/specs/2026-05-08-myt-43-billing-metering-design.md §5.2
 
-name: LLM pricing drift check
+name: LLM price check
 on:
   schedule:
     - cron: '0 14 * * *' # daily 14:00 UTC ≈ 9am US Eastern
   workflow_dispatch:
 
 jobs:
-  drift-check:
+  price-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,5 +27,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_DRIFT_CHECK }}
-        run: pnpm --filter backend exec tsx scripts/check-pricing-drift.ts
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_PRICE_CHECK }}
+        run: pnpm --filter backend exec tsx scripts/check-pricing.ts

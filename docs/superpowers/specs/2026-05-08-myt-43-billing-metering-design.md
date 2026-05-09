@@ -37,11 +37,11 @@ The Linear issue text and source spec §6/§7 disagree in several places. The co
 | Path | Responsibility |
 |------|---------------|
 | `backend/migrations/008_billing_metering.sql` | Schema changes: drop `session_usage.budget_limit_tokens`, add unique index `session_usage_one_per_session ON (session_id)`, add `worlds.is_demo BOOLEAN NOT NULL DEFAULT false`, partial unique index `worlds_one_demo`, seed `system` users row, seed placeholder demo world. |
-| `backend/src/billing/model-pricing.ts` | `MODEL_PRICING` constants + `computeCostUsd(model, deltas: UsageDeltas)` helper. Pure, no I/O. Also exports a `displayNameToSlug` map used by the drift-check (Anthropic's docs page lists models by display name; we key by slug). |
+| `backend/src/billing/model-pricing.ts` | `MODEL_PRICING` constants + `computeCostUsd(model, deltas: UsageDeltas)` helper. Pure, no I/O. Also exports a `displayNameToSlug` map used by the price-check (Anthropic's docs page lists models by display name; we key by slug). |
 | `backend/src/repo/uuidv5.ts` | Deterministic-by-input UUIDv5 generator. Used by the trial-burn `source_id` derivation. Wraps `node:crypto`'s SHA-1 with the RFC 4122 byte-twiddling. Tiny (~15 lines); single-purpose. |
 | `backend/src/billing/__tests__/model-pricing.test.ts` | Unit tests for `computeCostUsd` across mixed-model + cached/uncached scenarios. |
-| `backend/scripts/check-pricing-drift.ts` | Daily drift check: fetch Anthropic pricing docs, extract via Haiku with structured output + sanity-bounds validation, diff against `MODEL_PRICING`, exit non-zero with explicit diff if any rate differs. |
-| `.github/workflows/llm-pricing-drift.yml` | Daily 14:00 UTC cron (≈9am Eastern) running the drift check. CI failure → existing alarm pipeline (Slack/SNS) → 1-line PR. |
+| `backend/scripts/check-pricing.ts` | Daily price check: fetch Anthropic pricing docs, extract via Haiku with structured output + sanity-bounds validation, diff against `MODEL_PRICING`, exit non-zero with explicit diff if any rate differs. |
+| `.github/workflows/llm-price-check.yml` | Daily 14:00 UTC cron (≈9am Eastern) running the price check. CI failure → existing alarm pipeline (Slack/SNS) → 1-line PR. |
 
 **Modified files:**
 
@@ -154,8 +154,8 @@ The seed UUIDs use the UUIDv7 pattern's high bits (`019700e0`...) to keep them s
 // internal cost-cap enforcement, dashboards, and CloudWatch alarms.
 // Drift up to a few percent is acceptable directionally.
 //
-// Drift detection: scripts/check-pricing-drift.ts runs daily under
-// .github/workflows/llm-pricing-drift.yml — fetches Anthropic's
+// Drift detection: scripts/check-pricing.ts runs daily under
+// .github/workflows/llm-price-check.yml — fetches Anthropic's
 // pricing docs page, extracts rates via Haiku (Zod-validated +
 // sanity-bounded), diffs against this constant, alarms on any
 // difference (with floating-point epsilon).
@@ -166,7 +166,7 @@ export const MODEL_PRICING = {
   'claude-haiku-4-5-20251001':    { input: 1.00,  output:  5.00, cacheWrite: 1.25,  cacheRead: 0.10 },
 } as const
 
-/** Display name → slug mapping. Used by the drift-check to map
+/** Display name → slug mapping. Used by the price-check to map
  *  Anthropic's docs-page entries (which list models by display name
  *  only — "Claude Opus 4.7" — not by slug) back to MODEL_PRICING keys. */
 export const MODEL_DISPLAY_NAMES: Record<string, keyof typeof MODEL_PRICING> = {
@@ -224,7 +224,7 @@ The Mythrun-known model IDs above match what `backend/src/llm/models.ts` constan
 ### 5.2 Drift detection
 
 ```typescript
-// backend/scripts/check-pricing-drift.ts
+// backend/scripts/check-pricing.ts
 //
 // Daily job. Fetches Anthropic's pricing docs page, sends the
 // rendered text to Haiku with a Zod-validated structured-output
@@ -239,7 +239,7 @@ import { loadPrompt } from '../src/llm/prompts.js'
 
 const PRICING_DOC_URL = 'https://platform.claude.com/docs/en/about-claude/pricing'
 const PAGE_MARKER = 'MTok'  // sanity check that we got the actual pricing page
-const USER_AGENT = 'Mythrun-Pricing-Drift/1.0 (ops@mythrun.com)'
+const USER_AGENT = 'Mythrun-Price-Check/1.0 (ops@mythrun.com)'
 
 // Per-rate sanity bounds. Multiplier-based bounds catch order-of-
 // magnitude hallucinations AND wrong-cache-tier confusion (e.g., Haiku
@@ -269,16 +269,16 @@ async function main(): Promise<void> {
     redirect: 'manual',  // detect if Anthropic moves the URL
   })
   if (pageResponse.status >= 300 && pageResponse.status < 400) {
-    console.error(`pricing-drift: docs URL redirected (status ${pageResponse.status}); manual review required`)
+    console.error(`price-check: docs URL redirected (status ${pageResponse.status}); manual review required`)
     process.exit(1)
   }
   if (!pageResponse.ok) {
-    console.error(`pricing-drift: docs fetch failed ${pageResponse.status}`)
+    console.error(`price-check: docs fetch failed ${pageResponse.status}`)
     process.exit(1)
   }
   const pageText = await pageResponse.text()
   if (!pageText.includes(PAGE_MARKER)) {
-    console.error(`pricing-drift: page does not contain '${PAGE_MARKER}' marker; doc structure may have changed`)
+    console.error(`price-check: page does not contain '${PAGE_MARKER}' marker; doc structure may have changed`)
     process.exit(1)
   }
 
@@ -341,22 +341,22 @@ async function main(): Promise<void> {
     if (!present) drifts.push(`${slug}: not present in docs (model may have been retired or display-name renamed)`)
   }
 
-  for (const m of newModels) console.log(`pricing-drift: new model on docs page (informational): ${m}`)
+  for (const m of newModels) console.log(`price-check: new model on docs page (informational): ${m}`)
   if (drifts.length > 0) {
-    console.error('pricing-drift: DRIFT DETECTED')
+    console.error('price-check: DRIFT DETECTED')
     for (const d of drifts) console.error(`  ${d}`)
     process.exit(3)
   }
-  console.log('pricing-drift: OK — all rates match')
+  console.log('price-check: OK — all rates match')
 }
 
 function bailOnSanity(displayName: string, field: string, val: number, range: readonly [number, number]): never {
-  console.error(`pricing-drift: ${displayName}.${field} = ${val} outside sanity bounds [${range[0]}, ${range[1]}]`)
+  console.error(`price-check: ${displayName}.${field} = ${val} outside sanity bounds [${range[0]}, ${range[1]}]`)
   process.exit(2)
 }
 
 main().catch((err: unknown) => {
-  console.error('pricing-drift: unhandled error', err)
+  console.error('price-check: unhandled error', err)
   process.exit(1)
 })
 ```
@@ -364,13 +364,13 @@ main().catch((err: unknown) => {
 The system prompt lives in `backend/src/llm/prompts/billing/pricing-extract.txt` (per project convention — prompts are template files, not inline strings; matches the `loadPrompt('auth', 'profanity')` pattern). The prompt instructs Haiku to extract by display name, ignore the 1-hour cache write rate, and produce the 4 required rates per model.
 
 ```yaml
-# .github/workflows/llm-pricing-drift.yml
-name: LLM pricing drift check
+# .github/workflows/llm-price-check.yml
+name: LLM price check
 on:
   schedule: [{ cron: '0 14 * * *' }]   # 14:00 UTC daily ≈ 9am US Eastern
   workflow_dispatch:
 jobs:
-  drift-check:
+  price-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -380,13 +380,13 @@ jobs:
       - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
       - env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_DRIFT_CHECK }}
-        run: pnpm --filter backend exec tsx scripts/check-pricing-drift.ts
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_PRICE_CHECK }}
+        run: pnpm --filter backend exec tsx scripts/check-pricing.ts
 ```
 
 Cost: ~1 Haiku call/day at ~3K input + ~500 output tokens ≈ $0.005/day = $1.80/year.
 
-A separate Anthropic API key for the drift check (`ANTHROPIC_API_KEY_DRIFT_CHECK`) keeps it on its own audit trail and can be rate-limited or rotated independently of the production key.
+A separate Anthropic API key for the price check (`ANTHROPIC_API_KEY_PRICE_CHECK`) keeps it on its own audit trail and can be rate-limited or rotated independently of the production key.
 
 ## 6. Cache strategy: 5-minute cache
 
@@ -407,7 +407,7 @@ A typical Mythrun session is 3 hours, ~150 turns at ~1 turn/min. For a 10K-token
 
 The 5-min cache wins on the typical session by ~5% on the write cost, with TTL refreshing on every read keeping the cache warm for the entire session. The 1-hour cache only wins for pathological pause patterns (frequent >5min gaps, no rapid play interleaving). Active D&D play has natural lulls but rarely systematic pauses long enough to benefit.
 
-We track the 5-min cache rate (`cacheWrite: 1.25 × input`) in `MODEL_PRICING`. The 1-hour rate is omitted — we don't use it, and persisting unused rates clutters the constants and adds noise to the drift check.
+We track the 5-min cache rate (`cacheWrite: 1.25 × input`) in `MODEL_PRICING`. The 1-hour rate is omitted — we don't use it, and persisting unused rates clutters the constants and adds noise to the price check.
 
 ## 7. Trial / paid mutual exclusion
 
@@ -677,7 +677,7 @@ Spec edits in the **same commit** as the implementation, so the source-of-record
 
 - **§6 Token Budget table**: mark superseded. The cost-cap + FT-context-cap + Slow-Thinker narrative-wrap model replaces the model-blind 500K-output-tokens cap. Add a new subsection "Why not model-blind token budget" with the rationale (Opus-heavy at 500K = $37.50; Haiku-heavy at 500K = $2; ~19× cost variance; cost is the meaningful enforcement metric).
 - **§6 Token Accumulation**: drop the Redis-as-live-counter + Postgres-checkpoint pattern entirely. Replace with Postgres-only architecture: every LLM call writes via `recordUsage` UPSERT and reads back the running totals; the Slow Thinker's wrap-up signal is computed inline by the caller. Cost-cap-approaching is the **primary** session-end trigger (not an emergency backstop) — when accumulated cost hits the warn threshold (e.g. 80% of cap), the ST is signaled to ramp toward a graceful narrative close. FT context cap and ST narrative-driven wrap are the other two end signals; all three end via the same ST-driven path.
-- **§6 Cost Estimation**: expand to cover the 4-rate pricing model (input/output/cacheWrite/cacheRead). Reference `backend/src/billing/model-pricing.ts` as the source-of-truth for rates. Note the daily drift-check workflow.
+- **§6 Cost Estimation**: expand to cover the 4-rate pricing model (input/output/cacheWrite/cacheRead). Reference `backend/src/billing/model-pricing.ts` as the source-of-truth for rates. Note the daily price-check workflow.
 - **§7 Free Trial / Implementation**: mark trial-FIRST consumption as **superseded by mutual exclusion**. Replace with: trial credit and paid credit are mutually exclusive; first paid grant burns trial; `atomicDebit.consumedSourceType === 'trial'` is the trial-mode signal. Clarify that `users.free_trial_used` is the canonical "trial issued" signal — remove any reference to a `users.trial_granted_at` column that was speculated in earlier drafts.
 - **§8 Per-Session Cost Tracking schema block**: update the displayed schema — drop `budget_limit_tokens`, add `cache_write_tokens` / `cache_read_tokens` columns, add the unique index on `session_id`.
 - **§10 Edge Cases** (line 468 area): the "Trial-FIRST invariant" edge case row is **superseded by mutual exclusion**. Either remove the row or replace with "Mutual-exclusion invariant: trial and paid credit never coexist (auto-burn at first paid grant maintains)."
@@ -768,13 +768,13 @@ computeCostUsd
   - all rates in MODEL_PRICING are positive and within sanity bounds (defensive)
 ```
 
-### 11.5 `scripts/__tests__/check-pricing-drift.test.ts`
+### 11.5 `scripts/__tests__/check-pricing.test.ts`
 
 Mock fetch + Haiku response.
 
 ```
-- fetch returns 200 with a fake docs page → drift-check exits 0 when extracted == MODEL_PRICING
-- extracted rate differs by 0.01 → drift-check exits 3 with diff in stderr
+- fetch returns 200 with a fake docs page → price-check exits 0 when extracted == MODEL_PRICING
+- extracted rate differs by 0.01 → price-check exits 3 with diff in stderr
 - Haiku returns rate of 99999.0 (sanity-bound violation) → exits 2
 - fetch returns 500 → exits 1 (transient; cron retries on next run)
 - model present in MODEL_PRICING but missing from docs → drift detected
@@ -792,6 +792,6 @@ Mock fetch + Haiku response.
 - Trial-grant flow on `POST /api/users/register` (already shipped in MYT-38/MYT-42).
 - Cost dashboards (deferred to Observability sub-spec).
 - Cost-cap value tuning. The cap is a config value (env var or `settings` table). Initial value calibration is operational, requires measurement-based tuning during beta. The source spec's current $3/$5 + 20%-margin numbers are pre-launch placeholders pending beta data.
-- **`estimated_cost_usd` accuracy target** — pinning a target ("within X% of monthly Anthropic invoice") + a reconciliation cadence is operational and lives outside MYT-43. The drift-check workflow keeps the rates accurate; per-session cost-attribution accuracy follows from rate accuracy + correct token counts.
-- **Drift-check response loop SLA / owner.** The CI alarm fires; the human-in-the-loop response cadence is a Platform-on-call operational concern, not an MYT-43 design decision.
+- **`estimated_cost_usd` accuracy target** — pinning a target ("within X% of monthly Anthropic invoice") + a reconciliation cadence is operational and lives outside MYT-43. The price-check workflow keeps the rates accurate; per-session cost-attribution accuracy follows from rate accuracy + correct token counts.
+- **Price-check response loop SLA / owner.** The CI alarm fires; the human-in-the-loop response cadence is a Platform-on-call operational concern, not an MYT-43 design decision.
 - **`tryDebitForSession`'s HTTP route** itself. MYT-43 ships only the repo function; the route that consumes it (with the 402-response shape pinned in §7.4) lands when Session Runtime ships the session-create endpoint.

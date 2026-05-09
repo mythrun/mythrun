@@ -315,7 +315,7 @@ Four-rate pricing (per MYT-43 §5):
 
 The `cacheWrite` rate corresponds to Anthropic's **5-minute** cache (Mythrun does not use the 1-hour cache; `computeCostUsd` throws if 1-hour tokens are passed in). Cost is **observability-grade approximate**, not billing-grade exact — Stripe charges users a fixed $/session price; this number powers internal cost-cap signaling, dashboards, and CloudWatch alarms.
 
-A daily CI job (`.github/workflows/llm-pricing-drift.yml`) fetches Anthropic's pricing docs and alarms on any drift between the hardcoded constants and the published rates.
+A daily CI job (`.github/workflows/llm-price-check.yml`) fetches Anthropic's pricing docs and alarms on any drift between the hardcoded constants and the published rates.
 
 ### 6.4 Historical token-budget model (superseded)
 

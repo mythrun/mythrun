@@ -314,8 +314,8 @@
   <a href="../data/repository.html#recordusage-budgetsummary"><code>recordUsage</code></a> writer,
   the CloudWatch dashboards — compute cost from <code>tokens × ratePerMillion</code> against the
   rate map at <code>backend/src/billing/model-pricing.ts</code>, which is itself kept honest by the
-  daily LLM pricing-drift workflow. The <code>model</code> field on each log line is the
-  discriminator that lets retrospective analysis split spend across Haiku / Sonnet / Opus correctly.
+  daily LLM price-check workflow. The <code>model</code> field on each log line is the discriminator
+  that lets retrospective analysis split spend across Haiku / Sonnet / Opus correctly.
   <strong>Provider-specific finish-reason detail</strong> is also dropped — the SDK exposes
   <code>finishReason</code> as <code>{ unified, raw }</code>, and the middleware logs only
   <code>unified</code> (one of <code>stop</code> / <code>length</code> /
@@ -614,11 +614,9 @@
     <tr>
       <td><code>backend/src/llm/prompts/billing/pricing-extract.txt</code></td>
       <td>
-        System prompt template for the daily Anthropic-pricing drift extractor; consumed by
-        <code>scripts/check-pricing-drift.ts</code>. See
-        <a href="../auth-billing/billing-metering.html#the-daily-pricing-drift-check"
-          >billing-metering</a
-        >.
+        System prompt template for the daily Anthropic-pricing extractor; consumed by
+        <code>scripts/check-pricing.ts</code>. See
+        <a href="../auth-billing/billing-metering.html#the-daily-price-check">billing-metering</a>.
       </td>
     </tr>
   </tbody>

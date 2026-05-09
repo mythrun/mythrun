@@ -1,11 +1,11 @@
-// backend/scripts/check-pricing-drift.ts
+// backend/scripts/check-pricing.ts
 //
-// Daily job: fetch Anthropic pricing docs, extract via Haiku with a Zod
-// schema + sanity bounds, diff against MODEL_PRICING. Exit non-zero with
-// a clear per-rate diff if anything differs.
+// Daily price-check job: fetch Anthropic pricing docs, extract via Haiku
+// with a Zod schema + sanity bounds, diff against MODEL_PRICING. Exit
+// non-zero with a clear per-rate diff if anything has drifted.
 //
 // Spec: docs/superpowers/specs/2026-05-08-myt-43-billing-metering-design.md §5.2
-// CI:   .github/workflows/llm-pricing-drift.yml (daily 14:00 UTC)
+// CI:   .github/workflows/llm-price-check.yml (daily 14:00 UTC)
 //
 // Exit codes:
 //   0 — all rates match
@@ -21,7 +21,7 @@ import { loadPrompt } from '../src/llm/prompts.js'
 
 const PRICING_DOC_URL = 'https://platform.claude.com/docs/en/about-claude/pricing'
 const PAGE_MARKER = 'MTok'
-const USER_AGENT = 'Mythrun-Pricing-Drift/1.0 (ops@mythrun.com)'
+const USER_AGENT = 'Mythrun-Price-Check/1.0 (ops@mythrun.com)'
 
 // Per-rate sanity bounds. Multiplier-based bounds catch order-of-
 // magnitude hallucinations AND wrong-cache-tier confusion (e.g., Haiku
@@ -54,18 +54,18 @@ async function main(): Promise<void> {
   })
   if (pageResponse.status >= 300 && pageResponse.status < 400) {
     console.error(
-      `pricing-drift: docs URL redirected (status ${String(pageResponse.status)}); manual review required`,
+      `price-check: docs URL redirected (status ${String(pageResponse.status)}); manual review required`,
     )
     process.exit(1)
   }
   if (!pageResponse.ok) {
-    console.error(`pricing-drift: docs fetch failed ${String(pageResponse.status)}`)
+    console.error(`price-check: docs fetch failed ${String(pageResponse.status)}`)
     process.exit(1)
   }
   const pageText = await pageResponse.text()
   if (!pageText.includes(PAGE_MARKER)) {
     console.error(
-      `pricing-drift: page does not contain '${PAGE_MARKER}' marker; doc structure may have changed`,
+      `price-check: page does not contain '${PAGE_MARKER}' marker; doc structure may have changed`,
     )
     process.exit(1)
   }
@@ -130,14 +130,14 @@ async function main(): Promise<void> {
   }
 
   for (const m of newModels) {
-    console.log(`pricing-drift: new model on docs page (informational): ${m}`)
+    console.log(`price-check: new model on docs page (informational): ${m}`)
   }
   if (drifts.length > 0) {
-    console.error('pricing-drift: DRIFT DETECTED')
+    console.error('price-check: DRIFT DETECTED')
     for (const d of drifts) console.error(`  ${d}`)
     process.exit(3)
   }
-  console.log('pricing-drift: OK — all rates match')
+  console.log('price-check: OK — all rates match')
 }
 
 function bailOnSanity(
@@ -147,12 +147,12 @@ function bailOnSanity(
   range: readonly [number, number],
 ): never {
   console.error(
-    `pricing-drift: ${displayName}.${field} = ${String(val)} outside sanity bounds [${String(range[0])}, ${String(range[1])}]`,
+    `price-check: ${displayName}.${field} = ${String(val)} outside sanity bounds [${String(range[0])}, ${String(range[1])}]`,
   )
   process.exit(2)
 }
 
 main().catch((err: unknown) => {
-  console.error('pricing-drift: unhandled error', err)
+  console.error('price-check: unhandled error', err)
   process.exit(1)
 })

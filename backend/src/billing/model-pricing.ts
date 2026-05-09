@@ -11,8 +11,8 @@
 // users a fixed $/session price; these rates power internal cost-cap
 // signaling, dashboards, and CloudWatch alarms.
 //
-// Drift detection: scripts/check-pricing-drift.ts runs daily under
-// .github/workflows/llm-pricing-drift.yml — fetches Anthropic's pricing
+// Drift detection: scripts/check-pricing.ts runs daily under
+// .github/workflows/llm-price-check.yml — fetches Anthropic's pricing
 // docs page, extracts rates via Haiku (Zod-validated + sanity-bounded),
 // diffs against this constant, alarms on any drift (with floating-point
 // epsilon).
@@ -26,7 +26,7 @@ export const MODEL_PRICING = {
 } as const
 
 /** Display name (as listed on Anthropic's docs page) → MODEL_PRICING slug.
- *  Used by the daily drift-check; the docs page lists models by display
+ *  Used by the daily price-check; the docs page lists models by display
  *  name only, not by SDK slug. */
 export const MODEL_DISPLAY_NAMES: Record<string, keyof typeof MODEL_PRICING> = {
   'Claude Opus 4.7': 'claude-opus-4-7',

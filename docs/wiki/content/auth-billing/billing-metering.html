@@ -6,9 +6,9 @@
 <!-- source: backend/src/repo/worlds.ts -->
 <!-- source: backend/src/repo/uuidv5.ts -->
 <!-- source: backend/src/llm/prompts/billing/pricing-extract.txt -->
-<!-- source: backend/scripts/check-pricing-drift.ts -->
-<!-- source: .github/workflows/llm-pricing-drift.yml -->
-<!-- source-hash: sha256:022966e58258cfd87d39f72d297d2c36b19657e9f3d6c007eed7fb6c886cb0e2 -->
+<!-- source: backend/scripts/check-pricing.ts -->
+<!-- source: .github/workflows/llm-price-check.yml -->
+<!-- source-hash: sha256:a907137414bddcf324691b4f29b9186578b8ba72b2d7e433b1e45960d6126b6f -->
 <!-- last-ticket: MYT-43 -->
 
 <h1>Billing metering</h1>
@@ -30,7 +30,7 @@
   graceful close. The data plane that ships in MYT-43 is four concerns wrapped into one cluster:
   per-session cost metering, the credit-consumption primitive that powers session start, the trial /
   paid mutual-exclusion rule, and the demo world that acts as the trial entry-point. A daily
-  drift-check workflow keeps the rate map honest.
+  price-check workflow keeps the rate map honest.
 </p>
 
 <aside class="wiki-rationale">
@@ -250,15 +250,15 @@
   only the schema, the seed, and the helper.
 </p>
 
-<h2>The daily pricing-drift check</h2>
+<h2>The daily price check</h2>
 
 <p>
   <code>MODEL_PRICING</code> is hardcoded — Anthropic exposes no programmatic pricing API to query
   at runtime, and a third-party JSON like LiteLLM's would put us behind someone else's SLA with no
-  commitment to schema stability. The <code>.github/workflows/llm-pricing-drift.yml</code> workflow
+  commitment to schema stability. The <code>.github/workflows/llm-price-check.yml</code> workflow
   runs daily at 14:00 UTC (~9am Eastern). It fetches the public Anthropic pricing docs page, sends
   the rendered text to Haiku with a Zod-validated structured-output schema
-  (<code>scripts/check-pricing-drift.ts</code>), sanity-bounds the result, and diffs against
+  (<code>scripts/check-pricing.ts</code>), sanity-bounds the result, and diffs against
   <code>MODEL_PRICING</code> with a 1e-6 USD/MTok epsilon. Any difference exits non-zero and the
   existing CI alarm pipeline pages on it.
 </p>
@@ -274,11 +274,11 @@
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>A separate Anthropic API key for the drift check</strong> — the workflow reads
-  <code>secrets.ANTHROPIC_API_KEY_DRIFT_CHECK</code>, distinct from the production
+  <strong>A separate Anthropic API key for the price check</strong> — the workflow reads
+  <code>secrets.ANTHROPIC_API_KEY_PRICE_CHECK</code>, distinct from the production
   <code>ANTHROPIC_API_KEY</code>. Cost is trivial (~1 Haiku call per day at ~3K input + ~500 output
   tokens ≈ $0.005/day = ~$1.80/year), and isolating the key keeps the prod key's blast radius zero
-  if this CI key ever leaks. Rotating the drift-check key is operationally independent.
+  if this CI key ever leaks. Rotating the price-check key is operationally independent.
 </aside>
 
 <p>
@@ -300,9 +300,9 @@
   <li>
     The
     <a
-      href="https://github.com/Miklos24/mythrun/actions/workflows/llm-pricing-drift.yml"
+      href="https://github.com/Miklos24/mythrun/actions/workflows/llm-price-check.yml"
       rel="noopener"
-      >LLM pricing drift check</a
+      >LLM price check</a
     >
     workflow has reported drift. Read the workflow output: it lists each drifted rate as
     <code>&lt;slug&gt;.&lt;rate&gt;: ours=X docs=Y delta=Z</code>.
@@ -324,8 +324,8 @@
     confirm the per-rate sanity tests still pass.
   </li>
   <li>
-    Trigger the workflow manually (<code>gh workflow run "LLM pricing drift check"</code>) to verify
-    the fix passes before merging.
+    Trigger the workflow manually (<code>gh workflow run "LLM price check"</code>) to verify the fix
+    passes before merging.
   </li>
 </ol>
 
@@ -342,13 +342,13 @@
   </li>
   <li>
     Add an entry to <code>MODEL_DISPLAY_NAMES</code> mapping the display name on the docs page (e.g.
-    &ldquo;Claude Sonnet 4.7&rdquo;) to the slug. Without this mapping, the daily drift check will
+    &ldquo;Claude Sonnet 4.7&rdquo;) to the slug. Without this mapping, the daily price check will
     report the model as &ldquo;new on docs page (informational)&rdquo; and skip diffing — the model
     needs both halves to be tracked.
   </li>
   <li>
-    Run the drift check manually (<code
-      >pnpm --filter backend exec tsx scripts/check-pricing-drift.ts</code
+    Run the price check manually (<code
+      >pnpm --filter backend exec tsx scripts/check-pricing.ts</code
     >, with <code>ANTHROPIC_API_KEY</code> set in the env) and confirm it reports OK.
   </li>
 </ol>
@@ -454,23 +454,23 @@
     </tr>
     <tr>
       <td><code>backend/src/llm/prompts/billing/pricing-extract.txt</code></td>
-      <td>Haiku system prompt for the daily drift extractor.</td>
+      <td>Haiku system prompt for the daily price-check extractor.</td>
     </tr>
     <tr>
-      <td><code>backend/scripts/check-pricing-drift.ts</code></td>
+      <td><code>backend/scripts/check-pricing.ts</code></td>
       <td>
-        Daily drift-check entrypoint: fetch docs &rarr; Haiku extract &rarr; sanity bounds &rarr;
+        Daily price-check entrypoint: fetch docs &rarr; Haiku extract &rarr; sanity bounds &rarr;
         diff &rarr; exit 0/1/2/3 by outcome.
       </td>
     </tr>
     <tr>
-      <td><code>.github/workflows/llm-pricing-drift.yml</code></td>
-      <td>Daily 14:00 UTC cron + manual <code>workflow_dispatch</code> for the drift check.</td>
+      <td><code>.github/workflows/llm-price-check.yml</code></td>
+      <td>Daily 14:00 UTC cron + manual <code>workflow_dispatch</code> for the price check.</td>
     </tr>
   </tbody>
 </table>
 
-<h3>Drift-check exit codes</h3>
+<h3>Price-check exit codes</h3>
 <table>
   <thead>
     <tr>
@@ -506,7 +506,7 @@
   <code>backend/migrations/008_billing_metering.sql</code>,
   <code>backend/src/billing/model-pricing.ts</code>,
   <code>backend/src/repo/{sessions,sessions-errors,credits,worlds,uuidv5}.ts</code>,
-  <code>backend/scripts/check-pricing-drift.ts</code>,
+  <code>backend/scripts/check-pricing.ts</code>,
   <code>backend/src/llm/prompts/billing/pricing-extract.txt</code>,
-  <code>.github/workflows/llm-pricing-drift.yml</code>.
+  <code>.github/workflows/llm-price-check.yml</code>.
 </p>
