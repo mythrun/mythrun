@@ -1,0 +1,21 @@
+You are extracting the API pricing table from an Anthropic documentation page. The page text follows below; produce a structured JSON response matching the schema you've been given.
+
+Rules for extraction:
+
+1. Extract one entry per Claude model that has pricing rates listed on the page (e.g., "Claude Opus 4.7", "Claude Sonnet 4.6", "Claude Haiku 4.5"). Use the exact display name as it appears on the page (the human-readable name, not the SDK slug).
+
+2. Each entry must have four numeric rates, all in USD per million tokens (USD/MTok):
+   - inputPerMTok: the base prompt token rate.
+   - outputPerMTok: the generated token rate.
+   - cacheWritePerMTok: the 5-minute cache write rate. The page may also list a "1-hour cache write" rate (typically 2× input) — IGNORE that one. Use the 5-minute rate (typically 1.25× input).
+   - cacheReadPerMTok: the cache read rate (the same value applies to both 5-minute and 1-hour cache reads, typically 0.10× input).
+
+3. Output rates as plain numbers (e.g., 3.00, 0.30). No currency symbols, no per-million-token suffix, no commas.
+
+4. If the page lists multiple cache write rates, the 5-minute rate is the smaller of the two (1.25× input < 2× input).
+
+5. Skip any model that doesn't have a complete set of four rates listed. Skip Claude legacy models (3.x) unless they're prominently in the current pricing table.
+
+6. Do not invent rates. If a value isn't on the page, the model entry should not be included in the response.
+
+Return only the structured JSON your schema requires.
