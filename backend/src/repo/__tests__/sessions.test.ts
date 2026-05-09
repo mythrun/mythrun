@@ -133,4 +133,84 @@ describe('sessions repo (integration)', () => {
     await sessions.create({ campaignId, sessionNumber: 1 })
     await expect(sessions.create({ campaignId, sessionNumber: 2 })).rejects.toThrow()
   })
+
+  describe('recordUsage / budgetSummary (MYT-43)', () => {
+    async function makeSession(): Promise<{ sessionId: string }> {
+      const sessions = createSessionsRepo(pool)
+      const { campaignId } = await makeCampaign(pool)
+      const s = await sessions.create({ campaignId, sessionNumber: 1 })
+      return { sessionId: s.id }
+    }
+
+    it('first call inserts row with deltas + computed cost (sonnet)', async () => {
+      const sessions = createSessionsRepo(pool)
+      const { sessionId } = await makeSession()
+      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-4-6', {
+        inputTokens: 1000,
+        outputTokens: 500,
+      })
+      expect(result.inputTokens).toBe(1000)
+      expect(result.outputTokens).toBe(500)
+      // sonnet: 1000 * 3 + 500 * 15 = 10500 / 1M = 0.0105
+      expect(result.estimatedCostUsd).toBeCloseTo(0.0105, 6)
+    })
+
+    it('second call increments existing row (mixed model)', async () => {
+      const sessions = createSessionsRepo(pool)
+      const { sessionId } = await makeSession()
+      await sessions.recordUsage(sessionId, 'claude-haiku-4-5-20251001', {
+        inputTokens: 1000,
+        outputTokens: 100,
+      })
+      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-4-6', {
+        inputTokens: 500,
+        outputTokens: 50,
+      })
+      expect(result.inputTokens).toBe(1500)
+      expect(result.outputTokens).toBe(150)
+    })
+
+    it('cacheWriteTokens + cacheReadTokens go to separate columns', async () => {
+      const sessions = createSessionsRepo(pool)
+      const { sessionId } = await makeSession()
+      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-4-6', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheWriteTokens: 200,
+        cacheReadTokens: 1000,
+      })
+      expect(result.inputTokens).toBe(100)
+      expect(result.cacheWriteTokens).toBe(200)
+      expect(result.cacheReadTokens).toBe(1000)
+    })
+
+    it('budgetSummary returns null for sessions with no usage', async () => {
+      const sessions = createSessionsRepo(pool)
+      const { sessionId } = await makeSession()
+      expect(await sessions.budgetSummary(sessionId)).toBeNull()
+    })
+
+    it('budgetSummary returns the row after recordUsage', async () => {
+      const sessions = createSessionsRepo(pool)
+      const { sessionId } = await makeSession()
+      const recorded = await sessions.recordUsage(sessionId, 'claude-haiku-4-5-20251001', {
+        inputTokens: 1000,
+        outputTokens: 100,
+      })
+      const summary = await sessions.budgetSummary(sessionId)
+      expect(summary).toEqual(recorded)
+    })
+
+    it('recordUsage on non-existent session throws SessionNotFoundError', async () => {
+      const sessions = createSessionsRepo(pool)
+      const { SessionNotFoundError } = await import('../sessions-errors.js')
+      const fakeId = '019700e0-0000-7000-8000-00000000ffff'
+      await expect(
+        sessions.recordUsage(fakeId, 'claude-haiku-4-5-20251001', {
+          inputTokens: 100,
+          outputTokens: 50,
+        }),
+      ).rejects.toBeInstanceOf(SessionNotFoundError)
+    })
+  })
 })

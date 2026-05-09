@@ -1,7 +1,19 @@
 import { type Pool } from 'pg'
+import { computeCostUsd, type Model, type UsageDeltas } from '../billing/model-pricing.js'
 import { uuidv7 } from './uuidv7.js'
-import { type CreateSessionInput, type Session, type SessionUpdate } from './types.js'
-import { toSession, type SessionDbRow } from './mappers.js'
+import {
+  type CreateSessionInput,
+  type Session,
+  type SessionUpdate,
+  type SessionUsage,
+} from './types.js'
+import {
+  toSession,
+  toSessionUsage,
+  type SessionDbRow,
+  type SessionUsageDbRow,
+} from './mappers.js'
+import { SessionNotFoundError } from './sessions-errors.js'
 
 export function createSessionsRepo(pool: Pool) {
   return {
@@ -42,6 +54,76 @@ export function createSessionsRepo(pool: Pool) {
         [campaignId],
       )
       return result.rows.map(toSession)
+    },
+
+    /**
+     * Record token + cost deltas for a single LLM call against a session.
+     * UPSERT keyed on session_id; first call inserts the row, subsequent
+     * calls increment the running totals. Returns the post-update row so
+     * the Session Runtime can compute wrap-up signals inline (no extra
+     * round-trip to budgetSummary).
+     *
+     * The model parameter is consumed at write-time to weight the cost
+     * contribution per the 4-rate MODEL_PRICING table; not persisted.
+     *
+     * Throws SessionNotFoundError if the sessionId doesn't resolve to a
+     * sessions row (the SELECT-FROM clause matches zero rows). The hot
+     * path should never see this; firing means an upstream bug.
+     *
+     * Spec: docs/superpowers/specs/2026-05-08-myt-43-billing-metering-design.md §8
+     */
+    recordUsage: async (
+      sessionId: string,
+      model: Model,
+      deltas: UsageDeltas,
+    ): Promise<SessionUsage> => {
+      const cost = computeCostUsd(model, deltas)
+      const result = await pool.query<SessionUsageDbRow>(
+        `INSERT INTO session_usage
+           (id, session_id, campaign_id, user_id,
+            input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
+            estimated_cost_usd)
+         SELECT $1, s.id, s.campaign_id, c.created_by, $3, $4, $5, $6, $7
+           FROM sessions s
+           JOIN campaigns c ON c.id = s.campaign_id
+          WHERE s.id = $2
+         ON CONFLICT (session_id) DO UPDATE
+           SET input_tokens       = session_usage.input_tokens       + EXCLUDED.input_tokens,
+               output_tokens      = session_usage.output_tokens      + EXCLUDED.output_tokens,
+               cache_write_tokens = session_usage.cache_write_tokens + EXCLUDED.cache_write_tokens,
+               cache_read_tokens  = session_usage.cache_read_tokens  + EXCLUDED.cache_read_tokens,
+               estimated_cost_usd = session_usage.estimated_cost_usd + EXCLUDED.estimated_cost_usd
+         RETURNING *`,
+        [
+          uuidv7(),
+          sessionId,
+          deltas.inputTokens,
+          deltas.outputTokens,
+          deltas.cacheWriteTokens ?? 0,
+          deltas.cacheReadTokens ?? 0,
+          cost,
+        ],
+      )
+      const row = result.rows[0]
+      if (!row) throw new SessionNotFoundError(sessionId)
+      return toSessionUsage(row)
+    },
+
+    /**
+     * Read the durable session_usage row. Used for receipts, dashboards,
+     * end-of-session reports, and crash-recovery state. Returns null if
+     * the session has no usage yet (created but no LLM calls).
+     *
+     * NOT called by the Session Runtime hot path — that uses recordUsage's
+     * return value to compute wrap-up signals inline. See design §1.
+     */
+    budgetSummary: async (sessionId: string): Promise<SessionUsage | null> => {
+      const result = await pool.query<SessionUsageDbRow>(
+        `SELECT * FROM session_usage WHERE session_id = $1`,
+        [sessionId],
+      )
+      const row = result.rows[0]
+      return row ? toSessionUsage(row) : null
     },
 
     update: async (id: string, patch: SessionUpdate): Promise<Session> => {
