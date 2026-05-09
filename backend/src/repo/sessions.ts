@@ -7,12 +7,7 @@ import {
   type SessionUpdate,
   type SessionUsage,
 } from './types.js'
-import {
-  toSession,
-  toSessionUsage,
-  type SessionDbRow,
-  type SessionUsageDbRow,
-} from './mappers.js'
+import { toSession, toSessionUsage, type SessionDbRow, type SessionUsageDbRow } from './mappers.js'
 import { SessionNotFoundError } from './sessions-errors.js'
 
 export function createSessionsRepo(pool: Pool) {

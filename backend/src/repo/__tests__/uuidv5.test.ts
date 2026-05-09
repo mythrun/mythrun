@@ -6,9 +6,7 @@ const NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 describe('uuidv5', () => {
   it('returns a valid UUID with version 5 and variant 10 bits', () => {
     const result = uuidv5('test', NAMESPACE)
-    expect(result).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    )
+    expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
   it('is deterministic — same name + namespace produces same UUID', () => {

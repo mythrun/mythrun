@@ -123,7 +123,9 @@ async function main(): Promise<void> {
   for (const slug of Object.keys(MODEL_PRICING)) {
     const present = result.output.models.some((m) => MODEL_DISPLAY_NAMES[m.displayName] === slug)
     if (!present) {
-      drifts.push(`${slug}: not present in docs (model may have been retired or display-name renamed)`)
+      drifts.push(
+        `${slug}: not present in docs (model may have been retired or display-name renamed)`,
+      )
     }
   }
 

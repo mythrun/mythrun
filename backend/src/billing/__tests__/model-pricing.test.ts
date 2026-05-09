@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  MODEL_DISPLAY_NAMES,
-  MODEL_PRICING,
-  computeCostUsd,
-} from '../model-pricing.js'
+import { MODEL_DISPLAY_NAMES, MODEL_PRICING, computeCostUsd } from '../model-pricing.js'
 
 describe('MODEL_PRICING', () => {
   it('contains the three Mythrun-known model slugs', () => {

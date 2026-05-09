@@ -21,8 +21,10 @@ export function uuidv5(name: string, namespace: string): string {
     .update(Buffer.concat([namespaceBytes, nameBytes]))
     .digest()
   const bytes = Buffer.from(hash.subarray(0, 16))
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50 // version 5
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80 // variant 10
+  // Buffer.readUInt8 / writeUInt8 carry their own bounds checks, so we
+  // don't need non-null assertions on `bytes[6]` / `bytes[8]`.
+  bytes.writeUInt8((bytes.readUInt8(6) & 0x0f) | 0x50, 6) // version 5
+  bytes.writeUInt8((bytes.readUInt8(8) & 0x3f) | 0x80, 8) // variant 10
   return bytesToUuid(bytes)
 }
 

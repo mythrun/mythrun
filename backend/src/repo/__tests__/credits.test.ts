@@ -763,7 +763,9 @@ describe('credits repo (integration)', () => {
         [u.id],
       )
       expect(burnRows.rows).toHaveLength(1)
-      expect(burnRows.rows[0]!.amount).toBe(-1)
+      const firstBurn = burnRows.rows[0]
+      if (!firstBurn) throw new Error('expected burn row')
+      expect(firstBurn.amount).toBe(-1)
     })
 
     it('granting "gift" when trial credit exists → NO burn', async () => {

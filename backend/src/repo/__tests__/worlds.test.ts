@@ -133,10 +133,10 @@ describe('worlds repo (integration)', () => {
     it('returns the seeded demo world', async () => {
       const worlds = createWorldsRepo(pool)
       const result = await worlds.getDemo()
-      expect(result).not.toBeNull()
-      expect(result!.isDemo).toBe(true)
-      expect(result!.id).toBe('019700e0-0000-7000-8000-000000000002')
-      expect(result!.name).toBe('Demo Adventure')
+      if (result === null) throw new Error('expected seeded demo world')
+      expect(result.isDemo).toBe(true)
+      expect(result.id).toBe('019700e0-0000-7000-8000-000000000002')
+      expect(result.name).toBe('Demo Adventure')
     })
 
     it('returns null when no demo world exists', async () => {
@@ -158,7 +158,8 @@ describe('worlds repo (integration)', () => {
     it('toWorld correctly maps is_demo', async () => {
       const worlds = createWorldsRepo(pool)
       const result = await worlds.getDemo()
-      expect(result!.isDemo).toBe(true)
+      if (result === null) throw new Error('expected seeded demo world')
+      expect(result.isDemo).toBe(true)
     })
   })
 })
