@@ -70,11 +70,29 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // The docs page is a Next.js app and ships ~800 KB / ~215 K tokens of
+  // bundle, navigation, and SSR-state noise around the actual pricing
+  // data, which lives in React Server Component flight chunks (encoded
+  // as `<script>self.__next_f.push(...)</script>`). Filter to scripts
+  // that mention the 'MTok' rate marker — only ~12 of ~225 scripts —
+  // which keeps every visible rate while shrinking the payload by ~95%.
+  // Haiku reads RSC flight payloads fine; the structure is stringified
+  // JSX with the rates baked in next to the model display names.
+  const scripts = [...pageText.matchAll(/<script[\s\S]*?<\/script>/g)].map((m) => m[0])
+  const pricingScripts = scripts.filter((s) => s.includes(PAGE_MARKER))
+  if (pricingScripts.length === 0) {
+    console.error(
+      `price-check: no <script> elements contain '${PAGE_MARKER}'; page structure may have changed`,
+    )
+    process.exit(1)
+  }
+  const extractedContent = pricingScripts.join('\n')
+
   const result = await generateText({
     model: HAIKU,
     output: Output.object({ schema: PricingSchema }),
     system: loadPrompt('billing', 'pricing-extract'),
-    prompt: pageText,
+    prompt: extractedContent,
   })
 
   // Sanity bounds, model-aware. Catches both absolute hallucinations
