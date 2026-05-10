@@ -18,6 +18,7 @@ config({ path: resolve(here, '../../../.env.development') })
 process.env.AUTH_MODE ??= 'bypass'
 process.env.NODE_ENV ??= 'development'
 process.env.MYTHRUN_ENV ??= 'development'
+process.env.REGION_PREFIX ??= 'use1'
 process.env.FRONTEND_BASE_URL ??= 'http://localhost:5173'
 process.env.STRIPE_SECRET_KEY ??= 'rk_test_baseline_for_setup_env'
 process.env.STRIPE_WEBHOOK_SECRET ??= 'PLACEHOLDER'
