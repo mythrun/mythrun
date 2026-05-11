@@ -47,6 +47,20 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # MYT-45: Redis service for tests that exercise the Redis-backed
+      # @fastify/rate-limit store (cross-worker + per-sub tests). Other
+      # tests stub Redis via {ping, quit} and the app.ts plugin
+      # registration falls back to the in-memory store when the stub
+      # lacks `defineCommand`.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -67,6 +81,7 @@ jobs:
       - run: pnpm --filter @mythrun/backend test
         env:
           DATABASE_URL: postgresql://mythrun:mythrun_dev@127.0.0.1:5432/mythrun
+          REDIS_REALTIME_URL: redis://127.0.0.1:6379
 
       - name: Pre-flight — verify required vars are set
         run: |
