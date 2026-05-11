@@ -8,7 +8,7 @@
 <!-- source: backend/src/llm/profanity.ts -->
 <!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
 <!-- source: backend/src/app.ts -->
-<!-- source-hash: sha256:9f047283faeafc4685a5eded3c11945e72d398300c1e5a00b312b545f20cb4ab -->
+<!-- source-hash: sha256:b46abcce7fdaf4b0f544e73bbbac7d7d622060671ef1c703dd683087bc7db513 -->
 <!-- last-ticket: MYT-39 -->
 
 <h1>Onboarding &amp; Invites</h1>
@@ -419,13 +419,17 @@
 <p>
   Rate limits live as per-route <code>config.rateLimit</code> entries against
   <code>@fastify/rate-limit</code> (registered with <code>global: false</code>, so global is off and
-  routes opt in). The current shape:
+  routes opt in). The store is Redis-backed (the <code>redisRealtime</code> client) so per-route
+  caps apply <em>fleet-wide</em> across ECS tasks, not per-task — at <code>N</code> running tasks a
+  10/min/IP cap would otherwise become <code>10·N</code>/min/IP effective. The current shape:
 </p>
 
 <ul>
   <li>
-    <code>POST /api/users/register</code> — <strong>5/min</strong>. Registration is once-per-user; a
-    higher rate is a typo storm or a bot.
+    <code>POST /api/users/register</code> — <strong>5/min</strong>, keyed on
+    <code>request.user.sub</code> (not IP). Registration is once-per-user; a higher rate is a typo
+    storm or a bot, and one user trying many candidate usernames from one IP is the threat the
+    per-sub key bounds.
   </li>
   <li>
     <code>GET /api/users/check-username</code> — <strong>10/min</strong>. As-you-type checks but not
