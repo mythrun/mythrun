@@ -247,4 +247,32 @@ describe('repo.characters', () => {
       expect(list).toEqual([])
     })
   })
+
+  describe('findUserCharacterForCampaign', () => {
+    it("returns the user's character when one is joined to the campaign", async () => {
+      const characters = createCharactersRepo(pool)
+      const client = await pool.connect()
+      let charId: string
+      try {
+        await client.query('BEGIN')
+        const created = await characters.create(client, { userId, ...baseCharacterInput })
+        await client.query('COMMIT')
+        charId = created.id
+      } finally {
+        client.release()
+      }
+
+      await characters.addToCampaign(campaignId, charId, userId)
+
+      const found = await characters.findUserCharacterForCampaign(userId, campaignId)
+      expect(found?.id).toBe(charId)
+      expect(found?.userId).toBe(userId)
+    })
+
+    it('returns null when the user has no character in the campaign', async () => {
+      const characters = createCharactersRepo(pool)
+      const found = await characters.findUserCharacterForCampaign(userId, campaignId)
+      expect(found).toBeNull()
+    })
+  })
 })

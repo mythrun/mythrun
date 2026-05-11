@@ -85,5 +85,21 @@ export function createCharactersRepo(pool: Pool) {
       )
       return result.rows.map(toCharacter)
     },
+
+    findUserCharacterForCampaign: async (
+      userId: string,
+      campaignId: string,
+    ): Promise<Character | null> => {
+      const result = await pool.query<CharacterDbRow>(
+        `SELECT c.*
+         FROM characters c
+         JOIN campaign_characters cc ON cc.character_id = c.id
+         WHERE cc.campaign_id = $1 AND cc.user_id = $2
+         LIMIT 1`,
+        [campaignId, userId],
+      )
+      const row = result.rows[0]
+      return row ? toCharacter(row) : null
+    },
   }
 }
