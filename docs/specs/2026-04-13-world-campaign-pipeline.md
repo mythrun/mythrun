@@ -47,7 +47,7 @@ The pipeline system generates worlds and sets up campaigns. It is the most LLM-i
 - **Multi-player character creation IS day-one.** 2–5 players in parallel, BullMQ-fan-out + barrier + multi-PC post-stages.
 - **SSE streaming with entity-level events** for live graph UI is day-one. See §8.
 - **BullMQ worker** is provisioned and wired in *this* milestone (the existing `dist/worker.js` is a no-op shell at `desired_count=0`; flipping to 1 with real wiring is part of the work). See §6.
-- **Dev tool front-end** is day-one for manual end-to-end testing — explicitly a throwaway development tool, NOT the real player frontend. See §12.
+- **Dev tool front-end** ships *first* in this milestone (Phase 0) and grows alongside every pipeline feature. Every Linear issue that adds backend functionality MUST extend the dev tool to exercise it. A CI ship gate (`pnpm dev-tool:check`) blocks PRs that add a route / SSE event / BullMQ job without corresponding dev-tool coverage. See §12 — including §12.5 for the gate mechanism. Explicitly NOT the real player frontend.
 - **Snapshot capture / `reset-to-session` moves out of this milestone** to Session Runtime, where the consumer (live play) lives.
 
 ### What Changed From the Prototype
@@ -767,17 +767,44 @@ No other schema changes are needed by this milestone. Worlds, entities, prose_ke
 
 ## 12. Dev Tool Front-End
 
-The dev tool is a throwaway development utility built in this milestone so the engineer (and only the engineer) can exercise the prep pipeline end-to-end before the real player frontend exists. It is **explicitly NOT a prototype of the real frontend.** No components built here are intended to survive into the production UI.
+The dev tool is a throwaway development utility built in this milestone so the engineer (and only the engineer) can exercise the prep pipeline end-to-end before the real player frontend exists. It is **explicitly NOT a prototype of the real frontend** — no components built here are intended to survive into the production UI.
 
-### 12.1 Scope of the Dev Tool
+### 12.1 Sequencing — Phase 0 First, Then Grow With the Backend
 
-- Trigger world creation against either the local dev API or the deployed staging API.
+The dev tool ships in two phases:
+
+**Phase 0 — Skeleton (first Linear issue of this milestone).** Stub the website *before* any pipeline backend lands. The skeleton has:
+
+- Vite project at `backend/dev-tool/` building a single SPA.
+- Environment switcher in the page header (dropdown: `local | staging`, selecting the API base URL).
+- Dev-sub identity switcher (dropdown of pseudo users — `dev-user-1`, `dev-user-2`, … — sending the corresponding `x-mythrun-dev-sub` header on every request).
+- A smoke-test landing page that calls `GET /health/ready` against the selected environment and shows the response. Confirms environment + auth wiring end-to-end.
+- Deployed to staging at a stable URL.
+- `pnpm dev-tool:check` ship gate (see §12.5) wired into CI, running green at Phase 0 with an empty coverage manifest.
+
+Phase 0 produces a deployed, navigable site that does nothing useful yet — but proves the plumbing works.
+
+**Phase 1+ — Grow With the Backend.** Every subsequent Linear issue in this milestone (e.g., "world creation route + worker stage 1") MUST extend the dev tool to exercise the new functionality in the same PR. The ship gate enforces this. Concretely:
+
+| Backend feature | Dev tool extension in the same PR |
+|---|---|
+| New API route | A page or section that invokes it, displays response, handles errors |
+| New SSE event type | The event handler renders the event (entity-added → adds a graph node, etc.) |
+| New BullMQ job type | If user-visible, surface it; otherwise add to coverage manifest as "exercised transitively" |
+| Schema migration | If the resulting data is surfaced anywhere, a view; otherwise note in coverage |
+
+### 12.2 Scope of the Dev Tool (full surface, built incrementally)
+
+When the milestone is complete, the dev tool can:
+
+- Trigger world creation against either local-dev or staging API.
 - Watch a world generate in real time — phase + per-stage progress + the live entity graph populating as `entity-added` events arrive over SSE.
-- Trigger campaign creation on that world, configure 2–5 players (impersonating different dev-sub identities), submit character concepts, kick off parallel character creation, watch each player's character integration stream.
+- Trigger campaign creation on that world, configure 2–5 players (impersonating different dev-sub identities via the switcher), submit character concepts, kick off parallel character creation, watch each player's character integration stream.
 - Inspect the final world: list entities, prose kernels, facts, relationships, random tables.
 - Trigger resume of a failed pipeline.
+- Inspect the credit ledger for any dev user (so credit-debit behavior is observable).
 
-### 12.2 Architecture
+### 12.3 Architecture
 
 A single Vite-built SPA at `backend/dev-tool/` (sibling of `backend/src/`). Visual treatment styled after the wiki (`docs/wiki/`) — terse, single-column, monospace headings, minimal chrome. Tech stack details are not load-bearing; pick whatever works. Use bare SVG circles + lines for the graph (force-directed if convenient; static positions are fine). Do **not** reuse any code from the dev tool in the eventual production frontend.
 
@@ -785,18 +812,84 @@ The tool runs in two modes:
 - **Local dev** — `pnpm dev:dev-tool` boots Vite on a local port; calls `http://localhost:3000/api/*`.
 - **Staging** — same SPA, deployed to staging at a distinct URL (exact hosting / path TBD during implementation — S3+CloudFront under a dev-only subdomain, or served from the API ALB under `/dev-tool/`, whichever is least friction). Production deploys do **not** include the dev tool.
 
-The tool has an environment switcher at the top of the page (a dropdown selecting which API base URL to call). Both modes call the live API and live SSE endpoints.
+The environment switcher in the header selects which API base URL the page targets. Both modes call the live API and live SSE endpoints — the dev tool is a thin client over real backend.
 
-### 12.3 Auth in the Dev Tool
+### 12.4 Auth in the Dev Tool
 
-The dev tool reuses the existing bypass-plugin auth path (`x-mythrun-dev-sub` header), already wired for development. The tool stores the active "dev user" identity in `localStorage` and lets the user switch between fake identities (`dev-user-1`, `dev-user-2`, …) — this is how multi-player flows are exercised by one human. The plugin's 6-layer defense ensures the bypass header is rejected in production environments; the dev tool's production build path is excluded from production deploys regardless.
+The dev tool reuses the existing bypass-plugin auth path (`x-mythrun-dev-sub` header), already wired for development. The tool stores the active "dev user" identity in `localStorage` and lets the user switch between fake identities — this is how multi-player flows are exercised by one human. The plugin's 6-layer defense ensures the bypass header is rejected in production environments; the dev tool's production build path is excluded from production deploys regardless.
 
-### 12.4 Hard Boundaries
+### 12.5 Ship Gate (`pnpm dev-tool:check`)
+
+The ship gate prevents pipeline features from landing without dev-tool coverage. Modeled on `pnpm wiki:check` — runs in the same CI lint/check job, runs locally on every change, takes < 1 second.
+
+#### 12.5.1 Canonical contract files
+
+The backend declares its public pipeline surface in three contract files so the gate has unambiguous sources of truth (no spec-parsing, no route-handler scraping):
+
+- `backend/src/contract/pipeline-routes.ts` — `export const PIPELINE_ROUTES = ['POST /api/worlds', 'GET /api/worlds/:id', ...] as const`. Every pipeline route handler imports its entry from here (route registration uses the literal from the contract; TS infers a tight type).
+- `backend/src/contract/pipeline-events.ts` — `export const PIPELINE_SSE_EVENTS = ['phase', 'stage-started', 'entity-added', ...] as const`. The `PipelineEvent` discriminated union from §8 derives its `type` discriminator from this constant.
+- `backend/src/contract/pipeline-jobs.ts` — `export const PIPELINE_BULLMQ_JOBS = ['world-gen', 'character-creation', 'post-creation'] as const`.
+
+These three files are the load-bearing surface declarations. Adding a route / event / job means editing one of these files; the type system then forces the change to propagate.
+
+#### 12.5.2 Coverage manifest
+
+`backend/dev-tool/coverage.json` declares what the dev tool currently exercises:
+
+```json
+{
+  "routes": ["GET /health/ready"],
+  "events": [],
+  "jobs": [],
+  "exempt": {
+    "routes": {},
+    "events": {},
+    "jobs": {}
+  }
+}
+```
+
+At Phase 0 the manifest is essentially empty (just `/health/ready`). Each subsequent PR that adds backend functionality also adds the new entries to `coverage.json` AND ships the UI that exercises them.
+
+The `exempt` sub-objects are escape hatches keyed by entry → reason. Example:
+```json
+"exempt": {
+  "jobs": {
+    "post-creation": "transitively exercised — barrier is triggered by per-player completion, not a user action"
+  }
+}
+```
+
+The exempt list should be sparse; the spec discourages it. Every entry requires a reason and is reviewed in PR.
+
+#### 12.5.3 The check script
+
+`pnpm dev-tool:check` runs `backend/dev-tool/check.ts` which:
+
+1. Imports the three contract constants from `backend/src/contract/`.
+2. Reads `backend/dev-tool/coverage.json`.
+3. For each contract: every entry must be in either `coverage.<kind>` OR `coverage.exempt.<kind>`. If neither: print missing entry + exit 1.
+4. Warns (but does not fail) on entries in `coverage` that no longer exist in any contract (likely a removed route / event / job — clean up).
+5. Validates each `exempt` entry has a non-empty reason string.
+
+#### 12.5.4 CI integration
+
+The existing `lint` job in `.github/workflows/deploy.yml` adds one step:
+
+```yaml
+- name: dev-tool:check
+  run: pnpm dev-tool:check
+```
+
+Runs alongside `wiki:check`, `typecheck`, `lint`, `test`. Failing the check blocks the deploy job (same pattern as wiki freshness).
+
+### 12.6 Hard Boundaries
 
 - The dev tool ships to staging; it does **not** ship to production.
 - It uses the same routes as the real frontend will — no special "dev-tool" routes added to the API.
 - It does not maintain its own state model; it reads from `GET /status` on load and SSE thereafter.
 - Code is not factored for reuse. When the real frontend lands, the dev tool stays as an internal debugging surface; the production app is a clean build.
+- The ship gate is not optional or skippable. Adding `--no-verify` to commits with a failing `dev-tool:check` is a process violation, not a workaround.
 
 ---
 
