@@ -1,0 +1,46 @@
+import { type Pool } from 'pg'
+import { uuidv7 } from './uuidv7.js'
+import { toCharacter } from './mappers.js'
+import type { CharacterDbRow } from './mappers.js'
+import type { ClientLike } from './_types.js'
+import type { Character, CreateCharacterInput } from './types.js'
+
+export function createCharactersRepo(pool: Pool) {
+  void pool // unused until later tasks add pool-using methods
+  return {
+    create: async (tx: ClientLike, input: CreateCharacterInput): Promise<Character> => {
+      const id = uuidv7()
+      const result = await tx.query<CharacterDbRow>(
+        `INSERT INTO characters (
+           id, user_id, name, level, class, species, background,
+           str, dex, con, int, wis, cha,
+           hit_points, max_hit_points, armor_class, proficiency_bonus
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+         RETURNING *`,
+        [
+          id,
+          input.userId,
+          input.name,
+          input.level,
+          input.class,
+          input.species,
+          input.background,
+          input.str,
+          input.dex,
+          input.con,
+          input.int,
+          input.wis,
+          input.cha,
+          input.hitPoints,
+          input.maxHitPoints,
+          input.armorClass,
+          input.proficiencyBonus,
+        ],
+      )
+      const row = result.rows[0]
+      if (!row) throw new Error('characters.create: INSERT returned no row')
+      return toCharacter(row)
+    },
+  }
+}
