@@ -89,6 +89,11 @@ variable "rds_port" {
   type        = number
 }
 
+variable "rds_security_group_id" {
+  description = "Security group ID for the RDS instance — migrate task adds ingress + egress rules referencing it."
+  type        = string
+}
+
 variable "redis_host" {
   description = "ElastiCache primary endpoint hostname. Injected as REDIS_HOST env var."
   type        = string

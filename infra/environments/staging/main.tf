@@ -90,10 +90,11 @@ module "serving" {
   wildcard_cert_arn = data.terraform_remote_state.shared.outputs.wildcard_cert_arn
 
   # Data-layer refs (from shared workspace's data module)
-  rds_host   = data.terraform_remote_state.shared.outputs.rds_endpoint
-  rds_port   = data.terraform_remote_state.shared.outputs.rds_port
-  redis_host = data.terraform_remote_state.shared.outputs.redis_endpoint
-  redis_port = data.terraform_remote_state.shared.outputs.redis_port
+  rds_host              = data.terraform_remote_state.shared.outputs.rds_endpoint
+  rds_port              = data.terraform_remote_state.shared.outputs.rds_port
+  rds_security_group_id = data.terraform_remote_state.shared.outputs.rds_sg_id
+  redis_host            = data.terraform_remote_state.shared.outputs.redis_endpoint
+  redis_port            = data.terraform_remote_state.shared.outputs.redis_port
 
   # Secret ARNs
   shared_redis_auth_secret_arn = data.terraform_remote_state.shared.outputs.redis_auth_secret_arn
