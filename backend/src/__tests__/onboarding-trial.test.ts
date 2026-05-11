@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
-import type { Redis } from 'ioredis'
+import IoredisMock from 'ioredis-mock'
 import type { InjectOptions, LightMyRequestResponse } from 'fastify'
 
 vi.mock('../llm/profanity.js', () => ({
@@ -82,14 +82,8 @@ describe('onboarding trial-credit (integration)', () => {
 
     const deps: AppDeps = {
       pg: pool,
-      redisRealtime: {
-        ping: () => Promise.resolve('PONG'),
-        quit: () => Promise.resolve('OK'),
-      } as unknown as Redis,
-      redisBatch: {
-        ping: () => Promise.resolve('PONG'),
-        quit: () => Promise.resolve('OK'),
-      } as unknown as Redis,
+      redisRealtime: new IoredisMock(),
+      redisBatch: new IoredisMock(),
       redisKeyPrefix: 'test:use1:',
       repo: createRepo(pool),
     }

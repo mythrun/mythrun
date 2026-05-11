@@ -28,7 +28,7 @@ import Fastify from 'fastify'
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import type { Pool } from 'pg'
-import type { Redis } from 'ioredis'
+import IoredisMock from 'ioredis-mock'
 import { createRepo } from '../repo/index.js'
 import { _resetSkuCacheForTests } from '../billing/sku-cache.js'
 import { registerPublicRouteAllowlistHook } from '../auth/public-route-allowlist.js'
@@ -38,8 +38,8 @@ const makeStubDeps = (): AppDeps => {
   const mockPool = {} as Pool
   return {
     pg: mockPool,
-    redisRealtime: {} as Redis,
-    redisBatch: {} as Redis,
+    redisRealtime: new IoredisMock(),
+    redisBatch: new IoredisMock(),
     redisKeyPrefix: 'test:use1:',
     repo: createRepo(mockPool),
   }

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
-import type { Redis } from 'ioredis'
+import IoredisMock from 'ioredis-mock'
 import type { InjectOptions, LightMyRequestResponse } from 'fastify'
 import { createPgPool } from '../db/postgres.js'
 import { runMigrations } from '../db/migrate.js'
@@ -139,14 +139,8 @@ describe('invite routes (integration)', () => {
     repo = createRepo(pool)
     const deps: AppDeps = {
       pg: pool,
-      redisRealtime: {
-        ping: () => Promise.resolve('PONG'),
-        quit: () => Promise.resolve('OK'),
-      } as unknown as Redis,
-      redisBatch: {
-        ping: () => Promise.resolve('PONG'),
-        quit: () => Promise.resolve('OK'),
-      } as unknown as Redis,
+      redisRealtime: new IoredisMock(),
+      redisBatch: new IoredisMock(),
       redisKeyPrefix: 'test:use1:',
       repo,
     }

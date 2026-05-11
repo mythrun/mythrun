@@ -3,7 +3,24 @@ import { createShutdown, buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
+import IoredisMock from 'ioredis-mock'
+import { createRepo } from '../repo/index.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+
+// Minimal AppDeps for buildApp registration. Real ioredis-mock instances
+// are required because @fastify/rate-limit calls redis.defineCommand at
+// register time. createShutdown's own input is mocked separately
+// (MockClients below) so we can assert shutdown ordering.
+function makeBuildAppDeps(): AppDeps {
+  const mockPool = {} as Pool
+  return {
+    pg: mockPool,
+    redisRealtime: new IoredisMock(),
+    redisBatch: new IoredisMock(),
+    redisKeyPrefix: 'test:use1:',
+    repo: createRepo(mockPool),
+  }
+}
 
 type ExitFn = (code?: string | number | null) => never
 
@@ -43,7 +60,7 @@ describe('createShutdown', () => {
 
   it('drains in order: app.close → pg.end → redis.quit (both), then exit(0)', async () => {
     const app = await buildApp(
-      {} as AppDeps,
+      makeBuildAppDeps(),
       { mode: 'bypass' },
       { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
@@ -89,7 +106,7 @@ describe('createShutdown', () => {
 
   it('exits with code 1 if app.close throws', async () => {
     const app = await buildApp(
-      {} as AppDeps,
+      makeBuildAppDeps(),
       { mode: 'bypass' },
       { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
@@ -109,7 +126,7 @@ describe('createShutdown', () => {
 
   it('exits with code 1 if pg.end throws (after app.close succeeded)', async () => {
     const app = await buildApp(
-      {} as AppDeps,
+      makeBuildAppDeps(),
       { mode: 'bypass' },
       { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv() },
     )
