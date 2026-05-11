@@ -8,13 +8,10 @@ import { uuidv7 } from '../repo/uuidv7.js'
 import { installSignalHandlers } from '../boot/signal-handlers.js'
 import { loadEnv } from '../config/env.js'
 import { LOCK_KEY } from './lock-key.js'
+import { isValidMigrationFilename } from './migration-filename.js'
 import { createPgPool } from './postgres.js'
 
-const FILENAME_RE = /^[0-9]{3,}_[a-z0-9_]+\.sql$/
-
-export function isValidMigrationFilename(name: string): boolean {
-  return FILENAME_RE.test(name)
-}
+export { isValidMigrationFilename }
 
 const FORBIDDEN_RE = /^(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|END)\s*;?\s*$/i
 
