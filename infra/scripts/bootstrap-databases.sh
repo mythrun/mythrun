@@ -6,7 +6,7 @@
 # RDS is not publicly accessible.
 #
 # Usage:
-#   bootstrap-databases.sh --env staging [--verify | --user-only | --secret-only | --reset-password]
+#   bootstrap-databases.sh --env staging [--verify | --user-only | --secret-only | --reset-password | --migrate-user-only | --reset-migrate-password]
 #
 # Modes:
 #   (default)         Create database + user + password secret. Idempotent.
@@ -20,6 +20,8 @@
 #                     than missing.
 #   --grant-only      DB + user + secret all exist but the user lacks CREATE on
 #                     schema public (Postgres 15+ default ACL). Idempotent.
+#   --migrate-user-only          Provision/refresh the migrate user only.
+#   --reset-migrate-password     Rotate the migrate user's password + secret value.
 #
 # Required env vars (injected via ECS task role):
 #   AWS_REGION                us-east-1
@@ -35,6 +37,7 @@ trap 'rc=$?; unset PGPASSWORD MASTER_PASS MASTER_JSON; exit $rc' EXIT
 
 ENV=""
 MODE="default"
+RESET_MIGRATE_PW=0
 
 set_mode() {
   if [[ "$MODE" != "default" ]]; then
@@ -52,6 +55,8 @@ while [[ $# -gt 0 ]]; do
     --secret-only)    set_mode "secret-only"; shift ;;
     --reset-password) set_mode "reset-password"; shift ;;
     --grant-only)     set_mode "grant-only"; shift ;;
+    --migrate-user-only)     set_mode "migrate-user-only"; shift ;;
+    --reset-migrate-password) set_mode "reset-migrate-password"; RESET_MIGRATE_PW=1; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -205,6 +210,64 @@ SQL
   echo "Rotated password for $DB_USER and updated $APP_SECRET_ID"
 }
 
+# Provision the migrate user with rds_superuser + app-user role membership.
+# The migrate user runs forward-only schema migrations. rds_superuser
+# enables CREATE EXTENSION; membership in the app-user role grants ALTER
+# rights on existing app-owned tables (rds_superuser is NOT a true
+# SUPERUSER and cannot bypass object ACLs).
+#
+# Idempotent: skips if user already exists, unless RESET_MIGRATE_PW=1.
+# The secret value is JSON {"username","password"} matching the master
+# RDS secret convention.
+provision_migrate_user() {
+  local migrate_user="mythrun_${ENV}_migrate"
+  local migrate_secret_id="mythrun/${ENV}/migrate-db-credentials"
+  local app_user="$DB_USER"
+
+  local exists
+  exists=$("${PSQL_MASTER[@]}" --tuples-only --no-align \
+    --set=u="$migrate_user" \
+    <<< "SELECT 1 FROM pg_roles WHERE rolname = :'u'" | tr -d '[:space:]')
+
+  if [[ -n "$exists" && "${RESET_MIGRATE_PW:-0}" != "1" ]]; then
+    echo "$migrate_user already exists; skip (pass --reset-migrate-password to rotate)"
+    return 0
+  fi
+
+  local pw
+  pw=$(generate_password)
+
+  # Cluster-level grants against the maintenance DB.
+  "${PSQL_MASTER[@]}" --set=u="$migrate_user" --set=pw="$pw" --set=app="$app_user" <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'u') THEN
+    CREATE USER :u WITH LOGIN PASSWORD :'pw';
+  ELSE
+    ALTER USER :u WITH PASSWORD :'pw';
+  END IF;
+END
+\$\$;
+GRANT rds_superuser TO :u;
+GRANT :app TO :u;
+SQL
+
+  # Schema-level grants must run against the TARGET DB, not the maintenance DB.
+  psql --host="$RDS_HOST" --port="$RDS_PORT" --username="$MASTER_USER" \
+    --dbname="$DB_NAME" --no-password --tuples-only --no-align \
+    --set=u="$migrate_user" <<SQL
+GRANT USAGE, CREATE ON SCHEMA public TO :u;
+SQL
+
+  # JSON-shape secret value: {"username":"...","password":"..."}. ECS
+  # task def references .password via `valueFrom = <arn>:password::`.
+  local secret_json
+  secret_json=$(jq -cn --arg u "$migrate_user" --arg p "$pw" '{username:$u, password:$p}')
+  aws secretsmanager put-secret-value \
+    --secret-id "$migrate_secret_id" --secret-string "$secret_json" --region "$AWS_REGION" >/dev/null
+  echo "Provisioned $migrate_user → $migrate_secret_id (JSON shape)"
+}
+
 # --- dispatch by mode ---
 case "$MODE" in
   verify)
@@ -219,10 +282,19 @@ case "$MODE" in
       SECRET_MISSING) rotate_password ;;
       *)              echo "ERROR: unexpected state '$state'" >&2; exit 1 ;;
     esac
+    # Always (re-)assert the migrate user. Idempotent — skips if already
+    # present unless --reset-migrate-password is set.
+    provision_migrate_user
     ;;
   user-only)    create_user_only ;;
   secret-only)  rotate_password ;;
   reset-password) rotate_password ;;
   grant-only)   grant_public_schema_create
                 echo "Granted USAGE, CREATE on schema public to $DB_USER in $DB_NAME." ;;
+  migrate-user-only)
+    provision_migrate_user
+    ;;
+  reset-migrate-password)
+    provision_migrate_user
+    ;;
 esac
