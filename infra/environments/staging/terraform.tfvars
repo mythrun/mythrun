@@ -1,2 +1,2 @@
-bootstrap_image_tag  = "bootstrap-db-3e436fbb311853b53038a247072b7d518fc59939-1"
+bootstrap_image_tag  = "bootstrap-db-73643a3368ebac559df8f8c468d4961c13707a37-1"
 cognito_idps_enabled = true
