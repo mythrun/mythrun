@@ -120,8 +120,19 @@ Work continuously through implementation batches without stopping for per-task r
 ### Subagent Dispatch Rules
 
 - **Use Opus for ALL subagents** unless the user explicitly requests otherwise
-- **Never use worktree isolation** — worktrees silently destroy uncommitted work on cleanup
+- **Never pass `isolation: "worktree"` to the Agent tool.** Auto-cleanup silently destroys uncommitted work when the agent makes no changes. Manual worktrees for parallel implementation are different and documented below.
 - **Assign non-overlapping files** to each agent. Verify before dispatching that no two agents will write to the same file.
+
+### Parallel Implementation via Worktrees
+
+When the user asks to "work in a worktree" or to parallelize across Linear issues, the bring-up flow is:
+
+1. `bd worktree create .worktrees/<name>` from the main repo. **Do NOT use `git worktree add` directly** — `bd worktree create` sets up the `.beads/redirect` so issue state is shared across worktrees. Placing the worktree under `.worktrees/` keeps it inside the already-gitignored directory (no per-worktree gitignore noise).
+2. `cd .worktrees/<name>`
+3. `../../scripts/worktree-setup.sh` — symlinks entries from `.worktreeinclude` at the repo root (primarily `backend/.env.development`) back at the main repo so the worktree is runnable. Edits to the source files in the main repo propagate to every active worktree.
+4. `pnpm install` — each worktree maintains its own `node_modules/`.
+
+After bring-up the worktree is a normal-looking checkout. Commit, push, and close Linear from inside the worktree as usual. `.worktreeinclude` at the repo root is the source of truth for what propagates; read it if you need to know what's available or what to add.
 
 ### Standing Rules
 
