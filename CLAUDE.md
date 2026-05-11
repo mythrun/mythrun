@@ -132,7 +132,20 @@ When the user asks to "work in a worktree" or to parallelize across Linear issue
 3. `../../scripts/worktree-setup.sh` — symlinks entries from `.worktreeinclude` at the repo root (primarily `backend/.env.development`) back at the main repo so the worktree is runnable. Edits to the source files in the main repo propagate to every active worktree.
 4. `pnpm install` — each worktree maintains its own `node_modules/`.
 
-After bring-up the worktree is a normal-looking checkout. Commit, push, and close Linear from inside the worktree as usual. `.worktreeinclude` at the repo root is the source of truth for what propagates; read it if you need to know what's available or what to add.
+After bring-up the worktree is a normal-looking checkout. Commit work to the worktree's branch as usual. `.worktreeinclude` at the repo root is the source of truth for what propagates.
+
+**Merging worktree work back** — once the Linear issue is fully done (code + wiki committed locally on the worktree's branch, all `*:check` green):
+
+1. From the **main repo path** (not the worktree): `git checkout main && git pull` — catch any other worktrees' pushes that landed since this worktree was created.
+2. `git merge .worktrees/<name>` (or by branch name). Fast-forward when main hasn't moved; trivial merge when non-overlapping; resolve conflicts if multiple worktrees touched the same file.
+3. Re-run verification on the merged HEAD: `pnpm typecheck && pnpm lint && pnpm test && pnpm wiki:check && pnpm dev-tool:check`. Catches non-textual conflicts (two issues both appending to the same array in `pipeline-routes.ts`, etc.) that merge clean but break behavior.
+4. `git push origin main` — this is the only push.
+5. Flip the Linear issue to Done.
+6. `bd worktree remove <name>` to clean up.
+
+**Critical: do NOT `git push` from inside the worktree.** That would push the worktree's branch to origin instead of merging to main, silently forking the "push directly to main" convention.
+
+When multiple worktrees finish near-simultaneously, merge them **serially** (one at a time from main, re-verifying between each). Optional safety net before merge: `git push -u origin <branch>` from inside the worktree as a remote backup. Cheap insurance; skip for trivial issues.
 
 ### Standing Rules
 
