@@ -4,9 +4,12 @@ import { toCharacter } from './mappers.js'
 import type { CharacterDbRow } from './mappers.js'
 import type { ClientLike } from './_types.js'
 import type { Character, CreateCharacterInput } from './types.js'
+import {
+  CharacterAlreadyInCampaignError,
+  UserAlreadyHasCharacterInCampaignError,
+} from './characters-errors.js'
 
 export function createCharactersRepo(pool: Pool) {
-  void pool // unused until later tasks add pool-using methods
   return {
     create: async (tx: ClientLike, input: CreateCharacterInput): Promise<Character> => {
       const id = uuidv7()
@@ -41,6 +44,34 @@ export function createCharactersRepo(pool: Pool) {
       const row = result.rows[0]
       if (!row) throw new Error('characters.create: INSERT returned no row')
       return toCharacter(row)
+    },
+
+    addToCampaign: async (
+      campaignId: string,
+      characterId: string,
+      userId: string,
+    ): Promise<void> => {
+      const id = uuidv7()
+      try {
+        await pool.query(
+          `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+           VALUES ($1, $2, $3, $4)`,
+          [id, campaignId, characterId, userId],
+        )
+      } catch (err) {
+        if (typeof err === 'object' && err !== null && 'code' in err && 'constraint' in err) {
+          const pgErr = err as { code?: string; constraint?: string }
+          if (pgErr.code === '23505') {
+            if (pgErr.constraint === 'campaign_characters_campaign_id_character_id_key') {
+              throw new CharacterAlreadyInCampaignError(campaignId, characterId)
+            }
+            if (pgErr.constraint === 'campaign_characters_campaign_id_user_id_key') {
+              throw new UserAlreadyHasCharacterInCampaignError(campaignId, userId)
+            }
+          }
+        }
+        throw err
+      }
     },
   }
 }

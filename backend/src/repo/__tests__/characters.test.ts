@@ -125,9 +125,77 @@ describe('repo.characters', () => {
     })
   })
 
-  // Suppress unused-import warnings — these errors are exercised by tests
-  // added in later tasks (T5: addToCampaign). Keep imports for stability.
-  void CharacterAlreadyInCampaignError
-  void UserAlreadyHasCharacterInCampaignError
-  void campaignId
+  describe('addToCampaign', () => {
+    it('inserts a join row on first call', async () => {
+      const characters = createCharactersRepo(pool)
+      const client = await pool.connect()
+      let charId: string
+      try {
+        await client.query('BEGIN')
+        const created = await characters.create(client, { userId, ...baseCharacterInput })
+        await client.query('COMMIT')
+        charId = created.id
+      } finally {
+        client.release()
+      }
+
+      await characters.addToCampaign(campaignId, charId, userId)
+
+      const rows = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+         FROM campaign_characters
+         WHERE campaign_id = $1 AND character_id = $2 AND user_id = $3`,
+        [campaignId, charId, userId],
+      )
+      expect(rows.rows[0]?.count).toBe('1')
+    })
+
+    it('throws CharacterAlreadyInCampaignError on duplicate (campaign_id, character_id)', async () => {
+      const characters = createCharactersRepo(pool)
+      const client = await pool.connect()
+      let charId: string
+      try {
+        await client.query('BEGIN')
+        const created = await characters.create(client, { userId, ...baseCharacterInput })
+        await client.query('COMMIT')
+        charId = created.id
+      } finally {
+        client.release()
+      }
+
+      await characters.addToCampaign(campaignId, charId, userId)
+
+      await expect(characters.addToCampaign(campaignId, charId, userId)).rejects.toBeInstanceOf(
+        CharacterAlreadyInCampaignError,
+      )
+    })
+
+    it('throws UserAlreadyHasCharacterInCampaignError when same user adds a different character', async () => {
+      const characters = createCharactersRepo(pool)
+      const client = await pool.connect()
+      let charA: string
+      let charB: string
+      try {
+        await client.query('BEGIN')
+        const a = await characters.create(client, { userId, ...baseCharacterInput })
+        const b = await characters.create(client, {
+          userId,
+          ...baseCharacterInput,
+          name: 'Borin Stoneshield',
+          class: 'Fighter',
+        })
+        await client.query('COMMIT')
+        charA = a.id
+        charB = b.id
+      } finally {
+        client.release()
+      }
+
+      await characters.addToCampaign(campaignId, charA, userId)
+
+      await expect(characters.addToCampaign(campaignId, charB, userId)).rejects.toBeInstanceOf(
+        UserAlreadyHasCharacterInCampaignError,
+      )
+    })
+  })
 })
