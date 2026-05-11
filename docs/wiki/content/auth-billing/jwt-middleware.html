@@ -13,7 +13,7 @@
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
-<!-- source-hash: sha256:21065afef9841c649f1fb5b80f21069cf5fb58642a41d59a3071a3e792cdaef9 -->
+<!-- source-hash: sha256:7e2b51e4ad5fc2b772a5c513485cbfcd00307ec87e74b1f9744292ac41e6abe6 -->
 <!-- last-ticket: MYT-39 -->
 
 <h1>JWT middleware</h1>
@@ -330,6 +330,29 @@
   plugin's pessimism is in fact exercised on every CI run; they are the operational-correctness
   audit trail.
 </p>
+
+<h3>Per-request sub override via <code>x-mythrun-dev-sub</code></h3>
+<p>
+  Inside the bypass-only code path, the request hook reads an
+  <code>x-mythrun-dev-sub</code> header and, if present + non-empty, uses its value as
+  <code>request.user.sub</code> instead of the default <code>bypass:dev-1</code>. The override
+  preserves <code>cognitoUsername</code>, <code>scopes</code>, and the <code>Object.freeze</code>
+  contract; only the sub field changes. Without the override, every bypass-mode request in a single
+  test run collapses to one identity, which breaks integration tests that need distinct simulated
+  users — most acutely, the per-sub rate-limit keying on
+  <a href="./onboarding.html#rate-limits">/api/users/register</a>, which would otherwise share one
+  counter across every test that calls register.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why this is safe to add to a security-sensitive plugin</strong> — the header is read
+  <em>after</em> Layers 1–3 + 5 have already gated registration, so the override only fires when the
+  plugin has proven (a) <code>NODE_ENV</code> is <code>development</code> or <code>test</code>, (b)
+  the ECS task-metadata probe failed (not on ECS), (c) no Cognito vars are populated, and (d) the
+  Terraform serving module pinned <code>AUTH_MODE</code> away from bypass in any deployed env.
+  Production traffic can never reach this hook because the plugin itself can never register in
+  production. The header widens the dev-only seam without weakening any defense layer.
+</aside>
 
 <h2>The 404 fall-through guard</h2>
 
