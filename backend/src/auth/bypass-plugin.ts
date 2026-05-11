@@ -139,7 +139,21 @@ const bypassPluginImpl: FastifyPluginAsync<BypassPluginOptions> = async (app, op
       throw new Error('auth bypass plugin: Cognito config observed at request time')
     }
 
-    request.user = BYPASS_USER
+    // Per-request sub override via the `x-mythrun-dev-sub` header. Tests
+    // that exercise per-sub-keyed flows (rate-limit per-sub keying after
+    // MYT-45, future ownership-matrix tests) need unique subs per test;
+    // without the override, every bypass request collapses to
+    // `bypass:dev-1` and per-sub counters / lookups bleed across tests.
+    // Production never sees this header because bypass is gated by
+    // Layers 2a/2b/3 — only fires in NODE_ENV=development|test off-ECS
+    // with no Cognito config.
+    const subHeader = request.headers['x-mythrun-dev-sub']
+    const overrideSub = typeof subHeader === 'string' && subHeader.length > 0 ? subHeader : null
+    if (overrideSub !== null) {
+      request.user = Object.freeze({ ...BYPASS_USER, sub: overrideSub })
+    } else {
+      request.user = BYPASS_USER
+    }
   })
 }
 

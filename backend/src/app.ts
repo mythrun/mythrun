@@ -128,12 +128,23 @@ export const buildApp = async (
   // Fails OPEN if Redis is unreachable: @fastify/rate-limit's default
   // skipOnError logs the error and allows the request through. Trade-off
   // accepted — rate-limit infra failure should not 503 the service.
+  //
+  // Test fixtures that stub redisRealtime with only {ping, quit} cannot
+  // back the plugin — @fastify/rate-limit calls redis.defineCommand to
+  // register its Lua script. Detect a real ioredis-shaped client via
+  // the presence of defineCommand; otherwise fall back to the default
+  // in-memory store. Production always passes a real client; the
+  // fallback only fires in unit tests that don't exercise rate limiting.
+  const redisHasDefineCommand =
+    typeof (deps.redisRealtime as { defineCommand?: unknown } | undefined)?.defineCommand ===
+    'function'
   await app.register(rateLimit, {
     global: false,
     max: 1000,
     timeWindow: '1 minute',
-    redis: deps.redisRealtime,
-    nameSpace: `${deps.redisKeyPrefix}rl:`,
+    ...(redisHasDefineCommand
+      ? { redis: deps.redisRealtime, nameSpace: `${deps.redisKeyPrefix}rl:` }
+      : {}),
   })
 
   // requireOnboarded gates protected routes on a real users row +

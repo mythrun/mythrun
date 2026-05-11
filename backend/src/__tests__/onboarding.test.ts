@@ -44,9 +44,18 @@ describe('onboarding routes (integration)', () => {
   // 127.0.0.1 bucket would 429 each other after a few calls.
   let testIpCounter = 0
   let currentTestIp = ''
+  let currentTestSub = ''
 
   function inject(opts: InjectOptions): Promise<LightMyRequestResponse> {
-    return app.inject({ ...opts, remoteAddress: currentTestIp })
+    // x-mythrun-dev-sub overrides the bypass plugin's fixed sub per test.
+    // MYT-45's per-sub rate-limit keying on /api/users/register would
+    // otherwise collapse every test in this file onto one counter and
+    // 429 the suite after the 5th register call.
+    return app.inject({
+      ...opts,
+      remoteAddress: currentTestIp,
+      headers: { ...(opts.headers ?? {}), 'x-mythrun-dev-sub': currentTestSub },
+    })
   }
 
   beforeAll(async () => {
@@ -97,6 +106,10 @@ describe('onboarding routes (integration)', () => {
     // Spread across /16 to avoid colliding with rate-limit's /24 bucketing
     // even if more than 256 tests ever run in this file.
     currentTestIp = `10.0.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
+    // Per-test unique sub via x-mythrun-dev-sub. MYT-45's per-sub
+    // rate-limit keying on /api/users/register otherwise collapses
+    // every test onto bypass:dev-1.
+    currentTestSub = `bypass:dev-${String(testIpCounter)}`
     await resetData(pool)
     // Default: clean. Tests that exercise the rejection path override
     // with mockResolvedValueOnce / mockResolvedValue below.
