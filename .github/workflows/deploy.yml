@@ -144,8 +144,23 @@ jobs:
           echo "image=$DIGEST_REF" >> "$GITHUB_OUTPUT"
           echo "::notice::Deployed image digest: $DIGEST_REF"
 
-  deploy-staging:
+  # Apply pending DB migrations BEFORE rolling the new container. Solves
+  # two races that existed when db-migrate was a separate push-triggered
+  # workflow (myth-0m1n):
+  #   Race A — db-migrate read the image SHA from ECR before Deploy.build
+  #            pushed it → ImageNotFound. needs: build defeats this.
+  #   Race B — deploy-staging rolled a new container before db-migrate
+  #            finished applying schema → boot-gate refused to start,
+  #            ECS rollback. deploy-staging: needs: [build, db-migrate]
+  #            defeats this.
+  # The migrate runner is idempotent (no-op when nothing's pending), so
+  # this job runs on every deploy, not just commits that change SQL files.
+  db-migrate:
     needs: build
+    uses: ./.github/workflows/_db-migrate-job.yml
+
+  deploy-staging:
+    needs: [build, db-migrate]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: staging

@@ -1,182 +1,27 @@
+# Manual operator entry point for applying pending DB migrations against
+# staging RDS. Use cases (myth-0m1n design):
+#   - first-apply on fresh / DR-restored DB before API rolls
+#   - re-run after a cosmetic workflow failure (logs step died but the
+#     migration applied — re-running confirms idempotency)
+#   - confidence-check during incident response ("are all migrations
+#     applied?")
+#
+# Auto-on-push is owned by deploy.yml's `db-migrate` job, which has
+# `needs: build` so the just-built mythrun:<sha> image exists in ECR
+# before migrate runs. This file does NOT have a `push:` trigger —
+# previously it did, which produced a same-commit race with Deploy.build
+# and surfaced as ImageNotFoundException when migrate read the SHA
+# before build finished pushing.
+
 name: db-migrate
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/migrations/*.sql'
-      - '.github/workflows/db-migrate.yml'
   workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
-# Env-scoped concurrency, not ref-scoped. A workflow_dispatch from any
-# ref queues behind an in-flight auto-on-push on main. Two migrate tasks
-# against the same staging DB serialize via `pg_advisory_lock` regardless,
-# but queueing at the GHA layer keeps the workflow UX coherent.
-concurrency:
-  group: db-migrate-staging
-  cancel-in-progress: false # never cancel an in-flight migration
-
-env:
-  AWS_REGION: us-east-1
-  ECR_REPO: mythrun
-  ECS_CLUSTER: mythrun
-  TASK_DEF_FAMILY: mythrun-staging-migrate
-  CONTAINER_NAME: migrate
-  LOG_GROUP: /mythrun/staging/migrate
-
 jobs:
   migrate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: staging
-    steps:
-      - name: Pre-flight — verify required vars are set
-        run: |
-          set -euo pipefail
-          for v in AWS_ACCOUNT_ID PRIVATE_SUBNET_IDS MIGRATE_SECURITY_GROUP_ID; do
-            val="${!v:-}"
-            if [[ -z "$val" ]]; then
-              echo "::error::Required GH variable $v is not set on the staging environment."
-              exit 1
-            fi
-          done
-        env:
-          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          PRIVATE_SUBNET_IDS: ${{ vars.PRIVATE_SUBNET_IDS }}
-          MIGRATE_SECURITY_GROUP_ID: ${{ vars.MIGRATE_SECURITY_GROUP_ID }}
-
-      - name: Assume AWS role via OIDC
-        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Resolve image digest by commit SHA
-        id: image
-        # Pin to ${{ github.sha }} — the Deploy.build job pushes
-        # mythrun:<sha> alongside :latest. Resolving by SHA defeats the
-        # race where a parallel Deploy on a later commit retags :latest
-        # before this workflow reads it. workflow_dispatch reruns before
-        # Deploy.build has finished pushing fail loudly with ImageNotFound.
-        run: |
-          set -euo pipefail
-          ACCOUNT="${{ vars.AWS_ACCOUNT_ID }}"
-          REGISTRY="${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPO" \
-            --image-ids "imageTag=${{ github.sha }}" \
-            --query 'imageDetails[0].imageDigest' --output text)
-          DIGEST_REF="${REGISTRY}/${ECR_REPO}@${DIGEST}"
-          echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT"
-
-      - name: Fetch current task definition
-        run: |
-          set -euo pipefail
-          aws ecs describe-task-definition \
-            --task-definition "${{ env.TASK_DEF_FAMILY }}" \
-            --query 'taskDefinition' \
-            > task-def.json
-
-      - name: Render new task definition with digest image
-        id: taskdef
-        uses: aws-actions/amazon-ecs-render-task-definition@6853cfae8c3a7d978fbf68b5a55453395541dfbb # v1.8.5
-        with:
-          task-definition: task-def.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.image.outputs.digest_ref }}
-
-      - name: Register new task definition revision
-        id: register
-        # Register explicitly (rather than letting run-task pick
-        # family:LATEST) so we can launch against the exact new revision
-        # without racing a concurrent Deploy registering another rev.
-        run: |
-          set -euo pipefail
-          TD_ARN=$(aws ecs register-task-definition \
-            --cli-input-json "file://${{ steps.taskdef.outputs.task-definition }}" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "td_arn=$TD_ARN" >> "$GITHUB_OUTPUT"
-
-      - name: Run migrate task
-        id: runtask
-        run: |
-          set -euo pipefail
-          TASK_ARN=$(aws ecs run-task \
-            --cluster "$ECS_CLUSTER" \
-            --task-definition "${{ steps.register.outputs.td_arn }}" \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ vars.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ vars.MIGRATE_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
-            --query 'tasks[0].taskArn' --output text)
-          TASK_ID="${TASK_ARN##*/}"
-          echo "task_arn=$TASK_ARN" >> "$GITHUB_OUTPUT"
-          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
-          # Deterministic log-stream name: awslogs-stream-prefix '/' container-name '/' task-id
-          echo "log_stream=${CONTAINER_NAME}/${CONTAINER_NAME}/${TASK_ID}" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for task to stop
-        run: |
-          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "${{ steps.runtask.outputs.task_arn }}"
-
-      - name: Surface result + tail logs
-        # Distinguishes three states:
-        #   1. Task failed to start — exitCode null, stoppedReason set.
-        #      Logs may not exist; emit ECS-side reasons to GHA summary.
-        #   2. Task ran and exited non-zero — exitCode != 0; logs exist.
-        #   3. Task succeeded — exitCode == 0.
-        run: |
-          set -euo pipefail
-          TASK_JSON=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" \
-            --tasks "${{ steps.runtask.outputs.task_arn }}" --query 'tasks[0]')
-          STOP_REASON=$(echo "$TASK_JSON"  | jq -r '.stoppedReason // ""')
-          CONT_REASON=$(echo "$TASK_JSON"  | jq -r '.containers[0].reason // ""')
-          EXIT=$(echo "$TASK_JSON"         | jq -r '.containers[0].exitCode // "null"')
-
-          echo "stoppedReason=$STOP_REASON"
-          echo "containerReason=$CONT_REASON"
-          echo "exitCode=$EXIT"
-
-          if [[ "$EXIT" == "null" ]]; then
-            echo "::error::Migrate task failed to start. stoppedReason='$STOP_REASON' containerReason='$CONT_REASON'"
-            {
-              echo "## Migrate task failed to start"
-              echo "- **stoppedReason:** $STOP_REASON"
-              echo "- **containerReason:** $CONT_REASON"
-              echo "- **taskArn:** ${{ steps.runtask.outputs.task_arn }}"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-          # Stream name is deterministic (built from task ARN above), so no
-          # describe-log-streams heuristic. --start-from-head=false gives
-          # the tail. --limit 200 covers most realistic migration runs.
-          aws logs get-log-events \
-            --log-group-name "$LOG_GROUP" \
-            --log-stream-name "${{ steps.runtask.outputs.log_stream }}" \
-            --limit 200 \
-            --no-start-from-head \
-            --query 'events[*].message' --output text || true
-
-          # Pluck the migrate.start runId so the operator can jump straight
-          # to a Logs Insights query scoped to that runId.
-          RUN_ID=$(aws logs get-log-events \
-            --log-group-name "$LOG_GROUP" \
-            --log-stream-name "${{ steps.runtask.outputs.log_stream }}" \
-            --limit 1000 --start-from-head \
-            --query 'events[?contains(message, `migrate.start`)] | [0].message' --output text 2>/dev/null \
-            | jq -r '.runId // ""' 2>/dev/null || echo "")
-
-          {
-            echo "## Migrate run details"
-            echo "- **runId:** \`${RUN_ID:-unknown}\`"
-            echo "- **taskArn:** ${{ steps.runtask.outputs.task_arn }}"
-            echo "- **exitCode:** $EXIT"
-            echo "- **logStream:** $LOG_GROUP / ${{ steps.runtask.outputs.log_stream }}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$EXIT" != "0" ]]; then
-            echo "::error::Migrate task exited $EXIT — runId=${RUN_ID:-unknown}, see CloudWatch $LOG_GROUP"
-            exit 1
-          fi
+    uses: ./.github/workflows/_db-migrate-job.yml
