@@ -25,5 +25,10 @@ docker-compose.override.yml
 # Local scratch / agent-authored ephemeral files (checklists, reports, etc.)
 tmp/
 
+# Git worktrees created via `bd worktree create` / `git worktree add` for
+# parallel implementation work. Each worktree has its own checked-out tree;
+# from the main repo's view they're foreign and must not be tracked.
+.worktrees/
+
 # macOS Finder duplicates of docs/wiki/site/ (these accumulate via Finder copy-paste).
 docs/wiki/site [0-9]*/

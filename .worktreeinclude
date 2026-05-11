@@ -1,0 +1,28 @@
+# .worktreeinclude
+#
+# Files listed here are propagated from the main repo into a newly-created
+# git worktree by `scripts/worktree-setup.sh`. Use this for untracked dev-
+# only files (env vars, local overrides) that don't live in git but are
+# needed for the worktree to be runnable.
+#
+# Mechanism: each path becomes a symlink in the worktree pointing back at
+# the file in the main repo. Symlink, not copy — so editing a dev env var
+# in the main repo propagates to every active worktree without re-running
+# setup.
+#
+# Format:
+#   - One path per line, relative to repo root.
+#   - Lines starting with `#` are comments.
+#   - Blank lines ignored.
+#
+# Notes on what NOT to include:
+#   - `node_modules/` — pnpm install per worktree; pnpm's content-addressable
+#     store at ~/.pnpm-store/ makes reinstall fast and disk-efficient.
+#   - `dist/` — each worktree builds its own.
+#   - `.dolt/` — beads handles worktree access via its `redirect` mechanism
+#     (`bd worktree create` sets this up automatically); never symlink the
+#     dolt DB directly (concurrent-access hazard).
+#   - `tmp/`, `.terraform/`, `*.tfstate` — ephemeral or sensitive; keep
+#     scoped to the workspace that produced them.
+
+backend/.env.development
