@@ -6,7 +6,7 @@ import type { Pool, PoolClient } from 'pg'
 import pino from 'pino'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { installSignalHandlers } from '../boot/signal-handlers.js'
-import { loadEnv } from '../config/env.js'
+import { buildDatabaseUrl } from '../config/env.js'
 import { LOCK_KEY } from './lock-key.js'
 import { isValidMigrationFilename } from './migration-filename.js'
 import { createPgPool } from './postgres.js'
@@ -457,14 +457,17 @@ const DEFAULT_MIGRATIONS_DIR = resolve(__dirname, '../../migrations')
 
 const argv1 = process.argv[1]
 if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
-  // env is declared BEFORE the logger so the err serializer's closure
-  // can read env?.databaseUrl when it fires.
-  let env: ReturnType<typeof loadEnv> | undefined
+  // databaseUrl is declared BEFORE the logger so the err serializer's closure
+  // can read it when it fires. Use the dedicated buildDatabaseUrl helper
+  // (not full loadEnv) so the migrate CLI doesn't have to satisfy API-side
+  // validators (PORT, REDIS_*, FRONTEND_BASE_URL, etc.) that the migrate
+  // task definition deliberately doesn't carry.
+  let databaseUrl: string | undefined
 
   const logger = pino({
     level: process.env.LOG_LEVEL ?? 'info',
     base: { component: 'migrate' },
-    serializers: { err: buildErrSerializer(() => env?.databaseUrl) },
+    serializers: { err: buildErrSerializer(() => databaseUrl) },
     redact: {
       paths: [
         'err.connectionParameters',
@@ -485,7 +488,7 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
   })
 
   try {
-    env = loadEnv()
+    databaseUrl = buildDatabaseUrl()
   } catch (err) {
     logger.error(
       { event: 'migrate.fatal', err },
@@ -496,7 +499,7 @@ if (argv1 && import.meta.url === pathToFileURL(argv1).href) {
     process.exit()
   }
 
-  const pool = createPgPool(env.databaseUrl, {
+  const pool = createPgPool(databaseUrl, {
     max: 1,
     connectionTimeoutMillis: 10_000,
   })

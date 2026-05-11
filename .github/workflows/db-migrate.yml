@@ -156,7 +156,7 @@ jobs:
             --log-group-name "$LOG_GROUP" \
             --log-stream-name "${{ steps.runtask.outputs.log_stream }}" \
             --limit 200 \
-            --start-from-head false \
+            --no-start-from-head \
             --query 'events[*].message' --output text || true
 
           # Pluck the migrate.start runId so the operator can jump straight
@@ -164,7 +164,7 @@ jobs:
           RUN_ID=$(aws logs get-log-events \
             --log-group-name "$LOG_GROUP" \
             --log-stream-name "${{ steps.runtask.outputs.log_stream }}" \
-            --limit 1000 --start-from-head true \
+            --limit 1000 --start-from-head \
             --query 'events[?contains(message, `migrate.start`)] | [0].message' --output text 2>/dev/null \
             | jq -r '.runId // ""' 2>/dev/null || echo "")
 

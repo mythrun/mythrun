@@ -42,7 +42,11 @@ export interface Env {
 // migrate task uses MIGRATE_DATABASE_URL only. Loaders that inherit both
 // would silently expose the migration role's connection to the API.
 
-function buildDatabaseUrl(): string {
+// Exported because the migrate CLI (backend/src/db/migrate.ts) only needs
+// the DB URL — running it through full loadEnv() would force it to satisfy
+// API-side validators (PORT, REDIS_*, FRONTEND_BASE_URL, STRIPE_*, etc.)
+// that the migrate task definition deliberately doesn't carry.
+export function buildDatabaseUrl(): string {
   // Migrations may run as a different role than the API (rds_superuser
   // for CREATE EXTENSION). MIGRATE_DATABASE_URL takes precedence; fallback
   // to DATABASE_URL keeps local dev working out of the box.
