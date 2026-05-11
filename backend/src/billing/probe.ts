@@ -173,7 +173,9 @@ function validatePriceAgainstSpec(spec: LookupKeySpec, price: Stripe.Price): str
   const lk = spec.lookupKey
 
   if (price.currency !== 'usd') {
-    mismatches.push(`lookup_key '${lk}' has currency '${price.currency}' in Stripe; contract expects 'usd'`)
+    mismatches.push(
+      `lookup_key '${lk}' has currency '${price.currency}' in Stripe; contract expects 'usd'`,
+    )
   }
 
   const stripeType: 'recurring' | 'one_time' = price.recurring ? 'recurring' : 'one_time'
