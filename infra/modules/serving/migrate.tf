@@ -206,3 +206,8 @@ output "migrate_task_role_arn" {
 output "migrate_log_group_arn" {
   value = aws_cloudwatch_log_group.migrate.arn
 }
+
+output "migrate_db_credentials_secret_arn" {
+  value       = aws_secretsmanager_secret.migrate_db_credentials.arn
+  description = "Migrate-user password secret ARN. Consumed by the bootstrap-db module so its task role can PutSecretValue on it."
+}

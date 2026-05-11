@@ -59,6 +59,11 @@ variable "rds_password_secret_arn" {
   type        = string
 }
 
+variable "migrate_password_secret_arn" {
+  description = "ARN of the env-specific migrate-user password secret (read+write by the bootstrap task — provision_migrate_user populates the first version)."
+  type        = string
+}
+
 variable "log_retention_days" {
   description = "CloudWatch log group retention for bootstrap operations."
   type        = number

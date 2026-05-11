@@ -167,10 +167,11 @@ module "bootstrap_db" {
   ecr_repository_url = data.terraform_remote_state.shared.outputs.bootstrap_db_ecr_repository_url
   image_tag          = var.bootstrap_image_tag
 
-  rds_host                = data.terraform_remote_state.shared.outputs.rds_endpoint
-  rds_port                = data.terraform_remote_state.shared.outputs.rds_port
-  rds_master_secret_arn   = data.terraform_remote_state.shared.outputs.rds_master_user_secret_arn
-  rds_password_secret_arn = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn
+  rds_host                    = data.terraform_remote_state.shared.outputs.rds_endpoint
+  rds_port                    = data.terraform_remote_state.shared.outputs.rds_port
+  rds_master_secret_arn       = data.terraform_remote_state.shared.outputs.rds_master_user_secret_arn
+  rds_password_secret_arn     = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn
+  migrate_password_secret_arn = module.serving.migrate_db_credentials_secret_arn
 }
 
 # ======== GitHub Actions IAM Role (staging-scoped) ========

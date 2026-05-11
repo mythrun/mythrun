@@ -238,25 +238,30 @@ provision_migrate_user() {
   pw=$(generate_password)
 
   # Cluster-level grants against the maintenance DB.
-  "${PSQL_MASTER[@]}" --set=u="$migrate_user" --set=pw="$pw" --set=app="$app_user" <<SQL
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'u') THEN
-    CREATE USER :u WITH LOGIN PASSWORD :'pw';
-  ELSE
-    ALTER USER :u WITH PASSWORD :'pw';
-  END IF;
-END
-\$\$;
-GRANT rds_superuser TO :u;
-GRANT :app TO :u;
+  # Branch in bash rather than `DO $$ ... $$` — psql variable substitution
+  # (:'u', :u) does NOT happen inside dollar-quoted blocks, so the DO form
+  # would send literal `:'u'` to the server and fail with syntax error.
+  # Mirror the existing create_db_and_user/create_user_only pattern:
+  # bash interpolates identifiers ($migrate_user), psql substitutes the
+  # password literal (:'pw').
+  if [[ -n "$exists" ]]; then
+    "${PSQL_MASTER[@]}" --set=pw="$pw" <<SQL
+ALTER USER $migrate_user WITH PASSWORD :'pw';
+GRANT rds_superuser TO $migrate_user;
+GRANT $app_user TO $migrate_user;
 SQL
+  else
+    "${PSQL_MASTER[@]}" --set=pw="$pw" <<SQL
+CREATE USER $migrate_user WITH LOGIN PASSWORD :'pw';
+GRANT rds_superuser TO $migrate_user;
+GRANT $app_user TO $migrate_user;
+SQL
+  fi
 
   # Schema-level grants must run against the TARGET DB, not the maintenance DB.
   psql --host="$RDS_HOST" --port="$RDS_PORT" --username="$MASTER_USER" \
-    --dbname="$DB_NAME" --no-password --tuples-only --no-align \
-    --set=u="$migrate_user" <<SQL
-GRANT USAGE, CREATE ON SCHEMA public TO :u;
+    --dbname="$DB_NAME" --no-password --tuples-only --no-align <<SQL
+GRANT USAGE, CREATE ON SCHEMA public TO $migrate_user;
 SQL
 
   # JSON-shape secret value: {"username":"...","password":"..."}. ECS

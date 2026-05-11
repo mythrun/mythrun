@@ -122,7 +122,10 @@ data "aws_iam_policy_document" "task" {
       "secretsmanager:DescribeSecret",
       "secretsmanager:PutSecretValue",
     ]
-    resources = [var.rds_password_secret_arn]
+    resources = [
+      var.rds_password_secret_arn,
+      var.migrate_password_secret_arn,
+    ]
   }
 
   # GetRandomPassword is an account-level API (doesn't operate on a specific
