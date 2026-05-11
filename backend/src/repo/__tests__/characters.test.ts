@@ -198,4 +198,53 @@ describe('repo.characters', () => {
       )
     })
   })
+
+  describe('listForCampaign', () => {
+    it('returns characters joined to the campaign', async () => {
+      const characters = createCharactersRepo(pool)
+      const users = createUsersRepo(pool)
+
+      // Create a second user so we can have two PCs in the campaign
+      const client = await pool.connect()
+      let userBId: string
+      let charA: string
+      let charB: string
+      try {
+        await client.query('BEGIN')
+        const userB = await users.create(client, {
+          cognitoSub: 'g_player_b',
+          username: 'borin',
+          displayName: 'Borin',
+        })
+        userBId = userB.id
+
+        const a = await characters.create(client, { userId, ...baseCharacterInput })
+        const b = await characters.create(client, {
+          userId: userBId,
+          ...baseCharacterInput,
+          name: 'Borin Stoneshield',
+          class: 'Fighter',
+        })
+        await client.query('COMMIT')
+        charA = a.id
+        charB = b.id
+      } finally {
+        client.release()
+      }
+
+      await characters.addToCampaign(campaignId, charA, userId)
+      await characters.addToCampaign(campaignId, charB, userBId)
+
+      const list = await characters.listForCampaign(campaignId)
+
+      expect(list).toHaveLength(2)
+      expect(list.map((c) => c.id).sort()).toEqual([charA, charB].sort())
+    })
+
+    it('returns [] for a campaign with no characters', async () => {
+      const characters = createCharactersRepo(pool)
+      const list = await characters.listForCampaign(campaignId)
+      expect(list).toEqual([])
+    })
+  })
 })

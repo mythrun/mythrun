@@ -73,5 +73,17 @@ export function createCharactersRepo(pool: Pool) {
         throw err
       }
     },
+
+    listForCampaign: async (campaignId: string): Promise<readonly Character[]> => {
+      const result = await pool.query<CharacterDbRow>(
+        `SELECT c.*
+         FROM characters c
+         JOIN campaign_characters cc ON cc.character_id = c.id
+         WHERE cc.campaign_id = $1
+         ORDER BY cc.joined_at ASC, cc.id ASC`,
+        [campaignId],
+      )
+      return result.rows.map(toCharacter)
+    },
   }
 }
