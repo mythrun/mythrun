@@ -30,6 +30,12 @@ vi.mock('../billing/probe.js', () => ({
     await mockProbe()
   },
 }))
+const mockProbeMigrationsCurrent = vi.fn()
+vi.mock('../boot/migrations-current.js', () => ({
+  probeMigrationsCurrent: async (pool: unknown): Promise<void> => {
+    await mockProbeMigrationsCurrent(pool)
+  },
+}))
 
 vi.mock('../app.js', async () => {
   const actual = await vi.importActual<typeof import('../app.js')>('../app.js')
@@ -69,6 +75,7 @@ describe('server boot gate', () => {
     mockRtbQuit.mockReset().mockResolvedValue('OK')
     mockListen.mockReset().mockResolvedValue(undefined)
     mockProbe.mockReset().mockResolvedValue(undefined)
+    mockProbeMigrationsCurrent.mockReset().mockResolvedValue(undefined)
     // Each call to createRedisClient returns a fresh ioredis-shaped object.
     // Order matters: server.ts calls realtime first, then batch.
     const fakeRtr = { ping: mockRtrPing, quit: mockRtrQuit } as unknown as Redis
@@ -154,6 +161,38 @@ describe('server boot gate', () => {
       expect(mockListen).not.toHaveBeenCalled()
       const allErrCalls = errSpy.mock.calls.flat().join(' ')
       expect(allErrCalls).toContain('Redis (realtime)')
+      errSpy.mockRestore()
+    },
+    TEST_TIMEOUT_MS,
+  )
+
+  it(
+    'migrations-current probe fails → exitCode=1, named in error log, app.listen NOT called',
+    async () => {
+      mockPgQuery.mockResolvedValue({})
+      mockRtrPing.mockResolvedValue('PONG')
+      mockRtbPing.mockResolvedValue('PONG')
+      mockProbeMigrationsCurrent.mockRejectedValueOnce(
+        new Error(
+          'migrations-current: image expects 8 migrations, DB is missing 2 (007_recreate_billing_tables.sql, 008_billing_metering.sql). Run `gh workflow run db-migrate` then re-trigger Deploy.',
+        ),
+      )
+
+      let errorOutput = ''
+      const errSpy = vi
+        .spyOn(console, 'error')
+        .mockImplementation((...args: unknown[]) => {
+          errorOutput += args.map(String).join(' ') + '\n'
+        })
+
+      await import('../server.js')
+
+      // Boot-gate aborts before app.listen runs.
+      expect(mockListen).not.toHaveBeenCalled()
+      expect(process.exitCode).toBe(1)
+      expect(errorOutput).toContain('migrations-current')
+      expect(errorOutput).toContain('Run `gh workflow run db-migrate`')
+
       errSpy.mockRestore()
     },
     TEST_TIMEOUT_MS,

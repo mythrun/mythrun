@@ -42,9 +42,7 @@ export async function probeMigrationsCurrent(pool: Pool): Promise<void> {
     )
   }
 
-  const appliedResult = await pool.query<{ version: string }>(
-    'SELECT version FROM _migrations',
-  )
+  const appliedResult = await pool.query<{ version: string }>('SELECT version FROM _migrations')
   const appliedSet = new Set(appliedResult.rows.map((r) => r.version))
   const missing = sqlFiles.filter((f) => !appliedSet.has(f))
 

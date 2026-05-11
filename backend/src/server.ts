@@ -5,6 +5,7 @@ import { buildApp, createShutdown } from './app.js'
 import type { RegisterAuthOptions } from './auth/index.js'
 import { loadEnv, type Env } from './config/env.js'
 import { installSignalHandlers } from './boot/signal-handlers.js'
+import { probeMigrationsCurrent } from './boot/migrations-current.js'
 import { waitFor } from './boot/wait-for.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
@@ -134,6 +135,13 @@ export async function main(): Promise<void> {
       signal: abortController.signal,
     })
     console.log('✓ Redis (batch) ready')
+
+    // Schema-readiness probe: refuse to start the API on a DB that has
+    // not had every migration the image expects applied. The boot-gate
+    // turns the throw into a non-zero process exit; ECS rolls back the
+    // deploy. See docs/superpowers/specs/2026-05-11-migration-runner-design.md.
+    await probeMigrationsCurrent(pgRef)
+    console.log('✓ migrations-current verified')
 
     // MYT-41: Stripe contract verification. The probe lists the lookup_keys
     // in LOOKUP_KEYS, asserts each resolves to an active price with the
