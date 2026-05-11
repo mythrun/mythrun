@@ -1,6 +1,10 @@
 <!-- source: .github/workflows/deploy.yml -->
+<!-- source: .github/workflows/db-migrate.yml -->
 <!-- source: .github/dependabot.yml -->
-<!-- source-hash: sha256:88699bc90a93b5cd029f4eb199b27b01c100a8a86295ef2eb61add5075eed920 -->
+<!-- source: backend/src/boot/migrations-current.ts -->
+<!-- source: backend/src/db/migrate.ts -->
+<!-- source: infra/modules/serving/migrate.tf -->
+<!-- source-hash: sha256:680f2ad1373d66c87446cc5f10d0c427d28cc58d20b48800b56ea544f9c7fd54 -->
 <!-- last-ticket: MYT-35 -->
 
 <h1>CI/CD</h1>
@@ -194,6 +198,100 @@
   hand — never auto-merged — because each SHA change is a fresh opportunity to audit what the action
   is doing.
 </p>
+
+<h2>The db-migrate workflow</h2>
+
+<p>
+  Code and schema ship through two complementary pipelines.
+  <code>deploy.yml</code> handles the code path — rolls a new image onto the ECS API service.
+  <code>.github/workflows/db-migrate.yml</code> handles the schema path — applies the SQL files
+  in <code>backend/migrations/</code> to staging RDS. The pair is held in tension by a
+  <strong>container boot-gate</strong> that refuses to start the API on a schema-mismatched DB,
+  so a code roll cannot race ahead of its required schema change.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two workflows, one interlock</strong> — early drafts considered baking the migration
+  step into <code>deploy.yml</code> directly. The separate-workflow shape (with the boot-gate as
+  the safety net) keeps each surface focused: db-migrate is the canonical "apply pending
+  migrations" trigger, decoupled from any specific code roll. Operators can rerun migrations
+  without redeploying. If db-migrate doesn't run for any reason, the next Deploy hits the
+  boot-gate, ECS circuit-breaker rolls back, and the failure is loud at the right surface.
+  See <a href="../../superpowers/specs/2026-05-11-migration-runner-design.md"
+    >2026-05-11 migration runner design</a> §2 D3.
+</aside>
+
+<p>
+  Triggers: push to <code>main</code> with path filter <code>backend/migrations/*.sql</code>,
+  or manual <code>workflow_dispatch</code>. Both Deploy and db-migrate auto-fire on a paired
+  commit (migration + code in the same push); they run concurrently with no cross-workflow
+  ordering. If Deploy reaches the boot-gate before db-migrate finishes, the deploy fails on
+  <code>rolloutState=FAILED</code>, ECS rolls back, the previous image continues serving, and
+  the operator re-triggers Deploy after db-migrate is green.
+</p>
+
+<p>
+  The workflow itself follows <code>deploy.yml</code>'s pattern exactly:
+  <code>describe-task-definition</code> → <code>amazon-ecs-render-task-definition</code> with
+  the image swapped to <code>mythrun:&lt;github.sha&gt;</code> → explicit
+  <code>register-task-definition</code> → <code>run-task</code> against the new revision →
+  <code>wait tasks-stopped</code>. The image is pinned by commit SHA (not <code>:latest</code>)
+  to defeat the race where a parallel Deploy retags <code>:latest</code> before db-migrate reads
+  it. The log-stream name is derived from the task ARN (deterministic) so the &ldquo;tail logs&rdquo;
+  step never picks up a sibling run's stream. Failures distinguish task-failed-to-start
+  (<code>exitCode == null</code>, <code>stoppedReason</code> set) from task-failed-during-run
+  (<code>exitCode != 0</code>, logs available).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Separate migrate DB role with <code>rds_superuser</code> + app-user membership</strong>
+  — the migrate task connects as a dedicated <code>mythrun_staging_migrate</code> user, distinct
+  from the API's <code>mythrun_staging</code>. <code>rds_superuser</code> grants the role
+  <code>CREATE EXTENSION</code> for the RDS-allowed list (pgcrypto, pgvector, uuid-ossp). It is
+  <em>not</em> a true Postgres <code>SUPERUSER</code> and cannot bypass object ACLs on its own,
+  so the role also gets membership in <code>mythrun_staging</code> via
+  <code>GRANT mythrun_staging TO mythrun_staging_migrate</code> — that inherits ALTER/DROP
+  rights on the existing app-owned tables. Bootstrap-db provisions the user + populates a
+  <code>{username, password}</code> JSON secret at
+  <code>mythrun/staging/migrate-db-credentials</code> in Secrets Manager; the ECS task fetches
+  <code>:password::</code> at task launch.
+</aside>
+
+<h3 id="db-migrate-gha-env-vars">GitHub Environment variables for db-migrate</h3>
+
+<p>
+  Both jobs in <code>db-migrate.yml</code> declare <code>environment: staging</code> and read
+  three variables in addition to the standard <code>AWS_ACCOUNT_ID</code>:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Source</th>
+      <th>Example</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>PRIVATE_SUBNET_IDS</code></td>
+      <td>VPC private subnets (comma-separated, no quotes, no brackets)</td>
+      <td><code>subnet-0a3cbedc926460fa6,subnet-07ff5e9391c234651</code></td>
+    </tr>
+    <tr>
+      <td><code>MIGRATE_SECURITY_GROUP_ID</code></td>
+      <td>
+        Output <code>module.serving.migrate_security_group_id</code> from staging Terraform
+      </td>
+      <td><code>sg-0774618ed09c2bb09</code></td>
+    </tr>
+    <tr>
+      <td><code>AWS_ACCOUNT_ID</code></td>
+      <td>Existing — shared with deploy.yml</td>
+      <td><code>862127484110</code></td>
+    </tr>
+  </tbody>
+</table>
 
 <h2>GitHub Environment configuration</h2>
 
@@ -493,4 +591,11 @@
 
 <h2>Source</h2>
 
-<p><code>.github/workflows/deploy.yml</code>, <code>.github/dependabot.yml</code>.</p>
+<p>
+  <code>.github/workflows/deploy.yml</code>,
+  <code>.github/workflows/db-migrate.yml</code>,
+  <code>.github/dependabot.yml</code>,
+  <code>backend/src/boot/migrations-current.ts</code>,
+  <code>backend/src/db/migrate.ts</code>,
+  <code>infra/modules/serving/migrate.tf</code>.
+</p>

@@ -179,11 +179,9 @@ describe('server boot gate', () => {
       )
 
       let errorOutput = ''
-      const errSpy = vi
-        .spyOn(console, 'error')
-        .mockImplementation((...args: unknown[]) => {
-          errorOutput += args.map(String).join(' ') + '\n'
-        })
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errorOutput += args.map(String).join(' ') + '\n'
+      })
 
       await import('../server.js')
 
