@@ -118,12 +118,22 @@ export const buildApp = async (
 
   // Rate-limit plugin — global=false so individual routes opt in via
   // config.rateLimit. The 1000/min ceiling is a safety net only; per-route
-  // limits set tighter caps (e.g. /api/users/register = 5/min). Default
-  // in-memory store; MYT-45 swaps to Redis-backed.
+  // limits set tighter caps (e.g. /api/users/register = 5/min).
+  //
+  // Backed by redisRealtime so the limit applies across the ECS fleet,
+  // not per-task. Default keyGenerator returns request.ip (the real
+  // client because trustProxy: 1 strips the ALB hop). Routes that need
+  // per-sub limiting override via config.rateLimit.keyGenerator.
+  //
+  // Fails OPEN if Redis is unreachable: @fastify/rate-limit's default
+  // skipOnError logs the error and allows the request through. Trade-off
+  // accepted — rate-limit infra failure should not 503 the service.
   await app.register(rateLimit, {
     global: false,
     max: 1000,
     timeWindow: '1 minute',
+    redis: deps.redisRealtime,
+    nameSpace: `${deps.redisKeyPrefix}rl:`,
   })
 
   // requireOnboarded gates protected routes on a real users row +
