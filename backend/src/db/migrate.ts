@@ -90,6 +90,106 @@ export interface MigrationOptions {
   readonly runId?: string | undefined
 }
 
+// Plan helper: read _migrations, compute pending, warn on missing-on-disk
+// drift, and refuse out-of-order pending. Returns the lex-sorted list of
+// pending versions; throws on out-of-order (the one fatal planning error).
+async function planPendingMigrations(
+  client: PoolClient,
+  files: readonly string[],
+  runId: string,
+  logger: MigrateLogger,
+): Promise<readonly string[]> {
+  const appliedRows = await client.query<{ version: string }>('SELECT version FROM _migrations')
+  const applied = new Set(appliedRows.rows.map((r) => r.version))
+  const pending = files.filter((f) => !applied.has(f))
+
+  // Drift: applied rows without a file on disk. Warn + continue.
+  const fileSet = new Set(files)
+  const missing = [...applied].filter((v) => !fileSet.has(v)).sort()
+  if (missing.length > 0) {
+    logger.warn(
+      {
+        event: 'migrate.drift_missing_files',
+        runId,
+        missing,
+        hint: 'applied migrations are missing on disk. If this is the MYT-32→MYT-33 transition, run `pnpm db:reset && pnpm db:migrate`. Otherwise, investigate before continuing — a previously-applied migration was deleted or renamed.',
+      },
+      'migrate.drift_missing_files',
+    )
+  }
+
+  // Out-of-order: pending versions lex-less than the highest applied that
+  // also exists on disk. Drift rows are excluded from this baseline.
+  const appliedOnDisk = [...applied].filter((v) => fileSet.has(v))
+  if (appliedOnDisk.length > 0) {
+    const maxApplied = appliedOnDisk.sort().at(-1) ?? ''
+    const outOfOrder = pending.filter((p) => p < maxApplied)
+    if (outOfOrder.length > 0) {
+      throw new Error(
+        `out-of-order migrations detected: ${outOfOrder.join(', ')} ` +
+          `precede already-applied ${maxApplied}. ` +
+          `Rebase to a version greater than the highest applied. ` +
+          `If you intentionally need to backfill, see spec §12 Recovery.`,
+      )
+    }
+  }
+
+  logger.info(
+    {
+      event: 'migrate.plan',
+      runId,
+      pending: pending.length,
+      total: files.length,
+      pendingVersions: pending,
+    },
+    'migrate.plan',
+  )
+
+  return pending
+}
+
+// Per-file transaction script: BEGIN → SET LOCAL session vars → run the
+// migration's SQL → INSERT into _migrations → COMMIT. On error, ROLLBACK
+// then re-throw wrapped (caller maps to migrate.failed log + sets
+// errorPath). Stays a top-level function so the per-file try/catch
+// doesn't bloat runMigrations' outer try/catch/finally.
+async function applyMigration(
+  client: PoolClient,
+  file: string,
+  migrationsDir: string,
+  runId: string,
+  logger: MigrateLogger,
+): Promise<AppliedMigration> {
+  const contents = await readFile(join(migrationsDir, file), 'utf8')
+  validateNoTransactionStatements(file, contents)
+
+  const start = performance.now()
+  try {
+    await client.query('BEGIN')
+    await client.query('SET LOCAL statement_timeout = 0')
+    await client.query("SET LOCAL lock_timeout = '30s'")
+    await client.query("SET LOCAL application_name = 'mythrun-migrate'")
+    await client.query(contents)
+    await client.query('INSERT INTO _migrations (version) VALUES ($1)', [file])
+    await client.query('COMMIT')
+  } catch (pgErr) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      /* swallow; reported by caller */
+    }
+    const durationMs = Math.round(performance.now() - start)
+    logger.error(
+      { event: 'migrate.failed', runId, version: file, durationMs, err: pgErr },
+      'migrate.failed',
+    )
+    throw pgErr
+  }
+  const durationMs = Math.round(performance.now() - start)
+  logger.info({ event: 'migrate.applied', runId, version: file, durationMs }, 'migrate.applied')
+  return { version: file, durationMs }
+}
+
 export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigration[]> {
   const { pool, migrationsDir, logger, abortSignal } = opts
   const runId = opts.runId ?? fallbackRunId()
@@ -143,54 +243,7 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
       return appliedSoFar
     }
 
-    const appliedRows = await client.query<{ version: string }>('SELECT version FROM _migrations')
-    const applied = new Set(appliedRows.rows.map((r) => r.version))
-    const pending = files.filter((f) => !applied.has(f))
-
-    // Drift: applied rows without a file on disk. Warn and continue;
-    // the checksum-drift follow-up may upgrade this to error.
-    const fileSet = new Set(files)
-    const missing = [...applied].filter((v) => !fileSet.has(v)).sort()
-    if (missing.length > 0) {
-      logger.warn(
-        {
-          event: 'migrate.drift_missing_files',
-          runId,
-          missing,
-          hint: 'applied migrations are missing on disk. If this is the MYT-32→MYT-33 transition, run `pnpm db:reset && pnpm db:migrate`. Otherwise, investigate before continuing — a previously-applied migration was deleted or renamed.',
-        },
-        'migrate.drift_missing_files',
-      )
-    }
-
-    // Out-of-order: pending versions lex-less than the highest applied that
-    // also exists on disk. Drift rows (applied without a file) are excluded
-    // from this baseline — they're already reported by the drift warning and
-    // shouldn't gate ordering decisions.
-    const appliedOnDisk = [...applied].filter((v) => fileSet.has(v))
-    if (appliedOnDisk.length > 0) {
-      const maxApplied = appliedOnDisk.sort().at(-1) ?? ''
-      const outOfOrder = pending.filter((p) => p < maxApplied)
-      if (outOfOrder.length > 0) {
-        throw new Error(
-          `out-of-order migrations detected: ${outOfOrder.join(', ')} ` +
-            `precede already-applied ${maxApplied}. ` +
-            `Rebase to a version greater than the highest applied. ` +
-            `If you intentionally need to backfill, see spec §12 Recovery.`,
-        )
-      }
-    }
-
-    logger.info(
-      {
-        event: 'migrate.plan',
-        runId,
-        pending: pending.length,
-        total: files.length,
-        pendingVersions: pending,
-      },
-      'migrate.plan',
-    )
+    const pending = await planPendingMigrations(client, files, runId, logger)
 
     for (const file of pending) {
       if (abortSignal?.aborted) {
@@ -206,37 +259,15 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
         return appliedSoFar
       }
 
-      const contents = await readFile(join(migrationsDir, file), 'utf8')
-      validateNoTransactionStatements(file, contents)
-
-      const start = performance.now()
       try {
-        await client.query('BEGIN')
-        await client.query('SET LOCAL statement_timeout = 0')
-        await client.query("SET LOCAL lock_timeout = '30s'")
-        await client.query("SET LOCAL application_name = 'mythrun-migrate'")
-        await client.query(contents)
-        await client.query('INSERT INTO _migrations (version) VALUES ($1)', [file])
-        await client.query('COMMIT')
+        const result = await applyMigration(client, file, migrationsDir, runId, logger)
+        appliedSoFar.push(result)
       } catch (pgErr) {
-        try {
-          await client.query('ROLLBACK')
-        } catch {
-          /* swallow; reported below */
-        }
-        const durationMs = Math.round(performance.now() - start)
-        logger.error(
-          { event: 'migrate.failed', runId, version: file, durationMs, err: pgErr },
-          'migrate.failed',
-        )
         const err = pgErr instanceof Error ? pgErr : new Error(String(pgErr))
         const wrapped = new Error(`migration ${file} failed: ${err.message}`, { cause: err })
         errorPath = wrapped
         throw wrapped
       }
-      const durationMs = Math.round(performance.now() - start)
-      logger.info({ event: 'migrate.applied', runId, version: file, durationMs }, 'migrate.applied')
-      appliedSoFar.push({ version: file, durationMs })
     }
 
     return appliedSoFar
@@ -244,44 +275,71 @@ export async function runMigrations(opts: MigrationOptions): Promise<AppliedMigr
     errorPath ??= err instanceof Error ? err : new Error(String(err))
     throw errorPath
   } finally {
-    if (acquiredLock) {
-      try {
-        await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY.toString()])
-        logger.info(
-          {
-            event: 'migrate.lock_released',
-            runId,
-            holdMs: Math.round(performance.now() - lockStart),
-          },
-          'migrate.lock_released',
-        )
-      } catch (unlockErr) {
-        logger.warn(
-          { event: 'migrate.unlock_failed', runId, err: unlockErr },
-          'migrate.unlock_failed',
-        )
-      }
-    }
-    if (errorPath) {
-      client.release(errorPath)
-    } else {
-      try {
-        await client.query('DISCARD ALL')
-      } catch {
-        /* best-effort */
-      }
-      client.release()
-    }
-    logger.info(
-      {
-        event: 'migrate.done',
-        runId,
-        applied: appliedSoFar.length,
-        totalMs: Math.round(performance.now() - runStart),
-      },
-      'migrate.done',
-    )
+    await cleanupAndRelease(client, {
+      acquiredLock,
+      lockStart,
+      errorPath,
+      runId,
+      runStart,
+      appliedCount: appliedSoFar.length,
+      logger,
+    })
   }
+}
+
+interface CleanupAndReleaseOpts {
+  readonly acquiredLock: boolean
+  readonly lockStart: number
+  readonly errorPath: Error | undefined
+  readonly runId: string
+  readonly runStart: number
+  readonly appliedCount: number
+  readonly logger: MigrateLogger
+}
+
+// Release advisory lock (best-effort), then release the client. On error
+// path, release(err) destroys the client to defeat any leaked transaction
+// state; on success, DISCARD ALL + plain release returns to the pool clean.
+// Always emits a migrate.done log line as the final signal.
+async function cleanupAndRelease(client: PoolClient, opts: CleanupAndReleaseOpts): Promise<void> {
+  const { acquiredLock, lockStart, errorPath, runId, runStart, appliedCount, logger } = opts
+  if (acquiredLock) {
+    try {
+      await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY.toString()])
+      logger.info(
+        {
+          event: 'migrate.lock_released',
+          runId,
+          holdMs: Math.round(performance.now() - lockStart),
+        },
+        'migrate.lock_released',
+      )
+    } catch (unlockErr) {
+      logger.warn(
+        { event: 'migrate.unlock_failed', runId, err: unlockErr },
+        'migrate.unlock_failed',
+      )
+    }
+  }
+  if (errorPath) {
+    client.release(errorPath)
+  } else {
+    try {
+      await client.query('DISCARD ALL')
+    } catch {
+      /* best-effort */
+    }
+    client.release()
+  }
+  logger.info(
+    {
+      event: 'migrate.done',
+      runId,
+      applied: appliedCount,
+      totalMs: Math.round(performance.now() - runStart),
+    },
+    'migrate.done',
+  )
 }
 
 async function acquireAdvisoryLockWithHeartbeat(

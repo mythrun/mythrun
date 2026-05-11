@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto'
 import Stripe from 'stripe'
 import type { Logger } from 'pino'
-import { LOOKUP_KEYS, type LookupKey } from './lookup-keys.js'
+import { LOOKUP_KEYS, type LookupKey, type LookupKeySpec } from './lookup-keys.js'
 import {
   setSkuCache,
   type SkuCache,
@@ -139,79 +139,12 @@ export async function probeStripeContract(stripe: Stripe, logger: Logger): Promi
   for (const key of lookupKeys) {
     const spec = LOOKUP_KEYS[key]
     if ((counts.get(spec.lookupKey) ?? 0) > 1) continue
-
     const price = byLookup.get(spec.lookupKey)
     if (!price) {
       mismatches.push(`lookup_key '${spec.lookupKey}' not found in active Stripe prices`)
       continue
     }
-
-    if (price.currency !== 'usd') {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' has currency '${price.currency}' in Stripe; contract expects 'usd'`,
-      )
-    }
-
-    const stripeType: 'recurring' | 'one_time' = price.recurring ? 'recurring' : 'one_time'
-    if (stripeType !== spec.type) {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' has type '${stripeType}' in Stripe but contract expects '${spec.type}'`,
-      )
-      continue
-    }
-
-    if (typeof price.unit_amount !== 'number' || price.unit_amount <= 0) {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' has unit_amount '${String(price.unit_amount)}' in Stripe; contract expects > 0`,
-      )
-    }
-
-    if (price.billing_scheme !== 'per_unit') {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' has billing_scheme '${price.billing_scheme}' in Stripe; contract expects 'per_unit'`,
-      )
-    }
-
-    if (price.transform_quantity !== null) {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' has non-null transform_quantity in Stripe; contract requires null (no quantity transformation)`,
-      )
-    }
-
-    if (price.tax_behavior && price.tax_behavior !== 'unspecified') {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' has tax_behavior '${price.tax_behavior}' in Stripe; contract expects 'unspecified' (no tax handling at launch)`,
-      )
-    }
-
-    const product = price.product
-    if (typeof product === 'string' || !('active' in product)) {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' has unexpanded or deleted product field; probe expected expand: ['data.product']`,
-      )
-    } else if (!product.active) {
-      mismatches.push(
-        `lookup_key '${spec.lookupKey}' resolves to a price whose product is archived (product.id='${product.id}'); checkout will fail at session-create. Reactivate the product in Dashboard or rotate the lookup_key onto a price under an active product.`,
-      )
-    }
-
-    if (spec.type === 'recurring') {
-      if (price.recurring?.interval !== 'month') {
-        mismatches.push(
-          `lookup_key '${spec.lookupKey}' has recurring.interval '${String(price.recurring?.interval)}' in Stripe; contract expects 'month'`,
-        )
-      }
-      if (price.recurring?.interval_count !== 1) {
-        mismatches.push(
-          `lookup_key '${spec.lookupKey}' has recurring.interval_count '${String(price.recurring?.interval_count)}' in Stripe; contract expects 1 (monthly, not multi-month)`,
-        )
-      }
-      if (price.recurring?.usage_type !== 'licensed') {
-        mismatches.push(
-          `lookup_key '${spec.lookupKey}' has recurring.usage_type '${String(price.recurring?.usage_type)}' in Stripe; contract expects 'licensed'`,
-        )
-      }
-    }
+    mismatches.push(...validatePriceAgainstSpec(spec, price))
   }
 
   if (mismatches.length > 0) {
@@ -230,6 +163,82 @@ export async function probeStripeContract(stripe: Stripe, logger: Logger): Promi
     { event: 'billing.probe_passed', bootId, count: lookupKeys.length },
     'Stripe billing contract verified',
   )
+}
+
+// Per-price contract validation. Pure function of (spec, price) → mismatches[];
+// extracted from probeStripeContract's per-key loop to keep that function
+// focused on orchestration (fetch → dedupe → loop → portal → cache → log).
+function validatePriceAgainstSpec(spec: LookupKeySpec, price: Stripe.Price): string[] {
+  const mismatches: string[] = []
+  const lk = spec.lookupKey
+
+  if (price.currency !== 'usd') {
+    mismatches.push(`lookup_key '${lk}' has currency '${price.currency}' in Stripe; contract expects 'usd'`)
+  }
+
+  const stripeType: 'recurring' | 'one_time' = price.recurring ? 'recurring' : 'one_time'
+  if (stripeType !== spec.type) {
+    mismatches.push(
+      `lookup_key '${lk}' has type '${stripeType}' in Stripe but contract expects '${spec.type}'`,
+    )
+    // type mismatch is fatal for the rest of the per-spec checks
+    return mismatches
+  }
+
+  if (typeof price.unit_amount !== 'number' || price.unit_amount <= 0) {
+    mismatches.push(
+      `lookup_key '${lk}' has unit_amount '${String(price.unit_amount)}' in Stripe; contract expects > 0`,
+    )
+  }
+
+  if (price.billing_scheme !== 'per_unit') {
+    mismatches.push(
+      `lookup_key '${lk}' has billing_scheme '${price.billing_scheme}' in Stripe; contract expects 'per_unit'`,
+    )
+  }
+
+  if (price.transform_quantity !== null) {
+    mismatches.push(
+      `lookup_key '${lk}' has non-null transform_quantity in Stripe; contract requires null (no quantity transformation)`,
+    )
+  }
+
+  if (price.tax_behavior && price.tax_behavior !== 'unspecified') {
+    mismatches.push(
+      `lookup_key '${lk}' has tax_behavior '${price.tax_behavior}' in Stripe; contract expects 'unspecified' (no tax handling at launch)`,
+    )
+  }
+
+  const product = price.product
+  if (typeof product === 'string' || !('active' in product)) {
+    mismatches.push(
+      `lookup_key '${lk}' has unexpanded or deleted product field; probe expected expand: ['data.product']`,
+    )
+  } else if (!product.active) {
+    mismatches.push(
+      `lookup_key '${lk}' resolves to a price whose product is archived (product.id='${product.id}'); checkout will fail at session-create. Reactivate the product in Dashboard or rotate the lookup_key onto a price under an active product.`,
+    )
+  }
+
+  if (spec.type === 'recurring') {
+    if (price.recurring?.interval !== 'month') {
+      mismatches.push(
+        `lookup_key '${lk}' has recurring.interval '${String(price.recurring?.interval)}' in Stripe; contract expects 'month'`,
+      )
+    }
+    if (price.recurring?.interval_count !== 1) {
+      mismatches.push(
+        `lookup_key '${lk}' has recurring.interval_count '${String(price.recurring?.interval_count)}' in Stripe; contract expects 1 (monthly, not multi-month)`,
+      )
+    }
+    if (price.recurring?.usage_type !== 'licensed') {
+      mismatches.push(
+        `lookup_key '${lk}' has recurring.usage_type '${String(price.recurring?.usage_type)}' in Stripe; contract expects 'licensed'`,
+      )
+    }
+  }
+
+  return mismatches
 }
 
 function populateSkuCache(

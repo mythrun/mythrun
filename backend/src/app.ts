@@ -33,9 +33,6 @@ export interface AppConfig {
 // /health, webhook plugin before usersRoutes, billingRoutes last).
 // Splitting it into helpers would scatter the order-dependence across
 // files and obscure the wiring contract this function exists to express.
-// Comments + Fastify config inflate the line count past the 50-line
-// heuristic; the cohesion case is the same as routes/billing.ts.
-/* eslint-disable-next-line max-lines-per-function */
 export const buildApp = async (
   deps: AppDeps,
   authOpts: RegisterAuthOptions,

@@ -278,6 +278,92 @@ function expiresAtPlusOneMonth(periodEndSec: number): Date {
   return new Date(periodEndSec * 1000 + ONE_MONTH_MS)
 }
 
+interface ParsedProration {
+  readonly error: HandlerResult | null
+  readonly oldLookupKey: LookupKey
+  readonly newLookupKey: LookupKey
+  readonly oldSpec: ReturnType<typeof lookupKeySpec>
+  readonly newSpec: ReturnType<typeof lookupKeySpec>
+  readonly subtotal: number
+}
+
+// Three sub-steps of the pending_update_applied handler fused into one
+// helper because they share the 'validation_failed' return path and their
+// outputs thread strictly forward into each other:
+//   (a) splitInvoiceLines → exactly one negative + one positive line
+//   (b) reverse-resolve OLD/NEW lookup_keys from the price IDs
+//   (c) amount validation against newSpec.priceCents - oldSpec.priceCents
+// Errors emit the corresponding billing.upgrade_* / billing.amount_*
+// log line and surface a HandlerResult discriminator the caller returns.
+function parseAndValidateProration(
+  invoice: Stripe.Invoice,
+  ids: PendingUpdateLogIds,
+  log: FastifyBaseLogger,
+): ParsedProration {
+  const split = splitInvoiceLines(invoice)
+  if (split.negatives.length !== 1 || split.positives.length !== 1) {
+    log.error({ ...ids, line_amounts: split.allAmounts }, 'billing.upgrade_unexpected_line_shape')
+    return parsedProrationError('validation_failed')
+  }
+  const negative = split.negatives[0]
+  const positive = split.positives[0]
+  if (!negative || !positive) {
+    // length === 1 but [0] missing is unreachable; satisfies strict-TS
+    // exhaustive narrowing without `as`.
+    throw new Error(`pending_update_applied: line split inconsistent for invoice=${invoice.id}`)
+  }
+
+  const oldLookupKey = lookupKeyForPriceId(negative.priceId)
+  const newLookupKey = lookupKeyForPriceId(positive.priceId)
+  if (oldLookupKey === null || newLookupKey === null) {
+    log.error(
+      {
+        ...ids,
+        old_price_id: negative.priceId,
+        new_price_id: positive.priceId,
+        old_resolved: oldLookupKey,
+        new_resolved: newLookupKey,
+      },
+      'billing.upgrade_unknown_price_id',
+    )
+    return parsedProrationError('validation_failed')
+  }
+
+  const subtotal = invoice.subtotal_excluding_tax
+  const oldSpec = lookupKeySpec(oldLookupKey)
+  const newSpec = lookupKeySpec(newLookupKey)
+  const expectedDelta = newSpec.priceCents - oldSpec.priceCents
+  if (subtotal === null || subtotal !== expectedDelta) {
+    log.error(
+      {
+        ...ids,
+        old_lookup_key: oldLookupKey,
+        new_lookup_key: newLookupKey,
+        expected: expectedDelta,
+        actual: subtotal,
+      },
+      'billing.amount_validation_failed',
+    )
+    return parsedProrationError('validation_failed')
+  }
+
+  return { error: null, oldLookupKey, newLookupKey, oldSpec, newSpec, subtotal }
+}
+
+// Helper for the validation_failed early-return branches. The shape
+// satisfies ParsedProration's `readonly` fields with placeholders that
+// callers never read (caller short-circuits on `error !== null`).
+function parsedProrationError(error: HandlerResult): ParsedProration {
+  return {
+    error,
+    oldLookupKey: 'tier_wayfarer',
+    newLookupKey: 'tier_wayfarer',
+    oldSpec: { priceCents: 0, sessionsGranted: 0, worldsGranted: 0 },
+    newSpec: { priceCents: 0, sessionsGranted: 0, worldsGranted: 0 },
+    subtotal: 0,
+  }
+}
+
 interface SubscriptionFields {
   readonly tierLookupKey: string
   readonly periodStart: number
@@ -362,58 +448,14 @@ export async function handlePendingUpdateApplied(
     return 'validation_failed'
   }
 
-  // 4. Walk the proration invoice's line items. Exactly one negative and
-  //    one positive line MUST match the price_details discriminator; the
-  //    OLD price rides the negative line, the NEW price rides the positive.
-  const split = splitInvoiceLines(invoice)
-  if (split.negatives.length !== 1 || split.positives.length !== 1) {
-    log.error({ ...ids, line_amounts: split.allAmounts }, 'billing.upgrade_unexpected_line_shape')
-    return 'validation_failed'
-  }
-  const negative = split.negatives[0]
-  const positive = split.positives[0]
-  if (!negative || !positive) {
-    // Defensive: length === 1 but [0] missing is unreachable; satisfies
-    // strict-TS exhaustive narrowing without `as`.
-    throw new Error(`pending_update_applied: line split inconsistent for invoice=${invoice.id}`)
-  }
-
-  // 5. Reverse-resolve OLD/NEW lookup_keys.
-  const oldLookupKey = lookupKeyForPriceId(negative.priceId)
-  const newLookupKey = lookupKeyForPriceId(positive.priceId)
-  if (oldLookupKey === null || newLookupKey === null) {
-    log.error(
-      {
-        ...ids,
-        old_price_id: negative.priceId,
-        new_price_id: positive.priceId,
-        old_resolved: oldLookupKey,
-        new_resolved: newLookupKey,
-      },
-      'billing.upgrade_unknown_price_id',
-    )
-    return 'validation_failed'
-  }
-
-  // 6. Amount validation. The proration invoice's subtotal_excluding_tax is
-  //    the flat dollar delta between the two tier prices.
-  const subtotal = invoice.subtotal_excluding_tax
-  const oldSpec = lookupKeySpec(oldLookupKey)
-  const newSpec = lookupKeySpec(newLookupKey)
-  const expectedDelta = newSpec.priceCents - oldSpec.priceCents
-  if (subtotal === null || subtotal !== expectedDelta) {
-    log.error(
-      {
-        ...ids,
-        old_lookup_key: oldLookupKey,
-        new_lookup_key: newLookupKey,
-        expected: expectedDelta,
-        actual: subtotal,
-      },
-      'billing.amount_validation_failed',
-    )
-    return 'validation_failed'
-  }
+  // 4-6. Parse + reverse-resolve + amount-validate the proration invoice.
+  //      Three steps fused into one helper because they share the
+  //      'validation_failed' return path and the variables thread through
+  //      (lines → priceIds → lookup_keys → specs → subtotal compared
+  //      against newSpec.priceCents - oldSpec.priceCents).
+  const parsed = parseAndValidateProration(invoice, ids, log)
+  if (parsed.error !== null) return parsed.error
+  const { oldLookupKey, newLookupKey, oldSpec, newSpec, subtotal } = parsed
 
   // 7. upsertFromStripe — idempotent against a prior
   //    `customer.subscription.updated` having already written the NEW tier

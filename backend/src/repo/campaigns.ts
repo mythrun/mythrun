@@ -14,6 +14,11 @@ import type {
   CreateCampaignInput,
 } from './types.js'
 
+// Namespace factory: the body is the method dictionary, not a complex
+// algorithm. Splitting it into top-level helpers would lose the `pool`
+// closure and force a per-call argument; the namespace pattern is
+// load-bearing for the repo layer's grep-ability.
+// eslint-disable-next-line max-lines-per-function
 export function createCampaignsRepo(pool: Pool) {
   return {
     create: async (input: CreateCampaignInput): Promise<Campaign> => {

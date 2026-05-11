@@ -11,7 +11,7 @@
 // fetches the row again here for the response body. The double lookup is
 // fine — one is the gate, one is the body.
 
-import type { FastifyPluginAsync } from 'fastify'
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
 import { createUsersRepo } from '../repo/users.js'
 import { grantInTx } from '../repo/credits.js'
@@ -58,6 +58,210 @@ function generateSuggestion(base: string): string {
   return `${base}${digits}`
 }
 
+type ValidateRegisterResult =
+  | { readonly ok: true; readonly username: string; readonly displayName: string }
+  | {
+      readonly ok: false
+      readonly status: 400
+      readonly body: { readonly code: string; readonly reason: string }
+    }
+
+// Validates the register request body shape + username regex + profanity
+// gates on both username and displayName. Profanity gates are LLM round-
+// trips (200-800ms each); they MUST run BEFORE the transaction opens so a
+// PoolClient is not held across them (Sphinx I2 round 2 of MYT-38).
+async function validateRegisterInput(body: unknown): Promise<ValidateRegisterResult> {
+  const parsed = parseRegisterBody(body)
+  if (!parsed) {
+    return { ok: false, status: 400, body: { code: 'username_invalid', reason: 'format' } }
+  }
+  const { username, displayName } = parsed
+  if (!isValidUsernameFormat(username)) {
+    return { ok: false, status: 400, body: { code: 'username_invalid', reason: 'format' } }
+  }
+  const usernameProfanity = await classifyProfanity(username)
+  if (usernameProfanity.profane) {
+    return {
+      ok: false,
+      status: 400,
+      body: { code: 'username_invalid', reason: usernameProfanity.reason ?? 'offensive' },
+    }
+  }
+  const displayProfanity = await classifyProfanity(displayName)
+  if (displayProfanity.profane) {
+    return {
+      ok: false,
+      status: 400,
+      body: { code: 'display_name_invalid', reason: displayProfanity.reason ?? 'offensive' },
+    }
+  }
+  return { ok: true, username, displayName }
+}
+
+interface UniqueViolationCtx {
+  readonly sub: string
+  readonly username: string
+  readonly users: ReturnType<typeof createUsersRepo>
+}
+
+type UniqueViolationResolution =
+  | {
+      readonly code: 'already_onboarded_same'
+      readonly user: Awaited<ReturnType<ReturnType<typeof createUsersRepo>['getByCognitoSub']>>
+    }
+  | {
+      readonly code: 'already_onboarded_different' | 'username_taken' | 'inconsistent_state'
+      readonly status: number
+      readonly body: Record<string, unknown>
+    }
+
+// Maps the two known unique-constraint violations from the register
+// transaction (users_cognito_sub_key — sub already has a row;
+// users_username_lower_key — username taken) to the right 200/409/500
+// response. Anything else returns null so the caller re-throws.
+async function handleRegisterUniqueViolation(
+  err: unknown,
+  ctx: UniqueViolationCtx,
+): Promise<UniqueViolationResolution | null> {
+  if (typeof err !== 'object' || err === null || !('code' in err)) return null
+  if ((err as { code?: string }).code !== '23505') return null
+  const constraint = (err as { constraint?: string }).constraint ?? ''
+
+  if (constraint === 'users_cognito_sub_key') {
+    // Re-fetch via the pool (NOT the released client) — the tx is rolled
+    // back and the client is about to be released by the route's finally.
+    const existing = await ctx.users.getByCognitoSub(ctx.sub)
+    if (!existing) {
+      return { code: 'inconsistent_state', status: 500, body: { code: 'inconsistent_state' } }
+    }
+    if (existing.username.toLowerCase() === ctx.username.toLowerCase()) {
+      return { code: 'already_onboarded_same', user: existing }
+    }
+    return {
+      code: 'already_onboarded_different',
+      status: 409,
+      body: {
+        code: 'already_onboarded',
+        currentUsername: existing.username,
+        requestedUsername: ctx.username,
+      },
+    }
+  }
+
+  if (constraint === 'users_username_lower_key') {
+    let suggestion = generateSuggestion(ctx.username)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await classifyProfanity(suggestion)
+      if (!r.profane) break
+      suggestion = generateSuggestion(ctx.username)
+    }
+    return {
+      code: 'username_taken',
+      status: 409,
+      body: { code: 'username_taken', suggestion },
+    }
+  }
+
+  return null
+}
+
+interface RegisterCtx {
+  readonly pool: Pool
+  readonly users: ReturnType<typeof createUsersRepo>
+}
+
+// Handler: POST /api/users/register. Extracted as a top-level function
+// so the plugin body stays under the per-function line limit AND so the
+// transaction-script body stays parseable as one cohesive operation.
+// The plugin registers this via `(req, reply) => handleRegister(req, reply, ctx)`
+// so opts.pool and the repo closure are bound at registration time.
+async function handleRegister(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  ctx: RegisterCtx,
+): Promise<FastifyReply> {
+  if (!request.user) {
+    return reply.code(401).send({ code: 'unauthenticated' })
+  }
+  const validation = await validateRegisterInput(request.body)
+  if (!validation.ok) {
+    return reply.code(validation.status).send(validation.body)
+  }
+  const { username, displayName } = validation
+  const sub = request.user.sub
+
+  // Per spec §8: open a transaction, create the users row, grant the
+  // trial credit, flip free_trial_used. All three writes must succeed
+  // or none — otherwise we get an "onboarded user without trial credit"
+  // wedge state that the existing-user short-circuit can never recover
+  // from on re-registration.
+  //
+  // The classifyProfanity calls in validateRegisterInput MUST stay outside
+  // this tx (per Sphinx I2 round 2) — they are 200–800ms LLM calls and
+  // holding a PoolClient open across them is a DoS amplifier on `max=10`.
+  const client = await ctx.pool.connect()
+  let inTransaction = false
+  try {
+    await client.query(
+      "BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'",
+    )
+    inTransaction = true
+
+    const user = await ctx.users.create(client, {
+      cognitoSub: sub,
+      username: username.trim(),
+      displayName: displayName.trim(),
+    })
+    await grantInTx(client, {
+      userId: user.id,
+      creditType: 'session',
+      amount: 1,
+      sourceType: 'trial',
+      sourceId: null,
+      expiresAt: null,
+      sourcePurchaseId: null,
+      sourceBillingHistoryId: null,
+    })
+    await client.query('UPDATE users SET free_trial_used = true WHERE id = $1', [user.id])
+    await client.query('COMMIT')
+    inTransaction = false
+
+    // Stitch the post-COMMIT free_trial_used into the response shape so
+    // the body reflects state-at-end-of-tx. Re-reading is wasted I/O —
+    // the only column we just changed is the flag.
+    const userResponse = { ...user, freeTrialUsed: true }
+    return await reply
+      .header('Location', '/api/users/me')
+      .code(201)
+      .send({ user: userResponse, created: true })
+  } catch (err) {
+    if (inTransaction) {
+      try {
+        await client.query('ROLLBACK')
+      } catch {
+        // Connection may already be in failed state; pool will recycle.
+      }
+    }
+    const conflict = await handleRegisterUniqueViolation(err, {
+      sub,
+      username: username.trim(),
+      users: ctx.users,
+    })
+    if (conflict) {
+      if (conflict.code === 'already_onboarded_same') {
+        return await reply
+          .header('Content-Location', '/api/users/me')
+          .code(200)
+          .send({ user: conflict.user, created: false })
+      }
+      return await reply.code(conflict.status).send(conflict.body)
+    }
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
 // FastifyPluginAsync requires an async function shape; the body has no
 // top-level await (route registration is synchronous), so the rule is
 // disabled here per existing precedent in auth/bypass-plugin.ts.
@@ -82,132 +286,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         },
       },
     },
-    async (request, reply) => {
-      if (!request.user) {
-        return reply.code(401).send({ code: 'unauthenticated' })
-      }
-
-      const parsed = parseRegisterBody(request.body)
-      if (!parsed) {
-        return reply.code(400).send({ code: 'username_invalid', reason: 'format' })
-      }
-      const { username, displayName } = parsed
-
-      if (!isValidUsernameFormat(username)) {
-        return reply.code(400).send({ code: 'username_invalid', reason: 'format' })
-      }
-
-      const usernameProfanity = await classifyProfanity(username)
-      if (usernameProfanity.profane) {
-        return reply.code(400).send({
-          code: 'username_invalid',
-          reason: usernameProfanity.reason ?? 'offensive',
-        })
-      }
-
-      const displayProfanity = await classifyProfanity(displayName)
-      if (displayProfanity.profane) {
-        return reply.code(400).send({
-          code: 'display_name_invalid',
-          reason: displayProfanity.reason ?? 'offensive',
-        })
-      }
-
-      // Per spec §8: open a transaction, create the users row, grant the
-      // trial credit, flip free_trial_used. All three writes must succeed
-      // or none — otherwise we get an "onboarded user without trial credit"
-      // wedge state that the existing-user short-circuit can never recover
-      // from on re-registration.
-      //
-      // The classifyProfanity calls above MUST stay outside this tx (per
-      // Sphinx I2 round 2) — they are 200–800ms LLM calls and holding a
-      // PoolClient open across them is a DoS amplifier on `max=10`.
-      const client = await opts.pool.connect()
-      let inTransaction = false
-      try {
-        await client.query(
-          "BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'",
-        )
-        inTransaction = true
-
-        const user = await users.create(client, {
-          cognitoSub: request.user.sub,
-          username: username.trim(),
-          displayName: displayName.trim(),
-        })
-        await grantInTx(client, {
-          userId: user.id,
-          creditType: 'session',
-          amount: 1,
-          sourceType: 'trial',
-          sourceId: null,
-          expiresAt: null,
-          sourcePurchaseId: null,
-          sourceBillingHistoryId: null,
-        })
-        await client.query('UPDATE users SET free_trial_used = true WHERE id = $1', [user.id])
-        await client.query('COMMIT')
-        inTransaction = false
-
-        // Stitch the post-COMMIT free_trial_used into the response shape so
-        // the body reflects state-at-end-of-tx. Re-reading is wasted I/O —
-        // the only column we just changed is the flag.
-        const userResponse = { ...user, freeTrialUsed: true }
-        return await reply
-          .header('Location', '/api/users/me')
-          .code(201)
-          .send({ user: userResponse, created: true })
-      } catch (err) {
-        if (inTransaction) {
-          try {
-            await client.query('ROLLBACK')
-          } catch {
-            // Connection may already be in failed state; pool will recycle.
-          }
-          inTransaction = false
-        }
-        if (
-          typeof err === 'object' &&
-          err !== null &&
-          'code' in err &&
-          (err as { code?: string }).code === '23505'
-        ) {
-          const constraint = (err as { constraint?: string }).constraint ?? ''
-          if (constraint === 'users_cognito_sub_key') {
-            // Re-fetch via the pool (NOT the released client) — the
-            // tx is already rolled back and the client is about to be
-            // released in `finally`.
-            const existing = await users.getByCognitoSub(request.user.sub)
-            if (!existing) {
-              return await reply.code(500).send({ code: 'inconsistent_state' })
-            }
-            if (existing.username.toLowerCase() === username.trim().toLowerCase()) {
-              return await reply
-                .header('Content-Location', '/api/users/me')
-                .code(200)
-                .send({ user: existing, created: false })
-            }
-            return await reply.code(409).send({
-              code: 'already_onboarded',
-              currentUsername: existing.username,
-              requestedUsername: username.trim(),
-            })
-          }
-          if (constraint === 'users_username_lower_key') {
-            let suggestion = generateSuggestion(username.trim())
-            for (let attempt = 0; attempt < 3; attempt++) {
-              const r = await classifyProfanity(suggestion)
-              if (!r.profane) break
-              suggestion = generateSuggestion(username.trim())
-            }
-            return await reply.code(409).send({ code: 'username_taken', suggestion })
-          }
-        }
-        throw err
-      } finally {
-        client.release()
-      }
-    },
+    (request, reply) => handleRegister(request, reply, { pool: opts.pool, users }),
   )
 
   app.get(

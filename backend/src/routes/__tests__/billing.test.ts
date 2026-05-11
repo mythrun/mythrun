@@ -270,7 +270,6 @@ async function buildPublicTestApp(): Promise<FastifyInstance> {
 // Task 25: GET /api/billing/skus
 // ===========================================================================
 
-// eslint-disable-next-line max-lines-per-function
 describe('billingRoutes — GET /api/billing/skus (MYT-42 Task 25)', () => {
   let app: FastifyInstance
 
@@ -339,7 +338,6 @@ describe('billingRoutes — GET /api/billing/skus (MYT-42 Task 25)', () => {
 // Task 26: GET /api/billing/balance
 // ===========================================================================
 
-// eslint-disable-next-line max-lines-per-function
 describe('billingRoutes — GET /api/billing/balance (MYT-42 Task 26)', () => {
   let app: FastifyInstance | undefined
   let noAuthApp: FastifyInstance | undefined
@@ -429,7 +427,6 @@ describe('billingRoutes — GET /api/billing/balance (MYT-42 Task 26)', () => {
 // Task 27: GET /api/billing/subscription
 // ===========================================================================
 
-// eslint-disable-next-line max-lines-per-function
 describe('billingRoutes — GET /api/billing/subscription (MYT-42 Task 27)', () => {
   let app: FastifyInstance | undefined
   let noAuthApp: FastifyInstance | undefined
@@ -572,7 +569,6 @@ interface HistoryResponseBody {
   nextCursor: string | null
 }
 
-// eslint-disable-next-line max-lines-per-function
 describe('billingRoutes — GET /api/billing/history (MYT-42 Task 28)', () => {
   let app: FastifyInstance | undefined
   let noAuthApp: FastifyInstance | undefined
@@ -832,7 +828,6 @@ interface CheckoutSuccessBody {
   url: string | null
 }
 
-// eslint-disable-next-line max-lines-per-function
 describe('billingRoutes — POST /api/billing/checkout (MYT-42 Task 29)', () => {
   let app: FastifyInstance | undefined
   let stripe: StripeStubBag
@@ -1129,7 +1124,6 @@ function installPortalStub(): PortalStubBag {
 
 const PORTAL_RETURN_URL = 'http://localhost:5173/account'
 
-// eslint-disable-next-line max-lines-per-function
 describe('billingRoutes — POST /api/billing/portal (MYT-42 Task 30)', () => {
   let app: FastifyInstance | undefined
   let noAuthApp: FastifyInstance | undefined
@@ -1398,7 +1392,6 @@ const FIXTURE_UPGRADE_CACHE: SkuCache = (() => {
   }
 })()
 
-// eslint-disable-next-line max-lines-per-function
 describe('billingRoutes — POST /api/billing/upgrade-tier (MYT-42 Task 31)', () => {
   let app: FastifyInstance | undefined
   let noAuthApp: FastifyInstance | undefined

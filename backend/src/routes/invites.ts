@@ -108,124 +108,201 @@ async function requireMember(
   return true
 }
 
+interface InvitesCtx {
+  readonly repo: ReturnType<typeof createRepo>
+  readonly frontendBaseUrl: string
+}
+
+async function handleCreateInvite(
+  request: FastifyRequest<{ Params: CampaignIdParams }>,
+  reply: FastifyReply,
+  ctx: InvitesCtx,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(ctx.repo, request, reply)
+  if (userId === null) return reply
+  const campaignId = request.params.id
+  if (!(await requireOwner(ctx.repo, campaignId, userId, reply))) return reply
+
+  try {
+    const invite = await ctx.repo.invites.create({ campaignId, createdBy: userId })
+    return await reply
+      .header('Location', `/api/invites/${invite.inviteCode}/preview`)
+      .code(201)
+      .send({
+        inviteCode: invite.inviteCode,
+        inviteUrl: inviteUrlOf(ctx.frontendBaseUrl, invite.inviteCode),
+        uses: invite.uses,
+        expiresAt: invite.expiresAt,
+        createdAt: invite.createdAt,
+      })
+  } catch (err) {
+    if (err instanceof InviteCapReachedError) {
+      return reply.code(409).send({
+        code: 'invite_cap_reached',
+        activeInvites: err.activeInvites,
+      })
+    }
+    if (err instanceof InviteCreationError) {
+      return reply.code(500).send({ code: 'invite_creation_error' })
+    }
+    throw err
+  }
+}
+
+async function handleListInvites(
+  request: FastifyRequest<{ Params: CampaignIdParams }>,
+  reply: FastifyReply,
+  ctx: InvitesCtx,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(ctx.repo, request, reply)
+  if (userId === null) return reply
+  const campaignId = request.params.id
+  if (!(await requireOwner(ctx.repo, campaignId, userId, reply))) return reply
+
+  const invites = await ctx.repo.invites.listForCampaign(campaignId)
+  return reply.code(200).send({
+    invites: invites.map((inv) => ({
+      inviteCode: inv.inviteCode,
+      inviteUrl: inviteUrlOf(ctx.frontendBaseUrl, inv.inviteCode),
+      uses: inv.uses,
+      expiresAt: inv.expiresAt,
+      createdAt: inv.createdAt,
+      primary: inv.primary,
+    })),
+  })
+}
+
+async function handleRevokeInvite(
+  request: FastifyRequest<{ Params: CampaignAndInviteCodeParams }>,
+  reply: FastifyReply,
+  ctx: InvitesCtx,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(ctx.repo, request, reply)
+  if (userId === null) return reply
+  const { id: campaignId, inviteCode } = request.params
+  if (!(await requireOwner(ctx.repo, campaignId, userId, reply))) return reply
+
+  const result = await ctx.repo.invites.revoke(inviteCode, campaignId)
+  if ('revoked' in result) {
+    return reply.code(204).send()
+  }
+  return reply.code(404).send({ code: 'invite_not_found' })
+}
+
+async function handleInvitePreview(
+  request: FastifyRequest<{ Params: InviteCodeParams }>,
+  reply: FastifyReply,
+  ctx: InvitesCtx,
+): Promise<FastifyReply> {
+  const { inviteCode } = request.params
+  const preview = await ctx.repo.invites.getCodePreview(inviteCode)
+  if (preview === null) {
+    return reply.code(404).send({ code: 'invite_not_found' })
+  }
+  return reply.code(200).send({
+    campaignName: preview.campaignName,
+    ownerUsername: preview.ownerUsername,
+    ownerDisplayName: preview.ownerDisplayName,
+    valid: preview.valid,
+  })
+}
+
+async function handleAcceptInvite(
+  request: FastifyRequest<{ Params: InviteCodeParams }>,
+  reply: FastifyReply,
+  ctx: InvitesCtx,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(ctx.repo, request, reply)
+  if (userId === null) return reply
+  const { inviteCode } = request.params
+
+  try {
+    const result = await ctx.repo.invites.acceptInvite({ code: inviteCode, userId })
+    if ('campaignId' in result) {
+      if (result.alreadyMember) {
+        return await reply.code(200).send({
+          campaignId: result.campaignId,
+          alreadyMember: true,
+        })
+      }
+      return await reply
+        .header('Location', `/api/campaigns/${result.campaignId}`)
+        .code(201)
+        .send({ campaignId: result.campaignId, alreadyMember: false })
+    }
+    if ('notFound' in result) {
+      return await reply.code(404).send({ code: 'invite_not_found' })
+    }
+    if ('revoked' in result) {
+      return await reply.code(410).send({ code: 'invite_revoked' })
+    }
+    if ('campaignGone' in result) {
+      return await reply.code(410).send({ code: 'campaign_gone' })
+    }
+    // campaignFull
+    return await reply.code(409).send({
+      code: 'campaign_full',
+      activeMembers: result.activeMembers,
+    })
+  } catch (err) {
+    if (err instanceof InviteTimeoutError) {
+      return await reply
+        .header('Retry-After', '1')
+        .code(503)
+        .send({ code: 'invite_timeout', retryAfterSec: 1 })
+    }
+    throw err
+  }
+}
+
+async function handleListMembers(
+  request: FastifyRequest<{ Params: CampaignIdParams }>,
+  reply: FastifyReply,
+  ctx: InvitesCtx,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(ctx.repo, request, reply)
+  if (userId === null) return reply
+  const campaignId = request.params.id
+  if (!(await requireMember(ctx.repo, campaignId, userId, reply))) return reply
+
+  const members = await ctx.repo.campaigns.listMembers(campaignId)
+  return reply.code(200).send({ members })
+}
+
 // FastifyPluginAsync requires an async function shape; the body has no
 // top-level await (route registration is synchronous), so the rule is
 // disabled here per existing precedent in auth/bypass-plugin.ts.
 // eslint-disable-next-line @typescript-eslint/require-await
 export const invitesRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const repo = createRepo(opts.pool)
-  const { frontendBaseUrl } = opts
+  const ctx: InvitesCtx = { repo, frontendBaseUrl: opts.frontendBaseUrl }
 
-  // ── POST /api/campaigns/:id/invites — owner-only create ──────────────────
   app.post<{ Params: CampaignIdParams }>(
     '/api/campaigns/:id/invites',
-    {
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-    },
-    async (request, reply) => {
-      const userId = await resolveUserId(repo, request, reply)
-      if (userId === null) return reply
-      const campaignId = request.params.id
-      if (!(await requireOwner(repo, campaignId, userId, reply))) return reply
-
-      try {
-        const invite = await repo.invites.create({ campaignId, createdBy: userId })
-        return await reply
-          .header('Location', `/api/invites/${invite.inviteCode}/preview`)
-          .code(201)
-          .send({
-            inviteCode: invite.inviteCode,
-            inviteUrl: inviteUrlOf(frontendBaseUrl, invite.inviteCode),
-            uses: invite.uses,
-            expiresAt: invite.expiresAt,
-            createdAt: invite.createdAt,
-          })
-      } catch (err) {
-        if (err instanceof InviteCapReachedError) {
-          return reply.code(409).send({
-            code: 'invite_cap_reached',
-            activeInvites: err.activeInvites,
-          })
-        }
-        if (err instanceof InviteCreationError) {
-          return reply.code(500).send({ code: 'invite_creation_error' })
-        }
-        throw err
-      }
-    },
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    (req, reply) => handleCreateInvite(req, reply, ctx),
   )
 
-  // ── GET /api/campaigns/:id/invites — owner-only list ─────────────────────
   app.get<{ Params: CampaignIdParams }>(
     '/api/campaigns/:id/invites',
-    {
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-    },
-    async (request, reply) => {
-      const userId = await resolveUserId(repo, request, reply)
-      if (userId === null) return reply
-      const campaignId = request.params.id
-      if (!(await requireOwner(repo, campaignId, userId, reply))) return reply
-
-      const invites = await repo.invites.listForCampaign(campaignId)
-      return reply.code(200).send({
-        invites: invites.map((inv) => ({
-          inviteCode: inv.inviteCode,
-          inviteUrl: inviteUrlOf(frontendBaseUrl, inv.inviteCode),
-          uses: inv.uses,
-          expiresAt: inv.expiresAt,
-          createdAt: inv.createdAt,
-          primary: inv.primary,
-        })),
-      })
-    },
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    (req, reply) => handleListInvites(req, reply, ctx),
   )
 
-  // ── DELETE /api/campaigns/:id/invites/:inviteCode — owner-only revoke ────
   app.delete<{ Params: CampaignAndInviteCodeParams }>(
     '/api/campaigns/:id/invites/:inviteCode',
-    {
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-    },
-    async (request, reply) => {
-      const userId = await resolveUserId(repo, request, reply)
-      if (userId === null) return reply
-      const { id: campaignId, inviteCode } = request.params
-      if (!(await requireOwner(repo, campaignId, userId, reply))) return reply
-
-      const result = await repo.invites.revoke(inviteCode, campaignId)
-      if ('revoked' in result) {
-        return reply.code(204).send()
-      }
-      return reply.code(404).send({ code: 'invite_not_found' })
-    },
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    (req, reply) => handleRevokeInvite(req, reply, ctx),
   )
 
-  // ── GET /api/invites/:inviteCode/preview — PUBLIC ────────────────────────
   app.get<{ Params: InviteCodeParams }>(
     '/api/invites/:inviteCode/preview',
     {
-      config: {
-        auth: 'public',
-        rateLimit: { max: 10, timeWindow: '1 minute' },
-      },
+      config: { auth: 'public', rateLimit: { max: 10, timeWindow: '1 minute' } },
     },
-    async (request, reply) => {
-      const { inviteCode } = request.params
-      const preview = await repo.invites.getCodePreview(inviteCode)
-      if (preview === null) {
-        return reply.code(404).send({ code: 'invite_not_found' })
-      }
-      return reply.code(200).send({
-        campaignName: preview.campaignName,
-        ownerUsername: preview.ownerUsername,
-        ownerDisplayName: preview.ownerDisplayName,
-        valid: preview.valid,
-      })
-    },
+    (req, reply) => handleInvitePreview(req, reply, ctx),
   )
 
-  // ── POST /api/invites/:inviteCode/accept — any onboarded user ────────────
   app.post<{ Params: InviteCodeParams }>(
     '/api/invites/:inviteCode/accept',
     {
@@ -239,65 +316,12 @@ export const invitesRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         },
       },
     },
-    async (request, reply) => {
-      const userId = await resolveUserId(repo, request, reply)
-      if (userId === null) return reply
-      const { inviteCode } = request.params
-
-      try {
-        const result = await repo.invites.acceptInvite({ code: inviteCode, userId })
-        if ('campaignId' in result) {
-          if (result.alreadyMember) {
-            return await reply.code(200).send({
-              campaignId: result.campaignId,
-              alreadyMember: true,
-            })
-          }
-          return await reply
-            .header('Location', `/api/campaigns/${result.campaignId}`)
-            .code(201)
-            .send({ campaignId: result.campaignId, alreadyMember: false })
-        }
-        if ('notFound' in result) {
-          return await reply.code(404).send({ code: 'invite_not_found' })
-        }
-        if ('revoked' in result) {
-          return await reply.code(410).send({ code: 'invite_revoked' })
-        }
-        if ('campaignGone' in result) {
-          return await reply.code(410).send({ code: 'campaign_gone' })
-        }
-        // campaignFull
-        return await reply.code(409).send({
-          code: 'campaign_full',
-          activeMembers: result.activeMembers,
-        })
-      } catch (err) {
-        if (err instanceof InviteTimeoutError) {
-          return await reply
-            .header('Retry-After', '1')
-            .code(503)
-            .send({ code: 'invite_timeout', retryAfterSec: 1 })
-        }
-        throw err
-      }
-    },
+    (req, reply) => handleAcceptInvite(req, reply, ctx),
   )
 
-  // ── GET /api/campaigns/:id/members — any member ──────────────────────────
   app.get<{ Params: CampaignIdParams }>(
     '/api/campaigns/:id/members',
-    {
-      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-    },
-    async (request, reply) => {
-      const userId = await resolveUserId(repo, request, reply)
-      if (userId === null) return reply
-      const campaignId = request.params.id
-      if (!(await requireMember(repo, campaignId, userId, reply))) return reply
-
-      const members = await repo.campaigns.listMembers(campaignId)
-      return reply.code(200).send({ members })
-    },
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    (req, reply) => handleListMembers(req, reply, ctx),
   )
 }

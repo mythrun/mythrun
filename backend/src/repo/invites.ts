@@ -38,6 +38,8 @@ export interface InvitesRepoOpts {
   readonly statementTimeoutMs?: number
 }
 
+// Namespace factory — see createCampaignsRepo for the pattern rationale.
+// eslint-disable-next-line max-lines-per-function
 export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
   const lockMs = opts.lockTimeoutMs ?? ACCEPT_LOCK_TIMEOUT_MS
   const stmtMs = opts.statementTimeoutMs ?? ACCEPT_STATEMENT_TIMEOUT_MS
@@ -192,6 +194,13 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
       return { notFoundOrWrongCampaign: true }
     },
 
+    // Transaction script: BEGIN → lock invite row → validate state →
+    // INSERT membership (or detect idempotent re-call) → COMMIT.
+    // The discriminated-union return type forks the caller's response
+    // (200/409/404). Each step's error message is callable-specific.
+    // Breaking this into helpers would either lose the transaction
+    // boundary or require passing PoolClient through every helper.
+    // eslint-disable-next-line max-lines-per-function
     acceptInvite: async (input: {
       code: string
       userId: string

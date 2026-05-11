@@ -188,6 +188,8 @@ export interface NewClawbackRow {
   readonly sourceId: string // originating grant row's UUID
 }
 
+// Namespace factory — see createCampaignsRepo for the pattern rationale.
+// eslint-disable-next-line max-lines-per-function
 export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
   const lockTimeoutMs = opts.debitLockTimeoutMs ?? DEBIT_LOCK_TIMEOUT_MS
   const stmtTimeoutMs = opts.debitStatementTimeoutMs ?? DEBIT_STATEMENT_TIMEOUT_MS

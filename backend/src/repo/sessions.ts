@@ -10,6 +10,8 @@ import {
 import { toSession, toSessionUsage, type SessionDbRow, type SessionUsageDbRow } from './mappers.js'
 import { SessionNotFoundError } from './sessions-errors.js'
 
+// Namespace factory — see createCampaignsRepo for the pattern rationale.
+// eslint-disable-next-line max-lines-per-function
 export function createSessionsRepo(pool: Pool) {
   return {
     create: async (input: CreateSessionInput): Promise<Session> => {

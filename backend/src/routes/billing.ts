@@ -676,7 +676,6 @@ function resolveUpgradeTiers(
 }
 
 // Handler: POST /api/billing/upgrade-tier
-// eslint-disable-next-line max-lines-per-function
 async function handleUpgradeTier(
   pool: Pool,
   repo: Repo,

@@ -3,6 +3,8 @@ import { uuidv7 } from './uuidv7.js'
 import { type CreateWorldInput, type World, type WorldUpdate } from './types.js'
 import { toWorld, type WorldDbRow } from './mappers.js'
 
+// Namespace factory — see createCampaignsRepo for the pattern rationale.
+// eslint-disable-next-line max-lines-per-function
 export function createWorldsRepo(pool: Pool) {
   return {
     create: async (input: CreateWorldInput): Promise<World> => {
