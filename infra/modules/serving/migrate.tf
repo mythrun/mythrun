@@ -194,3 +194,15 @@ output "migrate_log_group_name" {
   value       = aws_cloudwatch_log_group.migrate.name
   description = "Log group name for the db-migrate workflow."
 }
+
+output "migrate_task_execution_role_arn" {
+  value = aws_iam_role.migrate_task_execution.arn
+}
+
+output "migrate_task_role_arn" {
+  value = aws_iam_role.migrate_task.arn
+}
+
+output "migrate_log_group_arn" {
+  value = aws_cloudwatch_log_group.migrate.arn
+}

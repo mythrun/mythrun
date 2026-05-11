@@ -348,6 +348,59 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     }
   }
 
+  # ecs:RunTask scoped to the migrate task definition family + cluster.
+  # The existing UpdateService/RegisterTaskDefinition grants do NOT
+  # imply RunTask — this is a meaningful new privilege class on the
+  # OIDC role. Scoped tightly so it can only launch migrate tasks in
+  # the mythrun cluster.
+  statement {
+    actions = ["ecs:RunTask"]
+    resources = [
+      "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/mythrun-${var.environment}-migrate:*",
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:cluster"
+      values = [
+        "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:cluster/mythrun",
+      ]
+    }
+  }
+
+  # iam:PassRole for the new migrate roles. The existing PassRole
+  # statement covers the shared serving roles; the migrate task uses
+  # dedicated roles for blast-radius isolation, so they need their own
+  # PassRole grant.
+  statement {
+    actions = ["iam:PassRole"]
+    resources = [
+      module.serving.migrate_task_execution_role_arn,
+      module.serving.migrate_task_role_arn,
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  # CloudWatch log reads for the migrate workflow's "tail + surface" step.
+  # Scoped to the migrate log group only.
+  statement {
+    actions = ["logs:DescribeLogStreams", "logs:GetLogEvents"]
+    resources = [
+      "${module.serving.migrate_log_group_arn}:*",
+    ]
+  }
+
+  # ECR describe-images for resolving the SHA-pinned digest at run time.
+  statement {
+    actions = ["ecr:DescribeImages"]
+    resources = [
+      "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun",
+    ]
+  }
+
   # rds:CreateDBSnapshot intentionally omitted. Infra §5.5 specifies pre-deploy
   # snapshots for production only; staging has deletion_protection disabled.
   # The production GH role (at Launch) will carry this permission.
