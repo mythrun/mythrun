@@ -97,8 +97,9 @@
   registers first so every subsequent route registration is checked against the closed set of public
   paths; then liveness <code>/health</code> and the <code>/health/ready</code> route; then a custom
   404 handler; then <code>registerAuth</code> attaches <code>request.user</code>;
-  <code>@fastify/rate-limit</code> registers with <code>global: false</code> so individual routes
-  opt in via <code>config.rateLimit</code>; then
+  <code>@fastify/rate-limit</code> registers with <code>global: false</code> + Redis-backed store
+  (via <code>deps.redisRealtime</code>) so individual routes opt in via
+  <code>config.rateLimit</code> and per-route caps apply fleet-wide; then
   <a href="../auth-billing/onboarding.html"><code>requireOnboarded</code></a> gates every
   default-auth route on a real <code>users</code> row plus the suspend check, attaching the frozen
   <code>request.dbUser</code>; then the

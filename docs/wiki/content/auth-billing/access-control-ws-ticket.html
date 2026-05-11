@@ -263,7 +263,8 @@
     is registered with <code>global: false</code>, so without an opt-in this endpoint would be
     uncapped — an authenticated user could mint tickets in a tight loop against Redis + Postgres.
     The cap is keyed on <code>requireDbUser(req).id</code> rather than IP, so a CG-NAT pool doesn't
-    share the budget. MYT-45 swaps the in-memory rate-limit store for Redis-backed.
+    share the budget. The store is Redis-backed (per MYT-45) so the cap applies fleet-wide across
+    ECS tasks, not per-task.
   </li>
   <li>
     <strong>Two-step preHandler array.</strong> Step 1 resolves <code>session.campaignId</code> onto

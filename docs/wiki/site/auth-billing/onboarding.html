@@ -841,8 +841,9 @@
 </aside>
 
 <p>
-  The store is in-memory today; MYT-45 swaps it to Redis-backed so the limits hold across the ECS
-  service's task replicas instead of per-task.
+  The store is Redis-backed (per MYT-45) so the limits hold across the ECS service's task replicas
+  instead of per-task. See the rate-limit list above for the per-route shape and the per-sub
+  override on register.
 </p>
 
 <h2 id="frontend-base-url-and-the-host-allowlist"><code>FRONTEND_BASE_URL</code> and the host allowlist</h2>
