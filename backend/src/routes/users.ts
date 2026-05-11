@@ -70,7 +70,16 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     {
       config: {
         auth: 'jwt-no-db',
-        rateLimit: { max: 5, timeWindow: '1 minute' },
+        rateLimit: {
+          max: 5,
+          timeWindow: '1 minute',
+          // Per-sub keying — defends against one user trying many candidate
+          // usernames from one IP. The fallback to req.ip is defensive: the
+          // route is `auth: 'jwt-no-db'` so req.user is set by the JWT plugin
+          // BEFORE the rate-limit pre-handler runs. The ?? branch only fires
+          // if some future call-shape regression strips req.user.
+          keyGenerator: (req): string => req.user?.sub ?? req.ip,
+        },
       },
     },
     async (request, reply) => {
