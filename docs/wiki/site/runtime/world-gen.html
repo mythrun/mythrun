@@ -1,0 +1,1101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World gen · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="world-gen">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › World gen</div>
+        <article>
+<h1>World gen</h1>
+
+<p class="lead">
+  The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a concept
+  (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a 3-axis
+  Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked transaction,
+  and enqueues a BullMQ job. The worker walks five stages — three are wired in this ticket
+  (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>); two are
+  placeholders that fail visibly until the streaming-stages ticket replaces them. A cost-cap circuit
+  breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; if the
+  cumulative cost ever exceeds it, the worker refunds the debited credit and marks the world failed.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="3934pt" height="702pt"
+ viewBox="14.00 14.00 3919.00 688.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 683.84)">
+<title>world_gen</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-669.44 3900.84,-669.44 3900.84,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_api</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-462 8,-609 2018.34,-609 2018.34,-462 8,-462"/>
+<text xml:space="preserve" text-anchor="middle" x="1013.17" y="-595.1" font-family="Courier,monospace" font-size="11.00">API process</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_redis</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="2254.37,-462 2254.37,-626 2484.08,-626 2484.08,-462 2254.37,-462"/>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-612.1" font-family="Courier,monospace" font-size="11.00">Redis</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_worker</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1795.22,-314 1795.22,-462 3552.12,-462 3552.12,-314 1795.22,-314"/>
+<text xml:space="preserve" text-anchor="middle" x="2673.67" y="-448.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker service &#160;(BullMQ Worker, concurrency 3)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_pg</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="3692.13,-18 3692.13,-340 3888.84,-340 3888.84,-18 3692.13,-18"/>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-326.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+</g>
+<!-- client -->
+<g id="node1" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1577.8,-665.44 1427.3,-665.44 1427.3,-608.56 1577.8,-608.56 1577.8,-665.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-646.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">HTTP client</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-633.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev tool today;</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-620.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> SPA after launch)</text>
+</g>
+<!-- post -->
+<g id="node2" class="node">
+<title>post</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="330.13,-586.04 8,-586.04 8,-515.96 330.13,-515.96 330.13,-586.04"/>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-567.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-554.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/campaigns</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-541.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Zod body parse</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-527.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(kind: &#39;new&#39;, mode: &#39;freeform&#39; | &#39;guided&#39;)</text>
+</g>
+<!-- client&#45;&gt;post -->
+<g id="edge1" class="edge">
+<title>client&#45;&gt;post</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1426.69,-639.81C1349.83,-642.45 1226.74,-646 1120.32,-646 546.79,-646 546.79,-646 546.79,-646 449.66,-646 342.6,-615.94 267.51,-589.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="268.57,-587.41 261.15,-587.39 266.93,-592.03 268.57,-587.41"/>
+<text xml:space="preserve" text-anchor="middle" x="858.41" y="-649" font-family="Courier,monospace" font-size="10.00">POST campaign</text>
+</g>
+<!-- pre -->
+<g id="node3" class="node">
+<title>pre</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="649.45,-587.64 446.14,-587.64 446.14,-504.36 649.45,-504.36 649.45,-587.64"/>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-569.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cheap pre&#45;checks</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-555.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;concurrent&#45;gen guard</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-542.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;rejection&#45;storm cooldown</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-529.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;credit balance peek</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-516.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;queue&#45;depth admission</text>
+</g>
+<!-- post&#45;&gt;pre -->
+<g id="edge2" class="edge">
+<title>post&#45;&gt;pre</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M330.65,-548.87C366.38,-548.39 403.48,-547.9 436.64,-547.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="436.65,-549.91 443.62,-547.37 436.58,-545.01 436.65,-549.91"/>
+<text xml:space="preserve" text-anchor="middle" x="388.13" y="-551.5" font-family="Courier,monospace" font-size="10.00">parsed body</text>
+</g>
+<!-- synth -->
+<g id="node4" class="node">
+<title>synth</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="963.36,-518.44 753.45,-518.44 753.45,-461.56 963.36,-461.56 963.36,-518.44"/>
+<text xml:space="preserve" text-anchor="middle" x="858.41" y="-499.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">synthesize&#45;concept.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="858.41" y="-486.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">guided only — Sonnet</text>
+<text xml:space="preserve" text-anchor="middle" x="858.41" y="-473.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ concept + intentSummary</text>
+</g>
+<!-- pre&#45;&gt;synth -->
+<g id="edge3" class="edge">
+<title>pre&#45;&gt;synth</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M649.84,-527.66C680.05,-522.18 713.37,-516.14 744.3,-510.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="744.72,-512.94 751.17,-509.28 743.84,-508.12 744.72,-512.94"/>
+<text xml:space="preserve" text-anchor="middle" x="701.45" y="-526.02" font-family="Courier,monospace" font-size="10.00">if guided</text>
+</g>
+<!-- gate -->
+<g id="node5" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1224.27,-579.64 1014.36,-579.64 1014.36,-496.36 1224.27,-496.36 1224.27,-579.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1119.32" y="-561.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">input&#45;gate.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1119.32" y="-547.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet, 3 axes</text>
+<text xml:space="preserve" text-anchor="middle" x="1119.32" y="-534.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;srd_compat | clone_intent</text>
+<text xml:space="preserve" text-anchor="middle" x="1119.32" y="-521.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;| inappropriate</text>
+<text xml:space="preserve" text-anchor="middle" x="1119.32" y="-508.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">aggregate&#45;confidence rule</text>
+</g>
+<!-- pre&#45;&gt;gate -->
+<g id="edge5" class="edge">
+<title>pre&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M649.96,-544.58C749.6,-543.18 901.53,-541.05 1005.14,-539.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1004.98,-542.04 1011.95,-539.49 1004.91,-537.14 1004.98,-542.04"/>
+<text xml:space="preserve" text-anchor="middle" x="858.41" y="-546.12" font-family="Courier,monospace" font-size="10.00">if freeform</text>
+</g>
+<!-- synth&#45;&gt;gate -->
+<g id="edge4" class="edge">
+<title>synth&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M963.97,-509.39C977.57,-511.91 991.55,-514.5 1005.28,-517.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1004.67,-519.42 1012,-518.29 1005.57,-514.6 1004.67,-519.42"/>
+</g>
+<!-- gate&#45;&gt;client -->
+<g id="edge7" class="edge">
+<title>gate&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1224.99,-565.18C1285.92,-581.01 1361.67,-600.67 1418.47,-615.43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1417.56,-617.72 1424.95,-617.11 1418.79,-612.98 1417.56,-617.72"/>
+<text xml:space="preserve" text-anchor="middle" x="1309.28" y="-605.15" font-family="Courier,monospace" font-size="10.00">422 concept_rejected</text>
+</g>
+<!-- tx -->
+<g id="node6" class="node">
+<title>tx</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1610.8,-571.84 1394.29,-571.84 1394.29,-462.16 1610.8,-462.16 1610.8,-571.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-553.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locked tx (Postgres)</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-540.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;advisory lock on user</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-526.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;debit credit_ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-513.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT worlds (generating)</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-500.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaigns (setup)</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-487.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaign_members</text>
+<text xml:space="preserve" text-anchor="middle" x="1502.55" y="-474.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;seed pipeline_runs row</text>
+</g>
+<!-- gate&#45;&gt;tx -->
+<g id="edge6" class="edge">
+<title>gate&#45;&gt;tx</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1224.99,-532.23C1274.59,-529.5 1334,-526.23 1385.02,-523.42"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1385.12,-525.87 1391.97,-523.04 1384.85,-520.97 1385.12,-525.87"/>
+<text xml:space="preserve" text-anchor="middle" x="1309.28" y="-533.61" font-family="Courier,monospace" font-size="10.00">verdict=allow</text>
+</g>
+<!-- enq -->
+<g id="node7" class="node">
+<title>enq</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2018.34,-588.04 1768.82,-588.04 1768.82,-517.96 2018.34,-517.96 2018.34,-588.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-569.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldGenQueue.add</text>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-556.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;name: &#39;world&#45;gen&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-543.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;jobId: campaignId</text>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-529.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(dedupe via removeOnComplete:0)</text>
+</g>
+<!-- tx&#45;&gt;enq -->
+<g id="edge11" class="edge">
+<title>tx&#45;&gt;enq</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1611.4,-526.98C1657.32,-531.23 1711.35,-536.23 1759.71,-540.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1759.35,-543.13 1766.55,-541.34 1759.8,-538.25 1759.35,-543.13"/>
+</g>
+<!-- pipeline_runs -->
+<g id="node16" class="node">
+<title>pipeline_runs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3888.84,-318.44 3692.13,-318.44 3692.13,-261.56 3888.84,-261.56 3888.84,-318.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-299.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline_runs</text>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-286.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;stage row</text>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-273.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;status, cost_usd, error</text>
+</g>
+<!-- tx&#45;&gt;pipeline_runs -->
+<g id="edge10" class="edge">
+<title>tx&#45;&gt;pipeline_runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1538.56,-461.59C1599.09,-373.4 1732.32,-211 1892.58,-211 1892.58,-211 1892.58,-211 3330.41,-211 3452.75,-211 3590.81,-238.59 3683.29,-261.16"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3682.67,-263.53 3690.05,-262.82 3683.84,-258.77 3682.67,-263.53"/>
+<text xml:space="preserve" text-anchor="middle" x="2829.4" y="-214" font-family="Courier,monospace" font-size="10.00">seed pending</text>
+</g>
+<!-- worlds -->
+<g id="node17" class="node">
+<title>worlds</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3878.94,-232.44 3702.03,-232.44 3702.03,-175.56 3878.94,-175.56 3878.94,-232.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-213.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds</text>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-200.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status: generating →</text>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-187.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;complete | failed</text>
+</g>
+<!-- tx&#45;&gt;worlds -->
+<g id="edge9" class="edge">
+<title>tx&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1518.74,-461.43C1537.38,-402.85 1574.32,-311.41 1635.8,-255 1726.41,-171.87 1769.62,-152 1892.58,-152 1892.58,-152 1892.58,-152 3454.76,-152 3535.83,-152 3626.65,-167.08 3693.21,-181"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3692.49,-183.35 3699.84,-182.4 3693.5,-178.55 3692.49,-183.35"/>
+<text xml:space="preserve" text-anchor="middle" x="2829.4" y="-155" font-family="Courier,monospace" font-size="10.00">INSERT generating</text>
+</g>
+<!-- ledger -->
+<g id="node19" class="node">
+<title>ledger</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3882.24,-74.44 3698.73,-74.44 3698.73,-17.56 3882.24,-17.56 3882.24,-74.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-55.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credit_ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-42.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">debit + cost_cap_refund</text>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-29.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ admin (dev)</text>
+</g>
+<!-- tx&#45;&gt;ledger -->
+<g id="edge8" class="edge">
+<title>tx&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1513.5,-461.66C1529.01,-388.2 1564.84,-257.49 1635.8,-169 1721.28,-62.42 1755.96,0 1892.58,0 1892.58,0 1892.58,0 3454.76,0 3534.36,0 3623.62,-12.92 3689.94,-25.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3689.2,-27.43 3696.53,-26.29 3690.09,-22.61 3689.2,-27.43"/>
+<text xml:space="preserve" text-anchor="middle" x="2829.4" y="-3" font-family="Courier,monospace" font-size="10.00">debit</text>
+</g>
+<!-- enq&#45;&gt;client -->
+<g id="edge13" class="edge">
+<title>enq&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1768.15,-579.87C1708.75,-592.69 1639.28,-607.69 1586.43,-619.1"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1586.2,-616.65 1579.87,-620.52 1587.23,-621.44 1586.2,-616.65"/>
+<text xml:space="preserve" text-anchor="middle" x="1689.81" y="-610.43" font-family="Courier,monospace" font-size="10.00">201 { campaignId }</text>
+</g>
+<!-- queue -->
+<g id="node8" class="node">
+<title>queue</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2424.67,-604.44 2313.78,-604.44 2313.78,-547.56 2424.67,-547.56 2424.67,-604.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-585.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullMQ queue</text>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-572.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen</text>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-559.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisBatch)</text>
+</g>
+<!-- enq&#45;&gt;queue -->
+<g id="edge12" class="edge">
+<title>enq&#45;&gt;queue</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2019.02,-559.04C2110.68,-563.49 2231.57,-569.36 2304.41,-572.9"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2304.12,-575.34 2311.23,-573.23 2304.36,-570.45 2304.12,-575.34"/>
+</g>
+<!-- proc -->
+<g id="node10" class="node">
+<title>proc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1991.93,-401.04 1795.22,-401.04 1795.22,-330.96 1991.93,-330.96 1991.93,-401.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-382.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen&#45;processor.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-369.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">readCostCap once per job</text>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-356.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">atomic claim per stage</text>
+<text xml:space="preserve" text-anchor="middle" x="1893.58" y="-342.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">stuck&#45;stage reset (&gt;5min)</text>
+</g>
+<!-- queue&#45;&gt;proc -->
+<g id="edge14" class="edge">
+<title>queue&#45;&gt;proc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2313.24,-561.11C2226.91,-537.5 2066.92,-492.74 2043.34,-479 2030.03,-471.25 2030.17,-464.85 2018.34,-455 1998.32,-438.34 1975.41,-421.34 1954.78,-406.72"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1956.21,-404.73 1949.08,-402.7 1953.39,-408.73 1956.21,-404.73"/>
+<text xml:space="preserve" text-anchor="middle" x="2136.35" y="-540.23" font-family="Courier,monospace" font-size="10.00">job { campaignId }</text>
+</g>
+<!-- channel -->
+<g id="node9" class="node">
+<title>channel</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2484.08,-518.44 2254.37,-518.44 2254.37,-461.56 2484.08,-461.56 2484.08,-518.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-499.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-486.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline:campaign:{campaignId}</text>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-473.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisRealtime)</text>
+</g>
+<!-- proc&#45;&gt;channel -->
+<g id="edge29" class="edge">
+<title>proc&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1992.38,-376.95C2060.97,-387.15 2153.57,-406.08 2229.37,-440 2239.81,-444.68 2241.64,-449.96 2252.79,-456.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2251.64,-458.87 2258.97,-460.01 2253.95,-454.55 2251.64,-458.87"/>
+<text xml:space="preserve" text-anchor="middle" x="2136.35" y="-467" font-family="Courier,monospace" font-size="10.00">phase / stage&#45;started /</text>
+<text xml:space="preserve" text-anchor="middle" x="2136.35" y="-455" font-family="Courier,monospace" font-size="10.00">stage&#45;completed / cost&#45;update /</text>
+<text xml:space="preserve" text-anchor="middle" x="2136.35" y="-443" font-family="Courier,monospace" font-size="10.00">stage&#45;failed</text>
+</g>
+<!-- s1 -->
+<g id="node11" class="node">
+<title>s1</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2477.48,-384.04 2260.97,-384.04 2260.97,-313.96 2477.48,-313.96 2477.48,-384.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-365.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 1</text>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-352.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concept_intake</text>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-339.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet + paint&#45;job validator</text>
+<text xml:space="preserve" text-anchor="middle" x="2369.22" y="-325.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(judge + ≤3 attempts)</text>
+</g>
+<!-- proc&#45;&gt;s1 -->
+<g id="edge16" class="edge">
+<title>proc&#45;&gt;s1</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1992.43,-362.49C2067.83,-359.78 2172.32,-356.03 2251.98,-353.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2251.87,-355.63 2258.77,-352.93 2251.69,-350.73 2251.87,-355.63"/>
+</g>
+<!-- settings -->
+<g id="node18" class="node">
+<title>settings</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3878.94,-146.84 3702.03,-146.84 3702.03,-103.16 3878.94,-103.16 3878.94,-146.84"/>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-128.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">settings</text>
+<text xml:space="preserve" text-anchor="middle" x="3790.49" y="-115.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_gen_cost_cap_usd</text>
+</g>
+<!-- proc&#45;&gt;settings -->
+<g id="edge15" class="edge">
+<title>proc&#45;&gt;settings</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1927.56,-330.31C1999.73,-256.31 2180.3,-93 2368.22,-93 2368.22,-93 2368.22,-93 3454.76,-93 3535.38,-93 3626.42,-102.31 3693.18,-110.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3692.55,-113.28 3699.81,-111.75 3693.19,-108.42 3692.55,-113.28"/>
+<text xml:space="preserve" text-anchor="middle" x="2995.66" y="-96" font-family="Courier,monospace" font-size="10.00">readCostCap</text>
+</g>
+<!-- s2 -->
+<g id="node12" class="node">
+<title>s2</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2738.39,-441.04 2535.08,-441.04 2535.08,-370.96 2738.39,-370.96 2738.39,-441.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2636.73" y="-422.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stages 2 + 3</text>
+<text xml:space="preserve" text-anchor="middle" x="2636.73" y="-409.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_and_factions</text>
+<text xml:space="preserve" text-anchor="middle" x="2636.73" y="-396.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locations_and_npcs</text>
+<text xml:space="preserve" text-anchor="middle" x="2636.73" y="-382.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stageNotImplementedHandler</text>
+</g>
+<!-- s1&#45;&gt;s2 -->
+<g id="edge17" class="edge">
+<title>s1&#45;&gt;s2</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2478.21,-372.18C2494.11,-375.6 2510.49,-379.11 2526.41,-382.53"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2525.56,-384.85 2532.92,-383.93 2526.59,-380.06 2525.56,-384.85"/>
+</g>
+<!-- capchk -->
+<g id="node15" class="node">
+<title>capchk</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3552.12,-370.44 3355.41,-370.44 3355.41,-313.56 3552.12,-313.56 3552.12,-370.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3453.76" y="-351.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cost&#45;cap.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="3453.76" y="-338.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sumCompletedStageCosts</text>
+<text xml:space="preserve" text-anchor="middle" x="3453.76" y="-325.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&gt; cap? &#160;→ refund + fail</text>
+</g>
+<!-- s1&#45;&gt;capchk -->
+<g id="edge20" class="edge">
+<title>s1&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2477.98,-348.3C2685.7,-346.96 3139.27,-344.03 3346.12,-342.69"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3346.08,-345.14 3353.06,-342.64 3346.04,-340.24 3346.08,-345.14"/>
+<text xml:space="preserve" text-anchor="middle" x="2995.66" y="-348.44" font-family="Courier,monospace" font-size="10.00">after each stage</text>
+</g>
+<!-- s1&#45;&gt;pipeline_runs -->
+<g id="edge25" class="edge">
+<title>s1&#45;&gt;pipeline_runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2447.15,-313.31C2499.22,-292.38 2570.21,-270 2635.73,-270 2635.73,-270 2635.73,-270 3330.41,-270 3440.24,-270 3467.39,-279.34 3577.12,-284 3611.51,-285.46 3649.06,-286.65 3682.89,-287.58"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3682.52,-290.02 3689.59,-287.76 3682.66,-285.12 3682.52,-290.02"/>
+<text xml:space="preserve" text-anchor="middle" x="3128.91" y="-285" font-family="Courier,monospace" font-size="10.00">completed +</text>
+<text xml:space="preserve" text-anchor="middle" x="3128.91" y="-273" font-family="Courier,monospace" font-size="10.00"> cost_usd</text>
+</g>
+<!-- s4 -->
+<g id="node13" class="node">
+<title>s4</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3070.91,-440.44 2920.41,-440.44 2920.41,-383.56 3070.91,-383.56 3070.91,-440.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2995.66" y="-421.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 4</text>
+<text xml:space="preserve" text-anchor="middle" x="2995.66" y="-408.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">starting_situation</text>
+<text xml:space="preserve" text-anchor="middle" x="2995.66" y="-395.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet</text>
+</g>
+<!-- s2&#45;&gt;s4 -->
+<g id="edge18" class="edge">
+<title>s2&#45;&gt;s4</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2739.06,-407.7C2793.41,-408.62 2859.59,-409.73 2910.99,-410.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2910.9,-413.04 2917.94,-410.71 2910.99,-408.14 2910.9,-413.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2829.4" y="-425.23" font-family="Courier,monospace" font-size="10.00">visible fail</text>
+<text xml:space="preserve" text-anchor="middle" x="2829.4" y="-413.23" font-family="Courier,monospace" font-size="10.00">phase=world_gen_failed</text>
+</g>
+<!-- s5 -->
+<g id="node14" class="node">
+<title>s5</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3304.41,-440.44 3186.92,-440.44 3186.92,-383.56 3304.41,-383.56 3304.41,-440.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3245.66" y="-421.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 5</text>
+<text xml:space="preserve" text-anchor="middle" x="3245.66" y="-408.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">random_tables</text>
+<text xml:space="preserve" text-anchor="middle" x="3245.66" y="-395.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet</text>
+</g>
+<!-- s4&#45;&gt;s5 -->
+<g id="edge19" class="edge">
+<title>s4&#45;&gt;s5</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M3071.4,-412C3105.18,-412 3144.78,-412 3177.59,-412"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3177.4,-414.45 3184.4,-412 3177.4,-409.55 3177.4,-414.45"/>
+</g>
+<!-- s4&#45;&gt;capchk -->
+<g id="edge21" class="edge">
+<title>s4&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3071.25,-392.94C3106.18,-384.59 3148.48,-375.27 3186.92,-369 3239.07,-360.49 3297.45,-354.21 3346.18,-349.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3346.29,-352.31 3353.05,-349.25 3345.86,-347.42 3346.29,-352.31"/>
+</g>
+<!-- s4&#45;&gt;pipeline_runs -->
+<g id="edge26" class="edge">
+<title>s4&#45;&gt;pipeline_runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3071.65,-435.19C3178.76,-465.11 3381.5,-509.85 3552.12,-479 3605.82,-469.29 3622.58,-467.51 3667.13,-436 3709.05,-406.35 3745.13,-358.97 3767.03,-326.26"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3768.94,-327.81 3770.75,-320.62 3764.85,-325.11 3768.94,-327.81"/>
+</g>
+<!-- s5&#45;&gt;capchk -->
+<g id="edge22" class="edge">
+<title>s5&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3304.9,-392.22C3321.77,-386.49 3340.64,-380.08 3359.09,-373.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3359.41,-376.29 3365.25,-371.72 3357.84,-371.65 3359.41,-376.29"/>
+</g>
+<!-- s5&#45;&gt;pipeline_runs -->
+<g id="edge27" class="edge">
+<title>s5&#45;&gt;pipeline_runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3301.61,-441.15C3310.68,-444.81 3320.15,-447.97 3329.41,-450 3426.12,-471.14 3457.52,-476.15 3552.12,-447 3631.16,-422.64 3708.33,-363 3752.28,-324.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3753.79,-326.58 3757.42,-320.11 3750.55,-322.9 3753.79,-326.58"/>
+</g>
+<!-- s5&#45;&gt;worlds -->
+<g id="edge28" class="edge">
+<title>s5&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3305.08,-418.19C3368.86,-422.43 3472.51,-421.81 3552.12,-385 3631.42,-348.33 3619.87,-296.12 3692.13,-247 3697.18,-243.57 3702.54,-240.31 3708.05,-237.24"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3709.04,-239.49 3714.04,-234.02 3706.72,-235.17 3709.04,-239.49"/>
+<text xml:space="preserve" text-anchor="middle" x="3453.76" y="-422.97" font-family="Courier,monospace" font-size="10.00">status=complete</text>
+</g>
+<!-- capchk&#45;&gt;worlds -->
+<g id="edge24" class="edge">
+<title>capchk&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3469.49,-312.9C3488.82,-278.32 3526.37,-222.37 3577.12,-199 3612.7,-182.62 3655.31,-180.69 3693,-184.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3692.44,-186.45 3699.65,-184.71 3692.93,-181.57 3692.44,-186.45"/>
+<text xml:space="preserve" text-anchor="middle" x="3622.13" y="-202" font-family="Courier,monospace" font-size="10.00">status=failed</text>
+</g>
+<!-- capchk&#45;&gt;ledger -->
+<g id="edge23" class="edge">
+<title>capchk&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3467.69,-313.09C3486.82,-272.86 3526.01,-199.6 3577.12,-152 3611.25,-120.21 3656.73,-95.8 3696.83,-78.47"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3697.62,-80.8 3703.11,-75.81 3695.71,-76.29 3697.62,-80.8"/>
+<text xml:space="preserve" text-anchor="middle" x="3622.13" y="-167" font-family="Courier,monospace" font-size="10.00">cost_cap_refund</text>
+<text xml:space="preserve" text-anchor="middle" x="3622.13" y="-155" font-family="Courier,monospace" font-size="10.00">+1 credit</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Four routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in the
+  <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
+  registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
+  flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
+  world row, and the member list for a campaign the caller is a member of.
+  <code>GET /api/campaigns/mine</code> lists every campaign the caller created or joined.
+  <code>POST /api/campaigns/:campaignId/resume</code> is the recovery surface: a polymorphic switch
+  over the eight phases <code>derivePhase</code> reports (see
+  <a href="./pipeline-status.html">pipeline status</a>) that re-enqueues, 409s, or 422s depending on
+  where the pipeline got stuck.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Campaign-id is the user-facing handle, not world-id</strong> — a campaign owns at most one
+  world, but the user always interacts with the campaign (its name, its membership, its session
+  history). World-id is an internal join key. The route surface, the status SSE channel
+  (<code>pipeline:campaign:{campaignId}</code>), and the BullMQ <code>jobId</code> all key on
+  <code>campaignId</code>; the 201 response from the create flow returns only <code>campaignId</code>.
+  This is also why the create transaction seeds a <code>pipeline_runs</code> row keyed on
+  <code>world_id</code> + <code>stage = 'concept_intake'</code> with <code>status = 'pending'</code>
+  — a Redis blip between COMMIT and <code>queue.add</code> presents as <code>world_gen_failed</code>
+  via the existing <code>derivePhase</code> rules instead of <code>not_started</code>, which the
+  resume route's <code>world_gen_failed</code> arm can recover from cleanly.
+</aside>
+
+<p>
+  The body shape is discriminated from day one. The outer discriminator is <code>kind</code> with
+  one functional arm (<code>'new'</code>) and a future arm reserved for joining an existing world
+  (not stubbed at launch — an unknown <code>kind</code> produces a standard 400 from Zod, not 501).
+  Inside <code>kind: 'new'</code>, an inner discriminator on <code>source.mode</code> selects either
+  <code>'freeform'</code> (a 20–4000-character free-text concept) or <code>'guided'</code> (exactly
+  three <code>{ title, whyILikeIt }</code> picks the user assembled in a chooser UI). The
+  synthesizer fires only in the guided arm; both arms then converge on the input gate.
+</p>
+
+<h2 id="the-four-routes">The four routes</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method &amp; path</th>
+      <th>Auth</th>
+      <th>Rate limit</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>POST /api/campaigns</code></td>
+      <td>Standard onboarded chain (auth + <code>requireDbUser</code>; no membership pre-handler — the user is creating the campaign)</td>
+      <td><strong>5 / min per USER</strong> (tighter than the queue or cost gates would tolerate; the floor that blocks adversarial Sonnet-burn loops trying to slip past the rejection-storm cooldown)</td>
+      <td>
+        <code>201 { campaignId }</code> on success; <code>400 invalid_body</code> on Zod failure;
+        <code>403 insufficient_credits</code>; <code>409 concurrent_generation_in_progress</code>;
+        <code>422 concept_rejected</code>; <code>429 rejection_storm_cooldown</code>;
+        <code>503 queue_full</code> (with <code>Retry-After: 60</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId</code></td>
+      <td><code>requireCampaignMember</code></td>
+      <td><strong>60 / min per IP</strong> (matches the status-fetch ceiling so a UI fanning out both calls on a tick doesn't trip its own limit on either axis)</td>
+      <td><code>200 { campaign, world, members }</code>; <code>404 campaign_not_found</code> or <code>world_not_found</code>.</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/mine</code></td>
+      <td>Onboarded chain; result filtered by <code>created_by</code> or <code>campaign_members.invite_accepted = true</code></td>
+      <td><strong>30 / min per IP</strong></td>
+      <td><code>200 { campaigns }</code>. Owned + joined collapse into a single ordered list.</td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/resume</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>5 / min per USER</strong> (much tighter than the GETs because resume is state-changing and triggers a queue add)</td>
+      <td>
+        <code>202 { campaignId, action }</code> when the world-gen job is re-enqueued; <code>409</code>
+        with a typed code on every phase that has no resume action (in-progress, already-complete,
+        terminal-failure, stuck-on-not-implemented-stage, world-gen-capped);
+        <code>422 phase_resume_not_yet_implemented</code> for <code>character_creation</code> /
+        <code>post_creation</code> phases.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Per-user rate-limit on POST + resume, per-IP on the GETs</strong> — the writes are tied to
+  cost (an LLM call, a queue add) and the abuse shape is per-identity. The reads are cheap and a
+  shared NAT (corporate VPN, lab network) might legitimately have several active users; per-IP
+  ceilings are enough there.
+</aside>
+
+<h2 id="the-pre-credit-validation-pipeline">The pre-credit validation pipeline</h2>
+
+<p>
+  Five pre-checks fire BEFORE the create transaction, in cheap-to-expensive order. Concurrent-gen
+  guard (one Postgres query) rejects with 409 if the caller already has a world in
+  <code>status = 'generating'</code>. Rejection-storm cooldown (one Redis <code>GET</code>) rejects
+  with 429 if the user has been rejected by the input gate more than three times in the past hour.
+  Credit balance peek (one Postgres SUM, no lock) rejects with 403 if the
+  <code>world_gen</code> balance is &lt; 1. Queue-depth admission (one BullMQ <code>getJobCounts</code>)
+  rejects with 503 if waiting + active + delayed exceeds 20.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Cheap checks first, LLM calls last</strong> — every gate that can run without an LLM call
+  runs first, so an adversarial caller burning rejection-storm credits or hammering the queue can't
+  drive Sonnet cost. The synthesizer (guided mode only — one Sonnet call) and the input gate (one
+  Sonnet call, always) run after every cheap rejection path has had a chance to short-circuit.
+</aside>
+
+<p>
+  Then the synthesizer fires if the body is guided-mode. It's one <code>generateText</code> call
+  with <code>temperature: 0.9</code> against the prompt template at
+  <code>backend/src/llm/prompts/prep/synthesize-concept.txt</code>, structured-output against the
+  <code>SynthesizerOutput</code> schema: <code>{ concept: string, intentSummary: { aesthetics[],
+  themes[], sourcesInternal[] } }</code>. The <code>concept</code> field is what the input gate (and
+  later stages) see as the user's freeform-equivalent input; <code>intentSummary</code> is the
+  structured trace of what aesthetic / thematic moves the synthesizer made.
+  <code>sourcesInternal</code> is the synthesizer's list of works it drew from — opaque downstream,
+  never echoed to the user, never appended to <code>concept_intake</code>'s prompt; the input gate
+  DOES receive it so clone-intent judgement isn't bypassed via prompt injection in the user's picks.
+</p>
+
+<p>
+  The input gate is a single Sonnet call against three axes — <code>srd_compat</code> (does this fit
+  D&amp;D 5e SRD-compatible mechanics?), <code>clone_intent</code> (is this a recognizable
+  intellectual-property clone?), <code>inappropriate</code> (does this trip the
+  content-safety policy?). Each axis returns a boolean and (where the model is calibrated to it) a
+  confidence score on [0, 1]. The verdict is computed in TypeScript from the structured output, not
+  prose-matched:
+</p>
+
+<ul>
+  <li>
+    <strong>Primary threshold (0.85)</strong> — any axis flag with confidence above this rejects on
+    that axis alone.
+  </li>
+  <li>
+    <strong>Aggregate rule (≥ 0.7 on both srd_compat AND clone_intent)</strong> — two near-miss
+    signals together reject as <code>srd_incompat</code>. Catches the "borderline-on-each-axis but
+    obviously off-spec when read together" case the per-axis check would otherwise pass.
+  </li>
+  <li>
+    <code>inappropriate</code> is treated as a binary flag with no confidence threshold — when set,
+    rejection is unconditional.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Verdict logic in code, not in the prompt</strong> — having the model emit per-axis
+  signals and computing the rejection rule in TypeScript means the rule is testable, auditable, and
+  changeable without re-tuning a prompt. The model's job is to score; the policy lives in code.
+</aside>
+
+<p>
+  On rejection, the route increments the rejection-storm counter, logs the model's reasoning
+  server-side (never returned in the HTTP response — leaking it would let an adversary iterate
+  against the gate's reasoning), and returns 422 with <code>{ code: 'concept_rejected', reason,
+  rejectionMessage }</code>. Guided-mode rejections additionally include
+  <code>synthesizedConcept</code> in the response so the user can see exactly what the synthesizer
+  produced before the gate rejected it.
+</p>
+
+<h3 id="the-paint-job-validator">The paint-job validator</h3>
+
+<p>
+  Stage 1 (<code>concept_intake</code>) wraps its generator call in
+  <code>validateAndGenerateConcept</code> — a judge-and-retry loop in
+  <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one Sonnet call
+  generates a structured <code>WorldConcept</code>; a SECOND Sonnet call (distinct prompt, fresh
+  context, <code>temperature: 0.1</code>) judges whether the draft mirrors a recognizable
+  copyrighted work; on flag (confidence &gt; 0.85), the loop discards the draft entirely and
+  retries with a fresh-direction amendment built from the judge's structured
+  <code>{ mirroredWork, specificDriftAxes }</code> output, plus a temperature bump to 1.0.
+  <strong>Max 3 attempts total</strong> (1 original + 2 retries). On exhaustion the loop throws
+  <code>PaintJobLoopExhaustedError</code>, which the worker treats as a stage failure.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Distinct judge prompt, not a self-check</strong> — the SDK's structured-output retry
+  policy is set to <code>maxRetries: 1</code> on the inner generator call so the SDK's policy and
+  the validator's outer loop don't multiply into 12 worst-case Sonnet calls. The validator is the
+  sole retry authority. The judge is a fresh Sonnet call (separate prompt template, separate
+  context) because asking the same model to grade its own output produces measurably worse
+  calibration than asking a fresh instance.
+</aside>
+
+<h2 id="the-credit-gate-transaction">The credit gate transaction</h2>
+
+<p>
+  Once the input gate allows the concept, the route opens a Postgres connection and runs the
+  create transaction. The shape (in order, all inside <code>BEGIN ... COMMIT</code>):
+</p>
+
+<ol>
+  <li>
+    <code>SET LOCAL lock_timeout = '5s'</code> + <code>SET LOCAL statement_timeout = '10s'</code>.
+    Bounds the tx's wall time so a hung lock can't pin a pool connection.
+  </li>
+  <li>
+    <code>pg_advisory_xact_lock(hashtextextended(userId::text, 0))</code>. Serializes per-user
+    create attempts so concurrent calls can't double-spend a credit.
+    <code>hashtextextended</code> sidesteps pg's lack of a direct uuid→bigint cast.
+  </li>
+  <li>
+    Re-read the <code>world_gen</code> balance under lock. If &lt; 1, ROLLBACK + 403 — the peek at
+    step 2d above was an optimization, not a guarantee.
+  </li>
+  <li>
+    <code>INSERT worlds</code> (<code>status = 'generating'</code>), <code>INSERT campaigns</code>
+    (<code>status = 'setup'</code>), <code>INSERT campaign_members</code> (<code>role = 'owner',
+    invite_accepted = true</code>).
+  </li>
+  <li>
+    <code>INSERT credit_ledger</code> — a -1 debit. <code>source_type = 'debit'</code>,
+    <code>source_id = worldId</code> (satisfies migration 004's
+    <code>credit_ledger_debit_has_source_chk</code>), both FK columns NULL.
+  </li>
+  <li>
+    Seed <code>pipeline_runs (stage = 'concept_intake', status = 'pending', started_at = NULL)</code>.
+    The seed row is what makes the Redis-blip recovery path work — see the resume table below.
+  </li>
+  <li>COMMIT.</li>
+</ol>
+
+<p>
+  After commit, the route resets the rejection-storm counter (a user who proves they can produce a
+  passing concept gets a clean slate), calls <code>worldGenQueue.add('world-gen', { campaignId }, {
+  jobId: campaignId })</code>, and returns <code>201 { campaignId }</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>jobId = campaignId</code> for BullMQ-side dedupe</strong> — without it, the resume
+  flow's "re-enqueue on stuck stage" path could pile up duplicate jobs for the same campaign. With
+  it, BullMQ's dedupe rejects duplicates. The world-gen queue is configured with
+  <code>removeOnComplete: { count: 0 }</code> + <code>removeOnFail: { count: 0 }</code> so terminal
+  jobs are pruned, making the same <code>jobId</code> reusable after a previous run completed —
+  without that pruning the second <code>queue.add</code> on a resume would reject.
+</aside>
+
+<h2 id="the-world-gen-worker">The world-gen worker</h2>
+
+<p>
+  The job is a single <code>{ campaignId }</code>. The processor in
+  <code>backend/src/llm/prep/world-gen-processor.ts</code> runs on the
+  <a href="./worker.html">worker service</a> at concurrency 3. The flow is a five-stage loop where
+  every iteration enforces the same per-stage invariant:
+</p>
+
+<ol>
+  <li>
+    <strong>Atomic claim.</strong> An <code>INSERT … ON CONFLICT (...) DO UPDATE … WHERE
+    pipeline_runs.status IN ('pending', 'failed') RETURNING id</code> either creates the row or
+    flips a pending/failed row to <code>running</code>. If <code>RETURNING</code> is empty, another
+    worker won the race OR the row is already <code>completed</code> — skip the stage in either
+    case. The unique index keys on <code>(COALESCE(world_id, campaign_id), stage,
+    COALESCE(user_id, sentinel))</code>; world-gen rows have <code>user_id = NULL</code>.
+  </li>
+  <li>
+    <strong>Stuck-stage reset.</strong> If the conflict branch found a <code>running</code> row, the
+    processor tries an UPDATE-with-WHERE on
+    <code>(status = 'running' AND started_at &lt; now() - INTERVAL '5 minutes')</code>. Zero rows
+    affected means another worker raced and won the reset; this worker bails.
+  </li>
+  <li>
+    <strong>Publish <code>stage-started</code>, run the handler, COMMIT
+    <code>stage-completed</code> + cost.</strong> The handler is wrapped in a BEGIN/ROLLBACK so a
+    handler throw rolls back any partial UPDATEs to the worlds row (concept_intake writes
+    <code>tone / themes / era / key_tensions / geography_summary</code>).
+  </li>
+  <li>
+    <strong>Cost-cap check.</strong> After the COMMIT, <code>sumCompletedStageCosts</code> reads
+    every completed <code>pipeline_runs</code> row for this world; if &gt; cap,
+    <code>issueCostCapRefund</code> fires (see below) and the loop exits.
+  </li>
+  <li>
+    <strong>On stage failure.</strong> Write a sanitized error JSON to
+    <code>pipeline_runs.error</code> (strict allowlist — only <code>{ code, message }</code> survive;
+    raw provider error chains with embedded API keys or response bodies are dropped) and publish
+    <code>stage-failed</code>. <code>StageNotImplementedError</code> is treated as an expected stop
+    (publish <code>phase = world_gen_failed</code> and return; no BullMQ retry); every other thrown
+    error rethrows so BullMQ's retry policy fires.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Read the cost cap once per stage, not once per job</strong> — a long-running world-gen
+  job that started under an old cap and crossed a config-change boundary mid-run should observe the
+  new cap on its next stage. The read is a single Postgres query against the
+  <code>settings</code> table; the cost of ~5 reads per run is negligible against the LLM-call cost
+  inside each stage.
+</aside>
+
+<h3 id="stage-taxonomy">Stage taxonomy</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Stage</th>
+      <th>Model</th>
+      <th>Persists</th>
+      <th>Wired now?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>concept_intake</code></td>
+      <td>Sonnet (via paint-job validator: generator + judge)</td>
+      <td>
+        <code>worlds.tone / themes / era / key_tensions / geography_summary /
+        political_summary</code> (one UPDATE inside the stage's transaction)
+      </td>
+      <td>Yes (this ticket)</td>
+    </tr>
+    <tr>
+      <td><code>world_and_factions</code></td>
+      <td>(streaming Opus — deferred)</td>
+      <td>(deferred)</td>
+      <td>
+        <strong>No.</strong> <code>stageNotImplementedHandler</code> rejects with typed
+        <code>StageNotImplementedError</code>. Worker maps to
+        <code>phase = world_gen_failed</code> and returns without retry.
+      </td>
+    </tr>
+    <tr>
+      <td><code>locations_and_npcs</code></td>
+      <td>(streaming Opus — deferred)</td>
+      <td>(deferred)</td>
+      <td><strong>No.</strong> Same shape as <code>world_and_factions</code>.</td>
+    </tr>
+    <tr>
+      <td><code>starting_situation</code></td>
+      <td>Sonnet</td>
+      <td>
+        <code>worlds.starting_situation</code> (prose block describing the opening scene)
+      </td>
+      <td>Yes (this ticket)</td>
+    </tr>
+    <tr>
+      <td><code>random_tables</code></td>
+      <td>Sonnet</td>
+      <td>
+        <code>worlds.random_tables</code> (per-world variance tables seeded from a generic seed
+        block; the seed-tables block is a constant placeholder for the non-streaming launch).
+      </td>
+      <td>Yes (this ticket)</td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Stages 2 + 3 fail visibly, not silently</strong> — pretending the pipeline succeeded when
+  two stages didn't run would mislead every downstream consumer (the status surface, the dev tool,
+  the eventual SPA, the campaign-setup worker). A typed error that maps to
+  <code>world_gen_failed</code> lets the system stay honest about what's actually built. Resume
+  knows not to retry stuck-on-not-implemented; the operator can see the stage name in the error.
+</aside>
+
+<h3 id="the-cost-cap-circuit-breaker">The cost-cap circuit breaker</h3>
+
+<p>
+  <code>backend/src/llm/prep/cost-cap.ts</code> owns three functions:
+  <code>readCostCap(pool)</code> fails loudly on a missing or unparseable
+  <code>settings.world_gen_cost_cap_usd</code> row (a misconfigured cap is an operator-fix, never
+  silently degraded to "no cap"). <code>sumCompletedStageCosts(pool, worldId)</code> sums
+  <code>cost_usd</code> from <code>pipeline_runs</code> where <code>status = 'completed'</code> and
+  <code>user_id IS NULL</code> — running / failed rows don't count toward the cap.
+  <code>issueCostCapRefund(pool, { userId, worldId })</code> runs a transaction that flips
+  <code>worlds.status = 'failed'</code> and inserts a <code>credit_ledger</code> row with
+  <code>source_type = 'cost_cap_refund'</code>, <code>amount = +1</code>, both FK columns NULL.
+</p>
+
+<p>
+  Migration 011 added <code>'cost_cap_refund'</code> to the <code>credit_ledger</code> source-type
+  whitelist and the table-level FK-shape CASE. The polarity check from migration 004 — <code>(source_type
+  = 'debit') = (amount &lt; 0)</code> — passes naturally because a refund is positive and not a
+  debit. The resume route's <code>world_gen_failed</code> arm sniffs the latest failed
+  <code>pipeline_runs.error</code> for the string <code>world_gen_cost_cap_exceeded</code> and 409s
+  with <code>code: 'world_gen_capped'</code> instead of re-enqueueing (a re-run would just burn cap
+  again).
+</p>
+
+<h2 id="resume-semantics">Resume semantics</h2>
+
+<p>
+  <code>POST /api/campaigns/:campaignId/resume</code> dispatches off <code>derivePhase</code>'s
+  eight phases via an exhaustive switch with an <code>assertNever</code> default. Most arms 409 with
+  a typed code; two have real recovery logic.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Phase</th>
+      <th>Resume action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>world_gen</code></td>
+      <td><code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>.</td>
+    </tr>
+    <tr>
+      <td><code>world_gen_failed</code></td>
+      <td>
+        Read the latest failed <code>pipeline_runs.error</code>. If it contains
+        <code>stage_not_implemented</code> → <code>409 phase_not_yet_implementable</code> with the
+        stuck stage name. If it contains <code>world_gen_cost_cap_exceeded</code> →
+        <code>409 world_gen_capped</code>. Otherwise treat as a transient infra failure and
+        re-enqueue the world-gen job (jobId-dedupe via BullMQ).
+        <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>world_ready</code></td>
+      <td><code>409 nothing_to_resume</code>.</td>
+    </tr>
+    <tr>
+      <td><code>character_creation</code> | <code>post_creation</code></td>
+      <td>
+        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. The downstream
+        ticket reference (MYT-52 / MYT-53) is logged server-side, not in the response.
+      </td>
+    </tr>
+    <tr>
+      <td><code>complete</code></td>
+      <td><code>409 already_complete</code>.</td>
+    </tr>
+    <tr>
+      <td><code>failed</code></td>
+      <td><code>409 terminal_failure</code> (post-worldgen failure; not retried at launch).</td>
+    </tr>
+    <tr>
+      <td><code>not_started</code></td>
+      <td>
+        Redis-blip orphan recovery. If a job with <code>jobId = campaignId</code> is still alive on
+        the queue (not completed AND not failed) → <code>409 world_gen_in_progress</code>.
+        Otherwise enqueue. <code>202 { campaignId, action:
+        'world-gen-enqueued-after-orphan-recovery' }</code>. Rare in practice because the create
+        transaction seeds the <code>pipeline_runs</code> row, so the typical Redis-blip orphan
+        presents as <code>world_gen_failed</code>, not <code>not_started</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Re-enqueue requires terminal-job pruning</strong> — BullMQ's <code>jobId</code> dedupe
+  rejects a second <code>add</code> with the same id while the original job exists. The world-gen
+  queue is configured with <code>removeOnComplete: { count: 0 }</code> and
+  <code>removeOnFail: { count: 0 }</code> so terminal jobs are removed, making the same id reusable
+  on resume. This is THE showstopper fix called out in the implementation plan — without it, every
+  resume after the first run would silently 409 inside BullMQ even though the API surfaces a 202.
+</aside>
+
+<h2 id="the-dev-tool-surface">The dev tool surface</h2>
+
+<p>
+  Three panels land in the <a href="./dev-tool.html">dev tool</a> alongside this ticket: a campaign
+  creation form (mode selector with freeform / guided sub-forms; freeform takes a textarea, guided
+  takes three <code>{ title, whyILikeIt }</code> picks), a campaign details panel (paste a
+  <code>campaignId</code> to load the campaign row, the world row, and the member list, plus a
+  Resume button that POSTs to the resume route), and a credit-ledger panel that lists the active
+  bypass user's <code>credit_ledger</code> rows and exposes a force-grant button hitting
+  <code>POST /api/dev/credits/grant</code> (dev-only — the route registers only when
+  <code>AUTH_MODE === 'bypass'</code> and lives behind the same six-layer bypass-plugin defense as
+  the rest of the dev surface).
+</p>
+
+<p>
+  The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in
+  <code>PIPELINE_ROUTES</code> and <code>PIPELINE_JOBS</code> must either be driven by a panel or
+  carry a typed exempt reason. Adding a new pipeline route or job is a four-file change in a single
+  PR — contract, handler, dev-tool panel, coverage entry — and <code>pnpm dev-tool:check</code>
+  red-CI's the merge otherwise. See <a href="./dev-tool.html">dev tool</a> for the full ship-gate
+  story.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</h3>
+<ol>
+  <li>
+    Get the campaign's phase from the snapshot endpoint:
+    <code>GET /api/campaigns/:campaignId/status</code>. <code>world_gen_failed</code> is the most
+    common stuck state; <code>world_gen</code> for &gt; 5 minutes usually means a wedged worker.
+  </li>
+  <li>
+    Query <code>pipeline_runs</code> for the world:
+    <code>SELECT stage, status, started_at, completed_at, error FROM pipeline_runs WHERE world_id =
+    $1 ORDER BY started_at DESC</code>. The latest <code>failed</code> row's <code>error</code>
+    column is JSON — read the <code>code</code> field.
+  </li>
+  <li>
+    Map <code>error.code</code> to action: <code>stage_not_implemented</code> → expected (resume
+    will 409 phase_not_yet_implementable); <code>world_gen_cost_cap_exceeded</code> → the cap fired
+    (refund row exists in <code>credit_ledger</code>; resume will 409 world_gen_capped); any other
+    code → transient infra blip, resume re-enqueues.
+  </li>
+  <li>
+    For a <code>world_gen</code>-stuck-running case, the worker's atomic-claim path will
+    self-recover after 5 minutes (the stuck-stage reset UPDATE flips a <code>started_at &lt; now()
+    - INTERVAL '5 minutes'</code> running row back to claimable). If it doesn't, the worker pod's
+    CloudWatch logs name the cause.
+  </li>
+</ol>
+
+<h3 id="watch-the-cost-cap-fire">Watch the cost-cap fire</h3>
+<ol>
+  <li>
+    Set the cap low against the local Postgres:
+    <code>UPDATE settings SET value = '0.001' WHERE key = 'world_gen_cost_cap_usd';</code>. The
+    worker re-reads the cap at the start of every stage, so no restart is needed.
+  </li>
+  <li>
+    Create a campaign via the dev tool. Stage 1 (<code>concept_intake</code>) runs to completion
+    (the cap check fires AFTER stage commit, not before LLM call), then the cap check sees
+    cumulative cost &gt; 0.001 USD.
+  </li>
+  <li>
+    Confirm the breaker fired: the worlds row's <code>status</code> column is <code>'failed'</code>;
+    a row exists in <code>credit_ledger</code> with <code>source_type = 'cost_cap_refund'</code>,
+    <code>amount = 1</code>, <code>user_id</code> matching the campaign owner. The pipeline_runs
+    row's <code>error</code> JSON contains <code>code: 'world_gen_cost_cap_exceeded'</code>.
+  </li>
+  <li>
+    Try to resume from the dev tool: the resume route returns
+    <code>409 { code: 'world_gen_capped' }</code> — there's no point re-running, the cap will fire
+    on the next stage too. Reset the cap to a sensible value before trying again.
+  </li>
+</ol>
+
+<h3 id="force-a-paint-job-rejection">Force a paint-job rejection</h3>
+<ol>
+  <li>
+    Submit a freeform concept that's a recognizable clone — "A school of magic on a hidden castle
+    where young wizards learn spells" is the canonical test input. The synthesizer is bypassed in
+    freeform mode; the input gate's <code>clone_intent</code> axis will likely flag it first and
+    return <code>422 concept_rejected</code> before the paint-job validator gets a chance.
+  </li>
+  <li>
+    To exercise the paint-job validator specifically, submit a concept that's BORDERLINE on
+    clone-intent (the input gate's primary threshold is 0.85; aim for the 0.5–0.8 range). The gate
+    lets it through; stage 1 generates a draft; the judge fires; on flag, the loop discards and
+    retries with a fresh-direction amendment.
+  </li>
+  <li>
+    The dev tool's status panel will show <code>concept_intake</code> running for ~30–60 seconds
+    longer than usual when the validator retries (up to 3 attempts × 2 Sonnet calls per attempt).
+    On exhaustion, the stage fails with
+    <code>code: 'concept_intake_paint_job_loop_exhausted'</code> and the phase flips to
+    <code>world_gen_failed</code>.
+  </li>
+  <li>
+    Resume re-enqueues (the loop-exhausted error isn't in the terminal-class list); a fresh attempt
+    rolls a fresh judge call and may succeed. If it doesn't, the user is asked to refine the
+    concept.
+  </li>
+</ol>
+
+<h3 id="recover-a-redis-blip-orphan">Recover a Redis-blip orphan</h3>
+<ol>
+  <li>
+    Find the orphaned campaign via
+    <code>GET /api/campaigns/:campaignId/status</code> — phase will be <code>world_gen_failed</code>
+    (the create transaction seeds a pending <code>pipeline_runs</code> row, which presents as
+    failed when no worker ever claims it) or, very rarely, <code>not_started</code> if the seed row
+    is missing.
+  </li>
+  <li>
+    Inspect the latest failed pipeline_runs row's <code>error</code> column. If it's NULL or the
+    code isn't in the terminal-class list (<code>stage_not_implemented</code>,
+    <code>world_gen_cost_cap_exceeded</code>), the resume route will re-enqueue cleanly.
+  </li>
+  <li>
+    From the dev tool's campaign details panel (or via direct
+    <code>POST /api/campaigns/:campaignId/resume</code>), click Resume. The response is
+    <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code> on the
+    <code>world_gen_failed</code> path or <code>... 'world-gen-enqueued-after-orphan-recovery'</code>
+    on the rarer <code>not_started</code> path.
+  </li>
+  <li>
+    Confirm the worker picked up the job: the <code>pipeline:campaign:{campaignId}</code> Redis
+    channel emits <code>phase = world_gen</code> and <code>stage-started</code> events almost
+    immediately. If the resume returns a non-recoverable code (409 world_gen_capped, 409
+    phase_not_yet_implementable), the failure isn't a Redis blip — see the
+    <a href="#diagnose-a-stuck-world-gen">diagnose-a-stuck-world-gen</a> runbook.
+  </li>
+</ol>
+
+<h2 id="integration-with-the-status-surface">Integration with the status surface</h2>
+
+<p>
+  The processor publishes JSON event payloads on
+  <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> — the channel format the
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. The lifecycle events
+  emitted by this ticket are <code>phase</code> (on entry to <code>world_gen</code> and the
+  terminal <code>world_ready</code> / <code>world_gen_failed</code>), <code>stage-started</code>,
+  <code>stage-completed</code>, <code>cost-update</code> (cumulative USD), and
+  <code>stage-failed</code>. Five additional entity-level events
+  (<code>stage-reset</code>, <code>entity-added</code>, <code>entity-updated</code>,
+  <code>edge-added</code>, <code>finalized</code>) are reserved in the contract for the streaming
+  stages ticket and arrive verbatim through the bridge once that ships; the dev tool's status
+  panel renders the lifecycle events today and renders the entity events when the live-graph
+  surface lands.
+</p>
+
+<h2 id="out-of-scope">Out of scope</h2>
+
+<ul>
+  <li>
+    <strong>Streaming stages 2 + 3</strong> (<code>world_and_factions</code>,
+    <code>locations_and_npcs</code>). The visible-failure shape locks in now; the real Opus
+    streaming handlers swap in via the streaming-stages ticket.
+  </li>
+  <li>
+    <strong>Per-player character creation.</strong> The pipeline has a placeholder phase
+    (<code>character_creation</code>); resume returns
+    <code>422 phase_resume_not_yet_implemented</code> on it. Lands after the streaming stages.
+  </li>
+  <li>
+    <strong>Automatic refunds beyond the cost cap.</strong> Stage failures that aren't cost-cap
+    fires don't refund — the user can resume and the worker re-runs failed stages within the
+    cap. Manual refunds for genuine infrastructure failures are an operator action, not an
+    automated path; a proper user-facing refund surface is a post-launch hardening item.
+  </li>
+  <li>
+    <strong>The future <code>kind: 'existing'</code> body arm</strong> (joining an existing world)
+    is reserved in the discriminated body shape but not stubbed at launch. An unknown
+    <code>kind</code> produces a Zod 400, not a 501.
+  </li>
+</ul>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/routes/dev-credits.ts</code>,
+  <code>backend/src/llm/prep/</code>, <code>backend/src/auth/rejection-storm.ts</code>,
+  <code>backend/src/repo/credit-grants.ts</code>, <code>backend/src/repo/pipeline-runs.ts</code>,
+  <code>backend/src/contract/pipeline-routes.ts</code>,
+  <code>backend/src/contract/pipeline-jobs.ts</code>,
+  <code>backend/src/contract/pipeline-errors.ts</code>,
+  <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>,
+  <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>,
+  <code>backend/migrations/012_credit_ledger_admin_source.sql</code>. Design spec:
+  <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>; parent
+  spec: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-four-routes">The four routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-world-gen-worker">The world-gen worker</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#resume-semantics">Resume semantics</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

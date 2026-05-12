@@ -261,9 +261,11 @@ CASE source_type
     WHEN 'refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))
     WHEN 'purchase'::text THEN ((source_purchase_id IS NOT NULL) AND (source_billing_history_id IS NULL))
     WHEN 'subscription'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))
+    WHEN 'cost_cap_refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))
+    WHEN 'admin'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))
     ELSE false
 END)</code></li>
-    <li><code>CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))</code></li>
+    <li><code>CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text, 'cost_cap_refund'::text, 'admin'::text])))</code></li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="purchases" id="schema-table-purchases">

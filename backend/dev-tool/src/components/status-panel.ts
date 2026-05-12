@@ -148,6 +148,30 @@ export function mountStatusPanel(parent: HTMLElement): void {
   watchBtn.addEventListener('click', watch)
   stopBtn.addEventListener('click', close)
 
+  // External triggers (MYT-51 T13).
+  //
+  // mythrun.watchcampaign: dispatched by the create panel on 201 — drop
+  // the new campaignId into the input + start watching its SSE stream.
+  //
+  // mythrun.closewatch: dispatched by main.ts on identity-switch (per
+  // Kraken-Imp6 — switching identity must close any open SSE stream so
+  // the new identity's first call doesn't share an EventSource with the
+  // previous identity's snapshot).
+  window.addEventListener('mythrun.watchcampaign', (e) => {
+    const id = (e as CustomEvent<string>).detail
+    if (typeof id !== 'string' || id.length === 0) return
+    close()
+    input.value = id
+    watch()
+  })
+  window.addEventListener('mythrun.closewatch', () => {
+    close()
+    input.value = ''
+    phaseEl.textContent = '(no campaign watched)'
+    stagesEl.textContent = ''
+    costEl.textContent = ''
+  })
+
   const inputRow = document.createElement('div')
   inputRow.style.display = 'flex'
   inputRow.style.gap = '8px'

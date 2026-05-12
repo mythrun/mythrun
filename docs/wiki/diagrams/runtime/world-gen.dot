@@ -1,0 +1,104 @@
+digraph world_gen {
+  // World-gen non-streaming pipeline. POST /api/campaigns lands the
+  // request; cheap pre-checks (concurrent-gen guard, rejection-storm
+  // cooldown, credit peek, queue-depth admission) fire BEFORE any LLM
+  // call. Guided mode runs the synthesizer; both modes then hit the
+  // 3-axis input gate. On allow, a single locked Postgres transaction
+  // debits a credit, seeds the world / campaign / pipeline_runs rows,
+  // and the route enqueues a BullMQ world-gen job. The worker walks
+  // five stages — 1 (concept_intake), 4 (starting_situation),
+  // 5 (random_tables) are wired; 2 + 3 visibly fail via
+  // stage-not-implemented. The cost cap is re-read at the start of
+  // each stage; cumulative cost over cap refunds the credit and marks
+  // the world failed. Every lifecycle transition publishes to
+  // pipeline:campaign:{campaignId} for the status surface.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  client [label="HTTP client\n(dev tool today;\n SPA after launch)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_api {
+    label="API process";
+    style="dashed";
+
+    post  [label="campaigns.ts\nPOST /api/campaigns\nZod body parse\n  (kind: 'new', mode: 'freeform' | 'guided')"];
+    pre   [label="cheap pre-checks\n  concurrent-gen guard\n  rejection-storm cooldown\n  credit balance peek\n  queue-depth admission"];
+    synth [label="synthesize-concept.ts\nguided only — Sonnet\n→ concept + intentSummary"];
+    gate  [label="input-gate.ts\nSonnet, 3 axes\n  srd_compat | clone_intent\n  | inappropriate\naggregate-confidence rule"];
+    tx    [label="locked tx (Postgres)\n  advisory lock on user\n  debit credit_ledger\n  INSERT worlds (generating)\n  INSERT campaigns (setup)\n  INSERT campaign_members\n  seed pipeline_runs row"];
+    enq   [label="worldGenQueue.add\n  name: 'world-gen'\n  jobId: campaignId\n  (dedupe via removeOnComplete:0)"];
+  }
+
+  subgraph cluster_redis {
+    label="Redis";
+    style="dotted";
+
+    queue   [label="BullMQ queue\nworld-gen\n(redisBatch)", color="ember", fontcolor="ember"];
+    channel [label="{redisKeyPrefix}\npipeline:campaign:{campaignId}\n(redisRealtime)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_worker {
+    label="Worker service  (BullMQ Worker, concurrency 3)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    proc   [label="world-gen-processor.ts\nreadCostCap once per job\natomic claim per stage\nstuck-stage reset (>5min)", color="ember", fontcolor="ember"];
+
+    s1     [label="stage 1\nconcept_intake\nSonnet + paint-job validator\n(judge + ≤3 attempts)"];
+    s2     [label="stages 2 + 3\nworld_and_factions\nlocations_and_npcs\nstageNotImplementedHandler"];
+    s4     [label="stage 4\nstarting_situation\nSonnet"];
+    s5     [label="stage 5\nrandom_tables\nSonnet"];
+
+    capchk [label="cost-cap.ts\nsumCompletedStageCosts\n> cap?  → refund + fail"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres";
+    style="dotted";
+
+    pipeline_runs [label="pipeline_runs\nper-stage row\n  status, cost_usd, error"];
+    worlds        [label="worlds\nstatus: generating →\n  complete | failed"];
+    settings      [label="settings\nworld_gen_cost_cap_usd"];
+    ledger        [label="credit_ledger\ndebit + cost_cap_refund\n  + admin (dev)"];
+  }
+
+  // Request → pre-checks → LLM → tx → enqueue → 201
+  client -> post  [label="POST campaign"];
+  post   -> pre   [label="parsed body"];
+  pre    -> synth [label="if guided"];
+  synth  -> gate;
+  pre    -> gate  [label="if freeform", style=dashed];
+  gate   -> tx    [label="verdict=allow"];
+  gate   -> client [label="422 concept_rejected", style=dashed];
+  tx     -> ledger [label="debit", style=dashed];
+  tx     -> worlds [label="INSERT generating", style=dashed];
+  tx     -> pipeline_runs [label="seed pending", style=dashed];
+  tx     -> enq;
+  enq    -> queue;
+  enq    -> client [label="201 { campaignId }", style=dashed];
+
+  // Worker stage loop
+  queue  -> proc  [label="job { campaignId }"];
+  proc   -> settings [label="readCostCap", style=dotted];
+  proc   -> s1;
+  s1     -> s2;
+  s2     -> s4   [label="visible fail\nphase=world_gen_failed", style=dashed];
+  s4     -> s5;
+  s1     -> capchk [style=dotted, label="after each stage"];
+  s4     -> capchk [style=dotted];
+  s5     -> capchk [style=dotted];
+  capchk -> ledger [label="cost_cap_refund\n+1 credit", style=dashed];
+  capchk -> worlds [label="status=failed", style=dashed];
+
+  // Stage results
+  s1     -> pipeline_runs [label="completed +\n cost_usd", style=dotted];
+  s4     -> pipeline_runs [style=dotted];
+  s5     -> pipeline_runs [style=dotted];
+  s5     -> worlds        [label="status=complete", style=dashed];
+
+  // Worker publishes lifecycle events
+  proc   -> channel [label="phase / stage-started /\nstage-completed / cost-update /\nstage-failed", style=dashed];
+}
