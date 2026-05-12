@@ -1,0 +1,49 @@
+digraph dev_tool {
+  // The dev tool. A throwaway, local-only engineering UI that runs against
+  // the local backend through a Vite proxy. Browser ←→ Vite (5273) ←→
+  // backend (3000). A ship gate (pnpm dev-tool:check) compares three
+  // contract files at backend/src/contract/ against backend/dev-tool/
+  // coverage.json and errors when a contract entry is uncovered.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  browser [label="browser\n127.0.0.1:5273", color="ember", fontcolor="ember"];
+
+  subgraph cluster_devtool {
+    label="backend/dev-tool/  (@mythrun/dev-tool)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    vite      [label="vite.config.ts\nproxy /api/* + /health/*\ntarget = PORT from\nbackend/.env.development"];
+    identity  [label="src/identity.ts\nDEV_SUBS (5 entries)\nlocalStorage: mythrun.devtool.devSub"];
+    api       [label="src/api-client.ts\napiCall(path, init)\nrelative paths only\nsets x-mythrun-dev-sub"];
+    main      [label="src/main.ts + components/\ntextContent only\nno bare fetch"];
+  }
+
+  subgraph cluster_gate {
+    label="ship gate  (pnpm dev-tool:check)";
+    style="dotted";
+
+    contracts [label="backend/src/contract/\npipeline-routes.ts\npipeline-events.ts\npipeline-jobs.ts"];
+    coverage  [label="backend/dev-tool/\ncoverage.json\n{ routes, events, jobs,\n  exempt: { reasons ≥ 20 } }"];
+    check     [label="backend/scripts/\ndev-tool-check.ts\ninvokes checkCoverage(...)\nexit 1 on uncovered entry"];
+    ci        [label=".github/workflows/\ndev-tool-check.yml\nPR + push to main"];
+  }
+
+  backend [label="local backend\nlocalhost:3000 (PORT)\nGET /health/ready", color="ember", fontcolor="ember"];
+
+  // Browser path through the proxy
+  browser -> main         [label="page load"];
+  main    -> api          [label="apiCall('/health/ready')"];
+  api     -> identity     [label="getCurrentDevSub()", style=dashed];
+  api     -> vite         [label="fetch(relative)\nx-mythrun-dev-sub: dev-user-N"];
+  vite    -> backend      [label="proxied http://localhost:PORT/..."];
+
+  // Ship gate path
+  contracts -> check      [label="read at boot"];
+  coverage  -> check      [label="read at boot"];
+  check     -> ci         [label="pnpm dev-tool:check", style=dashed];
+}

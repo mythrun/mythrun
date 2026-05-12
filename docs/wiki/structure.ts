@@ -20,6 +20,7 @@ export const structure: Section[] = [
     pages: [
       { slug: 'index', title: 'Overview' },
       { slug: 'llm', title: 'LLM client' },
+      { slug: 'dev-tool', title: 'Dev tool' },
     ],
   },
   {
