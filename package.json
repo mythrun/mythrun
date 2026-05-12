@@ -12,6 +12,8 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "dev": "pnpm --filter backend dev",
+    "dev:dev-tool": "pnpm --filter @mythrun/dev-tool dev",
+    "dev-tool:check": "pnpm --filter @mythrun/backend dev-tool:check",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d --wait",

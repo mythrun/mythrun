@@ -15,7 +15,8 @@
     "lint": "eslint src --no-error-on-unmatched-pattern",
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx --env-file=.env.development src/db/migrate.ts",
-    "db:migrate:compiled": "node dist/db/migrate.js"
+    "db:migrate:compiled": "node dist/db/migrate.js",
+    "dev-tool:check": "tsx scripts/dev-tool-check.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.76",

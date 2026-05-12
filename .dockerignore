@@ -13,6 +13,9 @@ coverage
 **/*.test.ts
 **/*.spec.ts
 
+# Dev tool is local-only by design; never include in the build context.
+backend/dev-tool
+
 # Secrets and local env.
 .env*
 
