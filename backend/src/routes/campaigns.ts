@@ -531,9 +531,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
  * Freeform passes the user's concept through verbatim; guided runs the
  * Sonnet synthesizer (one LLM call). Spec D4.
  */
-async function resolveConceptAndIntent(
-  source: NewWorldSource,
-): Promise<{
+async function resolveConceptAndIntent(source: NewWorldSource): Promise<{
   concept: string
   intentSummary: Awaited<ReturnType<typeof synthesizeConcept>>['intentSummary'] | null
 }> {
@@ -824,9 +822,7 @@ async function resumeFromWorldGenFailed(ctx: ResumeContext): Promise<FastifyRepl
     return ctx.reply.code(409).send({ code: 'world_gen_capped' })
   }
   await ctx.queue.add('world-gen', { campaignId: ctx.campaignId }, { jobId: ctx.campaignId })
-  return ctx.reply
-    .code(202)
-    .send({ campaignId: ctx.campaignId, action: 'world-gen-re-enqueued' })
+  return ctx.reply.code(202).send({ campaignId: ctx.campaignId, action: 'world-gen-re-enqueued' })
 }
 
 /**

@@ -51,10 +51,7 @@ function buildPrompt(picks: readonly SynthesizerPick[]): string {
   const picksBlock = picks
     .map((p) => `- Title: ${p.title}\n  Why they like it: ${p.whyILikeIt}`)
     .join('\n')
-  return PROMPT_TEMPLATE.replace(
-    /\{\{#picks\}\}[\s\S]*?\{\{\/picks\}\}/,
-    picksBlock,
-  )
+  return PROMPT_TEMPLATE.replace(/\{\{#picks\}\}[\s\S]*?\{\{\/picks\}\}/, picksBlock)
 }
 
 export async function synthesizeConcept(

@@ -58,13 +58,10 @@ const CONCEPT_DRAFT = {
   name: 'Aelmoor',
   tone: 'misted, melancholy, watchful',
   themes: 'guardianship, secrets, weather over still water',
-  geography_summary:
-    'A windswept highland archipelago on the edge of an older, drowned power.',
-  political_summary:
-    'Three rival lighthouse-houses, each binding storm-spirits into their lamps.',
+  geography_summary: 'A windswept highland archipelago on the edge of an older, drowned power.',
+  political_summary: 'Three rival lighthouse-houses, each binding storm-spirits into their lamps.',
   era: 'a lantern-age before steam',
-  key_tensions:
-    'The spirits chafe in the lanterns. The drowned power below has begun to dream.',
+  key_tensions: 'The spirits chafe in the lanterns. The drowned power below has begun to dream.',
   follow_up_questions:
     'Who lit the silent house? What watches from the cliffs at the spring tides?',
 }
@@ -112,7 +109,9 @@ interface MockUsage {
   readonly outputTokens: number
 }
 
-function pushConceptIntakeResponses(usage: MockUsage = { inputTokens: 800, outputTokens: 600 }): void {
+function pushConceptIntakeResponses(
+  usage: MockUsage = { inputTokens: 800, outputTokens: 600 },
+): void {
   // Generator response
   vi.mocked(ai.generateText).mockResolvedValueOnce({
     output: CONCEPT_DRAFT,
@@ -347,9 +346,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // ------------------------------------------------------------------
   it('issues refund + marks world failed when the cost cap is exceeded', async () => {
     const { userId, worldId, campaignId } = await seedUserWorldCampaign(pool)
-    await pool.query(
-      `UPDATE settings SET value = '0.0001' WHERE key = 'world_gen_cost_cap_usd'`,
-    )
+    await pool.query(`UPDATE settings SET value = '0.0001' WHERE key = 'world_gen_cost_cap_usd'`)
     // Generator usage that produces a cost well above 0.0001: 1M input / 1M
     // output @ Sonnet ($3 + $15 = $18) — comfortably above cap.
     pushConceptIntakeResponses({ inputTokens: 1_000_000, outputTokens: 1_000_000 })

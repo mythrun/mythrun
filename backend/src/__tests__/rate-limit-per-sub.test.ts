@@ -39,6 +39,7 @@ import { guardTestDatabase } from '../db/__tests__/guard-db.js'
 import { createRepo } from '../repo/index.js'
 import type { AppDeps } from '../app-deps.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+import { noopWorldGenQueue } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -86,6 +87,7 @@ describe('rate-limit per-sub key derivation (POST /api/users/register)', () => {
       } as unknown as Redis,
       redisKeyPrefix: `test:rl-sub-${String(Date.now())}:`,
       repo,
+      worldGenQueue: noopWorldGenQueue(),
     }
     app = await buildApp(
       deps,

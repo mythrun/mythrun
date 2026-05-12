@@ -18,11 +18,16 @@ describe('synthesizeConcept', () => {
   it('produces a concept + intentSummary from three picks', async () => {
     const mockResult = {
       output: {
-        concept: 'A windswept archipelago where rival lighthouse-keepers tend signal-fires fueled by trapped storm-spirits…',
+        concept:
+          'A windswept archipelago where rival lighthouse-keepers tend signal-fires fueled by trapped storm-spirits…',
         intentSummary: {
           aesthetics: ['weathered coastline', 'storm-glass refraction', 'oil-lamp warmth'],
           themes: ['guardianship under pressure', 'communion with bound spirits'],
-          sourcesInternal: ['Pick A (lighthouse atmosphere)', 'Pick B (spirit-binding aesthetic)', 'Pick C (rival-house politics)'],
+          sourcesInternal: [
+            'Pick A (lighthouse atmosphere)',
+            'Pick B (spirit-binding aesthetic)',
+            'Pick C (rival-house politics)',
+          ],
         },
       },
       finishReason: 'stop',
@@ -44,7 +49,10 @@ describe('synthesizeConcept', () => {
 
   it('passes pick data into the prompt template', async () => {
     const mockResult = {
-      output: { concept: 'x'.repeat(200), intentSummary: { aesthetics: [], themes: [], sourcesInternal: [] } },
+      output: {
+        concept: 'x'.repeat(200),
+        intentSummary: { aesthetics: [], themes: [], sourcesInternal: [] },
+      },
       finishReason: 'stop',
       usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
     } as never
@@ -56,7 +64,10 @@ describe('synthesizeConcept', () => {
       { title: 'C', whyILikeIt: 'c' },
     ])
 
-    const callArgs = vi.mocked(ai.generateText).mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    const callArgs = vi.mocked(ai.generateText).mock.calls[0]?.[0] as unknown as Record<
+      string,
+      unknown
+    >
     expect(callArgs.prompt).toContain('UNIQUE_TITLE_X')
     expect(callArgs.prompt).toContain('UNIQUE_REASON_Y')
   })

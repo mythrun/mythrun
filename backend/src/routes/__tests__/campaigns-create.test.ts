@@ -122,12 +122,10 @@ interface QueueSpy {
 function createQueueSpy(): QueueSpy {
   let jobCounts = 0
   const add = vi.fn().mockResolvedValue({ id: 'stub-job' })
-  const getJobCounts = vi.fn<(states: readonly string[]) => Promise<Record<string, number>>>(
-    () => {
-      // BullMQ returns an object keyed by state; the route sums values.
-      return Promise.resolve({ waiting: jobCounts, active: 0, delayed: 0 })
-    },
-  )
+  const getJobCounts = vi.fn<(states: readonly string[]) => Promise<Record<string, number>>>(() => {
+    // BullMQ returns an object keyed by state; the route sums values.
+    return Promise.resolve({ waiting: jobCounts, active: 0, delayed: 0 })
+  })
   const queue = {
     add,
     getJobCounts,
@@ -392,55 +390,55 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     it.each(['srd_incompat', 'clone_intent', 'inappropriate'] as const)(
       '422 with reason=%s',
       async (reason) => {
-      const { userId, devSub } = await seedUserWithCredits(pool, 1)
-      runInputGateMock.mockResolvedValue({
-        verdict: 'reject',
-        reason,
-        rejectionMessage: 'The proposed concept does not fit the rules.',
-        reasoning: `${reason}: detailed server-only reasoning`,
-        usage: STUB_USAGE,
-      })
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/campaigns',
-        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
-        payload: {
-          name: 'X',
-          world: {
-            kind: 'new',
-            source: {
-              mode: 'freeform',
-              concept: 'A perfectly fine concept that the mock gate will reject anyway.',
+        const { userId, devSub } = await seedUserWithCredits(pool, 1)
+        runInputGateMock.mockResolvedValue({
+          verdict: 'reject',
+          reason,
+          rejectionMessage: 'The proposed concept does not fit the rules.',
+          reasoning: `${reason}: detailed server-only reasoning`,
+          usage: STUB_USAGE,
+        })
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/campaigns',
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+          payload: {
+            name: 'X',
+            world: {
+              kind: 'new',
+              source: {
+                mode: 'freeform',
+                concept: 'A perfectly fine concept that the mock gate will reject anyway.',
+              },
             },
           },
-        },
-      })
-      expect(res.statusCode).toBe(422)
-      const body = res.json<{
-        code: string
-        reason: string
-        rejectionMessage: string
-        synthesizedConcept?: string
-        reasoning?: string
-      }>()
-      expect(body.code).toBe('concept_rejected')
-      expect(body.reason).toBe(reason)
-      expect(body.rejectionMessage).toBe('The proposed concept does not fit the rules.')
-      // Roc-Imp6: reasoning is server-side only, never in response.
-      expect(body.reasoning).toBeUndefined()
-      // synthesizedConcept is absent on freeform-mode rejections.
-      expect(body.synthesizedConcept).toBeUndefined()
+        })
+        expect(res.statusCode).toBe(422)
+        const body = res.json<{
+          code: string
+          reason: string
+          rejectionMessage: string
+          synthesizedConcept?: string
+          reasoning?: string
+        }>()
+        expect(body.code).toBe('concept_rejected')
+        expect(body.reason).toBe(reason)
+        expect(body.rejectionMessage).toBe('The proposed concept does not fit the rules.')
+        // Roc-Imp6: reasoning is server-side only, never in response.
+        expect(body.reasoning).toBeUndefined()
+        // synthesizedConcept is absent on freeform-mode rejections.
+        expect(body.synthesizedConcept).toBeUndefined()
 
-      // No debit happened.
-      const balance = await pool.query<{ balance: string }>(
-        `SELECT COALESCE(SUM(amount), 0)::text AS balance FROM credit_ledger
+        // No debit happened.
+        const balance = await pool.query<{ balance: string }>(
+          `SELECT COALESCE(SUM(amount), 0)::text AS balance FROM credit_ledger
          WHERE user_id = $1 AND credit_type = 'world_gen'`,
-        [userId],
-      )
-      expect(Number(balance.rows[0]?.balance)).toBe(1)
-      // No campaign / world row.
-      const c = await pool.query(`SELECT id FROM campaigns WHERE created_by = $1`, [userId])
-      expect(c.rows).toHaveLength(0)
+          [userId],
+        )
+        expect(Number(balance.rows[0]?.balance)).toBe(1)
+        // No campaign / world row.
+        const c = await pool.query(`SELECT id FROM campaigns WHERE created_by = $1`, [userId])
+        expect(c.rows).toHaveLength(0)
       },
     )
 

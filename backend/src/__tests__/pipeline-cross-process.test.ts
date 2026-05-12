@@ -33,6 +33,7 @@ import { createRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import type { AppDeps } from '../app-deps.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+import { noopWorldGenQueue } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -103,6 +104,7 @@ describe('pipeline status cross-process', () => {
       redisBatch: redisA,
       redisKeyPrefix: REDIS_KEY_PREFIX,
       repo,
+      worldGenQueue: noopWorldGenQueue(),
     }
     const depsB: AppDeps = { ...depsA, redisRealtime: redisB, redisBatch: redisB }
 

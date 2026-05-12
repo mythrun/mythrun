@@ -61,11 +61,7 @@ export function openSse(path: string, opts: OpenSseOptions): SseConnection {
   return { close }
 }
 
-async function runStream(
-  path: string,
-  signal: AbortSignal,
-  opts: OpenSseOptions,
-): Promise<void> {
+async function runStream(path: string, signal: AbortSignal, opts: OpenSseOptions): Promise<void> {
   const res = await fetch(path, {
     headers: {
       'x-mythrun-dev-sub': getCurrentDevSub(),

@@ -42,6 +42,15 @@ const makeStubDeps = (): AppDeps => {
     redisBatch: new IoredisMock(),
     redisKeyPrefix: 'test:use1:',
     repo: createRepo(mockPool),
+    // MYT-51 T12: AppDeps now carries the world-gen queue. None of these
+    // tests exercise the enqueue path — a no-op queue satisfies the type
+    // contract; tests that DO drive enqueue (routes/__tests__/campaigns-*)
+    // build their own spy with assertion hooks.
+    worldGenQueue: {
+      add: (): Promise<unknown> => Promise.resolve(undefined),
+      getJobCounts: (): Promise<Record<string, number>> => Promise.resolve({}),
+      getJob: (): Promise<null> => Promise.resolve(null),
+    },
   }
 }
 

@@ -37,7 +37,10 @@ import { issueCostCapRefund, readCostCap, sumCompletedStageCosts } from './cost-
 import { runConceptIntakeStage } from './stages/concept-intake.js'
 import { runStartingSituationStage } from './stages/starting-situation.js'
 import { runRandomTablesStage } from './stages/random-tables.js'
-import { stageNotImplementedHandler, StageNotImplementedError } from './stages/stage-not-implemented.js'
+import {
+  stageNotImplementedHandler,
+  StageNotImplementedError,
+} from './stages/stage-not-implemented.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 
 // Worker reads the seed-tables block from a constant placeholder until the

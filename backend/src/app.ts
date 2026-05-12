@@ -17,6 +17,8 @@ import { sessionsRoutes } from './routes/sessions.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
 import { campaignsRoutes } from './routes/campaigns.js'
+import { devCreditsRoutes } from './routes/dev-credits.js'
+import { PIPELINE_ROUTES } from './contract/pipeline-routes.js'
 import { createPipelineSubscriber, type PipelineSubscriber } from './sse/pipeline-subscriber.js'
 import { createConnectionCounter } from './sse/connection-counter.js'
 import type { Logger as PinoLogger } from 'pino'
@@ -113,6 +115,48 @@ export const buildApp = async (
   // /health registration and a future addition of a public route there
   // would silently slip through.
   registerPublicRouteAllowlistHook(app)
+
+  // Pipeline-routes contract enforcement (MYT-51 D12 revised). The forward
+  // check (onRoute) catches a route registered with config.pipelineRoute=true
+  // that is NOT declared in PIPELINE_ROUTES; the reverse check (onReady)
+  // catches an entry in PIPELINE_ROUTES that no route ever registered.
+  //
+  // APPROVED_VERBS filters HEAD/OPTIONS — Fastify auto-generates HEAD for
+  // every GET, and the auto-HEAD inherits config (including pipelineRoute)
+  // from its parent GET; counting it would double-register the key.
+  //
+  // The hook is installed on the root scope BEFORE any plugin registration,
+  // so Fastify's downward-inheritance contract picks up every subsequent
+  // route registration in any nested plugin.
+  const APPROVED_VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+  const registeredPipelineRoutes = new Set<string>()
+  app.addHook('onRoute', (routeOptions) => {
+    if (routeOptions.config?.pipelineRoute !== true) return
+    const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method]
+    for (const m of methods) {
+      if (!APPROVED_VERBS.has(m)) continue
+      const key = `${m} ${routeOptions.url}`
+      registeredPipelineRoutes.add(key)
+      if (!PIPELINE_ROUTES.includes(key)) {
+        throw new Error(
+          `pipeline-routes: ${key} is registered with config.pipelineRoute=true but is not ` +
+            `declared in contract/pipeline-routes.ts. Add it to PIPELINE_ROUTES or remove ` +
+            `the marker.`,
+        )
+      }
+    }
+  })
+  // eslint-disable-next-line @typescript-eslint/require-await
+  app.addHook('onReady', async () => {
+    const missing = PIPELINE_ROUTES.filter((k) => !registeredPipelineRoutes.has(k))
+    if (missing.length > 0) {
+      throw new Error(
+        `pipeline-routes: declared in contract/pipeline-routes.ts but no route ever registered ` +
+          `with config.pipelineRoute=true matching: ${missing.join(', ')}. Either register the ` +
+          `route with the marker or remove the entry from PIPELINE_ROUTES.`,
+      )
+    }
+  })
 
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' })) // liveness
   registerReadyRoute(app, deps) // /health/ready opts out via config: { auth: 'public' } INSIDE the route file
@@ -220,7 +264,25 @@ export const buildApp = async (
     pool: deps.pg,
     subscriber,
     counter,
+    // MYT-51 T12: thread the BullMQ queue + redis + key prefix so
+    // POST /api/campaigns + POST /resume can enqueue work and the
+    // rejection-storm counter can read/write its sliding-window key.
+    // T9's runtime requireCreateRouteDeps() assertion becomes silent
+    // dead code once this registration is in place — kept as belt-and-
+    // suspenders against a future regression that drops one of the
+    // three fields without updating the boot wiring.
+    redis: deps.redisRealtime,
+    redisKeyPrefix: deps.redisKeyPrefix,
+    worldGenQueue: deps.worldGenQueue,
   })
+
+  // Dev-only credit-grant route (MYT-51 T11). The plugin itself gates
+  // on AUTH_MODE === 'bypass' (defense in depth — Roc-C1); this outer
+  // gate is the belt-and-suspenders second layer so a future caller
+  // forgetting one gate still keeps the route off production.
+  if (config.env.authMode === 'bypass') {
+    await app.register(devCreditsRoutes, { pool: deps.pg })
+  }
 
   // Billing plugin (MYT-42 Tasks 25–31). Registered last as a direct
   // child of `app` so it inherits the public-route allowlist + auth
@@ -233,6 +295,24 @@ export const buildApp = async (
 
 export type ShutdownSignal = 'SIGTERM' | 'SIGINT'
 export type ShutdownHandler = (signal: ShutdownSignal) => Promise<void>
+
+/** MYT-51 T12: structural contract for the world-gen BullMQ Worker as
+ *  seen by the shutdown handler. Declared here (rather than importing
+ *  BullMQ's `Worker` class type directly) so the ShutdownClients shape
+ *  isn't coupled to BullMQ's generic-heavy class type; shutdown tests
+ *  inject a hand-rolled spy that satisfies this same shape. */
+export interface WorldGenWorkerLike {
+  close(): Promise<void>
+}
+
+/** MYT-51 T12: structural contract for the world-gen BullMQ Queue as
+ *  seen by the shutdown handler. Same rationale as WorldGenWorkerLike —
+ *  the queue's request-time surface (add / getJobCounts / getJob) lives
+ *  in routes/campaigns.ts's WorldGenQueueLike; shutdown only needs
+ *  `close()`. */
+export interface WorldGenQueueShutdown {
+  close(): Promise<void>
+}
 
 export interface ShutdownClients {
   readonly pg: Pool
@@ -248,6 +328,14 @@ export interface ShutdownClients {
    *  but we still clear it explicitly so a final 60s log doesn't fire
    *  after the subscriber + app have closed. */
   readonly stopPeriodicLog: () => void
+  /** MYT-51 T12: world-gen BullMQ Worker. Closed BEFORE the queue +
+   *  app.close so in-flight stage processing can drain (BullMQ's
+   *  worker.close() awaits the current job's processor function). */
+  readonly worldGenWorker: WorldGenWorkerLike
+  /** MYT-51 T12: world-gen BullMQ Queue. Closed AFTER its worker has
+   *  drained so the worker's emit-completed/emit-failed lifecycle
+   *  events still have a live queue to publish on. */
+  readonly worldGenQueue: WorldGenQueueShutdown
 }
 
 export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): ShutdownHandler => {
@@ -256,7 +344,7 @@ export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): 
       app.log.info({ signal }, 'shutting down')
       // Yield once so pino's async log queue drains before close.
       await new Promise<void>((resolve) => setImmediate(resolve))
-      // Drain order matters (MYT-50 spec D14):
+      // Drain order matters (MYT-50 spec D14 + MYT-51 T12 extension):
       //   1. Stop the connection-counter interval so a final periodic
       //      log doesn't fire mid-shutdown with already-closed sinks.
       //   2. subscriber.close() PUNSUBSCRIBEs the dedicated client,
@@ -265,12 +353,22 @@ export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): 
       //      Each sink's onClose decrements the counter — done before
       //      app.close so the SSE response sockets close cleanly
       //      rather than via Fastify's socket-rip at app.close.
-      //   3. app.close stops HTTP (no in-flight queries past this).
-      //   4. pg.end drains the pool.
-      //   5. redis QUIT (realtime + batch) — graceful, flushes
+      //   3. worldGenWorker.close() drains in-flight stage processing.
+      //      BullMQ awaits the current job's processor function before
+      //      returning, so this is what gracefully bounds the API-side
+      //      worker's exit (separate from the dedicated worker process
+      //      in worker.ts which has its own shutdown).
+      //   4. worldGenQueue.close() releases the queue's Redis-side
+      //      connection bookkeeping. After the worker has drained,
+      //      nothing else uses the queue handle.
+      //   5. app.close stops HTTP (no in-flight queries past this).
+      //   6. pg.end drains the pool.
+      //   7. redis QUIT (realtime + batch) — graceful, flushes
       //      in-flight commands; vs disconnect which rips the socket.
       clients.stopPeriodicLog()
       await clients.subscriber.close()
+      await clients.worldGenWorker.close()
+      await clients.worldGenQueue.close()
       await app.close()
       await clients.pg.end()
       await clients.redisRealtime.quit()

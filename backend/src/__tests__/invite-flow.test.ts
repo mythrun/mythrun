@@ -21,6 +21,7 @@ import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo, type Repo } from '../repo/index.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+import { noopWorldGenQueue } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -143,6 +144,7 @@ describe('invite routes (integration)', () => {
       redisBatch: new IoredisMock(),
       redisKeyPrefix: 'test:use1:',
       repo,
+      worldGenQueue: noopWorldGenQueue(),
     }
     app = await buildApp(
       deps,

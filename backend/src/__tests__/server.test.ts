@@ -10,6 +10,10 @@ const mockRtrPing = vi.fn()
 const mockRtrQuit = vi.fn().mockResolvedValue('OK')
 const mockRtbPing = vi.fn()
 const mockRtbQuit = vi.fn().mockResolvedValue('OK')
+// MYT-51 T12: separate ping/quit for the dedicated BullMQ-compatible
+// connection that server.ts spins up alongside the API's redisBatch.
+const mockBullmqPing = vi.fn()
+const mockBullmqQuit = vi.fn().mockResolvedValue('OK')
 const mockListen = vi.fn().mockResolvedValue(undefined)
 const mockCreateRedisClient = vi.fn()
 const mockProbe = vi.fn().mockResolvedValue(undefined)
@@ -19,6 +23,33 @@ vi.mock('../db/postgres.js', () => ({
 }))
 vi.mock('../redis/client.js', () => ({
   createRedisClient: (url: string) => mockCreateRedisClient(url) as Redis,
+}))
+// MYT-51 T12: stub createBullmqRedisClient — server.ts builds a
+// dedicated worker-side connection alongside the regular redisBatch
+// (BullMQ requires `maxRetriesPerRequest: null`, the regular fast-fail
+// client violates that). The unit test doesn't drive a real worker;
+// satisfy ping (boot probe) + quit (shutdown).
+vi.mock('../redis/bullmq-client.js', () => ({
+  createBullmqRedisClient: () =>
+    ({
+      ping: mockBullmqPing,
+      quit: mockBullmqQuit,
+      duplicate: () => ({ ping: mockBullmqPing, quit: mockBullmqQuit }),
+    }) as unknown as Redis,
+}))
+// MYT-51 T12: stub the bullmq Queue + Worker. The real classes try to
+// connect to Redis at construction time; we never drive jobs in this
+// unit test, so a hand-rolled no-op is sufficient.
+vi.mock('bullmq', () => ({
+  Queue: class FakeQueue {
+    add = (): Promise<unknown> => Promise.resolve(undefined)
+    getJobCounts = (): Promise<Record<string, number>> => Promise.resolve({})
+    getJob = (): Promise<null> => Promise.resolve(null)
+    close = (): Promise<void> => Promise.resolve()
+  },
+  Worker: class FakeWorker {
+    close = (): Promise<void> => Promise.resolve()
+  },
 }))
 // MYT-41: stub the Stripe probe so server.test.ts stays unit-level. The
 // probe-itself happy path is covered in src/billing/__tests__/probe.test.ts.
@@ -76,6 +107,8 @@ describe('server boot gate', () => {
     mockListen.mockReset().mockResolvedValue(undefined)
     mockProbe.mockReset().mockResolvedValue(undefined)
     mockProbeMigrationsCurrent.mockReset().mockResolvedValue(undefined)
+    mockBullmqPing.mockReset().mockResolvedValue('PONG')
+    mockBullmqQuit.mockReset().mockResolvedValue('OK')
     // Each call to createRedisClient returns a fresh ioredis-shaped object.
     // Order matters: server.ts calls realtime first, then batch.
     const fakeRtr = { ping: mockRtrPing, quit: mockRtrQuit } as unknown as Redis

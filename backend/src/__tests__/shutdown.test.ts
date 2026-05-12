@@ -20,6 +20,12 @@ function makeBuildAppDeps(): AppDeps {
     redisBatch: new IoredisMock(),
     redisKeyPrefix: 'test:use1:',
     repo: createRepo(mockPool),
+    // MYT-51 T12: no-op queue — buildApp doesn't drive enqueue paths.
+    worldGenQueue: {
+      add: (): Promise<unknown> => Promise.resolve(undefined),
+      getJobCounts: (): Promise<Record<string, number>> => Promise.resolve({}),
+      getJob: (): Promise<null> => Promise.resolve(null),
+    },
   }
 }
 
@@ -31,6 +37,9 @@ interface MockClients {
   redisBatch: { quit: ReturnType<typeof vi.fn> } & Partial<Redis>
   subscriber: { close: ReturnType<typeof vi.fn> } & Partial<PipelineSubscriber>
   stopPeriodicLog: ReturnType<typeof vi.fn>
+  // MYT-51 T12: world-gen BullMQ worker + queue, drained as part of shutdown.
+  worldGenWorker: { close: ReturnType<typeof vi.fn> }
+  worldGenQueue: { close: ReturnType<typeof vi.fn> }
 }
 
 function makeMockClients(): MockClients {
@@ -40,6 +49,8 @@ function makeMockClients(): MockClients {
     redisBatch: { quit: vi.fn().mockResolvedValue('OK') },
     subscriber: { close: vi.fn().mockResolvedValue(undefined) },
     stopPeriodicLog: vi.fn(),
+    worldGenWorker: { close: vi.fn().mockResolvedValue(undefined) },
+    worldGenQueue: { close: vi.fn().mockResolvedValue(undefined) },
   }
 }
 
@@ -63,7 +74,7 @@ describe('createShutdown', () => {
     process.exit = originalExit
   })
 
-  it('drains in order: stopPeriodicLog → subscriber.close → app.close → pg.end → redis.quit (both), then exit(0)', async () => {
+  it('drains in order: stopPeriodicLog → subscriber.close → worldGenWorker.close → worldGenQueue.close → app.close → pg.end → redis.quit (both), then exit(0)', async () => {
     const app = await buildApp(
       makeBuildAppDeps(),
       { mode: 'bypass' },
@@ -77,6 +88,14 @@ describe('createShutdown', () => {
     })
     clients.subscriber.close.mockImplementation(() => {
       callOrder.push('subscriber.close')
+      return Promise.resolve()
+    })
+    clients.worldGenWorker.close.mockImplementation(() => {
+      callOrder.push('worldGenWorker.close')
+      return Promise.resolve()
+    })
+    clients.worldGenQueue.close.mockImplementation(() => {
+      callOrder.push('worldGenQueue.close')
       return Promise.resolve()
     })
     vi.spyOn(app, 'close').mockImplementation((() => {
@@ -106,12 +125,16 @@ describe('createShutdown', () => {
       redisBatch: clients.redisBatch as unknown as Redis,
       subscriber: clients.subscriber as unknown as PipelineSubscriber,
       stopPeriodicLog: clients.stopPeriodicLog,
+      worldGenWorker: clients.worldGenWorker,
+      worldGenQueue: clients.worldGenQueue,
     })
     await handler('SIGTERM')
 
     expect(callOrder).toEqual([
       'stopPeriodicLog',
       'subscriber.close',
+      'worldGenWorker.close',
+      'worldGenQueue.close',
       'app.close',
       'pg.end',
       'redis-realtime.quit',
@@ -136,6 +159,8 @@ describe('createShutdown', () => {
       redisBatch: clients.redisBatch as unknown as Redis,
       subscriber: clients.subscriber as unknown as PipelineSubscriber,
       stopPeriodicLog: clients.stopPeriodicLog,
+      worldGenWorker: clients.worldGenWorker,
+      worldGenQueue: clients.worldGenQueue,
     })
     await handler('SIGTERM')
 
@@ -159,6 +184,8 @@ describe('createShutdown', () => {
       redisBatch: clients.redisBatch as unknown as Redis,
       subscriber: clients.subscriber as unknown as PipelineSubscriber,
       stopPeriodicLog: clients.stopPeriodicLog,
+      worldGenWorker: clients.worldGenWorker,
+      worldGenQueue: clients.worldGenQueue,
     })
     await handler('SIGTERM')
 

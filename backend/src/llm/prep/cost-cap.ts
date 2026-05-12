@@ -54,17 +54,11 @@ export interface IssueCostCapRefundArgs {
   readonly worldId: string
 }
 
-export async function issueCostCapRefund(
-  pool: Pool,
-  args: IssueCostCapRefundArgs,
-): Promise<void> {
+export async function issueCostCapRefund(pool: Pool, args: IssueCostCapRefundArgs): Promise<void> {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    await client.query(
-      `UPDATE worlds SET status = 'failed' WHERE id = $1`,
-      [args.worldId],
-    )
+    await client.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [args.worldId])
     await client.query(
       `INSERT INTO credit_ledger
          (id, user_id, credit_type, amount, source_type,

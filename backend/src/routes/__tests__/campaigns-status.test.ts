@@ -33,6 +33,7 @@ import { createRepo } from '../../repo/index.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import type { AppDeps } from '../../app-deps.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
+import { noopWorldGenQueue } from '../../__tests__/helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -92,6 +93,7 @@ describe('campaigns status routes', () => {
       redisBatch: redis,
       redisKeyPrefix: REDIS_KEY_PREFIX,
       repo,
+      worldGenQueue: noopWorldGenQueue(),
     }
     app = await buildApp(
       deps,

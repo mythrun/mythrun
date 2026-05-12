@@ -15,12 +15,14 @@ import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import IoredisMock from 'ioredis-mock'
 import type { AppDeps } from '../../app-deps.js'
+import type { WorldGenQueueLike } from '../../routes/campaigns.js'
 import { createRepo } from '../../repo/index.js'
 
 export interface StubDepsOverrides {
   pgQuery?: () => Promise<unknown>
   pingRealtime?: () => Promise<string>
   pingBatch?: () => Promise<string>
+  worldGenQueue?: WorldGenQueueLike
 }
 
 function makeMockRedis(pingOverride?: () => Promise<string>): Redis {
@@ -33,6 +35,24 @@ function makeMockRedis(pingOverride?: () => Promise<string>): Redis {
     ;(mock as unknown as { ping: () => Promise<string> }).ping = pingOverride
   }
   return mock
+}
+
+/**
+ * Hand-rolled no-op queue. Suffices for buildApp callers that never
+ * exercise POST /api/campaigns (the majority — health-ready, onboarding,
+ * invite-flow, etc.); tests that DO drive enqueue paths build their own
+ * spy with assertion hooks (see routes/__tests__/campaigns-create.test.ts).
+ *
+ * Exported so other tests that build their own `AppDeps` inline (rather
+ * than calling makeStubDeps) can satisfy the type contract without
+ * re-hand-rolling the shape.
+ */
+export function noopWorldGenQueue(): WorldGenQueueLike {
+  return {
+    add: () => Promise.resolve(undefined),
+    getJobCounts: () => Promise.resolve({}),
+    getJob: () => Promise.resolve(null),
+  }
 }
 
 export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
@@ -49,5 +69,6 @@ export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
     redisBatch: makeMockRedis(overrides.pingBatch),
     redisKeyPrefix: 'test:use1:',
     repo: createRepo(pg),
+    worldGenQueue: overrides.worldGenQueue ?? noopWorldGenQueue(),
   }
 }

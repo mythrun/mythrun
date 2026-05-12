@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import {
-  validateAndGenerateConcept,
-  type PaintJobJudgement,
-} from '../paint-job-validator.js'
+import { validateAndGenerateConcept, type PaintJobJudgement } from '../paint-job-validator.js'
 import * as ai from 'ai'
 
 vi.mock('ai', async () => {

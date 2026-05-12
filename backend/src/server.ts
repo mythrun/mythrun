@@ -1,7 +1,15 @@
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
-import type { AppDeps } from './app-deps.js'
-import { buildApp, createShutdown } from './app.js'
+import { Queue, Worker, type JobType } from 'bullmq'
+import type {
+  AppDeps,
+} from './app-deps.js'
+import {
+  buildApp,
+  createShutdown,
+  type WorldGenQueueShutdown,
+  type WorldGenWorkerLike,
+} from './app.js'
 import type { RegisterAuthOptions } from './auth/index.js'
 import { loadEnv, type Env } from './config/env.js'
 import { installSignalHandlers } from './boot/signal-handlers.js'
@@ -9,9 +17,14 @@ import { probeMigrationsCurrent } from './boot/migrations-current.js'
 import { waitFor } from './boot/wait-for.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
+import { createBullmqRedisClient } from './redis/bullmq-client.js'
 import { createRepo } from './repo/index.js'
 import { getStripeClient } from './billing/stripe-client.js'
 import { probeStripeContract } from './billing/probe.js'
+import { createWorldGenProcessor } from './llm/prep/world-gen-processor.js'
+import { CONCURRENCY_WORLD_GEN, QUEUE_WORLD_GEN } from './worker/bullmq-config.js'
+import type { WorldGenQueueLike } from './routes/campaigns.js'
+import type { Logger as PinoLogger } from 'pino'
 
 // Build a RegisterAuthOptions from a loaded Env without emitting `undefined`
 // fields explicitly — exactOptionalPropertyTypes forbids `userPoolId: undefined`
@@ -50,6 +63,63 @@ function bootGateEnabled(): boolean {
   return raw === '1' || raw.toLowerCase() === 'true'
 }
 
+/** MYT-51 T12: build the world-gen BullMQ queue + its plugin-facing
+ *  adapter. Extracted from main() so the boot orchestrator stays under
+ *  the 100-line lint budget. Returns the raw `bullmqQueue` (for
+ *  shutdown.close) AND the `WorldGenQueueLike` adapter that bridges
+ *  campaigns.ts's contract to BullMQ's variadic `getJobCounts` API. */
+function buildWorldGenQueue(redisBatch: Redis): {
+  bullmqQueue: Queue
+  worldGenQueue: WorldGenQueueLike
+} {
+  // SHOWSTOPPER fix from Hydra-C2 / spec D9:
+  //   `removeOnComplete: { count: 0 } + removeOnFail: { count: 0 }` —
+  //   BullMQ keeps terminal jobs permanently by default; with their
+  //   jobIds still in the dedupe set, our resume flow's
+  //   `queue.add(..., { jobId: campaignId })` silently no-ops on a
+  //   completed/failed job. The { count: 0 } config prunes terminal
+  //   jobs so resume's enqueue contract holds.
+  const bullmqQueue = new Queue(QUEUE_WORLD_GEN, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      removeOnComplete: { count: 0 },
+      removeOnFail: { count: 0 },
+    },
+  })
+  // Adapter from the campaigns plugin's WorldGenQueueLike contract
+  // (which takes states as a readonly string[]) to BullMQ Queue's real
+  // `getJobCounts(...types)` variadic signature.
+  const worldGenQueue: WorldGenQueueLike = {
+    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+    // The contract types `states` as readonly string[]; BullMQ's
+    // getJobCounts narrows to JobType[]. Cast at this single boundary
+    // — caller-supplied values come from the route handler, which
+    // hardcodes 'waiting'/'active'/'delayed' (all valid JobType).
+    getJobCounts: (states) => bullmqQueue.getJobCounts(...(states as JobType[])),
+    getJob: (jobId) => bullmqQueue.getJob(jobId),
+  }
+  return { bullmqQueue, worldGenQueue }
+}
+
+// Stub queue/worker for the boot-gate-disabled fallback path. The fallback
+// never connects to Redis, so we can't construct real BullMQ handles; the
+// app-deps + shutdown contracts both expect a non-undefined value, so
+// supply shape-conforming no-ops. None of the routes that USE the queue
+// are reachable on the fallback path (no DB, requireOnboarded 500s), so
+// `add` returning a rejected promise is operator-safe.
+function stubWorldGenQueue(): WorldGenQueueLike & WorldGenQueueShutdown {
+  return {
+    add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
+    getJobCounts: () => Promise.resolve({}),
+    getJob: () => Promise.resolve(null),
+    close: () => Promise.resolve(),
+  }
+}
+
+function stubWorldGenWorker(): WorldGenWorkerLike {
+  return { close: () => Promise.resolve() }
+}
+
 async function fallbackStart(): Promise<void> {
   // Boot-gate-disabled path: equivalent to the MYT-28 entrypoint with
   // auth wiring layered on top (MYT-37). No client creation, no
@@ -69,12 +139,14 @@ async function fallbackStart(): Promise<void> {
       throw new Error('repo unavailable: BOOT_GATE_ENABLED is off')
     },
   } as unknown as Pool
+  const stubQueue = stubWorldGenQueue()
   const stubDeps: AppDeps = {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
     redisBatch: { quit: () => Promise.resolve('OK') } as unknown as Redis,
     redisKeyPrefix: env.redisKeyPrefix,
     repo: createRepo(stubPool),
+    worldGenQueue: stubQueue,
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
@@ -87,6 +159,8 @@ async function fallbackStart(): Promise<void> {
     redisBatch: stubDeps.redisBatch,
     subscriber: app.mythrunSubscriber,
     stopPeriodicLog: app.mythrunStopPeriodicLog,
+    worldGenWorker: stubWorldGenWorker(),
+    worldGenQueue: stubQueue,
   })
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, () => void handleShutdown(signal))
@@ -161,6 +235,22 @@ export async function main(): Promise<void> {
 
     const repo = createRepo(pgRef)
     const authOpts = buildAuthOpts(env)
+
+    // MYT-51 T12: world-gen BullMQ queue + worker.
+    //
+    // Queue connection uses redisBatch directly (non-blocking commands;
+    // fast-fail `maxRetriesPerRequest: 1` is fine). Worker requires
+    // `maxRetriesPerRequest: null` (BullMQ contract — BRPOPLPUSH must
+    // not have a retry ceiling); build a dedicated BullMQ-compatible
+    // connection from the same URL, mirroring worker.ts's pattern.
+    const { bullmqQueue, worldGenQueue } = buildWorldGenQueue(rTBRef)
+    const worldGenWorkerRedis = createBullmqRedisClient(env.redisBatchUrl)
+    await waitFor({
+      label: 'Redis (worker bullmq)',
+      probe: () => worldGenWorkerRedis.ping(),
+      signal: abortController.signal,
+    })
+
     const app = await buildApp(
       {
         pg: pgRef,
@@ -168,10 +258,25 @@ export async function main(): Promise<void> {
         redisBatch: rTBRef,
         redisKeyPrefix: env.redisKeyPrefix,
         repo,
+        worldGenQueue,
       },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
     )
+    const worldGenWorker: Worker = new Worker(
+      QUEUE_WORLD_GEN,
+      createWorldGenProcessor({
+        pool: pgRef,
+        redisRealtime: rTRRef,
+        redisKeyPrefix: env.redisKeyPrefix,
+        logger: app.log as PinoLogger,
+      }),
+      {
+        connection: worldGenWorkerRedis,
+        concurrency: CONCURRENCY_WORLD_GEN,
+      },
+    )
+
     await app.listen({ port: env.port, host: '0.0.0.0' })
 
     const handleShutdown = createShutdown(app, {
@@ -180,6 +285,11 @@ export async function main(): Promise<void> {
       redisBatch: rTBRef,
       subscriber: app.mythrunSubscriber,
       stopPeriodicLog: app.mythrunStopPeriodicLog,
+      worldGenWorker,
+      // Pass the real BullMQ Queue here (not the WorldGenQueueLike
+      // adapter, which has no close()) — shutdown needs the underlying
+      // queue's close() to release its Redis-side connection bookkeeping.
+      worldGenQueue: bullmqQueue,
     })
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

@@ -32,6 +32,7 @@ import { guardTestDatabase } from '../db/__tests__/guard-db.js'
 import { createRepo } from '../repo/index.js'
 import type { AppDeps } from '../app-deps.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+import { noopWorldGenQueue } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -100,6 +101,7 @@ describe('rate-limit cross-worker enforcement', () => {
       } as unknown as Redis,
       redisKeyPrefix: uniquePrefix,
       repo,
+      worldGenQueue: noopWorldGenQueue(),
     }
     const depsB: AppDeps = { ...depsA, redisRealtime: redisB }
 

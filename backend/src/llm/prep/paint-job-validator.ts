@@ -21,10 +21,7 @@ import { z } from 'zod'
 import { SONNET } from '../models.js'
 
 const JUDGE_TEMPLATE = readFileSync(
-  resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    '../prompts/prep/paint-job-validator.txt',
-  ),
+  resolve(dirname(fileURLToPath(import.meta.url)), '../prompts/prep/paint-job-validator.txt'),
   'utf8',
 )
 
@@ -77,9 +74,7 @@ export async function validateAndGenerateConcept<TDraft>(
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const prompt: string =
-      attempt === 1
-        ? args.basePrompt
-        : buildRetryPrompt(args.basePrompt, lastJudgement)
+      attempt === 1 ? args.basePrompt : buildRetryPrompt(args.basePrompt, lastJudgement)
     const temperature = attempt === 1 ? 0.9 : 1.0
 
     const genResult = await generateText({
@@ -94,20 +89,14 @@ export async function validateAndGenerateConcept<TDraft>(
     const judgeResult = await generateText({
       model: SONNET,
       output: Output.object({ schema: PaintJobJudgementSchema }),
-      prompt: JUDGE_TEMPLATE.replace(
-        '{{draft}}',
-        JSON.stringify(genResult.output, null, 2),
-      ),
+      prompt: JUDGE_TEMPLATE.replace('{{draft}}', JSON.stringify(genResult.output, null, 2)),
       temperature: 0.1,
       maxRetries: 3,
     })
     totalUsage = addUsage(totalUsage, judgeResult.usage)
     lastJudgement = judgeResult.output
 
-    if (
-      !judgeResult.output.flagged ||
-      judgeResult.output.confidence <= FLAG_THRESHOLD
-    ) {
+    if (!judgeResult.output.flagged || judgeResult.output.confidence <= FLAG_THRESHOLD) {
       return {
         draft: genResult.output,
         attempts: attempt,
@@ -124,13 +113,9 @@ export async function validateAndGenerateConcept<TDraft>(
   throw new PaintJobLoopExhaustedError(lastJudgement)
 }
 
-function buildRetryPrompt(
-  basePrompt: string,
-  lastJudgement: PaintJobJudgement | null,
-): string {
+function buildRetryPrompt(basePrompt: string, lastJudgement: PaintJobJudgement | null): string {
   const driftAxes = lastJudgement?.specificDriftAxes.join(', ') ?? ''
-  const mirroredWork =
-    lastJudgement?.mirroredWork ?? 'a recognizable copyrighted work'
+  const mirroredWork = lastJudgement?.mirroredWork ?? 'a recognizable copyrighted work'
   return (
     basePrompt +
     '\n\n---\n\n' +
