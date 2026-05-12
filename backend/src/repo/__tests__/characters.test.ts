@@ -56,7 +56,7 @@ describe('repo.characters', () => {
   let campaignId: string
 
   beforeAll(async () => {
-    guardTestDatabase(databaseUrl)
+    await guardTestDatabase(databaseUrl)
     pool = createPgPool(databaseUrl)
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
   })
