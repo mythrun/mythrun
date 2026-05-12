@@ -39,10 +39,7 @@ async function probe(name: string, fn: () => Promise<unknown>): Promise<ProbeRes
   }
 }
 
-export async function startHealthServer(
-  port: number,
-  deps: HealthDeps,
-): Promise<FastifyInstance> {
+export async function startHealthServer(port: number, deps: HealthDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
 
   app.get('/health', async (_req, reply) => {
@@ -52,9 +49,7 @@ export async function startHealthServer(
       probe('pg', () => deps.pg.query('SELECT 1')),
       ...deps.workers.map((w) =>
         probe(`worker-${w.name}`, () =>
-          w.isRunning()
-            ? Promise.resolve()
-            : Promise.reject(new Error('worker is not running')),
+          w.isRunning() ? Promise.resolve() : Promise.reject(new Error('worker is not running')),
         ),
       ),
     ])
