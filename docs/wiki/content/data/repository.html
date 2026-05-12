@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:b7cec30b1906e88d912efafa2a955f51a78a241711bde7fa2550730a8364cfd6 -->
-<!-- last-ticket: MYT-43 -->
+<!-- source-hash: sha256:d19248f73a493199c55f4c978b5b3730c86626b18039efba93f06264214b7998 -->
+<!-- last-ticket: MYT-48 -->
 
 <h1>Repository layer</h1>
 
@@ -18,8 +18,8 @@
 <p>
   <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
   takes a <code>pg.Pool</code> and returns
-  <code>{ users, worlds, campaigns, sessions, credits, invites }</code> — one namespace per
-  top-level table cluster. Each namespace is built by a sibling factory
+  <code>{ users, worlds, campaigns, sessions, credits, invites, characters }</code> — one namespace
+  per top-level table cluster. Each namespace is built by a sibling factory
   (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
   pool and exposes the typed methods for that table. The return type is exported as
   <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
@@ -64,39 +64,46 @@
   guaranteed on every UPDATE.
 </p>
 
-<h2>Namespace boundaries: 10 today, 15 deferred</h2>
+<h2>Namespace boundaries: 11 today, 14 deferred</h2>
 
 <p>
   Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
-  <strong>ten</strong>: six pool-bound namespaces (<code>users</code>, <code>worlds</code>,
-  <code>campaigns</code>, <code>sessions</code>, <code>credits</code>, <code>invites</code>) plus
-  four transaction-scoped billing namespaces (<code>stripeEvents</code>, <code>purchases</code>,
-  <code>userSubscriptions</code>, <code>billingHistory</code>) the
+  <strong>eleven</strong>: seven pool-bound namespaces (<code>users</code>, <code>worlds</code>,
+  <code>campaigns</code>, <code>sessions</code>, <code>credits</code>, <code>invites</code>,
+  <code>characters</code>) plus four transaction-scoped billing namespaces
+  (<code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>,
+  <code>billingHistory</code>) the
   <a href="../auth-billing/billing-webhook.html">webhook handlers</a> and
-  <a href="../auth-billing/billing-routes.html">billing routes</a> consume. The remaining 15 are
+  <a href="../auth-billing/billing-routes.html">billing routes</a> consume. The remaining 14 are
   tracked as beads under the <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Producer batched with consumer</strong> — designing a <code>characters</code> namespace
-  with per-skill / feature / equipment / spell add APIs without the character-creation flow designed
-  produces guesses. <code>credits</code> shipped on the same principle: the atomic-debit pattern was
-  held back from the v1 repo until MYT-40 picked up Billing's first consumer-facing surface, because
-  designing <code>grant</code> / <code>debit</code> / <code>getBalance</code> as separate primitives
-  without the spend path in mind is exactly how a TOCTOU race ships. <code>invites</code> followed
-  in MYT-38 alongside its routes consumer; the multi-step <code>acceptInvite</code> transaction
-  (lock invite → membership check first → expiry check → cap check → INSERT with ON CONFLICT →
-  uses-bump) only fell into shape with the HTTP layer co-designed. The deferral list is in the v2
-  design spec; <code>bd list --label=repo-deferred</code> is the live view.
+  <strong>Producer batched with consumer</strong> — designing primitives without the consumer in
+  view produces guesses. <code>credits</code> shipped on the same principle: the atomic-debit
+  pattern was held back from the v1 repo until MYT-40 picked up Billing's first consumer-facing
+  surface, because designing <code>grant</code> / <code>debit</code> / <code>getBalance</code> as
+  separate primitives without the spend path in mind is exactly how a TOCTOU race ships.
+  <code>invites</code> followed in MYT-38 alongside its routes consumer; the multi-step
+  <code>acceptInvite</code> transaction (lock invite → membership check first → expiry check → cap
+  check → INSERT with ON CONFLICT → uses-bump) only fell into shape with the HTTP layer co-designed.
+  <code>characters</code> lands ahead of its MYT-53 campaign-setup consumer for a different reason:
+  migration 009 reshapes the storage contract (user-owned + join table), and authoring the
+  campaign-setup pipeline against the final shape is cheaper than chasing schema churn
+  mid-milestone. The deferral list is in the v2 design spec;
+  <code>bd list --label=repo-deferred</code> is the live view.
 </aside>
 
 <p>
-  Within the four shipped namespaces, the method set is similarly scope-cut.
+  Within each shipped namespace, the method set is similarly scope-cut.
   <code>worlds.fork</code> is deferred to the prep pipeline — fork semantics involve entity copy and
   fact deduplication that belong with the pipeline that owns them.
   <code>sessions.updateRunningSummary</code> is deferred to the Slow Thinker work that consumes it.
   <code>users.softDelete</code> and <code>campaigns.transferOwnership</code> follow the same rule:
-  no consumer in flight, no API design today.
+  no consumer in flight, no API design today. <code>characters</code> ships the portable-shape
+  primitives (<code>create</code>, <code>addToCampaign</code>, <code>listForCampaign</code>,
+  <code>findUserCharacterForCampaign</code>) but holds back skill / feature / equipment / spell
+  satellite APIs and any update path until MYT-53 picks up the character-creation flow.
 </p>
 
 <h2>Camel out, snake in: mappers at the boundary</h2>
@@ -431,6 +438,36 @@
   authenticated. The non-trivial method is <code>acceptInvite</code> — its own section below.
 </p>
 
+<p>
+  <strong><code>characters</code></strong> — <code>create</code>, <code>addToCampaign</code>,
+  <code>listForCampaign</code>, <code>findUserCharacterForCampaign</code>. The split mirrors
+  migration 009's two-step storage contract: <code>create</code> writes the user-owned row;
+  <code>addToCampaign</code> writes the <code>campaign_characters</code> join row. Both are expected
+  to live inside the same caller-controlled transaction at the MYT-53 campaign-setup call site —
+  <code>create</code> takes a <code>ClientLike</code> rather than reading from the closure's pool
+  (the same shape <code>users.create</code> uses for the onboarding flow).
+  <code>addToCampaign</code> opens its own short transaction off the pool because the join INSERT is
+  a single statement and the typed unique-violation translation only needs to span that one
+  statement. <code>listForCampaign</code> joins through <code>campaign_characters</code> ordered by
+  <code>joined_at, id</code>; <code>findUserCharacterForCampaign</code> is the per-player lookup
+  route handlers will use to answer "what character does this player have in this campaign?"
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Translate <code>23505</code> by constraint name, not by FK shape</strong> — the join's two
+  UNIQUEs (<code>(campaign_id, character_id)</code> and <code>(campaign_id, user_id)</code>) both
+  produce SQLSTATE <code>23505</code> on collision, and a caller needs to distinguish them: the
+  first means "this character is already in this campaign" (idempotent retry), the second means
+  "this user already has a different PC in this campaign" (real conflict). The repo inspects the pg
+  error's <code>constraint</code> field directly and maps to
+  <code>CharacterAlreadyInCampaignError</code> vs
+  <code>UserAlreadyHasCharacterInCampaignError</code>. The Postgres-default UNIQUE constraint names
+  (<code>campaign_characters_campaign_id_character_id_key</code> and
+  <code>campaign_characters_campaign_id_user_id_key</code>) are stable because the schema declares
+  the constraints inline rather than via <code>CREATE UNIQUE INDEX</code> — renaming requires a
+  deliberate <code>ALTER CONSTRAINT</code> migration.
+</aside>
+
 <h2>The credits namespace: append-only ledger with an atomic spend</h2>
 
 <p>
@@ -726,9 +763,10 @@
       <td>
         <code>User</code>, <code>World</code> (with <code>isDemo</code>), <code>Campaign</code>,
         <code>Session</code>, <code>SessionUsage</code>, <code>CampaignMember</code>,
-        <code>CampaignInvite</code>, <code>CampaignInvitePreview</code>;
-        <code>AtomicDebitResult</code> + <code>TryDebitResult</code> credit-debit shapes;
-        <code>CreateXxxInput</code> + <code>XxxUpdate</code> for each mutable row type.
+        <code>CampaignInvite</code>, <code>CampaignInvitePreview</code>, <code>Character</code>,
+        <code>CampaignCharacter</code>; <code>AtomicDebitResult</code> +
+        <code>TryDebitResult</code> credit-debit shapes; <code>CreateXxxInput</code> +
+        <code>XxxUpdate</code> for each mutable row type.
       </td>
     </tr>
     <tr>
@@ -736,7 +774,8 @@
       <td>
         <code>UserDbRow</code> / <code>WorldDbRow</code> / <code>CampaignDbRow</code> /
         <code>SessionDbRow</code> / <code>SessionUsageDbRow</code> /
-        <code>CampaignMemberDbRow</code> / <code>CampaignInviteDbRow</code>; matching
+        <code>CampaignMemberDbRow</code> / <code>CampaignInviteDbRow</code> /
+        <code>CharacterDbRow</code> / <code>CampaignCharacterDbRow</code>; matching
         <code>toXxx</code> functions; narrowing helpers for CHECK-constrained text columns.
       </td>
     </tr>
@@ -818,6 +857,22 @@
         <code>InsufficientCreditsError</code>, <code>IdempotencyConflictError</code>,
         <code>UserNotFoundError</code>, <code>DebitTimeoutError</code>; the
         <code>DEBIT_LOCK_TIMEOUT_MS</code> / <code>DEBIT_STATEMENT_TIMEOUT_MS</code> constants.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/characters.ts</code></td>
+      <td>
+        <code>createCharactersRepo(pool)</code> — <code>create</code> (caller-owned tx),
+        <code>addToCampaign</code> (own short tx, typed unique-violation mapping),
+        <code>listForCampaign</code>, <code>findUserCharacterForCampaign</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/characters-errors.ts</code></td>
+      <td>
+        <code>CharacterAlreadyInCampaignError</code>,
+        <code>UserAlreadyHasCharacterInCampaignError</code> — thrown by
+        <code>addToCampaign</code> on the two <code>campaign_characters</code> UNIQUE violations.
       </td>
     </tr>
     <tr>
