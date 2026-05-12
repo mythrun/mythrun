@@ -13,9 +13,7 @@ import { LlmRateLimitedError, LlmStructuredOutputError, LlmAuthError } from '../
 const stubModel = {} as LanguageModelV3
 const stubGenerate = (): Promise<never> => Promise.reject(new Error('generate not used'))
 
-function makeStream(
-  parts: LanguageModelV3StreamPart[],
-): ReadableStream<LanguageModelV3StreamPart> {
+function makeStream(parts: LanguageModelV3StreamPart[]): ReadableStream<LanguageModelV3StreamPart> {
   return new ReadableStream({
     start(controller) {
       for (const part of parts) controller.enqueue(part)
@@ -24,9 +22,7 @@ function makeStream(
   })
 }
 
-function makeStreamResult(
-  parts: LanguageModelV3StreamPart[],
-): LanguageModelV3StreamResult {
+function makeStreamResult(parts: LanguageModelV3StreamPart[]): LanguageModelV3StreamResult {
   return {
     stream: makeStream(parts),
     request: undefined,
@@ -116,7 +112,9 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     const out = await mw.wrapStream({
       doGenerate: stubGenerate,
       doStream: () =>
-        Promise.resolve(makeStreamResult([textDeltaPart('hi'), finishPart(20, 4, 'error' as const)])),
+        Promise.resolve(
+          makeStreamResult([textDeltaPart('hi'), finishPart(20, 4, 'error' as const)]),
+        ),
       params: emptyParams(),
       model: stubModel,
     })
