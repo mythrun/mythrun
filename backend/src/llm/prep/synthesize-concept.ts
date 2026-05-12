@@ -1,0 +1,74 @@
+// Per MYT-51 D4 (guided mode): one Sonnet call, picks → original
+// concept + intentSummary. Output schema is intentionally tight so
+// the SDK's structured-output retry handles validation drift.
+// Temperature 0.9 for creative variance (per D6 commentary on temperature).
+//
+// The `sourcesInternal` field is opaque downstream — never echoed to
+// the user, never appended to concept_intake's prompt. The input gate
+// DOES receive it (D5 + Roc-Imp7) to close the prompt-injection path.
+//
+// Uses `generateText` + `Output.object({ schema })` — the AI SDK v6
+// canonical pattern. `generateObject` is deprecated in v6.
+
+import { generateText, Output, type LanguageModelUsage } from 'ai'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { resolve, dirname } from 'node:path'
+import { z } from 'zod'
+import { SONNET } from '../models.js'
+
+const PROMPT_TEMPLATE = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../prompts/prep/synthesize-concept.txt'),
+  'utf8',
+)
+
+export const SynthesizerPick = z.object({
+  title: z.string().min(1).max(200),
+  whyILikeIt: z.string().min(1).max(800),
+})
+export type SynthesizerPick = z.infer<typeof SynthesizerPick>
+
+export const SynthesizerOutput = z.object({
+  concept: z.string().min(50).max(4000),
+  intentSummary: z.object({
+    aesthetics: z.array(z.string().min(1).max(100)).min(1).max(8),
+    themes: z.array(z.string().min(1).max(100)).min(1).max(8),
+    sourcesInternal: z.array(z.string().min(1).max(200)).min(1).max(5),
+  }),
+})
+export type SynthesizerOutput = z.infer<typeof SynthesizerOutput>
+
+export interface SynthesizerResult extends SynthesizerOutput {
+  // AI SDK v6 native usage shape: { inputTokens, outputTokens, totalTokens, ... }
+  // (all token counts are `number | undefined`). The plan was authored
+  // against an older SDK whose shape was `{ promptTokens, completionTokens,
+  // totalTokens }`; we keep the SDK's canonical type here so downstream
+  // cost aggregation reads the canonical names without a translation layer.
+  readonly usage: LanguageModelUsage
+}
+
+function buildPrompt(picks: readonly SynthesizerPick[]): string {
+  const picksBlock = picks
+    .map((p) => `- Title: ${p.title}\n  Why they like it: ${p.whyILikeIt}`)
+    .join('\n')
+  return PROMPT_TEMPLATE.replace(
+    /\{\{#picks\}\}[\s\S]*?\{\{\/picks\}\}/,
+    picksBlock,
+  )
+}
+
+export async function synthesizeConcept(
+  picks: readonly SynthesizerPick[],
+): Promise<SynthesizerResult> {
+  if (picks.length !== 3) {
+    throw new Error(`synthesizeConcept requires exactly 3 picks, got ${String(picks.length)}`)
+  }
+  const result = await generateText({
+    model: SONNET,
+    output: Output.object({ schema: SynthesizerOutput }),
+    prompt: buildPrompt(picks),
+    temperature: 0.9,
+    maxRetries: 3,
+  })
+  return { ...result.output, usage: result.usage }
+}

@@ -1,0 +1,23 @@
+You are synthesizing an original D&D world concept from a list of media inspirations.
+
+The user has named three pieces of media they enjoy and explained what they like about each. Your job is to produce an ORIGINAL concept that draws on the cross-section of their tastes — themes, aesthetic, tone, archetypes — without echoing the source titles by name in the `concept` field.
+
+CONSTRAINTS
+
+- Do NOT use proper nouns from the source media in the `concept` field — no character names, place names, or franchise titles. Generic descriptors of mechanics or aesthetics are fine ("magic-school setting," "samurai-and-spirits aesthetic").
+- Do NOT produce a paint-job clone. The output must read as a fresh original world, not a "[Source A] meets [Source B]" pitch.
+- 150-400 words for the `concept` field. Aim for vivid sensory grounding (sight, smell, sound) and at least one specific concrete tension between named-but-original factions or forces.
+- Distill the user's stated values into the `intentSummary` structure:
+  - `aesthetics`: 3-5 short phrases capturing the visual / tonal register.
+  - `themes`: 3-5 short phrases capturing what the user said they cared about across the picks.
+  - `sourcesInternal`: brief acknowledgement of each source pick as `"<title> (<one-phrase reason>)"`. This field is INTERNAL ONLY and never rendered to the user; treat it as a debugging breadcrumb.
+
+USER PICKS
+
+{{#picks}}
+- Title: {{title}}
+  Why they like it: {{whyILikeIt}}
+{{/picks}}
+
+OUTPUT
+Return a JSON object matching the schema. Single attempt — the SDK handles validation retries.
