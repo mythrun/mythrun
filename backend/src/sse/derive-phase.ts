@@ -68,10 +68,7 @@ export const CHARCREATION_STAGES = [
   'character_integration',
 ] as const
 
-export const POSTCREATION_STAGES = [
-  'materialize_relationships',
-  'continuity_check',
-] as const
+export const POSTCREATION_STAGES = ['materialize_relationships', 'continuity_check'] as const
 
 const STAGE_ORDER: readonly string[] = [
   ...WORLDGEN_STAGES,
@@ -171,7 +168,10 @@ function computePhase(input: {
   }
 
   // Charcreation failure → failed (post-worldgen).
-  if (charcreation.some((r) => r.status === 'failed') || postcreation.some((r) => r.status === 'failed')) {
+  if (
+    charcreation.some((r) => r.status === 'failed') ||
+    postcreation.some((r) => r.status === 'failed')
+  ) {
     return 'failed'
   }
 

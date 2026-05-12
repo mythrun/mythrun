@@ -88,7 +88,7 @@ describe('connection-counter', () => {
     expect(lines.length).toBeGreaterThanOrEqual(2)
     const second = lines[1]
     expect(second?.max_since_last).toBe(1) // current after first emission resets to current
-    expect(second?.wasted_msgs).toBe(0)    // reset after emission
+    expect(second?.wasted_msgs).toBe(0) // reset after emission
 
     stop()
   })

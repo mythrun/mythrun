@@ -1,6 +1,11 @@
 // backend/src/sse/__tests__/derive-phase.test.ts
 import { describe, expect, it } from 'vitest'
-import { derivePhase, type CampaignRow, type WorldRow, type PipelineRunRow } from '../derive-phase.js'
+import {
+  derivePhase,
+  type CampaignRow,
+  type WorldRow,
+  type PipelineRunRow,
+} from '../derive-phase.js'
 
 const baseCampaign: CampaignRow = {
   id: 'cmp-1',

@@ -18,7 +18,11 @@ describe('pipeline-runs repo', () => {
     await pool.query('DELETE FROM pipeline_runs')
   })
 
-  async function insertCampaign(): Promise<{ campaignId: string; worldId: string; userId: string }> {
+  async function insertCampaign(): Promise<{
+    campaignId: string
+    worldId: string
+    userId: string
+  }> {
     const userId = uuidv7()
     const worldId = uuidv7()
     const campaignId = uuidv7()

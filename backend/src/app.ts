@@ -16,6 +16,10 @@ import { invitesRoutes } from './routes/invites.js'
 import { sessionsRoutes } from './routes/sessions.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
+import { campaignsRoutes } from './routes/campaigns.js'
+import { createPipelineSubscriber, type PipelineSubscriber } from './sse/pipeline-subscriber.js'
+import { createConnectionCounter } from './sse/connection-counter.js'
+import type { Logger as PinoLogger } from 'pino'
 
 export interface AppConfig {
   /** Origin of the frontend SPA, used to compose share URLs (e.g. invite links).
@@ -26,6 +30,20 @@ export interface AppConfig {
    *  they can pull stripeSecretKey / stripeWebhookSecret without
    *  reaching back into module-level config. */
   readonly env: Env
+}
+
+/** Fastify module augmentation: buildApp `decorate`s the FastifyInstance
+ *  with the MYT-50 pipeline subscriber + the connection-counter's
+ *  periodic-log clearer. Both have app-scoped lifetime and need to be
+ *  reachable from createShutdown's ShutdownClients (constructed in
+ *  server.ts) — decorating keeps buildApp's return signature a plain
+ *  FastifyInstance so the dozen existing test callers don't have to
+ *  destructure, while still exposing the cross-boundary state. */
+declare module 'fastify' {
+  interface FastifyInstance {
+    mythrunSubscriber: PipelineSubscriber
+    mythrunStopPeriodicLog: () => void
+  }
 }
 
 // buildApp is the boot orchestrator: a flat, top-to-bottom registration
@@ -168,6 +186,42 @@ export const buildApp = async (
     redisKeyPrefix: deps.redisKeyPrefix,
   })
 
+  // MYT-50: pipeline status surface. The subscriber owns a DEDICATED
+  // duplicate of deps.redisRealtime that enters PSUBSCRIBE mode for
+  // `${redisKeyPrefix}pipeline:campaign:*` — sharing the main realtime
+  // client would deadlock subscriber-mode against rate-limit + ws-ticket
+  // commands. The counter's periodic log is unref'd, so it doesn't pin
+  // the event loop during shutdown, but we still clear it explicitly so
+  // the final 60s window doesn't emit after subscriber.close().
+  // Fastify v5's app.log is structurally a pino.Logger at runtime
+  // (Fastify uses pino internally), but its declared FastifyBaseLogger
+  // type omits pino-internal fields like `msgPrefix`. The subscriber +
+  // counter constructors take pino.Logger strictly so their internal
+  // call sites stay typesafe. Cast at the boundary — runtime is sound;
+  // the type-system gap is purely declarational. Mirrors the cast in
+  // routes/campaigns.ts where request.log crosses into openSseConnection.
+  const pinoLog = app.log as PinoLogger
+  const subscriber = createPipelineSubscriber(deps.redisRealtime, deps.redisKeyPrefix, pinoLog)
+  const counter = createConnectionCounter(pinoLog)
+  const stopPeriodicLog = counter.startPeriodicLog()
+  // Expose to server.ts (createShutdown) via the module-augmented
+  // FastifyInstance — see the `declare module 'fastify'` block above.
+  app.decorate('mythrunSubscriber', subscriber)
+  app.decorate('mythrunStopPeriodicLog', stopPeriodicLog)
+
+  // Campaigns plugin (MYT-50). Registered after the access-control +
+  // requireOnboarded chain so `/api/campaigns/:campaignId/status` +
+  // `/status/stream` inherit the JWT + onboarded + per-campaign-membership
+  // gates. The subscriber + counter are constructed here (not inside
+  // the plugin) because their lifetime is the app's lifetime — the
+  // shutdown handler needs to QUIT the dedicated client + clear the
+  // counter interval, and the plugin scope can't expose those.
+  await app.register(campaignsRoutes, {
+    pool: deps.pg,
+    subscriber,
+    counter,
+  })
+
   // Billing plugin (MYT-42 Tasks 25–31). Registered last as a direct
   // child of `app` so it inherits the public-route allowlist + auth
   // hooks installed above. /api/billing/skus is the only public route
@@ -184,6 +238,16 @@ export interface ShutdownClients {
   readonly pg: Pool
   readonly redisRealtime: Redis
   readonly redisBatch: Redis
+  /** MYT-50: dedicated PSUBSCRIBE client behind the campaigns SSE
+   *  stream. Closed BEFORE app.close so attached sinks receive a
+   *  structured `server-shutdown` close frame before the HTTP layer
+   *  yanks the underlying sockets. */
+  readonly subscriber: PipelineSubscriber
+  /** MYT-50: clears the connection-counter periodic-log interval. The
+   *  interval handle is `unref()`'d so it doesn't pin the event loop,
+   *  but we still clear it explicitly so a final 60s log doesn't fire
+   *  after the subscriber + app have closed. */
+  readonly stopPeriodicLog: () => void
 }
 
 export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): ShutdownHandler => {
@@ -192,9 +256,21 @@ export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): 
       app.log.info({ signal }, 'shutting down')
       // Yield once so pino's async log queue drains before close.
       await new Promise<void>((resolve) => setImmediate(resolve))
-      // Drain order matters: HTTP first (no in-flight queries), then pg pool,
-      // then redis QUIT (graceful, flushes in-flight commands; vs disconnect
-      // which rips the socket).
+      // Drain order matters (MYT-50 spec D14):
+      //   1. Stop the connection-counter interval so a final periodic
+      //      log doesn't fire mid-shutdown with already-closed sinks.
+      //   2. subscriber.close() PUNSUBSCRIBEs the dedicated client,
+      //      walks attached sinks and writes `event: close` frames
+      //      with reason: 'server-shutdown', then QUITs that client.
+      //      Each sink's onClose decrements the counter — done before
+      //      app.close so the SSE response sockets close cleanly
+      //      rather than via Fastify's socket-rip at app.close.
+      //   3. app.close stops HTTP (no in-flight queries past this).
+      //   4. pg.end drains the pool.
+      //   5. redis QUIT (realtime + batch) — graceful, flushes
+      //      in-flight commands; vs disconnect which rips the socket.
+      clients.stopPeriodicLog()
+      await clients.subscriber.close()
       await app.close()
       await clients.pg.end()
       await clients.redisRealtime.quit()

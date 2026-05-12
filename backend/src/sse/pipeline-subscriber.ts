@@ -35,7 +35,9 @@ export function createPipelineSubscriber(
   // we override retry options for the long-lived subscriber's needs.
   // Cast through `as unknown` because ioredis's duplicate() typing
   // doesn't include the options-override overload.
-  const sub = (redis as unknown as { duplicate: (opts: Record<string, unknown>) => Redis }).duplicate({
+  const sub = (
+    redis as unknown as { duplicate: (opts: Record<string, unknown>) => Redis }
+  ).duplicate({
     retryStrategy: (n: number) => Math.min(n * 1000, 30_000),
     maxRetriesPerRequest: null,
     enableOfflineQueue: true,
@@ -102,7 +104,10 @@ export function createPipelineSubscriber(
       try {
         sink.write(frame)
       } catch (err) {
-        logger.warn({ err, campaignId }, 'pipeline-subscriber sink.write threw — closing + detaching')
+        logger.warn(
+          { err, campaignId },
+          'pipeline-subscriber sink.write threw — closing + detaching',
+        )
         try {
           sink.close('unknown')
         } catch {
