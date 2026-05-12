@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url'
 import { Worker as BullmqWorker } from 'bullmq'
+import { waitFor } from './boot/wait-for.js'
 import { loadEnv } from './config/env.js'
 import { createPgPool } from './db/postgres.js'
 import { createBullmqRedisClient } from './redis/bullmq-client.js'
@@ -22,19 +23,21 @@ const WORKER_CLOSE_GRACE_MS = 100_000
 export async function main(): Promise<void> {
   const env = loadEnv()
 
-  // Establish connections (boot-fail fast on any failure).
-  // CRITICAL: BullMQ Workers require their own ioredis client with
-  // `maxRetriesPerRequest: null` — the default `createRedisClient` factory
-  // sets it to 1 (fast-fail for the API/Queue use case).
-  // `createBullmqRedisClient` is the BullMQ-compatible factory.
+  // Establish connections. Each probe is wrapped in waitFor() (200/500/
+  // 1000/2000ms backoff, 5 attempts total) to mirror the API's boot
+  // pattern in server.ts — without it, ioredis with
+  // `maxRetriesPerRequest: null` (BullMQ requirement) throws
+  // "Stream isn't writeable" on the first ping if the TCP socket isn't
+  // writable yet. Boot still fails fast on a real outage; it just
+  // tolerates the normal connection-establishment race.
   const redisBatch = createBullmqRedisClient(env.redisBatchUrl)
-  await redisBatch.ping()
+  await waitFor({ label: 'Redis (batch)', probe: () => redisBatch.ping() })
   // redisRealtime uses the regular client — only used for PUBLISH later
   // (MYT-52); BullMQ constraints don't apply.
   const redisRealtime = createRedisClient(env.redisRealtimeUrl)
-  await redisRealtime.ping()
+  await waitFor({ label: 'Redis (realtime)', probe: () => redisRealtime.ping() })
   const pg = createPgPool(env.databaseUrl, { max: WORKER_PG_POOL_SIZE })
-  await pg.query('SELECT 1')
+  await waitFor({ label: 'Postgres', probe: () => pg.query('SELECT 1') })
 
   // Register BullMQ Workers (stub processors at Phase 0).
   const stubProcessor = makeStubProcessor(logger)
