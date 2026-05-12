@@ -26,10 +26,10 @@ import type { Redis } from 'ioredis'
 import type { Logger as PinoLogger } from 'pino'
 import { z } from 'zod'
 import { createRepo } from '../repo/index.js'
-import { createPipelineRunsRepo } from '../repo/pipeline-runs.js'
+import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
-import { derivePhase, type PhaseAndStages } from '../sse/derive-phase.js'
+import { derivePhase, type PhaseAndStages, type PipelinePhase } from '../sse/derive-phase.js'
 import { openSseConnection } from '../sse/sse-connection.js'
 import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../sse/connection-counter.js'
@@ -45,13 +45,20 @@ import {
 // Minimal contract for the world-gen BullMQ queue. Declared here (not
 // imported from BullMQ directly) so the plugin's Opts shape isn't coupled
 // to the queue's generic-heavy class type; tests inject a hand-rolled spy.
+//
+// The `getJob` shape (used by POST /resume's not_started recovery branch)
+// mirrors the bits of BullMQ's Job<T> class that resume actually reads —
+// `isCompleted()` and `isFailed()` — so the runtime check survives a
+// minor BullMQ-typing churn without touching this file.
+export interface WorldGenJobLike {
+  isCompleted(): Promise<boolean> | boolean
+  isFailed(): Promise<boolean> | boolean
+}
+
 export interface WorldGenQueueLike {
-  add(
-    name: string,
-    data: { campaignId: string },
-    opts?: { jobId?: string },
-  ): Promise<unknown>
+  add(name: string, data: { campaignId: string }, opts?: { jobId?: string }): Promise<unknown>
   getJobCounts(states: readonly string[]): Promise<Record<string, number>>
+  getJob(jobId: string): Promise<WorldGenJobLike | null | undefined>
 }
 
 export interface Opts {
@@ -159,6 +166,21 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   }
 
+  // POST /api/campaigns/:campaignId/resume (T10) depends only on the
+  // BullMQ queue handle — no redis / redisKeyPrefix, because the
+  // rejection-storm counter doesn't fire on resume. Narrower than the
+  // create-route assert so resume can run in environments that wire the
+  // queue but not the storm counter (a thin-deployment future option).
+  function requireResumeRouteDeps(): { worldGenQueue: WorldGenQueueLike } {
+    if (!opts.worldGenQueue) {
+      throw new Error(
+        'campaignsRoutes: POST /api/campaigns/:campaignId/resume requires worldGenQueue ' +
+          'in Opts (wired by T12).',
+      )
+    }
+    return { worldGenQueue: opts.worldGenQueue }
+  }
+
   async function loadSnapshot(campaignId: string): Promise<PhaseAndStages | null> {
     const campaign = await repo.campaigns.getById(campaignId)
     if (!campaign) return null
@@ -183,6 +205,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         // Per-IP cap. Snapshot fetch is cheap; the 60/min ceiling protects
         // against runaway client polling that would otherwise hammer the DB.
         rateLimit: { max: 60, timeWindow: '1 minute' },
+        pipelineRoute: true,
       },
       preHandler: requireCampaignMember(repo),
     },
@@ -213,6 +236,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
             }
           },
         },
+        pipelineRoute: true,
       },
       preHandler: requireCampaignMember(repo),
     },
@@ -279,6 +303,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
             }
           },
         },
+        pipelineRoute: true,
       },
     },
     async (request, reply) => {
@@ -383,6 +408,118 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       return reply.code(201).send({ campaignId: txResult.campaignId })
     },
   )
+
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/:campaignId (MYT-51 T10)
+  //
+  // Member-only campaign detail surface. Returns the campaign row, the
+  // world row, and the member list. Used by the dev tool's
+  // campaign-details panel + a future user-facing campaign dashboard.
+  // -------------------------------------------------------------------------
+
+  app.get<{ Params: Params }>(
+    '/api/campaigns/:campaignId',
+    {
+      config: {
+        // Per-IP. Member-list + world fields are cheap reads; 60/min
+        // matches the status-fetch ceiling so a UI that fans out both
+        // calls on a tick doesn't trip its own limit on either axis.
+        rateLimit: { max: 60, timeWindow: '1 minute' },
+        pipelineRoute: true,
+      },
+      preHandler: requireCampaignMember(repo),
+    },
+    async (request, reply) => {
+      const campaign = await repo.campaigns.getById(request.params.campaignId)
+      if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+      const world = await repo.worlds.getById(campaign.worldId)
+      if (!world) return reply.code(404).send({ code: 'world_not_found' })
+      const members = await repo.campaigns.listMembers(campaign.id)
+      return reply.send({ campaign, world, members })
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/mine (MYT-51 T10)
+  //
+  // List the caller's campaigns — owned or any role where they are a
+  // member with invite_accepted = true. The repo's listByUser already
+  // joins campaign_members with that filter so owned + joined collapse
+  // into a single ordered list.
+  // -------------------------------------------------------------------------
+
+  app.get(
+    '/api/campaigns/mine',
+    {
+      config: {
+        // Per-IP. List endpoint; 30/min is plenty for any reasonable UI
+        // refresh cadence (and stops a buggy poll loop from hammering DB).
+        rateLimit: { max: 30, timeWindow: '1 minute' },
+        pipelineRoute: true,
+      },
+    },
+    async (request, reply) => {
+      const dbUser = requireDbUser(request)
+      const campaigns = await repo.campaigns.listByUser(dbUser.id)
+      return reply.send({ campaigns })
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // POST /api/campaigns/:campaignId/resume (MYT-51 T10)
+  //
+  // Owner-only. Full polymorphic switch over PipelinePhase's 8 arms with
+  // assertNever (Phoenix-C1). The per-arm behavior is documented in spec
+  // lines 554–607 — most arms 409 with a code; world_gen_failed and
+  // not_started have the recovery / re-enqueue paths.
+  //
+  // Per-sub rate limit (5/min) is much tighter than the GET endpoints —
+  // a resume is a real state-changing operation that triggers a queue
+  // add, so we cap retries to protect both the queue and the cost cap.
+  // -------------------------------------------------------------------------
+
+  app.post<{ Params: Params }>(
+    '/api/campaigns/:campaignId/resume',
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: '1 minute',
+          keyGenerator: (req: FastifyRequest): string => {
+            try {
+              return requireDbUser(req).id
+            } catch {
+              return req.ip
+            }
+          },
+        },
+        pipelineRoute: true,
+      },
+      preHandler: requireCampaignMember(repo, 'owner'),
+    },
+    async (request, reply) => {
+      const resumeDeps = requireResumeRouteDeps()
+      const campaignId = request.params.campaignId
+      const campaign = await repo.campaigns.getById(campaignId)
+      // requireCampaignMember already 403'd if the row was missing, but
+      // load it again to read world_id (the membership row is keyed on
+      // campaign_id, not on the campaign object).
+      if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+
+      const snapshot = await loadSnapshot(campaignId)
+      if (!snapshot) return reply.code(404).send({ code: 'campaign_not_found' })
+
+      return dispatchResume({
+        reply,
+        phase: snapshot.phase,
+        campaignId,
+        worldId: campaign.worldId,
+        queue: resumeDeps.worldGenQueue,
+        pipelineRunsRepo,
+        logger: request.log as PinoLogger,
+      })
+    },
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -396,7 +533,10 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
  */
 async function resolveConceptAndIntent(
   source: NewWorldSource,
-): Promise<{ concept: string; intentSummary: Awaited<ReturnType<typeof synthesizeConcept>>['intentSummary'] | null }> {
+): Promise<{
+  concept: string
+  intentSummary: Awaited<ReturnType<typeof synthesizeConcept>>['intentSummary'] | null
+}> {
   if (source.mode === 'freeform') {
     return { concept: source.concept, intentSummary: null }
   }
@@ -442,10 +582,7 @@ function sumQueueCounts(counts: Record<string, number>): number {
  * Read the current world_gen balance (unexpired credits only).
  * Plain pool — caller decides whether to wrap it in an advisory-locked tx.
  */
-async function readWorldGenBalance(
-  client: Pool | PoolClient,
-  userId: string,
-): Promise<number> {
+async function readWorldGenBalance(client: Pool | PoolClient, userId: string): Promise<number> {
   const result = await client.query<{ balance: string }>(
     `SELECT COALESCE(SUM(amount), 0)::text AS balance
        FROM credit_ledger
@@ -590,4 +727,131 @@ async function executeCreateTransaction(
   } finally {
     client.release()
   }
+}
+
+// ---------------------------------------------------------------------------
+// Resume route helpers (MYT-51 T10).
+//
+// dispatchResume's job is an exhaustive polymorphic switch over
+// PipelinePhase (8 arms + assertNever per Phoenix-C1). To keep the handler
+// under the 50-line lint budget, each non-trivial arm (world_gen_failed,
+// not_started) is extracted into its own small helper.
+// ---------------------------------------------------------------------------
+
+interface ResumeContext {
+  reply: FastifyReply
+  phase: PipelinePhase
+  campaignId: string
+  worldId: string
+  queue: WorldGenQueueLike
+  pipelineRunsRepo: PipelineRunsRepo
+  logger: PinoLogger
+}
+
+function assertNever(x: never): never {
+  throw new Error(`resume: unreachable phase ${String(x)}`)
+}
+
+async function dispatchResume(ctx: ResumeContext): Promise<FastifyReply> {
+  switch (ctx.phase) {
+    case 'world_gen':
+      ctx.reply.header('Retry-After', '30')
+      return ctx.reply.code(409).send({ code: 'world_gen_in_progress' })
+    case 'world_gen_failed':
+      return resumeFromWorldGenFailed(ctx)
+    case 'world_ready':
+      return ctx.reply.code(409).send({ code: 'nothing_to_resume' })
+    case 'character_creation':
+      // Phoenix-Imp3: 422 (not 501). Downstream ticket ID logged
+      // server-side, NOT in the response (Roc-Imp6).
+      ctx.logger.info(
+        {
+          event: 'resume_phase_not_yet_implemented',
+          phase: 'character_creation',
+          downstreamTicket: 'MYT-52',
+          campaignId: ctx.campaignId,
+        },
+        'resume requested for not-yet-implemented phase',
+      )
+      return ctx.reply.code(422).send({
+        code: 'phase_resume_not_yet_implemented',
+        phase: 'character_creation',
+      })
+    case 'post_creation':
+      ctx.logger.info(
+        {
+          event: 'resume_phase_not_yet_implemented',
+          phase: 'post_creation',
+          downstreamTicket: 'MYT-53',
+          campaignId: ctx.campaignId,
+        },
+        'resume requested for not-yet-implemented phase',
+      )
+      return ctx.reply.code(422).send({
+        code: 'phase_resume_not_yet_implemented',
+        phase: 'post_creation',
+      })
+    case 'complete':
+      return ctx.reply.code(409).send({ code: 'already_complete' })
+    case 'failed':
+      return ctx.reply.code(409).send({ code: 'terminal_failure' })
+    case 'not_started':
+      return resumeFromNotStarted(ctx)
+    default:
+      return assertNever(ctx.phase)
+  }
+}
+
+/**
+ * `world_gen_failed` arm — spec lines 561–576.
+ *
+ * Inspect the latest failed pipeline_runs.error. Two terminal classes
+ * (stage_not_implemented + cost-cap-fired) 409; everything else is
+ * treated as a transient infra failure and the world-gen job is
+ * re-enqueued so the user can recover from a Redis blip / DB hiccup /
+ * etc. Kraken-Imp4: explicitly never re-enqueue a guaranteed-fail loop.
+ */
+async function resumeFromWorldGenFailed(ctx: ResumeContext): Promise<FastifyReply> {
+  const stuckRun = await ctx.pipelineRunsRepo.getLatestFailedForWorld(ctx.worldId)
+  const errText = stuckRun?.error ?? ''
+  if (errText.includes('stage_not_implemented')) {
+    return ctx.reply.code(409).send({
+      code: 'phase_not_yet_implementable',
+      stuckAtStage: stuckRun?.stage ?? 'unknown',
+    })
+  }
+  if (errText.includes('world_gen_cost_cap_exceeded')) {
+    return ctx.reply.code(409).send({ code: 'world_gen_capped' })
+  }
+  await ctx.queue.add('world-gen', { campaignId: ctx.campaignId }, { jobId: ctx.campaignId })
+  return ctx.reply
+    .code(202)
+    .send({ campaignId: ctx.campaignId, action: 'world-gen-re-enqueued' })
+}
+
+/**
+ * `not_started` arm — Redis-blip orphan recovery (Phoenix-Imp4 +
+ * Hydra-Imp1). Spec lines 578–588.
+ *
+ * The create transaction seeds a pending pipeline_runs row, so reaching
+ * this branch is rare in practice — it requires the worker to have
+ * never picked up the job AND the seeded row to have been wiped/never
+ * persisted. Defensive: if a job with the same id is still alive on
+ * the queue, 409 rather than enqueue a duplicate; otherwise enqueue
+ * with the standard jobId-deduplication contract.
+ */
+async function resumeFromNotStarted(ctx: ResumeContext): Promise<FastifyReply> {
+  const existingJob = await ctx.queue.getJob(ctx.campaignId)
+  if (existingJob) {
+    const completed = await existingJob.isCompleted()
+    const failed = await existingJob.isFailed()
+    if (!completed && !failed) {
+      return ctx.reply.code(409).send({ code: 'world_gen_in_progress' })
+    }
+  }
+  await ctx.queue.add('world-gen', { campaignId: ctx.campaignId }, { jobId: ctx.campaignId })
+  return ctx.reply.code(202).send({
+    campaignId: ctx.campaignId,
+    action: 'world-gen-enqueued-after-orphan-recovery',
+  })
 }

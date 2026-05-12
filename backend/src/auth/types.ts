@@ -87,6 +87,15 @@ declare module 'fastify' {
      *  - undefined (default) — JWT verify + users-row lookup +
      *    suspended_at check + frozen request.dbUser attach. */
     auth?: 'public' | 'jwt-no-db'
+    /** Opt-in marker for routes that participate in the world-gen /
+     *  campaign-creation pipeline (MYT-51 D12 revised). The T12 boot-time
+     *  hook iterates every registered route and asserts that the marker
+     *  set on the route matches an entry in PIPELINE_ROUTES (forward AND
+     *  reverse — declared-but-not-mounted is also an error). The marker
+     *  itself is a boolean tag; PIPELINE_ROUTES is the source of truth
+     *  for what's expected, and the hook fails app.ready() if either
+     *  side diverges. */
+    pipelineRoute?: boolean
   }
 
   interface FastifyInstance {

@@ -11,6 +11,11 @@
 import type { Pool } from 'pg'
 import type { PipelineRunRow } from '../sse/derive-phase.js'
 
+export interface FailedRunRow {
+  readonly stage: string
+  readonly error: string | null
+}
+
 export interface PipelineRunsRepo {
   /**
    * Returns the latest pipeline_runs row per (stage, user_id) tuple
@@ -18,6 +23,13 @@ export interface PipelineRunsRepo {
    * auth pre-handler should already have 403'd in that case).
    */
   readonly listLatestForCampaign: (campaignId: string) => Promise<readonly PipelineRunRow[]>
+  /**
+   * Returns the most-recently-failed pipeline_runs row for a world (any
+   * stage, any user). Used by POST /resume to inspect the error and
+   * decide whether to re-enqueue (transient infra blip) or 409 (stuck
+   * on a not-yet-implemented stage / cost-cap fire). Spec lines 561–574.
+   */
+  readonly getLatestFailedForWorld: (worldId: string) => Promise<FailedRunRow | null>
 }
 
 interface PipelineRunRowRaw {
@@ -48,11 +60,24 @@ const QUERY = `
            started_at DESC NULLS LAST
 `
 
+const LATEST_FAILED_QUERY = `
+  SELECT stage, error
+    FROM pipeline_runs
+   WHERE world_id = $1
+     AND status = 'failed'
+   ORDER BY COALESCE(completed_at, started_at) DESC NULLS LAST
+   LIMIT 1
+`
+
 export function createPipelineRunsRepo(pool: Pool): PipelineRunsRepo {
   return {
     async listLatestForCampaign(campaignId: string): Promise<readonly PipelineRunRow[]> {
       const result = await pool.query<PipelineRunRowRaw>(QUERY, [campaignId])
       return result.rows
+    },
+    async getLatestFailedForWorld(worldId: string): Promise<FailedRunRow | null> {
+      const result = await pool.query<FailedRunRow>(LATEST_FAILED_QUERY, [worldId])
+      return result.rows[0] ?? null
     },
   }
 }
