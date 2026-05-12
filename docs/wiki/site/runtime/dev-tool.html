@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html" class="active">Dev tool</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html" class="active">Dev tool</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Dev tool</div>
         <article>
@@ -234,8 +234,10 @@
   <code>src/api-client.ts</code> is the single <code>fetch</code> wrapper: every HTTP call in the
   app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
   every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
-  page; <code>src/components/</code> holds the per-panel UI (the Phase 0 health panel today;
-  world-create, character-create, and SSE consumers later).
+  page; <code>src/components/</code> holds the per-panel UI — currently the health panel and
+  the <a href="pipeline-status.html">pipeline status panel</a> (an SSE consumer for
+  <code>/api/campaigns/:campaignId/status/stream</code>); world-create and character-create
+  consumers will land alongside their routes.
 </p>
 
 <aside class="wiki-rationale">

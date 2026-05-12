@@ -51,17 +51,10 @@ function renderSnapshot(
   costEl.textContent = `cumulative cost: $${snap.cumulativeCostUsd.toFixed(4)}`
 }
 
-function applyLiveEvent(
-  parsed: LiveEvent,
-  phaseEl: HTMLElement,
-  costEl: HTMLElement,
-): void {
+function applyLiveEvent(parsed: LiveEvent, phaseEl: HTMLElement, costEl: HTMLElement): void {
   if (parsed.type === 'phase' && typeof parsed.phase === 'string') {
     phaseEl.textContent = `phase: ${parsed.phase}`
-  } else if (
-    parsed.type === 'cost-update' &&
-    typeof parsed.cumulativeUsd === 'number'
-  ) {
+  } else if (parsed.type === 'cost-update' && typeof parsed.cumulativeUsd === 'number') {
     costEl.textContent = `cumulative cost: $${parsed.cumulativeUsd.toFixed(4)}`
   }
   // stage-started / stage-completed / stage-failed / job-failed: future

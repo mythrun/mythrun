@@ -21,6 +21,7 @@ export const structure: Section[] = [
       { slug: 'index', title: 'Overview' },
       { slug: 'llm', title: 'LLM client' },
       { slug: 'dev-tool', title: 'Dev tool' },
+      { slug: 'pipeline-status', title: 'Pipeline status' },
     ],
   },
   {

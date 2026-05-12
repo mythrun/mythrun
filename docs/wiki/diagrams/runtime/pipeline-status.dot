@@ -1,0 +1,67 @@
+digraph pipeline_status {
+  // Campaign-scoped pipeline status surface. The worker publishes JSON
+  // event payloads to one Redis channel per campaign; one dedicated
+  // PSUBSCRIBE'd ioredis client per API process fans them out via an
+  // in-memory Map<campaignId, Set<SseSink>> to attached SSE sinks. The
+  // snapshot endpoint serves the same shape as a one-shot read; the
+  // stream endpoint delivers the same shape as the first SSE frame,
+  // then forwards live events.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  worker [label="worker (MYT-49/-51+)\nPUBLISH after COMMIT", color="ember", fontcolor="ember"];
+
+  subgraph cluster_redis {
+    label="Redis (deps.redisRealtime cluster)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    channel [label="{redisKeyPrefix}\npipeline:campaign:{campaignId}\n\none channel per campaign"];
+  }
+
+  subgraph cluster_api {
+    label="API process  (per ECS task)";
+    style="dashed";
+
+    subscriber [label="pipeline-subscriber.ts\n.duplicate({retryStrategy,\n maxRetriesPerRequest:null})\nPSUBSCRIBE pipeline:campaign:*\nMap<campaignId, Set<SseSink>>"];
+
+    snapshot [label="campaigns.ts\nGET /api/campaigns/\n  :campaignId/status\nderivePhase(\n  campaign, world, runs)"];
+    stream   [label="campaigns.ts\nGET /api/campaigns/\n  :campaignId/status/stream\nattach → snapshot → forward"];
+
+    sse      [label="sse-connection.ts\nreply.hijack()\nkeepalive 25s\nidle-timeout 30min\nclose-reason enum"];
+
+    counter  [label="connection-counter.ts\nsse.connections.active\nevery 60s"];
+  }
+
+  subgraph cluster_repo {
+    label="Postgres";
+    style="dotted";
+
+    runs [label="pipeline_runs\nlatest per (stage, user_id)\nWHERE campaign_id = $1\n  OR world_id = ...", color="ember", fontcolor="ember"];
+  }
+
+  client [label="EventSource client\n(dev tool today;\n SPA after MYT-51)", color="ember", fontcolor="ember"];
+
+  // Worker → Redis → subscriber → sinks
+  worker     -> channel    [label="JSON payload"];
+  channel    -> subscriber [label="pmessage"];
+  subscriber -> sse        [label="sink.write(frame)"];
+  sse        -> client     [label="event: ...\\ndata: ..."];
+
+  // Snapshot path
+  client     -> snapshot   [label="GET /status"];
+  snapshot   -> runs       [label="listLatestForCampaign"];
+  snapshot   -> client     [label="200 JSON", style=dashed];
+
+  // Stream path — attach first, snapshot second, then forward
+  client     -> stream     [label="GET /status/stream"];
+  stream     -> subscriber [label="attach()"];
+  stream     -> runs       [label="listLatestForCampaign"];
+  stream     -> sse        [label="snapshot frame", style=dashed];
+
+  // Counter observes attach/detach
+  stream     -> counter    [label="increment / decrement", style=dotted];
+}
