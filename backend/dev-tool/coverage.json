@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "routes": [],
+  "events": [],
+  "jobs": [],
+  "exempt": {
+    "routes": {},
+    "events": {},
+    "jobs": {}
+  }
+}
