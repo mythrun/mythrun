@@ -1,5 +1,6 @@
 // Single fetch wrapper. Uses RELATIVE paths only — Vite dev server
-// proxies /api/* and /health/* to localhost:3000, so the browser only
+// proxies /api/* and /health/* to the local backend (port read from
+// backend/.env.development PORT; defaults to 3000). The browser only
 // ever sees same-origin requests. Sets x-mythrun-dev-sub from current
 // identity on every call.
 //

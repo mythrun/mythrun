@@ -478,23 +478,35 @@ Plain CSS, ~50 lines. Wiki-styled — system fonts, monospace headings, minimal 
 ### 5.2 `backend/dev-tool/vite.config.ts`
 
 ```ts
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 
-export default defineConfig({
-  server: {
-    host: '127.0.0.1',           // loopback only — never expose to LAN by default
-    port: 5273,                  // NOT 5173 (reserved for future production frontend)
-    strictPort: true,            // fail if 5273 is taken rather than silently picking 5274
-    fs: { strict: true },        // refuse to serve files outside project root
-    proxy: {
-      '/api':    'http://localhost:3000',
-      '/health': 'http://localhost:3000',
+const here = dirname(fileURLToPath(import.meta.url))
+
+export default defineConfig(({ mode }) => {
+  const backendEnv = loadEnv(mode, resolve(here, '..'), '')
+  const backendPort = backendEnv.PORT ?? '3000'
+  const backendTarget = `http://localhost:${backendPort}`
+
+  return {
+    server: {
+      host: '127.0.0.1',           // loopback only — never expose to LAN
+      port: 5273,                  // NOT 5173 (reserved for future production frontend)
+      strictPort: true,            // fail rather than silently picking another port
+      fs: { strict: true },        // refuse to serve files outside project root
+      proxy: {
+        '/api': backendTarget,
+        '/health': backendTarget,
+      },
     },
-  },
+  }
 })
 ```
 
 The proxy is what makes "same-origin" structurally true: the browser sees only `http://127.0.0.1:5273`; Vite forwards `/api/*` and `/health/*` requests to the backend transparently. No CORS preflight, no `Access-Control-*` headers needed, no SSE-EventSource-can't-set-headers problem when MYT-50 streaming arrives.
+
+**Backend port is configurable.** `loadEnv` reads `backend/.env.development` (without the `VITE_` prefix filter) and pulls `PORT`. Single source of truth — the engineer sets `PORT` once in their env file and both backend and Vite proxy honor it. Defaults to 3000 if missing. No hardcoded port in this config.
 
 ### 5.3 `backend/dev-tool/tsconfig.json`
 
