@@ -455,7 +455,7 @@ export async function handlePendingUpdateApplied(
   //      against newSpec.priceCents - oldSpec.priceCents).
   const parsed = parseAndValidateProration(invoice, ids, log)
   if (parsed.error !== null) return parsed.error
-  const { oldLookupKey, newLookupKey, oldSpec, newSpec, subtotal } = parsed
+  const { newLookupKey, oldSpec, newSpec, subtotal } = parsed
 
   // 7. upsertFromStripe — idempotent against a prior
   //    `customer.subscription.updated` having already written the NEW tier
