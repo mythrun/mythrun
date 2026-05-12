@@ -1,16 +1,15 @@
 // Paste-input campaignId + Watch/Stop buttons + live phase/stage display.
-// Opens an EventSource on /api/campaigns/{id}/status/stream. The first
-// SSE frame is the snapshot (event: snapshot); subsequent frames are
-// live events. Unknown event types are silently ignored — entity-* and
-// edge-* events arrive once MYT-51 streaming stages ship; the live
+// The first SSE frame is the snapshot (event: snapshot); subsequent
+// frames are live events (event defaults to 'message' for the bridge's
+// pub/sub forward). Unknown event types are silently ignored — entity-*
+// and edge-* events arrive once MYT-51 streaming stages ship; the live
 // graph that renders them lands in MYT-52.
 //
-// Auth note: EventSource is same-origin (Vite dev server proxies
-// /api/* to the backend), so the browser carries cookies automatically.
-// The dev-tool identity header (x-mythrun-dev-sub) cannot be set on
-// EventSource (the API takes no headers init), so this panel relies on
-// the bypass route's fallback identity in dev — matching how the SSE
-// surface is gated in production (Cognito session cookie).
+// Auth: openSse stamps `x-mythrun-dev-sub` from the identity switcher.
+// The browser-native EventSource API can't set custom headers, which
+// is why this panel uses a fetch-based SSE reader instead.
+
+import { openSse, type SseConnection } from '../sse-client.js'
 
 interface StageEntry {
   readonly stage: string
@@ -91,12 +90,12 @@ export function mountStatusPanel(parent: HTMLElement): void {
   const costEl = document.createElement('div')
   costEl.className = 'result'
 
-  let source: EventSource | null = null
+  let conn: SseConnection | null = null
 
   function close(): void {
-    if (source) {
-      source.close()
-      source = null
+    if (conn) {
+      conn.close()
+      conn = null
     }
     watchBtn.disabled = false
     stopBtn.disabled = true
@@ -112,41 +111,38 @@ export function mountStatusPanel(parent: HTMLElement): void {
     phaseEl.textContent = `phase: (connecting to /api/campaigns/${id}/status/stream)`
     stagesEl.textContent = ''
     costEl.textContent = ''
-    const es = new EventSource(`/api/campaigns/${id}/status/stream`)
-    source = es
 
-    es.addEventListener('snapshot', (e: MessageEvent<string>): void => {
-      try {
-        renderSnapshot(JSON.parse(e.data) as Snapshot, phaseEl, stagesEl, costEl)
-      } catch (err) {
-        phaseEl.textContent = `error parsing snapshot: ${err instanceof Error ? err.message : String(err)}`
-      }
-    })
-
-    es.addEventListener('message', (e: MessageEvent<string>): void => {
-      try {
-        applyLiveEvent(JSON.parse(e.data) as LiveEvent, phaseEl, costEl)
-      } catch {
-        // Ignore unparseable frames (keepalive comments don't fire onmessage anyway).
-      }
-    })
-
-    es.addEventListener('close', (e: MessageEvent<string>): void => {
-      try {
-        const payload = JSON.parse(e.data) as CloseEvent
-        phaseEl.textContent = `phase: (server closed — reason: ${payload.reason ?? 'unknown'})`
-      } catch {
-        phaseEl.textContent = 'phase: (server closed)'
-      }
-      close()
-    })
-
-    es.onerror = (): void => {
-      if (source?.readyState === EventSource.CLOSED) {
-        phaseEl.textContent = 'phase: (connection closed)'
+    conn = openSse(`/api/campaigns/${id}/status/stream`, {
+      onEvent: (ev) => {
+        if (ev.event === 'snapshot') {
+          try {
+            renderSnapshot(JSON.parse(ev.data) as Snapshot, phaseEl, stagesEl, costEl)
+          } catch (err) {
+            phaseEl.textContent = `error parsing snapshot: ${err instanceof Error ? err.message : String(err)}`
+          }
+        } else if (ev.event === 'close') {
+          try {
+            const payload = JSON.parse(ev.data) as CloseEvent
+            phaseEl.textContent = `phase: (server closed — reason: ${payload.reason ?? 'unknown'})`
+          } catch {
+            phaseEl.textContent = 'phase: (server closed)'
+          }
+          close()
+        } else if (ev.event === 'message') {
+          try {
+            applyLiveEvent(JSON.parse(ev.data) as LiveEvent, phaseEl, costEl)
+          } catch {
+            // Ignore unparseable frames.
+          }
+        }
+        // Unknown event types (entity-*, edge-*) are forwarded by the
+        // bridge but not rendered here — MYT-52 lands the live-graph UI.
+      },
+      onError: (err) => {
+        phaseEl.textContent = `phase: (connection error: ${err.message})`
         close()
-      }
-    }
+      },
+    })
   }
 
   watchBtn.addEventListener('click', watch)
