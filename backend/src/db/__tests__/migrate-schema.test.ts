@@ -133,11 +133,11 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'credit_ledger',
-    check_clause: `CHECK (\nCASE source_type\n    WHEN 'debit'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'trial'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'gift'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    WHEN 'purchase'::text THEN ((source_purchase_id IS NOT NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'subscription'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    ELSE false\nEND)`,
+    check_clause: `CHECK (\nCASE source_type\n    WHEN 'debit'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'trial'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'gift'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    WHEN 'purchase'::text THEN ((source_purchase_id IS NOT NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'subscription'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NOT NULL))\n    WHEN 'cost_cap_refund'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    WHEN 'admin'::text THEN ((source_purchase_id IS NULL) AND (source_billing_history_id IS NULL))\n    ELSE false\nEND)`,
   },
   {
     table_name: 'credit_ledger',
-    check_clause: `CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text])))`,
+    check_clause: `CHECK ((source_type = ANY (ARRAY['purchase'::text, 'subscription'::text, 'gift'::text, 'trial'::text, 'refund'::text, 'debit'::text, 'cost_cap_refund'::text, 'admin'::text])))`,
   },
   {
     table_name: 'entities',
@@ -565,6 +565,9 @@ describe('schema-parity (integration)', () => {
       '007_recreate_billing_tables.sql',
       '008_billing_metering.sql',
       '009_character_portability.sql',
+      '010_settings_world_gen_cost_cap.sql',
+      '011_credit_ledger_cost_cap_refund.sql',
+      '012_credit_ledger_admin_source.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
