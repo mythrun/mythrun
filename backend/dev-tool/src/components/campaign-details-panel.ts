@@ -199,9 +199,7 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
 
     const res = await apiCall<DetailsResponse>(`/api/campaigns/${id}`)
     if (res.status !== 200 || res.body === null) {
-      status.textContent = `error ${String(res.status)}: ${
-        res.error ?? JSON.stringify(res.body)
-      }`
+      status.textContent = `error ${String(res.status)}: ${res.error ?? JSON.stringify(res.body)}`
       return
     }
 
@@ -225,10 +223,9 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
     if (currentCampaignId === null) return
     resumeBtn.disabled = true
     resumeStatus.textContent = 'resuming...'
-    const res = await apiCall<ResumeResponse>(
-      `/api/campaigns/${currentCampaignId}/resume`,
-      { method: 'POST' },
-    )
+    const res = await apiCall<ResumeResponse>(`/api/campaigns/${currentCampaignId}/resume`, {
+      method: 'POST',
+    })
     const respBody = res.body ?? {}
     const code = respBody.code ?? '(no code)'
     if (res.status === 202) {

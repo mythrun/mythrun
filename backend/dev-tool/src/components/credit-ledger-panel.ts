@@ -172,9 +172,7 @@ export function mountCreditLedgerPanel(parent: HTMLElement): void {
 
       status.textContent = `201 — ledgerId ${body.ledgerId}, newBalance ${String(body.newBalance)}`
     } else {
-      status.textContent = `error ${String(res.status)}: ${
-        res.error ?? JSON.stringify(res.body)
-      }`
+      status.textContent = `error ${String(res.status)}: ${res.error ?? JSON.stringify(res.body)}`
     }
     grantBtn.disabled = false
   }
