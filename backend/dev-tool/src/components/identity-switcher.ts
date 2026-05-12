@@ -1,0 +1,30 @@
+// Renders a <select> for the current dev-sub identity. Writes to
+// identity.ts on change, which broadcasts the change event.
+
+import { DEV_SUBS, getCurrentDevSub, setCurrentDevSub, type DevSub } from '../identity.js'
+
+export function mountIdentitySwitcher(parent: HTMLElement): void {
+  const wrap = document.createElement('div')
+  wrap.className = 'identity-switcher'
+
+  const label = document.createElement('label')
+  label.textContent = 'Acting as: '
+
+  const select = document.createElement('select')
+  const current = getCurrentDevSub()
+  for (const sub of DEV_SUBS) {
+    const opt = document.createElement('option')
+    opt.value = sub
+    opt.textContent = sub
+    if (sub === current) opt.selected = true
+    select.appendChild(opt)
+  }
+  select.addEventListener('change', () => {
+    // Safe: options are populated only from DEV_SUBS above.
+    setCurrentDevSub(select.value as DevSub)
+  })
+
+  label.appendChild(select)
+  wrap.appendChild(label)
+  parent.appendChild(wrap)
+}
