@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:3296bd3a37cf7bccf4fe78488a29428d7b4677b77a4f60350a11d079d00d1c28 -->
+<!-- source-hash: sha256:fa63d94ef0bc99feed7bfc20fdbad4fd6774e65949a51f65ef50f645c6125a7d -->
 <!-- last-ticket: MYT-43 -->
 
 <h1>Backend</h1>
@@ -58,8 +58,9 @@
   The source tree is shallow but no longer flat: <code>app.ts</code> / <code>server.ts</code> /
   <code>app-deps.ts</code> / <code>worker.ts</code> at the root, with subdirectories for
   <code>auth/</code>, <code>billing/</code>, <code>boot/</code>, <code>config/</code>,
-  <code>db/</code>, <code>redis/</code>, <code>repo/</code>, and <code>routes/</code>. Each has a
-  colocated <code>__tests__/</code>. ESLint rules custom to Mythrun live one level up at
+  <code>contract/</code>, <code>db/</code>, <code>dev-tool-check/</code>, <code>llm/</code>,
+  <code>redis/</code>, <code>repo/</code>, and <code>routes/</code>. Each has a colocated
+  <code>__tests__/</code>. ESLint rules custom to Mythrun live one level up at
   <code>backend/eslint-rules/</code> — currently the two AST tripwires that ban Stripe
   price/product/subscription mutations from app code (see
   <a href="../auth-billing/stripe-contract.html">Stripe contract</a> for details).

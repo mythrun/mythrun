@@ -345,8 +345,9 @@
   The source tree is shallow but no longer flat: <code>app.ts</code> / <code>server.ts</code> /
   <code>app-deps.ts</code> / <code>worker.ts</code> at the root, with subdirectories for
   <code>auth/</code>, <code>billing/</code>, <code>boot/</code>, <code>config/</code>,
-  <code>db/</code>, <code>redis/</code>, <code>repo/</code>, and <code>routes/</code>. Each has a
-  colocated <code>__tests__/</code>. ESLint rules custom to Mythrun live one level up at
+  <code>contract/</code>, <code>db/</code>, <code>dev-tool-check/</code>, <code>llm/</code>,
+  <code>redis/</code>, <code>repo/</code>, and <code>routes/</code>. Each has a colocated
+  <code>__tests__/</code>. ESLint rules custom to Mythrun live one level up at
   <code>backend/eslint-rules/</code> — currently the two AST tripwires that ban Stripe
   price/product/subscription mutations from app code (see
   <a href="../auth-billing/stripe-contract.html">Stripe contract</a> for details).

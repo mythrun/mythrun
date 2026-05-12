@@ -31,9 +31,9 @@
 <p class="lead">
   A local-only engineering UI that drives the development backend through a Vite proxy, plus the
   ship gate that keeps it honest. The tool itself is throwaway — not a prototype of the production
-  frontend. The gate is the durable piece: a single command
-  (<code>pnpm dev-tool:check</code>) that fails CI when the prep-pipeline's HTTP, SSE, or BullMQ
-  contracts grow an entry the dev tool can't drive.
+  frontend. The gate is the durable piece: a single command (<code>pnpm dev-tool:check</code>) that
+  fails CI when the prep-pipeline's HTTP, SSE, or BullMQ contracts grow an entry the dev tool can't
+  drive.
 </p>
 
 <figure class="wiki-diagram">
@@ -218,24 +218,24 @@
   <strong>Local-only, not staging-pointable</strong> — Mythrun ships a six-layer defense against the
   auth-bypass plugin ever booting in a deployed environment (see
   <a href="../auth-billing/jwt-middleware.html">JWT middleware</a>). A dev tool that could swap
-  origins to point at staging would be an internet-exposed surface that mints requests with arbitrary
-  <code>x-mythrun-dev-sub</code> identities — a credentialless RCE on auth. There is no env
-  switcher, no staging mode, no CORS plugin. Staging validation goes through
+  origins to point at staging would be an internet-exposed surface that mints requests with
+  arbitrary <code>x-mythrun-dev-sub</code> identities — a credentialless RCE on auth. There is no
+  env switcher, no staging mode, no CORS plugin. Staging validation goes through
   <a href="../infra/smoke-testing.html">smoke testing</a> instead.
 </aside>
 
 <p>
   Five files do the work. <code>vite.config.ts</code> binds the dev server to
   <code>127.0.0.1</code> with <code>strictPort: true</code> and reads <code>PORT</code> out of
-  <code>backend/.env.development</code> at config time so the proxy target stays in lockstep with the
-  backend without a second source of truth. <code>src/identity.ts</code> owns the
+  <code>backend/.env.development</code> at config time so the proxy target stays in lockstep with
+  the backend without a second source of truth. <code>src/identity.ts</code> owns the
   <code>DEV_SUBS</code> list (<code>dev-user-1</code> through <code>dev-user-5</code>) and persists
   the active selection in <code>localStorage</code> under <code>mythrun.devtool.devSub</code>.
   <code>src/api-client.ts</code> is the single <code>fetch</code> wrapper: every HTTP call in the
-  app goes through <code>apiCall(path, init)</code>, which stamps
-  <code>x-mythrun-dev-sub</code> on every request and rejects absolute or protocol-relative paths.
-  <code>src/main.ts</code> mounts the page; <code>src/components/</code> holds the per-panel UI
-  (the Phase 0 health panel today; world-create, character-create, and SSE consumers later).
+  app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
+  every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
+  page; <code>src/components/</code> holds the per-panel UI (the Phase 0 health panel today;
+  world-create, character-create, and SSE consumers later).
 </p>
 
 <aside class="wiki-rationale">
@@ -269,13 +269,14 @@
 
 <p>
   The header carries a dropdown wired to the <code>DEV_SUBS</code> list. The selected value lives in
-  <code>localStorage</code> under <code>mythrun.devtool.devSub</code>; <code>api-client.ts</code>
-  reads it on every call and sets it as the <code>x-mythrun-dev-sub</code> header. The Phase 0 smoke
-  panel hits <code>/health/ready</code>, which is a public route — identity has no observable
-  effect on the response. That's expected: the surface that consumes the header lands in MYT-50
-  alongside the first authenticated pipeline routes, and the auth-bypass plugin (dev-only) is what
-  reads the header to populate <code>request.user</code>. Future multi-player flows switch
-  identities between requests to act as different players against the same world or campaign.
+  <code>localStorage</code> under <code>mythrun.devtool.devSub</code>;
+  <code>api-client.ts</code> reads it on every call and sets it as the
+  <code>x-mythrun-dev-sub</code> header. The Phase 0 smoke panel hits <code>/health/ready</code>,
+  which is a public route — identity has no observable effect on the response. That's expected: the
+  surface that consumes the header lands in MYT-50 alongside the first authenticated pipeline
+  routes, and the auth-bypass plugin (dev-only) is what reads the header to populate
+  <code>request.user</code>. Future multi-player flows switch identities between requests to act as
+  different players against the same world or campaign.
 </p>
 
 <aside class="wiki-rationale">
@@ -297,13 +298,13 @@
 
 <p>
   Three files at <code>backend/src/contract/</code> are the source of truth:
-  <code>pipeline-routes.ts</code> (HTTP routes, format
-  <code>'METHOD /api/path'</code>), <code>pipeline-events.ts</code> (SSE event names), and
-  <code>pipeline-jobs.ts</code> (BullMQ job names). Each is a
-  <code>readonly string[]</code> typed array, seeded empty at Phase 0; entries accumulate as
-  MYT-50 onward lands real routes. <code>backend/dev-tool/coverage.json</code> declares what the dev
-  tool actually covers, in three matching arrays plus an <code>exempt</code> object whose values are
-  human reasons for entries the tool deliberately skips.
+  <code>pipeline-routes.ts</code> (HTTP routes, format <code>'METHOD /api/path'</code>),
+  <code>pipeline-events.ts</code> (SSE event names), and <code>pipeline-jobs.ts</code> (BullMQ job
+  names). Each is a <code>readonly string[]</code> typed array, seeded empty at Phase 0; entries
+  accumulate as MYT-50 onward lands real routes.
+  <code>backend/dev-tool/coverage.json</code> declares what the dev tool actually covers, in three
+  matching arrays plus an <code>exempt</code> object whose values are human reasons for entries the
+  tool deliberately skips.
 </p>
 
 <p>
@@ -343,10 +344,11 @@
 
 <p>
   The Phase 0 contracts are empty, so today the gate is a no-op that proves the wiring works. The
-  shape locks in now: <strong>adding a pipeline route is a three-file change in a single PR</strong>
-  — append to <code>pipeline-routes.ts</code>, add the UI in <code>backend/dev-tool/src/</code>,
-  extend <code>coverage.json</code>'s <code>routes</code> array. Forgetting any one of them red-CI's
-  the gate. Events and jobs follow the same pattern with their own contract files and arrays.
+  shape locks in now:
+  <strong>adding a pipeline route is a three-file change in a single PR</strong> — append to
+  <code>pipeline-routes.ts</code>, add the UI in <code>backend/dev-tool/src/</code>, extend
+  <code>coverage.json</code>'s <code>routes</code> array. Forgetting any one of them red-CI's the
+  gate. Events and jobs follow the same pattern with their own contract files and arrays.
 </p>
 
 <h2 id="the-exempt-list">The exempt list</h2>
@@ -390,9 +392,9 @@
     any stored-XSS-shaped response surface ever appearing in a future panel. Cheap, mandatory.
   </li>
   <li>
-    <strong>No secrets in <code>localStorage</code>.</strong> Only <code>mythrun.devtool.devSub</code>
-    lives there. Tokens, JWTs, Anthropic keys do not. If a future surface needs a token, it goes
-    in-memory or <code>sessionStorage</code> at minimum.
+    <strong>No secrets in <code>localStorage</code>.</strong> Only
+    <code>mythrun.devtool.devSub</code> lives there. Tokens, JWTs, Anthropic keys do not. If a
+    future surface needs a token, it goes in-memory or <code>sessionStorage</code> at minimum.
   </li>
   <li>
     <strong>The ship gate is not skippable.</strong> <code>pnpm dev-tool:check</code> runs on every
@@ -423,7 +425,9 @@
   </li>
 </ol>
 
-<h3 id="add-a-pipeline-route-the-shape-the-gate-enforces">Add a pipeline route (the shape the gate enforces)</h3>
+<h3 id="add-a-pipeline-route-the-shape-the-gate-enforces">
+  Add a pipeline route (the shape the gate enforces)
+</h3>
 <ol>
   <li>
     Append the route to <code>backend/src/contract/pipeline-routes.ts</code> in the
@@ -434,8 +438,8 @@
     <code>app.ts</code>'s plugin registration.
   </li>
   <li>
-    Add a component under <code>backend/dev-tool/src/components/</code> that drives the new route via
-    <code>apiCall</code>, and mount it in <code>main.ts</code>.
+    Add a component under <code>backend/dev-tool/src/components/</code> that drives the new route
+    via <code>apiCall</code>, and mount it in <code>main.ts</code>.
   </li>
   <li>
     Add the same <code>'METHOD /api/path'</code> string to the <code>routes</code> array in
@@ -443,20 +447,21 @@
   </li>
   <li>
     <code>pnpm dev-tool:check</code> locally — must exit 0. If it errors, the message names exactly
-    which contract entry is uncovered or which exempt reason is too short. <strong>The same PR
-    contains all four changes.</strong> CI runs the same check on push.
+    which contract entry is uncovered or which exempt reason is too short.
+    <strong>The same PR contains all four changes.</strong> CI runs the same check on push.
   </li>
 </ol>
 
 <h3 id="exempt-a-contract-entry">Exempt a contract entry (rare)</h3>
 <ol>
   <li>
-    Add the contract string as a key under <code>coverage.exempt.&lt;routes|events|jobs&gt;</code> in
+    Add the contract string as a key under
+    <code>coverage.exempt.&lt;routes|events|jobs&gt;</code> in
     <code>backend/dev-tool/coverage.json</code>. The value is the reason.
   </li>
   <li>
-    Write a real reason of at least 20 characters: who decided, why the dev tool can't drive it,
-    and the Linear/MYT-* issue tracking the gap. The gate errors on shorter strings.
+    Write a real reason of at least 20 characters: who decided, why the dev tool can't drive it, and
+    the Linear/MYT-* issue tracking the gap. The gate errors on shorter strings.
   </li>
   <li>
     Open the PR with the exempt change visible alongside the contract change. Reviewers push back if
@@ -503,9 +508,9 @@
   <a href="../auth-billing/jwt-middleware.html">JWT middleware</a> reads to populate
   <code>request.user</code> in development. The ship gate's contract files
   (<code>backend/src/contract/</code>) are the seam future
-  <a href="../world-campaign/index.html">world-and-campaign pipeline</a> routes register against; the
-  spec amendment in <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> §12 codifies the
-  local-only stance. Staging validation goes through
+  <a href="../world-campaign/index.html">world-and-campaign pipeline</a> routes register against;
+  the spec amendment in <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> §12 codifies
+  the local-only stance. Staging validation goes through
   <a href="../infra/smoke-testing.html">smoke testing</a>, not this tool.
 </p>
 
@@ -638,10 +643,9 @@
 <p>
   <code>backend/dev-tool/</code>, <code>backend/src/contract/</code>,
   <code>backend/src/dev-tool-check/check-coverage.ts</code>,
-  <code>backend/scripts/dev-tool-check.ts</code>,
-  <code>.github/workflows/dev-tool-check.yml</code>. Design spec:
-  <code>docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md</code>; parent spec
-  §12: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+  <code>backend/scripts/dev-tool-check.ts</code>, <code>.github/workflows/dev-tool-check.yml</code>.
+  Design spec: <code>docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md</code>;
+  parent spec §12: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
