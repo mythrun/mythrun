@@ -15,17 +15,17 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:9280576e466db3c24c5162b24bb112169a474963409b6211f60bbbc42d51e680 -->
-<!-- last-ticket: MYT-43 -->
+<!-- source-hash: sha256:560f0b2a164c8e1034f3dba9c77baf7b370496aae88cd610173bdf4741e412b3 -->
+<!-- last-ticket: MYT-49 -->
 
 <h1>Backend</h1>
 
 <p class="lead">
   The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a
   dependency-injected data layer, two health endpoints (a process-liveness one and a
-  data-layer-readiness one), a retry-then-fail-loud boot gate that's now ON in staging, a worker
-  entrypoint scaffold, and a local docker-compose stack (Postgres + two Redis instances) the dev
-  loop probes on start.
+  data-layer-readiness one), a retry-then-fail-loud boot gate that's now ON in staging, a
+  BullMQ-aware <a href="./worker.html">worker</a> service for async stages, and a local
+  docker-compose stack (Postgres + two Redis instances) the dev loop probes on start.
 </p>
 
 <!-- @diagram: runtime/backend -->
@@ -329,27 +329,21 @@
   one place: <code>wait-for.ts</code>.
 </aside>
 
-<h2>The worker entrypoint scaffold</h2>
+<h2>The worker entrypoint</h2>
 
 <p>
-  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic today,
-  but in the build and on the task definition. It exports <code>main()</code> so tests can import
-  without executing, and runs <code>main()</code> only when invoked directly via
-  <code>node dist/worker.js</code> (the entry-point guard uses <code>pathToFileURL</code> to be
-  cross-platform). At startup it loads env, opens a redis-batch client, calls <code>ping()</code> to
-  surface connection failures synchronously, registers SIGTERM/SIGINT handlers that
-  <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
-  <code>Promise&lt;never&gt;</code> to keep the event loop alive.
+  <code>worker.ts</code> is the entrypoint for the worker container; the full narrative lives on the
+  <a href="./worker.html">Worker</a> page. The short version: it loads the same
+  <code>loadEnv</code> contract the API uses, opens its own pg pool and both Redis clients (with a
+  BullMQ-compatible ioredis factory at <code>redis/bullmq-client.ts</code> for the batch side),
+  registers two BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code> and
+  <code>QUEUE_CAMPAIGN_SETUP</code>, and binds a Fastify <code>/health</code> server on
+  <code>127.0.0.1:3001</code> that the ECS container <code>healthCheck</code> probes. Graceful
+  shutdown drains the workers within a <code>100s</code> deadline (under the task's 120s
+  <code>stopTimeout</code>) and falls back to a forced close that marks any in-flight jobs as
+  stalled for BullMQ to re-deliver. Phase 0 ships stub processors that log and complete; real
+  prep-stage logic lands in MYT-51 onward.
 </p>
-
-<aside class="wiki-rationale">
-  <strong>Scaffold ships on a service running zero tasks</strong> — the worker's
-  <a href="../infra/serving.html">ECS service</a> is at <code>desired_count = 0</code> until the
-  Prep Pipeline / Session Runtime milestones bump it. Shipping the scaffold now means the task
-  definition, container image, secrets wiring, and signal-handling shape are all proven before the
-  first real BullMQ job lands; later tickets just replace the <code>Promise&lt;never&gt;</code>
-  with worker registrations whose own loops keep the event loop alive.
-</aside>
 
 <h2>The env loader accepts two shapes</h2>
 
@@ -633,11 +627,14 @@
   <code>buildApp</code>, the seam every future route handler will reach the database through. The
   <a href="./llm.html">LLM client</a> at <code>backend/src/llm/</code> is the first cognitive-stack
   module — a thin shell over Vercel AI SDK v6 with tier-named model constants, logging +
-  error-normalization middleware, a typed error taxonomy, and a file-based prompt loader.
+  error-normalization middleware covering both <code>wrapGenerate</code> and
+  <code>wrapStream</code>, a typed error taxonomy, and a file-based prompt loader.
   <code>config/env.ts</code> validates <code>ANTHROPIC_API_KEY</code> at boot alongside the database
-  and Stripe secrets. The remaining cognitive tiers (Fast Thinker, Slow Thinker, Scribe, DM Trigger)
-  land as additional modules under <code>backend/src/</code> on top of that foundation; they'll
-  share this server's lifecycle, <code>AppDeps</code> shape, and Dockerfile.
+  and Stripe secrets. The <a href="./worker.html">Worker</a> page covers the second runtime process
+  in this repo — the async-execution half — running the same Dockerfile and config contract as the
+  API. The remaining cognitive tiers (Fast Thinker, Slow Thinker, Scribe, DM Trigger) land as
+  additional modules under <code>backend/src/</code> on top of that foundation; they'll share this
+  server's lifecycle, <code>AppDeps</code> shape, and Dockerfile.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -867,7 +864,29 @@
     <tr>
       <td><code>src/worker.ts</code></td>
       <td>
-        <code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.
+        <code>main()</code> — entry-point-guarded BullMQ worker boot: opens pg + both Redis clients,
+        registers two <code>Worker</code> instances on the batch Redis, starts the Fastify
+        <code>/health</code> probe on <code>:3001</code>, and threads bounded shutdown through
+        <code>closeWithDeadline</code>. See <a href="./worker.html">Worker</a>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/worker/bullmq-config.ts</code>, <code>src/worker/stub-processor.ts</code>,
+        <code>src/worker/health-server.ts</code>
+      </td>
+      <td>
+        Queue identifiers + concurrency caps; Phase 0 no-op processor; Fastify
+        <code>/health</code> server probing pg + both Redis + each worker's <code>isRunning()</code>
+        state.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/redis/bullmq-client.ts</code></td>
+      <td>
+        <code>createBullmqRedisClient(url)</code> — ioredis factory with
+        <code>maxRetriesPerRequest: null</code> as BullMQ requires (the general factory at
+        <code>redis/client.ts</code> sets it to 1 for fast-fail in the request path).
       </td>
     </tr>
   </tbody>

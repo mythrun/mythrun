@@ -2,8 +2,8 @@
 <!-- source: backend/src/config/env.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:fb047fb47d9943adbd058edafdb5890df5f8eaf00bd06f51df6d0d026df5b6ac -->
-<!-- last-ticket: MYT-43 -->
+<!-- source-hash: sha256:01a6be65a1e93c7cdeb59057b26d2be57623c638d201546a5cee11587cafbcc3 -->
+<!-- last-ticket: MYT-49 -->
 
 <h1>LLM client</h1>
 
@@ -121,20 +121,103 @@
 </p>
 
 <p>
-  <code>sessionId</code> and <code>userId</code> ride through
-  <code>providerOptions.mythrun = { sessionId, userId }</code> on the outgoing call. The middleware
-  reads them out of the params namespace and includes them in the log line; calls without the
-  context fields just have <code>undefined</code> for those keys. The <code>mythrun</code> namespace
+  <code>MythrunContext</code> rides through <code>providerOptions.mythrun</code> on every outgoing
+  call. Five fields are read: <code>sessionId</code>, <code>userId</code>, <code>worldId</code>,
+  <code>campaignId</code>, and <code>stage</code>. The middleware reads them out of the params
+  namespace and includes them on every log line; calls without the context fields just have
+  <code>undefined</code> for those keys (pino omits undefined). The <code>mythrun</code> namespace
   inside <code>providerOptions</code> avoids collision with provider-specific options like
   <code>providerOptions.anthropic.cacheControl</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Streaming intentionally not yet covered</strong> — <code>wrapStream</code> is a separate
-  middleware hook with its own usage-shape semantics (token totals arrive on the final chunk, not
-  the stream-open). Implementing it without a real consumer to validate against would risk getting
-  the per-chunk vs final-totals shape wrong. Lands when Fast Thinker needs SSE.
+  <strong>Five fields, not just <code>sessionId</code>/<code>userId</code></strong> — the prep
+  pipeline runs jobs that don't have a session yet (a world generation kicks off before any campaign
+  is bound to it), so a session-only attribution model wouldn't slice prep costs. Adding
+  <code>worldId</code>, <code>campaignId</code>, and a free-form <code>stage</code> label
+  (<code>'world-gen.intro'</code>, <code>'campaign-setup.factions'</code>, etc.) gives the
+  spend-attribution writer enough discriminator to split costs across world creation, campaign
+  bring-up, and live-play turns without changing schemas later.
 </aside>
+
+<h2>Streaming via <code>wrapStream</code></h2>
+
+<p>
+  Beyond <code>wrapGenerate</code>, the middleware also implements <code>wrapStream</code> — the SDK
+  hook that fires for <code>streamText</code> calls (Fast Thinker prose, eventually the prep-stage
+  interactive narration). Streaming is more demanding to observe than non-streaming: exactly one
+  terminal log line per call, regardless of how the stream ends, with the right bindings on the
+  right level. The middleware uses a <code>terminated</code> flag closed over the stream wrapper to
+  guarantee that.
+</p>
+
+<p>Six terminal states are possible; each produces exactly one log entry:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>State</th>
+      <th>Trigger</th>
+      <th>Log line</th>
+      <th>Surfaces to caller as</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Success</td>
+      <td>upstream emits a <code>type === 'finish'</code> part</td>
+      <td><code>llm.call</code> (info)</td>
+      <td>stream closes naturally</td>
+    </tr>
+    <tr>
+      <td>Provider-graceful error</td>
+      <td>finish part with <code>finishReason.unified === 'error'</code></td>
+      <td><code>llm.call</code> (info, with the unified reason)</td>
+      <td>stream closes naturally — provider already shaped the error</td>
+    </tr>
+    <tr>
+      <td>In-stream error</td>
+      <td>upstream emits a <code>type === 'error'</code> part mid-stream</td>
+      <td><code>llm.error</code> (error)</td>
+      <td><code>controller.error(mapped)</code> — consumer's iterator throws</td>
+    </tr>
+    <tr>
+      <td>Truncation</td>
+      <td>upstream closes with no finish or error event</td>
+      <td><code>llm.error</code> (error)</td>
+      <td><code>LlmStructuredOutputError</code> is raised through the controller</td>
+    </tr>
+    <tr>
+      <td>Cancellation</td>
+      <td>downstream <code>cancel()</code> handler fires</td>
+      <td><code>llm.error</code> (error, <code>reason: 'cancelled'</code>)</td>
+      <td>nothing — cancellation is consumer intent, no rethrow</td>
+    </tr>
+    <tr>
+      <td>Open-time error</td>
+      <td><code>doStream()</code> rejects before any chunk arrives</td>
+      <td><code>llm.error</code> (error)</td>
+      <td><code>wrapStream</code> throws the mapped error to the caller</td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Terminate-once via closure flag, not per-state idempotency</strong> — every state needs to
+  coordinate with the others (cancel after a finish is a no-op, error after a cancel is a no-op,
+  truncation after an in-stream error is a no-op). Tracking "did this stream already terminate?" via
+  one mutable flag in the wrapper closure is dramatically simpler than guarding each emission site
+  against the other five states independently. The flag flips the first time any terminal event
+  fires, and every subsequent emission site short-circuits.
+</aside>
+
+<p>
+  Every log line — both modes — now carries a <code>mode</code> field (<code>'generate'</code> |
+  <code>'stream'</code>) so retrospective queries can split spend across one-shot and streaming
+  calls without inferring from finishReason. The unified <code>LogBindings</code> shape is declared
+  in <code>middleware.ts</code> so a typo on a new callsite is a TS compile error rather than a
+  silently-malformed log entry.
+</p>
 
 <h2>The error taxonomy</h2>
 
@@ -347,7 +430,10 @@
   contract. The cognitive tiers planned in the Session Runtime milestone (Fast Thinker, Slow
   Thinker, Scribe, DM Trigger Classifier) will all use this same surface — calling Vercel's
   <code>generateText</code> / <code>streamText</code> against tier constants, threading
-  <code>providerOptions.mythrun = { sessionId, userId }</code> for log attribution. The
+  <code>providerOptions.mythrun = { sessionId, userId, worldId, campaignId, stage }</code> for log
+  attribution. The streaming half of the middleware lands ahead of those consumers via MYT-49 — the
+  <a href="./worker.html">worker</a>'s prep-stage processors will be the first callers to exercise
+  <code>wrapStream</code> end-to-end. The
   <a href="../auth-billing/billing-metering.html">billing-metering</a> data plane consumes the token
   counts the SDK surfaces — its <code>recordUsage</code> writer turns them into a durable
   per-session <code>estimated_cost_usd</code> using the <code>MODEL_PRICING</code> rate map. The
@@ -472,6 +558,11 @@
       <td>The pinned model ID (not the tier name).</td>
     </tr>
     <tr>
+      <td><code>mode</code></td>
+      <td><code>'generate'</code> | <code>'stream'</code></td>
+      <td>Splits one-shot vs streaming calls in spend / latency dashboards.</td>
+    </tr>
+    <tr>
       <td><code>inputTokens</code> / <code>outputTokens</code> / <code>totalTokens</code></td>
       <td>number | undefined</td>
       <td>
@@ -493,9 +584,23 @@
       </td>
     </tr>
     <tr>
-      <td><code>sessionId</code> / <code>userId</code></td>
+      <td>
+        <code>sessionId</code> / <code>userId</code> / <code>worldId</code> /
+        <code>campaignId</code> / <code>stage</code>
+      </td>
       <td>string | undefined</td>
-      <td>From <code>providerOptions.mythrun</code>, when caller supplies them.</td>
+      <td>
+        From <code>providerOptions.mythrun</code>, when caller supplies them. Used by the
+        spend-attribution writer to slice costs across sessions, prep stages, and worlds.
+      </td>
+    </tr>
+    <tr>
+      <td><code>reason</code></td>
+      <td>string | undefined</td>
+      <td>
+        Only on <code>llm.error</code> from streams: <code>'truncated'</code> or
+        <code>'cancelled'</code>. Discriminator for the six-state terminal matrix.
+      </td>
     </tr>
     <tr>
       <td><code>err</code></td>

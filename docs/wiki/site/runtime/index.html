@@ -25,20 +25,15 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/</code>, <code>backend/eslint-rules/</code>, <code>backend/package.json</code>, <code>backend/tsconfig.json</code>, <code>backend/tsconfig.build.json</code>, <code>backend/Dockerfile</code>, <code>backend/.dockerignore</code>, <code>backend/.env.development.example</code>, <code>package.json</code>, <code>pnpm-workspace.yaml</code>, <code>.npmrc</code>, <code>.nvmrc</code>, <code>.dockerignore</code>, <code>.gitignore</code>, <code>eslint.config.js</code>, <code>docker-compose.yml</code>, <code>docker-compose.override.yml.example</code></div>
-</div>
-
+        <article>
 <h1>Backend</h1>
 
 <p class="lead">
   The Node.js server the cognitive tiers will live in. A pnpm workspace, a Fastify app with a
   dependency-injected data layer, two health endpoints (a process-liveness one and a
-  data-layer-readiness one), a retry-then-fail-loud boot gate that's now ON in staging, a worker
-  entrypoint scaffold, and a local docker-compose stack (Postgres + two Redis instances) the dev
-  loop probes on start.
+  data-layer-readiness one), a retry-then-fail-loud boot gate that's now ON in staging, a
+  BullMQ-aware <a href="./worker.html">worker</a> service for async stages, and a local
+  docker-compose stack (Postgres + two Redis instances) the dev loop probes on start.
 </p>
 
 <figure class="wiki-diagram">
@@ -621,27 +616,21 @@
   one place: <code>wait-for.ts</code>.
 </aside>
 
-<h2 id="the-worker-entrypoint-scaffold">The worker entrypoint scaffold</h2>
+<h2 id="the-worker-entrypoint">The worker entrypoint</h2>
 
 <p>
-  <code>worker.ts</code> is the entrypoint for the worker container — empty of business logic today,
-  but in the build and on the task definition. It exports <code>main()</code> so tests can import
-  without executing, and runs <code>main()</code> only when invoked directly via
-  <code>node dist/worker.js</code> (the entry-point guard uses <code>pathToFileURL</code> to be
-  cross-platform). At startup it loads env, opens a redis-batch client, calls <code>ping()</code> to
-  surface connection failures synchronously, registers SIGTERM/SIGINT handlers that
-  <code>quit()</code> the client and <code>process.exit(0)</code>, then awaits a
-  <code>Promise&lt;never&gt;</code> to keep the event loop alive.
+  <code>worker.ts</code> is the entrypoint for the worker container; the full narrative lives on the
+  <a href="./worker.html">Worker</a> page. The short version: it loads the same
+  <code>loadEnv</code> contract the API uses, opens its own pg pool and both Redis clients (with a
+  BullMQ-compatible ioredis factory at <code>redis/bullmq-client.ts</code> for the batch side),
+  registers two BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code> and
+  <code>QUEUE_CAMPAIGN_SETUP</code>, and binds a Fastify <code>/health</code> server on
+  <code>127.0.0.1:3001</code> that the ECS container <code>healthCheck</code> probes. Graceful
+  shutdown drains the workers within a <code>100s</code> deadline (under the task's 120s
+  <code>stopTimeout</code>) and falls back to a forced close that marks any in-flight jobs as
+  stalled for BullMQ to re-deliver. Phase 0 ships stub processors that log and complete; real
+  prep-stage logic lands in MYT-51 onward.
 </p>
-
-<aside class="wiki-rationale">
-  <strong>Scaffold ships on a service running zero tasks</strong> — the worker's
-  <a href="../infra/serving.html">ECS service</a> is at <code>desired_count = 0</code> until the
-  Prep Pipeline / Session Runtime milestones bump it. Shipping the scaffold now means the task
-  definition, container image, secrets wiring, and signal-handling shape are all proven before the
-  first real BullMQ job lands; later tickets just replace the <code>Promise&lt;never&gt;</code>
-  with worker registrations whose own loops keep the event loop alive.
-</aside>
 
 <h2 id="the-env-loader-accepts-two-shapes">The env loader accepts two shapes</h2>
 
@@ -925,11 +914,14 @@
   <code>buildApp</code>, the seam every future route handler will reach the database through. The
   <a href="./llm.html">LLM client</a> at <code>backend/src/llm/</code> is the first cognitive-stack
   module — a thin shell over Vercel AI SDK v6 with tier-named model constants, logging +
-  error-normalization middleware, a typed error taxonomy, and a file-based prompt loader.
+  error-normalization middleware covering both <code>wrapGenerate</code> and
+  <code>wrapStream</code>, a typed error taxonomy, and a file-based prompt loader.
   <code>config/env.ts</code> validates <code>ANTHROPIC_API_KEY</code> at boot alongside the database
-  and Stripe secrets. The remaining cognitive tiers (Fast Thinker, Slow Thinker, Scribe, DM Trigger)
-  land as additional modules under <code>backend/src/</code> on top of that foundation; they'll
-  share this server's lifecycle, <code>AppDeps</code> shape, and Dockerfile.
+  and Stripe secrets. The <a href="./worker.html">Worker</a> page covers the second runtime process
+  in this repo — the async-execution half — running the same Dockerfile and config contract as the
+  API. The remaining cognitive tiers (Fast Thinker, Slow Thinker, Scribe, DM Trigger) land as
+  additional modules under <code>backend/src/</code> on top of that foundation; they'll share this
+  server's lifecycle, <code>AppDeps</code> shape, and Dockerfile.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -1159,7 +1151,29 @@
     <tr>
       <td><code>src/worker.ts</code></td>
       <td>
-        <code>main()</code> — entry-point-guarded; runs only under <code>node dist/worker.js</code>.
+        <code>main()</code> — entry-point-guarded BullMQ worker boot: opens pg + both Redis clients,
+        registers two <code>Worker</code> instances on the batch Redis, starts the Fastify
+        <code>/health</code> probe on <code>:3001</code>, and threads bounded shutdown through
+        <code>closeWithDeadline</code>. See <a href="./worker.html">Worker</a>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/worker/bullmq-config.ts</code>, <code>src/worker/stub-processor.ts</code>,
+        <code>src/worker/health-server.ts</code>
+      </td>
+      <td>
+        Queue identifiers + concurrency caps; Phase 0 no-op processor; Fastify
+        <code>/health</code> server probing pg + both Redis + each worker's <code>isRunning()</code>
+        state.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/redis/bullmq-client.ts</code></td>
+      <td>
+        <code>createBullmqRedisClient(url)</code> — ioredis factory with
+        <code>maxRetriesPerRequest: null</code> as BullMQ requires (the general factory at
+        <code>redis/client.ts</code> sets it to 1 for fast-fail in the request path).
       </td>
     </tr>
   </tbody>
@@ -1327,7 +1341,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</a></li><li style="padding-left:0"><a href="#two-health-endpoints-two-different-consumers">Two health endpoints, two different consumers</a></li><li style="padding-left:0"><a href="#the-boot-gate-on-in-staging">The boot gate, on in staging</a></li><li style="padding-left:0"><a href="#the-pg-pool-and-its-sslmode-trick">The pg pool and its sslmode trick</a></li><li style="padding-left:0"><a href="#the-redis-client-and-its-retry-policy">The redis client and its retry policy</a></li><li style="padding-left:0"><a href="#the-worker-entrypoint-scaffold">The worker entrypoint scaffold</a></li><li style="padding-left:0"><a href="#the-env-loader-accepts-two-shapes">The env loader accepts two shapes</a></li><li style="padding-left:0"><a href="#the-local-dev-loop">The local dev loop</a></li><li style="padding-left:0"><a href="#typescript-lint-and-the-container-image">TypeScript, lint, and the container image</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#reset-the-local-data-stack">Reset the local data stack</a></li><li style="padding-left:12px"><a href="#remap-local-ports">Remap local ports when something on the host conflicts</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-boot-gate">Diagnose a failed boot gate</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image-locally">Build and run the container image locally</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#local-docker-compose-stack">Local docker-compose stack</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</a></li><li style="padding-left:0"><a href="#two-health-endpoints-two-different-consumers">Two health endpoints, two different consumers</a></li><li style="padding-left:0"><a href="#the-boot-gate-on-in-staging">The boot gate, on in staging</a></li><li style="padding-left:0"><a href="#the-pg-pool-and-its-sslmode-trick">The pg pool and its sslmode trick</a></li><li style="padding-left:0"><a href="#the-redis-client-and-its-retry-policy">The redis client and its retry policy</a></li><li style="padding-left:0"><a href="#the-worker-entrypoint">The worker entrypoint</a></li><li style="padding-left:0"><a href="#the-env-loader-accepts-two-shapes">The env loader accepts two shapes</a></li><li style="padding-left:0"><a href="#the-local-dev-loop">The local dev loop</a></li><li style="padding-left:0"><a href="#typescript-lint-and-the-container-image">TypeScript, lint, and the container image</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#reset-the-local-data-stack">Reset the local data stack</a></li><li style="padding-left:12px"><a href="#remap-local-ports">Remap local ports when something on the host conflicts</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-boot-gate">Diagnose a failed boot gate</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image-locally">Build and run the container image locally</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#local-docker-compose-stack">Local docker-compose stack</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

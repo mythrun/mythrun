@@ -29,11 +29,15 @@
 <h1>CI/CD</h1>
 
 <p class="lead">
-  The push-to-deploy pipeline. A two-job GitHub Actions workflow that on every push to
+  The push-to-deploy pipeline. A four-job GitHub Actions workflow that on every push to
   <code>main</code> builds the backend image through an ECR pull-through cache, assumes the
   <a href="serving.html#the-github-actions-deploy-role">staging GitHub Actions role</a> via OIDC,
-  registers a new task-def revision pinned to the image digest, rolls the ECS service, polls for
-  circuit-breaker rollback, and smoke-tests the public <code>/health</code> URL.
+  registers a new task-def revision pinned to the image digest, and rolls the two ECS services in
+  parallel — <code>deploy-staging-api</code> against the API service (with a public
+  <code>/health</code> smoke test) and <code>deploy-staging-worker</code> against the worker service
+  (task-internal probe via the ECS container <code>healthCheck</code>). Both deploy jobs poll
+  <code>rolloutState</code> independently so a circuit-breaker rollback on either surface fails the
+  run loudly.
 </p>
 
 <figure class="wiki-diagram">
@@ -470,6 +474,40 @@
   matching <code>.status == "ok"</code>. Body-matching guards against the ALB's default-action
   <code>404</code> succeeding by accident: a listener-rule misconfiguration would still return 200
   from something, but not <code>{"status":"ok"}</code> from the backend.
+</p>
+
+<h2 id="the-deploy-staging-worker-job">The deploy-staging-worker job</h2>
+
+<p>
+  The worker deploy job is a near-mirror of the API job, with three deliberate differences. It
+  reuses the same digest from the build job's output (one build feeds both deploys), but it targets
+  <code>mythrun-staging-worker</code> as the family / service / container name, runs in a separate
+  concurrency group (<code>deploy-mythrun-staging-worker</code>) so a worker-only redeploy doesn't
+  queue behind an API deploy and vice versa, and omits the public HTTPS smoke test — the worker has
+  no ALB listener. The <a href="../runtime/worker.html">worker's own internal health endpoint</a> on
+  <code>:3001</code> is task-internal and probed by the ECS container
+  <code>healthCheck</code> block, which the <code>rolloutState</code> poll already gates on.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two jobs, not one matrix</strong> — a <code>matrix:</code> over <code>[api, worker]</code>
+  was the obvious shape, but each surface has subtly different verification (the API needs a public
+  smoke test; the worker needs a CloudWatch follow-up if logs are interesting). Concurrency groups
+  also have to differ. Two explicit jobs are 20% more YAML and 100% more readable: each can be
+  re-run, re-failed, or extended independently in the Actions UI.
+</aside>
+
+<p>
+  Job ordering: <code>needs: [build, db-migrate]</code> — the same dependency the API job carries,
+  so both deploy surfaces wait for migrations to finish before they roll. The build job runs once
+  and feeds both. Each deploy job assumes the GH Actions role fresh (jobs don't share credentials),
+  pulls the current task-def, renders the image digest in, calls
+  <code>amazon-ecs-deploy-task-definition</code> with <code>wait-for-service-stability: true</code>,
+  flips desired-count to 1 (no-op after the first deploy), and polls
+  <code>describe-services</code> for up to two minutes looking for
+  <code>rolloutState == COMPLETED</code> with running == desired and zero failed tasks. The
+  rolloutState poll catches a circuit-breaker rollback that the stability waiter alone misses — same
+  defense as the API job, same shape.
 </p>
 
 <h2 id="why-terraform-env-var-changes-need-a-ci-run">Why Terraform env-var changes need a CI run</h2>
@@ -925,7 +963,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-build-job">The build job</a></li><li style="padding-left:0"><a href="#the-deploy-staging-job">The deploy-staging job</a></li><li style="padding-left:0"><a href="#why-terraform-env-var-changes-need-a-ci-run">Why Terraform env-var changes need a CI run</a></li><li style="padding-left:0"><a href="#dependabot-for-sha-pinned-actions">Dependabot for SHA-pinned actions</a></li><li style="padding-left:0"><a href="#the-db-migrate-workflow">The db-migrate workflow</a></li><li style="padding-left:12px"><a href="#db-migrate-gha-env-vars">GitHub Environment variables for db-migrate</a></li><li style="padding-left:0"><a href="#github-environment-configuration">GitHub Environment configuration</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rerun-a-failed-deploy">Rerun a failed deploy</a></li><li style="padding-left:12px"><a href="#trigger-a-manual-deploy">Trigger a manual deploy (no new commit)</a></li><li style="padding-left:12px"><a href="#roll-back-to-a-previous-revision">Roll back to a previous revision</a></li><li style="padding-left:12px"><a href="#bootstrap-a-new-service-from-placeholder">Bootstrap a new ECS service from :placeholder</a></li><li style="padding-left:12px"><a href="#roll-a-tf-env-var-change-into-the-live-service">Roll a TF env-var or secret-reference change into the live service</a></li><li style="padding-left:12px"><a href="#recover-from-pull-through-cache-cold-start">Recover from a pull-through cache cold start</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#workflow-triggers">Workflow triggers</a></li><li style="padding-left:12px"><a href="#job-level-environment">Job-level environment</a></li><li style="padding-left:12px"><a href="#timeouts">Timeouts</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-build-job">The build job</a></li><li style="padding-left:0"><a href="#the-deploy-staging-job">The deploy-staging job</a></li><li style="padding-left:0"><a href="#the-deploy-staging-worker-job">The deploy-staging-worker job</a></li><li style="padding-left:0"><a href="#why-terraform-env-var-changes-need-a-ci-run">Why Terraform env-var changes need a CI run</a></li><li style="padding-left:0"><a href="#dependabot-for-sha-pinned-actions">Dependabot for SHA-pinned actions</a></li><li style="padding-left:0"><a href="#the-db-migrate-workflow">The db-migrate workflow</a></li><li style="padding-left:12px"><a href="#db-migrate-gha-env-vars">GitHub Environment variables for db-migrate</a></li><li style="padding-left:0"><a href="#github-environment-configuration">GitHub Environment configuration</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rerun-a-failed-deploy">Rerun a failed deploy</a></li><li style="padding-left:12px"><a href="#trigger-a-manual-deploy">Trigger a manual deploy (no new commit)</a></li><li style="padding-left:12px"><a href="#roll-back-to-a-previous-revision">Roll back to a previous revision</a></li><li style="padding-left:12px"><a href="#bootstrap-a-new-service-from-placeholder">Bootstrap a new ECS service from :placeholder</a></li><li style="padding-left:12px"><a href="#roll-a-tf-env-var-change-into-the-live-service">Roll a TF env-var or secret-reference change into the live service</a></li><li style="padding-left:12px"><a href="#recover-from-pull-through-cache-cold-start">Recover from a pull-through cache cold start</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#workflow-triggers">Workflow triggers</a></li><li style="padding-left:12px"><a href="#job-level-environment">Job-level environment</a></li><li style="padding-left:12px"><a href="#timeouts">Timeouts</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

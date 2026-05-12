@@ -4,17 +4,21 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:dbe1541c1729225832ed7243c92f1f0c89d77235698b9862d77a2159e85a4a17 -->
-<!-- last-ticket: MYT-35 -->
+<!-- source-hash: sha256:82dd11a33ab3380041a924a9ba55ddba72017f290aeab4ba02a76bd311d68e1c -->
+<!-- last-ticket: MYT-49 -->
 
 <h1>CI/CD</h1>
 
 <p class="lead">
-  The push-to-deploy pipeline. A two-job GitHub Actions workflow that on every push to
+  The push-to-deploy pipeline. A four-job GitHub Actions workflow that on every push to
   <code>main</code> builds the backend image through an ECR pull-through cache, assumes the
   <a href="serving.html#the-github-actions-deploy-role">staging GitHub Actions role</a> via OIDC,
-  registers a new task-def revision pinned to the image digest, rolls the ECS service, polls for
-  circuit-breaker rollback, and smoke-tests the public <code>/health</code> URL.
+  registers a new task-def revision pinned to the image digest, and rolls the two ECS services in
+  parallel — <code>deploy-staging-api</code> against the API service (with a public
+  <code>/health</code> smoke test) and <code>deploy-staging-worker</code> against the worker service
+  (task-internal probe via the ECS container <code>healthCheck</code>). Both deploy jobs poll
+  <code>rolloutState</code> independently so a circuit-breaker rollback on either surface fails the
+  run loudly.
 </p>
 
 <!-- @diagram: infra/ci-cd -->
@@ -147,6 +151,40 @@
   matching <code>.status == "ok"</code>. Body-matching guards against the ALB's default-action
   <code>404</code> succeeding by accident: a listener-rule misconfiguration would still return 200
   from something, but not <code>{"status":"ok"}</code> from the backend.
+</p>
+
+<h2 id="the-deploy-staging-worker-job">The deploy-staging-worker job</h2>
+
+<p>
+  The worker deploy job is a near-mirror of the API job, with three deliberate differences. It
+  reuses the same digest from the build job's output (one build feeds both deploys), but it targets
+  <code>mythrun-staging-worker</code> as the family / service / container name, runs in a separate
+  concurrency group (<code>deploy-mythrun-staging-worker</code>) so a worker-only redeploy doesn't
+  queue behind an API deploy and vice versa, and omits the public HTTPS smoke test — the worker has
+  no ALB listener. The <a href="../runtime/worker.html">worker's own internal health endpoint</a> on
+  <code>:3001</code> is task-internal and probed by the ECS container
+  <code>healthCheck</code> block, which the <code>rolloutState</code> poll already gates on.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two jobs, not one matrix</strong> — a <code>matrix:</code> over <code>[api, worker]</code>
+  was the obvious shape, but each surface has subtly different verification (the API needs a public
+  smoke test; the worker needs a CloudWatch follow-up if logs are interesting). Concurrency groups
+  also have to differ. Two explicit jobs are 20% more YAML and 100% more readable: each can be
+  re-run, re-failed, or extended independently in the Actions UI.
+</aside>
+
+<p>
+  Job ordering: <code>needs: [build, db-migrate]</code> — the same dependency the API job carries,
+  so both deploy surfaces wait for migrations to finish before they roll. The build job runs once
+  and feeds both. Each deploy job assumes the GH Actions role fresh (jobs don't share credentials),
+  pulls the current task-def, renders the image digest in, calls
+  <code>amazon-ecs-deploy-task-definition</code> with <code>wait-for-service-stability: true</code>,
+  flips desired-count to 1 (no-op after the first deploy), and polls
+  <code>describe-services</code> for up to two minutes looking for
+  <code>rolloutState == COMPLETED</code> with running == desired and zero failed tasks. The
+  rolloutState poll catches a circuit-breaker rollback that the stability waiter alone misses — same
+  defense as the API job, same shape.
 </p>
 
 <h2>Why Terraform env-var changes need a CI run</h2>

@@ -480,20 +480,44 @@
 </aside>
 
 <p>
-  Today, after the first CI deploy, the <code>mythrun-staging-api</code> service runs at
-  <code>desired_count=1</code> on a real git-SHA-addressed revision. The
-  <code>mythrun-staging-worker</code> service stays at <code>desired_count=0</code> on the
-  <code>:placeholder</code> revision until real worker code ships in the Prep Pipeline milestone.
+  Today, after the first CI deploy, both <code>mythrun-staging-api</code> and
+  <code>mythrun-staging-worker</code> run at <code>desired_count=1</code> on real git-SHA-addressed
+  revisions. MYT-49 closed the worker's Phase 0: the
+  <a href="../runtime/worker.html">worker service</a> ships a BullMQ-aware entrypoint with stub
+  processors and a <code>/health</code> Fastify probe, and CI's
+  <a href="ci-cd.html#the-deploy-staging-worker-job"><code>deploy-staging-worker</code> job</a>
+  flips it to <code>desired_count=1</code> on first deploy the same way the API job does.
 </p>
 
 <p>
   The API's container definition exposes <code>3000</code>, runs
   <code>node --max-old-space-size=768 dist/server.js</code>, declares a container-level HEALTHCHECK
   that curls <code>http://localhost:3000/health</code> through Node's own <code>http</code> module,
-  and has a 120-second <code>stopTimeout</code>. The Worker mirrors the API but omits the port
-  mapping and the container healthcheck — the worker doesn't exist yet, and the internal
-  BullMQ-pingable HTTP server on <code>:3001</code> that the spec calls for is deferred to the Prep
-  Pipeline milestone.
+  and has a 120-second <code>stopTimeout</code>. The Worker mirrors that shape: it runs
+  <code>node --max-old-space-size=768 dist/worker.js</code>, declares
+  <code>portMappings = [{ containerPort = 3001, protocol = "tcp" }]</code> for the internal Fastify
+  <code>/health</code> server, and carries its own container-level <code>healthCheck</code> block
+  that curls <code>http://localhost:3001/health</code> on the same cadence as the API (interval 30s,
+  timeout 5s, retries 3, startPeriod 60s). The <code>:3001</code> port is task-internal — there is
+  no target group, no ALB listener — the endpoint exists solely so ECS can probe BullMQ + Redis + pg
+  liveness from inside the task.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>60-second <code>startPeriod</code> on the worker healthCheck</strong> — worker cold boot
+  is heavier than the API's: BullMQ loads its Lua scripts into Redis, both Redis clients
+  <code>ping()</code> in sequence, pg <code>SELECT 1</code> runs, then Fastify binds on 3001. The
+  same value as the API leaves enough slack for an Opus-tier dependency hiccup without trading off
+  fast recovery once the task is up. The <code>.on('error', ...)</code> branch on the Node curl
+  command is what catches connection-refused during boot — without it, the healthcheck would flap
+  from "unknown" straight to "unhealthy" before the grace expires.
+</aside>
+
+<p>
+  The worker service also carries <code>health_check_grace_period_seconds = 120</code> on the ECS
+  service itself — first-deploy cold-start headroom for image pull + Node boot + Redis × 2 + pg +
+  Fastify binding all happening before the first healthCheck probes fire. The API service uses the
+  same value for the same reason.
 </p>
 
 <p>
@@ -726,8 +750,10 @@
   <code>redis-auth</code>) and the manual per-env secret shells. The ALB uses the wildcard ACM cert
   from the <a href="dns.html">DNS module</a>, and the per-env A-alias is published into the same
   Route 53 zone. The <a href="../runtime/index.html">Backend</a> image built from
-  <code>backend/Dockerfile</code> is what gets pushed to ECR and pointed at by task definitions on
-  every deploy — see <a href="ci-cd.html">CI/CD</a> for how that deploy is executed.
+  <code>backend/Dockerfile</code> is what gets pushed to ECR and pointed at by both task definitions
+  on every deploy — see <a href="../runtime/worker.html">Worker</a> for the worker container's
+  BullMQ + health-server runtime, and <a href="ci-cd.html">CI/CD</a> for how each deploy is executed
+  (the API and worker get separate deploy jobs sharing the same build).
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
