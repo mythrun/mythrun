@@ -27,7 +27,9 @@ export async function apiCall<T = unknown>(
   // (becoming https://evil.com/path) and would leak the x-mythrun-dev-sub
   // header to a foreign origin.
   if (!path.startsWith('/') || path.startsWith('//')) {
-    throw new Error(`apiCall: path must be relative and not protocol-relative (got ${JSON.stringify(path)})`)
+    throw new Error(
+      `apiCall: path must be relative and not protocol-relative (got ${JSON.stringify(path)})`,
+    )
   }
 
   const start = performance.now()
