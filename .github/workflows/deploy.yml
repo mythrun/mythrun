@@ -287,3 +287,94 @@ jobs:
           done
           echo "::error::Smoke test failed after $attempts attempts"
           exit 1
+
+  deploy-staging-worker:
+    needs: [build, db-migrate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    concurrency:
+      # Separate group from the API deploy so a worker-only redeploy
+      # doesn't queue behind an API deploy (and vice versa).
+      group: deploy-mythrun-staging-worker
+      cancel-in-progress: false
+    env:
+      ECS_CLUSTER: mythrun
+      ECS_SERVICE: mythrun-staging-worker
+      TASK_DEF_FAMILY: mythrun-staging-worker
+      CONTAINER_NAME: worker
+    steps:
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch current task definition
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition \
+            --task-definition "${{ env.TASK_DEF_FAMILY }}" \
+            --query 'taskDefinition' \
+            > task-def.json
+
+      - name: Render new task definition with digest image
+        id: taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@6853cfae8c3a7d978fbf68b5a55453395541dfbb # v1.8.5
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image }}
+
+      - name: Deploy new revision
+        # Does NOT check rolloutState — see the explicit poll step below.
+        uses: aws-actions/amazon-ecs-deploy-task-definition@a310a830f5c14e583e35d84e4e1ec7dd177c3c9c # v2.6.2
+        with:
+          task-definition: ${{ steps.taskdef.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+          wait-for-minutes: 15
+
+      - name: Ensure desired-count is 1
+        # First deploy: flips 0 → 1. Subsequent: no-op. Runs AFTER deploy
+        # action so ECS never tries to place on the :placeholder revision.
+        run: |
+          aws ecs update-service \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --service "${{ env.ECS_SERVICE }}" \
+            --desired-count 1 > /dev/null
+
+      - name: Verify deployment completed (poll rolloutState)
+        # `aws ecs wait services-stable` returns SUCCESS even after
+        # circuit-breaker rollback. Poll rolloutState to catch that.
+        run: |
+          set -euo pipefail
+          max_attempts=12
+          for attempt in $(seq 1 "$max_attempts"); do
+            SVC_JSON=$(aws ecs describe-services \
+              --cluster "${{ env.ECS_CLUSTER }}" \
+              --services "${{ env.ECS_SERVICE }}" \
+              --query 'services[0]')
+            ROLLOUT=$(echo "$SVC_JSON" | jq -r '.deployments[] | select(.status=="PRIMARY") | .rolloutState')
+            RUNNING=$(echo "$SVC_JSON" | jq -r '.runningCount')
+            DESIRED=$(echo "$SVC_JSON" | jq -r '.desiredCount')
+            FAILED=$(echo "$SVC_JSON" | jq -r '.deployments[] | select(.status=="PRIMARY") | .failedTasks')
+            echo "attempt=$attempt rolloutState=$ROLLOUT running=$RUNNING desired=$DESIRED failed=$FAILED"
+
+            if [[ "$ROLLOUT" == "FAILED" ]]; then
+              echo "::error::Worker deployment FAILED (circuit breaker)."
+              exit 1
+            fi
+
+            if [[ "$ROLLOUT" == "COMPLETED" && "$RUNNING" == "$DESIRED" && "$FAILED" == "0" ]]; then
+              echo "Worker deployment verified."
+              exit 0
+            fi
+
+            if [[ "$attempt" -lt "$max_attempts" ]]; then
+              sleep 10
+            fi
+          done
+          echo "::error::Worker deployment did not reach COMPLETED within 2 min"
+          exit 1
