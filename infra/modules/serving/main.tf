@@ -237,7 +237,10 @@ resource "aws_ecs_task_definition" "worker" {
 
     command = ["node", "--max-old-space-size=768", "dist/worker.js"]
 
-    # No portMappings — worker isn't ALB-registered.
+    portMappings = [{
+      containerPort = 3001
+      protocol      = "tcp"
+    }]
 
     environment = local.common_env
     secrets     = local.common_secrets
@@ -252,9 +255,19 @@ resource "aws_ecs_task_definition" "worker" {
         awslogs-stream-prefix = "ecs"
       }
     }
-    # No container-level healthCheck — the worker spec calls for an internal
-    # BullMQ+Redis pingable HTTP server on :3001, which doesn't exist yet.
-    # Add when the worker has an actual implementation (Prep Pipeline milestone).
+
+    # Container-level healthCheck probes the Fastify /health server at
+    # localhost:3001 (which itself probes BullMQ + Redis + pg). startPeriod 60s
+    # matches the API's value — worker cold boot is heavier (BullMQ Lua
+    # script load + two Redis pings + pg SELECT 1 + Fastify boot). The
+    # `.on('error', ...)` clause catches connection-refused during boot.
+    healthCheck = {
+      command     = ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 60
+    }
   }])
 
   tags = { Name = "mythrun-${var.environment}-worker" }
@@ -389,6 +402,10 @@ resource "aws_ecs_service" "worker" {
     enable   = true
     rollback = true
   }
+
+  # 120s grace matches stopTimeout + API service's value; first-deploy
+  # cold-start headroom (image pull + Node boot + Redis × 2 + pg + Fastify).
+  health_check_grace_period_seconds = 120
 
   lifecycle {
     ignore_changes = [desired_count, task_definition]
