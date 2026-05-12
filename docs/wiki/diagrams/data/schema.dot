@@ -47,7 +47,8 @@ digraph schema {
     camps     [label="campaigns"];
     members   [label="campaign_members\n(owner | player)"];
     invites   [label="campaign_invites"];
-    chars     [label="characters\n+ skills, features,\nequipment, spells"];
+    chars     [label="characters\n(user-owned)\n+ skills, features,\nequipment, spells"];
+    campchars [label="campaign_characters\nUNIQUE (campaign, character)\nUNIQUE (campaign, user)"];
     sessions  [label="sessions\nstatus: active |\nended | crashed"];
     msgs      [label="session_messages\n(seq-ordered)"];
     parts     [label="session_participants"];
@@ -102,7 +103,10 @@ digraph schema {
   camps   -> members  [label="CASCADE"];
   users   -> members  [label="CASCADE"];
   camps   -> invites  [label="CASCADE"];
-  camps   -> chars    [label="CASCADE"];
+  users   -> chars    [label="CASCADE\n(user-owned,\nmigration 009)"];
+  camps   -> campchars [label="CASCADE"];
+  chars   -> campchars [label="CASCADE"];
+  users   -> campchars [label="CASCADE"];
   entities -> chars   [label="SET NULL"];
   camps   -> sessions [label="CASCADE"];
   sessions -> msgs    [label="CASCADE"];

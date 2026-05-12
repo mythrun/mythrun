@@ -15,6 +15,7 @@ const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
 const EXPECTED_TABLES = [
   '_migrations',
   'billing_history',
+  'campaign_characters',
   'campaign_invites',
   'campaign_members',
   'campaigns',
@@ -56,10 +57,11 @@ const EXPECTED_TABLES = [
 const EXPECTED_IDX_NAMES = [
   'idx_billing_history_invoice_pi',
   'idx_billing_history_user_occurred',
+  'idx_campaign_characters_character',
+  'idx_campaign_characters_user',
   'idx_campaign_members_campaign',
   'idx_campaign_members_user',
   'idx_campaigns_created_by',
-  'idx_characters_campaign',
   'idx_characters_user',
   'idx_credit_ledger_source_billing_history',
   'idx_credit_ledger_source_purchase',
@@ -209,6 +211,24 @@ const EXPECTED_FK_DELETE_RULES: readonly {
     delete_rule: 'CASCADE',
   },
   {
+    table_name: 'campaign_characters',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'campaign_characters',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'campaign_characters',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
+    delete_rule: 'CASCADE',
+  },
+  {
     table_name: 'campaign_invites',
     column_name: 'campaign_id',
     foreign_table_name: 'campaigns',
@@ -272,12 +292,6 @@ const EXPECTED_FK_DELETE_RULES: readonly {
     table_name: 'character_spells',
     column_name: 'character_id',
     foreign_table_name: 'characters',
-    delete_rule: 'CASCADE',
-  },
-  {
-    table_name: 'characters',
-    column_name: 'campaign_id',
-    foreign_table_name: 'campaigns',
     delete_rule: 'CASCADE',
   },
   {
@@ -550,6 +564,7 @@ describe('schema-parity (integration)', () => {
       '006_drop_billing_config_tables.sql',
       '007_recreate_billing_tables.sql',
       '008_billing_metering.sql',
+      '009_character_portability.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

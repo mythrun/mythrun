@@ -279,3 +279,53 @@ export interface CreateInviteInput {
   readonly campaignId: string
   readonly createdBy: string
 }
+
+export interface Character {
+  readonly id: string
+  readonly userId: string
+  readonly entityId: string | null
+  readonly name: string
+  readonly level: number
+  readonly class: string
+  readonly species: string
+  readonly background: string
+  readonly str: number
+  readonly dex: number
+  readonly con: number
+  readonly int: number
+  readonly wis: number
+  readonly cha: number
+  readonly hitPoints: number
+  readonly maxHitPoints: number
+  readonly armorClass: number
+  readonly proficiencyBonus: number
+  readonly createdAt: Date
+  readonly updatedAt: Date
+}
+
+export interface CreateCharacterInput {
+  readonly userId: string
+  readonly name: string
+  readonly level: number
+  readonly class: string
+  readonly species: string
+  readonly background: string
+  readonly str: number
+  readonly dex: number
+  readonly con: number
+  readonly int: number
+  readonly wis: number
+  readonly cha: number
+  readonly hitPoints: number
+  readonly maxHitPoints: number
+  readonly armorClass: number
+  readonly proficiencyBonus: number
+}
+
+export interface CampaignCharacter {
+  readonly id: string
+  readonly campaignId: string
+  readonly characterId: string
+  readonly userId: string
+  readonly joinedAt: Date
+}

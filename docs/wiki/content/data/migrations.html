@@ -1,8 +1,8 @@
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: backend/src/db/lock-key.ts -->
 <!-- source: backend/migrations/ -->
-<!-- source-hash: sha256:58a259a2dae44c696008cbd64cdde0a54700763d682421a02e743c98d60c9a4d -->
-<!-- last-ticket: MYT-43 -->
+<!-- source-hash: sha256:8f193799a2f617fe0378c40c531609e976ca89a85b56fb9072d3996bef01583c -->
+<!-- last-ticket: MYT-48 -->
 
 <h1>Migrations</h1>
 
@@ -246,8 +246,8 @@
     <code>003_srd_reference_data.sql</code>, <code>004_credit_ledger_invariants.sql</code>,
     <code>005_drop_profile_columns_users.sql</code>,
     <code>006_drop_billing_config_tables.sql</code>, <code>007_recreate_billing_tables.sql</code>,
-    and <code>008_billing_metering.sql</code> in order — the
-    <a href="./schema.html">current schema</a>. A second run is a no-op that logs
+    <code>008_billing_metering.sql</code>, and <code>009_character_portability.sql</code> in order —
+    the <a href="./schema.html">current schema</a>. A second run is a no-op that logs
     <code>migrate.no_pending</code> and exits 0.
   </li>
   <li>
@@ -343,7 +343,7 @@ aws ecs execute-command \
 <h2>Integration points</h2>
 
 <p>
-  The runner applies the <a href="./schema.html">current schema</a> — eight files in
+  The runner applies the <a href="./schema.html">current schema</a> — nine files in
   <code>backend/migrations/</code>, the union of which lays down the application tables, named
   indexes, and three empty SRD reference tables — onto a fresh database; the
   <code>schema</code> page is the explainer for what those files lay down. The runner reuses

@@ -1716,7 +1716,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="characters" id="schema-table-characters">
   <summary>
     <span class="schema-table-name">characters</span>
-    <span class="schema-table-meta">21 columns · 2 indexes · 0 CHECKs · 24 FKs</span>
+    <span class="schema-table-meta">20 columns · 1 index · 0 CHECKs · 16 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1728,17 +1728,10 @@ END)</code></li>
         <td>—</td>
         <td>—</td>
       </tr>
-      <tr data-column-name="campaign_id">
-        <td><code>campaign_id</code></td>
-        <td><code>uuid</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
-      </tr>
       <tr data-column-name="user_id">
         <td><code>user_id</code></td>
         <td><code>uuid</code></td>
-        <td>YES</td>
+        <td>NO</td>
         <td>—</td>
         <td><code>users(id)</code> ON DELETE NO ACTION</td>
       </tr>
@@ -1872,7 +1865,6 @@ END)</code></li>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
-    <li><code>idx_characters_campaign</code> — (campaign_id)</li>
     <li><code>idx_characters_user</code> — (user_id)</li>
   </ul>
 </details>
@@ -2930,6 +2922,58 @@ END)</code></li>
     </tbody>
   </table>
 </details>
+<h2 class="schema-cluster" id="other">Other</h2>
+<details class="schema-table" data-table-name="campaign_characters" id="schema-table-campaign_characters">
+  <summary>
+    <span class="schema-table-name">campaign_characters</span>
+    <span class="schema-table-meta">5 columns · 2 indexes · 0 CHECKs · 3 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="joined_at">
+        <td><code>joined_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_campaign_characters_character</code> — (character_id)</li>
+    <li><code>idx_campaign_characters_user</code> — (user_id)</li>
+  </ul>
+</details>
 </div>
 
 <h2 id="integration-points">Integration points</h2>
@@ -2944,7 +2988,7 @@ END)</code></li>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#other">Other</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

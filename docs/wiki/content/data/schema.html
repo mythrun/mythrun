@@ -6,13 +6,14 @@
 <!-- source: backend/migrations/006_drop_billing_config_tables.sql -->
 <!-- source: backend/migrations/007_recreate_billing_tables.sql -->
 <!-- source: backend/migrations/008_billing_metering.sql -->
-<!-- source-hash: sha256:d7e60285e6dfdc03b20a2430b30489d25163b146e20e70c02705506169be469a -->
-<!-- last-ticket: MYT-43 -->
+<!-- source: backend/migrations/009_character_portability.sql -->
+<!-- source-hash: sha256:9c41d7794ab70c3fe8a7b80f23c8547c4734a9c0c6b4c822abdeebf653b5a08e -->
+<!-- last-ticket: MYT-48 -->
 
 <h1>Schema</h1>
 
 <p class="lead">
-  The Postgres shape Mythrun runs on: 34 application tables grouped into identity, billing, worlds,
+  The Postgres shape Mythrun runs on: 35 application tables grouped into identity, billing, worlds,
   campaigns, sessions, and ops; 25-plus named performance indexes; 3 empty SRD reference tables
   waiting on data load. Every primary key is a UUIDv7. The schema is enforced at the DB layer, not
   the app layer.
@@ -23,7 +24,7 @@
 <h2>How it fits together</h2>
 
 <p>
-  The schema is the union of eight migration files in <code>backend/migrations/</code>:
+  The schema is the union of nine migration files in <code>backend/migrations/</code>:
   <code>001_initial_schema.sql</code> ships every <code>CREATE TABLE</code> in topological FK order,
   <code>002_indexes.sql</code> adds the named performance and uniqueness indexes,
   <code>003_srd_reference_data.sql</code> creates the three empty SRD tables,
@@ -37,14 +38,17 @@
   <code>007_recreate_billing_tables.sql</code> recreates <code>purchases</code> +
   <code>user_subscriptions</code> with the new <code>lookup_key</code> shape, adds the
   <code>billing_history</code> audit feed, and adds two FK columns on <code>credit_ledger</code>
-  that link grants back to their originating purchase or invoice row, and
+  that link grants back to their originating purchase or invoice row,
   <code>008_billing_metering.sql</code> reshapes <code>session_usage</code> for the cost-cap
   metering model (drops the abandoned <code>budget_limit_tokens</code>, adds
   <code>cache_write_tokens</code> + <code>cache_read_tokens</code>, pins one row per session), adds
   <code>worlds.is_demo</code> with at-most-one-demo enforcement, and seeds a
-  <code>system</code> users row + placeholder demo world for the trial flow. The
-  <a href="./migrations.html">migrations runner</a> applies all eight end-to-end on a fresh
-  database. The diagram clusters tables by the story they tell — read it left to right.
+  <code>system</code> users row + placeholder demo world for the trial flow, and
+  <code>009_character_portability.sql</code> drops <code>characters.campaign_id</code>, makes
+  <code>characters.user_id</code> NOT NULL, and adds a <code>campaign_characters</code> join table
+  so a character row is portable across campaigns without a future migration. The
+  <a href="./migrations.html">migrations runner</a> applies all nine end-to-end on a fresh database.
+  The diagram clusters tables by the story they tell — read it left to right.
 </p>
 
 <h3>Identity and billing</h3>
@@ -226,10 +230,28 @@
 <p>
   <code>characters</code> are the player avatars: stats, hit points, level, class, the
   <code>character_skills</code> / <code>features</code> / <code>equipment</code> /
-  <code>spells</code> satellites. A character points at its <code>campaign</code> (CASCADE) and
-  optionally at an <code>entity</code> (SET NULL) — when a player retires a character, the entity
-  that represented them in the world stays.
+  <code>spells</code> satellites. Migration 009 made the row user-owned — <code>user_id</code> is
+  NOT NULL, <code>campaign_id</code> is gone — and moved campaign membership into a
+  <code>campaign_characters</code> join table with one row per (character, campaign) pairing. The
+  character still optionally points at an <code>entity</code> (SET NULL) so retiring a character
+  leaves the in-world representation intact. The join carries a <code>joined_at</code> stamp and two
+  UNIQUEs: <code>(campaign_id, character_id)</code> stops a character from being added to the same
+  campaign twice, and <code>(campaign_id, user_id)</code> enforces the day-one rule of "one PC per
+  player per campaign." Both FK sides CASCADE on delete, so removing a campaign or a character tears
+  down the join rows.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Portability lives in the schema even though the launch UX doesn't expose it</strong> — the
+  obvious shape is a <code>characters.campaign_id</code> FK: one character belongs to one campaign,
+  matches every day-one requirement. The cost is a migration the day we ever want a player to bring
+  the same character into a second campaign. The join-table shape is one extra <code>JOIN</code> in
+  <code>listForCampaign</code> queries today and zero migrations the day cross-campaign portability
+  ships. The <code>UNIQUE (campaign_id, user_id)</code> constraint keeps the day-one behavior locked
+  in regardless: porting a character means joining the same <code>character_id</code> to a
+  <em>different</em> <code>campaign_id</code>, never adding a second character for one user in one
+  campaign.
+</aside>
 
 <p>
   Live play happens in a <code>session</code> bound to a campaign.
@@ -305,20 +327,24 @@
 <p>
   The FK cascade rules encode the cleanup paths. Deleting a <code>user</code> RESTRICTs on
   <code>credit_ledger</code> (a revenue ledger is never garbage-collected; see migration 004 above),
-  and leaves <code>worlds</code> and <code>campaigns</code> orphaned (the FK is
+  CASCADEs through <code>characters</code> and <code>campaign_characters</code> (a deleted user's
+  PCs go with them), and leaves <code>worlds</code> and <code>campaigns</code> orphaned (the FK is
   <code>NO ACTION</code> on <code>created_by</code>) — user deletion is a billing-team operation,
   not a content-delete operation. Deleting a <code>world</code> CASCADEs through
   <code>entities</code> → <code>facts</code> + <code>prose_kernels</code> +
   <code>relationships</code> + <code>entity_hierarchy</code>, and through <code>campaigns</code> →
   <code>sessions</code> → <code>session_messages</code>: a world delete is a tear-everything-down
-  operation. Stat blocks detach to <code>SET NULL</code> on entity deletion; characters detach to
-  <code>SET NULL</code> on entity deletion. The schema-parity test in
+  operation. Deleting a <code>campaign</code> CASCADEs through <code>campaign_characters</code> but
+  the underlying <code>characters</code> rows survive — that's the portability commitment from
+  migration 009. Stat blocks detach to <code>SET NULL</code> on entity deletion; characters detach
+  to <code>SET NULL</code> on entity deletion. The schema-parity test in
   <code>migrate-schema.test.ts</code> pins each of these rules — including the
   <code>credit_ledger</code> RESTRICT, the four migration-004 invariants, migration 005's
-  drop-and-replacement of the username UNIQUE, and migration 006's drop of the four legacy
-  billing-config tables — so a future migration can't silently flip a CASCADE to a NO ACTION (or
-  vice versa), re-introduce a case-sensitive username uniqueness, or quietly re-add the dropped
-  tables under their old shapes.
+  drop-and-replacement of the username UNIQUE, migration 006's drop of the four legacy
+  billing-config tables, and migration 009's drop of <code>characters.campaign_id</code> alongside
+  the <code>campaign_characters</code> join shape — so a future migration can't silently flip a
+  CASCADE to a NO ACTION (or vice versa), re-introduce a case-sensitive username uniqueness, quietly
+  re-add the dropped tables under their old shapes, or re-couple characters to a single campaign.
 </p>
 
 <h3>What's not in the schema yet</h3>
@@ -332,10 +358,10 @@
 <p>
   Repository layer. <code>backend/src/db/</code> ships <code>migrate.ts</code>,
   <code>lock-key.ts</code>, and <code>postgres.ts</code>; the typed namespaces over these tables
-  live next door at <a href="./repository.html"><code>backend/src/repo/</code></a> and ship six
-  namespaces today (<code>users</code>, <code>worlds</code>, <code>campaigns</code>,
-  <code>sessions</code>, <code>credits</code>, <code>invites</code>). The remaining namespaces ship
-  batched with their consumers.
+  live next door at <a href="./repository.html"><code>backend/src/repo/</code></a> and ship seven
+  pool-bound namespaces today (<code>users</code>, <code>worlds</code>, <code>campaigns</code>,
+  <code>sessions</code>, <code>credits</code>, <code>invites</code>, <code>characters</code>). The
+  remaining namespaces ship batched with their consumers.
 </p>
 
 <h2>Operating this piece</h2>
@@ -348,22 +374,25 @@
     migrations.
   </li>
   <li>
-    <code>pnpm db:migrate</code> applies all seven migration files end-to-end. A second run is a
+    <code>pnpm db:migrate</code> applies all nine migration files end-to-end. A second run is a
     no-op.
   </li>
   <li>
     Verify the shape:
     <pre><code>docker compose exec postgres psql -U mythrun -d mythrun -c "\dt"
 docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
-    You should see 38 tables (1 <code>_migrations</code> + 34 application + 3 SRD), the
+    You should see 39 tables (1 <code>_migrations</code> + 35 application + 3 SRD), the
     <code>idx_*</code> index set, the
     <code>uniq_credit_ledger_debit_idempotency</code> partial-unique index from migration 004, the
     <code>users_username_lower_key</code> expression index from migration 005 (with no
     <code>email</code> / <code>avatar_url</code> / <code>auth_provider</code> columns on
-    <code>users</code>), and the migration 007 surface — <code>purchases</code>,
+    <code>users</code>), the migration 007 surface — <code>purchases</code>,
     <code>user_subscriptions</code>, <code>billing_history</code>, plus the
     <code>idx_billing_history_invoice_pi</code> partial index and the two
-    <code>source_*_id</code> FK columns on <code>credit_ledger</code>.
+    <code>source_*_id</code> FK columns on <code>credit_ledger</code> — and migration 009's
+    <code>campaign_characters</code> join (with no <code>campaign_id</code> column on
+    <code>characters</code>, <code>characters.user_id</code> NOT NULL, and both UNIQUE keys plus the
+    two <code>idx_campaign_characters_*</code> FK indexes).
   </li>
 </ol>
 
@@ -390,7 +419,7 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
 <h2>Integration points</h2>
 
 <p>
-  The <a href="./migrations.html">migrations runner</a> applies these six files; the runner's
+  The <a href="./migrations.html">migrations runner</a> applies these nine files; the runner's
   <code>_migrations</code> bookkeeping is what the drift hint is reasoning about. Downstream, the
   <a href="../runtime/index.html">backend runtime</a>'s repository layer will read and write these
   tables; the <a href="../auth-billing/index.html">auth & billing</a> stories build on
@@ -438,10 +467,11 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
       <td>Campaigns & play</td>
       <td>
         <code>campaigns</code>, <code>campaign_members</code>, <code>campaign_invites</code>,
-        <code>characters</code>, <code>character_skills</code>, <code>character_features</code>,
-        <code>character_equipment</code>, <code>character_spells</code>, <code>sessions</code>,
-        <code>session_messages</code>, <code>session_participants</code>,
-        <code>world_snapshots</code>, <code>session_preps</code>, <code>session_usage</code>
+        <code>characters</code>, <code>campaign_characters</code>, <code>character_skills</code>,
+        <code>character_features</code>, <code>character_equipment</code>,
+        <code>character_spells</code>, <code>sessions</code>, <code>session_messages</code>,
+        <code>session_participants</code>, <code>world_snapshots</code>, <code>session_preps</code>,
+        <code>session_usage</code>
       </td>
     </tr>
     <tr>
@@ -543,10 +573,14 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
         <code>idx_campaign_members_campaign</code>, <code>idx_sessions_campaign</code>,
         <code>idx_session_preps_campaign</code>, <code>idx_pipeline_runs_world</code>,
         <code>idx_pipeline_runs_campaign</code>, <code>idx_random_tables_world</code>,
-        <code>idx_characters_campaign</code>, <code>idx_characters_user</code>,
-        <code>idx_world_snapshots_campaign</code>
+        <code>idx_characters_user</code>, <code>idx_campaign_characters_user</code>,
+        <code>idx_campaign_characters_character</code>, <code>idx_world_snapshots_campaign</code>
       </td>
-      <td>Single-column FK lookup indexes</td>
+      <td>
+        Single-column FK lookup indexes. <code>idx_characters_campaign</code> was dropped with the
+        column in migration 009; the two <code>idx_campaign_characters_*</code> indexes back the
+        join-table FK lookups.
+      </td>
     </tr>
   </tbody>
 </table>
@@ -554,14 +588,17 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
 <h3>Schema-parity test</h3>
 
 <p>
-  <code>backend/src/db/__tests__/migrate-schema.test.ts</code> runs all seven migrations against a
+  <code>backend/src/db/__tests__/migrate-schema.test.ts</code> runs all nine migrations against a
   clean DB and asserts the full set: every table name, every <code>idx_*</code> index name, every
   CHECK constraint (including migration 007's
   <code>credit_ledger_source_link_chk</code> per-source-type CASE), every FK
   <code>ON DELETE</code> rule, the partial-unique predicates on
-  <code>idx_sessions_one_active</code> and <code>idx_billing_history_invoice_pi</code>, and the
-  presence of migration 007's three recreated tables. A transcription typo or a future schema-drift
-  PR fails the test with a clear diff.
+  <code>idx_sessions_one_active</code> and <code>idx_billing_history_invoice_pi</code>, the presence
+  of migration 007's three recreated tables, and migration 009's post-state — the
+  <code>campaign_characters</code> table with both UNIQUEs, the absence of
+  <code>characters.campaign_id</code>, and the NOT NULL constraint on
+  <code>characters.user_id</code>. A transcription typo or a future schema-drift PR fails the test
+  with a clear diff.
 </p>
 
 <h2>Source</h2>
@@ -574,5 +611,7 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
   <code>backend/migrations/005_drop_profile_columns_users.sql</code>,
   <code>backend/migrations/006_drop_billing_config_tables.sql</code>,
   <code>backend/migrations/007_recreate_billing_tables.sql</code>,
+  <code>backend/migrations/008_billing_metering.sql</code>,
+  <code>backend/migrations/009_character_portability.sql</code>,
   <code>backend/src/db/__tests__/migrate-schema.test.ts</code>.
 </p>

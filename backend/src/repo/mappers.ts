@@ -1,8 +1,10 @@
 import type {
   Campaign,
+  CampaignCharacter,
   CampaignInvite,
   CampaignMember,
   CampaignMemberRole,
+  Character,
   CreditEntry,
   CreditSourceType,
   CreditType,
@@ -311,5 +313,71 @@ export function toCampaignInvite(row: CampaignInviteDbRow, primary: boolean): Ca
     expiresAt: row.expires_at,
     createdAt: row.created_at,
     primary,
+  }
+}
+
+export interface CharacterDbRow {
+  readonly id: string
+  readonly user_id: string
+  readonly entity_id: string | null
+  readonly name: string
+  readonly level: number
+  readonly class: string
+  readonly species: string
+  readonly background: string
+  readonly str: number
+  readonly dex: number
+  readonly con: number
+  readonly int: number
+  readonly wis: number
+  readonly cha: number
+  readonly hit_points: number
+  readonly max_hit_points: number
+  readonly armor_class: number
+  readonly proficiency_bonus: number
+  readonly created_at: Date
+  readonly updated_at: Date
+}
+
+export function toCharacter(row: CharacterDbRow): Character {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    entityId: row.entity_id,
+    name: row.name,
+    level: row.level,
+    class: row.class,
+    species: row.species,
+    background: row.background,
+    str: row.str,
+    dex: row.dex,
+    con: row.con,
+    int: row.int,
+    wis: row.wis,
+    cha: row.cha,
+    hitPoints: row.hit_points,
+    maxHitPoints: row.max_hit_points,
+    armorClass: row.armor_class,
+    proficiencyBonus: row.proficiency_bonus,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export interface CampaignCharacterDbRow {
+  readonly id: string
+  readonly campaign_id: string
+  readonly character_id: string
+  readonly user_id: string
+  readonly joined_at: Date
+}
+
+export function toCampaignCharacter(row: CampaignCharacterDbRow): CampaignCharacter {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    characterId: row.character_id,
+    userId: row.user_id,
+    joinedAt: row.joined_at,
   }
 }
