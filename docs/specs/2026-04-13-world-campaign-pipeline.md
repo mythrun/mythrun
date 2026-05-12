@@ -808,15 +808,11 @@ When the milestone is complete, the dev tool can:
 
 A single Vite-built SPA at `backend/dev-tool/` (sibling of `backend/src/`). Visual treatment styled after the wiki (`docs/wiki/`) — terse, single-column, monospace headings, minimal chrome. Tech stack details are not load-bearing; pick whatever works. Use bare SVG circles + lines for the graph (force-directed if convenient; static positions are fine). Do **not** reuse any code from the dev tool in the eventual production frontend.
 
-The tool runs in two modes:
-- **Local dev** — `pnpm dev:dev-tool` boots Vite on a local port; calls `http://localhost:3000/api/*`.
-- **Staging** — same SPA, deployed to staging at a distinct URL (exact hosting / path TBD during implementation — S3+CloudFront under a dev-only subdomain, or served from the API ALB under `/dev-tool/`, whichever is least friction). Production deploys do **not** include the dev tool.
-
-The environment switcher in the header selects which API base URL the page targets. Both modes call the live API and live SSE endpoints — the dev tool is a thin client over real backend.
+The tool runs **local-only**. `pnpm dev:dev-tool` boots Vite on `127.0.0.1:5273` with a dev-server proxy that forwards `/api/*` and `/health/*` to `http://localhost:3000` — so the browser sees one same-origin host and no CORS plugin is needed on the API. There is no staging deploy and no env switcher; if you need to validate something against the deployed staging API, expand `pnpm smoke:staging`. The dev tool exists to iterate on the local backend, not to debug staging.
 
 ### 12.4 Auth in the Dev Tool
 
-The dev tool reuses the existing bypass-plugin auth path (`x-mythrun-dev-sub` header), already wired for development. The tool stores the active "dev user" identity in `localStorage` and lets the user switch between fake identities — this is how multi-player flows are exercised by one human. The plugin's 6-layer defense ensures the bypass header is rejected in production environments; the dev tool's production build path is excluded from production deploys regardless.
+The dev tool reuses the existing bypass-plugin auth path (`x-mythrun-dev-sub` header), already wired for development. The tool stores the active "dev user" identity in `localStorage` and lets the engineer switch between fake identities — this is how multi-player flows are exercised by one human. The bypass plugin's 6-layer defense gates this to `NODE_ENV=development|test`; synthetic identities only work against the local API. The dev tool is local-only, so this matches its threat model.
 
 ### 12.5 Ship Gate (`pnpm dev-tool:check`)
 
@@ -830,15 +826,18 @@ The backend declares its public pipeline surface in three contract files so the 
 - `backend/src/contract/pipeline-events.ts` — `export const PIPELINE_SSE_EVENTS = ['phase', 'stage-started', 'entity-added', ...] as const`. The `PipelineEvent` discriminated union from §8 derives its `type` discriminator from this constant.
 - `backend/src/contract/pipeline-jobs.ts` — `export const PIPELINE_BULLMQ_JOBS = ['world-gen', 'character-creation', 'post-creation'] as const`.
 
-These three files are the load-bearing surface declarations. Adding a route / event / job means editing one of these files; the type system then forces the change to propagate.
+At Phase 0 the contracts are empty and the lists do not structurally force route handlers to reference them — the enforcement layer (a `registerPipelineRoute(app, route, handler)` helper that takes `route: PipelineRoute`, or a Fastify `onRoute` hook that fails boot when a pipeline-path URL is registered without being in `PIPELINE_ROUTES`) lands in MYT-50 alongside the first real routes. Phase 0 documents the convention; MYT-50 enforces it mechanically. The check script (§12.5.3) is the runtime gate.
 
 #### 12.5.2 Coverage manifest
 
 `backend/dev-tool/coverage.json` declares what the dev tool currently exercises:
 
+At Phase 0 the manifest is empty (no pipeline routes/events/jobs exist yet). `/health/ready` is NOT in `coverage.routes` — it's a system-wide health endpoint, not a pipeline surface; the dev tool's smoke panel exercises it but the ship gate's scope is the prep pipeline only.
+
 ```json
 {
-  "routes": ["GET /health/ready"],
+  "version": 1,
+  "routes": [],
   "events": [],
   "jobs": [],
   "exempt": {
@@ -848,8 +847,6 @@ These three files are the load-bearing surface declarations. Adding a route / ev
   }
 }
 ```
-
-At Phase 0 the manifest is essentially empty (just `/health/ready`). Each subsequent PR that adds backend functionality also adds the new entries to `coverage.json` AND ships the UI that exercises them.
 
 The `exempt` sub-objects are escape hatches keyed by entry → reason. Example:
 ```json
@@ -874,21 +871,23 @@ The exempt list should be sparse; the spec discourages it. Every entry requires 
 
 #### 12.5.4 CI integration
 
-The existing `lint` job in `.github/workflows/deploy.yml` adds one step:
+A dedicated workflow `.github/workflows/dev-tool-check.yml` runs `pnpm dev-tool:check` on `pull_request` AND `push: branches: [main]`. Mirrors `wiki-check.yml`'s precedent (which also runs on both). The check is NOT folded into `deploy.yml` because deploy.yml only fires on push-to-main (not PRs) and its install filter excludes any non-backend-dep workspace.
 
 ```yaml
-- name: dev-tool:check
-  run: pnpm dev-tool:check
+- run: pnpm dev-tool:check
 ```
 
-Runs alongside `wiki:check`, `typecheck`, `lint`, `test`. Failing the check blocks the deploy job (same pattern as wiki freshness).
+Failing the check red-lights the workflow.
 
 ### 12.6 Hard Boundaries
 
-- The dev tool ships to staging; it does **not** ship to production.
+- The dev tool is local-only. It does NOT ship anywhere — no staging deploy, no production deploy. `.dockerignore` excludes `backend/dev-tool/` as belt-and-suspenders.
 - It uses the same routes as the real frontend will — no special "dev-tool" routes added to the API.
 - It does not maintain its own state model; it reads from `GET /status` on load and SSE thereafter.
 - Code is not factored for reuse. When the real frontend lands, the dev tool stays as an internal debugging surface; the production app is a clean build.
+- All HTTP calls go through `api-client.ts`'s `apiCall` (relative paths only, headers set centrally). No bare `fetch`, no absolute URLs.
+- The dev tool uses `.textContent` only, never `.innerHTML`.
+- The dev tool stores nothing secret in `localStorage` — only the active dev-sub key. Tokens / JWTs / Anthropic keys never land in `localStorage`.
 - The ship gate is not optional or skippable. Adding `--no-verify` to commits with a failing `dev-tool:check` is a process violation, not a workaround.
 
 ---
