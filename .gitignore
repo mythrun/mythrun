@@ -32,3 +32,10 @@ tmp/
 
 # macOS Finder duplicates of docs/wiki/site/ (these accumulate via Finder copy-paste).
 docs/wiki/site [0-9]*/
+
+# Beads server lockfile artifacts (transient per-process state)
+.beads/dolt-server*.pid
+.beads/dolt-server*.port
+
+# Terraform plan files
+*.tfplan
