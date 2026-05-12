@@ -128,9 +128,12 @@ resource "aws_elasticache_parameter_group" "main" {
   name   = "mythrun-redis7"
   family = "redis7"
 
+  # BullMQ requires `noeviction` — under `volatile-lru` (or any evicting
+  # policy), Redis may drop BullMQ job/queue keys under memory pressure
+  # and lose work. BullMQ logs a startup warning when this is misconfigured.
   parameter {
     name  = "maxmemory-policy"
-    value = "volatile-lru"
+    value = "noeviction"
   }
   parameter {
     name  = "timeout"
