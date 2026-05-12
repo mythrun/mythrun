@@ -11,10 +11,15 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "outDir": "dist",
-    "rootDir": "src",
     "declaration": false,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*"]
+  // scripts/ is included so ESLint's typescript-eslint projectService can
+  // parse files like scripts/dev-tool-check.ts under the strict-typed
+  // ruleset. The build (tsconfig.build.json) excludes scripts/ to keep
+  // dist/ clean — only src/** is emitted. rootDir is intentionally
+  // unset; tsc infers it from included files per config (src+scripts for
+  // typecheck, src-only for build).
+  "include": ["src/**/*", "scripts/**/*"]
 }
