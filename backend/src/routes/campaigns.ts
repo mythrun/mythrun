@@ -1,26 +1,30 @@
 // backend/src/routes/campaigns.ts
 //
-// Campaign-scoped HTTP routes. MYT-50 lands status + SSE stream only.
-// Subsequent issues add create / details / member-mgmt / character-creation
-// routes here.
+// Campaign-scoped HTTP routes.
+//
+// MYT-50 landed GET /status + GET /status/stream.
+// MYT-51 Task 9 extends the plugin with POST /api/campaigns — the world-gen
+// create route. The status routes stay; subsequent issues add details /
+// member-mgmt / character-creation routes here.
 //
 // Spec: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface.md §3
-//
-// Two routes:
-//   GET /api/campaigns/:campaignId/status         — JSON snapshot, 60/min
-//   GET /api/campaigns/:campaignId/status/stream  — SSE stream, 10/min per user
+//       docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md
+//         D2 (body shape), D3-D5 (synth + gate), D11 (cost cap),
+//         §"POST /api/campaigns flow" (the full step sequence).
 //
 // SSE attach-then-snapshot ordering matters: openSseConnection's onClose is
 // composed so that subscriber.attach()'s detach() runs BEFORE the counter
 // decrements. Snapshot is computed AFTER attach so any pipeline events
 // published during the gap are queued on the sink rather than lost.
 //
-// `app.ts` does not register this plugin yet — T7 wires it in alongside
-// boot-time construction of the PipelineSubscriber + ConnectionCounter.
+// `app.ts` (T12) registers this plugin and constructs the worldGenQueue
+// from BullMQ at app boot.
 
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify'
-import type { Pool } from 'pg'
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
+import type { Pool, PoolClient } from 'pg'
+import type { Redis } from 'ioredis'
 import type { Logger as PinoLogger } from 'pino'
+import { z } from 'zod'
 import { createRepo } from '../repo/index.js'
 import { createPipelineRunsRepo } from '../repo/pipeline-runs.js'
 import { requireCampaignMember } from '../auth/access-control.js'
@@ -29,24 +33,131 @@ import { derivePhase, type PhaseAndStages } from '../sse/derive-phase.js'
 import { openSseConnection } from '../sse/sse-connection.js'
 import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../sse/connection-counter.js'
+import { uuidv7 } from '../repo/uuidv7.js'
+import { synthesizeConcept } from '../llm/prep/synthesize-concept.js'
+import { runInputGate, type InputGateVerdict } from '../llm/prep/input-gate.js'
+import {
+  createRejectionStormCounter,
+  REJECTION_STORM_THRESHOLD,
+  REJECTION_STORM_WINDOW_SECONDS,
+} from '../auth/rejection-storm.js'
+
+// Minimal contract for the world-gen BullMQ queue. Declared here (not
+// imported from BullMQ directly) so the plugin's Opts shape isn't coupled
+// to the queue's generic-heavy class type; tests inject a hand-rolled spy.
+export interface WorldGenQueueLike {
+  add(
+    name: string,
+    data: { campaignId: string },
+    opts?: { jobId?: string },
+  ): Promise<unknown>
+  getJobCounts(states: readonly string[]): Promise<Record<string, number>>
+}
 
 export interface Opts {
   readonly pool: Pool
   readonly subscriber: PipelineSubscriber
   readonly counter: ConnectionCounter
+  // The MYT-51 T9 fields below are typed as optional so app.ts's existing
+  // (MYT-50-era) registration still typechecks before T12 wires the new
+  // dependencies in. The POST /api/campaigns handler runtime-asserts they
+  // are present at request time — T12 turns the runtime assert into a
+  // boot-time invariant by always passing them. New code paths in T10/T11
+  // that need these fields MUST runtime-check (this plugin's own checks
+  // are the canonical pattern).
+  /** Redis client for the rejection-storm counter. Required by POST /api/campaigns. */
+  readonly redis?: Redis
+  /** Environment-pinned key prefix — e.g. "production:use1:". Required by POST. */
+  readonly redisKeyPrefix?: string
+  /** BullMQ queue handle for `world-gen-non-streaming`. Required by POST. */
+  readonly worldGenQueue?: WorldGenQueueLike
 }
 
 interface Params {
   readonly campaignId: string
 }
 
+// ---------------------------------------------------------------------------
+// Body schema (MYT-51 D2). Discriminated union; only the `'new'` arm is
+// functional at launch — `'existing'` is an additive future addition.
+// Unknown `kind` produces a standard 400 from Zod (not 501).
+// ---------------------------------------------------------------------------
+
+const SynthesizerPickSchema = z.object({
+  title: z.string().min(1).max(200),
+  whyILikeIt: z.string().min(1).max(800),
+})
+
+const CreateCampaignBodySchema = z.object({
+  name: z.string().min(1).max(200),
+  world: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('new'),
+      source: z.discriminatedUnion('mode', [
+        z.object({
+          mode: z.literal('freeform'),
+          // Roc-C3 length cap. Lower bound 20 keeps trivially-empty inputs
+          // out (an empty concept is a body-shape bug, not a gate concern).
+          concept: z.string().min(20).max(4000),
+        }),
+        z.object({
+          mode: z.literal('guided'),
+          picks: z.array(SynthesizerPickSchema).length(3),
+        }),
+      ]),
+    }),
+  ]),
+})
+
+type CreateCampaignBody = z.infer<typeof CreateCampaignBodySchema>
+type NewWorldSource = (CreateCampaignBody['world'] & { kind: 'new' })['source']
+
+// ---------------------------------------------------------------------------
+// Errors raised by the create transaction (typed so the route can map
+// them to HTTP codes without leaking internal failure shape into prose).
+// ---------------------------------------------------------------------------
+
+class InsufficientCreditsError extends Error {
+  constructor() {
+    super('insufficient_credits')
+  }
+}
+
 // FastifyPluginAsync requires an async function shape; the body has no
-// top-level await (only synchronous app.get registrations), matching the
-// precedent in routes/sessions.ts.
+// top-level await (only synchronous app.get/post registrations).
 // eslint-disable-next-line @typescript-eslint/require-await
 export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const repo = createRepo(opts.pool)
   const pipelineRunsRepo = createPipelineRunsRepo(opts.pool)
+
+  // POST /api/campaigns (T9) depends on redis + worldGenQueue. T12 will
+  // make these required in Opts; until then, runtime-assert at the post-
+  // registration boundary so a misconfigured app boot fails loudly rather
+  // than 500ing on the first request.
+  function requireCreateRouteDeps(): {
+    redis: Redis
+    redisKeyPrefix: string
+    worldGenQueue: WorldGenQueueLike
+  } {
+    if (!opts.redis || opts.redisKeyPrefix === undefined || !opts.worldGenQueue) {
+      throw new Error(
+        'campaignsRoutes: POST /api/campaigns requires {redis, redisKeyPrefix, worldGenQueue} ' +
+          'in Opts (wired by T12). Missing: ' +
+          [
+            opts.redis ? null : 'redis',
+            opts.redisKeyPrefix === undefined ? 'redisKeyPrefix' : null,
+            opts.worldGenQueue ? null : 'worldGenQueue',
+          ]
+            .filter(Boolean)
+            .join(', '),
+      )
+    }
+    return {
+      redis: opts.redis,
+      redisKeyPrefix: opts.redisKeyPrefix,
+      worldGenQueue: opts.worldGenQueue,
+    }
+  }
 
   async function loadSnapshot(campaignId: string): Promise<PhaseAndStages | null> {
     const campaign = await repo.campaigns.getById(campaignId)
@@ -61,14 +172,16 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     })
   }
 
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/:campaignId/status (MYT-50)
+  // -------------------------------------------------------------------------
+
   app.get<{ Params: Params }>(
     '/api/campaigns/:campaignId/status',
     {
       config: {
-        // Per-IP cap. Snapshot fetch is cheap (one indexed lookup +
-        // bounded pipeline_runs scan); the 60/min ceiling exists to
-        // protect against runaway client polling that would otherwise
-        // hammer the DB.
+        // Per-IP cap. Snapshot fetch is cheap; the 60/min ceiling protects
+        // against runaway client polling that would otherwise hammer the DB.
         rateLimit: { max: 60, timeWindow: '1 minute' },
       },
       preHandler: requireCampaignMember(repo),
@@ -80,15 +193,15 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
   )
 
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/:campaignId/status/stream (MYT-50)
+  // -------------------------------------------------------------------------
+
   app.get<{ Params: Params }>(
     '/api/campaigns/:campaignId/status/stream',
     {
       config: {
-        // Per-USER (not per-IP) cap on stream opens. CG-NAT pools and
-        // shared offices would otherwise burn one user's allotment on
-        // another's behalf. Matches routes/sessions.ts ws-ticket pattern.
-        // Falls back to req.ip if requireDbUser throws (defence-in-depth:
-        // the requireOnboarded preHandler should have populated dbUser).
+        // Per-USER (not per-IP) cap on stream opens.
         rateLimit: {
           max: 10,
           timeWindow: '1 minute',
@@ -107,21 +220,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       const campaignId = request.params.campaignId
       opts.counter.increment()
 
-      // Compose detach + counter.decrement into a single onClose so the
-      // openSseConnection lifecycle owns teardown. `detach` is assigned
-      // AFTER openSseConnection returns (the sink exists first), so the
-      // onClose closure reads `detach` via the surrounding let-binding.
-      // Pre-attach the close path can fire (e.g. raw 'close' from an
-      // immediate disconnect) — `detach` is null then, so the null-check
-      // short-circuits and only the counter decrement runs.
       let detach: (() => void) | null = null
-      // Fastify v5's request.log is structurally a pino.Logger at
-      // runtime (Fastify uses pino internally), but its declared
-      // FastifyBaseLogger type omits a couple of pino-internal fields
-      // like `msgPrefix`. openSseConnection's logger param is typed
-      // strictly as pino.Logger so its internal call sites stay
-      // typesafe. Cast through pino.Logger at the boundary — runtime
-      // is sound; the type-system gap is purely declarational.
       const sink = openSseConnection({
         request,
         reply,
@@ -133,19 +232,362 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       })
       detach = opts.subscriber.attach(campaignId, sink)
 
-      // Snapshot computed AFTER attach: events published in the gap are
-      // queued on the sink, so the client sees them after the initial
-      // snapshot frame rather than missing them.
       const snapshot = await loadSnapshot(campaignId)
       if (!snapshot) {
         sink.close('unknown')
         return reply
       }
       sink.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`)
-      // sink lives on past return; reply.hijack() inside openSseConnection
-      // means Fastify won't try to serialize a response body. Return reply
-      // to satisfy the async handler signature.
       return reply
     },
   )
+
+  // -------------------------------------------------------------------------
+  // POST /api/campaigns (MYT-51 T9)
+  //
+  // Flow (spec § "POST /api/campaigns flow", revised after the round-1
+  // blind review fixes Wyvern-Min7 / Kraken-Imp5 / Phoenix-Imp1 / etc.):
+  //   1. Zod body parse                                        → 400
+  //   2a. Rate-limit (Fastify @fastify/rate-limit, route-level) → 429
+  //   2b. Concurrent-generation guard                           → 409
+  //   2c. Rejection-storm cooldown                              → 429
+  //   2d. Credit balance peek                                   → 403
+  //   2e. Queue-depth admission                                 → 503
+  //   3. Synthesize (guided) | passthrough (freeform)
+  //   4. Input gate (Sonnet)                                    → 422
+  //   5. Locked transaction (advisory lock, debit, rows)
+  //   6. Reset rejection-storm counter
+  //   7. Enqueue world-gen job
+  //   8. 201 { campaignId }                                     ← Phoenix-Min7
+  // -------------------------------------------------------------------------
+
+  app.post(
+    '/api/campaigns',
+    {
+      config: {
+        // Per-USER cap: 5 creates/min. Far below what the queue-depth + cost
+        // controls would tolerate, but enough to block adversarial Sonnet-burn
+        // loops that try to slip past the rejection-storm cooldown.
+        rateLimit: {
+          max: 5,
+          timeWindow: '1 minute',
+          keyGenerator: (req: FastifyRequest): string => {
+            try {
+              return requireDbUser(req).id
+            } catch {
+              return req.ip
+            }
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const createDeps = requireCreateRouteDeps()
+      const stormCounter = createRejectionStormCounter(createDeps.redis, createDeps.redisKeyPrefix)
+
+      // Step 1: body validation.
+      const parsed = CreateCampaignBodySchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.code(400).send({
+          code: 'invalid_body',
+          issues: parsed.error.issues,
+        })
+      }
+      const body = parsed.data
+      const dbUser = requireDbUser(request)
+
+      // Step 2b: concurrent-generation guard.
+      const inFlight = await opts.pool.query<{ id: string }>(
+        `SELECT campaigns.id FROM campaigns
+         WHERE campaigns.created_by = $1
+           AND campaigns.world_id IN (SELECT id FROM worlds WHERE status = 'generating')
+         LIMIT 1`,
+        [dbUser.id],
+      )
+      if (inFlight.rows.length > 0) {
+        return reply.code(409).send({ code: 'concurrent_generation_in_progress' })
+      }
+
+      // Step 2c: rejection-storm cooldown (read-only check; increment only
+      // on a later 422).
+      const stormCheck = await checkRejectionStorm(
+        createDeps.redis,
+        createDeps.redisKeyPrefix,
+        dbUser.id,
+      )
+      if (stormCheck.cooldownActive) {
+        reply.header('Retry-After', String(stormCheck.retryAfterSeconds))
+        return reply.code(429).send({ code: 'rejection_storm_cooldown' })
+      }
+
+      // Step 2d: credit balance peek (no advisory lock).
+      const peekBalance = await readWorldGenBalance(opts.pool, dbUser.id)
+      if (peekBalance < 1) {
+        return reply.code(403).send({ code: 'insufficient_credits', creditType: 'world_gen' })
+      }
+
+      // Step 2e: queue-depth admission.
+      const counts = await createDeps.worldGenQueue.getJobCounts(['waiting', 'active', 'delayed'])
+      const queueDepth = sumQueueCounts(counts)
+      if (queueDepth > 20) {
+        reply.header('Retry-After', '60')
+        return reply.code(503).send({ code: 'queue_full' })
+      }
+
+      // Step 3: synthesizer (guided) or passthrough (freeform).
+      const { concept, intentSummary } = await resolveConceptAndIntent(body.world.source)
+
+      // Step 4: input gate.
+      const gate = await runInputGate({ concept, intentSummary })
+      if (gate.verdict === 'reject') {
+        return handleGateRejection({
+          reply,
+          gate,
+          userId: dbUser.id,
+          mode: body.world.source.mode,
+          synthesizedConcept: concept,
+          stormIncrementer: () => stormCounter.incrementAndCheck(dbUser.id),
+          logger: request.log as PinoLogger,
+        })
+      }
+
+      // Step 5: locked transaction (debit + worlds + campaigns + member +
+      // pipeline_runs seed row).
+      let txResult: { campaignId: string }
+      try {
+        txResult = await executeCreateTransaction(opts.pool, {
+          userId: dbUser.id,
+          name: body.name,
+          concept,
+        })
+      } catch (err) {
+        if (err instanceof InsufficientCreditsError) {
+          return reply.code(403).send({ code: 'insufficient_credits', creditType: 'world_gen' })
+        }
+        throw err
+      }
+
+      // Step 6: reset rejection-storm counter — user produced a passing
+      // concept, so the slate is clean.
+      await stormCounter.reset(dbUser.id)
+
+      // Step 7: enqueue. `jobId: campaignId` gives BullMQ-side dedupe.
+      await createDeps.worldGenQueue.add(
+        'world-gen',
+        { campaignId: txResult.campaignId },
+        { jobId: txResult.campaignId },
+      )
+
+      // Step 8: 201 with campaignId only (Phoenix-Min7 — worldId is not
+      // a user-facing identifier).
+      return reply.code(201).send({ campaignId: txResult.campaignId })
+    },
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers (extracted to keep the handler under the lint length budget).
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the concept + intentSummary pair from the discriminated body.
+ * Freeform passes the user's concept through verbatim; guided runs the
+ * Sonnet synthesizer (one LLM call). Spec D4.
+ */
+async function resolveConceptAndIntent(
+  source: NewWorldSource,
+): Promise<{ concept: string; intentSummary: Awaited<ReturnType<typeof synthesizeConcept>>['intentSummary'] | null }> {
+  if (source.mode === 'freeform') {
+    return { concept: source.concept, intentSummary: null }
+  }
+  const synth = await synthesizeConcept(source.picks)
+  return { concept: synth.concept, intentSummary: synth.intentSummary }
+}
+
+/**
+ * Read-only rejection-storm check. Returns the current count + whether
+ * the cooldown is active. Distinct from the storm counter's
+ * `incrementAndCheck` — the route checks the count BEFORE the gate so
+ * cooldowns reject the cheapest possible way (no LLM call). The actual
+ * increment happens only on a 422 from the gate.
+ */
+async function checkRejectionStorm(
+  redis: Redis,
+  redisKeyPrefix: string,
+  userId: string,
+): Promise<{ cooldownActive: boolean; retryAfterSeconds: number }> {
+  const key = `${redisKeyPrefix}rejection_storm:${userId}`
+  const raw = await redis.get(key)
+  const count = raw === null ? 0 : Number.parseInt(raw, 10)
+  if (!Number.isFinite(count) || count <= REJECTION_STORM_THRESHOLD) {
+    return { cooldownActive: false, retryAfterSeconds: 0 }
+  }
+  // Match rejection-storm.ts's PTTL rounding contract: never return 0
+  // while the cooldown is still active. The fallback to the full window
+  // length only fires if the key has no TTL (defensive — every key set
+  // by the counter goes via EXPIRE-NX so a TTL is always present).
+  const pttlMs = await redis.pttl(key)
+  const retryAfterSeconds = pttlMs > 0 ? Math.ceil(pttlMs / 1000) : REJECTION_STORM_WINDOW_SECONDS
+  return { cooldownActive: true, retryAfterSeconds }
+}
+
+/** Sum the values of a getJobCounts() response across all requested states. */
+function sumQueueCounts(counts: Record<string, number>): number {
+  let total = 0
+  for (const v of Object.values(counts)) total += v
+  return total
+}
+
+/**
+ * Read the current world_gen balance (unexpired credits only).
+ * Plain pool — caller decides whether to wrap it in an advisory-locked tx.
+ */
+async function readWorldGenBalance(
+  client: Pool | PoolClient,
+  userId: string,
+): Promise<number> {
+  const result = await client.query<{ balance: string }>(
+    `SELECT COALESCE(SUM(amount), 0)::text AS balance
+       FROM credit_ledger
+      WHERE user_id = $1
+        AND credit_type = 'world_gen'
+        AND (expires_at IS NULL OR expires_at > now())`,
+    [userId],
+  )
+  return Number(result.rows[0]?.balance ?? 0)
+}
+
+/**
+ * Gate rejection branch: increments the rejection-storm counter, logs the
+ * server-side reasoning (Roc-Imp6 — never returned in the HTTP response),
+ * and shapes the 422 response. `synthesizedConcept` is included only on
+ * guided-mode rejections (Kraken-C2 — lets the user see what was judged).
+ */
+async function handleGateRejection(args: {
+  reply: FastifyReply
+  gate: InputGateVerdict
+  userId: string
+  mode: 'freeform' | 'guided'
+  synthesizedConcept: string
+  stormIncrementer: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
+  logger: PinoLogger
+}): Promise<FastifyReply> {
+  // Increment regardless of whether the increment trips the cooldown —
+  // the cooldown is checked at the START of the NEXT request, not on
+  // this one. (The current request still returns 422; the next one will
+  // return 429 if this increment pushed the count past the threshold.)
+  await args.stormIncrementer()
+
+  args.logger.info(
+    {
+      event: 'input_gate_reject',
+      reason: args.gate.reason,
+      reasoning: args.gate.reasoning,
+    },
+    'concept rejected by input gate',
+  )
+
+  const responsePayload: {
+    code: 'concept_rejected'
+    reason: InputGateVerdict['reason']
+    rejectionMessage: string | null
+    synthesizedConcept?: string
+  } = {
+    code: 'concept_rejected',
+    reason: args.gate.reason,
+    rejectionMessage: args.gate.rejectionMessage,
+  }
+  if (args.mode === 'guided') {
+    responsePayload.synthesizedConcept = args.synthesizedConcept
+  }
+  return args.reply.code(422).send(responsePayload)
+}
+
+/**
+ * Step 5 of the POST flow — the locked transaction.
+ *
+ * Sequence (revised — Roc-Imp1 UUID-cast fix + Hydra-Imp1 / Phoenix-Imp4
+ * seeded-row recovery contract):
+ *   - BEGIN + lock_timeout 5s + statement_timeout 10s
+ *   - pg_advisory_xact_lock(hashtextextended(userId::text, 0))
+ *   - Re-read balance under lock; throw InsufficientCreditsError if < 1
+ *   - INSERT worlds (status='generating')
+ *   - INSERT campaigns (status='setup')
+ *   - INSERT campaign_members (role='owner', invite_accepted=true)
+ *   - INSERT credit_ledger (-1 debit; source_id = worldId for the
+ *     migration 004 debit-has-source check)
+ *   - INSERT pipeline_runs (concept_intake, status='pending', started_at=NULL)
+ *   - COMMIT
+ */
+async function executeCreateTransaction(
+  pool: Pool,
+  args: { userId: string; name: string; concept: string },
+): Promise<{ campaignId: string; worldId: string }> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query("SET LOCAL lock_timeout = '5s'")
+    await client.query("SET LOCAL statement_timeout = '10s'")
+    // hashtextextended produces a stable bigint from any text input,
+    // sidestepping pg's lack of a direct uuid→bigint cast (Roc-Imp1).
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, [args.userId])
+
+    const lockedBalance = await readWorldGenBalance(client, args.userId)
+    if (lockedBalance < 1) {
+      await client.query('ROLLBACK')
+      throw new InsufficientCreditsError()
+    }
+
+    const worldId = uuidv7()
+    const campaignId = uuidv7()
+    const memberId = uuidv7()
+    const ledgerId = uuidv7()
+    const runId = uuidv7()
+
+    await client.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status)
+       VALUES ($1, $2, $3, $4, 'generating')`,
+      [worldId, args.userId, args.name, args.concept],
+    )
+    await client.query(
+      `INSERT INTO campaigns (id, world_id, created_by, name, status)
+       VALUES ($1, $2, $3, $4, 'setup')`,
+      [campaignId, worldId, args.userId, args.name],
+    )
+    await client.query(
+      `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+       VALUES ($1, $2, $3, 'owner', true)`,
+      [memberId, campaignId, args.userId],
+    )
+    // Debit. source_id = worldId so migration 004's
+    // credit_ledger_debit_has_source_chk is satisfied; both FKs (purchase
+    // / billing_history) are NULL per migration 007's debit branch.
+    await client.query(
+      `INSERT INTO credit_ledger
+         (id, user_id, credit_type, amount, source_type, source_id,
+          expires_at, source_purchase_id, source_billing_history_id)
+       VALUES ($1, $2, 'world_gen', -1, 'debit', $3, NULL, NULL, NULL)`,
+      [ledgerId, args.userId, worldId],
+    )
+    // Seed row — a missed enqueue (Redis blip between COMMIT and the
+    // queue.add call) presents as `world_gen_failed` via derivePhase
+    // instead of `not_started`, so the resume route can recover from it
+    // (Hydra-Imp1, Phoenix-Imp4).
+    await client.query(
+      `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
+       VALUES ($1, $2, 'concept_intake', 'pending', NULL, NULL)`,
+      [runId, worldId],
+    )
+    await client.query('COMMIT')
+    return { campaignId, worldId }
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // Connection may already be in a failed state; rethrow original.
+    }
+    throw err
+  } finally {
+    client.release()
+  }
 }
