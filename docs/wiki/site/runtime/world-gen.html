@@ -25,18 +25,24 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › World gen</div>
-        <article>
+        <article><div class="wiki-drift-banner" role="alert">
+  <strong>⚠️ Source has drifted.</strong>
+  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
+  <div class="wiki-drift-paths">source: <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/contract/pipeline-routes.ts</code>, <code>backend/src/contract/pipeline-jobs.ts</code>, <code>backend/src/contract/pipeline-errors.ts</code>, <code>backend/src/llm/prep/synthesize-concept.ts</code>, <code>backend/src/llm/prep/input-gate.ts</code>, <code>backend/src/llm/prep/paint-job-validator.ts</code>, <code>backend/src/llm/prep/cost-cap.ts</code>, <code>backend/src/llm/prep/stages/concept-intake.ts</code>, <code>backend/src/llm/prep/stages/starting-situation.ts</code>, <code>backend/src/llm/prep/stages/random-tables.ts</code>, <code>backend/src/llm/prep/stages/stage-not-implemented.ts</code>, <code>backend/src/llm/prep/world-gen-processor.ts</code>, <code>backend/src/routes/dev-credits.ts</code>, <code>backend/src/repo/credit-grants.ts</code>, <code>backend/src/auth/rejection-storm.ts</code>, <code>backend/src/repo/pipeline-runs.ts</code>, <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>, <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>, <code>backend/migrations/012_credit_ledger_admin_source.sql</code>, <code>backend/dev-tool/src/components/campaign-create-panel.ts</code>, <code>backend/dev-tool/src/components/campaign-details-panel.ts</code>, <code>backend/dev-tool/src/components/credit-ledger-panel.ts</code>, <code>backend/dev-tool/coverage.json</code>, <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>, <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code></div>
+</div>
+
 <h1>World gen</h1>
 
 <p class="lead">
-  The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a concept
-  (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a 3-axis
-  Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked transaction,
-  and enqueues a BullMQ job. The worker walks five stages — three are wired in this ticket
-  (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>); two are
-  placeholders that fail visibly until the streaming-stages ticket replaces them. A cost-cap circuit
-  breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; if the
-  cumulative cost ever exceeds it, the worker refunds the debited credit and marks the world failed.
+  The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a
+  concept (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a
+  3-axis Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked
+  transaction, and enqueues a BullMQ job. The worker walks five stages — three are wired in this
+  ticket (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>);
+  two are placeholders that fail visibly until the streaming-stages ticket replaces them. A cost-cap
+  circuit breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; if
+  the cumulative cost ever exceeds it, the worker refunds the debited credit and marks the world
+  failed.
 </p>
 
 <figure class="wiki-diagram">
@@ -439,8 +445,8 @@
 <h2 id="how-it-fits-together">How it fits together</h2>
 
 <p>
-  Four routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in the
-  <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
+  Four routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
+  the <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
   registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
   flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
   world row, and the member list for a campaign the caller is a member of.
@@ -456,12 +462,13 @@
   world, but the user always interacts with the campaign (its name, its membership, its session
   history). World-id is an internal join key. The route surface, the status SSE channel
   (<code>pipeline:campaign:{campaignId}</code>), and the BullMQ <code>jobId</code> all key on
-  <code>campaignId</code>; the 201 response from the create flow returns only <code>campaignId</code>.
-  This is also why the create transaction seeds a <code>pipeline_runs</code> row keyed on
-  <code>world_id</code> + <code>stage = 'concept_intake'</code> with <code>status = 'pending'</code>
-  — a Redis blip between COMMIT and <code>queue.add</code> presents as <code>world_gen_failed</code>
-  via the existing <code>derivePhase</code> rules instead of <code>not_started</code>, which the
-  resume route's <code>world_gen_failed</code> arm can recover from cleanly.
+  <code>campaignId</code>; the 201 response from the create flow returns only
+  <code>campaignId</code>. This is also why the create transaction seeds a
+  <code>pipeline_runs</code> row keyed on <code>world_id</code> +
+  <code>stage = 'concept_intake'</code> with <code>status = 'pending'</code> — a Redis blip between
+  COMMIT and <code>queue.add</code> presents as <code>world_gen_failed</code> via the existing
+  <code>derivePhase</code> rules instead of <code>not_started</code>, which the resume route's
+  <code>world_gen_failed</code> arm can recover from cleanly.
 </aside>
 
 <p>
@@ -488,8 +495,15 @@
   <tbody>
     <tr>
       <td><code>POST /api/campaigns</code></td>
-      <td>Standard onboarded chain (auth + <code>requireDbUser</code>; no membership pre-handler — the user is creating the campaign)</td>
-      <td><strong>5 / min per USER</strong> (tighter than the queue or cost gates would tolerate; the floor that blocks adversarial Sonnet-burn loops trying to slip past the rejection-storm cooldown)</td>
+      <td>
+        Standard onboarded chain (auth + <code>requireDbUser</code>; no membership pre-handler — the
+        user is creating the campaign)
+      </td>
+      <td>
+        <strong>5 / min per USER</strong> (tighter than the queue or cost gates would tolerate; the
+        floor that blocks adversarial Sonnet-burn loops trying to slip past the rejection-storm
+        cooldown)
+      </td>
       <td>
         <code>201 { campaignId }</code> on success; <code>400 invalid_body</code> on Zod failure;
         <code>403 insufficient_credits</code>; <code>409 concurrent_generation_in_progress</code>;
@@ -500,21 +514,34 @@
     <tr>
       <td><code>GET /api/campaigns/:campaignId</code></td>
       <td><code>requireCampaignMember</code></td>
-      <td><strong>60 / min per IP</strong> (matches the status-fetch ceiling so a UI fanning out both calls on a tick doesn't trip its own limit on either axis)</td>
-      <td><code>200 { campaign, world, members }</code>; <code>404 campaign_not_found</code> or <code>world_not_found</code>.</td>
+      <td>
+        <strong>60 / min per IP</strong> (matches the status-fetch ceiling so a UI fanning out both
+        calls on a tick doesn't trip its own limit on either axis)
+      </td>
+      <td>
+        <code>200 { campaign, world, members }</code>; <code>404 campaign_not_found</code> or
+        <code>world_not_found</code>.
+      </td>
     </tr>
     <tr>
       <td><code>GET /api/campaigns/mine</code></td>
-      <td>Onboarded chain; result filtered by <code>created_by</code> or <code>campaign_members.invite_accepted = true</code></td>
+      <td>
+        Onboarded chain; result filtered by <code>created_by</code> or
+        <code>campaign_members.invite_accepted = true</code>
+      </td>
       <td><strong>30 / min per IP</strong></td>
       <td><code>200 { campaigns }</code>. Owned + joined collapse into a single ordered list.</td>
     </tr>
     <tr>
       <td><code>POST /api/campaigns/:campaignId/resume</code></td>
       <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
-      <td><strong>5 / min per USER</strong> (much tighter than the GETs because resume is state-changing and triggers a queue add)</td>
       <td>
-        <code>202 { campaignId, action }</code> when the world-gen job is re-enqueued; <code>409</code>
+        <strong>5 / min per USER</strong> (much tighter than the GETs because resume is
+        state-changing and triggers a queue add)
+      </td>
+      <td>
+        <code>202 { campaignId, action }</code> when the world-gen job is re-enqueued;
+        <code>409</code>
         with a typed code on every phase that has no resume action (in-progress, already-complete,
         terminal-failure, stuck-on-not-implemented-stage, world-gen-capped);
         <code>422 phase_resume_not_yet_implemented</code> for <code>character_creation</code> /
@@ -539,8 +566,8 @@
   <code>status = 'generating'</code>. Rejection-storm cooldown (one Redis <code>GET</code>) rejects
   with 429 if the user has been rejected by the input gate more than three times in the past hour.
   Credit balance peek (one Postgres SUM, no lock) rejects with 403 if the
-  <code>world_gen</code> balance is &lt; 1. Queue-depth admission (one BullMQ <code>getJobCounts</code>)
-  rejects with 503 if waiting + active + delayed exceeds 20.
+  <code>world_gen</code> balance is &lt; 1. Queue-depth admission (one BullMQ
+  <code>getJobCounts</code>) rejects with 503 if waiting + active + delayed exceeds 20.
 </p>
 
 <aside class="wiki-rationale">
@@ -554,22 +581,22 @@
   Then the synthesizer fires if the body is guided-mode. It's one <code>generateText</code> call
   with <code>temperature: 0.9</code> against the prompt template at
   <code>backend/src/llm/prompts/prep/synthesize-concept.txt</code>, structured-output against the
-  <code>SynthesizerOutput</code> schema: <code>{ concept: string, intentSummary: { aesthetics[],
-  themes[], sourcesInternal[] } }</code>. The <code>concept</code> field is what the input gate (and
-  later stages) see as the user's freeform-equivalent input; <code>intentSummary</code> is the
-  structured trace of what aesthetic / thematic moves the synthesizer made.
-  <code>sourcesInternal</code> is the synthesizer's list of works it drew from — opaque downstream,
-  never echoed to the user, never appended to <code>concept_intake</code>'s prompt; the input gate
-  DOES receive it so clone-intent judgement isn't bypassed via prompt injection in the user's picks.
+  <code>SynthesizerOutput</code> schema:
+  <code>{ concept: string, intentSummary: { aesthetics[], themes[], sourcesInternal[] } }</code>.
+  The <code>concept</code> field is what the input gate (and later stages) see as the user's
+  freeform-equivalent input; <code>intentSummary</code> is the structured trace of what aesthetic /
+  thematic moves the synthesizer made. <code>sourcesInternal</code> is the synthesizer's list of
+  works it drew from — opaque downstream, never echoed to the user, never appended to
+  <code>concept_intake</code>'s prompt; the input gate DOES receive it so clone-intent judgement
+  isn't bypassed via prompt injection in the user's picks.
 </p>
 
 <p>
   The input gate is a single Sonnet call against three axes — <code>srd_compat</code> (does this fit
   D&amp;D 5e SRD-compatible mechanics?), <code>clone_intent</code> (is this a recognizable
-  intellectual-property clone?), <code>inappropriate</code> (does this trip the
-  content-safety policy?). Each axis returns a boolean and (where the model is calibrated to it) a
-  confidence score on [0, 1]. The verdict is computed in TypeScript from the structured output, not
-  prose-matched:
+  intellectual-property clone?), <code>inappropriate</code> (does this trip the content-safety
+  policy?). Each axis returns a boolean and (where the model is calibrated to it) a confidence score
+  on [0, 1]. The verdict is computed in TypeScript from the structured output, not prose-matched:
 </p>
 
 <ul>
@@ -589,18 +616,18 @@
 </ul>
 
 <aside class="wiki-rationale">
-  <strong>Verdict logic in code, not in the prompt</strong> — having the model emit per-axis
-  signals and computing the rejection rule in TypeScript means the rule is testable, auditable, and
+  <strong>Verdict logic in code, not in the prompt</strong> — having the model emit per-axis signals
+  and computing the rejection rule in TypeScript means the rule is testable, auditable, and
   changeable without re-tuning a prompt. The model's job is to score; the policy lives in code.
 </aside>
 
 <p>
   On rejection, the route increments the rejection-storm counter, logs the model's reasoning
   server-side (never returned in the HTTP response — leaking it would let an adversary iterate
-  against the gate's reasoning), and returns 422 with <code>{ code: 'concept_rejected', reason,
-  rejectionMessage }</code>. Guided-mode rejections additionally include
-  <code>synthesizedConcept</code> in the response so the user can see exactly what the synthesizer
-  produced before the gate rejected it.
+  against the gate's reasoning), and returns 422 with
+  <code>{ code: 'concept_rejected', reason, rejectionMessage }</code>. Guided-mode rejections
+  additionally include <code>synthesizedConcept</code> in the response so the user can see exactly
+  what the synthesizer produced before the gate rejected it.
 </p>
 
 <h3 id="the-paint-job-validator">The paint-job validator</h3>
@@ -611,8 +638,8 @@
   <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one Sonnet call
   generates a structured <code>WorldConcept</code>; a SECOND Sonnet call (distinct prompt, fresh
   context, <code>temperature: 0.1</code>) judges whether the draft mirrors a recognizable
-  copyrighted work; on flag (confidence &gt; 0.85), the loop discards the draft entirely and
-  retries with a fresh-direction amendment built from the judge's structured
+  copyrighted work; on flag (confidence &gt; 0.85), the loop discards the draft entirely and retries
+  with a fresh-direction amendment built from the judge's structured
   <code>{ mirroredWork, specificDriftAxes }</code> output, plus a temperature bump to 1.0.
   <strong>Max 3 attempts total</strong> (1 original + 2 retries). On exhaustion the loop throws
   <code>PaintJobLoopExhaustedError</code>, which the worker treats as a stage failure.
@@ -630,8 +657,8 @@
 <h2 id="the-credit-gate-transaction">The credit gate transaction</h2>
 
 <p>
-  Once the input gate allows the concept, the route opens a Postgres connection and runs the
-  create transaction. The shape (in order, all inside <code>BEGIN ... COMMIT</code>):
+  Once the input gate allows the concept, the route opens a Postgres connection and runs the create
+  transaction. The shape (in order, all inside <code>BEGIN ... COMMIT</code>):
 </p>
 
 <ol>
@@ -649,9 +676,9 @@
     step 2d above was an optimization, not a guarantee.
   </li>
   <li>
-    <code>INSERT worlds</code> (<code>status = 'generating'</code>), <code>INSERT campaigns</code>
-    (<code>status = 'setup'</code>), <code>INSERT campaign_members</code> (<code>role = 'owner',
-    invite_accepted = true</code>).
+    <code>INSERT worlds</code> (<code>status = 'generating'</code>),
+    <code>INSERT campaigns</code> (<code>status = 'setup'</code>),
+    <code>INSERT campaign_members</code> (<code>role = 'owner', invite_accepted = true</code>).
   </li>
   <li>
     <code>INSERT credit_ledger</code> — a -1 debit. <code>source_type = 'debit'</code>,
@@ -659,7 +686,8 @@
     <code>credit_ledger_debit_has_source_chk</code>), both FK columns NULL.
   </li>
   <li>
-    Seed <code>pipeline_runs (stage = 'concept_intake', status = 'pending', started_at = NULL)</code>.
+    Seed
+    <code>pipeline_runs (stage = 'concept_intake', status = 'pending', started_at = NULL)</code>.
     The seed row is what makes the Redis-blip recovery path work — see the resume table below.
   </li>
   <li>COMMIT.</li>
@@ -667,8 +695,9 @@
 
 <p>
   After commit, the route resets the rejection-storm counter (a user who proves they can produce a
-  passing concept gets a clean slate), calls <code>worldGenQueue.add('world-gen', { campaignId }, {
-  jobId: campaignId })</code>, and returns <code>201 { campaignId }</code>.
+  passing concept gets a clean slate), calls
+  <code>worldGenQueue.add('world-gen', { campaignId }, { jobId: campaignId })</code>, and returns
+  <code>201 { campaignId }</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -691,12 +720,16 @@
 
 <ol>
   <li>
-    <strong>Atomic claim.</strong> An <code>INSERT … ON CONFLICT (...) DO UPDATE … WHERE
-    pipeline_runs.status IN ('pending', 'failed') RETURNING id</code> either creates the row or
-    flips a pending/failed row to <code>running</code>. If <code>RETURNING</code> is empty, another
-    worker won the race OR the row is already <code>completed</code> — skip the stage in either
-    case. The unique index keys on <code>(COALESCE(world_id, campaign_id), stage,
-    COALESCE(user_id, sentinel))</code>; world-gen rows have <code>user_id = NULL</code>.
+    <strong>Atomic claim.</strong> An
+    <code
+      >INSERT … ON CONFLICT (...) DO UPDATE … WHERE pipeline_runs.status IN ('pending', 'failed')
+      RETURNING id</code
+    >
+    either creates the row or flips a pending/failed row to <code>running</code>. If
+    <code>RETURNING</code> is empty, another worker won the race OR the row is already
+    <code>completed</code> — skip the stage in either case. The unique index keys on
+    <code>(COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel))</code>; world-gen
+    rows have <code>user_id = NULL</code>.
   </li>
   <li>
     <strong>Stuck-stage reset.</strong> If the conflict branch found a <code>running</code> row, the
@@ -705,9 +738,12 @@
     affected means another worker raced and won the reset; this worker bails.
   </li>
   <li>
-    <strong>Publish <code>stage-started</code>, run the handler, COMMIT
-    <code>stage-completed</code> + cost.</strong> The handler is wrapped in a BEGIN/ROLLBACK so a
-    handler throw rolls back any partial UPDATEs to the worlds row (concept_intake writes
+    <strong
+      >Publish <code>stage-started</code>, run the handler, COMMIT <code>stage-completed</code> +
+      cost.</strong
+    >
+    The handler is wrapped in a BEGIN/ROLLBACK so a handler throw rolls back any partial UPDATEs to
+    the worlds row (concept_intake writes
     <code>tone / themes / era / key_tensions / geography_summary</code>).
   </li>
   <li>
@@ -717,18 +753,19 @@
   </li>
   <li>
     <strong>On stage failure.</strong> Write a sanitized error JSON to
-    <code>pipeline_runs.error</code> (strict allowlist — only <code>{ code, message }</code> survive;
-    raw provider error chains with embedded API keys or response bodies are dropped) and publish
-    <code>stage-failed</code>. <code>StageNotImplementedError</code> is treated as an expected stop
-    (publish <code>phase = world_gen_failed</code> and return; no BullMQ retry); every other thrown
-    error rethrows so BullMQ's retry policy fires.
+    <code>pipeline_runs.error</code> (strict allowlist — only
+    <code>{ code, message }</code> survive; raw provider error chains with embedded API keys or
+    response bodies are dropped) and publish <code>stage-failed</code>.
+    <code>StageNotImplementedError</code> is treated as an expected stop (publish
+    <code>phase = world_gen_failed</code> and return; no BullMQ retry); every other thrown error
+    rethrows so BullMQ's retry policy fires.
   </li>
 </ol>
 
 <aside class="wiki-rationale">
-  <strong>Read the cost cap once per stage, not once per job</strong> — a long-running world-gen
-  job that started under an old cap and crossed a config-change boundary mid-run should observe the
-  new cap on its next stage. The read is a single Postgres query against the
+  <strong>Read the cost cap once per stage, not once per job</strong> — a long-running world-gen job
+  that started under an old cap and crossed a config-change boundary mid-run should observe the new
+  cap on its next stage. The read is a single Postgres query against the
   <code>settings</code> table; the cost of ~5 reads per run is negligible against the LLM-call cost
   inside each stage.
 </aside>
@@ -749,8 +786,10 @@
       <td><code>concept_intake</code></td>
       <td>Sonnet (via paint-job validator: generator + judge)</td>
       <td>
-        <code>worlds.tone / themes / era / key_tensions / geography_summary /
-        political_summary</code> (one UPDATE inside the stage's transaction)
+        <code
+          >worlds.tone / themes / era / key_tensions / geography_summary / political_summary</code
+        >
+        (one UPDATE inside the stage's transaction)
       </td>
       <td>Yes (this ticket)</td>
     </tr>
@@ -773,9 +812,7 @@
     <tr>
       <td><code>starting_situation</code></td>
       <td>Sonnet</td>
-      <td>
-        <code>worlds.starting_situation</code> (prose block describing the opening scene)
-      </td>
+      <td><code>worlds.starting_situation</code> (prose block describing the opening scene)</td>
       <td>Yes (this ticket)</td>
     </tr>
     <tr>
@@ -814,11 +851,12 @@
 
 <p>
   Migration 011 added <code>'cost_cap_refund'</code> to the <code>credit_ledger</code> source-type
-  whitelist and the table-level FK-shape CASE. The polarity check from migration 004 — <code>(source_type
-  = 'debit') = (amount &lt; 0)</code> — passes naturally because a refund is positive and not a
-  debit. The resume route's <code>world_gen_failed</code> arm sniffs the latest failed
-  <code>pipeline_runs.error</code> for the string <code>world_gen_cost_cap_exceeded</code> and 409s
-  with <code>code: 'world_gen_capped'</code> instead of re-enqueueing (a re-run would just burn cap
+  whitelist and the table-level FK-shape CASE. The polarity check from migration 004 —
+  <code>(source_type = 'debit') = (amount &lt; 0)</code> — passes naturally because a refund is
+  positive and not a debit. The resume route's <code>world_gen_failed</code> arm sniffs the latest
+  failed <code>pipeline_runs.error</code> for the string
+  <code>world_gen_cost_cap_exceeded</code> and 409s with
+  <code>code: 'world_gen_capped'</code> instead of re-enqueueing (a re-run would just burn cap
   again).
 </p>
 
@@ -876,11 +914,12 @@
       <td><code>not_started</code></td>
       <td>
         Redis-blip orphan recovery. If a job with <code>jobId = campaignId</code> is still alive on
-        the queue (not completed AND not failed) → <code>409 world_gen_in_progress</code>.
-        Otherwise enqueue. <code>202 { campaignId, action:
-        'world-gen-enqueued-after-orphan-recovery' }</code>. Rare in practice because the create
-        transaction seeds the <code>pipeline_runs</code> row, so the typical Redis-blip orphan
-        presents as <code>world_gen_failed</code>, not <code>not_started</code>.
+        the queue (not completed AND not failed) → <code>409 world_gen_in_progress</code>. Otherwise
+        enqueue.
+        <code>202 { campaignId, action: 'world-gen-enqueued-after-orphan-recovery' }</code>. Rare in
+        practice because the create transaction seeds the <code>pipeline_runs</code> row, so the
+        typical Redis-blip orphan presents as <code>world_gen_failed</code>, not
+        <code>not_started</code>.
       </td>
     </tr>
   </tbody>
@@ -913,9 +952,9 @@
   The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in
   <code>PIPELINE_ROUTES</code> and <code>PIPELINE_JOBS</code> must either be driven by a panel or
   carry a typed exempt reason. Adding a new pipeline route or job is a four-file change in a single
-  PR — contract, handler, dev-tool panel, coverage entry — and <code>pnpm dev-tool:check</code>
-  red-CI's the merge otherwise. See <a href="./dev-tool.html">dev tool</a> for the full ship-gate
-  story.
+  PR — contract, handler, dev-tool panel, coverage entry — and
+  <code>pnpm dev-tool:check</code> red-CI's the merge otherwise. See
+  <a href="./dev-tool.html">dev tool</a> for the full ship-gate story.
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -929,9 +968,11 @@
   </li>
   <li>
     Query <code>pipeline_runs</code> for the world:
-    <code>SELECT stage, status, started_at, completed_at, error FROM pipeline_runs WHERE world_id =
-    $1 ORDER BY started_at DESC</code>. The latest <code>failed</code> row's <code>error</code>
-    column is JSON — read the <code>code</code> field.
+    <code
+      >SELECT stage, status, started_at, completed_at, error FROM pipeline_runs WHERE world_id = $1
+      ORDER BY started_at DESC</code
+    >. The latest <code>failed</code> row's <code>error</code> column is JSON — read the
+    <code>code</code> field.
   </li>
   <li>
     Map <code>error.code</code> to action: <code>stage_not_implemented</code> → expected (resume
@@ -941,9 +982,9 @@
   </li>
   <li>
     For a <code>world_gen</code>-stuck-running case, the worker's atomic-claim path will
-    self-recover after 5 minutes (the stuck-stage reset UPDATE flips a <code>started_at &lt; now()
-    - INTERVAL '5 minutes'</code> running row back to claimable). If it doesn't, the worker pod's
-    CloudWatch logs name the cause.
+    self-recover after 5 minutes (the stuck-stage reset UPDATE flips a
+    <code>started_at &lt; now() - INTERVAL '5 minutes'</code> running row back to claimable). If it
+    doesn't, the worker pod's CloudWatch logs name the cause.
   </li>
 </ol>
 
@@ -988,8 +1029,8 @@
   </li>
   <li>
     The dev tool's status panel will show <code>concept_intake</code> running for ~30–60 seconds
-    longer than usual when the validator retries (up to 3 attempts × 2 Sonnet calls per attempt).
-    On exhaustion, the stage fails with
+    longer than usual when the validator retries (up to 3 attempts × 2 Sonnet calls per attempt). On
+    exhaustion, the stage fails with
     <code>code: 'concept_intake_paint_job_loop_exhausted'</code> and the phase flips to
     <code>world_gen_failed</code>.
   </li>
@@ -1004,10 +1045,10 @@
 <ol>
   <li>
     Find the orphaned campaign via
-    <code>GET /api/campaigns/:campaignId/status</code> — phase will be <code>world_gen_failed</code>
-    (the create transaction seeds a pending <code>pipeline_runs</code> row, which presents as
-    failed when no worker ever claims it) or, very rarely, <code>not_started</code> if the seed row
-    is missing.
+    <code>GET /api/campaigns/:campaignId/status</code> — phase will be
+    <code>world_gen_failed</code> (the create transaction seeds a pending
+    <code>pipeline_runs</code> row, which presents as failed when no worker ever claims it) or, very
+    rarely, <code>not_started</code> if the seed row is missing.
   </li>
   <li>
     Inspect the latest failed pipeline_runs row's <code>error</code> column. If it's NULL or the
@@ -1018,8 +1059,9 @@
     From the dev tool's campaign details panel (or via direct
     <code>POST /api/campaigns/:campaignId/resume</code>), click Resume. The response is
     <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code> on the
-    <code>world_gen_failed</code> path or <code>... 'world-gen-enqueued-after-orphan-recovery'</code>
-    on the rarer <code>not_started</code> path.
+    <code>world_gen_failed</code> path or
+    <code>... 'world-gen-enqueued-after-orphan-recovery'</code> on the rarer
+    <code>not_started</code> path.
   </li>
   <li>
     Confirm the worker picked up the job: the <code>pipeline:campaign:{campaignId}</code> Redis
@@ -1036,15 +1078,14 @@
   The processor publishes JSON event payloads on
   <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> — the channel format the
   <a href="./pipeline-status.html">pipeline status</a> surface listens on. The lifecycle events
-  emitted by this ticket are <code>phase</code> (on entry to <code>world_gen</code> and the
-  terminal <code>world_ready</code> / <code>world_gen_failed</code>), <code>stage-started</code>,
+  emitted by this ticket are <code>phase</code> (on entry to <code>world_gen</code> and the terminal
+  <code>world_ready</code> / <code>world_gen_failed</code>), <code>stage-started</code>,
   <code>stage-completed</code>, <code>cost-update</code> (cumulative USD), and
-  <code>stage-failed</code>. Five additional entity-level events
-  (<code>stage-reset</code>, <code>entity-added</code>, <code>entity-updated</code>,
-  <code>edge-added</code>, <code>finalized</code>) are reserved in the contract for the streaming
-  stages ticket and arrive verbatim through the bridge once that ships; the dev tool's status
-  panel renders the lifecycle events today and renders the entity events when the live-graph
-  surface lands.
+  <code>stage-failed</code>. Five additional entity-level events (<code>stage-reset</code>,
+  <code>entity-added</code>, <code>entity-updated</code>, <code>edge-added</code>,
+  <code>finalized</code>) are reserved in the contract for the streaming stages ticket and arrive
+  verbatim through the bridge once that ships; the dev tool's status panel renders the lifecycle
+  events today and renders the entity events when the live-graph surface lands.
 </p>
 
 <h2 id="out-of-scope">Out of scope</h2>
@@ -1062,9 +1103,9 @@
   </li>
   <li>
     <strong>Automatic refunds beyond the cost cap.</strong> Stage failures that aren't cost-cap
-    fires don't refund — the user can resume and the worker re-runs failed stages within the
-    cap. Manual refunds for genuine infrastructure failures are an operator action, not an
-    automated path; a proper user-facing refund surface is a post-launch hardening item.
+    fires don't refund — the user can resume and the worker re-runs failed stages within the cap.
+    Manual refunds for genuine infrastructure failures are an operator action, not an automated
+    path; a proper user-facing refund surface is a post-launch hardening item.
   </li>
   <li>
     <strong>The future <code>kind: 'existing'</code> body arm</strong> (joining an existing world)
