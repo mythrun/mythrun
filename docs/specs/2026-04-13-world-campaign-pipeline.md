@@ -776,13 +776,11 @@ The dev tool ships in two phases:
 **Phase 0 — Skeleton (first Linear issue of this milestone).** Stub the website *before* any pipeline backend lands. The skeleton has:
 
 - Vite project at `backend/dev-tool/` building a single SPA.
-- Environment switcher in the page header (dropdown: `local | staging`, selecting the API base URL).
 - Dev-sub identity switcher (dropdown of pseudo users — `dev-user-1`, `dev-user-2`, … — sending the corresponding `x-mythrun-dev-sub` header on every request).
-- A smoke-test landing page that calls `GET /health/ready` against the selected environment and shows the response. Confirms environment + auth wiring end-to-end.
-- Deployed to staging at a stable URL.
+- A smoke-test landing page that calls `GET /health/ready` against `localhost:3000` via the Vite dev-server proxy and shows the response. Confirms proxy + auth wiring end-to-end.
 - `pnpm dev-tool:check` ship gate (see §12.5) wired into CI, running green at Phase 0 with an empty coverage manifest.
 
-Phase 0 produces a deployed, navigable site that does nothing useful yet — but proves the plumbing works.
+Phase 0 produces a locally-runnable site that does nothing useful yet — but proves the proxy + auth + ship-gate plumbing works.
 
 **Phase 1+ — Grow With the Backend.** Every subsequent Linear issue in this milestone (e.g., "world creation route + worker stage 1") MUST extend the dev tool to exercise the new functionality in the same PR. The ship gate enforces this. Concretely:
 
@@ -797,7 +795,7 @@ Phase 0 produces a deployed, navigable site that does nothing useful yet — but
 
 When the milestone is complete, the dev tool can:
 
-- Trigger world creation against either local-dev or staging API.
+- Trigger world creation against the local API.
 - Watch a world generate in real time — phase + per-stage progress + the live entity graph populating as `entity-added` events arrive over SSE.
 - Trigger campaign creation on that world, configure 2–5 players (impersonating different dev-sub identities via the switcher), submit character concepts, kick off parallel character creation, watch each player's character integration stream.
 - Inspect the final world: list entities, prose kernels, facts, relationships, random tables.
