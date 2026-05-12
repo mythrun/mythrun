@@ -1,0 +1,396 @@
+<!-- source: backend/src/worker.ts -->
+<!-- source: backend/src/worker/bullmq-config.ts -->
+<!-- source: backend/src/worker/stub-processor.ts -->
+<!-- source: backend/src/worker/health-server.ts -->
+<!-- source: backend/src/redis/bullmq-client.ts -->
+<!-- source: backend/src/llm/middleware.ts -->
+<!-- source: infra/modules/serving/main.tf -->
+<!-- source: .github/workflows/deploy.yml -->
+<!-- source: docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md -->
+<!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
+<!-- source: docs/specs/2026-04-10-infrastructure-devops.md -->
+<!-- source-hash: sha256:e5cfb57bfed23e664024506b8fc63394713a8bf817425f5b953a41e46d6e2ff0 -->
+<!-- last-ticket: MYT-49 -->
+
+<h1>Worker</h1>
+
+<p class="lead">
+  The async-execution half of the backend. A second ECS Fargate service running
+  <code>node dist/worker.js</code> with two BullMQ Workers — <code>world-gen</code> (concurrency 3)
+  and <code>campaign-setup</code> (concurrency 5) — both consuming from <code>redisBatch</code>.
+  Phase 0 ships stub processors that log job receipt and mark complete; the prep-stage logic lands
+  in MYT-51 onward. The shape locks in now so adding a real stage is a coverage edit, not a
+  service-topology change.
+</p>
+
+<!-- @diagram: runtime/worker -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The prep pipeline is long-running by nature: an Opus call inside the world-generation stage holds
+  a streaming HTTP connection open for tens of seconds, and a single campaign-setup run chains
+  multiple such calls. Running those calls inside the API service would tie up event-loop time the
+  HTTP and WebSocket handlers need, and an OOM in a stage would kill in-flight player requests. The
+  worker is the other side of that split: a separate service, on a separate ECS task, scaling
+  independently from queue depth, with its own failure blast radius.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Separate service, not a sidecar</strong> — packing the worker into the API container would
+  couple their resource limits (CPU, memory, file descriptors) and their deploy lifecycles. An
+  Opus-heavy worker run that approached the task's memory ceiling would page-trap the API threads.
+  Independent ECS services means the worker can be sized for batch (more memory, fewer vCPU) while
+  the API stays sized for steady-state HTTP.
+</aside>
+
+<p>
+  The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
+  <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
+  data plane, and then registers two BullMQ <code>Worker</code> instances against
+  <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3) and
+  <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5). Queue names and
+  concurrency caps live in <code>backend/src/worker/bullmq-config.ts</code> — the single source of
+  truth so the API-side <code>Queue</code> producers and the worker-side <code>Worker</code>
+  consumers can't drift.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two queues, not one</strong> — world-generation and campaign-setup have different
+  cost-per-job, different SLAs (interactive vs. batch), and different retry semantics. Putting them
+  on one queue would mean a slow world-gen run could starve a quick campaign-setup of worker slots.
+  Two queues with independent concurrency caps lets each stage be tuned in isolation.
+</aside>
+
+<p>
+  Boot is sequential and fail-fast.
+  <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis client configured for
+  BullMQ; immediately <code>ping()</code>'d so a misconfigured URL surfaces at startup rather than
+  first-job time. <code>createRedisClient(env.redisRealtimeUrl)</code> opens the second Redis (the
+  realtime side, reserved for <code>PUBLISH</code> from MYT-52's streaming entity events; unused at
+  Phase 0). <code>createPgPool(env.databaseUrl, { max: 4 })</code> with
+  <code>SELECT 1</code> follows. Only once every dependency is up does
+  <code>startHealthServer</code> bind Fastify on <code>127.0.0.1:3001</code> — the order matters
+  because that bind is what flips the task from starting to healthy at the ECS level.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A second ioredis factory for BullMQ</strong> — BullMQ requires
+  <code>maxRetriesPerRequest: null</code> on its Redis client (blocking commands depend on unlimited
+  retries). The general <code>createRedisClient</code> sets it to 1 for fast-fail in the request
+  path. A separate <code>createBullmqRedisClient</code> factory at
+  <code>backend/src/redis/bullmq-client.ts</code> keeps that requirement explicit at the call site
+  instead of hiding it behind a config flag — when a future contributor wires another Redis-backed
+  background system, the factory name signals which one to pick.
+</aside>
+
+<h2>The health endpoint</h2>
+
+<p>
+  <code>GET http://127.0.0.1:3001/health</code> probes the four moving parts: the pg pool (<code
+    >SELECT 1</code
+  >), <code>redisBatch.ping()</code>, <code>redisRealtime.ping()</code>, and each registered
+  <code>Worker</code>'s <code>isRunning()</code> state. Each probe is given a 1-second timeout via
+  <code>Promise.race</code>. A 200 response means all probes passed; a 503 response carries a
+  <code>failed[]</code> array of probe names so operators can see at a glance which dependency
+  tripped. The endpoint binds <code>127.0.0.1</code> only — it's task-internal, consumed by the ECS
+  container <code>healthCheck</code> block in <code>infra/modules/serving/main.tf</code>, which
+  curls it every 30 seconds.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Probe the workers, not just the connections</strong> — a healthy Redis client paired with
+  a wedged BullMQ Worker (Node-side state machine stuck on a crashed job) would otherwise pass an
+  "are sockets open" probe and silently miss jobs. <code>isRunning()</code> is the actual liveness
+  signal the ECS-level circuit breaker needs.
+</aside>
+
+<h2>Graceful shutdown</h2>
+
+<p>
+  ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
+  <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
+  new probes from going green during teardown), then runs <code>worker.close()</code> on both BullMQ
+  Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
+  force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
+  <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
+  After both close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish out,
+  then <code>process.exit(0)</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>100s graceful close under a 120s stopTimeout</strong> — the 20-second remainder is the
+  budget for pg + Redis cleanup plus any final log flushes. If a job legitimately takes longer than
+  100 seconds it's a misshaped job, not a shutdown problem; the stall recovery path is the right
+  tool, not a longer grace.
+</aside>
+
+<h2>The wrapStream middleware</h2>
+
+<p>
+  The worker is the first consumer of streaming LLM calls. The LLM layer's existing
+  <code>wrapGenerate</code> middleware logs and normalizes errors for one-shot calls; this issue
+  adds <code>wrapStream</code> with the same contract for the streaming side. Both live in
+  <code>backend/src/llm/middleware.ts</code> and the worker registers them when constructing its
+  model handles.
+</p>
+
+<p>
+  Streaming has six terminal states. The middleware logs exactly one line per call, governed by a
+  <code>terminated</code> closure flag so an in-stream <code>error</code> chunk followed by stream
+  close doesn't double-log:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Terminal state</th>
+      <th>Trigger</th>
+      <th>Log line</th>
+      <th>Caller behavior</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Success</td>
+      <td><code>type === 'finish'</code></td>
+      <td><code>event: 'llm.call'</code></td>
+      <td>Stream closes</td>
+    </tr>
+    <tr>
+      <td>Provider-graceful error</td>
+      <td><code>finishReason === 'error'</code></td>
+      <td><code>event: 'llm.call'</code></td>
+      <td>Stream closes</td>
+    </tr>
+    <tr>
+      <td>In-stream error part</td>
+      <td><code>type === 'error'</code></td>
+      <td><code>event: 'llm.error'</code></td>
+      <td><code>controller.error(mapToMythrunError(part.error))</code></td>
+    </tr>
+    <tr>
+      <td>Truncation</td>
+      <td>Stream closes without finish or error</td>
+      <td><code>event: 'llm.error'</code>, <code>reason: 'truncated'</code></td>
+      <td><code>controller.error(LlmStructuredOutputError)</code></td>
+    </tr>
+    <tr>
+      <td>Cancellation</td>
+      <td>Stream's <code>cancel()</code> handler fires</td>
+      <td><code>event: 'llm.error'</code>, <code>reason: 'cancelled'</code></td>
+      <td>(no rethrow)</td>
+    </tr>
+    <tr>
+      <td>Open-time error</td>
+      <td><code>doStream()</code> throws</td>
+      <td><code>event: 'llm.error'</code></td>
+      <td><code>wrapStream</code> throws the mapped error</td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Truncation is treated as a typed error, not a quiet close</strong> — a stream that closes
+  without a <code>finish</code> part means the model output didn't satisfy the structured schema.
+  The caller needs a typed signal (<code>LlmStructuredOutputError</code>) it can branch on for
+  retry, not an ambiguous "stream ended."
+</aside>
+
+<p>
+  Callers attribute cost by passing
+  <code>providerOptions.mythrun = { worldId, campaignId?, userId?, stage }</code> on the call; the
+  middleware threads those into the log line so the cost-attribution path from MYT-43 can join
+  against <code>pipeline_runs</code>. Mythrun-typed errors propagate to the caller in every failure
+  case — parity with <code>wrapGenerate</code> is the explicit contract.
+</p>
+
+<h2>The deploy mechanism</h2>
+
+<p>
+  The worker service is provisioned in Terraform with <code>desired_count = 0</code> and
+  <code>lifecycle.ignore_changes = [desired_count, task_definition]</code> — Terraform creates the
+  service and the initial task-def revision, but CI owns both the running count and revision pinning
+  thereafter. The pattern matches the API service (see <a href="../infra/serving.html">Serving</a>)
+  so both deploy through the same shape.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>TF registers, CI deploys</strong> — Terraform pins task-def images to
+  <code>:placeholder</code>; the GitHub Actions deploy job swaps in the real ECR digest at
+  push-to-main time. After a TF env-var or secret change the right move is
+  <code>gh workflow run Deploy</code>, never force-rollover onto the TF-owned revision.
+</aside>
+
+<p>
+  The <code>deploy-staging-worker</code> job in <code>.github/workflows/deploy.yml</code> is a
+  parallel peer of <code>deploy-staging</code> with its own concurrency group. On every push to
+  <code>main</code> it fetches the current task definition, renders it with the new image via
+  <code>aws-actions/amazon-ecs-render-task-definition</code>, deploys via
+  <code>aws-actions/amazon-ecs-deploy-task-definition</code> with
+  <code>wait-for-service-stability: true</code>, then flips <code>desired_count</code> to 1 (a no-op
+  after the first deploy), then polls <code>rolloutState</code> for two minutes to catch a
+  circuit-breaker rollback the action's wait wouldn't otherwise surface.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="bring-up-the-worker-locally">Bring up the worker locally</h3>
+<ol>
+  <li>
+    Bring up the local data plane and backend: <code>pnpm db:up</code>, then
+    <code>pnpm dev</code> in one terminal (see <a href="./index.html">backend</a>).
+  </li>
+  <li>
+    In a second terminal: <code>pnpm --filter @mythrun/backend dev:worker</code>. The process binds
+    <code>:3001</code> for <code>/health</code> and logs <code>event: 'worker.started'</code> with
+    the queue names.
+  </li>
+  <li>
+    Curl <code>http://127.0.0.1:3001/health</code>. A 200 with <code>{ "status": "ok" }</code> means
+    pg + both Redises + both BullMQ workers are healthy.
+  </li>
+</ol>
+
+<h3 id="deploy-the-worker-to-staging">Deploy the worker to staging</h3>
+<ol>
+  <li>
+    Push to <code>main</code>. The <code>deploy-staging-worker</code> job in
+    <code>.github/workflows/deploy.yml</code> fires alongside <code>deploy-staging</code>.
+  </li>
+  <li>
+    The job builds + pushes the image to ECR, renders the new task definition, deploys with
+    <code>wait-for-service-stability</code>, flips <code>desired_count = 1</code>, and polls
+    <code>rolloutState</code> for two minutes.
+  </li>
+  <li>
+    On a circuit-breaker rollback (<code>rolloutState != COMPLETED</code> at the two-minute mark),
+    the job fails red. Inspect the ECS service events tab and the most recent task's CloudWatch log
+    group to diagnose.
+  </li>
+</ol>
+
+<h3 id="roll-after-a-tf-env-or-secret-change">Roll the worker after a TF env or secret change</h3>
+<ol>
+  <li>
+    Apply the Terraform change. Confirm the new task-def revision was registered (revision number
+    bumps; image stays pinned to <code>:placeholder</code>).
+  </li>
+  <li>
+    <code>gh workflow run Deploy</code> from the repo root, targeting <code>main</code>. Do
+    <strong>not</strong> manually force-rollover the service onto the TF revision — the image is a
+    placeholder. The Deploy run renders the real image digest onto the new revision.
+  </li>
+  <li>
+    Confirm the new revision shows up in <code>aws ecs describe-services</code> and the worker pod's
+    logs reflect the new config.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The worker shares the <a href="./index.html">backend</a> codebase, the
+  <a href="../data/repository.html">repository layer</a>, and the
+  <a href="./llm.html">LLM client</a> with the API. Its task definition and service are provisioned
+  by the <a href="../infra/serving.html">serving</a> module alongside the API service. Job names
+  live in <code>backend/src/contract/pipeline-jobs.ts</code> — the same contract file the
+  <a href="./dev-tool.html">dev tool</a>'s ship gate enforces coverage against. Streaming-cost
+  attribution joins to the <code>pipeline_runs</code> table introduced in MYT-43.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>Worker source files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>backend/src/worker.ts</code></td>
+      <td>Process entrypoint. Boots clients, registers Workers, runs graceful shutdown.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/worker/bullmq-config.ts</code></td>
+      <td>
+        <code>QUEUE_WORLD_GEN</code>, <code>QUEUE_CAMPAIGN_SETUP</code>,
+        <code>CONCURRENCY_WORLD_GEN = 3</code>, <code>CONCURRENCY_CAMPAIGN_SETUP = 5</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/worker/stub-processor.ts</code></td>
+      <td>Phase 0 processor: logs job receipt and resolves. Replaced stage-by-stage in MYT-51+.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/worker/health-server.ts</code></td>
+      <td>
+        Fastify <code>/health</code> server on <code>127.0.0.1:3001</code>; probes pg + both Redises
+        + workers' <code>isRunning()</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/redis/bullmq-client.ts</code></td>
+      <td>
+        ioredis factory with <code>maxRetriesPerRequest: null</code> for BullMQ compatibility.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/middleware.ts</code></td>
+      <td>
+        <code>wrapGenerate</code> + <code>wrapStream</code> — logging and error normalization for
+        both call shapes.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Operational surface</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Surface</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Health endpoint</td>
+      <td><code>GET http://127.0.0.1:3001/health</code> (task-internal)</td>
+    </tr>
+    <tr>
+      <td>ECS <code>stopTimeout</code></td>
+      <td>120 seconds</td>
+    </tr>
+    <tr>
+      <td>Worker close deadline</td>
+      <td>100 seconds (per worker; force-close on miss leaves jobs stalled)</td>
+    </tr>
+    <tr>
+      <td>pg pool size</td>
+      <td>4 (vs. API's higher cap; tuned for the worker's parallelism)</td>
+    </tr>
+    <tr>
+      <td>Concurrency: <code>world-gen</code></td>
+      <td>3</td>
+    </tr>
+    <tr>
+      <td>Concurrency: <code>campaign-setup</code></td>
+      <td>5</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/worker.ts</code>, <code>backend/src/worker/</code>,
+  <code>backend/src/redis/bullmq-client.ts</code>, <code>backend/src/llm/middleware.ts</code>,
+  <code>infra/modules/serving/main.tf</code>, <code>.github/workflows/deploy.yml</code>. Design
+  spec: <code>docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md</code>; parent specs:
+  <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> and
+  <code>docs/specs/2026-04-10-infrastructure-devops.md</code>.
+</p>
