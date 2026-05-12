@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pipeline status · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="pipeline-status">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/pipeline-status.html" class="active">Pipeline status</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Pipeline status</div>
+        <article>
+<h1>Pipeline status</h1>
+
+<p class="lead">
+  The campaign-scoped status surface — a JSON snapshot endpoint plus an SSE stream — that lets
+  clients watch a campaign's world-gen and character-creation pipeline progress in real time. One
+  Redis channel per campaign, one dedicated PSUBSCRIBE'd ioredis client per API process, and an
+  in-memory fan-out from there to every attached SSE sink.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1303pt" height="580pt"
+ viewBox="14.00 14.00 1289.00 566.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 561.84)">
+<title>pipeline_status</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-547.44 1270.4,-547.44 1270.4,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_redis</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="285.71,-444.44 285.71,-535.44 526.15,-535.44 526.15,-444.44 285.71,-444.44"/>
+<text xml:space="preserve" text-anchor="middle" x="405.93" y="-521.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (deps.redisRealtime cluster)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_api</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="287.27,-184.44 287.27,-444.44 1258.4,-444.44 1258.4,-184.44 287.27,-184.44"/>
+<text xml:space="preserve" text-anchor="middle" x="772.84" y="-430.54" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_repo</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="712.07,-85.44 712.07,-176.44 921.98,-176.44 921.98,-85.44 712.07,-85.44"/>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-162.54" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+</g>
+<!-- worker -->
+<g id="node1" class="node">
+<title>worker</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="163.7,-501.28 0,-501.28 0,-457.6 163.7,-457.6 163.7,-501.28"/>
+<text xml:space="preserve" text-anchor="middle" x="81.85" y="-482.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">worker (MYT&#45;49/&#45;51+)</text>
+<text xml:space="preserve" text-anchor="middle" x="81.85" y="-469.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PUBLISH after COMMIT</text>
+</g>
+<!-- channel -->
+<g id="node2" class="node">
+<title>channel</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="520.29,-514.38 290.58,-514.38 290.58,-444.5 520.29,-444.5 520.29,-514.38"/>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-495.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-482.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline:campaign:{campaignId}</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-456.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one channel per campaign</text>
+</g>
+<!-- worker&#45;&gt;channel -->
+<g id="edge1" class="edge">
+<title>worker&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M164.41,-479.44C199.79,-479.44 241.99,-479.44 281.07,-479.44"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="281.06,-481.89 288.06,-479.44 281.06,-476.99 281.06,-481.89"/>
+<text xml:space="preserve" text-anchor="middle" x="224.71" y="-482.44" font-family="Courier,monospace" font-size="10.00">JSON payload</text>
+</g>
+<!-- subscriber -->
+<g id="node3" class="node">
+<title>subscriber</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="931.88,-423.08 702.17,-423.08 702.17,-339.8 931.88,-339.8 931.88,-423.08"/>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-404.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline&#45;subscriber.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-391.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.duplicate({retryStrategy,</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-378.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> maxRetriesPerRequest:null})</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-364.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PSUBSCRIBE pipeline:campaign:*</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-351.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Map&lt;campaignId, Set&lt;SseSink&gt;&gt;</text>
+</g>
+<!-- channel&#45;&gt;subscriber -->
+<g id="edge2" class="edge">
+<title>channel&#45;&gt;subscriber</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M520.8,-452.08C574.49,-439.23 638.56,-423.9 693.27,-410.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="693.62,-413.25 699.86,-409.23 692.48,-408.48 693.62,-413.25"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-445.1" font-family="Courier,monospace" font-size="10.00">pmessage</text>
+</g>
+<!-- sse -->
+<g id="node6" class="node">
+<title>sse</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1258.4,-268.08 1107.9,-268.08 1107.9,-184.8 1258.4,-184.8 1258.4,-268.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-249.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sse&#45;connection.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-236.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reply.hijack()</text>
+<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-223.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">keepalive 25s</text>
+<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-209.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">idle&#45;timeout 30min</text>
+<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-196.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">close&#45;reason enum</text>
+</g>
+<!-- subscriber&#45;&gt;sse -->
+<g id="edge3" class="edge">
+<title>subscriber&#45;&gt;sse</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M917.53,-339.09C974.62,-314.78 1045.47,-284.62 1099.48,-261.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1100.17,-264 1105.65,-259 1098.25,-259.49 1100.17,-264"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.89" y="-320.82" font-family="Courier,monospace" font-size="10.00">sink.write(frame)</text>
+</g>
+<!-- snapshot -->
+<g id="node4" class="node">
+<title>snapshot</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="500.48,-268.08 310.38,-268.08 310.38,-184.8 500.48,-184.8 500.48,-268.08"/>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-249.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-236.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/campaigns/</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-223.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;:campaignId/status</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-209.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">derivePhase(</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-196.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;campaign, world, runs)</text>
+</g>
+<!-- runs -->
+<g id="node8" class="node">
+<title>runs</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="921.98,-155.48 712.07,-155.48 712.07,-85.4 921.98,-85.4 921.98,-155.48"/>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-136.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline_runs</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-123.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">latest per (stage, user_id)</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-110.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">WHERE campaign_id = $1</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-97.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;OR world_id = ...</text>
+</g>
+<!-- snapshot&#45;&gt;runs -->
+<g id="edge6" class="edge">
+<title>snapshot&#45;&gt;runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M447.76,-184.15C474.63,-159.79 511.88,-131.48 551.15,-118.44 599.22,-102.48 654.95,-100.62 702.86,-103.69"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="702.43,-106.11 709.59,-104.16 702.78,-101.23 702.43,-106.11"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-121.44" font-family="Courier,monospace" font-size="10.00">listLatestForCampaign</text>
+</g>
+<!-- client -->
+<g id="node9" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="892.28,-56.88 741.78,-56.88 741.78,0 892.28,0 892.28,-56.88"/>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">EventSource client</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev tool today;</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> SPA after MYT&#45;51)</text>
+</g>
+<!-- snapshot&#45;&gt;client -->
+<g id="edge7" class="edge">
+<title>snapshot&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M437.91,-184.08C464.46,-151.48 505.39,-107.97 551.15,-83.44 607.24,-53.37 678.16,-39.73 732.5,-33.54"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="732.57,-36 739.27,-32.81 732.04,-31.13 732.57,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-86.44" font-family="Courier,monospace" font-size="10.00">200 JSON</text>
+</g>
+<!-- stream -->
+<g id="node5" class="node">
+<title>stream</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="523.59,-367.48 287.27,-367.48 287.27,-297.4 523.59,-297.4 523.59,-367.48"/>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-348.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-335.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/campaigns/</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-322.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;:campaignId/status/stream</text>
+<text xml:space="preserve" text-anchor="middle" x="405.43" y="-309.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">attach → snapshot → forward</text>
+</g>
+<!-- stream&#45;&gt;subscriber -->
+<g id="edge9" class="edge">
+<title>stream&#45;&gt;subscriber</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M524.08,-346.51C577.03,-352.85 639.53,-360.33 693.09,-366.73"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="692.57,-369.14 699.81,-367.54 693.15,-364.27 692.57,-369.14"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-367.19" font-family="Courier,monospace" font-size="10.00">attach()</text>
+</g>
+<!-- stream&#45;&gt;sse -->
+<g id="edge11" class="edge">
+<title>stream&#45;&gt;sse</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M496.56,-296.65C567.92,-269.04 662.04,-234.4 702.17,-227.44 839.65,-203.61 1002.64,-210.53 1098.94,-218.16"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1098.49,-220.58 1105.66,-218.71 1098.89,-215.7 1098.49,-220.58"/>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-230.44" font-family="Courier,monospace" font-size="10.00">snapshot frame</text>
+</g>
+<!-- counter -->
+<g id="node7" class="node">
+<title>counter</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="905.48,-310.88 728.57,-310.88 728.57,-254 905.48,-254 905.48,-310.88"/>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-292.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connection&#45;counter.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-279.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sse.connections.active</text>
+<text xml:space="preserve" text-anchor="middle" x="817.03" y="-265.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">every 60s</text>
+</g>
+<!-- stream&#45;&gt;counter -->
+<g id="edge12" class="edge">
+<title>stream&#45;&gt;counter</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M524.08,-318.08C586.03,-310.52 661.07,-301.36 719.55,-294.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="719.6,-296.68 726.25,-293.4 719.01,-291.82 719.6,-296.68"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-316.39" font-family="Courier,monospace" font-size="10.00">increment / decrement</text>
+</g>
+<!-- stream&#45;&gt;runs -->
+<g id="edge10" class="edge">
+<title>stream&#45;&gt;runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M509.38,-296.85C515.46,-292.56 521.13,-287.77 526.15,-282.44 549.36,-257.76 526.11,-233.25 551.15,-210.44 593.79,-171.59 622.45,-197.67 677.17,-179.44 694.52,-173.66 712.73,-166.65 730.05,-159.5"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="730.74,-161.87 736.25,-156.91 728.85,-157.35 730.74,-161.87"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-213.44" font-family="Courier,monospace" font-size="10.00">listLatestForCampaign</text>
+</g>
+<!-- sse&#45;&gt;client -->
+<g id="edge4" class="edge">
+<title>sse&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1115.67,-184.16C1065.94,-153.26 995.77,-111.21 931.88,-78.44 920.38,-72.54 908.03,-66.66 895.85,-61.12"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="896.94,-58.92 889.55,-58.28 894.92,-63.39 896.94,-58.92"/>
+<text xml:space="preserve" text-anchor="middle" x="1019.89" y="-166.6" font-family="Courier,monospace" font-size="10.00">event: ...\ndata: ...</text>
+</g>
+<!-- client&#45;&gt;snapshot -->
+<g id="edge5" class="edge">
+<title>client&#45;&gt;snapshot</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M741.28,-10.18C685.77,-0.67 609.82,3.52 551.15,-26.44 490.05,-57.65 448.77,-128.04 426.42,-176.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="424.27,-175.22 423.61,-182.6 428.73,-177.24 424.27,-175.22"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-29.44" font-family="Courier,monospace" font-size="10.00">GET /status</text>
+</g>
+<!-- client&#45;&gt;stream -->
+<g id="edge8" class="edge">
+<title>client&#45;&gt;stream</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M741.27,-51.87C727.08,-58.79 713.23,-67.52 702.17,-78.44 683.06,-97.3 697.83,-116.29 677.17,-133.44 632.78,-170.27 591.27,-123 551.15,-164.44 513.86,-202.96 560.36,-241.16 526.15,-282.44 523.55,-285.58 520.71,-288.53 517.69,-291.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="516.42,-289.16 512.64,-295.54 519.58,-292.91 516.42,-289.16"/>
+<text xml:space="preserve" text-anchor="middle" x="614.16" y="-167.44" font-family="Courier,monospace" font-size="10.00">GET /status/stream</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Two endpoints under <code>/api/campaigns/:campaignId/*</code> are the consumption surface:
+  <code>GET .../status</code> is a one-shot read and <code>GET .../status/stream</code> is the
+  long-lived SSE attachment. Both compute the same shape — a phase, a stages list, and the
+  cumulative pipeline cost — from the same three sources: the campaign row, its world row, and the
+  latest <code>pipeline_runs</code> entry per <code>(stage, user_id)</code> tuple. The stream
+  variant delivers that shape as its first frame and then forwards live worker events for the rest
+  of the connection.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Snapshot is the first SSE frame, not a separate fetch</strong> — a naive client that
+  fetches <code>GET /status</code> and then opens <code>GET /status/stream</code> has a
+  50–200&nbsp;ms window where worker events published between the two calls are lost. Sending the
+  snapshot inside the SSE handler (after subscriber attachment but before live forwarding) closes
+  that race. The standalone <code>GET /status</code> remains for callers that want a point-in-time
+  read without holding a connection open.
+</aside>
+
+<p>
+  MYT-50 lands only the consumption side. The worker (MYT-49 shell, MYT-51+ real processors) is what
+  publishes events to Redis; this page documents how those events reach attached clients. The
+  contract files <code>backend/src/contract/pipeline-routes.ts</code> and
+  <code>pipeline-events.ts</code> declare the surface — two routes today, eleven event types (six
+  lifecycle events landed now, five entity events that arrive verbatim from the worker but render
+  later in MYT-52). The bridge itself is type-blind: every JSON payload published on a campaign
+  channel is forwarded to attached sinks unchanged.
+</p>
+
+<h2 id="the-two-endpoints">The two endpoints</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method &amp; path</th>
+      <th>Auth</th>
+      <th>Rate limit</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/status</code></td>
+      <td><code>requireCampaignMember</code> via the standard onboarded + access-control chain</td>
+      <td><strong>60 / min per IP</strong></td>
+      <td>
+        <code>200 { phase, stages[], cumulativeCostUsd }</code>;
+        <code>404 { code: 'campaign_not_found' }</code> when the campaign or its world is gone.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/status/stream</code></td>
+      <td>Same — same membership semantics, same chain</td>
+      <td>
+        <strong>10 / min per USER</strong> (<code>keyGenerator</code> reads
+        <code>requireDbUser(req).id</code>; falls back to <code>req.ip</code> if the chain didn't
+        attach <code>dbUser</code>)
+      </td>
+      <td>
+        <code>text/event-stream</code>. First frame:
+        <code>event: snapshot\ndata: {...}\n\n</code> (same shape as the snapshot endpoint).
+        Subsequent frames: JSON-discriminated-union event payloads on the default
+        <code>message</code> channel; periodic <code>:keepalive\n\n</code> comments; a terminal
+        <code>event: close\ndata: { reason }\n\n</code> before the response ends.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Per-user rate-limit on the stream, per-IP on the snapshot</strong> —
+  <code>EventSource</code> auto-reconnects (~3&nbsp;s) on every close. A user on a flaky network or
+  watching two campaigns at once burns through a per-IP 10/min cap and locks themselves out of the
+  surface they need to see their pipeline progress. The threat model — "burst-open many connections
+  to leak resources" — is per-user, not per-IP, and matches the
+  <a href="../auth-billing/access-control-ws-ticket.html">ws-ticket</a> route's existing precedent.
+  The snapshot stays per-IP because cheap polling is the abuse shape there.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Route param is <code>:campaignId</code>, not <code>:id</code></strong> —
+  <code>requireCampaignMember</code> reads <code>request.params.campaignId</code> directly (matching
+  the established <code>sessions.ts</code> ws-ticket convention). Using <code>:id</code> would 500
+  every request because the auth pre-handler couldn't resolve the param. The parent spec text says
+  <code>:id</code> in §9; this implementation standardises on <code>:campaignId</code> for every
+  campaign-scoped route going forward.
+</aside>
+
+<h2 id="the-pub-sub-channel">The pub/sub channel</h2>
+
+<p>
+  Channel naming is <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code>. Concrete example:
+  <code>staging:use1:pipeline:campaign:01HABC...</code>. The prefix is the
+  <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code> envelope every Redis-keyed subsystem prepends — see
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a> for the
+  cross-cutting story. Staging and production share one ElastiCache cluster, so the prefix is what
+  scopes channels by env; PSUBSCRIBE's pattern is <code>{redisKeyPrefix}pipeline:campaign:*</code>.
+</p>
+
+<p>
+  The channel is one-per-campaign, not one-per-stream-or-user. The worker publishes a single JSON
+  payload per event after the corresponding <code>pipeline_runs</code> write COMMITs; the API's
+  in-memory map fans that out to every SSE sink attached to the campaign. Campaign-id extraction in
+  the <code>pmessage</code> handler is a suffix slice —
+  <code>channel.slice(channelPrefix.length)</code> — not a split on <code>':'</code>, because the
+  prefix itself contains colons while UUIDv7 campaign IDs do not.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One channel per campaign, not one per (campaign × user × stage)</strong> — a multi-axis
+  channel scheme would let the API filter at the Redis layer, but at our cardinality (single-digit
+  subscribers per campaign, low-tens of campaigns per task) the PSUBSCRIBE fan-out costs less than
+  re-implementing routing in application code. If the wasted-message ratio documented below ever
+  crosses ~50% sustained, swap PSUBSCRIBE for per-channel SUBSCRIBE/UNSUBSCRIBE on attach/detach
+  behind the existing <code>PipelineSubscriber</code> interface. Trivially swappable.
+</aside>
+
+<h2 id="phase-derivation">Phase derivation</h2>
+
+<p>
+  <code>derivePhase</code> is a pure function in <code>backend/src/sse/derive-phase.ts</code>. It
+  takes <code>{ campaign, world, runs }</code> and returns one of eight phase strings plus the
+  ordered stages list and the cumulative cost. The route handler and (eventually) the worker's
+  on-transition <code>phase</code> event share this one function as the source of truth for what
+  state a campaign is in.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Phase</th>
+      <th>Condition</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>complete</code></td>
+      <td><code>campaigns.status = 'active'</code>. Overrides every other check.</td>
+    </tr>
+    <tr>
+      <td><code>not_started</code></td>
+      <td>No <code>pipeline_runs</code> rows at all for the campaign or its world.</td>
+    </tr>
+    <tr>
+      <td><code>world_gen</code></td>
+      <td>Any worldgen stage is <code>running</code> or <code>pending</code>.</td>
+    </tr>
+    <tr>
+      <td><code>world_gen_failed</code></td>
+      <td>
+        <code>worlds.status = 'failed'</code>, or any worldgen stage has a
+        <code>failed</code> latest attempt with no later-stage progress.
+      </td>
+    </tr>
+    <tr>
+      <td><code>post_creation</code></td>
+      <td>
+        Any post-creation stage (<code>materialize_relationships</code>,
+        <code>continuity_check</code>) is <code>running</code> or <code>pending</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>character_creation</code></td>
+      <td>Any character-creation stage is <code>running</code> or <code>pending</code>.</td>
+    </tr>
+    <tr>
+      <td><code>failed</code></td>
+      <td>
+        Any character-creation or post-creation stage failed (post-worldgen failure; unrecoverable
+        for now).
+      </td>
+    </tr>
+    <tr>
+      <td><code>world_ready</code></td>
+      <td>
+        <code>worlds.status = 'complete'</code> and no later-stage activity. The
+        "waiting-for-players" state.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  The query that feeds <code>derivePhase</code> is <code>listLatestForCampaign</code> in
+  <code>backend/src/repo/pipeline-runs.ts</code>. It unions rows keyed by
+  <code>campaign_id</code> with rows keyed by the campaign's <code>world_id</code> (worldgen runs
+  attach to the world; character-creation and post-creation runs attach to the campaign), then
+  <code>DISTINCT ON (stage, user_id)</code> picks the most recent attempt per slot. A stage that was
+  <code>failed</code> then retried to <code>completed</code> reports as <code>completed</code>; the
+  previous failure isn't surfaced. <code>cost_usd</code> is <code>NUMERIC(10,6)</code> in the
+  schema, which <code>pg</code> returns as a string by default; the query casts it
+  <code>::float8</code> locally so the column lands in JS as <code>number</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Latest-attempt wins, not run-history</strong> — clients want "where is the pipeline now,"
+  not "what happened in the past." History lives on the rows themselves; the snapshot is a
+  present-tense projection. Surfacing every retry in the snapshot would make the dev tool unreadable
+  on any campaign that exercised the worker's retry path.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Cumulative cost is DB-canonical</strong> — both the snapshot and the worker's
+  <code>cost-update</code> event sum or report the same <code>pipeline_runs.cost_usd</code> column.
+  The worker only publishes <code>cost-update</code> after the row COMMITs, so out-of-order arrival
+  between snapshot and stream events is impossible within a single connection. Both surfaces report
+  ABSOLUTE values, not deltas.
+</aside>
+
+<h2 id="sse-plumbing">SSE plumbing</h2>
+
+<p>
+  <code>backend/src/sse/sse-connection.ts</code> wraps a Fastify <code>Reply</code> into an
+  <code>SseSink</code> with two methods: <code>write(frame): boolean</code> and
+  <code>close(reason)</code>. The first thing it does is <code>reply.hijack()</code> so Fastify
+  stops trying to manage the response — no <code>Content-Length</code>, no <code>onSend</code>/<code
+    >onResponse</code
+  >
+  hooks fire, the response lifecycle belongs to the sink from here on. Then it writes the SSE
+  headers directly: <code>Content-Type: text/event-stream</code>,
+  <code>Cache-Control: no-cache, no-transform</code>, <code>X-Accel-Buffering: no</code>. There is
+  no <code>Connection: keep-alive</code> header — that's HTTP/1.1-specific and forbidden under
+  HTTP/2, which the ALB terminates.
+</p>
+
+<p>
+  The sink arms two timers. A 25-second keepalive writes <code>:keepalive\n\n</code> (a comment
+  frame the client ignores) and re-arms itself on a <code>setTimeout</code> rather than a
+  <code>setInterval</code> — every real event-write resets the keepalive too, so a busy stream
+  doesn't pay for useless ticks. A 30-minute idle timeout fires when no real event has been written
+  for that long and closes the sink with <code>reason: 'idle-timeout'</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>25-second keepalive, 30-minute idle close</strong> — the ALB's idle timeout is
+  3600&nbsp;s, but corporate VPNs and dev-loop proxies can be tighter. Six bytes every 25&nbsp;s
+  pre-empts every intermediate-proxy idle drop we'd otherwise see. The 30-minute server-side idle
+  close is the recovery path for genuinely abandoned connections; clients reconnect via a fresh
+  <code>/status/stream</code> and pick up where they left off via the snapshot frame.
+</aside>
+
+<p>
+  Close emits a structured terminal frame:
+  <code>event: close\ndata: { "reason": "&lt;reason&gt;" }\n\n</code>. The reason is one of:
+</p>
+
+<ul>
+  <li>
+    <code>idle-timeout</code> — 30 minutes with no event written. The campaign is quiet; the client
+    is welcome to reconnect.
+  </li>
+  <li>
+    <code>server-shutdown</code> — the API task is draining (SIGTERM from ECS). Clients should
+    reconnect and the ALB will route them to a surviving task.
+  </li>
+  <li>
+    <code>redis-resync-required</code> — the dedicated subscriber reconnected to Redis after a blip.
+    Attached sinks may have missed messages in the gap; the safe move is to close them and let
+    clients re-fetch via a fresh stream (whose first frame is a fresh snapshot).
+  </li>
+  <li>
+    <code>rate-limited</code> — reserved for future per-event rate-limit eviction; not emitted by
+    MYT-50.
+  </li>
+  <li>
+    <code>back-pressure</code> — the underlying <code>reply.raw.write()</code> returned
+    <code>false</code> and the <code>'drain'</code> event didn't fire within 5&nbsp;seconds. Slow
+    client; drop-and-let-them-reconnect is the recoverable path.
+  </li>
+  <li><code>unknown</code> — the upstream socket closed or a write threw. Catch-all.</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Close-reason enum, not a free-form message</strong> — ops needs to distinguish "campaign
+  is quiet" from "task scaled-in" from "Redis blipped" from "slow client dropped." A small typed
+  enum gives the dev tool and (eventually) the SPA a structured signal to drive auto-reconnect
+  decisions and gives operators a discriminator for log queries. Six values cover the lifecycle
+  comprehensively.
+</aside>
+
+<p>
+  Back-pressure handling protects the 768&nbsp;MB Fargate heap. <code>raw.write()</code> returns
+  <code>false</code> when the kernel send buffer is full; the sink arms a 5-second timer and waits
+  for the <code>'drain'</code> event. If drain fires, the timer clears. If it doesn't, the sink
+  closes with <code>back-pressure</code> and detaches. Once MYT-52's entity-event flood ships, a
+  slow client on a busy campaign without this gate would buffer megabytes per second; the gate
+  bounds exposure at one in-flight write plus the drain window.
+</p>
+
+<p>
+  Cleanup listens on BOTH <code>request.raw 'close'</code> AND <code>reply.raw 'close'</code> —
+  Fastify 5 + Node 22 emit on either depending on which end of the socket closes first. The close
+  path is idempotent (a <code>closed</code> flag short-circuits repeat calls), so wiring both is
+  safe.
+</p>
+
+<h2 id="the-dedicated-subscriber-client">The dedicated subscriber client</h2>
+
+<p>
+  <code>backend/src/sse/pipeline-subscriber.ts</code> owns the one Redis subscriber per API process.
+  Critically, it does NOT use <code>deps.redisRealtime</code> directly. Instead it calls
+  <code
+    >redis.duplicate({ retryStrategy, maxRetriesPerRequest: null, enableOfflineQueue: true })</code
+  >
+  to create a sibling ioredis client with the same URL/AUTH/TLS but a different retry policy.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Dedicated client, not a shared one</strong> — once an ioredis client issues SUBSCRIBE or
+  PSUBSCRIBE it enters subscriber mode and rejects nearly every other command. The shared
+  <code>deps.redisRealtime</code> is in command mode and serves the
+  <a href="../auth-billing/access-control-ws-ticket.html">ws-ticket store</a>, the
+  <code>@fastify/rate-limit</code> backing store, and (forthcoming) the live-session metering
+  surface. Reusing it for PSUBSCRIBE would silently break rate-limit and ws-ticket on every task
+  with a single SSE connection attached — a credentialless DoS shape. The dedicated client makes the
+  mode boundary explicit at the type and lifecycle level.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Override the retry policy on the dedicated client</strong> — the base factory at
+  <code>redis/client.ts</code> disables retries (<code>retryStrategy: () =&gt; null</code>) because
+  the boot probe wants fail-loud semantics. The subscriber is long-lived and needs the opposite: an
+  exponential backoff up to 30&nbsp;s with no per-request retry cap (<code
+    >maxRetriesPerRequest: null</code
+  >
+  is required for pub/sub clients in ioredis). The <code>.duplicate(...)</code> call threads the
+  override-specific options through.
+</aside>
+
+<p>
+  The subscriber holds the channel-to-sinks map:
+  <code>Map&lt;campaignId, Set&lt;SseSink&gt;&gt;</code>. On <code>'pmessage'</code> it extracts the
+  campaign-id, looks up the set, and writes the JSON payload to every attached sink as a
+  <code>data: {...}\n\n</code> frame. Each <code>sink.write()</code> is wrapped in try/catch over a
+  snapshot of the set so one stale sink can't wedge iteration over the others; on throw, the sink is
+  closed with <code>unknown</code> and removed from the set.
+</p>
+
+<p>
+  Reconnection is the load-bearing operational behaviour. On the first <code>'ready'</code> event
+  (initial connect), nothing has been missed, so the subscriber just re-issues PSUBSCRIBE. On every
+  subsequent <code>'ready'</code> (post-disconnect), every attached sink gets a
+  <code>close('redis-resync-required')</code> push and the map clears — events published while the
+  client was disconnected may be lost, so the safe move is to evict and let clients reconnect via a
+  fresh stream whose snapshot frame is the resync mechanism. A <code>'pmessage'</code> arriving on a
+  channel with zero attached sinks increments a <code>wastedMessages</code> counter surfaced in the
+  60-second log.
+</p>
+
+<p>
+  <code>backend/src/sse/connection-counter.ts</code> is the observability seam. Every
+  60&nbsp;seconds it emits a single pino log line with <code>event: 'sse.connections.active'</code>,
+  the current count, the max-since-last-emission, the wasted-message count, and the ECS task
+  revision. The <code>setInterval</code> handle is <code>unref()</code>'d so the periodic log never
+  pins the event loop during shutdown.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="diagnose-a-stale-sse-connection">Diagnose a stale SSE connection</h3>
+<ol>
+  <li>
+    In the client, read the last frame on the EventSource — a structured close emits
+    <code>event: close\ndata: {"reason":"..."}\n\n</code> before the socket terminates. The dev
+    tool's status panel renders this as
+    <code>phase: (server closed — reason: &lt;reason&gt;)</code> in the phase row.
+  </li>
+  <li>
+    Cross-reference the reason against the enum: <code>idle-timeout</code> means the campaign was
+    quiet for 30&nbsp;min, <code>server-shutdown</code> means an ECS rolling deploy or scale-in,
+    <code>redis-resync-required</code> means a Redis blip, <code>back-pressure</code> means a slow
+    consumer.
+  </li>
+  <li>
+    In CloudWatch Logs Insights against the API task group, run the canonical query:
+    <code
+      >fields @timestamp, count, max_since_last, wasted_msgs, taskRevision | filter event =
+      'sse.connections.active' | stats sum(count) as fleet_total, max(max_since_last) as peak by
+      bin(1m)</code
+    >. A growing <code>fleet_total</code> with flat traffic suggests a connection-leak bug — sinks
+    aren't being detached on close.
+  </li>
+  <li>
+    For <code>back-pressure</code> closes specifically, search for the pino
+    <code>'sse write threw — closing connection'</code> line; the surrounding context names the
+    campaign and the underlying cause (kernel buffer full, socket reset, ECONNRESET).
+  </li>
+</ol>
+
+<h3 id="verify-the-subscriber-survived-a-redis-blip">
+  Verify the subscriber survived a Redis blip
+</h3>
+<ol>
+  <li>
+    A Redis blip emits the warn-level <code>'pipeline-subscriber reconnecting'</code> log line. In
+    Logs Insights:
+    <code>fields @timestamp, msg | filter msg like /pipeline-subscriber reconnecting/</code>.
+  </li>
+  <li>
+    The subsequent recovery is the warn-level
+    <code
+      >'pipeline-subscriber reconnected — closing attached sinks with redis-resync-required'</code
+    >
+    line, which carries an <code>attached</code> field counting the sinks that were evicted. That
+    count is "how many clients we forced to reconnect to recover from the blip"; zero means no
+    clients were attached during the gap.
+  </li>
+  <li>
+    On the client side, the surviving EventSources should have received an
+    <code>event: close\ndata: {"reason":"redis-resync-required"}\n\n</code> frame. The dev tool's
+    status panel auto-stops on close; production clients will auto-reconnect once that surface
+    lands.
+  </li>
+  <li>
+    Confirm PSUBSCRIBE re-attached: a successful reconnect emits no error log, and the next worker
+    publish on any campaign channel reaches new SSE attachments. If publishes are arriving but no
+    sink receives them, check the <code>wasted_msgs</code> field in the next
+    <code>sse.connections.active</code> emission — a non-zero value with no attached sinks is the
+    expected steady state for any channel with no current watchers.
+  </li>
+</ol>
+
+<h3 id="watch-a-campaign-locally">Watch a campaign locally</h3>
+<ol>
+  <li>
+    Bring up the backend and the dev tool per the
+    <a href="./dev-tool.html#run-the-dev-tool-locally">Dev tool runbook</a>:
+    <code>pnpm db:up</code>, <code>pnpm dev</code>, <code>pnpm dev:dev-tool</code>.
+  </li>
+  <li>
+    Pick or create a campaign row in Postgres (until MYT-51 ships the real create flow, an
+    <code>INSERT INTO campaigns</code> via <code>psql</code> is the path). Note the <code>id</code>.
+  </li>
+  <li>
+    In the dev tool's Pipeline status panel, paste the <code>campaignId</code> into the input and
+    click Watch. The panel opens an <code>EventSource</code> on
+    <code>/api/campaigns/{id}/status/stream</code>; the first frame is the snapshot and renders the
+    phase + stages list.
+  </li>
+  <li>
+    To smoke-test the live-event path without the worker, publish a fake event via
+    <code>redis-cli</code>:
+    <code
+      >redis-cli PUBLISH "development:use1:pipeline:campaign:&lt;id&gt;"
+      '{"type":"phase","phase":"world_gen"}'</code
+    >. The panel's phase row updates within a frame's RTT. Unknown event types are silently ignored
+    — entity events from MYT-51 will flow through but won't render until MYT-52's live-graph lands.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The <a href="../data/schema.html">schema page</a> covers <code>pipeline_runs</code>, the
+  <code>campaigns</code> table, and the <code>worlds</code> table that
+  <code>listLatestForCampaign</code> joins through. The
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a> page
+  covers <code>requireCampaignMember</code> (the preHandler both routes share) and explains the
+  <code>redisKeyPrefix</code> envelope every Redis channel uses. The
+  <a href="./dev-tool.html">dev tool</a> page covers the local-only engineering UI whose
+  <code>status-panel.ts</code> drives this surface and explains how the ship gate (<code
+    >pnpm dev-tool:check</code
+  >) keeps the two contract files (<code>pipeline-routes.ts</code>, <code>pipeline-events.ts</code>)
+  honest as new routes and event types land.
+</p>
+
+<p>
+  The worker side of the contract is out of scope for MYT-50 and lands in MYT-49 (BullMQ shell +
+  <code>wrapStream</code> middleware) and MYT-51+ (real worldgen and character-creation processors
+  that publish events after COMMIT). The parent spec
+  <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> §8 and §9 — both amended on
+  2026-05-12 to consolidate around the campaign-scoped surface — are the contract these issues
+  share.
+</p>
+
+<h2 id="out-of-scope-phase-0">Out of scope (Phase 0)</h2>
+
+<p>
+  Five entity-level event types (<code>stage-reset</code>, <code>entity-added</code>,
+  <code>entity-updated</code>, <code>edge-added</code>, <code>finalized</code>) are declared in
+  <code>pipeline-events.ts</code> so MYT-51+ worker emissions don't have to expand the contract
+  piecemeal — but the dev tool's live-graph rendering surface for them lands in MYT-52. The bridge
+  forwards them verbatim today; consumers that don't know what to do with them silently ignore the
+  frame. Dev-tool coverage marks them <code>exempt</code> with a MYT-52 pointer.
+</p>
+
+<p>
+  JWT-expiry and membership-revocation eviction mid-stream are not handled. If a user is removed
+  from a campaign while they're holding a stream open, they keep receiving events until the next
+  close (idle, shutdown, or resync). The 30-minute idle timeout bounds the exposure window. A proper
+  per-frame auth re-check is a post-launch hardening item.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="source-tree">Source tree</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>backend/src/routes/campaigns.ts</code></td>
+      <td>
+        Two-route Fastify plugin: <code>GET /status</code> + <code>GET /status/stream</code>. Owns
+        the attach→snapshot→forward ordering.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/sse/pipeline-subscriber.ts</code></td>
+      <td>
+        Dedicated PSUBSCRIBE'd ioredis client;
+        <code>Map&lt;campaignId, Set&lt;SseSink&gt;&gt;</code>; reconnect-on-blip with
+        <code>redis-resync-required</code> eviction.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/sse/sse-connection.ts</code></td>
+      <td>
+        Fastify <code>Reply</code> → <code>SseSink</code>. <code>reply.hijack()</code>, headers,
+        25&nbsp;s keepalive, 30&nbsp;min idle, 5&nbsp;s back-pressure drain, close-reason enum.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/sse/derive-phase.ts</code></td>
+      <td>
+        Pure <code>derivePhase({ campaign, world, runs })</code>. Stage taxonomy
+        (<code>WORLDGEN_STAGES</code>, <code>CHARCREATION_STAGES</code>,
+        <code>POSTCREATION_STAGES</code>) + the eight phase strings.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/sse/connection-counter.ts</code></td>
+      <td>
+        60&nbsp;s periodic pino log: count + max-since-last + wasted-msgs + taskRevision.
+        <code>setInterval</code> <code>unref()</code>'d.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/repo/pipeline-runs.ts</code></td>
+      <td>
+        <code>listLatestForCampaign(campaignId)</code> —
+        <code>DISTINCT ON (stage, user_id)</code> over campaign-keyed + world-keyed rows;
+        <code>::float8</code> cast for <code>cost_usd</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/contract/pipeline-routes.ts</code></td>
+      <td>The two route strings the ship gate keys against.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/contract/pipeline-events.ts</code></td>
+      <td>
+        Eleven event-type strings (six MYT-50 lifecycle + five MYT-52 entity) plus the typed
+        <code>PipelineEvent</code> discriminated union.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/dev-tool/src/components/status-panel.ts</code></td>
+      <td>
+        Paste-input <code>campaignId</code> + Watch/Stop. Opens <code>EventSource</code>; renders
+        snapshot frame; applies <code>phase</code> and <code>cost-update</code> live events;
+        surfaces the close-reason on terminal frame.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="close-reason-enum">Close-reason enum</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Reason</th>
+      <th>Cause</th>
+      <th>Client action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>idle-timeout</code></td>
+      <td>30&nbsp;min no event written.</td>
+      <td>Reconnect if still watching.</td>
+    </tr>
+    <tr>
+      <td><code>server-shutdown</code></td>
+      <td>API task SIGTERM / drain.</td>
+      <td>Reconnect; ALB routes to surviving task.</td>
+    </tr>
+    <tr>
+      <td><code>redis-resync-required</code></td>
+      <td>Dedicated subscriber reconnected after a blip.</td>
+      <td>Reconnect; fresh snapshot recovers state.</td>
+    </tr>
+    <tr>
+      <td><code>rate-limited</code></td>
+      <td>Reserved for future per-event eviction.</td>
+      <td>Back off; not emitted by MYT-50.</td>
+    </tr>
+    <tr>
+      <td><code>back-pressure</code></td>
+      <td>5&nbsp;s drain window expired after a <code>raw.write() === false</code>.</td>
+      <td>Investigate slow client; reconnect once recovered.</td>
+    </tr>
+    <tr>
+      <td><code>unknown</code></td>
+      <td>Upstream socket close or write threw.</td>
+      <td>Reconnect.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="periodic-log-fields">Periodic log fields</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>event</code></td>
+      <td><code>'sse.connections.active'</code>. Discriminator for Logs Insights filtering.</td>
+    </tr>
+    <tr>
+      <td><code>count</code></td>
+      <td>Currently-attached SSE connections on this task.</td>
+    </tr>
+    <tr>
+      <td><code>max_since_last</code></td>
+      <td>Peak count since the previous emission; resets to current after each emission.</td>
+    </tr>
+    <tr>
+      <td><code>wasted_msgs</code></td>
+      <td>
+        <code>pmessage</code>s received for channels with zero attached sinks since the previous
+        emission. Sustained high ratio is the signal to switch from PSUBSCRIBE to per-channel
+        SUBSCRIBE.
+      </td>
+    </tr>
+    <tr>
+      <td><code>taskRevision</code></td>
+      <td>
+        Value of <code>ECS_TASK_REVISION</code> at process start; lets Logs Insights aggregate
+        across the 1–4 task fleet.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/sse/</code>,
+  <code>backend/src/repo/pipeline-runs.ts</code>,
+  <code>backend/src/contract/pipeline-routes.ts</code>,
+  <code>backend/src/contract/pipeline-events.ts</code>,
+  <code>backend/dev-tool/src/components/status-panel.ts</code>. Design spec:
+  <code>docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md</code>; parent
+  spec §8 + §9: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-endpoints">The two endpoints</a></li><li style="padding-left:0"><a href="#the-pub-sub-channel">The pub/sub channel</a></li><li style="padding-left:0"><a href="#phase-derivation">Phase derivation</a></li><li style="padding-left:0"><a href="#sse-plumbing">SSE plumbing</a></li><li style="padding-left:0"><a href="#the-dedicated-subscriber-client">The dedicated subscriber client</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stale-sse-connection">Diagnose a stale SSE connection</a></li><li style="padding-left:12px"><a href="#verify-the-subscriber-survived-a-redis-blip">Verify the subscriber survived a Redis blip</a></li><li style="padding-left:12px"><a href="#watch-a-campaign-locally">Watch a campaign locally</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#out-of-scope-phase-0">Out of scope (Phase 0)</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#close-reason-enum">Close-reason enum</a></li><li style="padding-left:12px"><a href="#periodic-log-fields">Periodic log fields</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

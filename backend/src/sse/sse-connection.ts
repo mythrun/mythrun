@@ -1,0 +1,148 @@
+// backend/src/sse/sse-connection.ts
+//
+// Fastify reply wrapper for an SSE response. Owns the response lifecycle:
+//   - reply.hijack() before any raw writes (Fastify won't run onSend/onResponse
+//     after hijack; we own the response).
+//   - SSE response headers (no Connection: keep-alive — forbidden under HTTP/2).
+//   - Keepalive: ':keepalive\n\n' every 25s via re-armed setTimeout (not
+//     setInterval — avoids useless ticks on busy streams).
+//   - Idle-timeout: 30 min no event → close with 'idle-timeout' reason.
+//   - Back-pressure: write returns boolean; if false, arm 5s drain timer;
+//     on timeout, close with 'back-pressure' reason.
+//   - Cleanup: listen on BOTH request.raw 'close' AND reply.raw 'close'
+//     (Fastify 5 / Node 22 emits on either depending on the closing party).
+//     Idempotent.
+
+import type { FastifyReply, FastifyRequest } from 'fastify'
+import type pino from 'pino'
+
+const KEEPALIVE_MS = 25_000
+const IDLE_TIMEOUT_MS = 30 * 60_000
+const DRAIN_TIMEOUT_MS = 5_000
+
+export type CloseReason =
+  | 'idle-timeout'
+  | 'server-shutdown'
+  | 'redis-resync-required'
+  | 'rate-limited'
+  | 'back-pressure'
+  | 'unknown'
+
+export interface SseSink {
+  /** Returns false if the writer is back-pressured (caller may ignore). */
+  readonly write: (frame: string) => boolean
+  /** Closes the SSE response with a structured reason. Idempotent. */
+  readonly close: (reason: CloseReason) => void
+}
+
+export interface OpenSseConnectionOpts {
+  readonly request: FastifyRequest
+  readonly reply: FastifyReply
+  readonly logger: pino.Logger
+  readonly onClose: () => void
+}
+
+export function openSseConnection(opts: OpenSseConnectionOpts): SseSink {
+  const { request, reply, logger, onClose } = opts
+
+  reply.hijack()
+  const raw = reply.raw
+  raw.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no',
+  })
+
+  let closed = false
+  let keepaliveHandle: NodeJS.Timeout | null = null
+  let idleHandle: NodeJS.Timeout | null = null
+  let drainHandle: NodeJS.Timeout | null = null
+
+  function armKeepalive(): void {
+    if (keepaliveHandle) clearTimeout(keepaliveHandle)
+    keepaliveHandle = setTimeout(() => {
+      if (closed) return
+      raw.write(':keepalive\n\n')
+      armKeepalive()
+    }, KEEPALIVE_MS)
+  }
+
+  function armIdleTimeout(): void {
+    if (idleHandle) clearTimeout(idleHandle)
+    idleHandle = setTimeout(() => {
+      close('idle-timeout')
+    }, IDLE_TIMEOUT_MS)
+  }
+
+  function clearDrain(): void {
+    if (drainHandle) {
+      clearTimeout(drainHandle)
+      drainHandle = null
+    }
+  }
+
+  function onDrain(): void {
+    clearDrain()
+  }
+
+  function close(reason: CloseReason): void {
+    if (closed) return
+    closed = true
+    if (keepaliveHandle) clearTimeout(keepaliveHandle)
+    if (idleHandle) clearTimeout(idleHandle)
+    clearDrain()
+    raw.off('drain', onDrain)
+    request.raw.off('close', onUpstreamClose)
+    raw.off('close', onUpstreamClose)
+    try {
+      raw.write(`event: close\ndata: ${JSON.stringify({ reason })}\n\n`)
+    } catch {
+      // Already-half-closed; ignore.
+    }
+    try {
+      raw.end()
+    } catch {
+      // Already ended; ignore.
+    }
+    try {
+      onClose()
+    } catch (err) {
+      logger.warn({ err }, 'sse onClose handler threw')
+    }
+  }
+
+  function onUpstreamClose(): void {
+    close('unknown')
+  }
+
+  request.raw.on('close', onUpstreamClose)
+  raw.on('close', onUpstreamClose)
+  raw.on('drain', onDrain)
+
+  armKeepalive()
+  armIdleTimeout()
+
+  function write(frame: string): boolean {
+    if (closed) return false
+    let result: boolean
+    try {
+      result = raw.write(frame)
+    } catch (err) {
+      logger.warn({ err }, 'sse write threw — closing connection')
+      close('unknown')
+      return false
+    }
+    // Reset both timers on a real event write.
+    armKeepalive()
+    armIdleTimeout()
+    if (!result && !drainHandle) {
+      drainHandle = setTimeout(() => {
+        drainHandle = null
+        close('back-pressure')
+      }, DRAIN_TIMEOUT_MS)
+    }
+    return result
+  }
+
+  return { write, close }
+}

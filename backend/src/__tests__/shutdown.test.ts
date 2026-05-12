@@ -6,6 +6,7 @@ import type { Redis } from 'ioredis'
 import IoredisMock from 'ioredis-mock'
 import { createRepo } from '../repo/index.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
 
 // Minimal AppDeps for buildApp registration. Real ioredis-mock instances
 // are required because @fastify/rate-limit calls redis.defineCommand at
@@ -28,6 +29,8 @@ interface MockClients {
   pg: { end: ReturnType<typeof vi.fn> } & Partial<Pool>
   redisRealtime: { quit: ReturnType<typeof vi.fn> } & Partial<Redis>
   redisBatch: { quit: ReturnType<typeof vi.fn> } & Partial<Redis>
+  subscriber: { close: ReturnType<typeof vi.fn> } & Partial<PipelineSubscriber>
+  stopPeriodicLog: ReturnType<typeof vi.fn>
 }
 
 function makeMockClients(): MockClients {
@@ -35,6 +38,8 @@ function makeMockClients(): MockClients {
     pg: { end: vi.fn().mockResolvedValue(undefined) },
     redisRealtime: { quit: vi.fn().mockResolvedValue('OK') },
     redisBatch: { quit: vi.fn().mockResolvedValue('OK') },
+    subscriber: { close: vi.fn().mockResolvedValue(undefined) },
+    stopPeriodicLog: vi.fn(),
   }
 }
 
@@ -58,7 +63,7 @@ describe('createShutdown', () => {
     process.exit = originalExit
   })
 
-  it('drains in order: app.close → pg.end → redis.quit (both), then exit(0)', async () => {
+  it('drains in order: stopPeriodicLog → subscriber.close → app.close → pg.end → redis.quit (both), then exit(0)', async () => {
     const app = await buildApp(
       makeBuildAppDeps(),
       { mode: 'bypass' },
@@ -67,6 +72,13 @@ describe('createShutdown', () => {
     const clients = makeMockClients()
     const callOrder: string[] = []
 
+    clients.stopPeriodicLog.mockImplementation(() => {
+      callOrder.push('stopPeriodicLog')
+    })
+    clients.subscriber.close.mockImplementation(() => {
+      callOrder.push('subscriber.close')
+      return Promise.resolve()
+    })
     vi.spyOn(app, 'close').mockImplementation((() => {
       callOrder.push('app.close')
       return Promise.resolve()
@@ -92,10 +104,14 @@ describe('createShutdown', () => {
       pg: clients.pg as unknown as Pool,
       redisRealtime: clients.redisRealtime as unknown as Redis,
       redisBatch: clients.redisBatch as unknown as Redis,
+      subscriber: clients.subscriber as unknown as PipelineSubscriber,
+      stopPeriodicLog: clients.stopPeriodicLog,
     })
     await handler('SIGTERM')
 
     expect(callOrder).toEqual([
+      'stopPeriodicLog',
+      'subscriber.close',
       'app.close',
       'pg.end',
       'redis-realtime.quit',
@@ -118,6 +134,8 @@ describe('createShutdown', () => {
       pg: clients.pg as unknown as Pool,
       redisRealtime: clients.redisRealtime as unknown as Redis,
       redisBatch: clients.redisBatch as unknown as Redis,
+      subscriber: clients.subscriber as unknown as PipelineSubscriber,
+      stopPeriodicLog: clients.stopPeriodicLog,
     })
     await handler('SIGTERM')
 
@@ -139,6 +157,8 @@ describe('createShutdown', () => {
       pg: clients.pg as unknown as Pool,
       redisRealtime: clients.redisRealtime as unknown as Redis,
       redisBatch: clients.redisBatch as unknown as Redis,
+      subscriber: clients.subscriber as unknown as PipelineSubscriber,
+      stopPeriodicLog: clients.stopPeriodicLog,
     })
     await handler('SIGTERM')
 

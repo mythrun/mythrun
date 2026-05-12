@@ -81,7 +81,13 @@ async function fallbackStart(): Promise<void> {
     env,
   })
   await app.listen({ port: env.port, host: '0.0.0.0' })
-  const handleShutdown = createShutdown(app, stubDeps)
+  const handleShutdown = createShutdown(app, {
+    pg: stubDeps.pg,
+    redisRealtime: stubDeps.redisRealtime,
+    redisBatch: stubDeps.redisBatch,
+    subscriber: app.mythrunSubscriber,
+    stopPeriodicLog: app.mythrunStopPeriodicLog,
+  })
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, () => void handleShutdown(signal))
   }
@@ -172,6 +178,8 @@ export async function main(): Promise<void> {
       pg: pgRef,
       redisRealtime: rTRRef,
       redisBatch: rTBRef,
+      subscriber: app.mythrunSubscriber,
+      stopPeriodicLog: app.mythrunStopPeriodicLog,
     })
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

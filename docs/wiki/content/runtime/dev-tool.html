@@ -11,7 +11,7 @@
 <!-- source: .github/workflows/dev-tool-check.yml -->
 <!-- source: docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:07889ffb3222e38d1c3c90ae953e32e1278a8b465d80de07a87c064633400bad -->
+<!-- source-hash: sha256:b7e7ef87b114e2c196e9967654ffee4f3956face7d89771c9cfb8fcb3eabc3b4 -->
 <!-- last-ticket: MYT-47 -->
 
 <h1>Dev tool</h1>
@@ -58,8 +58,10 @@
   <code>src/api-client.ts</code> is the single <code>fetch</code> wrapper: every HTTP call in the
   app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
   every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
-  page; <code>src/components/</code> holds the per-panel UI (the Phase 0 health panel today;
-  world-create, character-create, and SSE consumers later).
+  page; <code>src/components/</code> holds the per-panel UI — currently the health panel and
+  the <a href="pipeline-status.html">pipeline status panel</a> (an SSE consumer for
+  <code>/api/campaigns/:campaignId/status/stream</code>); world-create and character-create
+  consumers will land alongside their routes.
 </p>
 
 <aside class="wiki-rationale">
