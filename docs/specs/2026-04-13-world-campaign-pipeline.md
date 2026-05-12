@@ -3,6 +3,7 @@
 > **Type**: Sub-spec (conforms to Production Architecture Overview)
 > **Date**: 2026-04-13
 > **Amended**: 2026-05-11 (Prep Pipeline milestone scoping pass — fork deferral, character portability, streaming entity events, dev tool, BullMQ worker provisioning, LLM client realignment to MYT-44, post-MYT-43 cost tracking)
+> **Amended**: 2026-05-12 (MYT-50 brainstorming — status surface consolidated to campaign-scoped routes; world-scoped HTTP surface dropped at launch; one Redis pub/sub channel `pipeline:campaign:{id}` covering the full lifecycle; `POST /api/campaigns` is the entry point, `POST /api/worlds` removed)
 > **Status**: Amended; ready for Linear-issue decomposition
 > **Parent**: `2026-04-06-production-architecture-overview.md`
 > **Depends on**:
@@ -185,18 +186,18 @@ Model selection uses MYT-44's tier-named constants — `HAIKU` / `SONNET` / `OPU
 
 ### Credit Gate
 
-Before enqueuing the world-gen BullMQ job, the API atomically debits one `world_gen` credit from the owner's ledger. The pattern matches MYT-43's session-credit debit:
+`POST /api/campaigns` is the entry point. Before enqueuing the world-gen BullMQ job, it atomically debits one `world_gen` credit from the owner's ledger. The pattern matches MYT-43's session-credit debit:
 
 1. Resolve `request.user.sub → users.id` via `repo.users.getByCognitoSub`.
 2. Open a transaction. Take a transaction-scoped advisory lock keyed by `users.id` to serialize concurrent debits for the same user.
 3. `SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE user_id=$1 AND credit_type='world_gen' AND (expires_at IS NULL OR expires_at > now())`. If `< 1`, ROLLBACK and return `402 Payment Required + {code: 'insufficient_credits', creditType: 'world_gen'}`.
-4. INSERT the `worlds` stub row (status='generating') and the negative `credit_ledger` row (`amount=-1, source_type='debit', source_purchase_id=NULL, source_billing_history_id=NULL` — the `credit_ledger_source_link_chk` CHECK requires both source FK columns NULL for `source_type='debit'`).
+4. INSERT the `worlds` stub row (status='generating'), INSERT the `campaigns` row (status='setup', `world_id` = the new world's id), and INSERT the negative `credit_ledger` row (`amount=-1, source_type='debit', source_purchase_id=NULL, source_billing_history_id=NULL` — the `credit_ledger_source_link_chk` CHECK requires both source FK columns NULL for `source_type='debit'`).
 5. COMMIT.
-6. **After commit:** enqueue the BullMQ `world-gen` job against `redisBatch`. Postgres-then-Redis ordering is intentional — Redis enqueue is not transactional with Postgres, so the only durable-then-recoverable order is "debit committed, then enqueue."
+6. **After commit:** enqueue the BullMQ `world-gen` job against `redisBatch` with payload `{ campaignId, worldId, userId }`. Postgres-then-Redis ordering is intentional — Redis enqueue is not transactional with Postgres, so the only durable-then-recoverable order is "debit committed, then enqueue."
 
 **Failure modes:**
 - Step 5 commit fails: nothing happened. Return 500. No debit; no orphaned anything.
-- Step 6 enqueue fails (Redis blip): the debit committed but no job runs. The world stays in `status='generating'` forever; the user sees the orphan via `GET /api/worlds/mine`. Operator-facing recovery: `POST /api/worlds/:id/resume` re-enqueues idempotently (no second debit; the stub row exists and the credit was already taken).
+- Step 6 enqueue fails (Redis blip): the debit committed but no job runs. The campaign + world stay in their initial states; the user sees the orphan via `GET /api/campaigns/mine`. Operator-facing recovery: `POST /api/campaigns/:id/resume` re-enqueues idempotently (no second debit; the stub rows exist and the credit was already taken).
 - We do not auto-refund at launch — refunds for orphaned debits are an operator action, applied as a new positive `credit_ledger` row with `source_type='refund'` and `source_billing_history_id` linking to a billing-history audit row (per migration 007's refund-routing scheme).
 
 ### Per-World Cost Cap
@@ -332,7 +333,7 @@ The `campaigns.world_id` FK is genuinely decoupled — a single user could in pr
 
 This is the only fork-related work in this milestone:
 - Leave the inert columns alone.
-- Keep `GET /api/worlds/mine` (returns worlds the user owns; trivial at launch since most users have ≤ 1 world).
+- Worlds are not independently addressable via HTTP at launch (see §9). The user finds their content via `GET /api/campaigns/mine`; the campaign embeds its world.
 - Do not build `GET /api/worlds/public`, marketplace listing, or the deep-copy SQL.
 
 ---
@@ -510,17 +511,17 @@ type PipelinePhase =
 
 ### Real-Time Progress via SSE
 
-The API exposes two SSE endpoints:
+The API exposes **one** SSE endpoint:
 
-- `GET /api/worlds/:id/status/stream` — open while a world is generating
-- `GET /api/campaigns/:id/status/stream` — open while a campaign is setting up
+- `GET /api/campaigns/:id/status/stream` — open while a campaign is in any phase between creation and `active`
 
-Server-side, both subscribe to a Redis pub/sub channel on `redisRealtime`:
+Server-side, the API subscribes to one Redis pub/sub channel on `redisRealtime`:
 
-- `pipeline:world:{worldId}` for world-gen events
-- `pipeline:campaign:{campaignId}` for campaign-setup events
+- `pipeline:campaign:{campaignId}` — receives every event for the campaign's entire lifecycle (world-gen, character creation, post-creation)
 
-The worker publishes events to those channels; the API forwards each message to all attached SSE subscribers for the given scope. SSE is the only realtime surface — there is **no polling fallback**. Clients that need a one-shot snapshot use the non-streaming `GET /api/worlds/:id/status` / `GET /api/campaigns/:id/status` endpoint, which reads `pipeline_runs` directly and returns the current phase + per-stage state. (Used by the dev tool on initial page load, then SSE for live updates.)
+The worker publishes events for ALL phases (world-gen and character-creation alike) to this single channel keyed by `campaignId`. The campaign is the user-facing unit at launch — the world is an internal child resource of the campaign, not an independently-addressable thing. See §9 for the consolidated route list.
+
+The API forwards each message to all attached SSE subscribers for the campaign. SSE is the only realtime surface — there is **no polling fallback**. Clients that need a one-shot snapshot use the non-streaming `GET /api/campaigns/:id/status` endpoint, which reads `pipeline_runs` directly and returns the current phase + per-stage state. (Used by the dev tool on initial page load, then SSE for live updates.)
 
 ### Event Type Union
 
@@ -613,37 +614,32 @@ Session prep generation is invoked at session start, not as part of the prep pip
 
 ## 9. API Routes
 
-All routes opt in to rate limiting per MYT-45 (`config.rateLimit: { max, timeWindow, keyGenerator? }`). World/campaign create are tight and per-sub keyed (the threat is one user blowing the credit-check by burst-creating). SSE stream routes are looser since they hold one connection per pipeline. List/read routes are at the default per-IP rate.
+All routes opt in to rate limiting per MYT-45 (`config.rateLimit: { max, timeWindow, keyGenerator? }`). Campaign create is tight and per-sub keyed (the threat is one user blowing the credit-check by burst-creating). SSE stream routes are looser since they hold one connection per pipeline. List/read routes are at the default per-IP rate.
 
-### World Routes
+### Campaign is the user-facing unit
 
-| Method | Path | Auth | Rate limit | Purpose |
-|--------|------|------|---|---------|
-| POST | `/api/worlds` | JWT + onboarded | 5/min per-sub | Create a world. Validates concept, debits 1 `world_gen` credit, enqueues `world-gen` job. |
-| GET | `/api/worlds/:id` | JWT + onboarded + (owner or member of a campaign on this world) | 60/min per-IP | Get world details + entities |
-| GET | `/api/worlds/:id/status` | JWT + onboarded + access | 60/min per-IP | One-shot pipeline status snapshot (no streaming) |
-| GET | `/api/worlds/:id/status/stream` | JWT + onboarded + access | 10/min per-IP (rate-limits the *connection-open* rate, not events) | SSE stream — emits the §8 event union |
-| POST | `/api/worlds/:id/resume` | JWT + onboarded + owner | 5/min per-sub | Re-enqueue a failed world-gen job (idempotent — picks up at first non-completed stage) |
-| GET | `/api/worlds/mine` | JWT + onboarded | 30/min per-IP | List worlds owned by the current user. Trivial at launch (≤1 active world per typical user). |
+At launch there are **no top-level world routes**. The campaign is the entry point and the only thing the user creates explicitly; the world is generated as part of campaign creation and lives as a child resource of the campaign. The `worlds` table stays as the data backbone (entities, prose kernels, facts, relationships, random tables, starting situations all hang off `world_id`), but it's never independently addressable via HTTP at launch. World inspection happens through `GET /api/campaigns/:id`, which embeds the campaign's world.
 
-**Cut from original spec:** `GET /api/worlds/public` — marketplace browsing is deferred with the rest of the fork story (§5).
+Future "share an existing world during campaign creation" is the only realistic case that would re-introduce world-scoped routes; it's deferred with the rest of the fork story (§5). If that lands later, the world routes get added back as a new surface — not as a replacement for the campaign-scoped pattern.
 
 ### Campaign Routes
 
 | Method | Path | Auth | Rate limit | Purpose |
 |--------|------|------|---|---------|
-| POST | `/api/campaigns` | JWT + onboarded | 5/min per-sub | Create a campaign on a world the user owns. No fork. |
-| GET | `/api/campaigns/:id` | Member | 60/min per-IP | Get campaign details + members + characters |
-| GET | `/api/campaigns/:id/status` | Member | 60/min per-IP | One-shot campaign-setup status snapshot |
-| GET | `/api/campaigns/:id/status/stream` | Member | 10/min per-IP | SSE stream |
+| POST | `/api/campaigns` | JWT + onboarded | 5/min per-sub | **The entry point.** Validates the concept text, atomically debits 1 `world_gen` credit, creates `campaigns` + `worlds` rows (campaign owns world, world starts `status='generating'`), enqueues the `world-gen` BullMQ job. |
+| GET | `/api/campaigns/:id` | Member | 60/min per-IP | Campaign details + embedded world + members + characters |
+| GET | `/api/campaigns/:id/status` | Member | 60/min per-IP | One-shot pipeline status snapshot covering both world-gen and character-creation phases |
+| GET | `/api/campaigns/:id/status/stream` | Member | 10/min per-IP (rate-limits the *connection-open* rate, not events) | SSE stream — emits the §8 event union for the entire campaign lifecycle |
+| POST | `/api/campaigns/:id/resume` | Owner | 5/min per-sub | Re-enqueue any failed stage in the campaign's pipeline (world-gen OR character-creation OR post-creation). Idempotent — picks up at first non-completed stage. |
 | GET | `/api/campaigns/:id/starting-situations` | Member | 30/min per-IP | Three location hooks from the world's `starting_situations` |
 | POST | `/api/campaigns/:id/characters` | Member | 5/min per-sub | Submit this player's character concept (one per `(campaign_id, user_id)`). When all members have submitted, the owner can trigger creation. |
-| POST | `/api/campaigns/:id/start-character-creation` | Owner | 2/min per-sub | Fan out per-player BullMQ jobs + enqueue barrier. Returns the per-player job IDs. |
+| POST | `/api/campaigns/:id/start-character-creation` | Owner | 2/min per-sub | Fan out per-player BullMQ jobs + enqueue barrier. Returns the per-player job IDs. (See also: re-running this is the implicit "resume" path for character-creation specifically.) |
 | GET | `/api/campaigns/:id/characters` | Member | 30/min per-IP | List all characters in this campaign + their portable shape |
 | GET | `/api/campaigns/:id/characters/:charId` | Member | 30/min per-IP | One character with full details (skills/features/equipment/spells) |
 | GET | `/api/campaigns/:id/hierarchy` | Member | 30/min per-IP | Entity parent-child hierarchy (graph layout helper) |
 | GET | `/api/campaigns/:id/random-tables` | Member | 30/min per-IP | Random tables + entries |
-| DELETE | `/api/campaigns/:id` | Owner | 5/min per-sub | Delete (cascade) |
+| GET | `/api/campaigns/mine` | JWT + onboarded | 30/min per-IP | List campaigns the user owns or is a member of. Useful for "find the orphan after a Redis-blip enqueue failure" recovery (§3). |
+| DELETE | `/api/campaigns/:id` | Owner | 5/min per-sub | Delete (cascade through campaign_characters, characters that are campaign-only, sessions, etc. — world stays unless explicitly cascaded too). |
 | POST | `/api/campaigns/:id/archive` | Owner | 5/min per-sub | Archive (transitions `setup → archived`) |
 
 **Cut from original spec (moved to Session Runtime):**
@@ -653,18 +649,27 @@ All routes opt in to rate limiting per MYT-45 (`config.rateLimit: { max, timeWin
 - `POST /api/campaigns/:id/reset-prep` — session-prep reset
 - `POST /api/campaigns/:id/reset-to-session/:n` — snapshot restore
 
+**Dropped entirely (consolidated under campaign-scoped surface, 2026-05-12):**
+- `POST /api/worlds` → `POST /api/campaigns` is the entry point
+- `GET /api/worlds/:id` → folded into `GET /api/campaigns/:id` (campaign includes world)
+- `GET /api/worlds/:id/status` + `/status/stream` → `GET /api/campaigns/:id/status` + `/status/stream`
+- `POST /api/worlds/:id/resume` → `POST /api/campaigns/:id/resume`
+- `GET /api/worlds/mine` → `GET /api/campaigns/mine`
+- `GET /api/worlds/public` (marketplace) — deferred with fork story (§5)
+
 The `session_preps` and `world_snapshots` tables stay in the schema; they get no writes until Session Runtime ships.
 
 ### Resume Endpoint Behavior
 
-`POST /api/worlds/:id/resume`:
+`POST /api/campaigns/:id/resume`:
 
 1. Owner-only.
-2. Reads `pipeline_runs` for `(world_id, *)`. If all stages are `completed`, return 200 + `{ already_complete: true }`.
-3. If any stage is `failed`: reset the failed stage to `pending`, re-enqueue the `world-gen` job. Idempotency (§3) means already-completed stages skip.
-4. If any stage is `running` and `started_at < now() - 60s`: same as failed (stalled). If `running` and recent: 409 + `{ code: 'job_still_running' }`.
+2. Reads `pipeline_runs` for all rows belonging to this campaign: rows with `campaign_id = $1` plus rows with `world_id = (SELECT world_id FROM campaigns WHERE id = $1)`. The combined set covers world-gen, character-creation, and post-creation stages.
+3. If all stages are `completed` and `campaigns.status = 'active'`, return 200 + `{ already_complete: true }`.
+4. If any stage is `failed`: reset the failed stage(s) to `pending`, re-enqueue the appropriate job(s) — `world-gen` if the failure is in a world-gen stage, individual per-player `character-creation` jobs if a player stage failed, or the `post-creation` barrier if a post stage failed. Idempotency (§3) means already-completed stages skip.
+5. If any stage is `running` and `started_at < now() - 60s`: same as failed (stalled). If `running` and recent: 409 + `{ code: 'job_still_running' }`.
 
-There is no `POST /api/campaigns/:id/resume` endpoint at launch — campaign-setup resume is implicit by re-running `POST /api/campaigns/:id/start-character-creation`; the API fans out only for players whose per-player `pipeline_runs.status != 'completed'`.
+Character-creation resume is also implicitly available via re-running `POST /api/campaigns/:id/start-character-creation`; the API fans out only for players whose per-player `pipeline_runs.status != 'completed'`. Either path is fine — owners typically hit the dedicated resume endpoint via the dev tool's "Resume" button; the start-character-creation re-run path covers the case where the owner is re-triggering after a player drops out.
 
 ---
 
@@ -782,7 +787,7 @@ The dev tool ships in two phases:
 
 Phase 0 produces a locally-runnable site that does nothing useful yet — but proves the proxy + auth + ship-gate plumbing works.
 
-**Phase 1+ — Grow With the Backend.** Every subsequent Linear issue in this milestone (e.g., "world creation route + worker stage 1") MUST extend the dev tool to exercise the new functionality in the same PR. The ship gate enforces this. Concretely:
+**Phase 1+ — Grow With the Backend.** Every subsequent Linear issue in this milestone (e.g., "campaign creation route + worker stage 1") MUST extend the dev tool to exercise the new functionality in the same PR. The ship gate enforces this. Concretely:
 
 | Backend feature | Dev tool extension in the same PR |
 |---|---|
@@ -820,7 +825,7 @@ The ship gate prevents pipeline features from landing without dev-tool coverage.
 
 The backend declares its public pipeline surface in three contract files so the gate has unambiguous sources of truth (no spec-parsing, no route-handler scraping):
 
-- `backend/src/contract/pipeline-routes.ts` — `export const PIPELINE_ROUTES = ['POST /api/worlds', 'GET /api/worlds/:id', ...] as const`. Every pipeline route handler imports its entry from here (route registration uses the literal from the contract; TS infers a tight type).
+- `backend/src/contract/pipeline-routes.ts` — `export const PIPELINE_ROUTES = ['POST /api/campaigns', 'GET /api/campaigns/:id', ...] as const`. Every pipeline route handler imports its entry from here (route registration uses the literal from the contract; TS infers a tight type).
 - `backend/src/contract/pipeline-events.ts` — `export const PIPELINE_SSE_EVENTS = ['phase', 'stage-started', 'entity-added', ...] as const`. The `PipelineEvent` discriminated union from §8 derives its `type` discriminator from this constant.
 - `backend/src/contract/pipeline-jobs.ts` — `export const PIPELINE_BULLMQ_JOBS = ['world-gen', 'character-creation', 'post-creation'] as const`.
 
@@ -897,7 +902,7 @@ Failing the check red-lights the workflow.
 | World forking (cross-user, marketplace) | Future fork sub-spec; schema columns inert at launch (§5) |
 | World marketplace (browsing, ratings, payouts) | Future marketplace sub-spec |
 | `GET /api/worlds/public` route | Folded into the fork deferral |
-| `GET /api/worlds/mine` picker UX | Backend route stays trivial; no picker UI |
+| Independently-addressable world routes (`POST /api/worlds`, `GET /api/worlds/:id`, etc.) | Consolidated into campaign-scoped surface (§9). The world is a child resource of the campaign at launch. Revisit if/when fork lands. |
 | Session prep generation | Session Runtime milestone |
 | Snapshot capture / restore / `reset-to-session` | Session Runtime milestone |
 | Between-session world observer | Future — architecture supports it, not at launch |
