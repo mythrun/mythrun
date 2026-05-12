@@ -2,26 +2,76 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../config/env.js', () => ({
   loadEnv: () => ({
+    databaseUrl: 'postgresql://test@localhost:5432/test',
     redisBatchUrl: 'redis://localhost:6379',
+    redisRealtimeUrl: 'redis://localhost:6380',
     // Other fields not consumed by main()
   }),
 }))
 
-const pingMock = vi.fn((): Promise<string> => Promise.resolve('PONG'))
-const quitMock = vi.fn((): Promise<string> => Promise.resolve('OK'))
+const batchPingMock = vi.fn((): Promise<string> => Promise.resolve('PONG'))
+const batchQuitMock = vi.fn((): Promise<string> => Promise.resolve('OK'))
+const realtimePingMock = vi.fn((): Promise<string> => Promise.resolve('PONG'))
+const realtimeQuitMock = vi.fn((): Promise<string> => Promise.resolve('OK'))
+
+vi.mock('../redis/bullmq-client.js', () => ({
+  createBullmqRedisClient: () => ({
+    ping: batchPingMock,
+    quit: batchQuitMock,
+  }),
+}))
 
 vi.mock('../redis/client.js', () => ({
   createRedisClient: () => ({
-    ping: pingMock,
-    quit: quitMock,
+    ping: realtimePingMock,
+    quit: realtimeQuitMock,
+  }),
+}))
+
+const pgQueryMock = vi.fn(() => Promise.resolve({ rows: [{ '?column?': 1 }] }))
+const pgEndMock = vi.fn(() => Promise.resolve())
+
+vi.mock('../db/postgres.js', () => ({
+  createPgPool: () => ({
+    query: pgQueryMock,
+    end: pgEndMock,
+  }),
+}))
+
+const healthCloseMock = vi.fn(() => Promise.resolve())
+
+vi.mock('../worker/health-server.js', () => ({
+  startHealthServer: vi.fn(() => Promise.resolve({ close: healthCloseMock })),
+}))
+
+interface FakeWorker {
+  name: string
+  close: ReturnType<typeof vi.fn>
+}
+const workerInstances: FakeWorker[] = []
+
+vi.mock('bullmq', () => ({
+  Worker: vi.fn().mockImplementation((name: string) => {
+    const instance: FakeWorker = {
+      name,
+      close: vi.fn(() => Promise.resolve()),
+    }
+    workerInstances.push(instance)
+    return instance
   }),
 }))
 
 describe('worker.main()', () => {
   beforeEach(() => {
     vi.useRealTimers()
-    pingMock.mockClear()
-    quitMock.mockClear()
+    batchPingMock.mockClear()
+    batchQuitMock.mockClear()
+    realtimePingMock.mockClear()
+    realtimeQuitMock.mockClear()
+    pgQueryMock.mockClear()
+    pgEndMock.mockClear()
+    healthCloseMock.mockClear()
+    workerInstances.length = 0
   })
 
   afterEach(() => {
@@ -30,23 +80,32 @@ describe('worker.main()', () => {
     vi.restoreAllMocks()
   })
 
-  it('logs "worker started" then exits cleanly on SIGTERM', async () => {
+  it('starts up, registers workers + health server, then shuts down cleanly on SIGTERM', async () => {
     const { main } = await import('../worker.js')
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
 
     void main() // never awaited — main blocks forever on Promise<never>
 
+    // Wait for startup: workers registered, health server up.
     await vi.waitFor(() => {
-      expect(consoleSpy).toHaveBeenCalledWith('worker started')
+      expect(workerInstances).toHaveLength(2)
     })
-    expect(pingMock).toHaveBeenCalledTimes(1)
+    expect(batchPingMock).toHaveBeenCalledTimes(1)
+    expect(realtimePingMock).toHaveBeenCalledTimes(1)
+    expect(pgQueryMock).toHaveBeenCalledWith('SELECT 1')
 
     process.emit('SIGTERM', 'SIGTERM' as NodeJS.Signals)
 
+    // Wait for clean shutdown.
     await vi.waitFor(() => {
       expect(exitSpy).toHaveBeenCalledWith(0)
     })
-    expect(quitMock).toHaveBeenCalledTimes(1)
+    expect(healthCloseMock).toHaveBeenCalledTimes(1)
+    for (const w of workerInstances) {
+      expect(w.close).toHaveBeenCalled()
+    }
+    expect(pgEndMock).toHaveBeenCalledTimes(1)
+    expect(batchQuitMock).toHaveBeenCalledTimes(1)
+    expect(realtimeQuitMock).toHaveBeenCalledTimes(1)
   })
 })
