@@ -14,7 +14,10 @@ function mockLogger(): Logger {
   } as unknown as Logger
 }
 
-function mockJob(overrides: Partial<Job> = {}): { job: Job; updateProgress: ReturnType<typeof vi.fn> } {
+function mockJob(overrides: Partial<Job> = {}): {
+  job: Job
+  updateProgress: ReturnType<typeof vi.fn>
+} {
   const updateProgress = vi.fn().mockResolvedValue(undefined)
   const job = {
     id: 'job-123',
