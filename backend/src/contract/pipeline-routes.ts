@@ -1,15 +1,21 @@
-// Declarative list of prep-pipeline HTTP routes. The ship-gate check
-// (backend/scripts/dev-tool-check.ts) reads this list to ensure every
-// entry has corresponding dev-tool coverage (or an explicit exempt
-// entry).
+// backend/src/contract/pipeline-routes.ts
 //
-// Format: '<METHOD> /api/<path>' (e.g., 'GET /api/campaigns/:campaignId/status').
-// Route param tokens (`:campaignId`) MUST match the actual handler
-// registration in routes/campaigns.ts — the dev-tool check does an
-// exact-string compare against the route URLs Fastify reports.
+// Declarative list of campaign-scoped pipeline HTTP routes. Boot-time
+// enforcement (per MYT-51 D12) verifies every entry is registered AND
+// every route marked `config.pipelineRoute = true` appears here.
+//
+// Format: '<METHOD> /api/<path>' with Fastify route patterns
+// (e.g., `:campaignId`, not request URLs).
+
 export const PIPELINE_ROUTES: readonly string[] = [
+  // Status surface (from the status-surface ticket; pre-existing):
   'GET /api/campaigns/:campaignId/status',
   'GET /api/campaigns/:campaignId/status/stream',
+  // World gen (this ticket):
+  'POST /api/campaigns',
+  'GET /api/campaigns/:campaignId',
+  'GET /api/campaigns/mine',
+  'POST /api/campaigns/:campaignId/resume',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

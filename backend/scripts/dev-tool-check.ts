@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 
 import { PIPELINE_ROUTES } from '../src/contract/pipeline-routes.js'
 import { PIPELINE_SSE_EVENTS } from '../src/contract/pipeline-events.js'
-import { PIPELINE_BULLMQ_JOBS } from '../src/contract/pipeline-jobs.js'
+import { PIPELINE_JOBS } from '../src/contract/pipeline-jobs.js'
 import { checkCoverage, type Coverage } from '../src/dev-tool-check/check-coverage.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -20,7 +20,7 @@ const result = checkCoverage(
   {
     routes: PIPELINE_ROUTES,
     events: PIPELINE_SSE_EVENTS,
-    jobs: PIPELINE_BULLMQ_JOBS,
+    jobs: PIPELINE_JOBS,
   },
   coverage,
 )
