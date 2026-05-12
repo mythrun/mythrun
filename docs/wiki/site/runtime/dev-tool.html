@@ -234,8 +234,8 @@
   <code>src/api-client.ts</code> is the single <code>fetch</code> wrapper: every HTTP call in the
   app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
   every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
-  page; <code>src/components/</code> holds the per-panel UI — currently the health panel and
-  the <a href="pipeline-status.html">pipeline status panel</a> (an SSE consumer for
+  page; <code>src/components/</code> holds the per-panel UI — currently the health panel and the
+  <a href="pipeline-status.html">pipeline status panel</a> (an SSE consumer for
   <code>/api/campaigns/:campaignId/status/stream</code>); world-create and character-create
   consumers will land alongside their routes.
 </p>

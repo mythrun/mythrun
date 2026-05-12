@@ -7,14 +7,14 @@
     "dist"
   ],
   "scripts": {
-    "dev": "tsx watch --env-file=.env.development src/server.ts",
+    "dev": "tsx watch --env-file=.env.development --env-file-if-exists=../.env.worktree src/server.ts",
     "build": "tsc -p tsconfig.build.json && cp -r src/llm/prompts dist/llm/prompts",
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src --no-error-on-unmatched-pattern",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "tsx --env-file=.env.development src/db/migrate.ts",
+    "db:migrate": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree src/db/migrate.ts",
     "db:migrate:compiled": "node dist/db/migrate.js",
     "dev-tool:check": "tsx scripts/dev-tool-check.ts"
   },

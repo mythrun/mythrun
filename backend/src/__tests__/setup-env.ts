@@ -1,4 +1,5 @@
 import { config } from 'dotenv'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { afterEach, vi } from 'vitest'
@@ -8,6 +9,17 @@ import { afterEach, vi } from 'vitest'
 // root-level `pnpm test` (CWD = repo root).
 const here = fileURLToPath(import.meta.url)
 config({ path: resolve(here, '../../../.env.development') })
+
+// Worktree override: `scripts/worktree-setup.sh` writes a repo-root
+// `.env.worktree` so concurrent worktrees can each target their own
+// Postgres DB (mythrun_<worktree>) without colliding on TRUNCATE in
+// resetData. Main repo has no `.env.worktree` — load is a no-op.
+// Loaded AFTER `.env.development` with override:true so DATABASE_URL
+// from the worktree file wins.
+const worktreeEnv = resolve(here, '../../../../.env.worktree')
+if (existsSync(worktreeEnv)) {
+  config({ path: worktreeEnv, override: true })
+}
 
 // CI fallback: `.env.development` is gitignored and not present in CI runs,
 // so dotenv silently no-ops and AUTH_MODE / NODE_ENV stay undefined. Tests

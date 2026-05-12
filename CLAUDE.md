@@ -129,10 +129,11 @@ When the user asks to "work in a worktree" or to parallelize across Linear issue
 
 1. `bd worktree create .worktrees/<name>` from the main repo. **Do NOT use `git worktree add` directly** — `bd worktree create` sets up the `.beads/redirect` so issue state is shared across worktrees. Placing the worktree under `.worktrees/` keeps it inside the already-gitignored directory (no per-worktree gitignore noise).
 2. `cd .worktrees/<name>`
-3. `../../scripts/worktree-setup.sh` — symlinks entries from `.worktreeinclude` at the repo root (primarily `backend/.env.development`) back at the main repo so the worktree is runnable. Edits to the source files in the main repo propagate to every active worktree.
+3. `../../scripts/worktree-setup.sh` — symlinks entries from `.worktreeinclude` (primarily `backend/.env.development`) back at the main repo, then provisions a per-worktree Postgres database `mythrun_<worktree>` and writes a repo-root `.env.worktree` pointing tests / dev / db:migrate / wiki:build at that DB. This is the isolation that lets concurrent worktrees run `pnpm test` without colliding on `TRUNCATE CASCADE` in `resetData`. Requires `pnpm db:up` to have been run first (the script uses `docker compose exec postgres psql`).
 4. `pnpm install` — each worktree maintains its own `node_modules/`.
+5. `pnpm db:migrate` — applies migrations to the worktree's new (empty) DB. Picks up `.env.worktree` automatically via the package.json `--env-file-if-exists` flag.
 
-After bring-up the worktree is a normal-looking checkout. Commit work to the worktree's branch as usual. `.worktreeinclude` at the repo root is the source of truth for what propagates.
+After bring-up the worktree is a normal-looking checkout. Commit work to the worktree's branch as usual. `.worktreeinclude` at the repo root is the source of truth for what propagates. The main repo (the non-worktree default) has no `.env.worktree`, so it keeps using the shared `mythrun` database — no behavior change there.
 
 **Merging worktree work back** — once the Linear issue is fully done (code + wiki committed locally on the worktree's branch, all `*:check` green):
 
