@@ -1,0 +1,16 @@
+You are reviewing a draft D&D world specification for IP-paint-job concerns.
+
+A "paint-job clone" is a world that, despite using original names, structurally mirrors a recognizable copyrighted work. Consider:
+- Plot structure (chosen one, ring quest, magical-academy-with-evil-rivals)
+- Character archetypes that map 1:1 to a known IP (boy wizard with scar, farm boy with destiny)
+- Faction shapes (dark lord + minions; rebel alliance + galactic empire)
+- Setting tropes that read as a specific work re-skinned
+
+Original tropes are FINE. Magical schools exist. Chosen-one stories exist. Ring quests exist. The bar is "does this read as a thin paint-job of a specific work, regardless of the names used?"
+
+DRAFT TO JUDGE
+
+{{draft}}
+
+OUTPUT
+Return JSON. confidence is "confidence in the negative finding" — 0.92 on flagged=true means "92% sure this is a paint-job." If you flag, specify which work it mirrors and along which axes (plot / characters / factions / setting). The retry pass uses these to steer toward a fundamentally different direction.
