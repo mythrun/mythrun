@@ -204,7 +204,7 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
       }
     })
 
-    it('ignores the x-mythrun-dev-sub header — credits always land on bypass:dev-1', async () => {
+    it('honors x-mythrun-dev-sub — credits land on the active dev sub', async () => {
       const bypassUserId = uuidv7()
       const otherUserId = uuidv7()
       await pool.query(
@@ -213,7 +213,7 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
       )
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [otherUserId, 'bypass:other-1', 'Other', 'other1'],
+        [otherUserId, 'dev-user-2', 'Other', 'other2'],
       )
 
       const app = await buildTestApp(pool)
@@ -223,13 +223,13 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
           url: '/api/dev/credits/grant',
           headers: {
             'content-type': 'application/json',
-            'x-mythrun-dev-sub': 'bypass:other-1',
+            'x-mythrun-dev-sub': 'dev-user-2',
           },
           payload: { creditType: 'session', amount: 3 },
         })
         expect(res.statusCode).toBe(201)
 
-        // Credits land on bypass:dev-1, NOT on the header-pointed user.
+        // Credits land on the header-pointed user, NOT on bypass:dev-1.
         const bypassBalance = await pool.query<{ balance: string }>(
           `SELECT COALESCE(SUM(amount), 0)::text AS balance
              FROM credit_ledger WHERE user_id = $1 AND credit_type = 'session'`,
@@ -240,8 +240,27 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
              FROM credit_ledger WHERE user_id = $1 AND credit_type = 'session'`,
           [otherUserId],
         )
-        expect(Number(bypassBalance.rows[0]?.balance ?? 0)).toBe(3)
-        expect(Number(otherBalance.rows[0]?.balance ?? 0)).toBe(0)
+        expect(Number(bypassBalance.rows[0]?.balance ?? 0)).toBe(0)
+        expect(Number(otherBalance.rows[0]?.balance ?? 0)).toBe(3)
+      } finally {
+        await app.close()
+      }
+    })
+
+    it('400 unknown_dev_sub when the header points at a non-existent user', async () => {
+      const app = await buildTestApp(pool)
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/dev/credits/grant',
+          headers: {
+            'content-type': 'application/json',
+            'x-mythrun-dev-sub': 'never-seeded',
+          },
+          payload: { creditType: 'world_gen', amount: 1 },
+        })
+        expect(res.statusCode).toBe(400)
+        expect(res.json()).toEqual({ code: 'unknown_dev_sub', sub: 'never-seeded' })
       } finally {
         await app.close()
       }

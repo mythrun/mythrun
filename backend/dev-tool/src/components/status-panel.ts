@@ -50,11 +50,7 @@ function renderStages(stages: readonly StageEntry[], stagesEl: HTMLElement): voi
     .join('\n')
 }
 
-function findOrAppendStage(
-  stages: StageEntry[],
-  stage: string,
-  userId: string | null,
-): StageEntry {
+function findOrAppendStage(stages: StageEntry[], stage: string, userId: string | null): StageEntry {
   const existing = stages.find((s) => s.stage === stage && s.userId === userId)
   if (existing) return existing
   const row: StageEntry = { stage, status: 'pending', userId, costUsd: 0 }
@@ -67,11 +63,7 @@ function findOrAppendStage(
 // stage-started / stage-completed / stage-failed events patch the rows
 // they reference. This is the fix for "stage table frozen at snapshot
 // state while phase + cumulative cost progress."
-function applyStageEvent(
-  parsed: LiveEvent,
-  stages: StageEntry[],
-  stagesEl: HTMLElement,
-): boolean {
+function applyStageEvent(parsed: LiveEvent, stages: StageEntry[], stagesEl: HTMLElement): boolean {
   if (typeof parsed.stage !== 'string' || parsed.stage.length === 0) return false
   const userId = parsed.userId ?? null
   const row = findOrAppendStage(stages, parsed.stage, userId)

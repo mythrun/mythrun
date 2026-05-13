@@ -20,13 +20,16 @@
 //      mean production never reaches a request handler here even if the
 //      gates above regressed.
 //
-// Identity: this route does NOT honor `x-mythrun-dev-sub`. Credit grants
-// always target `bypass:dev-1`. The dev tool's identity switcher selects
-// the active sub for normal API calls; credit grants are pinned to the
-// canonical bypass identity so the dev tool's credit-ledger panel always
-// works regardless of which sub is currently selected. If a dev needs
-// credits as a non-default sub, they edit the DB directly (the smoke-test
-// setup script already does this).
+// Identity: grants to the currently-active dev sub (via request.user.sub,
+// which the bypass plugin sets from x-mythrun-dev-sub or its default).
+// Originally pinned to `bypass:dev-1` per spec D13 / Roc-C1's "drop the
+// header" guidance, but that produced "grant succeeds → credits go to a
+// sub the user can never spend them as" UX. The security concern Roc-C1
+// raised (a buggy test header-spoofing to grant credits to an attacker
+// sub) is moot: this route is bypass-mode-gated by 6 plugin layers, no
+// production exposure exists, and even in dev the credits aren't
+// fungible to anything real. Honoring the header matches every other
+// dev route's behavior and removes the dead-end UX. Unknown sub → 400.
 //
 // Rate limit: 30 req / hour per IP. Even in dev, a buggy test hammering
 // this route shouldn't run unbounded — and the cost-cap smoke loop's
@@ -41,11 +44,6 @@ import { insertCreditGrant } from '../repo/credit-grants.js'
 export interface DevCreditsRoutesOpts {
   readonly pool: Pool
 }
-
-// Fixed identity for dev-mode credit grants (spec D13). Mirrors the
-// constant in auth/bypass-plugin.ts; restated literally here so this
-// module is grep-discoverable without dereferencing the auth layer.
-const BYPASS_DEV_SUB = 'bypass:dev-1'
 
 // Strict body schema per spec D13. `z.number().int().positive().max(100)`
 // refuses non-integer, zero, negative, and >100 inputs — the hard 100 cap
@@ -97,16 +95,15 @@ export const devCreditsRoutes: FastifyPluginAsync<DevCreditsRoutesOpts> = async 
       }
       const { creditType, amount } = parsed.data
 
-      // Always resolve `bypass:dev-1` — spec D13 explicitly forbids
-      // honoring the `x-mythrun-dev-sub` header here.
-      const user = await repo.users.getByCognitoSub(BYPASS_DEV_SUB)
+      // The bypass auth plugin sets request.user.sub from the
+      // x-mythrun-dev-sub header (or its default). Grant to that user.
+      const sub = request.user?.sub
+      if (typeof sub !== 'string' || sub.length === 0) {
+        return reply.code(401).send({ code: 'no_dev_identity' })
+      }
+      const user = await repo.users.getByCognitoSub(sub)
       if (!user) {
-        // The bypass-dev user is expected to exist in any dev / test
-        // environment that reaches this route (it's seeded by the local
-        // dev setup script). Surface as 500 with a clear operator-facing
-        // code rather than silently 404 — a missing seed user is a
-        // configuration error, not a request error.
-        return reply.code(500).send({ code: 'bypass_user_missing' })
+        return reply.code(400).send({ code: 'unknown_dev_sub', sub })
       }
 
       const result = await insertCreditGrant(opts.pool, {
