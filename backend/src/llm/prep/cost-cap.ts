@@ -26,6 +26,9 @@ export async function readCostCap(pool: Pool): Promise<number> {
   if (result.rows.length === 0) {
     throw new CostCapParseError('row settings.world_gen_cost_cap_usd is missing')
   }
+  /* c8 ignore next — rows[0] is guaranteed by the length check above;
+     the `?? ''` is defensive against a hypothetical row with NULL value
+     that the settings.value NOT NULL constraint already prevents. */
   const raw = result.rows[0]?.value ?? ''
   const parsed = Number.parseFloat(raw)
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -46,6 +49,9 @@ export async function sumCompletedStageCosts(
        AND status = 'completed'`,
     [worldId],
   )
+  /* c8 ignore next — COALESCE(SUM(...), 0) always returns one row, so
+     the `?? 0` falsy arm is unreachable; kept for TS optional-chain
+     narrowing without a non-null assertion. */
   return result.rows[0]?.total ?? 0
 }
 

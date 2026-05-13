@@ -251,4 +251,36 @@ describe('derivePhase', () => {
     expect(charConceptStages).toHaveLength(2)
     expect(charConceptStages.map((s) => s.userId).sort()).toEqual(['usr-1', 'usr-2'])
   })
+
+  it('sort comparator handles null user_id alongside non-null values stably', () => {
+    // Same-stage rows where one has user_id=null and one is a real user;
+    // exercises the `a.user_id ?? ''` falsy arm in the per-player sort.
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: [
+        run({
+          stage: 'character_concept',
+          status: 'running',
+          campaign_id: 'cmp-1',
+          world_id: null,
+          user_id: 'usr-2',
+          completed_at: null,
+        }),
+        run({
+          stage: 'character_concept',
+          status: 'running',
+          campaign_id: 'cmp-1',
+          world_id: null,
+          user_id: null,
+          completed_at: null,
+        }),
+      ],
+    })
+    const ordered = result.stages
+      .filter((s) => s.stage === 'character_concept')
+      .map((s) => s.userId)
+    // localeCompare('', 'usr-2') < 0 → null entry sorts first.
+    expect(ordered).toEqual([null, 'usr-2'])
+  })
 })

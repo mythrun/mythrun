@@ -90,23 +90,19 @@ describe('waitFor', () => {
     await expect(promise).rejects.toThrow(/abort/i)
   })
 
-  it('handles a signal that aborts between addEventListener registration and the next event loop tick', async () => {
+  it('rejects with "aborted during backoff sleep" when the signal aborts during probe rejection (before sleepWithAbort attaches its abort listener)', async () => {
     // Covers the if (signal.aborted) early-return inside sleepWithAbort
-    // (lines 44-48). We need signal.aborted to be true at the point
-    // sleepWithAbort checks it AFTER setTimeout was scheduled but BEFORE
-    // the abort listener was attached. Simulate by patching addEventListener.
+    // (lines 44-48). When the probe aborts the controller AS PART OF its
+    // rejection, the catch arm enters sleepWithAbort with signal.aborted
+    // already true — exercising the synchronous early-reject branch.
     const controller = new AbortController()
-    const realAdd = controller.signal.addEventListener.bind(controller.signal)
-    vi.spyOn(controller.signal, 'addEventListener').mockImplementation(
-      (event: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
-        controller.abort()
-        realAdd(event, listener, options)
-      },
-    )
-    const probe = vi.fn().mockRejectedValue(new Error('nope'))
-    const promise = waitFor({ label: 'race', probe, signal: controller.signal })
+    const probe = vi.fn(async () => {
+      controller.abort()
+      throw new Error('probe aborted itself')
+    })
+    const promise = waitFor({ label: 'racey', probe, signal: controller.signal })
     promise.catch(() => undefined)
-    await vi.advanceTimersByTimeAsync(10_000)
-    await expect(promise).rejects.toThrow(/abort/i)
+    await vi.advanceTimersByTimeAsync(0)
+    await expect(promise).rejects.toThrow(/aborted during backoff sleep/)
   })
 })

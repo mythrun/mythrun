@@ -6,12 +6,14 @@ import {
   toSession,
   toCampaignMember,
   toCampaignCharacter,
+  toCreditEntry,
   type UserDbRow,
   type WorldDbRow,
   type CampaignDbRow,
   type SessionDbRow,
   type CampaignMemberDbRow,
   type CampaignCharacterDbRow,
+  type CreditEntryDbRow,
 } from '../mappers.js'
 
 const FIXED_DATE = new Date('2026-04-28T12:00:00.000Z')
@@ -218,5 +220,49 @@ describe('toCampaignCharacter', () => {
       userId: campaignCharacterRow.user_id,
       joinedAt: FIXED_DATE,
     })
+  })
+})
+
+const creditEntryRow: CreditEntryDbRow = {
+  id: '019dccef-300b-7ebc-ac99-d08d3a76533d',
+  user_id: '019dccef-300b-7ebc-ac99-d08d3a765185',
+  credit_type: 'world_gen',
+  amount: 5,
+  source_type: 'gift',
+  source_id: null,
+  granted_at: FIXED_DATE,
+  expires_at: null,
+}
+
+describe('toCreditEntry', () => {
+  it('maps world_gen + gift fields correctly', () => {
+    const e = toCreditEntry(creditEntryRow)
+    expect(e.creditType).toBe('world_gen')
+    expect(e.sourceType).toBe('gift')
+    expect(e.amount).toBe(5)
+  })
+
+  it('maps session credit type correctly', () => {
+    const e = toCreditEntry({ ...creditEntryRow, credit_type: 'session' })
+    expect(e.creditType).toBe('session')
+  })
+
+  it('maps every CreditSourceType variant', () => {
+    for (const src of ['purchase', 'subscription', 'gift', 'trial', 'refund', 'debit'] as const) {
+      const e = toCreditEntry({ ...creditEntryRow, source_type: src })
+      expect(e.sourceType).toBe(src)
+    }
+  })
+
+  it('throws on unexpected credit_type value from DB', () => {
+    expect(() =>
+      toCreditEntry({ ...creditEntryRow, credit_type: 'wild_card' as 'world_gen' }),
+    ).toThrow(/unexpected credit_type value from DB: wild_card/)
+  })
+
+  it('throws on unexpected source_type value from DB', () => {
+    expect(() =>
+      toCreditEntry({ ...creditEntryRow, source_type: 'mystery' as 'gift' }),
+    ).toThrow(/unexpected source_type value from DB: mystery/)
   })
 })
