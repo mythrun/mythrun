@@ -76,6 +76,39 @@ describe('worlds repo (integration)', () => {
     expect(await worlds.getById('019dccef-0000-7000-8000-000000000000')).toBeNull()
   })
 
+  it('getById returns the world when present', async () => {
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const found = await worlds.getById(w.id)
+    expect(found?.id).toBe(w.id)
+  })
+
+  it('update with empty patch is a no-op on every nullable field (covers ?? null=null branches)', async () => {
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const updated = await worlds.update(w.id, {})
+    expect(updated.name).toBe('A')
+    expect(updated.concept).toBe('c')
+  })
+
+  it('create defensively throws when INSERT returns no row (fake pool)', async () => {
+    const fakePool = {
+      query: async () => ({ rows: [], rowCount: 0 }),
+    } as unknown as Pool
+    const worlds = createWorldsRepo(fakePool)
+    await expect(
+      worlds.create({
+        createdBy: '019dccef-0000-7000-8000-000000000001',
+        name: 'X',
+        concept: 'c',
+      }),
+    ).rejects.toThrow(/INSERT returned no row/)
+  })
+
   it('listByUser returns DESC by createdAt', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
@@ -105,6 +138,55 @@ describe('worlds repo (integration)', () => {
     expect(updated.isPublic).toBe(true)
     expect(updated.concept).toBe('c')
     expect(updated.updatedAt.getTime()).toBeGreaterThan(w.updatedAt.getTime())
+  })
+
+  it('update with every patch field defined hits all COALESCE branches', async () => {
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const updated = await worlds.update(w.id, {
+      name: 'renamed',
+      concept: 'new concept',
+      tone: 'grim',
+      themes: 'isolation',
+      geographySummary: 'mountains',
+      politicalSummary: 'fractured',
+      era: 'twilight',
+      keyTensions: 'guild vs crown',
+      worldOverview: 'overview text',
+      followUpQuestions: 'q1\nq2',
+      startingSituations: 'opening situations',
+      isPublic: true,
+      moderationStatus: 'approved',
+      language: 'en',
+    })
+    expect(updated.name).toBe('renamed')
+    expect(updated.tone).toBe('grim')
+    expect(updated.era).toBe('twilight')
+    expect(updated.isPublic).toBe(true)
+    expect(updated.moderationStatus).toBe('approved')
+  })
+
+  it('update throws when the world does not exist', async () => {
+    const worlds = createWorldsRepo(pool)
+    await expect(
+      worlds.update('019dccef-0000-7000-8000-000000000000', { name: 'X' }),
+    ).rejects.toThrow(/no world with id/)
+  })
+
+  it('updateStatus throws when the world does not exist', async () => {
+    const worlds = createWorldsRepo(pool)
+    await expect(
+      worlds.updateStatus('019dccef-0000-7000-8000-000000000000', 'complete'),
+    ).rejects.toThrow(/no world with id/)
+  })
+
+  it('incrementForkCount throws when the world does not exist', async () => {
+    const worlds = createWorldsRepo(pool)
+    await expect(
+      worlds.incrementForkCount('019dccef-0000-7000-8000-000000000000'),
+    ).rejects.toThrow(/no world with id/)
   })
 
   it('updateStatus moves a world through generating → complete', async () => {

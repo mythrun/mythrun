@@ -4,10 +4,14 @@ import {
   toWorld,
   toCampaign,
   toSession,
+  toCampaignMember,
+  toCampaignCharacter,
   type UserDbRow,
   type WorldDbRow,
   type CampaignDbRow,
   type SessionDbRow,
+  type CampaignMemberDbRow,
+  type CampaignCharacterDbRow,
 } from '../mappers.js'
 
 const FIXED_DATE = new Date('2026-04-28T12:00:00.000Z')
@@ -162,5 +166,57 @@ describe('toSession', () => {
     expect(() => toSession({ ...sessionRow, status: 'paused' })).toThrow(
       /unexpected session status/,
     )
+  })
+})
+
+const memberRow: CampaignMemberDbRow = {
+  id: '019dccef-300b-7ebc-ac99-d08d3a76522c',
+  campaign_id: '019dccef-300b-7ebc-ac99-d08d3a76520a',
+  user_id: '019dccef-300b-7ebc-ac99-d08d3a765185',
+  role: 'owner',
+  invite_accepted: true,
+  joined_at: FIXED_DATE,
+}
+
+describe('toCampaignMember', () => {
+  it('maps owner role correctly', () => {
+    const m = toCampaignMember(memberRow)
+    expect(m.role).toBe('owner')
+    expect(m.campaignId).toBe(memberRow.campaign_id)
+    expect(m.userId).toBe(memberRow.user_id)
+    expect(m.inviteAccepted).toBe(true)
+    expect(m.joinedAt).toBe(FIXED_DATE)
+  })
+
+  it('maps player role correctly', () => {
+    const m = toCampaignMember({ ...memberRow, role: 'player' })
+    expect(m.role).toBe('player')
+  })
+
+  it('throws on unexpected role', () => {
+    expect(() => toCampaignMember({ ...memberRow, role: 'admin' })).toThrow(
+      /unexpected campaign_members\.role/,
+    )
+  })
+})
+
+const campaignCharacterRow: CampaignCharacterDbRow = {
+  id: '019dccef-300b-7ebc-ac99-d08d3a76533d',
+  campaign_id: '019dccef-300b-7ebc-ac99-d08d3a76520a',
+  character_id: '019dccef-300b-7ebc-ac99-d08d3a76544e',
+  user_id: '019dccef-300b-7ebc-ac99-d08d3a765185',
+  joined_at: FIXED_DATE,
+}
+
+describe('toCampaignCharacter', () => {
+  it('maps every field correctly', () => {
+    const cc = toCampaignCharacter(campaignCharacterRow)
+    expect(cc).toEqual({
+      id: campaignCharacterRow.id,
+      campaignId: campaignCharacterRow.campaign_id,
+      characterId: campaignCharacterRow.character_id,
+      userId: campaignCharacterRow.user_id,
+      joinedAt: FIXED_DATE,
+    })
   })
 })

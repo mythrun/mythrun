@@ -81,6 +81,42 @@ describe('pipeline-runs repo', () => {
     expect(rows[0]?.cost_usd).toBeCloseTo(0.5)
   })
 
+  describe('getLatestFailedForWorld', () => {
+    it('returns the latest failed row for a world', async () => {
+      const { worldId, userId } = await insertCampaign()
+      // Older failed run.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, completed_at, error, user_id)
+         VALUES ($1, $2, 'concept_intake', 'failed', now() - interval '1 hour', now() - interval '50 minutes', 'old error', $3)`,
+        [uuidv7(), worldId, userId],
+      )
+      // Newer failed run on a different stage.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, completed_at, error, user_id)
+         VALUES ($1, $2, 'world_overview', 'failed', now() - interval '5 minutes', now(), 'latest error', $3)`,
+        [uuidv7(), worldId, userId],
+      )
+      const repo = createPipelineRunsRepo(pool)
+      const result = await repo.getLatestFailedForWorld(worldId)
+      expect(result).not.toBeNull()
+      expect(result?.stage).toBe('world_overview')
+      expect(result?.error).toBe('latest error')
+    })
+
+    it('returns null when no failed rows exist', async () => {
+      const { worldId } = await insertCampaign()
+      const repo = createPipelineRunsRepo(pool)
+      const result = await repo.getLatestFailedForWorld(worldId)
+      expect(result).toBeNull()
+    })
+
+    it('returns null for an unknown worldId', async () => {
+      const repo = createPipelineRunsRepo(pool)
+      const result = await repo.getLatestFailedForWorld(uuidv7())
+      expect(result).toBeNull()
+    })
+  })
+
   it('returns only the LATEST row per (stage, user_id) when a stage has retries', async () => {
     // Schema's idx_pipeline_runs_unique forbids two rows with the same
     // (COALESCE(world_id, campaign_id), stage, user_id) tuple, so two

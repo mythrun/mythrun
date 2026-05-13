@@ -192,6 +192,39 @@ describe('derivePhase', () => {
     ])
   })
 
+  it('classifies unknown stage names into the "unknown" bucket without crashing', () => {
+    // Exercises stageScope's `return 'unknown'` fall-through (derive-phase.ts:83-84).
+    // An unknown stage doesn't land in any of the three scoped buckets,
+    // so it shouldn't influence phase computation; the stage list still
+    // includes it (sorted last because STAGE_ORDER.indexOf returns -1).
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: [
+        run({ stage: 'unknown_future_stage', status: 'running', completed_at: null }),
+      ],
+    })
+    // No bucketed runs → not_started despite the unknown row existing.
+    expect(result.phase).toBe('not_started')
+    expect(result.stages.map((s) => s.stage)).toContain('unknown_future_stage')
+  })
+
+  it('returns world_gen_failed when a worldgen stage failed but world.status is not yet failed', () => {
+    // Exercises the second-pass `worldgen.some(failed)` guard at
+    // derive-phase.ts:156-158. The earlier `world.status === 'failed'`
+    // guard doesn't fire (the row hasn't been updated yet), so the
+    // stage-level failed status is what flips the phase.
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'generating' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({ stage: 'world_and_factions', status: 'failed', completed_at: null }),
+      ],
+    })
+    expect(result.phase).toBe('world_gen_failed')
+  })
+
   it('preserves per-player rows in the stage list', () => {
     const result = derivePhase({
       campaign: baseCampaign,

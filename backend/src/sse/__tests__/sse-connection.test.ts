@@ -241,6 +241,52 @@ describe('sse-connection', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('logs a warning when onClose handler itself throws (idempotent close)', () => {
+    // Exercises sse-connection.ts:107-111 — the inner try/catch around
+    // the user-supplied onClose. If it throws, we log + continue rather
+    // than letting the exception escape close().
+    const reply = makeReply()
+    const request = makeRequest()
+    const logger = pino({ level: 'silent' })
+    const warnSpy = vi.spyOn(logger, 'warn')
+    const sink = openSseConnection({
+      request: request as never,
+      reply: reply as never,
+      logger,
+      onClose: () => {
+        throw new Error('handler-boom')
+      },
+    })
+    expect(() => sink.close('server-shutdown')).not.toThrow()
+    expect(warnSpy).toHaveBeenCalled()
+  })
+
+  it('write that throws closes the connection with reason=unknown', () => {
+    // Exercises sse-connection.ts:130-134 — raw.write itself rejects /
+    // throws (e.g., socket was forcibly torn). The wrapper logs, closes
+    // with 'unknown', and returns false. Subsequent writes are no-ops.
+    const reply = makeReply()
+    const request = makeRequest()
+    const onClose = vi.fn()
+    const logger = pino({ level: 'silent' })
+    const warnSpy = vi.spyOn(logger, 'warn')
+    const sink = openSseConnection({
+      request: request as never,
+      reply: reply as never,
+      logger,
+      onClose,
+    })
+    // First write — flip raw.write to throw synchronously.
+    reply.raw.write = (): boolean => {
+      throw new Error('socket-gone')
+    }
+    expect(sink.write('data: dropped\n\n')).toBe(false)
+    expect(warnSpy).toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    // Sink is closed; subsequent writes short-circuit (the closed guard).
+    expect(sink.write('data: ignored\n\n')).toBe(false)
+  })
+
   it('drain event before timeout clears the back-pressure close', () => {
     const reply = makeReply()
     const request = makeRequest()

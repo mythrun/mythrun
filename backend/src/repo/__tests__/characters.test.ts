@@ -100,6 +100,17 @@ describe('repo.characters', () => {
   })
 
   describe('create', () => {
+    it('defensively throws when INSERT returns no row (fake client)', async () => {
+      const characters = createCharactersRepo(pool)
+      const fakeTx = {
+        query: async () => ({ rows: [], rowCount: 0 }),
+      }
+      await expect(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        characters.create(fakeTx as any, { userId, ...baseCharacterInput }),
+      ).rejects.toThrow(/INSERT returned no row/)
+    })
+
     it('returns a Character row matching the input', async () => {
       const characters = createCharactersRepo(pool)
       const client = await pool.connect()
@@ -168,6 +179,26 @@ describe('repo.characters', () => {
       await expect(characters.addToCampaign(campaignId, charId, userId)).rejects.toBeInstanceOf(
         CharacterAlreadyInCampaignError,
       )
+    })
+
+    it('rethrows non-23505 errors verbatim (FK violation 23503 from unknown campaign)', async () => {
+      const characters = createCharactersRepo(pool)
+      const client = await pool.connect()
+      let charId: string
+      try {
+        await client.query('BEGIN')
+        const created = await characters.create(client, { userId, ...baseCharacterInput })
+        await client.query('COMMIT')
+        charId = created.id
+      } finally {
+        client.release()
+      }
+      // campaignId points at a campaign that doesn't exist → FK violation 23503,
+      // which is NOT 23505 and must escape the catch via the trailing rethrow.
+      const phantomCampaignId = '019dccef-0000-7000-8000-000000aaaaaa'
+      await expect(
+        characters.addToCampaign(phantomCampaignId, charId, userId),
+      ).rejects.toThrow()
     })
 
     it('throws UserAlreadyHasCharacterInCampaignError when same user adds a different character', async () => {

@@ -86,6 +86,10 @@ export async function insertCreditGrant(
       // surfaces the original error.
     }
     throw err
+    /* c8 ignore next — v8's branch counter flags the finally boundary
+       even though both completion paths (success + exception) are
+       exercised; same quirk appears on every try/finally with a release()
+       inside an async function. */
   } finally {
     client.release()
   }

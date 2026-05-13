@@ -7,6 +7,7 @@ import {
   LlmInvalidRequestError,
   LlmContextTooLongError,
   LlmTimeoutError,
+  LlmStructuredOutputError,
   mapToMythrunError,
 } from '../errors.js'
 
@@ -76,6 +77,38 @@ describe('mapToMythrunError', () => {
   it('passes unknown errors through unchanged', () => {
     const upstream = new Error('something else')
     expect(mapToMythrunError(upstream)).toBe(upstream)
+  })
+
+  it('maps AI_NoObjectGeneratedError (matched by name) to LlmStructuredOutputError', () => {
+    // The class lives in the `ai` package and is matched by `.name` to
+    // avoid a brittle deep import. Construct a stand-in by setting .name.
+    const upstream = new Error('schema failed after retries')
+    upstream.name = 'AI_NoObjectGeneratedError'
+    const mapped = mapToMythrunError(upstream)
+    expect(mapped).toBeInstanceOf(LlmStructuredOutputError)
+    expect(mapped.cause).toBe(upstream)
+  })
+
+  it('maps generic 5xx APICallError (not 401/403/429/529) through to fallthrough Error', () => {
+    // 500 doesn't hit any of the typed branches — falls through to the
+    // final `err instanceof Error ? err : new Error(...)` line.
+    const upstream = new APICallError({
+      message: 'server exploded',
+      url: 'https://api.anthropic.com',
+      statusCode: 500,
+      requestBodyValues: {},
+      isRetryable: true,
+    })
+    const mapped = mapToMythrunError(upstream)
+    expect(mapped).toBe(upstream)
+  })
+
+  it('wraps non-Error throwables into Error', () => {
+    // The final fallback: `err instanceof Error ? err : new Error(String(err))`
+    // — exercises the `: new Error(String(err))` branch.
+    const mapped = mapToMythrunError('string-thrown')
+    expect(mapped).toBeInstanceOf(Error)
+    expect(mapped.message).toBe('string-thrown')
   })
 
   it('preserves cause chain on every mapped error', () => {

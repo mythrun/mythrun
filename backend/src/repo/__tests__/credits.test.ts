@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import { createPgPool } from '../../db/postgres.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
-import { createCreditsRepo } from '../credits.js'
+import { createCreditsRepo, grantInTx } from '../credits.js'
 import { uuidv7 } from '../uuidv7.js'
 import { resetData, resetCreditsData } from './_helpers/reset-data.js'
 import { ensureSchema, pool } from './_helpers/with-tx.js'
@@ -684,6 +684,26 @@ describe('credits repo (integration)', () => {
       expect(sessionOnly[0]?.creditType).toBe('session')
     })
 
+    it('respects an explicit numeric limit', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 2, sourceType: 'gift' })
+      const entries = await credits.listEntries(u.id, { limit: 1 })
+      expect(entries).toHaveLength(1)
+    })
+
+    it('treats limit=null as "no LIMIT clause"', async () => {
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 2, sourceType: 'gift' })
+      const entries = await credits.listEntries(u.id, { limit: null })
+      expect(entries.length).toBeGreaterThanOrEqual(2)
+    })
+
     it('includes expired entries (audit view, not balance view)', async () => {
       const users = createUsersRepo(pool)
       const credits = createCreditsRepo(pool)
@@ -976,6 +996,366 @@ describe('credits repo (integration)', () => {
       })
       await expect(pool.query('DELETE FROM users WHERE id = $1', [u.id])).rejects.toThrow(
         /credit_ledger_user_id_fkey/,
+      )
+    })
+
+    it('grantInTx rejects sourceType="debit" with a helpful error', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await expect(
+          grantInTx(client, {
+            userId: u.id,
+            creditType: 'session',
+            amount: 1,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            sourceType: 'debit' as any,
+          }),
+        ).rejects.toThrow(/sourceType cannot be "debit"/)
+        await client.query('ROLLBACK')
+      } finally {
+        client.release()
+      }
+    })
+
+    it('grantInTx with explicit FK fields exercises the optional-coalesce branches', async () => {
+      const users = createUsersRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      // Insert a purchase so the FK is satisfiable.
+      const purchaseId = uuidv7()
+      await pool.query(
+        `INSERT INTO purchases (id, user_id, stripe_payment_intent_id, lookup_key, quantity, amount_cents, status)
+         VALUES ($1, $2, $3, 'sku_session', 1, 500, 'completed')`,
+        [purchaseId, u.id, `pi_explicit_${purchaseId.slice(-6)}`],
+      )
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const entry = await grantInTx(client, {
+          userId: u.id,
+          creditType: 'session',
+          amount: 5,
+          sourceType: 'purchase',
+          sourceId: uuidv7(), // explicit source_id
+          expiresAt: new Date(Date.now() + 86_400_000), // explicit expires_at
+          sourcePurchaseId: purchaseId,
+        })
+        await client.query('COMMIT')
+        expect(entry.amount).toBe(5)
+        expect(entry.sourceType).toBe('purchase')
+        expect(entry.expiresAt).toBeInstanceOf(Date)
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined)
+        throw err
+      } finally {
+        client.release()
+      }
+    })
+
+    it('readConsumedSourceType defensive throw fires when balance check passed but no positive row exists (fake tx)', async () => {
+      // This branch is unreachable in real PG (the balance-check passing
+      // guarantees a positive row); we exercise it via a fake client that
+      // diverges from the invariant.
+      const users = createUsersRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      let inserts = 0
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT id FROM users')) {
+                return Promise.resolve({ rows: [{ id: u.id }], rowCount: 1 })
+              }
+              if (
+                sql.includes('FROM credit_ledger') &&
+                sql.includes("source_type = 'debit'") &&
+                sql.includes('source_id = $3')
+              ) {
+                // Idempotency check: no prior debit row.
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.includes('SUM(amount)')) {
+                // Balance check passes: claim positive balance.
+                return Promise.resolve({
+                  rows: [{ balance: '100' }],
+                  rowCount: 1,
+                })
+              }
+              if (
+                sql.includes('SELECT source_type FROM credit_ledger') &&
+                sql.includes('LIMIT 1')
+              ) {
+                // Diverge from invariant: return zero positive unexpired rows.
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.startsWith('INSERT INTO credit_ledger')) {
+                inserts += 1
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.startsWith('ROLLBACK') || sql.startsWith('COMMIT')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const credits = createCreditsRepo(fakePool)
+      await expect(
+        credits.atomicDebit({
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
+        }),
+      ).rejects.toThrow(/no positive unexpired credit row|ledger inconsistency/)
+      expect(inserts).toBe(0)
+    })
+
+    it('atomicDebit defensive INSERT-returned-no-row throw fires (fake pool)', async () => {
+      // Hits the `if (!row) throw new Error('atomicDebit: INSERT returned no row')` branch.
+      const users = createUsersRepo(pool)
+      const u = await users.create(pool, baseUserInput)
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT id FROM users')) {
+                return Promise.resolve({ rows: [{ id: u.id }], rowCount: 1 })
+              }
+              if (
+                sql.includes('FROM credit_ledger') &&
+                sql.includes("source_type = 'debit'") &&
+                sql.includes('source_id = $3')
+              ) {
+                // No prior debit.
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.includes('SUM(amount)')) {
+                return Promise.resolve({ rows: [{ balance: '5' }], rowCount: 1 })
+              }
+              if (sql.includes('SELECT source_type FROM credit_ledger')) {
+                return Promise.resolve({ rows: [{ source_type: 'gift' }], rowCount: 1 })
+              }
+              if (sql.startsWith('INSERT INTO credit_ledger')) {
+                // Defensive: INSERT returns 0 rows.
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.startsWith('ROLLBACK') || sql.startsWith('COMMIT')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const credits = createCreditsRepo(fakePool)
+      await expect(
+        credits.atomicDebit({
+          userId: u.id,
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
+        }),
+      ).rejects.toThrow(/INSERT returned no row/)
+    })
+
+    it('recordClawback defensive throw fires when ON CONFLICT then SELECT returns no row (fake tx)', async () => {
+      // Real PG would never have this state because the partial unique index
+      // means an ON CONFLICT means a row exists. Drive the branch via fakery.
+      const fakeTx = {
+        query: async (sqlOrConfig: unknown): Promise<unknown> => {
+          const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+          if (sql.startsWith('INSERT INTO credit_ledger')) {
+            // ON CONFLICT DO NOTHING → no rows returned.
+            return { rows: [], rowCount: 0 }
+          }
+          if (sql.startsWith('SELECT * FROM credit_ledger')) {
+            // SELECT also returns no rows — defensive branch.
+            return { rows: [], rowCount: 0 }
+          }
+          return { rows: [], rowCount: 0 }
+        },
+      }
+      const credits = createCreditsRepo({} as unknown as Pool)
+      await expect(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        credits.recordClawback(fakeTx as any, {
+          userId: uuidv7(),
+          creditType: 'session',
+          amount: -1,
+          sourceId: uuidv7(),
+        }),
+      ).rejects.toThrow(/row missing after ON CONFLICT/)
+    })
+
+    it('atomicDebit maps pg lock_timeout (55P03) to DebitTimeoutError', async () => {
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT id FROM users')) {
+                return Promise.reject(
+                  Object.assign(new Error('lock timeout'), { code: '55P03' }),
+                )
+              }
+              if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const credits = createCreditsRepo(fakePool)
+      const { DebitTimeoutError } = await import('../credits-errors.js')
+      await expect(
+        credits.atomicDebit({
+          userId: uuidv7(),
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
+        }),
+      ).rejects.toBeInstanceOf(DebitTimeoutError)
+    })
+
+    it('atomicDebit maps pg statement_timeout (57014) to DebitTimeoutError', async () => {
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT id FROM users')) {
+                return Promise.reject(
+                  Object.assign(new Error('statement timeout'), { code: '57014' }),
+                )
+              }
+              if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const credits = createCreditsRepo(fakePool)
+      const { DebitTimeoutError } = await import('../credits-errors.js')
+      await expect(
+        credits.atomicDebit({
+          userId: uuidv7(),
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
+        }),
+      ).rejects.toBeInstanceOf(DebitTimeoutError)
+    })
+
+    it('atomicDebit swallows ROLLBACK failure and rethrows the original error', async () => {
+      // Hits the `} catch { /* ignore */ }` around ROLLBACK in the outer
+      // atomicDebit catch.
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT id FROM users')) {
+                return Promise.reject(new Error('original-debit-error'))
+              }
+              if (sql.startsWith('ROLLBACK')) {
+                return Promise.reject(new Error('rollback exploded too'))
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const credits = createCreditsRepo(fakePool)
+      await expect(
+        credits.atomicDebit({
+          userId: uuidv7(),
+          creditType: 'session',
+          amount: 1,
+          sourceId: uuidv7(),
+        }),
+      ).rejects.toThrow(/original-debit-error/)
+    })
+
+    it('grant swallows ROLLBACK failure and rethrows the original error', async () => {
+      // Hits the `} catch { /* ignore */ }` around ROLLBACK in `grant`.
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT id FROM users')) {
+                return Promise.reject(new Error('original-grant-error'))
+              }
+              if (sql.startsWith('ROLLBACK')) {
+                return Promise.reject(new Error('rollback exploded too'))
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const credits = createCreditsRepo(fakePool)
+      await expect(
+        credits.grant({
+          userId: uuidv7(),
+          creditType: 'session',
+          amount: 1,
+          sourceType: 'gift',
+        }),
+      ).rejects.toThrow(/original-grant-error/)
+    })
+
+    it('tryDebitForSession rethrows non-InsufficientCreditsError errors (e.g. amount validation)', async () => {
+      // The amount<=0 check throws a plain Error, not InsufficientCreditsError.
+      // We invoke atomicDebit directly with amount=0 to force the early throw;
+      // tryDebitForSession passes amount=1, so we instead exercise the rethrow
+      // branch by passing a non-existent user (UserNotFoundError isn't an
+      // InsufficientCreditsError, so the `throw err` line fires).
+      const credits = createCreditsRepo(pool)
+      const { UserNotFoundError } = await import('../credits-errors.js')
+      await expect(credits.tryDebitForSession(uuidv7(), uuidv7())).rejects.toBeInstanceOf(
+        UserNotFoundError,
       )
     })
 

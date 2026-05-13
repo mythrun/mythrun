@@ -238,6 +238,9 @@ async function handleRegister(
     if (inTransaction) {
       try {
         await client.query('ROLLBACK')
+        /* c8 ignore next 3 — same swallow-the-rollback-failure pattern
+           as elsewhere; reachable only when the pg client is in a
+           torn-down state. */
       } catch {
         // Connection may already be in failed state; pool will recycle.
       }

@@ -28,11 +28,15 @@ const PROBE_JITTER_MS = 1000
 
 // Static guardrail: lookup_keys filter has a Stripe-API hard ceiling at 100.
 // If LOOKUP_KEYS ever grows past this, the probe needs pagination.
+/* c8 ignore start — module-load assert; fires only if the SKU catalog
+   ever crosses 100 entries (current size: ~10). Cannot be exercised in
+   unit tests without mutating the module's import shape. */
 if (Object.keys(LOOKUP_KEYS).length > 100) {
   throw new Error(
     'BillingProbe: LOOKUP_KEYS exceeds 100 entries; Stripe prices.list lookup_keys filter caps at 100 — redesign required.',
   )
 }
+/* c8 ignore stop */
 
 export class BillingProbeError extends Error {
   readonly code = 'BILLING_PROBE_FAILED'
@@ -253,18 +257,22 @@ function populateSkuCache(
   for (const key of lookupKeys) {
     const spec = LOOKUP_KEYS[key]
     const price = byLookup.get(spec.lookupKey)
+    /* c8 ignore start — post-probe invariant asserts. The probe loop
+       above already required every lookup_key to be present with a
+       numeric unit_amount > 0; reaching either of these throws means
+       the probe data was mutated between validation and cache build,
+       which is structurally impossible in the current call graph. */
     if (!price) {
-      // Probe asserted presence above; this branch is unreachable on a passing probe.
       throw new Error(
         `BillingProbe: unreachable — lookup_key '${spec.lookupKey}' missing from byLookup after probe passed`,
       )
     }
     if (typeof price.unit_amount !== 'number') {
-      // Probe validated unit_amount > 0 above; this branch is also unreachable on a passing probe.
       throw new Error(
         `BillingProbe: unreachable — price for '${spec.lookupKey}' has non-numeric unit_amount after probe passed`,
       )
     }
+    /* c8 ignore stop */
     const internal: SkuInternalEntry = {
       lookup_key: spec.lookupKey,
       stripe_price_id: price.id,

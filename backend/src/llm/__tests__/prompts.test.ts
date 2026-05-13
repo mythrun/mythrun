@@ -72,4 +72,20 @@ describe('loadPrompt', () => {
       rmSync(path)
     }
   })
+
+  it('preserves placeholder when key is present but value is undefined', () => {
+    // Exercises the `vars[key] ?? match` branch — hasOwnProperty short-
+    // circuit returns false for missing keys, but here the key IS present
+    // with value `undefined`, so we fall through to the `??` fallback.
+    const path = resolve(promptsDir, 'auth', 'test_undefined_value.txt')
+    writeFileSync(path, 'Hello {{name}}!')
+    try {
+      // TS-ish: a Record<string, string> normally can't hold undefined,
+      // but the runtime guard exists for this exact case. Cast via unknown.
+      const vars = { name: undefined as unknown as string }
+      expect(loadPrompt('auth', 'test_undefined_value', vars)).toBe('Hello {{name}}!')
+    } finally {
+      rmSync(path)
+    }
+  })
 })

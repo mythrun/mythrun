@@ -505,4 +505,91 @@ describe('probeStripeContract', () => {
     )
     expect(getSkuCache()).toBeNull()
   })
+
+  it('Customer Portal probe StripeAuthenticationError → BillingProbeAuthError, no retry', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const authErr = stripeError(Stripe.errors.StripeAuthenticationError, 'Invalid API Key', 401)
+    const portalList = vi.fn().mockRejectedValue(authErr)
+    const { logger, entries } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toBeInstanceOf(BillingProbeAuthError)
+    expect(portalList).toHaveBeenCalledTimes(1)
+    expect(entries.some((e) => e.event === 'billing.probe_auth_failed')).toBe(true)
+    // SKU cache must NOT be populated when portal probe blows up at auth.
+    expect(getSkuCache()).toBeNull()
+  })
+
+  it('Customer Portal probe StripePermissionError → BillingProbeAuthError, no retry', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const permErr = stripeError(
+      Stripe.errors.StripePermissionError,
+      'Restricted key missing BillingPortal: read',
+      403,
+    )
+    const portalList = vi.fn().mockRejectedValue(permErr)
+    const { logger } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { portalList }), logger),
+    ).rejects.toBeInstanceOf(BillingProbeAuthError)
+    expect(portalList).toHaveBeenCalledTimes(1)
+    expect(getSkuCache()).toBeNull()
+  })
+
+  it('Customer Portal probe transient Stripe API error → BillingProbeTransientError (no retry on portal)', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const apiErr = stripeError(Stripe.errors.StripeAPIError, '503 service unavailable', 503)
+    const portalList = vi.fn().mockRejectedValue(apiErr)
+    const { logger, entries } = makeLogger()
+    await expect(probeStripeContract(makeStripe(list, { portalList }), logger)).rejects.toThrow(
+      /failed transiently after 1 attempts/,
+    )
+    // Portal probe is single-shot (no retry loop), so portalList runs once.
+    expect(portalList).toHaveBeenCalledTimes(1)
+    expect(
+      entries.some((e) => e.event === 'billing.probe_portal_transient_failed'),
+    ).toBe(true)
+    expect(getSkuCache()).toBeNull()
+  })
+
+  it('non-Error rejection from prices.list → retry log emits String(err); exhaust → transient error', async () => {
+    // Branch coverage for probe.ts:416/428 — the `err instanceof Error ?
+    // err.message : String(err)` else paths fire when the SDK / network
+    // rejects with a non-Error value (string, plain object). Same retry
+    // loop as the Error case but a different log shape.
+    const list = vi.fn().mockRejectedValue('opaque non-Error rejection')
+    const { logger, entries } = makeLogger()
+    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(/3 attempts/)
+    expect(list).toHaveBeenCalledTimes(3)
+    expect(entries.some((e) => e.event === 'billing.probe_transient_failed')).toBe(true)
+  }, 30_000)
+
+  it('unexpanded product (price.product is a string ID) → BillingProbeError', async () => {
+    // Branch coverage for probe.ts:215 — `typeof product === 'string'`
+    // (unexpanded). The probe requests expand: ['data.product'] but a
+    // future Stripe-side regression could ignore that hint.
+    const fixtures = allFiveFixtures().map((p) =>
+      p.lookup_key === 'tier_wayfarer'
+        ? { ...p, product: 'prod_wayfarer_string_only' as unknown as PriceFixture['product'] }
+        : p,
+    )
+    const list = vi.fn().mockResolvedValue(listOk(fixtures))
+    const { logger } = makeLogger()
+    await expect(probeStripeContract(makeStripe(list), logger)).rejects.toThrow(
+      /unexpanded or deleted product field/,
+    )
+  })
+
+  it('Customer Portal probe non-Stripe error → BillingProbeTransientError (covers String(err) branch)', async () => {
+    // The portal transient-error logger has a `err instanceof Error` guard
+    // at probe.ts line 310. A plain (non-Error) rejection exercises the
+    // `String(err)` else branch.
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const portalList = vi.fn().mockRejectedValue('network blew up')
+    const { logger } = makeLogger()
+    await expect(probeStripeContract(makeStripe(list, { portalList }), logger)).rejects.toThrow(
+      /failed transiently after 1 attempts/,
+    )
+    expect(getSkuCache()).toBeNull()
+  })
 })

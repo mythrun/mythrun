@@ -313,7 +313,76 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     expect(obj.totalTokens).toBeUndefined()
   })
 
-  it('case 9 — Backwards-compat: wrapGenerate still works with expanded MythrunContext', async () => {
+  it('case 10 — pull() throw: source reader rejects mid-stream — logs llm.error, re-throws wrapped Error', async () => {
+    // Exercises the pull-catch arm at middleware.ts:141-143. When the
+    // underlying ReadableStream errors out (not via a 'type:error' part,
+    // but a hard read-time rejection), the wrapper logs llm.error then
+    // controller.error()s — consumer sees the thrown error.
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const mw = logAndNormalizeMiddleware('claude-sonnet-test')
+    assert(mw.wrapStream !== undefined)
+
+    const erroringStream = new ReadableStream<LanguageModelV3StreamPart>({
+      pull(controller) {
+        controller.error(new Error('read failed'))
+      },
+    })
+
+    const out = await mw.wrapStream({
+      doGenerate: stubGenerate,
+      doStream: () =>
+        Promise.resolve({
+          stream: erroringStream,
+          request: undefined,
+          response: undefined,
+        } as unknown as LanguageModelV3StreamResult),
+      params: emptyParams(),
+      model: stubModel,
+    })
+
+    await expect(drainStream(out.stream)).rejects.toThrow('read failed')
+    expect(errorSpy).toHaveBeenCalledOnce()
+    expect(infoSpy).not.toHaveBeenCalled()
+    expect(errorSpy.mock.calls[0]?.[0]).toMatchObject({
+      event: 'llm.error',
+      mode: 'stream',
+    })
+  })
+
+  it('case 11 — pull() throw: non-Error throwable is wrapped via String(err)', async () => {
+    // Exercises the `err instanceof Error ? err : new Error(String(err))`
+    // ternary at middleware.ts:142. Throwing a string forces the false arm.
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const mw = logAndNormalizeMiddleware('claude-sonnet-test')
+    assert(mw.wrapStream !== undefined)
+
+    const stringThrowStream = new ReadableStream<LanguageModelV3StreamPart>({
+      pull(controller) {
+        // Synchronously erroring with a non-Error reason. The wrapper's
+        // try/catch sees the rejection from sourceReader.read() — that
+        // value gets passed through the `err instanceof Error` ternary.
+        controller.error('plain-string-error')
+      },
+    })
+
+    const out = await mw.wrapStream({
+      doGenerate: stubGenerate,
+      doStream: () =>
+        Promise.resolve({
+          stream: stringThrowStream,
+          request: undefined,
+          response: undefined,
+        } as unknown as LanguageModelV3StreamResult),
+      params: emptyParams(),
+      model: stubModel,
+    })
+
+    await expect(drainStream(out.stream)).rejects.toBeInstanceOf(Error)
+    expect(errorSpy).toHaveBeenCalledOnce()
+  })
+
+  it('case 12 — Backwards-compat: wrapGenerate still works with expanded MythrunContext', async () => {
     const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => undefined)
     const mw = logAndNormalizeMiddleware('claude-haiku-test')
     assert(mw.wrapGenerate !== undefined)

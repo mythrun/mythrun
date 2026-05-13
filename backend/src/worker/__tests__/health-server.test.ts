@@ -73,4 +73,26 @@ describe('startHealthServer', () => {
     expect(res.statusCode).toBe(503)
     expect(res.json()).toEqual({ healthy: false, failed: ['worker-campaign-setup'] })
   })
+
+  it('returns 503 with the failed probe when a probe never resolves (timeout)', async () => {
+    // Exercises the setTimeout-reject arm at health-server.ts:31-33 — a
+    // probe that never settles within PROBE_TIMEOUT_MS (1s) gets the
+    // timeout rejection from Promise.race and is marked ok=false.
+    //
+    // Use a hanging redis ping (Promise that never resolves) so the
+    // timeout wins the race.
+    const hangingRedis = {
+      ping: vi.fn(() => new Promise<string>(() => undefined)),
+    } as unknown as Redis
+    app = await startHealthServer(0, {
+      pg: mockPool(),
+      redisBatch: hangingRedis,
+      redisRealtime: mockRedis(),
+      workers: [mockWorker('world-gen')],
+    })
+
+    const res = await app.inject({ method: 'GET', url: '/health' })
+    expect(res.statusCode).toBe(503)
+    expect(res.json()).toEqual({ healthy: false, failed: ['redis-batch'] })
+  }, 5000)
 })

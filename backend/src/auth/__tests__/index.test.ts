@@ -67,4 +67,34 @@ describe('registerAuth', () => {
       }),
     ).rejects.toThrow(/Cognito config present/)
   })
+
+  it('passes appClientId through to bypass plugin Layer 3', async () => {
+    app = Fastify({ logger: false })
+    await expect(
+      registerAuth(app, {
+        mode: 'bypass',
+        appClientId: 'leaked-client-id',
+      }),
+    ).rejects.toThrow(/Cognito config present/)
+  })
+
+  it('passes issuerUrl through to bypass plugin Layer 3', async () => {
+    app = Fastify({ logger: false })
+    await expect(
+      registerAuth(app, {
+        mode: 'bypass',
+        issuerUrl: 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_xxx',
+      }),
+    ).rejects.toThrow(/Cognito config present/)
+  })
+
+  it('passes hostedUiDomain through to bypass plugin Layer 3', async () => {
+    app = Fastify({ logger: false })
+    await expect(
+      registerAuth(app, {
+        mode: 'bypass',
+        hostedUiDomain: 'auth.example.com',
+      }),
+    ).rejects.toThrow(/Cognito config present/)
+  })
 })

@@ -132,4 +132,20 @@ describe('consumeWsTicket', () => {
     const result = await consumeWsTicket({ redis, keyPrefix: KEY_PREFIX }, 'extra')
     expect(result).toMatchObject({ userId: 'u-1', sessionId: 's-1', campaignId: 'c-1' })
   })
+
+  it('returns null when getdel returns a Buffer (defensive against buffer-mode connection)', async () => {
+    // Production realtime client is string-mode, but the guard at lines
+    // 60-67 of ws-ticket.ts catches a future config regression where the
+    // Redis connection is switched to buffer-mode. Stub getdel directly
+    // to simulate that scenario without re-configuring ioredis-mock.
+    const bufferStub = {
+      getdel: () =>
+        Promise.resolve(Buffer.from(JSON.stringify({ userId: 'u', sessionId: 's', campaignId: 'c' }))),
+    } as unknown as Redis
+    const result = await consumeWsTicket(
+      { redis: bufferStub, keyPrefix: KEY_PREFIX },
+      'whatever',
+    )
+    expect(result).toBeNull()
+  })
 })

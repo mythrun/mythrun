@@ -240,4 +240,103 @@ describe('jwtPlugin', () => {
     const result = await decoratedVerifier.verify('token')
     expect(result).toEqual(VALID_PAYLOAD)
   })
+
+  it('throws if app.jwtVerifier is already decorated (mid-state double-register guard)', async () => {
+    // Some other code path could pre-decorate `jwtVerifier` before the
+    // plugin runs (e.g. a sibling plugin sharing the name). The inner
+    // double-decorate guard at jwt-plugin.ts:68-70 catches that.
+    app = Fastify({ logger: false })
+    // The pre-decorated stub is never invoked; the plugin's
+    // hasDecorator('jwtVerifier') check throws before any verify call.
+    // We satisfy the JwtVerifier type via a Proxy that returns a never-
+    // resolving promise rather than reproducing the full Cognito payload.
+    const stubVerifier = {
+      verify: () => new Promise(() => undefined),
+    }
+    app.decorate('jwtVerifier', stubVerifier as unknown as import('../types.js').JwtVerifier)
+    await expect(app.register(jwtPlugin, OPTS)).rejects.toThrow(/jwtVerifier is already decorated/)
+  })
+
+  it('attaches empty scopes array when scope claim is missing', async () => {
+    // Branch coverage: the `payload.scope` empty/missing branch returns
+    // Object.freeze([]) at jwt-plugin.ts:123. Distinct from the "scope is
+    // a space-separated string" branch covered by the happy-path test.
+    mockVerify.mockResolvedValue({
+      sub: 'u-1',
+      username: 'cognito_u_1',
+      // Intentionally NO scope field.
+      token_use: 'access',
+    })
+    app = Fastify({ logger: false })
+    await app.register(jwtPlugin, OPTS)
+    let attached: { scopes?: readonly string[] } = {}
+    app.get('/protected', (request) => {
+      attached = request.user as { scopes: readonly string[] }
+      return { ok: true }
+    })
+    const res = await app.inject({
+      method: 'GET',
+      url: '/protected',
+      headers: { authorization: 'Bearer t' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(attached.scopes).toEqual([])
+  })
+
+  it('hydrate rejecting with non-Error → log emits errorClass=Unknown, plugin still throws', async () => {
+    // Branch coverage for jwt-plugin.ts:59 errorClass else path. A
+    // non-Error rejection (string, plain object) is theoretically
+    // possible if a transport library mishandles serialization.
+    mockHydrate.mockRejectedValue('opaque non-Error rejection')
+    app = Fastify({ logger: false })
+    await expect(app.register(jwtPlugin, OPTS)).rejects.toBe('opaque non-Error rejection')
+  })
+
+  it('verifier rejecting with non-Error → log emits errorClass=Unknown, 401 returned', async () => {
+    // Branch coverage for jwt-plugin.ts:101 errorClass else path.
+    mockVerify.mockRejectedValue({ code: 'opaque-non-error-object' })
+    app = Fastify({ logger: false })
+    await app.register(jwtPlugin, OPTS)
+    app.get('/protected', () => ({ ok: true }))
+    const res = await app.inject({
+      method: 'GET',
+      url: '/protected',
+      headers: { authorization: 'Bearer t' },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('404 fall-through: routeOptions.url undefined → hook returns without verifying', async () => {
+    app = Fastify({ logger: false })
+    await app.register(jwtPlugin, OPTS)
+    // No routes registered — request falls through to default 404 handler.
+    // The hook's `routeOptions.url === undefined` early-return prevents a
+    // verify call against an undefined-route request.
+    const res = await app.inject({ method: 'GET', url: '/no-such-route' })
+    expect(res.statusCode).toBe(404)
+    expect(mockVerify).not.toHaveBeenCalled()
+  })
+
+  it('attaches empty scopes array when scope claim is empty string', async () => {
+    mockVerify.mockResolvedValue({
+      sub: 'u-1',
+      username: 'cognito_u_1',
+      scope: '',
+      token_use: 'access',
+    })
+    app = Fastify({ logger: false })
+    await app.register(jwtPlugin, OPTS)
+    let attached: { scopes?: readonly string[] } = {}
+    app.get('/protected', (request) => {
+      attached = request.user as { scopes: readonly string[] }
+      return { ok: true }
+    })
+    const res = await app.inject({
+      method: 'GET',
+      url: '/protected',
+      headers: { authorization: 'Bearer t' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(attached.scopes).toEqual([])
+  })
 })

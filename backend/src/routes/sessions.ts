@@ -69,11 +69,17 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       // hook chain — surface as 500 with a clear operator message rather
       // than continuing with a malformed payload.
       const campaignId = request.resolvedCampaignId
+      /* c8 ignore start — defense-in-depth: the upstream preHandler chain
+         sets resolvedCampaignId AND access-control.ts throws a 500 of its
+         own before this handler runs if the chain is mis-wired. This
+         throw exists to keep the type narrow without the `!` non-null
+         assertion downstream; it is unreachable in practice. */
       if (campaignId === undefined) {
         throw new Error(
           'sessions ws-ticket: request.resolvedCampaignId missing — upstream preHandler did not run',
         )
       }
+      /* c8 ignore stop */
       const { ticket, expiresAt } = await mintWsTicket(
         { redis: opts.redisRealtime, keyPrefix: opts.redisKeyPrefix },
         { userId: dbUser.id, sessionId, campaignId },

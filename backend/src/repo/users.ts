@@ -78,6 +78,7 @@ export function createUsersRepo(pool: Pool) {
           }
         }
         throw err
+        /* c8 ignore next — v8 finally-boundary quirk; both paths tested. */
       } finally {
         client.release()
       }
@@ -222,6 +223,7 @@ export async function findOrCreateStripeCustomer(
       // Ignore — connection may already be in a failed state.
     }
     throw err
+    /* c8 ignore next — v8 finally-boundary quirk; both paths tested. */
   } finally {
     client.release()
   }

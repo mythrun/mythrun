@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+import type { Pool, PoolClient } from 'pg'
 import {
   createUsersRepo,
   findOrCreateStripeCustomer,
+  LookupTimeoutError,
   type StripeCustomersClient,
 } from '../users.js'
 import { resetData } from './_helpers/reset-data.js'
@@ -21,6 +23,17 @@ describe('users repo (integration)', () => {
     username: 'alice',
     displayName: 'Alice',
   }
+
+  it('create defensively throws when INSERT returns no row (fake tx)', async () => {
+    const repo = createUsersRepo(pool)
+    const fakeTx = {
+      query: async () => ({ rows: [], rowCount: 0 }),
+    }
+    await expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      repo.create(fakeTx as any, { cognitoSub: 'x', username: 'x', displayName: 'X' }),
+    ).rejects.toThrow(/INSERT returned no row/)
+  })
 
   it('create returns a fully-populated user row', async () => {
     const repo = createUsersRepo(pool)
@@ -99,6 +112,11 @@ describe('users repo (integration)', () => {
     expect((await repo.getByUsername('gandalf'))?.username).toBe('Gandalf')
   })
 
+  it('getByUsername returns null for unknown username', async () => {
+    const repo = createUsersRepo(pool)
+    expect(await repo.getByUsername('nobody')).toBeNull()
+  })
+
   it('UNIQUE LOWER(username) rejects case-variant duplicates', async () => {
     const repo = createUsersRepo(pool)
     await repo.create(pool, { ...baseInput, username: 'Admin' })
@@ -118,6 +136,68 @@ describe('users repo (integration)', () => {
     const repo = createUsersRepo(pool)
     const u = await repo.getByCognitoSubWithTimeout('nope', 200)
     expect(u).toBeNull()
+  })
+
+  it('getByCognitoSubWithTimeout maps pg statement_timeout (57014) to LookupTimeoutError', async () => {
+    // Drive the catch branch with a fake pool whose client.query throws a pg
+    // error carrying code='57014' on the SELECT step. The function must
+    // (a) issue ROLLBACK (we accept that silently), and (b) rethrow as
+    // LookupTimeoutError.
+    const fakePool = {
+      connect: async (): Promise<PoolClient> => {
+        const fake: Partial<PoolClient> = {
+          query: ((sqlOrConfig: unknown): Promise<unknown> => {
+            const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+            if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+            if (sql.includes('SELECT * FROM users')) {
+              const err = Object.assign(new Error('statement timeout'), { code: '57014' })
+              return Promise.reject(err)
+            }
+            if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
+            return Promise.resolve({ rows: [], rowCount: 0 })
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          }) as any,
+          release: () => {
+            /* no-op */
+          },
+        }
+        return fake as PoolClient
+      },
+    } as unknown as Pool
+    const repo = createUsersRepo(fakePool)
+    await expect(repo.getByCognitoSubWithTimeout('any-sub', 10)).rejects.toBeInstanceOf(
+      LookupTimeoutError,
+    )
+  })
+
+  it('getByCognitoSubWithTimeout swallows a ROLLBACK error and rethrows the original', async () => {
+    // Fake pool whose SELECT rejects with a non-timeout error AND whose
+    // ROLLBACK also rejects. The function must swallow the ROLLBACK failure
+    // and rethrow the original SELECT error verbatim (not LookupTimeoutError).
+    const fakePool = {
+      connect: async (): Promise<PoolClient> => {
+        const fake: Partial<PoolClient> = {
+          query: ((sqlOrConfig: unknown): Promise<unknown> => {
+            const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+            if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+            if (sql.includes('SELECT * FROM users')) {
+              return Promise.reject(new Error('select exploded'))
+            }
+            if (sql.startsWith('ROLLBACK')) {
+              return Promise.reject(new Error('rollback also exploded'))
+            }
+            return Promise.resolve({ rows: [], rowCount: 0 })
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          }) as any,
+          release: () => {
+            /* no-op */
+          },
+        }
+        return fake as PoolClient
+      },
+    } as unknown as Pool
+    const repo = createUsersRepo(fakePool)
+    await expect(repo.getByCognitoSubWithTimeout('any-sub', 10)).rejects.toThrow(/select exploded/)
   })
 
   describe('findOrCreateStripeCustomer', () => {
@@ -209,6 +289,78 @@ describe('users repo (integration)', () => {
         findOrCreateStripeCustomer(pool, client, '019dccef-0000-7000-8000-000000000000'),
       ).rejects.toThrow(/users row not found/)
       expect(create).not.toHaveBeenCalled()
+    })
+
+    it('phase-3 rollback path: SELECT FOR UPDATE failure triggers ROLLBACK + rethrow', async () => {
+      // Real pool serves the phase-1 SELECT (existing row found via the real users
+      // table). For phase-3 we wrap pool.connect so the client's query rejects on
+      // SELECT FOR UPDATE and ROLLBACK succeeds — the function must rethrow the
+      // original SELECT FOR UPDATE error.
+      const repo = createUsersRepo(pool)
+      const created = await repo.create(pool, baseInput)
+      const { client: stripe } = makeStripeCustomersStub('cus_test_D')
+
+      // Spy on pool.connect — return a fake client whose query rejects on the
+      // SELECT FOR UPDATE statement. Other statements behave benignly.
+      const fakePool = {
+        query: pool.query.bind(pool),
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.includes('FOR UPDATE')) {
+                return Promise.reject(new Error('select-for-update exploded'))
+              }
+              if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+
+      await expect(findOrCreateStripeCustomer(fakePool, stripe, created.id)).rejects.toThrow(
+        /select-for-update exploded/,
+      )
+    })
+
+    it('phase-3 rollback failure is swallowed; original error still rethrown', async () => {
+      const repo = createUsersRepo(pool)
+      const created = await repo.create(pool, baseInput)
+      const { client: stripe } = makeStripeCustomersStub('cus_test_E')
+
+      const fakePool = {
+        query: pool.query.bind(pool),
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.includes('FOR UPDATE')) {
+                return Promise.reject(new Error('original-phase3-error'))
+              }
+              if (sql.startsWith('ROLLBACK')) {
+                return Promise.reject(new Error('rollback exploded too'))
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+
+      await expect(findOrCreateStripeCustomer(fakePool, stripe, created.id)).rejects.toThrow(
+        /original-phase3-error/,
+      )
     })
   })
 })

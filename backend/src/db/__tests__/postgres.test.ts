@@ -28,4 +28,48 @@ describe('createPgPool', () => {
     expect(pool.options.max).toBe(7)
     pool.end().catch(() => undefined)
   })
+
+  it('sslmode=require → ssl: { rejectUnauthorized: false } (RDS encryption-only)', () => {
+    const pool = createPgPool('postgresql://u:p@h:5432/d?sslmode=require')
+    expect(pool.options.ssl).toEqual({ rejectUnauthorized: false })
+    pool.end().catch(() => undefined)
+  })
+
+  it('sslmode=verify-ca → ssl: { rejectUnauthorized: true }', () => {
+    const pool = createPgPool('postgresql://u:p@h:5432/d?sslmode=verify-ca')
+    expect(pool.options.ssl).toEqual({ rejectUnauthorized: true })
+    pool.end().catch(() => undefined)
+  })
+
+  it('sslmode=verify-full → ssl: { rejectUnauthorized: true }', () => {
+    const pool = createPgPool('postgresql://u:p@h:5432/d?sslmode=verify-full')
+    expect(pool.options.ssl).toEqual({ rejectUnauthorized: true })
+    pool.end().catch(() => undefined)
+  })
+
+  it('no sslmode → ssl unset (dev branch)', () => {
+    const pool = createPgPool('postgresql://u:p@h:5432/d')
+    expect(pool.options.ssl).toBeUndefined()
+    pool.end().catch(() => undefined)
+  })
+
+  it('strips sslmode from connection string before passing to pg', () => {
+    // pg-pool stores the connectionString on options when no other host
+    // info is provided. Verify our sslmode-stripping pre-processing leaves
+    // it absent from the URL pg actually uses.
+    const pool = createPgPool('postgresql://u:p@h:5432/d?sslmode=require')
+    const cs = pool.options.connectionString
+    expect(typeof cs).toBe('string')
+    expect(cs).not.toContain('sslmode')
+    pool.end().catch(() => undefined)
+  })
+
+  it('sslmode=disable (unrecognized to our switch) → ssl unset', () => {
+    // 'disable' isn't one of the modes we explicitly handle; the function
+    // falls through to "no ssl config." Documents the default-branch
+    // behavior for completeness.
+    const pool = createPgPool('postgresql://u:p@h:5432/d?sslmode=disable')
+    expect(pool.options.ssl).toBeUndefined()
+    pool.end().catch(() => undefined)
+  })
 })

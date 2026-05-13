@@ -83,6 +83,29 @@ describe('repo.purchases', () => {
     })
   })
 
+  it('insertMany returns immediately on an empty rows array (no DB call)', async () => {
+    // No tx needed — the function must early-return before issuing any query.
+    // Pass a fake ClientLike whose .query would throw to prove no call lands.
+    const fakeTx = {
+      query: () => {
+        throw new Error('should not be called for empty rows')
+      },
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await purchases.insertMany(fakeTx as any, [])
+  })
+
+  it('markRefunded normalizes a null pg rowCount to 0 (defensive ?? branch)', async () => {
+    // Construct a fake ClientLike whose UPDATE returns rowCount=null.
+    // (Real pg never does this for UPDATE, but the `?? 0` exists for safety.)
+    const fakeTx = {
+      query: async () => ({ rows: [], rowCount: null }),
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await purchases.markRefunded(fakeTx as any, uuidv7())
+    expect(result.rowsAffected).toBe(0)
+  })
+
   it('markRefunded is idempotent — second call sees status=refunded already, returns rowcount 0 cleanly', async () => {
     await withTx(async (tx) => {
       const user = await createTestUser(tx)

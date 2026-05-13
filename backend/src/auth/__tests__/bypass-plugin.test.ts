@@ -106,6 +106,36 @@ describe('bypassPlugin', () => {
     expect(app.hasDecorator('mythAuthRegistered')).toBe(true)
   })
 
+  it('Layer 2b: probe-internal timeout fires (>1s) → controller.abort() invoked', async () => {
+    // Exercises bypass-plugin.ts:52-54 — the 1s setTimeout that fires
+    // controller.abort() when the ECS metadata probe hangs longer than
+    // the probe timeout. The mock fetch respects AbortSignal so the
+    // signal aborts → fetch rejects → plugin's try/catch swallows.
+    SAFE_DEV_ENV()
+    mockFetchImpl = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal
+        if (signal) {
+          if (signal.aborted) {
+            reject(new Error('aborted'))
+            return
+          }
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(new Error('aborted'))
+            },
+            { once: true },
+          )
+        }
+        // Never resolve on our own — only the plugin's own probeTimer
+        // (1s) can abort us.
+      })
+    app = Fastify({ logger: false, pluginTimeout: 30_000 })
+    await app.register(bypassPlugin, {})
+    expect(app.hasDecorator('mythAuthRegistered')).toBe(true)
+  }, 15_000)
+
   it('Layer 3: throws when cognitoUserPoolId opt is set', async () => {
     SAFE_DEV_ENV()
     app = Fastify({ logger: false })
@@ -189,5 +219,65 @@ describe('bypassPlugin', () => {
     vi.stubEnv('NODE_ENV', 'production')
     const res = await app.inject({ method: 'GET', url: '/protected' })
     expect(res.statusCode).toBe(500)
+  })
+
+  it('per-request: throws if Cognito env var appears after registration (Layer 3 re-check)', async () => {
+    SAFE_DEV_ENV()
+    app = Fastify({ logger: false })
+    await app.register(bypassPlugin, {})
+    app.get('/protected', () => ({ ok: true }))
+    // Mutate process.env AFTER registration succeeded. The per-request hook
+    // re-checks at request time so a future code path that sets Cognito
+    // env at runtime can't silently keep bypass alive.
+    vi.stubEnv('COGNITO_APP_CLIENT_ID', 'leaked-at-runtime')
+    const res = await app.inject({ method: 'GET', url: '/protected' })
+    expect(res.statusCode).toBe(500)
+  })
+
+  it('per-request: x-mythrun-dev-sub header overrides sub for per-test isolation', async () => {
+    SAFE_DEV_ENV()
+    app = Fastify({ logger: false })
+    await app.register(bypassPlugin, {})
+    let attached: { sub?: string } = {}
+    app.get('/protected', (request) => {
+      attached = request.user as { sub: string }
+      return { ok: true }
+    })
+    const res = await app.inject({
+      method: 'GET',
+      url: '/protected',
+      headers: { 'x-mythrun-dev-sub': 'bypass:custom-test-sub' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(attached.sub).toBe('bypass:custom-test-sub')
+  })
+
+  it('404 fall-through: routeOptions.url undefined → hook returns without attaching user', async () => {
+    SAFE_DEV_ENV()
+    app = Fastify({ logger: false })
+    await app.register(bypassPlugin, {})
+    // No routes registered → request to any URL falls through to the
+    // default 404 handler. `request.routeOptions.url` is undefined in
+    // that path, so the hook should early-return without throwing.
+    const res = await app.inject({ method: 'GET', url: '/does-not-exist' })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('per-request: empty x-mythrun-dev-sub header falls back to default BYPASS_USER', async () => {
+    SAFE_DEV_ENV()
+    app = Fastify({ logger: false })
+    await app.register(bypassPlugin, {})
+    let attached: { sub?: string } = {}
+    app.get('/protected', (request) => {
+      attached = request.user as { sub: string }
+      return { ok: true }
+    })
+    const res = await app.inject({
+      method: 'GET',
+      url: '/protected',
+      headers: { 'x-mythrun-dev-sub': '' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(attached.sub).toBe('bypass:dev-1')
   })
 })

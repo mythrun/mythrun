@@ -85,6 +85,34 @@ describe('sessions repo (integration)', () => {
     expect(await sessions.getById('019dccef-0000-7000-8000-000000000000')).toBeNull()
   })
 
+  it('getById returns the session when present', async () => {
+    const sessions = createSessionsRepo(pool)
+    const { campaignId } = await makeCampaign(pool)
+    const created = await sessions.create({ campaignId, sessionNumber: 1 })
+    const found = await sessions.getById(created.id)
+    expect(found?.id).toBe(created.id)
+    expect(found?.status).toBe('active')
+  })
+
+  it('update throws when the session does not exist', async () => {
+    const sessions = createSessionsRepo(pool)
+    await expect(
+      sessions.update('019dccef-0000-7000-8000-000000000000', { summary: 'x' }),
+    ).rejects.toThrow(/no session with id/)
+  })
+
+  it('create defensively throws when INSERT returns no row (fake pool)', async () => {
+    // Real PG always returns a row from INSERT...RETURNING *. The defensive
+    // `if (!row)` exists to surface a programmer error if that ever changes.
+    const fakePool = {
+      query: async () => ({ rows: [], rowCount: 0 }),
+    } as unknown as Pool
+    const sessions = createSessionsRepo(fakePool)
+    await expect(
+      sessions.create({ campaignId: '019dccef-0000-7000-8000-000000000000', sessionNumber: 1 }),
+    ).rejects.toThrow(/INSERT returned no row/)
+  })
+
   it('getActiveByCampaign returns the active session', async () => {
     const sessions = createSessionsRepo(pool)
     const { campaignId } = await makeCampaign(pool)

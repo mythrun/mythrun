@@ -18,8 +18,10 @@ import { STRIPE_API_VERSION } from '../stripe-client.js'
 import {
   dispatchEvent,
   HANDLERS,
+  PREFETCHERS,
   type EventHandler,
   type KnownStripeEventType,
+  type PrefetchFn,
 } from '../webhook.js'
 import {
   setSkuCache,
@@ -646,6 +648,399 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     expect(await countUserSubs(pool, sub_id)).toBe(0)
     expect(await countBillingHistoryFor(pool, userId)).toBe(0)
     expect(await countCreditLedgerFor(pool, userId)).toBe(0)
+  })
+
+  it('subscription session with undefined line_items: lineCount falls back to 0 → validation_failed', async () => {
+    // Stripe's checkout session payload doesn't always include line_items
+    // (depends on expand). Our prefetcher requests expand for line_items,
+    // but a future API regression / Stripe outage could return a session
+    // sans line_items. The handler treats the missing field as lineCount=0
+    // → multi-line guard fires.
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const sub_id = `sub_noli_${uuidv7().slice(0, 12)}`
+    // Cast to skip the required line_items field — production Stripe types
+    // allow undefined; the test fixture type tightens for happy-path usage.
+    const session = {
+      id: `cs_noli_${uuidv7().slice(0, 12)}`,
+      mode: 'subscription',
+      customer: cus,
+      subscription: sub_id,
+      payment_intent: null,
+      payment_status: 'paid',
+      metadata: { userId },
+      // line_items intentionally omitted.
+      amount_subtotal: 1500,
+      currency: 'usd',
+    } as unknown as SessionFixture
+    const { stripe } = makeStripeWithFixtures({
+      session,
+      subscription: placeholderSubscription(sub_id),
+    })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+    expect(
+      entries.some(
+        (e) => e.level === 'error' && e.msg === 'billing.checkout_subscription_multi_line',
+      ),
+    ).toBe(true)
+    expect(await countUserSubs(pool, sub_id)).toBe(0)
+  })
+
+  it('malformed prefetch shape: asCheckoutPrefetch throws → ROLLBACK', async () => {
+    // The asCheckoutPrefetch shape-gate at webhook.ts:296-304 protects the
+    // handler from a dispatcher → prefetcher mis-wiring. Reaching it requires
+    // overriding PREFETCHERS so a non-object value reaches the real handler.
+    const original = PREFETCHERS['checkout.session.completed']
+    const malformedPrefetcher: PrefetchFn = () => Promise.resolve('not an object')
+    PREFETCHERS['checkout.session.completed'] = malformedPrefetcher
+    try {
+      const session: SessionFixture = {
+        id: `cs_malformed_${uuidv7().slice(0, 12)}`,
+        mode: 'subscription',
+        customer: null,
+        subscription: null,
+        payment_intent: null,
+        payment_status: 'paid',
+        metadata: {},
+        line_items: { data: [] },
+        amount_subtotal: 0,
+        currency: 'usd',
+      }
+      const { stripe } = makeStripeWithFixtures({ session })
+      const event = makeCheckoutEvent(session)
+      const { log } = makeLogger()
+
+      await expect(dispatchEvent(event, stripe, pool, log)).rejects.toThrow(
+        /prefetch shape unexpected/,
+      )
+      expect(await countStripeEventRow(pool, event.id)).toBe(0)
+    } finally {
+      if (original) {
+        PREFETCHERS['checkout.session.completed'] = original
+      }
+    }
+  })
+
+  it("metadata.userId missing entirely: pages 'billing.checkout_orphan' (null branch), commits stripe_events", async () => {
+    // The orphan-row test above sets metadata.userId to a UUID that doesn't
+    // resolve. This covers the EARLIER branch at webhook.ts:363-366: the
+    // metadata.userId field itself is absent, so `ids.metadata_user_id`
+    // is null and the handler skips the users lookup entirely.
+    const sub_id = `sub_nometa_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_nometa_${uuidv7().slice(0, 12)}`,
+      mode: 'subscription',
+      // Also covers the customer-null branch in checkoutLogIds.
+      customer: null,
+      subscription: sub_id,
+      payment_intent: null,
+      payment_status: 'paid',
+      // Intentionally omit userId so checkoutLogIds() returns null.
+      metadata: {},
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 1500,
+      currency: 'usd',
+    }
+    const { stripe } = makeStripeWithFixtures({
+      session,
+      subscription: placeholderSubscription(sub_id),
+    })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+    const paged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'billing.checkout_orphan',
+    )
+    expect(paged).toBeDefined()
+    if (!paged) throw new Error('expected billing.checkout_orphan log')
+    expect(paged.obj.metadata_user_id).toBeNull()
+    expect(await countUserSubs(pool, sub_id)).toBe(0)
+  })
+
+  it("session.mode='setup' (unhandled mode) → INFO log, commits stripe_events, no writes", async () => {
+    // Branch for the trailing `log.info('billing.checkout_unhandled_mode')`
+    // path at webhook.ts:404-408. Stripe `setup` mode sessions don't
+    // generate revenue events; the handler logs and exits clean.
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    // Cast: setup is a real Stripe.Checkout.Session mode, but our test
+    // fixture type only lists 'subscription' | 'payment' because those
+    // are the only ones the handler does real work for.
+    const session = {
+      id: `cs_setup_${uuidv7().slice(0, 12)}`,
+      mode: 'setup',
+      customer: cus,
+      subscription: null,
+      payment_intent: null,
+      payment_status: 'no_payment_required',
+      metadata: { userId },
+      line_items: { data: [] },
+      amount_subtotal: 0,
+      currency: 'usd',
+    } as unknown as SessionFixture
+    const { stripe } = makeStripeWithFixtures({ session })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+    expect(
+      entries.some((e) => e.level === 'info' && e.msg === 'billing.checkout_unhandled_mode'),
+    ).toBe(true)
+    expect(await countBillingHistoryFor(pool, userId)).toBe(0)
+    expect(await countCreditLedgerFor(pool, userId)).toBe(0)
+  })
+
+  it('subscription mode but prefetch.subscription is null → handler throws → ROLLBACK', async () => {
+    // The prefetcher returns subscription=null when session.subscription is
+    // not a non-empty string. The handler's `if (!subscription)` guard
+    // at webhook.ts:445-449 then throws, which bubbles out of the
+    // dispatcher's try block → ROLLBACK → stripe_events row gone.
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const session: SessionFixture = {
+      id: `cs_nosub_${uuidv7().slice(0, 12)}`,
+      mode: 'subscription',
+      customer: cus,
+      // null forces prefetcher to skip subscription retrieve, leaving
+      // prefetch.subscription === null at handler-invocation time.
+      subscription: null,
+      payment_intent: null,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 1500,
+      currency: 'usd',
+    }
+    const { stripe } = makeStripeWithFixtures({ session })
+    const event = makeCheckoutEvent(session)
+    const { log } = makeLogger()
+
+    await expect(dispatchEvent(event, stripe, pool, log)).rejects.toThrow(
+      /subscription mode but prefetch\.subscription is null/,
+    )
+    // ROLLBACK on throw — stripe_events row not committed.
+    expect(await countStripeEventRow(pool, event.id)).toBe(0)
+  })
+
+  it('subscription with multi-item subscription.items: returns validation_failed, commits stripe_events, writes nothing', async () => {
+    // Distinct from the multi-line session check: the dispatched subscription
+    // itself has > 1 item. This is the second guard in
+    // handleCheckoutCompletedSubscription (webhook.ts:450-460). Reaching
+    // this branch requires a single line_item AND a subscription with
+    // multi-item data.
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const sub_id = `sub_multiitem_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_multiitem_${uuidv7().slice(0, 12)}`,
+      mode: 'subscription',
+      customer: cus,
+      subscription: sub_id,
+      payment_intent: null,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 1500,
+      currency: 'usd',
+    }
+    const subscription: SubscriptionFixture = {
+      id: sub_id,
+      status: 'active',
+      cancel_at_period_end: false,
+      cancel_at: null,
+      cancellation_details: null,
+      items: {
+        data: [
+          {
+            current_period_start: 1_780_000_000,
+            current_period_end: 1_790_000_000,
+            price: { id: 'price_a', lookup_key: 'tier_wayfarer' },
+          },
+          {
+            current_period_start: 1_780_000_000,
+            current_period_end: 1_790_000_000,
+            price: { id: 'price_b', lookup_key: 'tier_sojourner' },
+          },
+        ],
+      },
+    }
+    const { stripe } = makeStripeWithFixtures({ session, subscription })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+    const paged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'billing.checkout_subscription_multi_item',
+    )
+    expect(paged).toBeDefined()
+    if (!paged) throw new Error('expected billing.checkout_subscription_multi_item log')
+    expect(paged.obj.subscription_id).toBe(sub_id)
+    expect(paged.obj.items_count).toBe(2)
+    expect(
+      entries.some(
+        (e) => e.level === 'error' && e.msg === 'billing.handler_validation_failed_committed',
+      ),
+    ).toBe(true)
+    expect(await countUserSubs(pool, sub_id)).toBe(0)
+  })
+
+  it('subscription with missing lookup_key on price: returns validation_failed, commits stripe_events, writes nothing', async () => {
+    // Hits webhook.ts:467-478 — single line_item, single subscription item,
+    // but the price has no lookup_key. Operator-error guard: tier resolution
+    // must NOT silently fall back to anything.
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const sub_id = `sub_nolk_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_nolk_${uuidv7().slice(0, 12)}`,
+      mode: 'subscription',
+      customer: cus,
+      subscription: sub_id,
+      payment_intent: null,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 1500,
+      currency: 'usd',
+    }
+    const subscription: SubscriptionFixture = {
+      id: sub_id,
+      status: 'active',
+      cancel_at_period_end: false,
+      cancel_at: null,
+      cancellation_details: null,
+      items: {
+        data: [
+          {
+            current_period_start: 1_780_000_000,
+            current_period_end: 1_790_000_000,
+            // Empty lookup_key triggers the validation_failed branch.
+            price: { id: 'price_no_lookup', lookup_key: null },
+          },
+        ],
+      },
+    }
+    const { stripe } = makeStripeWithFixtures({ session, subscription })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+    const paged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'billing.checkout_subscription_missing_lookup_key',
+    )
+    expect(paged).toBeDefined()
+    if (!paged) throw new Error('expected billing.checkout_subscription_missing_lookup_key log')
+    expect(paged.obj.subscription_id).toBe(sub_id)
+    expect(paged.obj.price_id).toBe('price_no_lookup')
+    expect(
+      entries.some(
+        (e) => e.level === 'error' && e.msg === 'billing.handler_validation_failed_committed',
+      ),
+    ).toBe(true)
+    expect(await countUserSubs(pool, sub_id)).toBe(0)
+  })
+
+  it('subscription with empty-string lookup_key: returns validation_failed (length-zero branch)', async () => {
+    // Exercises the second half of the typeof-or-length-zero condition at
+    // webhook.ts:468 — lookup_key is a string but empty.
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const sub_id = `sub_emptylk_${uuidv7().slice(0, 12)}`
+    const session: SessionFixture = {
+      id: `cs_emptylk_${uuidv7().slice(0, 12)}`,
+      mode: 'subscription',
+      customer: cus,
+      subscription: sub_id,
+      payment_intent: null,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 1500,
+            price: { id: 'price_wayfarer', lookup_key: 'tier_wayfarer', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 1500,
+      currency: 'usd',
+    }
+    const subscription: SubscriptionFixture = {
+      id: sub_id,
+      status: 'active',
+      cancel_at_period_end: false,
+      cancel_at: null,
+      cancellation_details: null,
+      items: {
+        data: [
+          {
+            current_period_start: 1_780_000_000,
+            current_period_end: 1_790_000_000,
+            price: { id: 'price_empty_lookup', lookup_key: '' },
+          },
+        ],
+      },
+    }
+    const { stripe } = makeStripeWithFixtures({ session, subscription })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+    expect(
+      entries.some(
+        (e) =>
+          e.level === 'error' && e.msg === 'billing.checkout_subscription_missing_lookup_key',
+      ),
+    ).toBe(true)
+    expect(await countUserSubs(pool, sub_id)).toBe(0)
   })
 
   it('multi-line subscription session: returns validation_failed, commits stripe_events, writes nothing', async () => {

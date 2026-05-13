@@ -93,6 +93,29 @@ describe('campaigns repo (integration)', () => {
     expect(await campaigns.getById('019dccef-0000-7000-8000-000000000000')).toBeNull()
   })
 
+  it('getById returns the campaign when present', async () => {
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const campaigns = createCampaignsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'X' })
+    const found = await campaigns.getById(c.id)
+    expect(found?.id).toBe(c.id)
+  })
+
+  it('update with empty patch is a no-op (covers all-undefined ?? null branches)', async () => {
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const campaigns = createCampaignsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'B' })
+    const updated = await campaigns.update(c.id, {})
+    expect(updated.name).toBe('B')
+    expect(updated.status).toBe('setup')
+  })
+
   it('listByUser returns campaigns where user is an accepted member', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
@@ -143,6 +166,80 @@ describe('campaigns repo (integration)', () => {
     expect(updated.name).toBe('A renamed')
     expect(updated.status).toBe('active')
     expect(updated.updatedAt.getTime()).toBeGreaterThan(c.updatedAt.getTime())
+  })
+
+  it('update accepts all defined patch fields (covers each COALESCE branch)', async () => {
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const campaigns = createCampaignsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'A' })
+    const updated = await campaigns.update(c.id, {
+      name: 'A2',
+      status: 'archived',
+      language: 'en',
+    })
+    expect(updated.name).toBe('A2')
+    expect(updated.status).toBe('archived')
+    expect(updated.language).toBe('en')
+  })
+
+  it('update throws when the campaign does not exist', async () => {
+    const campaigns = createCampaignsRepo(pool)
+    await expect(
+      campaigns.update('019dccef-0000-7000-8000-000000000000', { name: 'X' }),
+    ).rejects.toThrow(/no campaign with id/)
+  })
+
+  it('create defensively throws when INSERT returns no row (fake pool)', async () => {
+    const fakePool = {
+      query: async () => ({ rows: [], rowCount: 0 }),
+    } as unknown as Pool
+    const campaigns = createCampaignsRepo(fakePool)
+    await expect(
+      campaigns.create({
+        worldId: '019dccef-0000-7000-8000-000000000001',
+        createdBy: '019dccef-0000-7000-8000-000000000002',
+        name: 'X',
+      }),
+    ).rejects.toThrow(/INSERT returned no row/)
+  })
+
+  it('addMember defensively throws when ON CONFLICT then SELECT returns no row (fake pool)', async () => {
+    // Real PG always finds the row after ON CONFLICT DO NOTHING because the
+    // conflict means a row exists. This defensive branch fires only if the
+    // schema invariant has drifted.
+    let call = 0
+    const fakePool = {
+      query: async () => {
+        call += 1
+        // First call: INSERT...ON CONFLICT DO NOTHING returns 0 rows (conflict).
+        // Second call: follow-up SELECT also returns 0 rows (impossible normally).
+        return { rows: [], rowCount: 0 }
+      },
+    } as unknown as Pool
+    const campaigns = createCampaignsRepo(fakePool)
+    await expect(
+      campaigns.addMember({
+        campaignId: '019dccef-0000-7000-8000-000000000001',
+        userId: '019dccef-0000-7000-8000-000000000002',
+        role: 'player',
+      }),
+    ).rejects.toThrow(/ON CONFLICT then SELECT returned no row/)
+    expect(call).toBe(2)
+  })
+
+  it('getOwner returns null when the campaign has no owner row', async () => {
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const campaigns = createCampaignsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'NoOwner' })
+    // No addMember call → no owner row.
+    const o = await campaigns.getOwner(c.id)
+    expect(o).toBeNull()
   })
 
   describe('member methods', () => {

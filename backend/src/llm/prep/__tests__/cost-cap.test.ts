@@ -153,6 +153,32 @@ describe('cost-cap', () => {
   })
 
   describe('issueCostCapRefund', () => {
+    it('rolls back the transaction when an inner query fails', async () => {
+      // Exercises the catch + ROLLBACK arm (cost-cap.ts:71-72). Passing
+      // a userId that does not exist in `users` violates the
+      // credit_ledger FK; the INSERT throws inside the BEGIN/COMMIT pair
+      // and the wrapper must ROLLBACK before re-raising.
+      const { worldId } = await seedUserWorldCampaign()
+      const missingUserId = uuidv7()
+      await expect(
+        issueCostCapRefund(pool, { userId: missingUserId, worldId }),
+      ).rejects.toBeDefined()
+      // World status MUST remain unchanged — the UPDATE inside the same
+      // tx was rolled back along with the failing INSERT. (If ROLLBACK
+      // didn't run, the world would now be 'failed'.)
+      const world = await pool.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [worldId],
+      )
+      expect(world.rows[0]?.status).toBe('generating')
+      // No credit_ledger row was inserted for the missing user.
+      const ledger = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM credit_ledger WHERE user_id = $1`,
+        [missingUserId],
+      )
+      expect(ledger.rows[0]?.count).toBe('0')
+    })
+
     it('marks world failed + inserts +1 credit_ledger refund in one transaction', async () => {
       const { userId, worldId } = await seedUserWorldCampaign()
       // Existing debit row from create-campaign flow. The debit polarity +

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import { createPgPool } from '../../db/postgres.js'
 import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
@@ -10,7 +10,11 @@ import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
 import { createInvitesRepo } from '../invites.js'
-import { InviteCapReachedError, InviteTimeoutError } from '../invites-errors.js'
+import {
+  InviteCapReachedError,
+  InviteCreationError,
+  InviteTimeoutError,
+} from '../invites-errors.js'
 import { resetData } from './_helpers/reset-data.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -86,6 +90,104 @@ describe('invites repo (integration)', () => {
         invites.create({ campaignId: campaign.id, createdBy: owner.id }),
       ).rejects.toBeInstanceOf(InviteCapReachedError)
     }, 10_000)
+
+    it('rethrows non-23505 INSERT errors via the outer catch + ROLLBACK', async () => {
+      // Passing a createdBy that doesn't exist → FK violation 23503 on INSERT,
+      // which is NOT the invite_code UNIQUE collision the retry loop handles.
+      // The error falls through `throw err` in the retry loop, then through
+      // the outer catch which fires ROLLBACK and rethrows.
+      const { invites, campaign } = await setup()
+      const phantomUserId = '019dccef-0000-7000-8000-000000bbbbbb'
+      await expect(
+        invites.create({ campaignId: campaign.id, createdBy: phantomUserId }),
+      ).rejects.toThrow()
+    })
+
+    it('rollback failure during outer catch is swallowed; original error rethrown', async () => {
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.includes('FROM campaigns WHERE id')) {
+                // Force a generic error in body to enter the catch.
+                return Promise.reject(new Error('campaign-select exploded'))
+              }
+              if (sql.startsWith('ROLLBACK')) {
+                return Promise.reject(new Error('rollback exploded'))
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      await expect(
+        invitesRepo.create({
+          campaignId: '019dccef-0000-7000-8000-000000000001',
+          createdBy: '019dccef-0000-7000-8000-000000000002',
+        }),
+      ).rejects.toThrow(/campaign-select exploded/)
+    })
+
+    it('throws InviteCreationError when every INSERT collides on invite_code (fake pool)', async () => {
+      // Drive the retry loop to exhaustion: fake pool whose INSERT always
+      // rejects with 23505 + campaign_invites_invite_code_key. Loop exits
+      // after INVITE_CODE_RETRIES iterations and throws InviteCreationError.
+      let inserts = 0
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.includes('FROM campaigns WHERE id')) {
+                // Campaign lock check.
+                return Promise.resolve({ rows: [{ id: 'whatever' }], rowCount: 1 })
+              }
+              if (sql.includes('count(*)')) {
+                // Cap-check returns under cap.
+                return Promise.resolve({ rows: [{ count: '0' }], rowCount: 1 })
+              }
+              if (sql.startsWith('INSERT INTO campaign_invites')) {
+                inserts += 1
+                return Promise.reject(
+                  Object.assign(new Error('unique violation'), {
+                    code: '23505',
+                    constraint: 'campaign_invites_invite_code_key',
+                  }),
+                )
+              }
+              if (sql.startsWith('ROLLBACK') || sql.startsWith('COMMIT')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      await expect(
+        invitesRepo.create({
+          campaignId: '019dccef-0000-7000-8000-000000000001',
+          createdBy: '019dccef-0000-7000-8000-000000000002',
+        }),
+      ).rejects.toBeInstanceOf(InviteCreationError)
+      expect(inserts).toBe(3) // INVITE_CODE_RETRIES
+    })
   })
 
   describe('getByCode', () => {
@@ -128,6 +230,33 @@ describe('invites repo (integration)', () => {
       await pool.query('UPDATE users SET suspended_at = now() WHERE id = $1', [owner.id])
       const preview = await invites.getCodePreview(inv.inviteCode)
       expect(preview).toBeNull()
+    })
+  })
+
+  describe('listForCampaign', () => {
+    it('returns all non-expired invites ordered ASC by created_at; first row has primary=true', async () => {
+      const { invites, campaign, owner } = await setup()
+      const a = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
+      await new Promise((r) => setTimeout(r, 5))
+      const b = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
+      const list = await invites.listForCampaign(campaign.id)
+      expect(list.map((i) => i.id)).toEqual([a.id, b.id])
+      expect(list[0]?.primary).toBe(true)
+      expect(list[1]?.primary).toBe(false)
+    })
+
+    it('returns empty when the campaign has no active invites', async () => {
+      const { invites, campaign } = await setup()
+      const list = await invites.listForCampaign(campaign.id)
+      expect(list).toEqual([])
+    })
+
+    it('excludes expired invites', async () => {
+      const { invites, campaign, owner } = await setup()
+      const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
+      await invites.revoke(inv.inviteCode, campaign.id) // sets expires_at = now()
+      const list = await invites.listForCampaign(campaign.id)
+      expect(list).toEqual([])
     })
   })
 
@@ -212,6 +341,281 @@ describe('invites repo (integration)', () => {
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       const result = await invites.acceptInvite({ code: inv.inviteCode, userId: newPlayer.id })
       expect(result).toEqual({ campaignFull: true, activeMembers: 6 })
+    })
+
+    it('campaign deleted mid-accept (FK 23503 on INSERT) → campaignGone: true', async () => {
+      // Drive the FK-violation branch by faking the INSERT to reject 23503.
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const inviteRow = {
+            id: '019dccef-0000-7000-8000-000000000005',
+            campaign_id: '019dccef-0000-7000-8000-000000000099',
+            created_by: '019dccef-0000-7000-8000-000000000001',
+            invite_code: 'CODECODECODE',
+            max_uses: null,
+            uses: 0,
+            expires_at: null,
+            created_at: new Date(),
+          }
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+                return Promise.resolve({ rows: [inviteRow], rowCount: 1 })
+              }
+              if (sql.startsWith('SELECT id FROM campaign_members')) {
+                // Not a member.
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.startsWith('SELECT count(*)::text AS count FROM campaign_members')) {
+                return Promise.resolve({ rows: [{ count: '0' }], rowCount: 1 })
+              }
+              if (sql.startsWith('INSERT INTO campaign_members')) {
+                return Promise.reject(
+                  Object.assign(new Error('fk violation'), { code: '23503' }),
+                )
+              }
+              if (sql.startsWith('ROLLBACK') || sql.startsWith('COMMIT')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      const result = await invitesRepo.acceptInvite({
+        code: 'CODECODECODE',
+        userId: '019dccef-0000-7000-8000-000000000001',
+      })
+      expect(result).toEqual({ campaignGone: true })
+    })
+
+    it('non-23503 INSERT error rethrows verbatim (e.g. generic DB error)', async () => {
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const inviteRow = {
+            id: '019dccef-0000-7000-8000-000000000007',
+            campaign_id: '019dccef-0000-7000-8000-000000000099',
+            created_by: '019dccef-0000-7000-8000-000000000001',
+            invite_code: 'GENERICCODE!',
+            max_uses: null,
+            uses: 0,
+            expires_at: null,
+            created_at: new Date(),
+          }
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+                return Promise.resolve({ rows: [inviteRow], rowCount: 1 })
+              }
+              if (sql.startsWith('SELECT id FROM campaign_members')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.startsWith('SELECT count(*)::text AS count FROM campaign_members')) {
+                return Promise.resolve({ rows: [{ count: '0' }], rowCount: 1 })
+              }
+              if (sql.startsWith('INSERT INTO campaign_members')) {
+                // Non-23503, non-23505: a generic DB error.
+                return Promise.reject(new Error('generic insert error'))
+              }
+              if (sql.startsWith('ROLLBACK') || sql.startsWith('COMMIT')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      await expect(
+        invitesRepo.acceptInvite({
+          code: 'GENERICCODE!',
+          userId: '019dccef-0000-7000-8000-000000000001',
+        }),
+      ).rejects.toThrow(/generic insert error/)
+    })
+
+    it('ON CONFLICT no-op (rowCount=0) on INSERT membership → alreadyMember: true', async () => {
+      // A concurrent insert via a different invite code landed the membership
+      // row. Our INSERT...ON CONFLICT DO NOTHING returns 0 rows; we COMMIT
+      // and report alreadyMember=true without incrementing uses.
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const inviteRow = {
+            id: '019dccef-0000-7000-8000-000000000006',
+            campaign_id: '019dccef-0000-7000-8000-000000000099',
+            created_by: '019dccef-0000-7000-8000-000000000001',
+            invite_code: 'OTHEROTHEROT',
+            max_uses: null,
+            uses: 0,
+            expires_at: null,
+            created_at: new Date(),
+          }
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+                return Promise.resolve({ rows: [inviteRow], rowCount: 1 })
+              }
+              if (sql.startsWith('SELECT id FROM campaign_members')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.startsWith('SELECT count(*)::text AS count FROM campaign_members')) {
+                return Promise.resolve({ rows: [{ count: '0' }], rowCount: 1 })
+              }
+              if (sql.startsWith('INSERT INTO campaign_members')) {
+                // ON CONFLICT DO NOTHING with the row already present.
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.startsWith('ROLLBACK') || sql.startsWith('COMMIT')) {
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      const result = await invitesRepo.acceptInvite({
+        code: 'OTHEROTHEROT',
+        userId: '019dccef-0000-7000-8000-000000000001',
+      })
+      expect(result).toEqual({
+        campaignId: '019dccef-0000-7000-8000-000000000099',
+        alreadyMember: true,
+      })
+    })
+
+    it('lock_timeout (55P03) maps to InviteTimeoutError(cause=lock) via fake pool', async () => {
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+                return Promise.reject(
+                  Object.assign(new Error('lock timeout'), { code: '55P03' }),
+                )
+              }
+              if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      let caught: unknown
+      try {
+        await invitesRepo.acceptInvite({
+          code: 'LOCKLOCKLOCK',
+          userId: '019dccef-0000-7000-8000-000000000001',
+        })
+      } catch (e) {
+        caught = e
+      }
+      expect(caught).toBeInstanceOf(InviteTimeoutError)
+      if (caught instanceof InviteTimeoutError) {
+        expect(caught.cause).toBe('lock')
+        expect(caught.sqlstate).toBe('55P03')
+      }
+    })
+
+    it('statement_timeout (57014) maps to InviteTimeoutError(cause=statement)', async () => {
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+                return Promise.reject(
+                  Object.assign(new Error('statement timeout'), { code: '57014' }),
+                )
+              }
+              if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      let caught: unknown
+      try {
+        await invitesRepo.acceptInvite({
+          code: 'STMTSTMTSTMT',
+          userId: '019dccef-0000-7000-8000-000000000001',
+        })
+      } catch (e) {
+        caught = e
+      }
+      expect(caught).toBeInstanceOf(InviteTimeoutError)
+      if (caught instanceof InviteTimeoutError) {
+        expect(caught.cause).toBe('statement')
+        expect(caught.sqlstate).toBe('57014')
+      }
+    })
+
+    it('ROLLBACK failure during catch is swallowed; original error rethrown', async () => {
+      const fakePool = {
+        connect: async (): Promise<PoolClient> => {
+          const fake: Partial<PoolClient> = {
+            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+                return Promise.reject(new Error('select-invite exploded'))
+              }
+              if (sql.startsWith('ROLLBACK')) {
+                return Promise.reject(new Error('rollback exploded'))
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any,
+            release: () => {
+              /* no-op */
+            },
+          }
+          return fake as PoolClient
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      await expect(
+        invitesRepo.acceptInvite({
+          code: 'RBFAILRBFAIL',
+          userId: '019dccef-0000-7000-8000-000000000001',
+        }),
+      ).rejects.toThrow(/select-invite exploded/)
     })
   })
 })

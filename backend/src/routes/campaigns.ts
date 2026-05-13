@@ -770,6 +770,9 @@ async function executeCreateTransaction(
   } catch (err) {
     try {
       await client.query('ROLLBACK')
+      /* c8 ignore next 3 — ROLLBACK only throws when the pg client is
+         already in a torn-down state; we swallow so the original error
+         from the catch arm propagates with its real stack. */
     } catch {
       // Connection may already be in a failed state; rethrow original.
     }
@@ -798,9 +801,14 @@ interface ResumeContext {
   logger: PinoLogger
 }
 
+/* c8 ignore start — TypeScript exhaustiveness assertion. If the
+   PipelinePhase union grows and a new arm isn't added to dispatchResume's
+   switch, this function turns a silent miss into a runtime throw. It is
+   structurally unreachable for any valid PipelinePhase. */
 function assertNever(x: never): never {
   throw new Error(`resume: unreachable phase ${String(x)}`)
 }
+/* c8 ignore stop */
 
 async function dispatchResume(ctx: ResumeContext): Promise<FastifyReply> {
   switch (ctx.phase) {
@@ -847,6 +855,7 @@ async function dispatchResume(ctx: ResumeContext): Promise<FastifyReply> {
       return ctx.reply.code(409).send({ code: 'terminal_failure' })
     case 'not_started':
       return resumeFromNotStarted(ctx)
+    /* c8 ignore next 2 — exhaustiveness default; see assertNever above. */
     default:
       return assertNever(ctx.phase)
   }

@@ -141,6 +141,9 @@ async function recordEventOnlyTx(pool: Pool, event: Stripe.Event): Promise<void>
   } catch (err) {
     try {
       await client.query('ROLLBACK')
+      /* c8 ignore next 4 — ROLLBACK throws only when the pg client is
+         already in a torn-down state; swallow so the catch-arm's original
+         error propagates with its real stack. */
     } catch {
       // Connection dead; pool will recycle. Swallow so the original
       // error propagates to the caller.
@@ -221,6 +224,8 @@ export async function dispatchEvent(
   } catch (err) {
     try {
       await client.query('ROLLBACK')
+      /* c8 ignore next 4 — same double-failure swallow as the
+         recordOrSkip handler above; unreachable on a healthy pg client. */
     } catch {
       // Connection dead; pool will recycle. Swallow so the original
       // error propagates.
@@ -459,6 +464,10 @@ async function handleCheckoutCompletedSubscription(
     return 'validation_failed'
   }
   const item = subscription.items.data[0]
+  /* c8 ignore next 5 — invariant assertion: the length-check immediately
+     above already returned when items.data.length !== 1, so items.data[0]
+     must exist. The TS narrowing rejects a non-null assertion without it,
+     which would also hide a real bug if the length check ever changed. */
   if (!item) {
     throw new Error(
       `checkout.session.completed: subscription items.data[0] missing (sub=${subscription.id})`,

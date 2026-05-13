@@ -75,4 +75,38 @@ describe('waitFor', () => {
     await expect(promise).rejects.toThrow(/abort/i)
     expect(probe).not.toHaveBeenCalled()
   })
+
+  it('throws "aborted" (the loop-top check) when signal aborts after first probe failure but before next retry', async () => {
+    // Covers the if (signal?.aborted) branch at the TOP of each loop pass.
+    // Sequence: probe fails → loop sleeps via sleepWithAbort → during sleep
+    // the controller aborts → sleepWithAbort rejects, the catch handler
+    // catches it, the next iteration's top-of-loop signal check throws.
+    const controller = new AbortController()
+    const probe = vi.fn().mockRejectedValue(new Error('nope'))
+    const promise = waitFor({ label: 'midloop', probe, signal: controller.signal })
+    promise.catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(50) // probe runs + fails
+    controller.abort()
+    await expect(promise).rejects.toThrow(/abort/i)
+  })
+
+  it('handles a signal that aborts between addEventListener registration and the next event loop tick', async () => {
+    // Covers the if (signal.aborted) early-return inside sleepWithAbort
+    // (lines 44-48). We need signal.aborted to be true at the point
+    // sleepWithAbort checks it AFTER setTimeout was scheduled but BEFORE
+    // the abort listener was attached. Simulate by patching addEventListener.
+    const controller = new AbortController()
+    const realAdd = controller.signal.addEventListener.bind(controller.signal)
+    vi.spyOn(controller.signal, 'addEventListener').mockImplementation(
+      (event: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
+        controller.abort()
+        realAdd(event, listener, options)
+      },
+    )
+    const probe = vi.fn().mockRejectedValue(new Error('nope'))
+    const promise = waitFor({ label: 'race', probe, signal: controller.signal })
+    promise.catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(10_000)
+    await expect(promise).rejects.toThrow(/abort/i)
+  })
 })

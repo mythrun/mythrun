@@ -103,6 +103,20 @@ describe('runInputGate', () => {
     expect(v.verdict).toBe('allow')
   })
 
+  it('reject verdict with null rejectionMessage threads null through', async () => {
+    // Exercises the branch where `axes.rejectionMessage` is null on a
+    // reject. The Zod schema allows it (z.string().nullable()), and the
+    // verdict computation honors it without crashing.
+    mockGateReturn({
+      inappropriate: { flagged: true, reasoning: 'reason' },
+      rejectionMessage: null,
+    })
+    const v = await runInputGate({ concept: '...', intentSummary: null })
+    expect(v.verdict).toBe('reject')
+    expect(v.rejectionMessage).toBeNull()
+    expect(v.reason).toBe('inappropriate')
+  })
+
   it('passes intentSummary into the prompt', async () => {
     mockGateReturn({})
     await runInputGate({

@@ -98,6 +98,25 @@ describe('runRandomTablesStage', () => {
     expect(result.outputTokens).toBe(1500)
   })
 
+  it('treats undefined usage tokens as 0 (cost = 0, both counters = 0)', async () => {
+    // Exercises the `usage.inputTokens ?? 0` + `usage.outputTokens ?? 0`
+    // fallbacks at random-tables.ts:123-127. The AI SDK v6 usage shape
+    // allows undefined when the provider doesn't report counts; the
+    // stage should NOT NaN-out the cost when that happens.
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: TABLES,
+      finishReason: 'stop',
+      usage: { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined },
+    } as never)
+
+    const client = makeClient()
+    const result = await runRandomTablesStage(client as never, baseArgs)
+
+    expect(result.costUsd).toBe(0)
+    expect(result.inputTokens).toBe(0)
+    expect(result.outputTokens).toBe(0)
+  })
+
   it('renders all template placeholders into the Haiku prompt', async () => {
     vi.mocked(ai.generateText).mockResolvedValueOnce({
       output: TABLES,

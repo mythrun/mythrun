@@ -156,6 +156,34 @@ describe('buildApp', () => {
     expect(res.json()).toEqual({ code: 'username_required' })
   })
 
+  it('returns 404 JSON for an unmatched route via setNotFoundHandler', async () => {
+    // Exercises app.ts:173-175 — Fastify's default 404 is HTML-ish;
+    // buildApp installs a stable JSON shape.
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, stubConfig())
+    const res = await app.inject({ method: 'GET', url: '/this/route/does/not/exist' })
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual({ error: 'Not Found' })
+  })
+
+  it('skips devCreditsRoutes when authMode !== "bypass"', async () => {
+    // Exercises the `if (config.env.authMode === 'bypass')` gate at
+    // app.ts:297. With authMode='real' the route block is skipped —
+    // `/api/dev/credits` should 404 because it was never registered.
+    app = await buildApp(
+      makeStubDeps(),
+      { mode: 'bypass' }, // RegisterAuthOptions still bypass for boot ease
+      {
+        frontendBaseUrl: 'http://localhost:5173',
+        env: makeStubEnv({ authMode: 'real' }),
+      },
+    )
+    const res = await app.inject({ method: 'POST', url: '/api/dev/credits' })
+    // 404 (not 405/401/403) proves the route was never registered — the
+    // dev-credits plugin's `app.post('/api/dev/credits', ...)` block
+    // didn't run at all in this configuration.
+    expect(res.statusCode).toBe(404)
+  })
+
   it('public-route allowlist hook rejects non-allowlisted public routes', async () => {
     // Side fastify instance: install the same hook the buildApp wiring
     // installs, then add a public route NOT in the allowlist. The hook
