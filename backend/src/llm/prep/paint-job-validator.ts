@@ -82,7 +82,14 @@ export async function validateAndGenerateConcept<TDraft>(
       output: Output.object<TDraft>({ schema: args.schema }),
       prompt,
       temperature,
-      maxRetries: 1, // validator loop is the sole retry authority (Wyvern-C1)
+      // SDK retries handle schema-validation failures (it feeds the previous
+      // draft + ZodError back to the model for self-correction). The outer
+      // paint-job validator loop handles a DIFFERENT failure (judge flag),
+      // so the two retry mechanisms cover disjoint failure modes —
+      // Wyvern-C1's concern only fires in the pathological case where EVERY
+      // iteration both fails schema 3x AND produces a paint-job draft.
+      // Cost-cap protects the wallet against that runaway.
+      maxRetries: 3,
     })
     totalUsage = addUsage(totalUsage, genResult.usage)
 

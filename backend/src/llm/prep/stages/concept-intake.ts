@@ -29,7 +29,7 @@ export const WorldConceptSchema = z.object({
   themes: z.string().min(10).max(400),
   geography_summary: z.string().min(20).max(1200),
   political_summary: z.string().min(20).max(1200),
-  era: z.string().min(2).max(200),
+  era: z.string().min(2).max(400),
   key_tensions: z.string().min(20).max(1200),
   follow_up_questions: z.string().min(10).max(800),
 })

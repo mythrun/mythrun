@@ -406,6 +406,14 @@ async function handleStageError(
     willRetry: !isNotImplemented,
   })
   if (isNotImplemented) {
+    // Terminal expected stop — flip worlds.status to 'failed' so the
+    // concurrent-generation guard releases. Without this, the world
+    // sits in 'generating' forever and the user can't create another
+    // campaign. Cost-cap already does this via issueCostCapRefund; the
+    // stage-not-implemented path needs an equivalent terminal-state
+    // marker. The phase derivation will continue to read
+    // world_gen_failed from the pipeline_runs row's failed status.
+    await deps.pool.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [ctx.world.id])
     await publishEvent(deps, ctx.campaign.id, { type: 'phase', phase: 'world_gen_failed' })
     return 'stop'
   }

@@ -4,6 +4,7 @@ import { mountStatusPanel } from './components/status-panel.js'
 import { mountCampaignCreatePanel } from './components/campaign-create-panel.js'
 import { mountCampaignDetailsPanel } from './components/campaign-details-panel.js'
 import { mountCreditLedgerPanel } from './components/credit-ledger-panel.js'
+import { mountMyCampaignsPanel } from './components/my-campaigns-panel.js'
 import { onIdentityChanged } from './identity.js'
 import './styles.css'
 
@@ -14,6 +15,7 @@ if (!header || !main) throw new Error('layout missing required elements')
 mountIdentitySwitcher(header)
 mountHealthPanel(main)
 mountCampaignCreatePanel(main)
+mountMyCampaignsPanel(main)
 mountStatusPanel(main)
 mountCampaignDetailsPanel(main)
 mountCreditLedgerPanel(main)

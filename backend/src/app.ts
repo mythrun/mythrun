@@ -8,6 +8,15 @@ import type { AppDeps } from './app-deps.js'
 import { registerAuth, type RegisterAuthOptions } from './auth/index.js'
 import { accessControlAllowlist } from './auth/access-control-allowlist.js'
 import { registerPublicRouteAllowlistHook } from './auth/public-route-allowlist.js'
+import {
+  LlmAuthError,
+  LlmContextTooLongError,
+  LlmInvalidRequestError,
+  LlmOverloadedError,
+  LlmRateLimitedError,
+  LlmStructuredOutputError,
+  LlmTimeoutError,
+} from './llm/errors.js'
 import { requireOnboarded } from './auth/require-onboarded.js'
 import type { Env } from './config/env.js'
 import { registerReadyRoute } from './routes/health-ready.js'
@@ -171,6 +180,43 @@ export const buildApp = async (
   // here. The url-undefined guard is the actual contract.
   app.setNotFoundHandler((_request, reply) => {
     reply.code(404).send({ error: 'Not Found' })
+  })
+
+  // Typed-error → typed-response mapper. The Vercel SDK middleware
+  // (backend/src/llm/middleware.ts) already maps raw AI_APICallError
+  // chains into Mythrun-typed error classes (LlmAuthError,
+  // LlmRateLimitedError, etc.). This handler is the second half: it
+  // translates those typed errors into HTTP responses that match
+  // PipelineRouteError's discriminated union, so the FE never sees
+  // an untyped 500 from an upstream LLM failure.
+  //
+  // Application-level typed errors (InsufficientCreditsError, etc.)
+  // stay inline in their route handlers — those carry route-specific
+  // payload (creditType, etc.) that the global handler can't compose.
+  app.setErrorHandler((err, request, reply) => {
+    // Sanitized log of the full error chain so an operator can
+    // diagnose without exposing internals to the user.
+    request.log.error({ err }, 'unhandled route error')
+
+    if (
+      err instanceof LlmAuthError ||
+      err instanceof LlmRateLimitedError ||
+      err instanceof LlmOverloadedError ||
+      err instanceof LlmTimeoutError ||
+      err instanceof LlmStructuredOutputError ||
+      err instanceof LlmInvalidRequestError ||
+      err instanceof LlmContextTooLongError
+    ) {
+      reply.header('Retry-After', '60')
+      return reply.code(503).send({
+        code: 'llm_upstream_unavailable',
+        retryAfterSeconds: 60,
+      })
+    }
+
+    // Anything else falls through to Fastify's default 500 (untyped).
+    // Future application-level typed errors can add arms here.
+    reply.send(err)
   })
 
   await registerAuth(app, authOpts)

@@ -261,6 +261,15 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
     resumeBtn.style.display = 'none'
   })
 
+  // External open hook (dispatched by my-campaigns-panel's Details button).
+  // Drop the campaignId into the input + fetch.
+  window.addEventListener('mythrun.opendetails', (e) => {
+    const id = (e as CustomEvent<string>).detail
+    if (typeof id !== 'string' || id.length === 0) return
+    input.value = id
+    void fetchDetails()
+  })
+
   card.appendChild(title)
   card.appendChild(inputRow)
   card.appendChild(status)

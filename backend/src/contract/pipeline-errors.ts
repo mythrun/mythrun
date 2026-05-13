@@ -20,6 +20,7 @@ export type PipelineRouteError =
   | { code: 'queue_full'; retryAfterSeconds: number }
   | { code: 'rejection_storm_cooldown'; retryAfterSeconds: number }
   | { code: 'concurrent_generation_in_progress' }
+  | { code: 'llm_upstream_unavailable'; retryAfterSeconds: number }
   // POST /api/campaigns/:campaignId/resume:
   | { code: 'world_gen_in_progress' }
   | { code: 'phase_not_yet_implementable'; stuckAtStage: string }
@@ -40,6 +41,7 @@ export const PIPELINE_ERROR_CODES: readonly PipelineErrorCode[] = [
   'queue_full',
   'rejection_storm_cooldown',
   'concurrent_generation_in_progress',
+  'llm_upstream_unavailable',
   'world_gen_in_progress',
   'phase_not_yet_implementable',
   'world_gen_capped',
