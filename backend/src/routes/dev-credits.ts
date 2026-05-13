@@ -118,4 +118,73 @@ export const devCreditsRoutes: FastifyPluginAsync<DevCreditsRoutesOpts> = async 
       })
     },
   )
+
+  // GET /api/dev/credits/me — reads the active dev sub's current
+  // balance + the last 20 ledger entries. Without this, the credit-
+  // ledger panel could only know about grants it had issued *this
+  // session*; any debit (campaign creation) or refund (cost-cap fire)
+  // was invisible to the UI. Same identity rules + AUTH_MODE gate as
+  // the POST.
+  app.get(
+    '/api/dev/credits/me',
+    {
+      config: {
+        rateLimit: {
+          max: 120,
+          timeWindow: '1 hour',
+          keyGenerator: (req: FastifyRequest): string => req.ip,
+        },
+      },
+    },
+    async (request, reply) => {
+      const sub = request.user?.sub
+      if (typeof sub !== 'string' || sub.length === 0) {
+        return reply.code(401).send({ code: 'no_dev_identity' })
+      }
+      const user = await repo.users.getByCognitoSub(sub)
+      if (!user) {
+        return reply.code(400).send({ code: 'unknown_dev_sub', sub })
+      }
+
+      const balances = await opts.pool.query<{ credit_type: string; balance: number }>(
+        `SELECT credit_type, COALESCE(SUM(amount), 0)::int AS balance
+           FROM credit_ledger
+           WHERE user_id = $1
+             AND (expires_at IS NULL OR expires_at > now())
+           GROUP BY credit_type`,
+        [user.id],
+      )
+      const recent = await opts.pool.query<{
+        granted_at: string
+        amount: number
+        credit_type: string
+        source_type: string
+      }>(
+        `SELECT granted_at, amount::int AS amount, credit_type, source_type
+           FROM credit_ledger
+           WHERE user_id = $1
+           ORDER BY granted_at DESC
+           LIMIT 20`,
+        [user.id],
+      )
+
+      const out: Record<'world_gen' | 'session', number> = { world_gen: 0, session: 0 }
+      for (const row of balances.rows) {
+        if (row.credit_type === 'world_gen' || row.credit_type === 'session') {
+          out[row.credit_type] = row.balance
+        }
+      }
+
+      return reply.code(200).send({
+        sub,
+        balances: out,
+        recent: recent.rows.map((r) => ({
+          grantedAt: r.granted_at,
+          amount: r.amount,
+          creditType: r.credit_type,
+          sourceType: r.source_type,
+        })),
+      })
+    },
+  )
 }

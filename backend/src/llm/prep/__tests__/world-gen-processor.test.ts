@@ -259,12 +259,14 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(byStage.has('starting_situation')).toBe(false)
     expect(byStage.has('random_tables')).toBe(false)
 
-    // World status stays 'generating' — we did not reach the loop's
-    // happy tail, so worlds.status='complete' was never assigned.
+    // World status flips to 'failed' on terminal-stop. Without this, the
+    // concurrent-gen guard (which refuses to enqueue while status='generating')
+    // would lock the world out of any retry. Discovered via E2E smoke when
+    // every retry after a StageNotImplementedError hit 409.
     const w = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [
       worldId,
     ])
-    expect(w.rows[0]?.status).toBe('generating')
+    expect(w.rows[0]?.status).toBe('failed')
 
     const phaseEvents = deps.publishSpy.mock.calls.filter(
       (c) => typeof c[1] === 'string' && c[1].includes('"phase"'),

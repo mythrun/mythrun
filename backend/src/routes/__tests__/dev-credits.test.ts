@@ -370,6 +370,174 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
   })
 
   // -------------------------------------------------------------------------
+  // GET /api/dev/credits/me — balance + recent ledger entries
+  // -------------------------------------------------------------------------
+
+  describe('GET /api/dev/credits/me', () => {
+    beforeEach(() => {
+      vi.stubEnv('AUTH_MODE', 'bypass')
+      vi.stubEnv('NODE_ENV', 'test')
+    })
+
+    it('200 with zero balances + empty recent when the user has no ledger entries', async () => {
+      const userId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+      )
+      const app = await buildTestApp(pool)
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/dev/credits/me' })
+        expect(res.statusCode).toBe(200)
+        expect(res.json()).toEqual({
+          sub: BYPASS_DEV_SUB,
+          balances: { world_gen: 0, session: 0 },
+          recent: [],
+        })
+      } finally {
+        await app.close()
+      }
+    })
+
+    it('200 sums non-expired balances per credit_type and returns recent entries newest-first', async () => {
+      const userId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+      )
+      // Three world_gen grants (15 total) + one session grant (10).
+      // Plus one expired world_gen grant (-5) that should be ignored.
+      await pool.query(
+        `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, granted_at)
+         VALUES ($1, $2, 'world_gen',  5, 'admin', now() - interval '3 minutes'),
+                ($3, $2, 'world_gen',  5, 'admin', now() - interval '2 minutes'),
+                ($4, $2, 'world_gen',  5, 'admin', now() - interval '1 minute'),
+                ($5, $2, 'session',   10, 'admin', now())`,
+        [uuidv7(), userId, uuidv7(), uuidv7(), uuidv7()],
+      )
+      await pool.query(
+        `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, granted_at, expires_at)
+         VALUES ($1, $2, 'world_gen', 999, 'admin', now() - interval '1 hour', now() - interval '1 minute')`,
+        [uuidv7(), userId],
+      )
+
+      const app = await buildTestApp(pool)
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/dev/credits/me' })
+        expect(res.statusCode).toBe(200)
+        const body = res.json<{
+          sub: string
+          balances: { world_gen: number; session: number }
+          recent: { amount: number; creditType: string; sourceType: string }[]
+        }>()
+        expect(body.sub).toBe(BYPASS_DEV_SUB)
+        // Expired row excluded; non-expired sum to 15 world_gen + 10 session.
+        expect(body.balances).toEqual({ world_gen: 15, session: 10 })
+        // Newest first by granted_at. Most recent is the session grant.
+        expect(body.recent.length).toBeGreaterThanOrEqual(4)
+        expect(body.recent[0]?.creditType).toBe('session')
+        expect(body.recent[0]?.amount).toBe(10)
+      } finally {
+        await app.close()
+      }
+    })
+
+    it('honors x-mythrun-dev-sub — returns balance for the header-pointed user, not bypass:dev-1', async () => {
+      const bypassUserId = uuidv7()
+      const otherUserId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES
+           ($1, $2, $3, $4), ($5, $6, $7, $8)`,
+        [
+          bypassUserId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1',
+          otherUserId, 'dev-user-2', 'Other', 'other2',
+        ],
+      )
+      // Grant on bypass-user only — the header-pointed user has nothing.
+      await pool.query(
+        `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type)
+         VALUES ($1, $2, 'world_gen', 42, 'admin')`,
+        [uuidv7(), bypassUserId],
+      )
+      const app = await buildTestApp(pool)
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/dev/credits/me',
+          headers: { 'x-mythrun-dev-sub': 'dev-user-2' },
+        })
+        expect(res.statusCode).toBe(200)
+        const body = res.json<{ sub: string; balances: { world_gen: number; session: number } }>()
+        expect(body.sub).toBe('dev-user-2')
+        expect(body.balances).toEqual({ world_gen: 0, session: 0 })
+      } finally {
+        await app.close()
+      }
+    })
+
+    it('400 unknown_dev_sub when the header points at a non-seeded user', async () => {
+      const app = await buildTestApp(pool)
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/dev/credits/me',
+          headers: { 'x-mythrun-dev-sub': 'never-seeded' },
+        })
+        expect(res.statusCode).toBe(400)
+        expect(res.json()).toEqual({ code: 'unknown_dev_sub', sub: 'never-seeded' })
+      } finally {
+        await app.close()
+      }
+    })
+
+    it('does NOT register when AUTH_MODE!=bypass', async () => {
+      vi.stubEnv('AUTH_MODE', 'real')
+      const app = Fastify({ logger: false })
+      await app.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' })
+      await app.register(devCreditsRoutes, { pool })
+      await app.ready()
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/dev/credits/me' })
+        expect(res.statusCode).toBe(404)
+      } finally {
+        await app.close()
+      }
+    })
+
+    it('caps recent entries at 20 even when more exist', async () => {
+      const userId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+      )
+      // Seed 25 ledger entries spread across the last 25 minutes.
+      const values: string[] = []
+      const params: unknown[] = []
+      let p = 1
+      for (let i = 0; i < 25; i++) {
+        values.push(`($${p++}, $${p++}, 'world_gen', 1, 'admin', now() - interval '${String(i)} minutes')`)
+        params.push(uuidv7(), userId)
+      }
+      await pool.query(
+        `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, granted_at)
+         VALUES ${values.join(',')}`,
+        params,
+      )
+      const app = await buildTestApp(pool)
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/dev/credits/me' })
+        expect(res.statusCode).toBe(200)
+        const body = res.json<{ recent: unknown[]; balances: { world_gen: number } }>()
+        expect(body.recent).toHaveLength(20)
+        // All 25 still counted in the balance — the cap is on the recent list only.
+        expect(body.balances.world_gen).toBe(25)
+      } finally {
+        await app.close()
+      }
+    })
+  })
+
+  // -------------------------------------------------------------------------
   // Rate limit
   // -------------------------------------------------------------------------
 

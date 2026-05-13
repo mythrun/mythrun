@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# Pre-push gate. Runs the full backend vitest suite with 100% coverage
+# thresholds (see backend/vitest.config.ts). If any test fails OR if any
+# uncovered line/branch/function/statement slips into production code,
+# the push is refused.
+#
+# The 100% threshold is enforced on the include set in
+# backend/vitest.config.ts. Excluded files (server.ts, worker.ts,
+# migrate.ts, scripts/) are listed there with one-line justifications;
+# adding to that list is a design decision, not a way to skip tests.
+#
+# To run the same check manually:  pnpm test:coverage
+# To bypass once (DON'T):           git push --no-verify
+
+set -e
+
+echo "→ pre-push: backend vitest suite + 100% coverage threshold"
+pnpm --filter @mythrun/backend test:coverage
