@@ -102,7 +102,9 @@ export function mountMyCampaignsPanel(parent: HTMLElement): void {
       return
     }
     if (res.status === 409) {
-      window.alert('Campaign is still generating — wait for it to complete or fail, then retry delete.')
+      window.alert(
+        'Campaign is still generating — wait for it to complete or fail, then retry delete.',
+      )
       return
     }
     window.alert(`Delete failed: ${String(res.status)} ${res.error ?? JSON.stringify(res.body)}`)

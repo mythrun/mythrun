@@ -56,8 +56,8 @@
   over the eight phases <code>derivePhase</code> reports (see
   <a href="./pipeline-status.html">pipeline status</a>) that re-enqueues, 409s, or 422s depending on
   where the pipeline got stuck. <code>DELETE /api/campaigns/:campaignId</code> is the hard-delete
-  cleanup path — owner-only, refuses while generating, cascades through the FK chain to remove
-  the world + every dependent row.
+  cleanup path — owner-only, refuses while generating, cascades through the FK chain to remove the
+  world + every dependent row.
 </p>
 
 <aside class="wiki-rationale">
@@ -156,15 +156,14 @@
       <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
       <td><strong>10 / min per USER</strong></td>
       <td>
-        <code>204 No Content</code> on success. The world row is the cascade root —
-        deleting it removes the campaign + pipeline_runs + campaign_members + entities +
-        prose_kernels + facts + relationships + random_tables (and every other dependent)
-        in one statement via the FK chain's <code>ON DELETE CASCADE</code>. Refuses with
-        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code> while the
-        world is still <code>status='generating'</code> — deleting mid-generation
-        would orphan the worker's in-flight LLM cost and produce noisy BullMQ retry
-        failures. Resume the campaign to terminal failure (or wait for it to complete)
-        before deleting.
+        <code>204 No Content</code> on success. The world row is the cascade root — deleting it
+        removes the campaign + pipeline_runs + campaign_members + entities + prose_kernels + facts +
+        relationships + random_tables (and every other dependent) in one statement via the FK
+        chain's <code>ON DELETE CASCADE</code>. Refuses with
+        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code> while the world is
+        still <code>status='generating'</code> — deleting mid-generation would orphan the worker's
+        in-flight LLM cost and produce noisy BullMQ retry failures. Resume the campaign to terminal
+        failure (or wait for it to complete) before deleting.
       </td>
     </tr>
   </tbody>

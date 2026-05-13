@@ -12,10 +12,10 @@
 import { openSse, type SseConnection } from '../sse-client.js'
 
 interface StageEntry {
-  readonly stage: string
-  readonly status: string
-  readonly userId: string | null
-  readonly costUsd: number
+  stage: string
+  status: string
+  userId: string | null
+  costUsd: number
 }
 
 interface Snapshot {
@@ -26,39 +26,67 @@ interface Snapshot {
 
 interface LiveEvent {
   readonly type?: string
+  // Phase events:
   readonly phase?: string
+  // Cost-update events:
   readonly cumulativeUsd?: number
+  // Stage-* events:
+  readonly stage?: string
+  readonly userId?: string | null
+  readonly costUsd?: number
+  readonly errorCode?: string
 }
 
 interface CloseEvent {
   readonly reason?: string
 }
 
-function renderSnapshot(
-  snap: Snapshot,
-  phaseEl: HTMLElement,
-  stagesEl: HTMLElement,
-  costEl: HTMLElement,
-): void {
-  phaseEl.textContent = `phase: ${snap.phase}`
-  stagesEl.textContent = snap.stages
+function renderStages(stages: readonly StageEntry[], stagesEl: HTMLElement): void {
+  stagesEl.textContent = stages
     .map(
       (s) =>
         `${s.stage.padEnd(28)} ${s.status.padEnd(10)} ${s.userId ?? '-'} $${s.costUsd.toFixed(4)}`,
     )
     .join('\n')
-  costEl.textContent = `cumulative cost: $${snap.cumulativeCostUsd.toFixed(4)}`
 }
 
-function applyLiveEvent(parsed: LiveEvent, phaseEl: HTMLElement, costEl: HTMLElement): void {
-  if (parsed.type === 'phase' && typeof parsed.phase === 'string') {
-    phaseEl.textContent = `phase: ${parsed.phase}`
-  } else if (parsed.type === 'cost-update' && typeof parsed.cumulativeUsd === 'number') {
-    costEl.textContent = `cumulative cost: $${parsed.cumulativeUsd.toFixed(4)}`
+function findOrAppendStage(
+  stages: StageEntry[],
+  stage: string,
+  userId: string | null,
+): StageEntry {
+  const existing = stages.find((s) => s.stage === stage && s.userId === userId)
+  if (existing) return existing
+  const row: StageEntry = { stage, status: 'pending', userId, costUsd: 0 }
+  stages.push(row)
+  return row
+}
+
+// Mutates the stages array in place from a stage-* lifecycle event and
+// re-renders. Snapshot frame populates initial state; subsequent
+// stage-started / stage-completed / stage-failed events patch the rows
+// they reference. This is the fix for "stage table frozen at snapshot
+// state while phase + cumulative cost progress."
+function applyStageEvent(
+  parsed: LiveEvent,
+  stages: StageEntry[],
+  stagesEl: HTMLElement,
+): boolean {
+  if (typeof parsed.stage !== 'string' || parsed.stage.length === 0) return false
+  const userId = parsed.userId ?? null
+  const row = findOrAppendStage(stages, parsed.stage, userId)
+  if (parsed.type === 'stage-started') {
+    row.status = 'running'
+  } else if (parsed.type === 'stage-completed') {
+    row.status = 'completed'
+    if (typeof parsed.costUsd === 'number') row.costUsd = parsed.costUsd
+  } else if (parsed.type === 'stage-failed') {
+    row.status = 'failed'
+  } else {
+    return false
   }
-  // stage-started / stage-completed / stage-failed / job-failed: future
-  // enhancement (re-render stage list incrementally). For Phase 0 we rely
-  // on the snapshot frame on each reconnect for stage state.
+  renderStages(stages, stagesEl)
+  return true
 }
 
 export function mountStatusPanel(parent: HTMLElement): void {
@@ -91,6 +119,11 @@ export function mountStatusPanel(parent: HTMLElement): void {
   costEl.className = 'result'
 
   let conn: SseConnection | null = null
+  // Per-watch mutable state. Snapshot frame populates this; subsequent
+  // stage-* / phase / cost-update events patch it. Closing the stream
+  // does NOT clear it — the user keeps seeing the last-known state until
+  // they click Watch again on the same or a different campaign.
+  let stages: StageEntry[] = []
 
   function close(): void {
     if (conn) {
@@ -102,6 +135,26 @@ export function mountStatusPanel(parent: HTMLElement): void {
     input.disabled = false
   }
 
+  function applyMessage(parsed: LiveEvent): void {
+    if (parsed.type === 'phase' && typeof parsed.phase === 'string') {
+      phaseEl.textContent = `phase: ${parsed.phase}`
+      return
+    }
+    if (parsed.type === 'cost-update' && typeof parsed.cumulativeUsd === 'number') {
+      costEl.textContent = `cumulative cost: $${parsed.cumulativeUsd.toFixed(4)}`
+      return
+    }
+    if (
+      parsed.type === 'stage-started' ||
+      parsed.type === 'stage-completed' ||
+      parsed.type === 'stage-failed'
+    ) {
+      applyStageEvent(parsed, stages, stagesEl)
+    }
+    // Unknown event types (entity-*, edge-*) silently ignored — the
+    // bridge forwards them but MYT-52's live-graph UI is where they land.
+  }
+
   function watch(): void {
     const id = input.value.trim()
     if (!id) return
@@ -111,12 +164,23 @@ export function mountStatusPanel(parent: HTMLElement): void {
     phaseEl.textContent = `phase: (connecting to /api/campaigns/${id}/status/stream)`
     stagesEl.textContent = ''
     costEl.textContent = ''
+    stages = []
 
     conn = openSse(`/api/campaigns/${id}/status/stream`, {
       onEvent: (ev) => {
         if (ev.event === 'snapshot') {
           try {
-            renderSnapshot(JSON.parse(ev.data) as Snapshot, phaseEl, stagesEl, costEl)
+            const snap = JSON.parse(ev.data) as Snapshot
+            phaseEl.textContent = `phase: ${snap.phase}`
+            // Clone into a mutable array the live events can patch.
+            stages = snap.stages.map((s) => ({
+              stage: s.stage,
+              status: s.status,
+              userId: s.userId,
+              costUsd: s.costUsd,
+            }))
+            renderStages(stages, stagesEl)
+            costEl.textContent = `cumulative cost: $${snap.cumulativeCostUsd.toFixed(4)}`
           } catch (err) {
             phaseEl.textContent = `error parsing snapshot: ${err instanceof Error ? err.message : String(err)}`
           }
@@ -130,13 +194,11 @@ export function mountStatusPanel(parent: HTMLElement): void {
           close()
         } else if (ev.event === 'message') {
           try {
-            applyLiveEvent(JSON.parse(ev.data) as LiveEvent, phaseEl, costEl)
+            applyMessage(JSON.parse(ev.data) as LiveEvent)
           } catch {
             // Ignore unparseable frames.
           }
         }
-        // Unknown event types (entity-*, edge-*) are forwarded by the
-        // bridge but not rendered here — MYT-52 lands the live-graph UI.
       },
       onError: (err) => {
         phaseEl.textContent = `phase: (connection error: ${err.message})`
