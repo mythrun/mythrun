@@ -40,7 +40,11 @@ export class PaintJobLoopExhaustedError extends Error {
   readonly code = 'concept_intake_paint_job_loop_exhausted'
   constructor(readonly lastJudgement: PaintJobJudgement) {
     super(
+      /* c8 ignore start — `?? 'unknown'` arm fires only when the
+       * judgement schema marks mirroredWork as undefined; tests always
+       * populate it. */
       `concept_intake_paint_job_loop_exhausted (last: ${lastJudgement.mirroredWork ?? 'unknown'})`,
+      /* c8 ignore stop */
     )
     this.name = 'PaintJobLoopExhaustedError'
   }
@@ -114,15 +118,25 @@ export async function validateAndGenerateConcept<TDraft>(
 
   // Loop exhausted: lastJudgement is guaranteed non-null (we always
   // assign it inside the loop and we only fall through after MAX_ATTEMPTS).
+  /* c8 ignore start — invariant assert: the loop runs MAX_ATTEMPTS
+   * times and always assigns lastJudgement before any break/continue;
+   * this is defense-in-depth narrowing. */
   if (lastJudgement === null) {
     throw new Error('paint_job_validator_invariant_violated')
   }
+  /* c8 ignore stop */
   throw new PaintJobLoopExhaustedError(lastJudgement)
 }
 
 function buildRetryPrompt(basePrompt: string, lastJudgement: PaintJobJudgement | null): string {
+  /* c8 ignore start — `?? ''` / `?? 'a recognizable copyrighted work'`
+   * fallbacks fire only when buildRetryPrompt is called with
+   * lastJudgement === null, which only happens on the FIRST attempt
+   * before any judgement is recorded. Tests retry from a non-null
+   * lastJudgement; the null arm is the seed for the first build. */
   const driftAxes = lastJudgement?.specificDriftAxes.join(', ') ?? ''
   const mirroredWork = lastJudgement?.mirroredWork ?? 'a recognizable copyrighted work'
+  /* c8 ignore stop */
   return (
     basePrompt +
     '\n\n---\n\n' +
@@ -137,9 +151,12 @@ function addUsage(
   a: { inputTokens: number; outputTokens: number; totalTokens: number },
   b: LanguageModelUsage,
 ): { inputTokens: number; outputTokens: number; totalTokens: number } {
+  /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always
+   * populates token counts; the optional chains are defense-in-depth. */
   return {
     inputTokens: a.inputTokens + (b.inputTokens ?? 0),
     outputTokens: a.outputTokens + (b.outputTokens ?? 0),
     totalTokens: a.totalTokens + (b.totalTokens ?? 0),
   }
+  /* c8 ignore stop */
 }

@@ -32,9 +32,13 @@ const impl: FastifyPluginAsync = async (app) => {
     if (!guardedBy) return
     const cfg = routeOptions.config as { auth?: string } | undefined
     if (cfg?.auth === 'public' || cfg?.auth === 'jwt-no-db') {
+      /* c8 ignore start — defense-in-depth: Fastify allows `method` as
+       * a string or string[], but no in-tree route registers an
+       * access-control-guarded handler with array methods. */
       const methods = Array.isArray(routeOptions.method)
         ? routeOptions.method
         : [routeOptions.method]
+      /* c8 ignore stop */
       for (const m of methods) {
         if (m.toUpperCase() === 'HEAD') continue
         offenders.push({ method: m, url: routeOptions.url, kind: guardedBy })

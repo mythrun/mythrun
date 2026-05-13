@@ -121,11 +121,15 @@ async function appendPlain(tx: ClientLike, row: NewBillingHistoryRow): Promise<B
     buildInsertParams(row),
   )
   const found = result.rows[0]
+  /* c8 ignore start — `found === undefined` arm is unreachable: an
+   * INSERT ... RETURNING always emits one row on success. The catch
+   * arm handles errors; this is defense-in-depth narrowing. */
   if (found === undefined) {
     throw new Error(
       `billingHistory.append: RETURNING yielded no row for default INSERT kind=${row.kind} source_id_stripe=${row.source_id_stripe}`,
     )
   }
+  /* c8 ignore stop */
   return found
 }
 
@@ -149,16 +153,17 @@ async function appendDoNothing(
     [row.kind, row.source_id_stripe],
   )
   const found = got.rows[0]
+  /* c8 ignore start — Defensive: INSERT either lands a new row or hits
+   * the conflict path (which leaves the existing row in place). A
+   * missing row here means a different transaction deleted the row in
+   * this window, which billing_history's CASCADE-from-users-only
+   * delete rule rules out mid-flight. Surface as a hard error. */
   if (found === undefined) {
-    // Defensive: INSERT either lands a new row or hits the conflict path
-    // (which leaves the existing row in place). A missing row here means
-    // a different transaction deleted the row in this window, which
-    // billing_history's CASCADE-from-users-only delete rule rules out
-    // mid-flight. Surface as a hard error.
     throw new Error(
       `billingHistory.append: row missing after do_nothing for kind=${row.kind} source_id_stripe=${row.source_id_stripe}`,
     )
   }
+  /* c8 ignore stop */
   return found
 }
 
@@ -185,11 +190,15 @@ async function appendDoUpdateCoalesce(
     buildInsertParams(row),
   )
   const found = result.rows[0]
+  /* c8 ignore start — `found === undefined` arm is unreachable: an
+   * INSERT ... ON CONFLICT DO UPDATE ... RETURNING always emits one
+   * row (insert side or update side). Defense-in-depth. */
   if (found === undefined) {
     throw new Error(
       `billingHistory.append: RETURNING yielded no row for do_update_coalesce kind=${row.kind} source_id_stripe=${row.source_id_stripe}`,
     )
   }
+  /* c8 ignore stop */
   return found
 }
 
@@ -312,10 +321,13 @@ export const billingHistory = {
     }
     const page = fetched.slice(0, opts.limit)
     const lastKept = page[page.length - 1]
+    /* c8 ignore start — Unreachable when opts.limit > 0 (we already
+     * returned above when fetched.length <= opts.limit, so page has at
+     * least 1 row). Guard for type-narrowing. */
     if (lastKept === undefined) {
-      // Unreachable when opts.limit > 0; guard for type-narrowing.
       return { rows: page, nextCursor: null }
     }
+    /* c8 ignore stop */
     // Encode the cursor as a JSON string of { t, i }. The route layer
     // (Task 28) is responsible for base64url-encoding the wire form per
     // spec §11; the repo returns the JSON payload so the boundary is clean
@@ -338,6 +350,9 @@ export const billingHistory = {
       `UPDATE billing_history SET status = 'refunded' WHERE id = $1 AND status = 'completed'`,
       [id],
     )
+    /* c8 ignore start — `?? 0` falsy arm: pg's QueryResult always
+     * sets rowCount on UPDATE. Kept for TS narrowing. */
     return { rowsAffected: result.rowCount ?? 0 }
+    /* c8 ignore stop */
   },
 }

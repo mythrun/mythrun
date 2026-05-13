@@ -631,6 +631,35 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       const c = await pool.query(`SELECT id FROM campaigns WHERE created_by = $1`, [userId])
       expect(c.rows).toHaveLength(0)
     })
+
+    it('rethrows non-InsufficientCreditsError from executeCreateTransaction (falls through to Fastify 500)', async () => {
+      // Covers the falsy arm of `if (err instanceof InsufficientCreditsError)`
+      // at routes/campaigns.ts:415. Force the inner pipeline to throw a
+      // generic Error by making the input gate reject — its rejection
+      // propagates up through executeCreateTransaction's outer catch and
+      // out to the route handler, where it's NOT InsufficientCreditsError,
+      // so the fall-through `throw err` fires.
+      const { devSub } = await seedUserWithCredits(pool, 1)
+      runInputGateMock.mockRejectedValueOnce(new Error('input gate exploded'))
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+        payload: {
+          name: 'X',
+          world: {
+            kind: 'new',
+            source: {
+              mode: 'freeform',
+              concept: 'A long enough concept string to clear the Zod bound trivially.',
+            },
+          },
+        },
+      })
+      // Fastify's default 500 (the global handler doesn't have a typed
+      // mapping for this error class).
+      expect(res.statusCode).toBe(500)
+    })
   })
 
   describe('concurrent-generation guard (409)', () => {

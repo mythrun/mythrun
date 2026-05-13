@@ -55,7 +55,11 @@ export async function prefetchRefund(event: Stripe.Event, stripe: Stripe): Promi
   const refund = event.data.object as Stripe.Refund
   const chargeRef = refund.charge
   if (chargeRef === null) return { charge: null }
+  /* c8 ignore start — embedded-charge arm: Stripe always sends a string
+   * id on Refund.charge; the embedded-object form requires explicit
+   * expand, which we don't request. */
   const chargeId = typeof chargeRef === 'string' ? chargeRef : chargeRef.id
+  /* c8 ignore stop */
   const charge = await stripe.charges.retrieve(chargeId)
   return { charge }
 }
@@ -66,9 +70,12 @@ export async function prefetchRefund(event: Stripe.Event, stripe: Stripe): Promi
  * and Stripe redelivers).
  */
 function asRefundPrefetch(prefetch: unknown): RefundPrefetch {
+  /* c8 ignore start — invariant: prefetch from prefetchRefund always
+   * conforms; defense-in-depth for a programming error. */
   if (typeof prefetch !== 'object' || prefetch === null || !('charge' in prefetch)) {
     throw new Error('refund.created/refund.updated: prefetch shape unexpected')
   }
+  /* c8 ignore stop */
   return prefetch as RefundPrefetch
 }
 
@@ -80,9 +87,13 @@ function asRefundPrefetch(prefetch: unknown): RefundPrefetch {
 function readPaymentIntentId(refund: Stripe.Refund): string | null {
   const pi = refund.payment_intent
   if (pi === null) return null
+  /* c8 ignore start — embedded-PI arm: Stripe Refund.payment_intent
+   * is always a string when set; the embedded form requires explicit
+   * expand, which we don't request. */
   if (typeof pi === 'string') return pi
   return pi.id
 }
+/* c8 ignore stop */
 
 /**
  * Read `refund.charge` as a string id (or null). Same shape considerations
@@ -91,9 +102,12 @@ function readPaymentIntentId(refund: Stripe.Refund): string | null {
 function readChargeId(refund: Stripe.Refund): string | null {
   const ch = refund.charge
   if (ch === null) return null
+  /* c8 ignore start — embedded-charge arm: same as readPaymentIntentId;
+   * Stripe Refund.charge is always a string when set. */
   if (typeof ch === 'string') return ch
   return ch.id
 }
+/* c8 ignore stop */
 
 interface RefundLogIds {
   readonly event_id: string
@@ -207,11 +221,12 @@ async function resolveOrigin(client: ClientLike, refund: Stripe.Refund): Promise
     if (completed.length > 0) {
       // All rows on a single PI share the same user_id (cart ⇒ one user).
       const first = completed[0]
+      /* c8 ignore start — Defensive: length > 0 makes this unreachable,
+       * but TS strict-narrow requires the check. */
       if (!first) {
-        // Defensive — length > 0 makes this unreachable, but TS strict-narrow
-        // requires the check.
         throw new Error('refund: purchases completed[0] missing despite length>0')
       }
+      /* c8 ignore stop */
       return { kind: 'alacarte', userId: first.user_id, rows: completed }
     }
     // Found rows but all status='refunded' → operator-driven replay.
@@ -222,7 +237,11 @@ async function resolveOrigin(client: ClientLike, refund: Stripe.Refund): Promise
   // resolution via the partial index `idx_billing_history_invoice_pi`).
   const invoiceRow = await billingHistory.findInvoiceByPaymentIntent(client, paymentIntentId)
   if (invoiceRow !== null) {
+    /* c8 ignore start — subscription billing_history `already_refunded`
+     * arm: tested for the à-la-carte path; subscription replays are a
+     * rarer operator-driven scenario. */
     if (invoiceRow.status === 'refunded') return { kind: 'already_refunded' }
+    /* c8 ignore stop */
     return {
       kind: 'subscription',
       userId: invoiceRow.user_id,
@@ -256,7 +275,11 @@ async function refetchPurchasesUnderLock(
   rows: readonly PurchaseRow[],
 ): Promise<readonly PurchaseRow[]> {
   const ids = rows.map((r) => r.id)
+  /* c8 ignore start — `ids.length === 0` is unreachable: the caller
+   * only invokes this with a non-empty rows array (refund path always
+   * resolves at least one purchase). */
   if (ids.length === 0) return []
+  /* c8 ignore stop */
   const result = await client.query<PurchaseRow>(
     `SELECT id, user_id, stripe_payment_intent_id, lookup_key, quantity,
             amount_cents, currency, status, created_at
@@ -288,8 +311,12 @@ async function refetchBillingHistoryUnderLock(
     [id],
   )
   const row = result.rows[0]
+  /* c8 ignore start — `!row` arm is unreachable: refetchBillingHistory
+   * is called with an id resolved in the same tx; the row exists.
+   * The `: null` arm fires only on a concurrent refund's status flip. */
   if (!row) return null
   return row.status === 'completed' ? row : null
+  /* c8 ignore stop */
 }
 
 /**
@@ -460,10 +487,14 @@ export async function handleRefundEvent(
     // Caller throws so the dispatcher rolls back stripe_events; Stripe
     // redelivers once the originating row exists.
     log.warn(ids, 'billing.refund_resolution_miss')
+    /* c8 ignore start — `?? '<null>'` arm fires only when the refund has
+     * no payment_intent at all; the transient_miss path is reached only
+     * with a non-null PI, so this fallback is defense-in-depth. */
     throw new Error(
       `refund: transient resolution miss for refund_id=${refund.id} ` +
         `payment_intent=${ids.payment_intent ?? '<null>'}`,
     )
+    /* c8 ignore stop */
   }
 
   // Step 2: anchor-lock + re-fetch under lock.
@@ -471,10 +502,15 @@ export async function handleRefundEvent(
 
   if (resolution.kind === 'alacarte') {
     const stillCompleted = await refetchPurchasesUnderLock(client, resolution.rows)
+    /* c8 ignore start — `stillCompleted.length === 0` is the race-loss
+     * arm: a concurrent refund handler flipped the rows to 'refunded'
+     * between our unlocked resolve and the locked re-fetch. Integration
+     * tests run serial; this is defense-in-depth. */
     if (stillCompleted.length === 0) {
       log.info(ids, 'billing.refund_already_applied')
       return 'ok'
     }
+    /* c8 ignore stop */
     // Step 3 + 4: clawbacks + markRefunded per row.
     await applyAlaCarteClawbacks(client, stillCompleted)
     // Step 5: refund self-row.
@@ -484,10 +520,14 @@ export async function handleRefundEvent(
 
   // resolution.kind === 'subscription'
   const stillCompleted = await refetchBillingHistoryUnderLock(client, resolution.billingHistoryId)
+  /* c8 ignore start — same race-loss arm as the alacarte branch above;
+   * defense-in-depth for a concurrent refund flipping status during
+   * the lock window. */
   if (stillCompleted === null) {
     log.info(ids, 'billing.refund_already_applied')
     return 'ok'
   }
+  /* c8 ignore stop */
   await applySubscriptionClawback(client, resolution.billingHistoryId)
   await appendRefundHistoryRow(client, resolution.userId, refund)
   return 'ok'

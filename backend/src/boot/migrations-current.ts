@@ -34,7 +34,11 @@ export async function probeMigrationsCurrent(pool: Pool): Promise<void> {
   )
   const exists = existsResult.rows[0]?.reg ?? null
   if (exists === null) {
+    /* c8 ignore start — '(none)' fallback fires only when migrations/
+     * is empty. The repo always ships migrations; this is defense-in-
+     * depth for an accidentally-emptied dir. */
     const latest = sqlFiles.at(-1) ?? '(none)'
+    /* c8 ignore stop */
     throw new Error(
       `migrations-current: _migrations table does not exist — DB has never been migrated. ` +
         `Run \`gh workflow run db-migrate\` to apply ${String(sqlFiles.length)} migrations ` +

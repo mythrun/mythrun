@@ -178,6 +178,35 @@ describe('onboarding routes (integration)', () => {
       expect(body.created).toBe(false)
     })
 
+    it('username already taken (different sub) → 409 username_taken with suggestion', async () => {
+      // Register `alice` under sub A.
+      const subA = currentTestSub
+      const resA = await inject({
+        method: 'POST',
+        url: '/api/users/register',
+        payload: { username: 'alice', displayName: 'Alice' },
+      })
+      expect(resA.statusCode).toBe(201)
+
+      // Switch to a different sub and try to register `alice` again.
+      // The DB's UNIQUE(LOWER(username)) constraint trips → 23505 →
+      // handleRegisterUniqueViolation classifies as users_username_lower_key
+      // → 409 username_taken with a fresh suggestion.
+      currentTestSub = `${subA}-other`
+      const resB = await inject({
+        method: 'POST',
+        url: '/api/users/register',
+        payload: { username: 'alice', displayName: 'Bob' },
+      })
+      expect(resB.statusCode).toBe(409)
+      const body = resB.json<{ code: string; suggestion: string }>()
+      expect(body.code).toBe('username_taken')
+      expect(typeof body.suggestion).toBe('string')
+      expect(body.suggestion.length).toBeGreaterThan(0)
+      // restore for cleanliness
+      currentTestSub = subA
+    })
+
     it('already onboarded under different name → 409 already_onboarded', async () => {
       await inject({
         method: 'POST',

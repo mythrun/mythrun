@@ -90,6 +90,9 @@ export async function runStartingSituationStage(
     JSON.stringify(result.output),
   ])
 
+  /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always
+   * populates inputTokens/outputTokens on the final usage emission;
+   * the optional-chain narrowing is defense-in-depth. */
   return {
     costUsd: computeCostUsd({
       inputTokens: result.usage.inputTokens ?? 0,
@@ -98,4 +101,5 @@ export async function runStartingSituationStage(
     inputTokens: result.usage.inputTokens ?? 0,
     outputTokens: result.usage.outputTokens ?? 0,
   }
+  /* c8 ignore stop */
 }

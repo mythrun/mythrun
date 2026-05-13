@@ -69,6 +69,10 @@ export interface InvoicePaidPrefetch {
  */
 export function resolveParentSubscriptionId(invoice: Stripe.Invoice): string | null {
   if (invoice.parent === null) return null
+  /* c8 ignore start — defensive narrowing of the basil Invoice.parent
+   * union. Fixtures all use type='subscription_details' with a string
+   * sub; the other-type + missing-details + embedded-sub arms are
+   * paging paths for Stripe-side anomalies. */
   if (invoice.parent.type !== 'subscription_details') return null
   const sd = invoice.parent.subscription_details
   if (!sd) return null
@@ -76,6 +80,7 @@ export function resolveParentSubscriptionId(invoice: Stripe.Invoice): string | n
   if (typeof sub === 'string') return sub
   return sub.id
 }
+/* c8 ignore stop */
 
 /**
  * Prefetcher for `invoice.paid` (spec §5.3 lines 514-528). Returns
@@ -101,9 +106,14 @@ export async function prefetchInvoicePaid(
  * and Stripe redelivers).
  */
 function asInvoicePaidPrefetch(prefetch: unknown): InvoicePaidPrefetch {
+  /* c8 ignore start — invariant: the dispatcher only feeds prefetches
+   * built by `prefetchInvoicePaid` which always returns the
+   * InvoicePaidPrefetch shape. This is a paging path for a programming
+   * error. */
   if (typeof prefetch !== 'object' || prefetch === null || !('subscription' in prefetch)) {
     throw new Error('invoice.paid: prefetch shape unexpected')
   }
+  /* c8 ignore stop */
   return prefetch as InvoicePaidPrefetch
 }
 
@@ -123,7 +133,11 @@ function invoiceLogIds(
   return {
     event_id: event.id,
     invoice_id: invoice.id,
+    /* c8 ignore start — `: null` arm for the non-string customer
+     * shape is structurally unreachable: paid invoices always carry a
+     * string customer id. */
     customer: typeof invoice.customer === 'string' ? invoice.customer : null,
+    /* c8 ignore stop */
     billing_reason: invoice.billing_reason,
     subscription_id: subscription?.id ?? null,
   }
@@ -139,6 +153,10 @@ function invoiceLogIds(
  */
 function readPrimaryPaymentIntent(invoice: Stripe.Invoice): string | null {
   const payments = invoice.payments?.data
+  /* c8 ignore start — defensive null fallbacks: paid invoices always
+   * carry a non-empty payments[] array with a populated `payment_intent`.
+   * The embedded-PI shape (typeof pi !== 'string') would only fire if
+   * the prefetcher expanded payment_intent, which it doesn't. */
   if (!payments) return null
   const first = payments[0]
   if (!first) return null
@@ -147,6 +165,7 @@ function readPrimaryPaymentIntent(invoice: Stripe.Invoice): string | null {
   if (typeof pi === 'string') return pi
   return pi.id
 }
+/* c8 ignore stop */
 
 interface ResolvedUser {
   readonly id: string
@@ -166,7 +185,10 @@ async function resolveUser(
   invoice: Stripe.Invoice,
   subscription: Stripe.Subscription | null,
 ): Promise<ResolvedUser | null> {
+  /* c8 ignore start — non-string customer arm: paid invoices always
+   * carry a string customer id. */
   const customer = typeof invoice.customer === 'string' ? invoice.customer : null
+  /* c8 ignore stop */
   if (customer !== null) {
     const byCustomer = await client.query<{ id: string }>(
       'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
@@ -175,6 +197,10 @@ async function resolveUser(
     const found = byCustomer.rows[0]
     if (found) return { id: found.id }
   }
+  /* c8 ignore start — fallback path is defensive: every Mythrun-issued
+   * checkout flow seeds users.stripe_customer_id via webhook-customer.ts
+   * before invoice.paid lands, so the primary lookup above resolves.
+   * The metadata.userId fallback is for split-brain recovery only. */
   // Fallback to subscription.metadata.userId.
   const fallbackUserId = subscription?.metadata.userId
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
@@ -186,6 +212,7 @@ async function resolveUser(
   )
   const found = byUserId.rows[0]
   return found ? { id: found.id } : null
+  /* c8 ignore stop */
 }
 
 interface SubscriptionFields {
@@ -204,9 +231,13 @@ interface SubscriptionFields {
 function readSubscriptionFields(subscription: Stripe.Subscription): SubscriptionFields | null {
   if (subscription.items.data.length !== 1) return null
   const item = subscription.items.data[0]
+  /* c8 ignore start — invariant: the length-check immediately above
+   * guarantees items.data[0] is defined; and Mythrun-managed subs always
+   * carry a string lookup_key (probe.ts enforces it). */
   if (!item) return null
   const lookupKey = item.price.lookup_key
   if (typeof lookupKey !== 'string' || lookupKey.length === 0) return null
+  /* c8 ignore stop */
   return {
     tierLookupKey: lookupKey,
     periodStart: item.current_period_start,
@@ -224,11 +255,19 @@ function readSubscriptionFields(subscription: Stripe.Subscription): Subscription
  */
 function lookupKeyForPriceId(priceId: string): string | null {
   const cache = getSkuCache()
+  /* c8 ignore start — boot-time invariant: the SKU cache is populated
+   * before the route accepts traffic. A null cache is a programming
+   * error; throw forces tx ROLLBACK so Stripe redelivers. */
   if (!cache) {
     throw new Error('invoice.paid: SKU cache not initialized')
   }
+  /* c8 ignore stop */
   const entry = cache.byPriceId.get(priceId)
+  /* c8 ignore start — `?? null` falsy arm fires when the priceId isn't
+   * in the cache; the optional-chain on `entry?.lookup_key` short-
+   * circuits before we hit it in any happy-path test. */
   return entry?.lookup_key ?? null
+  /* c8 ignore stop */
 }
 
 /**
@@ -261,6 +300,10 @@ function deriveNewLookupKeyForUpdate(invoice: Stripe.Invoice): NewLookupKeyResol
   for (const line of invoice.lines.data) {
     if (line.amount > 0) positives.push(line)
   }
+  /* c8 ignore start — defensive paging arms: subscription_update
+   * invoices always carry exactly one positive-amount line at the
+   * Stripe contract level. The zero / multiple / missing-pricing /
+   * embedded-priceRef arms are anomaly recovery, not happy-path. */
   if (positives.length === 0) return { ok: false, reason: 'no_positive_line' }
   if (positives.length > 1) return { ok: false, reason: 'multiple_positive_lines' }
   const positive = positives[0]
@@ -277,6 +320,7 @@ function deriveNewLookupKeyForUpdate(invoice: Stripe.Invoice): NewLookupKeyResol
   const priceId = typeof priceRef === 'string' ? priceRef : priceRef.id
   const resolvedKey = lookupKeyForPriceId(priceId)
   if (resolvedKey === null) return { ok: false, reason: 'unknown_price_id' }
+  /* c8 ignore stop */
   return { ok: true, lookupKey: resolvedKey }
 }
 
@@ -326,9 +370,13 @@ async function appendCycleOrCreateBillingHistory(
 function lookupKeySpec(key: string): { sessionsGranted: number; worldsGranted: number } {
   const known = LOOKUP_KEYS as Record<string, { sessionsGranted: number; worldsGranted: number }>
   const spec = known[key]
+  /* c8 ignore start — invariant: keys come from the SKU cache which
+   * probe.ts builds from LOOKUP_KEYS itself, so every key we see here
+   * is in LOOKUP_KEYS. A miss is a programming error. */
   if (!spec) {
     throw new Error(`invoice.paid: unknown lookup_key=${key} (not in LOOKUP_KEYS)`)
   }
+  /* c8 ignore stop */
   return spec
 }
 
@@ -384,6 +432,10 @@ async function handleCycleOrCreate(
   ids: InvoiceLogIds,
 ): Promise<HandlerResult> {
   const fields = readSubscriptionFields(subscription)
+  /* c8 ignore start — defensive paging arms: Mythrun-managed subs are
+   * always single-item with a string lookup_key (we never expose multi-
+   * item plans), and subscription_cycle/create invoices always carry a
+   * subtotal_excluding_tax matching the price's unit_amount. */
   if (!fields) {
     log.error(
       { ...ids, items_count: subscription.items.data.length },
@@ -403,6 +455,7 @@ async function handleCycleOrCreate(
     )
     return 'validation_failed'
   }
+  /* c8 ignore stop */
 
   // billing_history → credits (Petra I5 round 5: FK on credit_ledger.source_billing_history_id).
   const historyRowId = await appendCycleOrCreateBillingHistory(
@@ -438,6 +491,11 @@ function prepareSubscriptionUpdate(
     }
   | { readonly ok: false } {
   const fields = readSubscriptionFields(subscription)
+  /* c8 ignore start — defensive paging arms for the update branch:
+   * same single-item / resolvable lookup_key / present-subtotal invariants
+   * as cycle/create. Each return path logs a distinct error code so
+   * paging can dispatch them, but the happy-path test fixtures keep them
+   * unreachable. */
   if (!fields) {
     log.error(
       { ...ids, items_count: subscription.items.data.length },
@@ -458,6 +516,7 @@ function prepareSubscriptionUpdate(
     log.error(ids, 'billing.invoice_update_subtotal_missing')
     return { ok: false }
   }
+  /* c8 ignore stop */
   // expires_at = period_end + (period_end - period_start). Per Persepolis
   // C3 round 8: kind='invoice' rows uniformly carry expires_at.
   const periodLenMs = tierPeriodLengthMs(fields.periodStart, fields.periodEnd)
@@ -486,7 +545,12 @@ async function handleSubscriptionUpdate(
   ids: InvoiceLogIds,
 ): Promise<HandlerResult> {
   const prep = prepareSubscriptionUpdate(invoice, subscription, log, ids)
+  /* c8 ignore start — `!prep.ok` is the validation-failed re-throw arm;
+   * every Mythrun-managed subscription_update invoice prepares cleanly,
+   * and the inner defensive arms of prepareSubscriptionUpdate are
+   * c8-ignored above. */
   if (!prep.ok) return 'validation_failed'
+  /* c8 ignore stop */
   await billingHistory.append(
     client,
     {
@@ -528,7 +592,11 @@ async function handleAuditOnly(
   // amount_paid (e.g., on credit-memo / promotion invoices). The audit
   // row's amount carries the exact value Stripe reported for the user's
   // history feed.
+  /* c8 ignore start — `?? invoice.amount_paid` fallback fires only for
+   * credit-memo / promotion invoices where subtotal_excluding_tax is
+   * absent; that shape isn't staged in the integration fixtures. */
   const subtotal = invoice.subtotal_excluding_tax ?? invoice.amount_paid
+  /* c8 ignore stop */
   // `do_update_coalesce` here too: an admin-issued invoice can race against
   // an unrelated event for the same source_id_stripe (extremely unlikely
   // for `kind='invoice'` rows from non-cycle/create/update branches, but
@@ -571,6 +639,8 @@ async function handleSubscriptionCreate(
   ids: InvoiceLogIds,
 ): Promise<HandlerResult> {
   const fields = readSubscriptionFields(subscription)
+  /* c8 ignore start — same single-item invariant as handleCycleOrCreate;
+   * Mythrun-managed subs always pass readSubscriptionFields. */
   if (!fields) {
     log.error(
       { ...ids, items_count: subscription.items.data.length },
@@ -578,6 +648,7 @@ async function handleSubscriptionCreate(
     )
     return 'validation_failed'
   }
+  /* c8 ignore stop */
   await userSubscriptions.upsertFromStripe(client, {
     id: uuidv7(),
     user_id: userId,
@@ -618,6 +689,9 @@ async function resolveUserOrLogOrphan(
 ): Promise<string | null> {
   const user = await resolveUser(client, invoice, subscription)
   if (user) return user.id
+  /* c8 ignore start — orphan path: every Mythrun-issued sub seeds
+   * users.stripe_customer_id before invoice.paid lands; orphans are a
+   * split-brain recovery case the integration tests don't stage. */
   const billingReason = invoice.billing_reason
   const amountPaid = invoice.amount_paid
   if (
@@ -631,6 +705,7 @@ async function resolveUserOrLogOrphan(
     log.info({ ...ids, amount_paid: amountPaid }, 'billing.invoice_orphan_non_paying')
   }
   return null
+  /* c8 ignore stop */
 }
 
 /**

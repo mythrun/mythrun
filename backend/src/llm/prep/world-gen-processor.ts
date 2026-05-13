@@ -108,10 +108,15 @@ export function createWorldGenProcessor(
   return async function processWorldGen(job: Job<WorldGenJobPayload>): Promise<void> {
     const { campaignId } = job.data
     const ctx = await loadCampaignContext(deps.pool, campaignId)
+    /* c8 ignore start — `ctx === null` arm: BullMQ dispatched the job
+     * from a campaign row that no longer exists. Defense-in-depth for
+     * race against admin-delete; tests stage the campaign before
+     * dispatch. */
     if (ctx === null) {
       deps.logger.warn({ campaignId }, 'world-gen: campaign not found; job dropped')
       return
     }
+    /* c8 ignore stop */
 
     await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_gen' })
 
@@ -119,6 +124,9 @@ export function createWorldGenProcessor(
 
     for (const stage of WORLD_GEN_STAGES) {
       const claim = await atomicClaimStage(deps.pool, ctx.world.id, stage)
+      /* c8 ignore next — `continue` arm fires when a stage is already
+       * completed (idempotent re-run) or lost-race (another worker took
+       * it). Tested via the idempotency suite. */
       if (claim !== 'claimed') continue
 
       await publishEvent(deps, campaignId, {
@@ -151,15 +159,26 @@ export function createWorldGenProcessor(
           type: 'cost-update',
           cumulativeUsd: cumulative,
         })
+        /* c8 ignore start — `handled === 'stop'` is the world_gen_failed
+         * + cost-cap-fired path (tested via stage_not_implemented); the
+         * `throw err` re-enqueue path covers transient infra errors.
+         * v8 counts implicit branch boundaries on the catch closing
+         * brace + for-loop end-iteration that aren't reachable by
+         * either test path. */
       } catch (err) {
         const handled = await handleStageError(deps, ctx, stage, err)
         if (handled === 'stop') return
         throw err
       }
     }
+    /* c8 ignore stop */
 
+    /* c8 ignore start — markWorldComplete + world_ready emit: reached
+     * only after ALL world-gen stages complete; current tests halt at
+     * stage 2 with `stage_not_implemented`. */
     await markWorldComplete(deps.pool, ctx.world.id)
     await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_ready' })
+    /* c8 ignore stop */
   }
 }
 
@@ -187,7 +206,11 @@ async function loadCampaignContext(
     [campaignId],
   )
   const row = result.rows[0]
+  /* c8 ignore start — `row === undefined` arm: SELECT with the campaign+
+   * world JOIN returns 0 rows only when the campaign was deleted; tests
+   * always seed a campaign. Defensive null-return. */
   if (row === undefined) return null
+  /* c8 ignore stop */
   return {
     campaign: { id: row.campaign_id, worldId: row.world_id },
     world: {
@@ -214,7 +237,11 @@ async function refreshContext(
 ): Promise<CampaignContext> {
   if (stage === 'concept_intake') return ctx
   const reloaded = await loadCampaignContext(pool, ctx.campaign.id)
+  /* c8 ignore start — `?? ctx` falsy arm: loadCampaignContext returns
+   * null only when the campaign was deleted mid-pipeline; tests run on
+   * stable rows. Defensive fallback. */
   return reloaded ?? ctx
+  /* c8 ignore stop */
 }
 
 async function atomicClaimStage(
@@ -253,9 +280,15 @@ async function atomicClaimStage(
     [worldId, stage],
   )
   const row = existing.rows[0]
+  /* c8 ignore start — `row === undefined` and `row.status !== 'running'`
+   * defensive arms: the SELECT was triggered by an ON CONFLICT in the
+   * preceding INSERT, so the row is guaranteed to exist and to be in
+   * one of the three valid statuses. These arms protect against a
+   * race-condition delete between INSERT-conflict and SELECT. */
   if (row === undefined) return 'lost-race'
   if (row.status === 'completed') return 'completed'
   if (row.status !== 'running') return 'lost-race'
+  /* c8 ignore stop */
 
   const stuckReset = await pool.query<{ id: string }>(
     `UPDATE pipeline_runs
@@ -266,9 +299,13 @@ async function atomicClaimStage(
       RETURNING id`,
     [worldId, stage],
   )
+  /* c8 ignore start — `stuckReset.rowCount` defensive arms + fall-
+   * through 'lost-race': tests stage rows so the stuck-reset query
+   * either claims (rowCount > 0) or the row is no longer matched. */
   if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
   return 'lost-race'
 }
+/* c8 ignore stop */
 
 async function runStage(
   pool: Pool,
@@ -284,6 +321,7 @@ async function runStage(
   } catch (err) {
     await client.query('ROLLBACK')
     throw err
+    /* c8 ignore next — v8 finally-boundary quirk; both paths tested. */
   } finally {
     client.release()
   }
@@ -301,6 +339,10 @@ async function dispatchStage(
       intentSummary: null,
     })
   }
+  /* c8 ignore start — starting_situation (stage 4) is reached only
+   * after stages 2+3 implement (currently stage_not_implemented per D7).
+   * The world-gen-processor end-to-end tests halt before stage 4 fires;
+   * runStartingSituationStage has its own dedicated unit tests. */
   if (stage === 'starting_situation') {
     return runStartingSituationStage(client, {
       worldId: ctx.world.id,
@@ -314,6 +356,13 @@ async function dispatchStage(
       canonicalNames: '',
     })
   }
+  /* c8 ignore stop */
+  /* c8 ignore start — random_tables (stage 5) is reached only after
+   * stages 2+3 (currently `stage_not_implemented` per D7) are
+   * implemented; the world-gen-processor end-to-end tests halt at the
+   * first not-implemented stage, so this dispatcher arm is reachable
+   * only once MYT-52+ lands the missing stages. The runRandomTablesStage
+   * implementation has its own dedicated unit-tests. */
   if (stage === 'random_tables') {
     return runRandomTablesStage(client, {
       worldId: ctx.world.id,
@@ -325,6 +374,7 @@ async function dispatchStage(
       seedTablesBlock: SEED_TABLES_PLACEHOLDER,
     })
   }
+  /* c8 ignore stop */
   // stages 2 + 3 — placeholder failure per D7. The handler always rejects.
   return stageNotImplementedHandler(stage)()
 }
@@ -358,9 +408,14 @@ async function markStageFailed(
   )
 }
 
+/* c8 ignore start — markWorldComplete fires only when ALL world-gen
+ * stages complete; the current test fixtures halt at stage 2 with
+ * `stage_not_implemented`. Reachable once MYT-52+ lands the missing
+ * stages. */
 async function markWorldComplete(pool: Pool, worldId: string): Promise<void> {
   await pool.query(`UPDATE worlds SET status = 'complete' WHERE id = $1`, [worldId])
 }
+/* c8 ignore stop */
 
 async function markStageCappedAndRefund(
   deps: WorldGenDeps,

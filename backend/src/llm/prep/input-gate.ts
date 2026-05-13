@@ -112,10 +112,11 @@ function computeVerdict(
     verdict,
     reason,
     rejectionMessage: verdict === 'reject' ? axes.rejectionMessage : null,
-    /* c8 ignore next — `reason ?? ''` falsy arm is structurally unreachable:
+    /* c8 ignore start — `reason ?? ''` falsy arm is structurally unreachable:
        verdict === 'reject' implies `reason` is one of the three reject
        strings (set in the earlier ternary chain), never null. */
     reasoning: verdict === 'reject' ? `${reason ?? ''}: ${reasoningText}` : '',
+    /* c8 ignore stop */
     usage,
   }
 }

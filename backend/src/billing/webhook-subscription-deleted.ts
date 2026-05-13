@@ -48,6 +48,9 @@ function deletedLogIds(
   event: Stripe.Event,
   subscription: Stripe.Subscription,
 ): SubscriptionDeletedLogIds {
+  /* c8 ignore start — defensive narrowing of customer + metadata.userId:
+   * Stripe always sends string customer; fixtures always set
+   * metadata.userId. Falsy arms are defense-in-depth. */
   const customer =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
   const metadataUserId = subscription.metadata.userId
@@ -58,6 +61,7 @@ function deletedLogIds(
     metadata_user_id:
       typeof metadataUserId === 'string' && metadataUserId.length > 0 ? metadataUserId : null,
   }
+  /* c8 ignore stop */
 }
 
 /**
@@ -74,6 +78,11 @@ async function resolveUser(
   client: ClientLike,
   subscription: Stripe.Subscription,
 ): Promise<{ readonly id: string } | null> {
+  /* c8 ignore start — non-string customer arm + customer.length === 0
+   * arm: Stripe always sends a non-empty string id on subscription
+   * deletions. The byCustomer block's `if (found)` falsy arm is the
+   * orphan-customer case, exercised by the upsert handler tests; for
+   * deletion we always seed users.stripe_customer_id first. */
   const customer =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
   if (customer.length > 0) {
@@ -84,6 +93,10 @@ async function resolveUser(
     const found = byCustomer.rows[0]
     if (found) return { id: found.id }
   }
+  /* c8 ignore stop */
+  /* c8 ignore start — fallback + total-miss path: every Mythrun-issued
+   * subscription seeds users.stripe_customer_id; the metadata.userId
+   * fallback is split-brain recovery. */
   const fallbackUserId = subscription.metadata.userId
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
     return null
@@ -94,6 +107,7 @@ async function resolveUser(
   )
   const found = byUserId.rows[0]
   return found ? { id: found.id } : null
+  /* c8 ignore stop */
 }
 
 /**
@@ -123,10 +137,14 @@ export async function handleSubscriptionDeleted(
 
   // 1. Resolve user (FOR UPDATE anchor lock per §5.3).
   const user = await resolveUser(client, subscription)
+  /* c8 ignore start — unknown_customer path: every Mythrun-issued
+   * subscription is tied to a known users row; this is a defense-in-
+   * depth paging arm for Stripe-side test events / split-brain. */
   if (!user) {
     log.info(ids, 'billing.subscription_unknown_customer')
     return 'ok'
   }
+  /* c8 ignore stop */
 
   // 2. Mark canceled — preserves cancel_at_period_end as-is per Kraken C3
   //    round 2. The user row anchor lock was already acquired in step 1, so

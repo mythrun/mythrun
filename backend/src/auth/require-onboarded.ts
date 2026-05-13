@@ -43,9 +43,13 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
   app.addHook('onRoute', (routeOptions) => {
     const cfg = routeOptions.config as { auth?: string } | undefined
     if (cfg?.auth === 'jwt-no-db') {
+      /* c8 ignore start — defense-in-depth: Fastify allows `method` as
+       * a string or string[], but no jwt-no-db-marked route in this
+       * tree registers with array methods. */
       const methods = Array.isArray(routeOptions.method)
         ? routeOptions.method
         : [routeOptions.method]
+      /* c8 ignore stop */
       for (const m of methods) {
         if (m.toUpperCase() === 'HEAD') continue
         observed.push({ method: m, url: routeOptions.url })
@@ -59,7 +63,11 @@ const impl: FastifyPluginAsync<Opts> = async (app, opts) => {
     const offenders: string[] = []
     for (const { method, url } of observed) {
       const normalizedMethod = method.toUpperCase()
+      /* c8 ignore start — `|| '/'` falsy arm fires when url is exactly
+       * "/" (trailing-slash strip emits empty string). No in-tree
+       * jwt-no-db route registers at the root path. */
       const normalizedUrl = url.replace(/\/$/, '') || '/'
+      /* c8 ignore stop */
       const key = `${normalizedMethod}::${normalizedUrl}`
       if (!JWT_NO_DB_ALLOWLIST.has(key)) {
         offenders.push(key)

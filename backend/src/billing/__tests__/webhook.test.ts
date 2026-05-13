@@ -1527,4 +1527,51 @@ describe('billing.webhook checkout.session.completed (payment mode)', () => {
     expect(await countBillingHistoryFor(pool, userId)).toBe(0)
     expect(await countCreditLedgerFor(pool, userId)).toBe(0)
   })
+
+  it('null payment_intent in payment mode: returns validation_failed, pages billing.checkout_payment_no_payment_intent, writes nothing else', async () => {
+    // payment-mode sessions ALWAYS carry payment_intent at the Stripe side;
+    // a null here would be a Stripe-side anomaly. The handler logs and
+    // returns the validation_failed sentinel rather than crashing the tx
+    // (which would force-redeliver an event Stripe can't fix).
+    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const session: SessionFixture = {
+      id: `cs_nopi_${uuidv7().slice(0, 12)}`,
+      mode: 'payment',
+      customer: cus,
+      subscription: null,
+      payment_intent: null,
+      payment_status: 'paid',
+      metadata: { userId },
+      line_items: {
+        data: [
+          {
+            id: 'li_1',
+            quantity: 1,
+            amount_total: 500,
+            price: { id: PRICE_ID_SKU_SESSION, lookup_key: 'sku_session', currency: 'usd' },
+          },
+        ],
+      },
+      amount_subtotal: 500,
+      currency: 'usd',
+    }
+    const { stripe } = makeStripeWithFixtures({ session })
+    const event = makeCheckoutEvent(session)
+    const { log, entries } = makeLogger()
+
+    await dispatchEvent(event, stripe, pool, log)
+
+    expect(await countStripeEventRow(pool, event.id)).toBe(1)
+
+    const paged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'billing.checkout_payment_no_payment_intent',
+    )
+    expect(paged).toBeDefined()
+    if (!paged) throw new Error('expected billing.checkout_payment_no_payment_intent log')
+    expect(paged.obj.event_id).toBe(event.id)
+    expect(paged.obj.session_id).toBe(session.id)
+
+    expect(await countBillingHistoryFor(pool, userId)).toBe(0)
+    expect(await countCreditLedgerFor(pool, userId)).toBe(0)
+  })
 })

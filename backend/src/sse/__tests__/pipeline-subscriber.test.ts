@@ -131,6 +131,21 @@ describe('pipeline-subscriber', () => {
     await sub.close()
     expect(sub.activeConnectionCount()).toBe(0)
   })
+
+  it('wastedMessageCount increments for PMESSAGEs on a channel with no attached sinks', async () => {
+    const sub = createPipelineSubscriber(redis, PREFIX, pino({ level: 'silent' }))
+    // Wait for the subscriber to issue PSUBSCRIBE before publishing.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    expect(sub.wastedMessageCount()).toBe(0)
+    // Publish to a channel with no sinks attached — should increment wasted counter.
+    await publisher.publish(
+      `${PREFIX}pipeline:campaign:cmp-no-listener`,
+      JSON.stringify({ type: 'phase', phase: 'world_gen' }),
+    )
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    expect(sub.wastedMessageCount()).toBe(1)
+    await sub.close()
+  })
 })
 
 // --- Error-path coverage --------------------------------------------

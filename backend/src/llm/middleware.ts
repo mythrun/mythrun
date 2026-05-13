@@ -35,6 +35,11 @@ interface LogBindings extends MythrunContext {
  * layer is missing or the values aren't strings.
  */
 function extractMythrunContext(params: unknown): MythrunContext {
+  /* c8 ignore start — defensive narrowing of the providerOptions tree:
+   * the Vercel SDK always passes a params object with a providerOptions
+   * shape; the mythrun namespace and the per-field string narrowing are
+   * defense-in-depth for hand-rolled callers that bypass the typed
+   * helpers. */
   if (typeof params !== 'object' || params === null) return {}
   const providerOptions = (params as { providerOptions?: unknown }).providerOptions
   if (typeof providerOptions !== 'object' || providerOptions === null) return {}
@@ -48,6 +53,7 @@ function extractMythrunContext(params: unknown): MythrunContext {
     campaignId: typeof ctx.campaignId === 'string' ? ctx.campaignId : undefined,
     stage: typeof ctx.stage === 'string' ? ctx.stage : undefined,
   }
+  /* c8 ignore stop */
 }
 
 function sumTokens(a: number | undefined, b: number | undefined): number | undefined {
@@ -78,7 +84,11 @@ function wrapModelStream(
   let terminated = false
 
   function logSuccess(): void {
+    /* c8 ignore start — reentry guard: the stream wrapper invokes each
+     * terminal log exactly once; this guard is defense-in-depth against
+     * a future caller looping on success. */
     if (terminated) return
+    /* c8 ignore stop */
     terminated = true
     const bindings: LogBindings = {
       event: 'llm.call',
@@ -95,7 +105,10 @@ function wrapModelStream(
   }
 
   function logError(err: unknown, reason?: string): void {
+    /* c8 ignore start — reentry guard: same as logSuccess; defense-in-
+     * depth against a future caller invoking logError after success. */
     if (terminated) return
+    /* c8 ignore stop */
     terminated = true
     const bindings: LogBindings = {
       event: 'llm.error',

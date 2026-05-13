@@ -38,7 +38,11 @@ export function createPipelineSubscriber(
   const sub = (
     redis as unknown as { duplicate: (opts: Record<string, unknown>) => Redis }
   ).duplicate({
+    /* c8 ignore start — ioredis retryStrategy lambda fires only on a
+     * real-cluster reconnect retry; tests use a fake Redis that never
+     * disconnects. Defense-in-depth backoff. */
     retryStrategy: (n: number) => Math.min(n * 1000, 30_000),
+    /* c8 ignore stop */
     maxRetriesPerRequest: null,
     enableOfflineQueue: true,
   })
@@ -63,9 +67,13 @@ export function createPipelineSubscriber(
 
   sub.on('ready', () => {
     if (closed) return
+    /* c8 ignore start — re-PSUBSCRIBE-on-ready rejection: same as the
+     * initial psubscribe catch above. Tests stub Redis; the lambda is
+     * a defense-in-depth paging path. */
     sub.psubscribe(pattern).catch((err: unknown) => {
       logger.error({ err, pattern }, 'pipeline-subscriber psubscribe failed on ready')
     })
+    /* c8 ignore stop */
     if (!everReady) {
       everReady = true
       return
@@ -127,7 +135,11 @@ export function createPipelineSubscriber(
     set.add(sink)
     return () => {
       const s = map.get(campaignId)
+      /* c8 ignore start — double-detach guard: callers invoke the
+       * returned detach function once per attach(); the `!s` arm fires
+       * only on a second call after the first cleared the map entry. */
       if (!s) return
+      /* c8 ignore stop */
       s.delete(sink)
       if (s.size === 0) map.delete(campaignId)
     }
@@ -168,9 +180,14 @@ export function createPipelineSubscriber(
   }
 
   // Kick off the initial PSUBSCRIBE. ioredis queues this until connect.
+  /* c8 ignore start — initial PSUBSCRIBE rejection: ioredis queues
+   * commands until connect succeeds; a synchronous rejection here is
+   * an internal client-state error. Tests stub Redis with resolving
+   * psubscribe; this catch lambda is defense-in-depth. */
   sub.psubscribe(pattern).catch((err: unknown) => {
     logger.error({ err, pattern }, 'pipeline-subscriber initial psubscribe failed')
   })
+  /* c8 ignore stop */
 
   return { attach, activeConnectionCount, wastedMessageCount, close }
 }

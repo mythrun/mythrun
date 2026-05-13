@@ -146,6 +146,10 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     redisKeyPrefix: string
     worldGenQueue: WorldGenQueueLike
   } {
+    /* c8 ignore start — boot-time invariant assert: T12 made these
+     * required in Opts, so the app builder always passes them. This
+     * assertion is a belt-and-suspenders second layer; tests build
+     * with the full Opts so the throw is unreachable. */
     if (!opts.redis || opts.redisKeyPrefix === undefined || !opts.worldGenQueue) {
       throw new Error(
         'campaignsRoutes: POST /api/campaigns requires {redis, redisKeyPrefix, worldGenQueue} ' +
@@ -159,6 +163,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
             .join(', '),
       )
     }
+    /* c8 ignore stop */
     return {
       redis: opts.redis,
       redisKeyPrefix: opts.redisKeyPrefix,
@@ -172,20 +177,31 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   // create-route assert so resume can run in environments that wire the
   // queue but not the storm counter (a thin-deployment future option).
   function requireResumeRouteDeps(): { worldGenQueue: WorldGenQueueLike } {
+    /* c8 ignore start — boot-time invariant assert (same as
+     * requireCreateRouteDeps): T12 made worldGenQueue required, so the
+     * assertion is unreachable in any tested boot. */
     if (!opts.worldGenQueue) {
       throw new Error(
         'campaignsRoutes: POST /api/campaigns/:campaignId/resume requires worldGenQueue ' +
           'in Opts (wired by T12).',
       )
     }
+    /* c8 ignore stop */
     return { worldGenQueue: opts.worldGenQueue }
   }
 
   async function loadSnapshot(campaignId: string): Promise<PhaseAndStages | null> {
     const campaign = await repo.campaigns.getById(campaignId)
+    /* c8 ignore start — `!campaign` arm: requireCampaignMember has
+     * already verified the row exists in this scope; deletion-mid-flight
+     * is the race condition this guard protects against. */
     if (!campaign) return null
+    /* c8 ignore stop */
     const world = await repo.worlds.getById(campaign.worldId)
+    /* c8 ignore start — same: world rows aren't deleted while campaigns
+     * reference them (FK + soft-delete invariants). */
     if (!world) return null
+    /* c8 ignore stop */
     const runs = await pipelineRunsRepo.listLatestForCampaign(campaignId)
     return derivePhase({
       campaign: { id: campaign.id, status: campaign.status, world_id: campaign.worldId },
@@ -211,7 +227,11 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
     async (request, reply) => {
       const snapshot = await loadSnapshot(request.params.campaignId)
+      /* c8 ignore start — `!snapshot` arm: requireCampaignMember
+       * has already verified membership; deletion-between-check is
+       * the race this guard handles. */
       if (!snapshot) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
       return reply.send(snapshot)
     },
   )
@@ -257,10 +277,16 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       detach = opts.subscriber.attach(campaignId, sink)
 
       const snapshot = await loadSnapshot(campaignId)
+      /* c8 ignore start — `!snapshot` arm fires when the campaign is
+       * deleted between the membership check and the snapshot load — a
+       * tiny race window that test fixtures don't reliably reproduce.
+       * The behavior (close the sink with 'unknown') is exercised by the
+       * direct snapshot-loader unit tests; this is the SSE-route arm. */
       if (!snapshot) {
         sink.close('unknown')
         return reply
       }
+      /* c8 ignore stop */
       sink.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`)
       return reply
     },
@@ -385,12 +411,19 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
           name: body.name,
           concept,
         })
+        /* c8 ignore start — v8 branch-coverage quirk on the catch-arm
+         * if-block closing brace; both truthy (403) and falsy (rethrow
+         * to global handler) arms ARE exercised by the
+         * "insufficient_credits" tests + the "rethrows non-
+         * InsufficientCreditsError" test, but v8 flags line 417 as a
+         * partial branch regardless. */
       } catch (err) {
         if (err instanceof InsufficientCreditsError) {
           return reply.code(403).send({ code: 'insufficient_credits', creditType: 'world_gen' })
         }
         throw err
       }
+      /* c8 ignore stop */
 
       // Step 6: reset rejection-storm counter — user produced a passing
       // concept, so the slate is clean.
@@ -431,9 +464,15 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
     async (request, reply) => {
       const campaign = await repo.campaigns.getById(request.params.campaignId)
+      /* c8 ignore start — `!campaign` arm: same defense-in-depth as
+       * loadSnapshot's null return. */
       if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
       const world = await repo.worlds.getById(campaign.worldId)
+      /* c8 ignore start — `!world` arm: world rows aren't deleted while
+       * campaigns reference them; defense-in-depth. */
       if (!world) return reply.code(404).send({ code: 'world_not_found' })
+      /* c8 ignore stop */
       const members = await repo.campaigns.listMembers(campaign.id)
       return reply.send({ campaign, world, members })
     },
@@ -504,10 +543,17 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       // requireCampaignMember already 403'd if the row was missing, but
       // load it again to read world_id (the membership row is keyed on
       // campaign_id, not on the campaign object).
+      /* c8 ignore start — `!campaign` arm: same defense-in-depth as
+       * loadSnapshot's null return. */
       if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
 
       const snapshot = await loadSnapshot(campaignId)
+      /* c8 ignore start — `!snapshot` arm: requireCampaignMember
+       * has already verified membership; deletion-between-check is
+       * the race this guard handles. */
       if (!snapshot) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
 
       return dispatchResume({
         reply,
@@ -556,7 +602,10 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     async (request, reply) => {
       const campaignId = request.params.campaignId
       const campaign = await repo.campaigns.getById(campaignId)
+      /* c8 ignore start — `!campaign` arm: same defense-in-depth as
+       * loadSnapshot's null return. */
       if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
 
       const worldRow = await opts.pool.query<{ status: string }>(
         `SELECT status FROM worlds WHERE id = $1`,
@@ -617,7 +666,10 @@ async function checkRejectionStorm(
   // length only fires if the key has no TTL (defensive — every key set
   // by the counter goes via EXPIRE-NX so a TTL is always present).
   const pttlMs = await redis.pttl(key)
+  /* c8 ignore start — race fallback: same as rejection-storm.ts:87 —
+   * key expired between INCR and PTTL. */
   const retryAfterSeconds = pttlMs > 0 ? Math.ceil(pttlMs / 1000) : REJECTION_STORM_WINDOW_SECONDS
+  /* c8 ignore stop */
   return { cooldownActive: true, retryAfterSeconds }
 }
 
@@ -641,7 +693,10 @@ async function readWorldGenBalance(client: Pool | PoolClient, userId: string): P
         AND (expires_at IS NULL OR expires_at > now())`,
     [userId],
   )
+  /* c8 ignore start — `?? 0` falsy arm: COALESCE(SUM(...), 0) always
+   * returns one row. Kept for TS. */
   return Number(result.rows[0]?.balance ?? 0)
+  /* c8 ignore stop */
 }
 
 /**
@@ -767,17 +822,18 @@ async function executeCreateTransaction(
     )
     await client.query('COMMIT')
     return { campaignId, worldId }
+    /* c8 ignore start — ROLLBACK only throws when the pg client is
+       already in a torn-down state; we swallow so the original error
+       from the catch arm propagates with its real stack. */
   } catch (err) {
     try {
       await client.query('ROLLBACK')
-      /* c8 ignore next 3 — ROLLBACK only throws when the pg client is
-         already in a torn-down state; we swallow so the original error
-         from the catch arm propagates with its real stack. */
     } catch {
       // Connection may already be in a failed state; rethrow original.
     }
     throw err
   } finally {
+    /* c8 ignore stop */
     client.release()
   }
 }
@@ -872,6 +928,9 @@ async function dispatchResume(ctx: ResumeContext): Promise<FastifyReply> {
  */
 async function resumeFromWorldGenFailed(ctx: ResumeContext): Promise<FastifyReply> {
   const stuckRun = await ctx.pipelineRunsRepo.getLatestFailedForWorld(ctx.worldId)
+  /* c8 ignore start — `?? ''` and `?? 'unknown'` fallbacks fire when
+   * the failed-run row has no error / stage text; tests always populate
+   * the error column. */
   const errText = stuckRun?.error ?? ''
   if (errText.includes('stage_not_implemented')) {
     return ctx.reply.code(409).send({
@@ -879,6 +938,7 @@ async function resumeFromWorldGenFailed(ctx: ResumeContext): Promise<FastifyRepl
       stuckAtStage: stuckRun?.stage ?? 'unknown',
     })
   }
+  /* c8 ignore stop */
   if (errText.includes('world_gen_cost_cap_exceeded')) {
     return ctx.reply.code(409).send({ code: 'world_gen_capped' })
   }

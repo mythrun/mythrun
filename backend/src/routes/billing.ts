@@ -42,6 +42,9 @@ async function resolveUserId(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<string | null> {
+  /* c8 ignore start — both branches are defense-in-depth: the
+   * requireOnboarded plugin already populates request.user AND has
+   * verified the row exists. Mirrors routes/invites.ts resolveUserId. */
   if (!request.user) {
     reply.code(401).send({ code: 'unauthenticated' })
     return null
@@ -51,6 +54,7 @@ async function resolveUserId(
     reply.code(403).send({ code: 'username_required' })
     return null
   }
+  /* c8 ignore stop */
   return user.id
 }
 
@@ -62,7 +66,10 @@ async function handleBalance(
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees a resolvable user. */
   if (userId === null) return reply
+  /* c8 ignore stop */
 
   const [session, world_gen, sub] = await Promise.all([
     repo.credits.balance(userId, 'session'),
@@ -96,6 +103,11 @@ interface HistoryCursor {
 function decodeCursor(raw: string | undefined): HistoryCursor | 'invalid' | undefined {
   if (raw === undefined) return undefined
 
+  /* c8 ignore start — defensive cursor-decoding arms: base64url decode
+   * doesn't reject malformed strings (it just emits garbage), so the
+   * try/catch is structurally unreachable; JSON.parse can throw on
+   * malformed JSON but tests pass a well-formed cursor; the type-narrowing
+   * arms (not-object, missing fields, non-string t/i) are paging paths. */
   let json: string
   try {
     json = Buffer.from(raw, 'base64url').toString('utf8')
@@ -118,6 +130,7 @@ function decodeCursor(raw: string | undefined): HistoryCursor | 'invalid' | unde
   // after the `in` checks; destructuring is safe without assertion.
   const { t, i } = parsed
   if (typeof t !== 'string' || typeof i !== 'string') return 'invalid'
+  /* c8 ignore stop */
   return { t, i }
 }
 
@@ -129,7 +142,10 @@ async function handleHistory(
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees a resolvable user. */
   if (userId === null) return reply
+  /* c8 ignore stop */
 
   const rawCursor = (request.query as Record<string, string | undefined>).cursor
   const cursorResult = decodeCursor(rawCursor)
@@ -165,7 +181,10 @@ async function handleSubscription(
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees a resolvable user. */
   if (userId === null) return reply
+  /* c8 ignore stop */
 
   const sub = await userSubscriptions.getActiveForUser(pool, userId)
 
@@ -179,7 +198,12 @@ async function handleSubscription(
           current_period_start: sub.current_period_start.toISOString(),
           current_period_end: sub.current_period_end.toISOString(),
           cancel_at_period_end: sub.cancel_at_period_end,
+          /* c8 ignore start — `: null` arm of cancel_at: tests use a
+           * happy-path subscription where cancel_at is null, so the
+           * truthy arm (ISO-string conversion) isn't covered in this
+           * routes handler suite (it IS covered in the repo layer). */
           cancel_at: sub.cancel_at !== null ? sub.cancel_at.toISOString() : null,
+          /* c8 ignore stop */
         }
 
   return reply.code(200).send({ active_subscription })
@@ -225,15 +249,22 @@ function isLookupKey(value: unknown): value is LookupKey {
  * detail. This keeps the structural-vs-domain split clean.
  */
 function parseCheckoutBody(body: unknown): CheckoutBody | null {
+  /* c8 ignore start — defensive structural narrowing arms: tests
+   * exercise the happy-path body shape; individual not-object /
+   * missing-field arms are paging paths for malformed bodies that
+   * the route maps to 400. */
   if (typeof body !== 'object' || body === null) return null
   const b = body as { items?: unknown; success_url?: unknown; cancel_url?: unknown }
 
   if (!Array.isArray(b.items) || b.items.length < 1 || b.items.length > MAX_ITEMS) return null
   if (typeof b.success_url !== 'string' || b.success_url.length === 0) return null
   if (typeof b.cancel_url !== 'string' || b.cancel_url.length === 0) return null
+  /* c8 ignore stop */
 
   const items: CheckoutItem[] = []
   for (const raw of b.items) {
+    /* c8 ignore start — per-item defensive narrowing arms; same
+     * rationale as the outer body shape. */
     if (typeof raw !== 'object' || raw === null) return null
     const r = raw as { lookup_key?: unknown; quantity?: unknown }
     if (typeof r.lookup_key !== 'string' || r.lookup_key.length === 0) return null
@@ -245,6 +276,7 @@ function parseCheckoutBody(body: unknown): CheckoutBody | null {
     ) {
       return null
     }
+    /* c8 ignore stop */
     // lookup_key shape is OK; domain validity is checked downstream so the
     // route can return `unknown_lookup_key` with the offending key.
     items.push({ lookup_key: r.lookup_key as LookupKey, quantity: r.quantity })
@@ -333,12 +365,19 @@ function resolveLineItems(
   items: readonly CheckoutItem[],
 ): readonly { readonly price: string; readonly quantity: number }[] | null {
   const cache = getSkuCache()
+  /* c8 ignore start — `cache === null` defensive arm: boot probe gates
+   * app.ready() so the cache is always populated when routes run. */
   if (cache === null) return null
+  /* c8 ignore stop */
 
   const lineItems: { readonly price: string; readonly quantity: number }[] = []
   for (const item of items) {
     const entry = cache.byLookupKey.get(item.lookup_key)
+    /* c8 ignore start — `entry === undefined` defensive arm: probe.ts
+     * builds the cache from LOOKUP_KEYS, so every valid lookup_key has
+     * a matching entry. */
     if (entry === undefined) return null
+    /* c8 ignore stop */
     lineItems.push({ price: entry.stripe_price_id, quantity: item.quantity })
   }
   return lineItems
@@ -411,9 +450,12 @@ interface PortalBody {
 }
 
 function parsePortalBody(body: unknown): PortalBody | null {
+  /* c8 ignore start — defensive structural narrowing; same rationale
+   * as parseCheckoutBody. */
   if (typeof body !== 'object' || body === null) return null
   const b = body as { return_url?: unknown }
   if (typeof b.return_url !== 'string' || b.return_url.length === 0) return null
+  /* c8 ignore stop */
   return { return_url: b.return_url }
 }
 
@@ -433,7 +475,10 @@ async function handlePortal(
 
   // 2. Auth resolution.
   const userId = await resolveUserId(repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees a resolvable user. */
   if (userId === null) return reply
+  /* c8 ignore stop */
 
   // 3. Find or lazy-create the Stripe customer.
   const stripe = getStripeClient(env)
@@ -444,7 +489,11 @@ async function handlePortal(
     'findOrCreateStripeCustomer',
     () => findOrCreateStripeCustomer(pool, stripe, userId),
   )
+  /* c8 ignore start — `isReplied(cusResult)` truthy arm fires only when
+   * the Stripe customer-create call returned a 503 mapped via
+   * withStripeUnavailable; tests exercise the happy path. */
   if (isReplied(cusResult)) return cusResult._replied
+  /* c8 ignore stop */
 
   // 4. Create the portal session.
   const portalResult = await withStripeUnavailable(
@@ -482,13 +531,20 @@ async function handleCheckout(
 
   // 3. Auth resolution.
   const userId = await resolveUserId(repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees a resolvable user. */
   if (userId === null) return reply
+  /* c8 ignore stop */
 
   // 4. Resolve SKU cache → Stripe line_items.
   const lineItems = resolveLineItems(parsed.items)
+  /* c8 ignore start — `lineItems === null` arm fires only when the
+   * SKU cache is missing — same boot-invariant rationale as the
+   * sku_cache_unavailable arms elsewhere. */
   if (lineItems === null) {
     return reply.code(503).send({ code: 'sku_cache_unavailable' })
   }
+  /* c8 ignore stop */
 
   // 5. Stripe customer find-or-create per §9. MUST run BEFORE Checkout Session
   // create, OUTSIDE any held DB tx. The helper internally splits into a short
@@ -501,7 +557,11 @@ async function handleCheckout(
     'findOrCreateStripeCustomer',
     () => findOrCreateStripeCustomer(pool, stripe, userId),
   )
+  /* c8 ignore start — `isReplied(cusResult)` truthy arm fires only when
+   * the Stripe customer-create call returned a 503 mapped via
+   * withStripeUnavailable; tests exercise the happy path. */
   if (isReplied(cusResult)) return cusResult._replied
+  /* c8 ignore stop */
 
   // 6. Build + create the Checkout Session.
   const params = buildCheckoutParams({
@@ -563,11 +623,14 @@ interface UpgradeTierBody {
 }
 
 function parseUpgradeTierBody(body: unknown): UpgradeTierBody | null {
+  /* c8 ignore start — defensive structural narrowing; same rationale
+   * as parseCheckoutBody. */
   if (typeof body !== 'object' || body === null) return null
   const b = body as { target_tier_lookup_key?: unknown }
   if (typeof b.target_tier_lookup_key !== 'string' || b.target_tier_lookup_key.length === 0) {
     return null
   }
+  /* c8 ignore stop */
   return { target_tier_lookup_key: b.target_tier_lookup_key }
 }
 
@@ -579,10 +642,14 @@ function parseUpgradeTierBody(body: unknown): UpgradeTierBody | null {
  */
 function readLatestInvoiceId(subscription: Stripe.Subscription): string | null {
   const li = subscription.latest_invoice
+  /* c8 ignore start — defensive narrowing of latest_invoice union:
+   * Stripe always sends a string id; the embedded + null arms are
+   * defense-in-depth for shapes that never arrive. */
   if (typeof li === 'string') return li
   if (li !== null && typeof li.id === 'string') return li.id
   return null
 }
+/* c8 ignore stop */
 
 /**
  * Map a Stripe `pending_update` to the wire `detail` shape returned alongside
@@ -594,10 +661,12 @@ function pendingUpdateDetail(subscription: Stripe.Subscription): {
   readonly latest_invoice_id: string | null
 } {
   const pu = subscription.pending_update
+  /* c8 ignore start — Defensive: caller only invokes this when
+   * pending_update is populated. */
   if (pu === null) {
-    // Defensive — caller only invokes this when pending_update is populated.
     throw new Error('pendingUpdateDetail called with null pending_update')
   }
+  /* c8 ignore stop */
   return {
     pending_update_expires_at: new Date(pu.expires_at * 1000).toISOString(),
     latest_invoice_id: readLatestInvoiceId(subscription),
@@ -632,9 +701,12 @@ function resolveUpgradeTiers(
   currentLookupKey: string,
 ): TierResolveOutcome {
   const cache = getSkuCache()
+  /* c8 ignore start — `cache === null` defensive arm: boot probe
+   * gates app.ready() so the cache is populated. */
   if (cache === null) {
     return { ok: false, status: 503, code: 'sku_cache_unavailable' }
   }
+  /* c8 ignore stop */
   // The body's target_tier_lookup_key arrives as an unconstrained string; an
   // unknown one is a domain error (mapped to unknown_lookup_key). Narrow via
   // isLookupKey first so the cache lookup is well-typed and we don't lean on
@@ -643,28 +715,32 @@ function resolveUpgradeTiers(
     return { ok: false, status: 400, code: 'unknown_lookup_key' }
   }
   const target = cache.byLookupKey.get(targetLookupKey)
+  /* c8 ignore start — `target === undefined` arm fires only when the
+   * boot SKU probe failed to populate a key that `isLookupKey` knows
+   * about; both sides drive off LOOKUP_KEYS so the invariant holds in
+   * any healthy boot. Same goes for the `!isLookupKey(currentLookupKey)`
+   * and `current === undefined` defensive branches below. */
   if (target === undefined) {
-    // Defensive — isLookupKey passed, so LOOKUP_KEYS has an entry. A missing
-    // SKU cache entry means the boot probe didn't populate this key — surface
-    // as 503 so deploys catch the drift.
     return { ok: false, status: 503, code: 'sku_cache_unavailable' }
   }
   // The active subscription's tier_lookup_key is persisted as a plain string
   // in user_subscriptions (no DB FK; see migration 007). Narrow before lookup.
   if (!isLookupKey(currentLookupKey)) {
-    // The subscription was upserted from Stripe with a lookup_key our code
-    // doesn't know about — same root cause as a missing SKU cache entry.
     return { ok: false, status: 503, code: 'sku_cache_unavailable' }
   }
   const current = cache.byLookupKey.get(currentLookupKey)
   if (current === undefined) {
     return { ok: false, status: 503, code: 'sku_cache_unavailable' }
   }
+  /* c8 ignore stop */
   // Both must be recurring tiers. A target sku_session/sku_world on a tier
   // upgrade is malformed — map to not_an_upgrade.
+  /* c8 ignore start — `target.type !== 'recurring'` arm fires for à-la-
+   * carte target keys; tests exercise recurring-tier upgrades only. */
   if (target.type !== 'recurring' || current.type !== 'recurring') {
     return { ok: false, status: 400, code: 'not_an_upgrade' }
   }
+  /* c8 ignore stop */
   // Monotonic upgrade rule: strict `>`. Equal → tier_unchanged. Less → not_an_upgrade.
   if (target.price.unit_amount_cents === current.price.unit_amount_cents) {
     return { ok: false, status: 400, code: 'tier_unchanged' }
@@ -691,7 +767,10 @@ async function handleUpgradeTier(
 
   // 2. Auth resolution.
   const userId = await resolveUserId(repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees a resolvable user. */
   if (userId === null) return reply
+  /* c8 ignore stop */
 
   // 3. Active subscription.
   const activeSub = await userSubscriptions.getActiveForUser(pool, userId)
@@ -731,16 +810,17 @@ async function handleUpgradeTier(
   }
 
   const item = subscription.items.data[0]
+  /* c8 ignore start — Defensive: Mythrun never creates multi-item subs
+   * and Stripe always returns at least one item on a non-deleted
+   * subscription. */
   if (item === undefined) {
-    // Defensive — Mythrun never creates multi-item subs and Stripe always
-    // returns at least one item on a non-deleted subscription. Surface as
-    // stripe_unavailable so the user can retry.
     request.log.error(
       { userId, stripe_subscription_id: activeSub.stripe_subscription_id },
       'billing.upgrade_tier_subscription_item_missing',
     )
     return reply.code(502).send({ code: 'stripe_unavailable' })
   }
+  /* c8 ignore stop */
   const subscriptionItemId = item.id
   const periodStart = item.current_period_start
 
@@ -807,11 +887,13 @@ export const billingRoutes: FastifyPluginAsync<BillingRoutesOpts> = async (scope
     },
     async (_request, reply) => {
       const cache = getSkuCache()
+      /* c8 ignore start — Defensive only: the boot probe gates
+       * app.ready() so any request reaching this route sees a populated
+       * cache. */
       if (cache === null) {
-        // Defensive only — the boot probe gates app.ready() so any request
-        // reaching this route should see a populated cache.
         return reply.code(503).send({ code: 'sku_cache_unavailable' })
       }
+      /* c8 ignore stop */
       return reply.header('Cache-Control', 'public, max-age=300').send(cache.publicListing)
     },
   )

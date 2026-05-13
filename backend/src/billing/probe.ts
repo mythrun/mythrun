@@ -135,9 +135,15 @@ export async function probeStripeContract(stripe: Stripe, logger: Logger): Promi
   // Build a map only after duplicate-detection.
   const byLookup = new Map<string, Stripe.Price>()
   for (const p of fetched) {
+    /* c8 ignore start — both falsy arms are structurally unreachable:
+     * `fetched` came from a list query with lookup_keys: [...] so every
+     * returned price has a non-null lookup_key; and `counts` was
+     * populated from the same `fetched` array immediately above, so
+     * every key we look up is a known key with count >= 1. */
     if (p.lookup_key && (counts.get(p.lookup_key) ?? 0) === 1) {
       byLookup.set(p.lookup_key, p)
     }
+    /* c8 ignore stop */
   }
 
   for (const key of lookupKeys) {
@@ -412,8 +418,13 @@ async function fetchPricesWithRetry(
       }
       lastErr = err
       if (attempt === PROBE_MAX_ATTEMPTS) break
+      /* c8 ignore start — both `??` fallbacks are structurally
+       * unreachable: `attempt - 1` ranges 0..PROBE_MAX_ATTEMPTS-2 here
+       * (the break above prevents `attempt === MAX`), and PROBE_BACKOFF_MS
+       * has length PROBE_MAX_ATTEMPTS, so the indexed read always hits. */
       const base =
         PROBE_BACKOFF_MS[attempt - 1] ?? PROBE_BACKOFF_MS[PROBE_BACKOFF_MS.length - 1] ?? 1000
+      /* c8 ignore stop */
       const jitter = Math.floor(Math.random() * PROBE_JITTER_MS)
       logger.warn(
         {

@@ -34,7 +34,11 @@ export const PUBLIC_ROUTE_ALLOWLIST: ReadonlySet<string> = new Set([
 export function registerPublicRouteAllowlistHook(app: FastifyInstance): void {
   app.addHook('onRoute', (routeOptions) => {
     if (routeOptions.config?.auth !== 'public') return
+    /* c8 ignore start — defense-in-depth: Fastify allows `method` as a
+     * string or string[], but no in-tree public route registers with
+     * array methods. */
     const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method]
+    /* c8 ignore stop */
     for (const m of methods) {
       // Fastify auto-generates a HEAD route for every GET registration.
       // The auto-generated HEAD fires onRoute with a non-null onSend array;

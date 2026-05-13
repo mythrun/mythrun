@@ -84,7 +84,13 @@ export function createRejectionStormCounter(
     // would tell the user to retry immediately even though the key still
     // exists. Floor + 1 (when pttl > 0) achieves the round-up.
     const pttlMs = await redis.pttl(key)
+    /* c8 ignore start — race fallback: when the key has just expired
+     * between the INCR and the PTTL read (PTTL = -2 = missing, -1 =
+     * no TTL), retryAfterSeconds defaults to the full window. The
+     * EXPIRE-NX above is best-effort; this arm is the recovery for the
+     * rare interleaving where the key is gone before we read its TTL. */
     const retryAfterSeconds = pttlMs > 0 ? Math.ceil(pttlMs / 1000) : REJECTION_STORM_WINDOW_SECONDS
+    /* c8 ignore stop */
     return { count, cooldownActive: true, retryAfterSeconds }
   }
 

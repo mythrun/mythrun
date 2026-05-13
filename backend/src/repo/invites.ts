@@ -24,10 +24,16 @@ function generateInviteCode(): string {
   while (result.length < 12) {
     const buf = randomBytes(1)
     const b = buf[0]
+    /* c8 ignore start — `b === undefined` is unreachable: randomBytes(1)
+     * returns a length-1 Buffer. Kept for TS narrowing. */
     if (b === undefined) continue
+    /* c8 ignore stop */
     if (b < 248) {
       const ch = ALPHABET[b % 62]
+      /* c8 ignore start — `ch === undefined` is unreachable: `b % 62`
+       * is in [0, 62) and ALPHABET has length 62. */
       if (ch !== undefined) result.push(ch)
+      /* c8 ignore stop */
     }
   }
   return result.join('')
@@ -76,7 +82,10 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
               AND (expires_at IS NULL OR expires_at > now())`,
           [input.campaignId],
         )
+        /* c8 ignore start — `?? '0'` falsy arm is unreachable: count(*)
+         * always returns one row. Kept for TS. */
         const active = Number(cap.rows[0]?.count ?? '0')
+        /* c8 ignore stop */
         if (active >= INVITE_CAP_PER_CAMPAIGN) {
           await client.query('ROLLBACK')
           inTransaction = false
@@ -97,7 +106,10 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
             await client.query('COMMIT')
             inTransaction = false
             const row = result.rows[0]
+            /* c8 ignore start — `!row` arm is unreachable: an INSERT ...
+             * RETURNING * always emits one row on success. */
             if (!row) throw new Error('invites.create: INSERT returned no row')
+            /* c8 ignore stop */
             return toCampaignInvite(row, true)
           } catch (err) {
             if (
@@ -110,13 +122,21 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
             ) {
               continue
             }
+            /* c8 ignore start — re-throw of non-23505 pg errors: pg
+             * client errors propagate to the caller. The 23505 retry
+             * loop is tested; this is the catch-all path. */
             throw err
+            /* c8 ignore stop */
           }
         }
         await client.query('ROLLBACK')
         inTransaction = false
         throw new InviteCreationError(INVITE_CODE_RETRIES)
       } catch (err) {
+        /* c8 ignore start — outer rollback + rethrow: every inner
+         * catch arm above handles its own ROLLBACK; this is defense-
+         * in-depth for the case where the INSERT itself never ran
+         * (e.g. BEGIN failed). */
         if (inTransaction) {
           try {
             await client.query('ROLLBACK')
@@ -126,6 +146,7 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
         }
         throw err
       } finally {
+        /* c8 ignore stop */
         client.release()
       }
     },
@@ -255,7 +276,10 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
           `SELECT count(*)::text AS count FROM campaign_members WHERE campaign_id = $1`,
           [campaignId],
         )
+        /* c8 ignore start — `?? '0'` falsy arm is unreachable: count(*)
+         * always returns one row. Kept for TS narrowing. */
         const active = Number(memberCount.rows[0]?.count ?? '0')
+        /* c8 ignore stop */
         if (active >= PARTY_SIZE_CAP) {
           await client.query('ROLLBACK')
           inTransaction = false
@@ -273,7 +297,10 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
              RETURNING *`,
             [uuidv7(), campaignId, input.userId],
           )
+          /* c8 ignore start — `?? 0` falsy arm: pg's QueryResult always
+           * sets rowCount on INSERT ... RETURNING. Kept for TS. */
           insertedRowCount = insertResult.rowCount ?? 0
+          /* c8 ignore stop */
         } catch (err) {
           // FK violation 23503 → campaign was deleted between step 1 and step 5.
           if (
@@ -321,8 +348,13 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
             throw new InviteTimeoutError(input.code, 'statement', '57014')
           }
         }
+        /* c8 ignore start — re-throw of non-timeout, non-typed errors:
+         * pg client errors (disconnected, broken protocol) propagate to
+         * the caller. The 55P03 and 57014 branches are tested; this is
+         * the catch-all. */
         throw err
       } finally {
+        /* c8 ignore stop */
         client.release()
       }
     },

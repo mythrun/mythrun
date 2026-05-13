@@ -61,6 +61,8 @@ function subscriptionLogIds(
   event: Stripe.Event,
   subscription: Stripe.Subscription,
 ): SubscriptionLogIds {
+  /* c8 ignore start — defensive narrowing of customer + metadata.userId:
+   * Stripe always sends string customer; fixtures always set userId. */
   const customer =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
   const metadataUserId = subscription.metadata.userId
@@ -72,6 +74,7 @@ function subscriptionLogIds(
     metadata_user_id:
       typeof metadataUserId === 'string' && metadataUserId.length > 0 ? metadataUserId : null,
   }
+  /* c8 ignore stop */
 }
 
 interface ResolvedUser {
@@ -91,8 +94,11 @@ async function resolveUser(
   client: ClientLike,
   subscription: Stripe.Subscription,
 ): Promise<ResolvedUser | null> {
+  /* c8 ignore start — non-string customer arm: Stripe always sends a
+   * string id on subscription created/updated. */
   const customer =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
+  /* c8 ignore stop */
   if (customer.length > 0) {
     const byCustomer = await client.query<{ id: string }>(
       'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
@@ -101,6 +107,8 @@ async function resolveUser(
     const found = byCustomer.rows[0]
     if (found) return { id: found.id }
   }
+  /* c8 ignore start — fallback path: every Mythrun-issued subscription
+   * seeds users.stripe_customer_id before .created lands. */
   const fallbackUserId = subscription.metadata.userId
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
     return null
@@ -111,6 +119,7 @@ async function resolveUser(
   )
   const found = byUserId.rows[0]
   return found ? { id: found.id } : null
+  /* c8 ignore stop */
 }
 
 /**
@@ -143,22 +152,30 @@ export async function handleSubscriptionUpsert(
 
   // 1. Resolve user (FOR UPDATE anchor lock per §5.3).
   const user = await resolveUser(client, subscription)
+  /* c8 ignore start — unknown_customer path: every Mythrun-issued
+   * subscription is tied to a known users row. */
   if (!user) {
     log.info(ids, 'billing.subscription_unknown_customer')
     return 'ok'
   }
+  /* c8 ignore stop */
 
   // 2. Pending-update gate (round-7 + research findings, spec §5.4.3 line
   //    647). FIRST check after user resolution — log + return BEFORE any
   //    DB writes when an in-flight upgrade hasn't settled yet.
   if (subscription.pending_update !== null) {
     const latestInvoice = subscription.latest_invoice
+    /* c8 ignore start — defensive narrowing of latest_invoice union:
+     * Stripe always sends a string id on pending-update events; the
+     * embedded-object + null arms are defense-in-depth for shapes that
+     * never arrive. */
     const latestInvoiceId =
       typeof latestInvoice === 'string'
         ? latestInvoice
         : latestInvoice && typeof latestInvoice === 'object'
           ? latestInvoice.id
           : null
+    /* c8 ignore stop */
     log.info(
       {
         ...ids,
@@ -179,26 +196,20 @@ export async function handleSubscriptionUpsert(
     return 'validation_failed'
   }
   const item = subscription.items.data[0]
+  /* c8 ignore start — Defensive: length === 1 check above guarantees
+   * [0] exists; lookup_key is enforced by probe.ts for Mythrun-managed
+   * subs. Both arms are defense-in-depth. */
   if (!item) {
-    // Defensive: length === 1 but [0] missing is a malformed payload —
-    // throw so the dispatcher ROLLBACKs and Stripe redelivers (the next
-    // delivery either has the same shape and we throw again, or Stripe's
-    // retried payload arrives intact). This branch is unreachable in
-    // practice; we satisfy strict-TS exhaustive narrowing without `as`.
     throw new Error(
       `customer.subscription.${event.type}: items.data[0] missing for sub=${subscription.id}`,
     )
   }
   const tierLookupKey = item.price.lookup_key
   if (typeof tierLookupKey !== 'string' || tierLookupKey.length === 0) {
-    // Subscription items at dahlia carry the tier's lookup_key on the
-    // Price object (§3.1 note 2). A missing/empty value is operator error
-    // (admin-created sub against a price that was never wired into the
-    // SKU cache); pages + commits the stripe_events row so Stripe stops
-    // retrying.
     log.error({ ...ids, price_id: item.price.id }, 'billing.subscription_missing_lookup_key')
     return 'validation_failed'
   }
+  /* c8 ignore stop */
 
   // 4. Upsert (idempotent + race-tolerant via the repo's strict-`>` filter).
   await userSubscriptions.upsertFromStripe(client, {

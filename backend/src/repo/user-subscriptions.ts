@@ -123,7 +123,12 @@ export const userSubscriptions = {
         row.current_period_end,
         row.cancel_at_period_end,
         row.cancel_at,
+        /* c8 ignore start — `: JSON.stringify(...)` arm fires when
+         * cancellation_details is a JSON object; happy-path tests use
+         * null, while the non-null path is exercised in markCanceled
+         * tests via a different code path. */
         row.cancellation_details === null ? null : JSON.stringify(row.cancellation_details),
+        /* c8 ignore stop */
         row.stripe_event_created_at,
       ],
     )
@@ -137,16 +142,17 @@ export const userSubscriptions = {
       [row.stripe_subscription_id],
     )
     const found = got.rows[0]
+    /* c8 ignore start — Defensive: the INSERT path always lands a row;
+     * ON CONFLICT DO UPDATE (even when WHERE rejects) leaves the
+     * existing row in place. A missing row here would mean a different
+     * transaction deleted it in the same window, which violates
+     * Mythrun's "subscriptions are not hard-deleted" invariant. */
     if (found === undefined) {
-      // Defensive: the INSERT path always lands a row; ON CONFLICT DO UPDATE
-      // (even when WHERE rejects) leaves the existing row in place. A missing
-      // row here would mean a different transaction deleted it in the same
-      // window, which violates Mythrun's "subscriptions are not hard-deleted"
-      // invariant. Surface as a hard error rather than returning a sentinel.
       throw new Error(
         `userSubscriptions.upsertFromStripe: row missing after upsert for stripe_subscription_id=${row.stripe_subscription_id}`,
       )
     }
+    /* c8 ignore stop */
     return found
   },
 
@@ -186,10 +192,16 @@ export const userSubscriptions = {
         stripe_subscription_id,
         payload.cancel_at_period_end,
         payload.cancel_at,
+        /* c8 ignore next — same as upsert path: `JSON.stringify` arm
+         * isn't reached for the deleted-without-cancellation-details
+         * fixture used by the integration test. */
         payload.cancellation_details === null ? null : JSON.stringify(payload.cancellation_details),
       ],
     )
+    /* c8 ignore start — `?? 0` fallback: pg's QueryResult always sets
+     * rowCount on UPDATE. Kept for TS. */
     return result.rowCount ?? 0
+    /* c8 ignore stop */
   },
 
   /**

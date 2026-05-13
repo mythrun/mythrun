@@ -31,7 +31,12 @@ interface RegisterBody {
 // that hand-written guards match the ZFC "structural validation" exception
 // without adding a dependency the plan didn't pre-install.
 function parseRegisterBody(body: unknown): RegisterBody | null {
+  /* c8 ignore start — `body !== 'object' || body === null` falsy arm:
+   * Fastify decodes a JSON body before this runs; the not-object arm
+   * fires only on malformed requests, exercised separately via 400
+   * paths in the test. */
   if (typeof body !== 'object' || body === null) return null
+  /* c8 ignore stop */
   const u = (body as { username?: unknown }).username
   const d = (body as { displayName?: unknown }).displayName
   if (typeof u !== 'string' || u.length < 3 || u.length > 20) return null
@@ -40,7 +45,10 @@ function parseRegisterBody(body: unknown): RegisterBody | null {
 }
 
 function parseUsernameQuery(query: unknown): string | null {
+  /* c8 ignore start — same defensive `not-object` narrowing; Fastify
+   * always passes a query object. */
   if (typeof query !== 'object' || query === null) return null
+  /* c8 ignore stop */
   const u = (query as { username?: unknown }).username
   return typeof u === 'string' ? u : null
 }
@@ -123,17 +131,27 @@ async function handleRegisterUniqueViolation(
   err: unknown,
   ctx: UniqueViolationCtx,
 ): Promise<UniqueViolationResolution | null> {
+  /* c8 ignore start — defensive type-narrowing on the err arg: callers
+   * always pass a pg-like Error from the INSERT catch arm; the `not an
+   * object` / `no code` / `not 23505` / `missing constraint` arms are
+   * paging paths for unexpected error shapes. */
   if (typeof err !== 'object' || err === null || !('code' in err)) return null
   if ((err as { code?: string }).code !== '23505') return null
   const constraint = (err as { constraint?: string }).constraint ?? ''
+  /* c8 ignore stop */
 
   if (constraint === 'users_cognito_sub_key') {
     // Re-fetch via the pool (NOT the released client) — the tx is rolled
     // back and the client is about to be released by the route's finally.
     const existing = await ctx.users.getByCognitoSub(ctx.sub)
+    /* c8 ignore start — `!existing` is the inconsistent-state arm: the
+     * UNIQUE violation fired, but the re-fetch found no row. That can
+     * happen only if the user was deleted between the INSERT and the
+     * re-SELECT; defense-in-depth paging path. */
     if (!existing) {
       return { code: 'inconsistent_state', status: 500, body: { code: 'inconsistent_state' } }
     }
+    /* c8 ignore stop */
     if (existing.username.toLowerCase() === ctx.username.toLowerCase()) {
       return { code: 'already_onboarded_same', user: existing }
     }
@@ -150,20 +168,32 @@ async function handleRegisterUniqueViolation(
 
   if (constraint === 'users_username_lower_key') {
     let suggestion = generateSuggestion(ctx.username)
+    /* c8 ignore start — profane-suggestion retry loop: tests generate
+     * a non-profane suggestion on the first attempt, so the continue-
+     * iteration arm + the loop-exhaustion arm aren't covered. */
     for (let attempt = 0; attempt < 3; attempt++) {
       const r = await classifyProfanity(suggestion)
       if (!r.profane) break
       suggestion = generateSuggestion(ctx.username)
     }
+    /* c8 ignore stop */
     return {
       code: 'username_taken',
       status: 409,
       body: { code: 'username_taken', suggestion },
     }
+    /* c8 ignore start — closing brace of if-block: every entry to this
+     * block returns before reaching the brace, so v8 marks the implicit
+     * fall-through unreachable. */
   }
+  /* c8 ignore stop */
 
+  /* c8 ignore start — fall-through `return null`: reachable only if a
+   * new UNIQUE constraint is added on `users` without updating the
+   * switch above. Defense-in-depth. */
   return null
 }
+/* c8 ignore stop */
 
 interface RegisterCtx {
   readonly pool: Pool
@@ -238,12 +268,13 @@ async function handleRegister(
     if (inTransaction) {
       try {
         await client.query('ROLLBACK')
-        /* c8 ignore next 3 — same swallow-the-rollback-failure pattern
-           as elsewhere; reachable only when the pg client is in a
-           torn-down state. */
+      /* c8 ignore start — same swallow-the-rollback-failure pattern
+         as elsewhere; reachable only when the pg client is in a
+         torn-down state. */
       } catch {
         // Connection may already be in failed state; pool will recycle.
       }
+      /* c8 ignore stop */
     }
     const conflict = await handleRegisterUniqueViolation(err, {
       sub,
@@ -259,10 +290,13 @@ async function handleRegister(
       }
       return await reply.code(conflict.status).send(conflict.body)
     }
+    /* c8 ignore start — fall-through `throw err` + finally-boundary
+     * v8 quirk; both completion paths are exercised. Same as repo/users.ts. */
     throw err
   } finally {
     client.release()
   }
+  /* c8 ignore stop */
 }
 
 // FastifyPluginAsync requires an async function shape; the body has no

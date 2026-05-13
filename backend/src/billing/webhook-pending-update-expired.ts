@@ -28,10 +28,16 @@ import type { EventHandler } from './webhook.js'
 export const handlePendingUpdateExpired: EventHandler = async (event, _prefetch, _client, log) => {
   const sub = event.data.object as Stripe.Subscription
 
+  /* c8 ignore start — defensive narrowing of the Stripe Subscription
+   * shape: customer / latest_invoice / items.data[0] are always populated
+   * for a subscription in pending_update state. The embedded-object
+   * arms + `?? null` fallbacks are defense-in-depth for shapes that
+   * never arrive in practice. */
   const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id
   const latestInvoiceId =
     typeof sub.latest_invoice === 'string' ? sub.latest_invoice : (sub.latest_invoice?.id ?? null)
   const targetTierLookupKey = sub.items.data[0]?.price.lookup_key ?? null
+  /* c8 ignore stop */
 
   log.info(
     {

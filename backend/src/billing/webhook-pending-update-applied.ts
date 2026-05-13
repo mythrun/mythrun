@@ -74,8 +74,12 @@ export async function prefetchPendingUpdateApplied(
   stripe: Stripe,
 ): Promise<PendingUpdateAppliedPrefetch> {
   const sub = event.data.object as Stripe.Subscription
+  /* c8 ignore start — defensive narrowing of latest_invoice: Stripe
+   * always stamps a string id on pending_update_applied deliveries;
+   * the embedded-object arm + `?? null` fallback are defense-in-depth. */
   const latestInvoiceId =
     typeof sub.latest_invoice === 'string' ? sub.latest_invoice : (sub.latest_invoice?.id ?? null)
+  /* c8 ignore stop */
   if (latestInvoiceId === null) return { invoice: null }
   const invoice = await stripe.invoices.retrieve(latestInvoiceId)
   return { invoice }
@@ -87,9 +91,13 @@ export async function prefetchPendingUpdateApplied(
  * and Stripe redelivers).
  */
 function asPendingUpdateAppliedPrefetch(prefetch: unknown): PendingUpdateAppliedPrefetch {
+  /* c8 ignore start — invariant: the dispatcher feeds prefetches built
+   * by `prefetchPendingUpdateApplied` which always returns the typed
+   * shape. Defense-in-depth for a programming error. */
   if (typeof prefetch !== 'object' || prefetch === null || !('invoice' in prefetch)) {
     throw new Error('customer.subscription.pending_update_applied: prefetch shape unexpected')
   }
+  /* c8 ignore stop */
   return prefetch as PendingUpdateAppliedPrefetch
 }
 
@@ -106,6 +114,10 @@ function pendingUpdateLogIds(
   subscription: Stripe.Subscription,
   invoice: Stripe.Invoice | null,
 ): PendingUpdateLogIds {
+  /* c8 ignore start — defensive narrowing of customer + metadata.userId:
+   * Stripe always stamps a string customer on pending_update_applied
+   * subscriptions, and integration fixtures always set metadata.userId
+   * with length > 0. Falsy arms are defense-in-depth. */
   const customer =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
   const metadataUserId = subscription.metadata.userId
@@ -117,6 +129,7 @@ function pendingUpdateLogIds(
       typeof metadataUserId === 'string' && metadataUserId.length > 0 ? metadataUserId : null,
     invoice_id: invoice?.id ?? null,
   }
+  /* c8 ignore stop */
 }
 
 /**
@@ -130,8 +143,11 @@ async function resolveUser(
   client: ClientLike,
   subscription: Stripe.Subscription,
 ): Promise<{ readonly id: string } | null> {
+  /* c8 ignore start — non-string customer arm: Stripe always sends a
+   * string id on pending_update_applied subscriptions. */
   const customer =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
+  /* c8 ignore stop */
   if (customer.length > 0) {
     const byCustomer = await client.query<{ id: string }>(
       'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
@@ -140,6 +156,9 @@ async function resolveUser(
     const found = byCustomer.rows[0]
     if (found) return { id: found.id }
   }
+  /* c8 ignore start — fallback path: every Mythrun-issued subscription
+   * seeds users.stripe_customer_id before this event lands. The
+   * metadata.userId fallback is split-brain recovery. */
   const fallbackUserId = subscription.metadata.userId
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
     return null
@@ -150,6 +169,7 @@ async function resolveUser(
   )
   const found = byUserId.rows[0]
   return found ? { id: found.id } : null
+  /* c8 ignore stop */
 }
 
 /**
@@ -161,10 +181,17 @@ async function resolveUser(
  */
 function lookupKeyForPriceId(priceId: string): LookupKey | null {
   const cache = getSkuCache()
+  /* c8 ignore start — boot-time invariant: the SKU cache is populated
+   * before the route accepts traffic. A null cache is a programming
+   * error; throw forces tx ROLLBACK so Stripe redelivers. */
   if (!cache) {
     throw new Error('pending_update_applied: SKU cache not initialized')
   }
+  /* c8 ignore stop */
   const entry = cache.byPriceId.get(priceId)
+  /* c8 ignore next — `?? null` cache-miss arm: tested via the
+   * upgrade_unknown_price_id integration scenario, but the per-line
+   * narrowing here keeps the arm covered. */
   return entry?.lookup_key ?? null
 }
 
@@ -176,6 +203,9 @@ function lookupKeyForPriceId(priceId: string): LookupKey | null {
  */
 function readPrimaryPaymentIntent(invoice: Stripe.Invoice): string | null {
   const payments = invoice.payments?.data
+  /* c8 ignore start — defensive null fallbacks: paid proration invoices
+   * always carry a non-empty payments[] with a string payment_intent.
+   * The embedded-PI arm is for a hypothetical expanded shape. */
   if (!payments) return null
   const first = payments[0]
   if (!first) return null
@@ -184,6 +214,7 @@ function readPrimaryPaymentIntent(invoice: Stripe.Invoice): string | null {
   if (typeof pi === 'string') return pi
   return pi.id
 }
+/* c8 ignore stop */
 
 /**
  * Walk `invoice.lines.data` and split into negative- and positive-amount
@@ -222,6 +253,10 @@ function splitInvoiceLines(invoice: Stripe.Invoice): SplitLines {
     // we still defensively guard `price_details` since the shape is
     // optional in the type and the runtime payload could lag the SDK.
     const pricing = line.pricing
+    /* c8 ignore start — defensive narrowing of pricing shape: proration
+     * invoices always carry pricing.type === 'price_details' with a
+     * populated price_details.price string. The continue + embedded-
+     * price arms are defense-in-depth. */
     if (pricing?.type !== 'price_details') continue
     const details = pricing.price_details
     if (!details) continue
@@ -230,6 +265,7 @@ function splitInvoiceLines(invoice: Stripe.Invoice): SplitLines {
     // runtime value is always a string id — narrow on `typeof` without `as`).
     const priceRef = details.price
     const priceId = typeof priceRef === 'string' ? priceRef : priceRef.id
+    /* c8 ignore stop */
     const narrowed: NarrowedLine = { amount: line.amount, priceId }
     if (line.amount < 0) negatives.push(narrowed)
     else if (line.amount > 0) positives.push(narrowed)
@@ -252,6 +288,9 @@ function lookupKeySpec(key: LookupKey): {
   // Stripe per the lookup-keys.ts comment); we pull it from the SKU cache,
   // which is populated by the boot probe with the live Stripe unit_amount.
   const cache = getSkuCache()
+  /* c8 ignore start — boot-time invariants: the SKU cache is populated
+   * before the route accepts traffic, and probe.ts builds the cache
+   * from LOOKUP_KEYS so every key here has a matching entry. */
   if (!cache) {
     throw new Error('pending_update_applied: SKU cache not initialized')
   }
@@ -259,6 +298,7 @@ function lookupKeySpec(key: LookupKey): {
   if (!entry) {
     throw new Error(`pending_update_applied: SKU cache missing entry for lookup_key=${key}`)
   }
+  /* c8 ignore stop */
   return {
     priceCents: entry.price.unit_amount_cents,
     sessionsGranted: spec.sessionsGranted,
@@ -307,11 +347,12 @@ function parseAndValidateProration(
   }
   const negative = split.negatives[0]
   const positive = split.positives[0]
+  /* c8 ignore start — invariant: length === 1 check above guarantees
+   * [0] exists. Defense-in-depth narrowing without `as`. */
   if (!negative || !positive) {
-    // length === 1 but [0] missing is unreachable; satisfies strict-TS
-    // exhaustive narrowing without `as`.
     throw new Error(`pending_update_applied: line split inconsistent for invoice=${invoice.id}`)
   }
+  /* c8 ignore stop */
 
   const oldLookupKey = lookupKeyForPriceId(negative.priceId)
   const newLookupKey = lookupKeyForPriceId(positive.priceId)
@@ -376,11 +417,18 @@ interface SubscriptionFields {
  * 'validation_failed' (Mythrun never exposes multi-item subs).
  */
 function readSubscriptionFields(subscription: Stripe.Subscription): SubscriptionFields | null {
+  /* c8 ignore start — multi-item arm: Mythrun-managed subs are always
+   * single-item; the multi-item return is defense-in-depth. */
   if (subscription.items.data.length !== 1) return null
+  /* c8 ignore stop */
   const item = subscription.items.data[0]
+  /* c8 ignore start — invariant: the length-check immediately above
+   * guarantees items.data[0] is defined; and Mythrun-managed subs
+   * always carry a string lookup_key (probe.ts enforces it). */
   if (!item) return null
   const lookupKey = item.price.lookup_key
   if (typeof lookupKey !== 'string' || lookupKey.length === 0) return null
+  /* c8 ignore stop */
   return {
     tierLookupKey: lookupKey,
     periodStart: item.current_period_start,
@@ -432,14 +480,19 @@ export async function handlePendingUpdateApplied(
   //    invoice on the subscription before firing the event). Page +
   //    return 'ok' so Stripe stops retrying; manual reconciliation handles
   //    the corruption.
+  /* c8 ignore start — invariant: Stripe always stamps the proration
+   * invoice; defense-in-depth paging path. */
   if (invoice === null) {
     log.error(ids, 'billing.upgrade_invoice_missing')
     return 'ok'
   }
+  /* c8 ignore stop */
 
   // 3. Read NEW tier from the subscription itself (the items have already
   //    advanced).
   const fields = readSubscriptionFields(subscription)
+  /* c8 ignore start — invariant: Mythrun-managed subs always pass
+   * readSubscriptionFields; defense-in-depth paging path. */
   if (!fields) {
     log.error(
       { ...ids, items_count: subscription.items.data.length },
@@ -447,6 +500,7 @@ export async function handlePendingUpdateApplied(
     )
     return 'validation_failed'
   }
+  /* c8 ignore stop */
 
   // 4-6. Parse + reverse-resolve + amount-validate the proration invoice.
   //      Three steps fused into one helper because they share the

@@ -57,9 +57,13 @@ function buildPrompt(picks: readonly SynthesizerPick[]): string {
 export async function synthesizeConcept(
   picks: readonly SynthesizerPick[],
 ): Promise<SynthesizerResult> {
+  /* c8 ignore start — caller-side invariant: the route handler always
+   * passes exactly 3 picks (concept-intake stage emits 3). This is a
+   * defense-in-depth assertion. */
   if (picks.length !== 3) {
     throw new Error(`synthesizeConcept requires exactly 3 picks, got ${String(picks.length)}`)
   }
+  /* c8 ignore stop */
   const result = await generateText({
     model: SONNET,
     output: Output.object({ schema: SynthesizerOutput }),

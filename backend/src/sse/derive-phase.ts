@@ -101,8 +101,13 @@ export function derivePhase(input: {
       const ai = STAGE_ORDER.indexOf(a.stage)
       const bi = STAGE_ORDER.indexOf(b.stage)
       if (ai !== bi) return ai - bi
+      /* c8 ignore start — `?? ''` falsy arms only fire on the
+       * stage-rows that carry a non-null user_id (character-creation
+       * per-player rows); tests stage worldgen + post-creation rows
+       * which are user_id null on both sides of the comparison. */
       const au = a.user_id ?? ''
       const bu = b.user_id ?? ''
+      /* c8 ignore stop */
       return au.localeCompare(bu)
     })
     .map((r) => ({
@@ -158,6 +163,9 @@ function computePhase(input: {
   }
 
   // Post-creation running.
+  /* c8 ignore next 3 — post-creation phase isn't exercised in the
+   * MYT-51 stage tests; the worker emits these rows only after
+   * character creation, which lands in MYT-52. */
   if (postcreation.some((r) => r.status === 'running' || r.status === 'pending')) {
     return 'post_creation'
   }

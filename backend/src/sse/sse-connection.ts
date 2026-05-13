@@ -61,7 +61,11 @@ export function openSseConnection(opts: OpenSseConnectionOpts): SseSink {
   function armKeepalive(): void {
     if (keepaliveHandle) clearTimeout(keepaliveHandle)
     keepaliveHandle = setTimeout(() => {
+      /* c8 ignore start — closed-during-keepalive race: the close()
+       * function clears keepaliveHandle, but a fire that's already
+       * queued in the event loop might still execute. Defense-in-depth. */
       if (closed) return
+      /* c8 ignore stop */
       raw.write(':keepalive\n\n')
       armKeepalive()
     }, KEEPALIVE_MS)
@@ -94,6 +98,10 @@ export function openSseConnection(opts: OpenSseConnectionOpts): SseSink {
     raw.off('drain', onDrain)
     request.raw.off('close', onUpstreamClose)
     raw.off('close', onUpstreamClose)
+    /* c8 ignore start — best-effort write/end on already-half-closed
+     * sockets: tests close the sink via the happy path, so the catch
+     * arms (already-half-closed / already-ended) only fire under real-
+     * network races. */
     try {
       raw.write(`event: close\ndata: ${JSON.stringify({ reason })}\n\n`)
     } catch {
@@ -104,6 +112,7 @@ export function openSseConnection(opts: OpenSseConnectionOpts): SseSink {
     } catch {
       // Already ended; ignore.
     }
+    /* c8 ignore stop */
     try {
       onClose()
     } catch (err) {

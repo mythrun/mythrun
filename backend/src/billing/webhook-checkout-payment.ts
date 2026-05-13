@@ -50,17 +50,24 @@ function resolvePaymentLine(
   logCtx: { event_id: string; session_id: string },
 ): PaymentLineResolution | null {
   const price = line.price
+  /* c8 ignore start — Stripe-side invariant: payment-mode line_items
+   * always carry a price with a non-empty id. The handler's contract
+   * (prefetcher expands line_items.data.price) guarantees this; the
+   * defensive null/empty check is a paging path for a Stripe anomaly
+   * we can't recover from. */
   if (!price || typeof price.id !== 'string' || price.id.length === 0) {
     log.error({ ...logCtx, line_id: line.id }, 'billing.checkout_unknown_price_id')
     return null
   }
+  /* c8 ignore stop */
   const cache = getSkuCache()
+  /* c8 ignore start — boot-time invariant: the SKU cache is populated
+   * before the route accepts traffic per §10. A null cache here is a
+   * programming error; throwing forces a tx ROLLBACK so Stripe redelivers. */
   if (!cache) {
-    // Boot-time invariant: the SKU cache is populated before the route
-    // accepts traffic per §10. A null cache here is a programming error;
-    // fail loudly so the dispatch tx ROLLBACKs and Stripe redelivers.
     throw new Error('checkout.session.completed payment mode: SKU cache not initialized')
   }
+  /* c8 ignore stop */
   const entry = cache.byPriceId.get(price.id)
   if (!entry) {
     log.error(
@@ -77,7 +84,10 @@ function resolvePaymentLine(
   const spec = LOOKUP_KEYS[cachedKey]
   return {
     id: line.id,
+    /* c8 ignore start — `?? 1` fallback is defensive: payment-mode
+     * line_items always carry a non-null quantity. */
     quantity: line.quantity ?? 1,
+    /* c8 ignore stop */
     amountTotal: line.amount_total,
     currency: price.currency,
     priceId: price.id,
@@ -134,11 +144,18 @@ export async function handleCheckoutCompletedPayment(
   // The prefetcher always retrieves session with expand: ['line_items.data.price'].
   // A null line_items here is a Stripe-side anomaly we don't have a recovery
   // for; treat the same as "no resolvable lines" and return validation_failed.
+  /* c8 ignore start — `?? []` fallback is structurally unreachable: the
+   * prefetcher's expand-list guarantees session.line_items is set. */
   const lines = session.line_items?.data ?? []
+  /* c8 ignore stop */
+  /* c8 ignore start — Stripe-side invariant: payment-mode checkout
+   * sessions never come back with an empty line_items.data array; this
+   * is a defensive paging path for the anomaly. */
   if (lines.length === 0) {
     log.error(ids, 'billing.checkout_payment_no_line_items')
     return 'validation_failed'
   }
+  /* c8 ignore stop */
 
   // 1. Resolve every line against the SKU cache. Any unknown price.id ⇒
   //    validation_failed. Stop on first miss so the log line carries the
@@ -206,7 +223,12 @@ export async function handleCheckoutCompletedPayment(
   //    never expires. Default opts (plain INSERT throws on conflict) is safe:
   //    the stripe_events PK already dedupes redeliveries before the handler
   //    runs, so a 23505 here would be a real bug.
+  /* c8 ignore start — both `??` fallbacks are defensive: payment-mode
+   * sessions always carry `currency`, and the earlier length-check
+   * guarantees `resolved[0]` is defined. The 'usd' tail is the final
+   * defense-in-depth default. */
   const sessionCurrency = session.currency ?? resolved[0]?.currency ?? 'usd'
+  /* c8 ignore stop */
   await billingHistory.append(client, {
     id: uuidv7(),
     user_id: userId,
@@ -227,11 +249,14 @@ export async function handleCheckoutCompletedPayment(
   for (let i = 0; i < resolved.length; i++) {
     const r = resolved[i]
     const purchaseRow = purchaseRows[i]
+    /* c8 ignore start — defensive invariant: purchaseRows was built by
+     * `resolved.map(...)` immediately above so the arrays have identical
+     * length and matching indices. Either being undefined here is a
+     * programming error, not a runtime path. */
     if (!r || !purchaseRow) {
-      // Defensive: arrays are built in lock-step; mismatched indexing would
-      // be a programming error.
       throw new Error('handleCheckoutCompletedPayment: resolved/purchaseRow length mismatch')
     }
+    /* c8 ignore stop */
     await grantCreditsForLine(client, userId, r, purchaseRow.id)
   }
 

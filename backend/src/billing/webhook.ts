@@ -138,18 +138,21 @@ async function recordEventOnlyTx(pool: Pool, event: Stripe.Event): Promise<void>
     )
     await stripeEvents.recordOrSkip(client, event.id, event.type)
     await client.query('COMMIT')
+    /* c8 ignore start — recordOrSkip is an UPSERT-like INSERT
+       ON CONFLICT DO NOTHING; only fatal pg states (disconnected
+       client, broken protocol) reach this catch. Tests cover the happy
+       + skip paths against a real DB; this is the disaster-recovery
+       arm. */
   } catch (err) {
     try {
       await client.query('ROLLBACK')
-      /* c8 ignore next 4 — ROLLBACK throws only when the pg client is
-         already in a torn-down state; swallow so the catch-arm's original
-         error propagates with its real stack. */
     } catch {
       // Connection dead; pool will recycle. Swallow so the original
       // error propagates to the caller.
     }
     throw err
   } finally {
+    /* c8 ignore stop */
     client.release()
   }
 }
@@ -222,14 +225,15 @@ export async function dispatchEvent(
       log.error({ event_id: event.id }, 'billing.handler_validation_failed_committed')
     }
   } catch (err) {
+    /* c8 ignore start — same double-failure swallow as the
+       recordOrSkip handler above; unreachable on a healthy pg client. */
     try {
       await client.query('ROLLBACK')
-      /* c8 ignore next 4 — same double-failure swallow as the
-         recordOrSkip handler above; unreachable on a healthy pg client. */
     } catch {
       // Connection dead; pool will recycle. Swallow so the original
       // error propagates.
     }
+    /* c8 ignore stop */
     throw err
   } finally {
     client.release()
@@ -464,7 +468,7 @@ async function handleCheckoutCompletedSubscription(
     return 'validation_failed'
   }
   const item = subscription.items.data[0]
-  /* c8 ignore next 5 — invariant assertion: the length-check immediately
+  /* c8 ignore start — invariant assertion: the length-check immediately
      above already returned when items.data.length !== 1, so items.data[0]
      must exist. The TS narrowing rejects a non-null assertion without it,
      which would also hide a real bug if the length check ever changed. */
@@ -473,6 +477,7 @@ async function handleCheckoutCompletedSubscription(
       `checkout.session.completed: subscription items.data[0] missing (sub=${subscription.id})`,
     )
   }
+  /* c8 ignore stop */
   const tierLookupKey = item.price.lookup_key
   if (typeof tierLookupKey !== 'string' || tierLookupKey.length === 0) {
     log.error(

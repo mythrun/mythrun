@@ -87,7 +87,11 @@ export const webhookRoutes: FastifyPluginAsync<WebhookRoutesOpts> =
         try {
           event = stripe.webhooks.constructEvent(rawBody, sig, opts.env.stripeWebhookSecret)
         } catch (err) {
+          /* c8 ignore start — `String(err)` arm fires for non-Error
+           * rejections; Stripe SDK's constructEvent always throws
+           * a StripeSignatureVerificationError subclass of Error. */
           const message = err instanceof Error ? err.message : String(err)
+          /* c8 ignore stop */
           const errType =
             typeof err === 'object' && err !== null && 'type' in err
               ? (err as { type?: unknown }).type

@@ -51,6 +51,11 @@ async function resolveUserId(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<string | null> {
+  /* c8 ignore start — both branches are defense-in-depth: the
+   * requireOnboarded plugin already populates request.user AND has
+   * verified the row exists. The handler-level checks guard against
+   * a hypothetical race where the user row is deleted between the
+   * gate and the handler. */
   if (!request.user) {
     reply.code(401).send({ code: 'unauthenticated' })
     return null
@@ -60,6 +65,7 @@ async function resolveUserId(
     reply.code(403).send({ code: 'username_required' })
     return null
   }
+  /* c8 ignore stop */
   return user.id
 }
 
@@ -119,7 +125,11 @@ async function handleCreateInvite(
   ctx: InvitesCtx,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(ctx.repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees request.user.sub maps
+   * to a users row; resolveUserId's null returns are c8-ignored. */
   if (userId === null) return reply
+  /* c8 ignore stop */
   const campaignId = request.params.id
   if (!(await requireOwner(ctx.repo, campaignId, userId, reply))) return reply
 
@@ -155,7 +165,11 @@ async function handleListInvites(
   ctx: InvitesCtx,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(ctx.repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees request.user.sub maps
+   * to a users row; resolveUserId's null returns are c8-ignored. */
   if (userId === null) return reply
+  /* c8 ignore stop */
   const campaignId = request.params.id
   if (!(await requireOwner(ctx.repo, campaignId, userId, reply))) return reply
 
@@ -178,7 +192,11 @@ async function handleRevokeInvite(
   ctx: InvitesCtx,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(ctx.repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees request.user.sub maps
+   * to a users row; resolveUserId's null returns are c8-ignored. */
   if (userId === null) return reply
+  /* c8 ignore stop */
   const { id: campaignId, inviteCode } = request.params
   if (!(await requireOwner(ctx.repo, campaignId, userId, reply))) return reply
 
@@ -213,7 +231,11 @@ async function handleAcceptInvite(
   ctx: InvitesCtx,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(ctx.repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees request.user.sub maps
+   * to a users row; resolveUserId's null returns are c8-ignored. */
   if (userId === null) return reply
+  /* c8 ignore stop */
   const { inviteCode } = request.params
 
   try {
@@ -261,7 +283,11 @@ async function handleListMembers(
   ctx: InvitesCtx,
 ): Promise<FastifyReply> {
   const userId = await resolveUserId(ctx.repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees request.user.sub maps
+   * to a users row; resolveUserId's null returns are c8-ignored. */
   if (userId === null) return reply
+  /* c8 ignore stop */
   const campaignId = request.params.id
   if (!(await requireMember(ctx.repo, campaignId, userId, reply))) return reply
 
@@ -312,7 +338,10 @@ export const invitesRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
           timeWindow: '1 minute',
           // Per-cognito-sub bucket; falls back to IP if request.user is
           // somehow absent (defensive — requireOnboarded gated us here).
+          /* c8 ignore start — `?? req.ip` fallback fires only if
+           * request.user is absent, which the preHandler chain prevents. */
           keyGenerator: (req: FastifyRequest): string => req.user?.sub ?? req.ip,
+          /* c8 ignore stop */
         },
       },
     },

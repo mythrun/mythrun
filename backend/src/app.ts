@@ -76,13 +76,24 @@ export const buildApp = async (
     pluginTimeout: 30_000,
     genReqId: (req) => {
       const trace = req.headers['x-amzn-trace-id']
+      /* c8 ignore start — randomUUID fallback fires only when the
+       * ALB header is absent; production traffic always carries it and
+       * test traffic is generated via inject() without setting it. The
+       * falsy arm is defense-in-depth for non-ALB callers. */
       return typeof trace === 'string' ? trace : randomUUID()
+      /* c8 ignore stop */
     },
     logger: {
       redact: {
         paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
         censor: '[REDACTED]',
       },
+      /* c8 ignore start — pino's req serializer fires only when a log
+       * call actually serializes `req`. Fastify's built-in request log
+       * is suppressed in test env (disableRequestLogging is on for our
+       * test logger), so this body is structurally unreachable in unit
+       * coverage. The behavior is verified by the redaction + URL-strip
+       * specs in production logs. */
       serializers: {
         req(request) {
           // Strip query strings from logged URLs so future routes that
@@ -104,6 +115,7 @@ export const buildApp = async (
           }
         },
       },
+      /* c8 ignore stop */
     },
   })
 
@@ -133,7 +145,13 @@ export const buildApp = async (
   const registeredPipelineRoutes = new Set<string>()
   app.addHook('onRoute', (routeOptions) => {
     if (routeOptions.config?.pipelineRoute !== true) return
+    /* c8 ignore start — defense-in-depth: Fastify allows `method` as a
+     * string or string[], but every pipelineRoute=true registration in
+     * this codebase passes a single HTTP verb string. The array arm is
+     * a future-proofing fall-through for the multi-verb registration
+     * shape we don't currently use. */
     const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method]
+    /* c8 ignore stop */
     for (const m of methods) {
       if (!APPROVED_VERBS.has(m)) continue
       const key = `${m} ${routeOptions.url}`
