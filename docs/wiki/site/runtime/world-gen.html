@@ -440,7 +440,7 @@
 <h2 id="how-it-fits-together">How it fits together</h2>
 
 <p>
-  Four routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
+  Five routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
   the <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
   registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
   flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
@@ -449,7 +449,9 @@
   <code>POST /api/campaigns/:campaignId/resume</code> is the recovery surface: a polymorphic switch
   over the eight phases <code>derivePhase</code> reports (see
   <a href="./pipeline-status.html">pipeline status</a>) that re-enqueues, 409s, or 422s depending on
-  where the pipeline got stuck.
+  where the pipeline got stuck. <code>DELETE /api/campaigns/:campaignId</code> is the hard-delete
+  cleanup path — owner-only, refuses while generating, cascades through the FK chain to remove
+  the world + every dependent row.
 </p>
 
 <aside class="wiki-rationale">
@@ -476,7 +478,7 @@
   synthesizer fires only in the guided arm; both arms then converge on the input gate.
 </p>
 
-<h2 id="the-four-routes">The four routes</h2>
+<h2 id="the-five-routes">The five routes</h2>
 
 <table>
   <thead>
@@ -541,6 +543,22 @@
         terminal-failure, stuck-on-not-implemented-stage, world-gen-capped);
         <code>422 phase_resume_not_yet_implemented</code> for <code>character_creation</code> /
         <code>post_creation</code> phases.
+      </td>
+    </tr>
+    <tr>
+      <td><code>DELETE /api/campaigns/:campaignId</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>10 / min per USER</strong></td>
+      <td>
+        <code>204 No Content</code> on success. The world row is the cascade root —
+        deleting it removes the campaign + pipeline_runs + campaign_members + entities +
+        prose_kernels + facts + relationships + random_tables (and every other dependent)
+        in one statement via the FK chain's <code>ON DELETE CASCADE</code>. Refuses with
+        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code> while the
+        world is still <code>status='generating'</code> — deleting mid-generation
+        would orphan the worker's in-flight LLM cost and produce noisy BullMQ retry
+        failures. Resume the campaign to terminal failure (or wait for it to complete)
+        before deleting.
       </td>
     </tr>
   </tbody>
@@ -1129,7 +1147,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-four-routes">The four routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-world-gen-worker">The world-gen worker</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#resume-semantics">Resume semantics</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-five-routes">The five routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-world-gen-worker">The world-gen worker</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#resume-semantics">Resume semantics</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

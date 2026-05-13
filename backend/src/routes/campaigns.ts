@@ -520,6 +520,58 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       })
     },
   )
+
+  // DELETE /api/campaigns/:campaignId — owner-only hard delete.
+  //
+  // Cascades: campaigns.world_id REFERENCES worlds(id) ON DELETE CASCADE,
+  // and every dependent table (pipeline_runs, campaign_members, entities,
+  // prose_kernels, facts, relationships, random_tables, random_table_entries,
+  // characters via campaign_characters, etc.) cascades from either side.
+  // So a single `DELETE FROM worlds WHERE id = $1` removes the campaign +
+  // every descendant in one statement.
+  //
+  // Refuses (409 world_gen_in_progress) when the world is mid-generation —
+  // deleting the row while a worker holds a stage open produces noisy
+  // BullMQ retry failures and orphans the in-flight LLM call's cost.
+  // Resume can mark it failed first if the user wants to abort.
+  app.delete<{ Params: Params }>(
+    '/api/campaigns/:campaignId',
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+          keyGenerator: (req: FastifyRequest): string => {
+            try {
+              return requireDbUser(req).id
+            } catch {
+              return req.ip
+            }
+          },
+        },
+        pipelineRoute: true,
+      },
+      preHandler: requireCampaignMember(repo, 'owner'),
+    },
+    async (request, reply) => {
+      const campaignId = request.params.campaignId
+      const campaign = await repo.campaigns.getById(campaignId)
+      if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+
+      const worldRow = await opts.pool.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [campaign.worldId],
+      )
+      const worldStatus = worldRow.rows[0]?.status
+      if (worldStatus === 'generating') {
+        reply.header('Retry-After', '30')
+        return reply.code(409).send({ code: 'world_gen_in_progress' })
+      }
+
+      await opts.pool.query(`DELETE FROM worlds WHERE id = $1`, [campaign.worldId])
+      return reply.code(204).send()
+    },
+  )
 }
 
 // ---------------------------------------------------------------------------

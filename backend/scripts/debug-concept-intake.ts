@@ -15,7 +15,9 @@ const PROMPT_TEMPLATE = readFileSync(
   'utf8',
 )
 
-const concept = process.argv[2] ?? 'a windswept archipelago where rival lighthouse-keepers tend signal-fires fueled by trapped storm-spirits'
+const concept =
+  process.argv[2] ??
+  'a windswept archipelago where rival lighthouse-keepers tend signal-fires fueled by trapped storm-spirits'
 
 const prompt = PROMPT_TEMPLATE.replace('{{concept}}', concept).replace(
   '{{intent}}',

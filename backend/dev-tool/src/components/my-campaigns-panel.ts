@@ -75,11 +75,37 @@ export function mountMyCampaignsPanel(parent: HTMLElement): void {
         window.dispatchEvent(new CustomEvent<string>('mythrun.opendetails', { detail: c.id }))
       })
 
+      const deleteBtn = document.createElement('button')
+      deleteBtn.textContent = 'Delete'
+      deleteBtn.addEventListener('click', () => {
+        void handleDelete(c)
+      })
+
       row.appendChild(label)
       row.appendChild(watchBtn)
       row.appendChild(detailsBtn)
+      row.appendChild(deleteBtn)
       list.appendChild(row)
     }
+  }
+
+  async function handleDelete(c: CampaignRow): Promise<void> {
+    // Plain-text confirm — the dev tool doesn't ship a modal lib.
+    // Production FE will replace this with a proper confirmation flow.
+    if (!window.confirm(`Delete campaign ${c.name ?? c.id}? This is permanent.`)) return
+    const res = await apiCall(`/api/campaigns/${c.id}`, { method: 'DELETE' })
+    if (res.status === 204) {
+      // If the user was watching this campaign, close the stream + clear panels.
+      window.dispatchEvent(new CustomEvent('mythrun.closewatch'))
+      window.dispatchEvent(new CustomEvent('mythrun.detailspanel.clear'))
+      void refresh()
+      return
+    }
+    if (res.status === 409) {
+      window.alert('Campaign is still generating — wait for it to complete or fail, then retry delete.')
+      return
+    }
+    window.alert(`Delete failed: ${String(res.status)} ${res.error ?? JSON.stringify(res.body)}`)
   }
 
   refreshBtn.addEventListener('click', () => {

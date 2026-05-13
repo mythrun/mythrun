@@ -24,7 +24,7 @@
 <!-- source: backend/dev-tool/coverage.json -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:4a9ecb282f8bfe5fea25b7c115b3096cf34543cdf053496896cd6b286d112c41 -->
+<!-- source-hash: sha256:e7f1e8018e71984f4ae0af4907a93b12c0f4c936b41bd307c17db039ec92d579 -->
 <!-- last-ticket: MYT-51 -->
 
 <h1>World gen</h1>
@@ -46,7 +46,7 @@
 <h2>How it fits together</h2>
 
 <p>
-  Four routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
+  Five routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
   the <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
   registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
   flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
@@ -55,7 +55,9 @@
   <code>POST /api/campaigns/:campaignId/resume</code> is the recovery surface: a polymorphic switch
   over the eight phases <code>derivePhase</code> reports (see
   <a href="./pipeline-status.html">pipeline status</a>) that re-enqueues, 409s, or 422s depending on
-  where the pipeline got stuck.
+  where the pipeline got stuck. <code>DELETE /api/campaigns/:campaignId</code> is the hard-delete
+  cleanup path — owner-only, refuses while generating, cascades through the FK chain to remove
+  the world + every dependent row.
 </p>
 
 <aside class="wiki-rationale">
@@ -82,7 +84,7 @@
   synthesizer fires only in the guided arm; both arms then converge on the input gate.
 </p>
 
-<h2>The four routes</h2>
+<h2>The five routes</h2>
 
 <table>
   <thead>
@@ -147,6 +149,22 @@
         terminal-failure, stuck-on-not-implemented-stage, world-gen-capped);
         <code>422 phase_resume_not_yet_implemented</code> for <code>character_creation</code> /
         <code>post_creation</code> phases.
+      </td>
+    </tr>
+    <tr>
+      <td><code>DELETE /api/campaigns/:campaignId</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>10 / min per USER</strong></td>
+      <td>
+        <code>204 No Content</code> on success. The world row is the cascade root —
+        deleting it removes the campaign + pipeline_runs + campaign_members + entities +
+        prose_kernels + facts + relationships + random_tables (and every other dependent)
+        in one statement via the FK chain's <code>ON DELETE CASCADE</code>. Refuses with
+        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code> while the
+        world is still <code>status='generating'</code> — deleting mid-generation
+        would orphan the worker's in-flight LLM cost and produce noisy BullMQ retry
+        failures. Resume the campaign to terminal failure (or wait for it to complete)
+        before deleting.
       </td>
     </tr>
   </tbody>

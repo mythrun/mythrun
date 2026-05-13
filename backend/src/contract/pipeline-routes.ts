@@ -16,6 +16,7 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'GET /api/campaigns/:campaignId',
   'GET /api/campaigns/mine',
   'POST /api/campaigns/:campaignId/resume',
+  'DELETE /api/campaigns/:campaignId',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]
