@@ -12,6 +12,7 @@
 import type { FastifyError, FastifyRequest, FastifyReply } from 'fastify'
 import {
   LlmAuthError,
+  LlmContentFilteredError,
   LlmContextTooLongError,
   LlmInvalidRequestError,
   LlmOverloadedError,
@@ -30,6 +31,19 @@ export function typedErrorHandler(
   // Sanitized log of the full error chain so an operator can
   // diagnose without exposing internals to the user.
   request.log.error({ err }, 'unhandled route error')
+
+  // Content-policy filter (MYT-52 §7.2): terminal — retrying the same prompt
+  // will hit the same filter. 422 Unprocessable Entity is the right shape:
+  // the request was well-formed but the upstream content filter rejected it,
+  // and no Retry-After is sent because the user must change the source text.
+  // (503 + Retry-After is wrong here — it would invite the FE to auto-retry
+  // a request that is permanently rejected. 409 is what the resume route
+  // emits when this is the world's stuck state; the global handler uses 422
+  // for the "synchronous LLM call from a route hit the filter" path.)
+  if (err instanceof LlmContentFilteredError) {
+    void reply.code(422).send({ code: 'content_filtered' })
+    return
+  }
 
   if (
     err instanceof LlmAuthError ||

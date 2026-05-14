@@ -24,6 +24,7 @@ describe('PIPELINE_ERROR_CODES', () => {
       'rejection_storm_cooldown',
       'concurrent_generation_in_progress',
       'llm_upstream_unavailable',
+      'content_filtered',
       'world_gen_in_progress',
       'phase_not_yet_implementable',
       'world_gen_capped',

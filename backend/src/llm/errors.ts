@@ -42,6 +42,22 @@ export class LlmStructuredOutputError extends Error {
     this.name = 'LlmStructuredOutputError'
   }
 }
+/**
+ * Anthropic content-policy filter tripped on the prompt (or its continuation).
+ *
+ * Surfaces from Vercel AI SDK as `finishReason.unified === 'content-filter'`
+ * on both `generateText` and `streamObject` paths. Per MYT-52 design §7.2:
+ * this is a TERMINAL stop — retrying produces the same filter hit on the
+ * same prompt, so the worker must NOT retry. The user must adjust the
+ * source concept text via a new campaign. The resume route reports
+ * `content_filtered` (409) until the user acts.
+ */
+export class LlmContentFilteredError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'LlmContentFilteredError'
+  }
+}
 
 const CONTEXT_WINDOW_RE = /context window|too long|maximum context/i
 

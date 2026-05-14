@@ -27,15 +27,7 @@
   "jobs": ["world-gen"],
   "exempt": {
     "routes": {},
-    "events": {
-      "stage-reset": "Rendered by the live-events inspector panel landing in MYT-52; bridge forwards verbatim in MYT-50",
-      "entity-added": "Rendered by the live-events inspector panel landing in MYT-52; bridge forwards verbatim in MYT-50",
-      "entity-updated": "Rendered by the live-events inspector panel landing in MYT-52; bridge forwards verbatim in MYT-50",
-      "entity-removed": "Rendered by the live-events inspector panel landing in MYT-52; introduced during MYT-52 design review for repair-chain + coherence-pass removal semantics",
-      "edge-added": "Rendered by the live-events inspector panel landing in MYT-52; bridge forwards verbatim in MYT-50",
-      "edge-removed": "Rendered by the live-events inspector panel landing in MYT-52; introduced during MYT-52 design review for coherence-pass delete_relationship semantics",
-      "finalized": "Rendered by the live-events inspector panel landing in MYT-52; bridge forwards verbatim in MYT-50"
-    },
+    "events": {},
     "jobs": {}
   }
 }

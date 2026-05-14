@@ -5,6 +5,7 @@ import { mountCampaignCreatePanel } from './components/campaign-create-panel.js'
 import { mountCampaignDetailsPanel } from './components/campaign-details-panel.js'
 import { mountCreditLedgerPanel } from './components/credit-ledger-panel.js'
 import { mountMyCampaignsPanel } from './components/my-campaigns-panel.js'
+import { mountLiveEventsPanel } from './components/live-events-panel.js'
 import { onIdentityChanged } from './identity.js'
 import './styles.css'
 
@@ -17,6 +18,7 @@ mountHealthPanel(main)
 mountCampaignCreatePanel(main)
 mountMyCampaignsPanel(main)
 mountStatusPanel(main)
+mountLiveEventsPanel(main)
 mountCampaignDetailsPanel(main)
 mountCreditLedgerPanel(main)
 

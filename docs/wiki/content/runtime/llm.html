@@ -2,7 +2,7 @@
 <!-- source: backend/src/config/env.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:e6fd23c62c0e7a3b85513d6aeb17bbf24c578001c21d3f0ae4cafd65f71c6619 -->
+<!-- source-hash: sha256:edad347c3b3f0cb922d35de02c5a54415d6eb3cbdb17e6a68172a47c94ee9c0a -->
 <!-- last-ticket: MYT-49 -->
 
 <h1>LLM client</h1>
@@ -222,13 +222,15 @@
 <h2>The error taxonomy</h2>
 
 <p>
-  <code>errors.ts</code> defines seven typed classes and a single mapper:
+  <code>errors.ts</code> defines eight typed classes and a single mapper:
   <code>LlmRateLimitedError</code> (429), <code>LlmOverloadedError</code> (529 — Anthropic-specific
   upstream-busy), <code>LlmAuthError</code> (401 / 403), <code>LlmContextTooLongError</code> (400 +
   context-window message match), <code>LlmInvalidRequestError</code> (other 4xx),
   <code>LlmTimeoutError</code> (<code>AbortError</code>),
   <code>LlmStructuredOutputError</code> (<code>AI_NoObjectGeneratedError</code> — the SDK exhausted
-  its retries trying to coerce the model into a schema-valid response).
+  its retries trying to coerce the model into a schema-valid response), and
+  <code>LlmContentFilteredError</code> (Anthropic's content-policy filter terminated generation —
+  the call returned with <code>finishReason.unified === 'content-filter'</code>).
 </p>
 
 <p>
@@ -237,14 +239,19 @@
   <code>AI_NoObjectGeneratedError</code> (matched by name to avoid a brittle deep-import), or
   <code>APICallError</code> with status code dispatch. Unknown errors pass through unchanged so
   Fastify's default error handler still catches them as 500. Every mapped error preserves the
-  original as <code>cause</code> for stack-trace forensics.
+  original as <code>cause</code> for stack-trace forensics. The middleware's <code>wrapGenerate</code>
+  also detects <code>finishReason.unified === 'content-filter'</code> on otherwise-successful calls
+  and raises <code>LlmContentFilteredError</code> from there — the call doesn't reject from the SDK,
+  but the response is unusable, so the middleware shapes it into the taxonomy at call-frame edge.
 </p>
 
 <p>
   Route handlers catch only Mythrun classes. The HTTP-status mapping happens at the route layer:
   rate-limited → 429, overloaded → 503, timeout → 504, auth-failed → 503 (server misconfigured, not
   the caller's fault), context-too-long → 400, invalid-request → 400, structured-output → 502
-  (provider returned unparseable output).
+  (provider returned unparseable output), content-filtered → 422 (the prompt itself was rejected;
+  retrying with the same payload hits the same filter, so the response carries
+  <code>code: 'content_filtered'</code> with no <code>Retry-After</code>).
 </p>
 
 <h2>The prompt loader</h2>

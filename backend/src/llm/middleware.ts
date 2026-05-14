@@ -4,7 +4,7 @@ import type {
   LanguageModelV3StreamResult,
 } from '@ai-sdk/provider'
 import { logger } from './logger.js'
-import { mapToMythrunError, LlmStructuredOutputError } from './errors.js'
+import { mapToMythrunError, LlmStructuredOutputError, LlmContentFilteredError } from './errors.js'
 
 interface MythrunContext {
   readonly sessionId?: string | undefined
@@ -70,9 +70,9 @@ interface StreamTelemetry {
 /**
  * Build a ReadableStream wrapper that observes a doStream() result and emits
  * exactly one terminal log line via the `terminated` flag. Handles the
- * Success / Provider-graceful error / In-stream error / Truncation /
- * Cancellation arms of the six-state matrix. Open-time error is handled by
- * the caller (it short-circuits before this helper runs).
+ * Success / Provider-graceful error / Content-policy filter / In-stream error /
+ * Truncation / Cancellation arms of the seven-state matrix. Open-time error is
+ * handled by the caller (it short-circuits before this helper runs).
  */
 function wrapModelStream(
   upstream: LanguageModelV3StreamResult,
@@ -142,6 +142,18 @@ function wrapModelStream(
           telemetry.outputTokens = value.usage.outputTokens.total
           telemetry.totalTokens = sumTokens(telemetry.inputTokens, telemetry.outputTokens)
           telemetry.finishReason = value.finishReason.unified
+          // Content-policy filter is terminal (MYT-52 §7.2): translate the
+          // finishReason into a thrown LlmContentFilteredError so the stage
+          // handler treats it as a non-retryable failure. Distinct from
+          // `finishReason: 'error'` (provider-graceful, treated as success).
+          if (value.finishReason.unified === 'content-filter') {
+            const filtered = new LlmContentFilteredError(
+              'llm stream stopped by content-policy filter',
+            )
+            logError(filtered, 'content-filter')
+            controller.error(filtered)
+            return
+          }
           logSuccess()
         } else if (value.type === 'error') {
           const mapped = mapToMythrunError(value.error)
@@ -172,17 +184,18 @@ function wrapModelStream(
  * Mythrun-typed errors via `mapToMythrunError` before rethrowing — route
  * handlers catch only Mythrun classes.
  *
- * **wrapStream**: implements a six-state terminal-state matrix, each producing
+ * **wrapStream**: implements a seven-state terminal-state matrix, each producing
  * exactly one log line guarded by a `terminated` flag in the closure:
  *
- * | State                  | Trigger                            | Log              | Caller                                            |
- * |------------------------|------------------------------------|------------------|---------------------------------------------------|
- * | Success                | `type === 'finish'` part            | `llm.call`       | stream closes naturally                           |
- * | Provider-graceful error| `finishReason.unified === 'error'`  | `llm.call`       | stream closes naturally                           |
- * | In-stream error        | `type === 'error'` part             | `llm.error`      | `controller.error(mapped)` — consumer throws      |
- * | Truncation             | stream closes with no finish/error  | `llm.error`      | `controller.error(LlmStructuredOutputError)`      |
- * | Cancellation           | downstream `cancel()` handler fires | `llm.error`      | no rethrow — cancellation is consumer intent      |
- * | Open-time error        | `doStream()` rejects                | `llm.error`      | `wrapStream` throws mapped error                  |
+ * | State                  | Trigger                                       | Log              | Caller                                            |
+ * |------------------------|-----------------------------------------------|------------------|---------------------------------------------------|
+ * | Success                | `type === 'finish'` part                       | `llm.call`       | stream closes naturally                           |
+ * | Provider-graceful error| `finishReason.unified === 'error'`             | `llm.call`       | stream closes naturally                           |
+ * | Content-policy filter  | `finishReason.unified === 'content-filter'`    | `llm.error`      | `controller.error(LlmContentFilteredError)` — terminal, no retry |
+ * | In-stream error        | `type === 'error'` part                        | `llm.error`      | `controller.error(mapped)` — consumer throws      |
+ * | Truncation             | stream closes with no finish/error             | `llm.error`      | `controller.error(LlmStructuredOutputError)`      |
+ * | Cancellation           | downstream `cancel()` handler fires            | `llm.error`      | no rethrow — cancellation is consumer intent      |
+ * | Open-time error        | `doStream()` rejects                           | `llm.error`      | `wrapStream` throws mapped error                  |
  *
  * Token + finishReason shapes: in @ai-sdk/provider v3 the usage object holds
  * nested `{ inputTokens: { total, ... }, outputTokens: { total, ... } }` and
@@ -196,23 +209,9 @@ export function logAndNormalizeMiddleware(modelId: string): LanguageModelV3Middl
     wrapGenerate: async ({ doGenerate, params }) => {
       const start = Date.now()
       const ctx = extractMythrunContext(params)
+      let result: Awaited<ReturnType<typeof doGenerate>>
       try {
-        const result = await doGenerate()
-        const inputTokens = result.usage.inputTokens.total
-        const outputTokens = result.usage.outputTokens.total
-        const bindings: LogBindings = {
-          event: 'llm.call',
-          model: modelId,
-          mode: 'generate',
-          inputTokens,
-          outputTokens,
-          totalTokens: sumTokens(inputTokens, outputTokens),
-          latencyMs: Date.now() - start,
-          finishReason: result.finishReason.unified,
-          ...ctx,
-        }
-        logger.info(bindings, 'llm call completed')
-        return result
+        result = await doGenerate()
       } catch (err) {
         const bindings: LogBindings = {
           event: 'llm.error',
@@ -225,6 +224,45 @@ export function logAndNormalizeMiddleware(modelId: string): LanguageModelV3Middl
         logger.error(bindings, 'llm call failed')
         throw mapToMythrunError(err)
       }
+      const inputTokens = result.usage.inputTokens.total
+      const outputTokens = result.usage.outputTokens.total
+      // Content-policy filter is terminal (MYT-52 §7.2): mirror the
+      // stream-side handling — log llm.error + throw so the caller treats
+      // it as a non-retryable failure rather than a successful empty
+      // result. Other finishReasons (incl. 'error') still flow through
+      // as graceful successes. We log + throw OUTSIDE the doGenerate try
+      // block so the catch arm above doesn't re-log this synthetic error.
+      if (result.finishReason.unified === 'content-filter') {
+        const filtered = new LlmContentFilteredError('llm call stopped by content-policy filter')
+        const errBindings: LogBindings = {
+          event: 'llm.error',
+          model: modelId,
+          mode: 'generate',
+          inputTokens,
+          outputTokens,
+          totalTokens: sumTokens(inputTokens, outputTokens),
+          latencyMs: Date.now() - start,
+          finishReason: result.finishReason.unified,
+          err: filtered,
+          reason: 'content-filter',
+          ...ctx,
+        }
+        logger.error(errBindings, 'llm call stopped by content-policy filter')
+        throw filtered
+      }
+      const bindings: LogBindings = {
+        event: 'llm.call',
+        model: modelId,
+        mode: 'generate',
+        inputTokens,
+        outputTokens,
+        totalTokens: sumTokens(inputTokens, outputTokens),
+        latencyMs: Date.now() - start,
+        finishReason: result.finishReason.unified,
+        ...ctx,
+      }
+      logger.info(bindings, 'llm call completed')
+      return result
     },
     wrapStream: async ({ doStream, params }) => {
       const start = Date.now()

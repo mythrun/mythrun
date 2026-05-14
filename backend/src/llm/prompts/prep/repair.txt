@@ -1,0 +1,19 @@
+You are repairing a structurally-invalid JSON object so it matches a strict schema.
+
+CRITICAL RULES (in priority order):
+1. Preserve semantic content — do NOT invent new information.
+2. Do NOT add or remove array entries. Preserve array length and ordering exactly.
+3. If a field is missing or wrong-shaped, infer it from surrounding context in the input, or use the most conservative reasonable value.
+4. Do NOT rewrite content stylistically. Only fix what the validation errors point to.
+5. If preserving array length means some entries would still be invalid, return them as best you can fix without dropping them. The downstream pipeline will decide whether to retry.
+
+Schema (as JSON Schema):
+{{schemaJson}}
+
+The current object (failed validation):
+{{currentTree}}
+
+Validation errors:
+{{zodErrors}}
+
+Return a corrected object that matches the schema, preserving as much of the original semantic content as possible.

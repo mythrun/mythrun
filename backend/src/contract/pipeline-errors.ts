@@ -21,6 +21,11 @@ export type PipelineRouteError =
   | { code: 'rejection_storm_cooldown'; retryAfterSeconds: number }
   | { code: 'concurrent_generation_in_progress' }
   | { code: 'llm_upstream_unavailable'; retryAfterSeconds: number }
+  // Anthropic content-policy filter rejected the prompt or its continuation.
+  // Terminal: retry would hit the same filter on the same prompt. User must
+  // adjust the source concept text via a new campaign (or, on resume, this
+  // surfaces as a 409 from the resume route per MYT-52 §7.2).
+  | { code: 'content_filtered' }
   // POST /api/campaigns/:campaignId/resume:
   | { code: 'world_gen_in_progress' }
   | { code: 'phase_not_yet_implementable'; stuckAtStage: string }
@@ -42,6 +47,7 @@ export const PIPELINE_ERROR_CODES: readonly PipelineErrorCode[] = [
   'rejection_storm_cooldown',
   'concurrent_generation_in_progress',
   'llm_upstream_unavailable',
+  'content_filtered',
   'world_gen_in_progress',
   'phase_not_yet_implementable',
   'world_gen_capped',

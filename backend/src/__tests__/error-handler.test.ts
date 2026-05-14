@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { typedErrorHandler } from '../error-handler.js'
 import {
   LlmAuthError,
+  LlmContentFilteredError,
   LlmContextTooLongError,
   LlmInvalidRequestError,
   LlmOverloadedError,
@@ -59,6 +60,22 @@ describe('typedErrorHandler', () => {
       }
     })
   }
+
+  it('maps LlmContentFilteredError to 422 content_filtered (no Retry-After)', async () => {
+    // Content-policy filter is terminal: retrying with the same prompt
+    // hits the same filter. 422 + no Retry-After signals "permanently
+    // rejected on this payload, change the source" rather than the
+    // 503 + Retry-After shape that invites auto-retry. (MYT-52 §7.2.)
+    const app = await buildAppThatThrows(new LlmContentFilteredError('filtered'))
+    try {
+      const res = await app.inject({ method: 'GET', url: '/throw' })
+      expect(res.statusCode).toBe(422)
+      expect(res.headers['retry-after']).toBeUndefined()
+      expect(res.json()).toEqual({ code: 'content_filtered' })
+    } finally {
+      await app.close()
+    }
+  })
 
   it('falls through to Fastify default 500 for non-LLM errors', async () => {
     const app = await buildAppThatThrows(new Error('something else'))
