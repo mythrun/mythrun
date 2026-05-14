@@ -5,15 +5,33 @@
 // Non-streaming Sonnet call: reads full world state, identifies
 // contradictions / typos / role conflicts / dangling references, emits
 // a list of patches keyed by REAL UUID. The patch list parses + validates
-// BEFORE the BEGIN; the apply path inside the transaction is purely
-// mechanical (no LLM nondeterminism after BEGIN).
+// before any client writes; the apply path is purely mechanical (no LLM
+// nondeterminism after the model returns).
+//
+// Unified dispatch contract (T13 wiring): the handler does NOT manage its
+// own transaction and does NOT publish events directly. The outer scope
+// (runStage in world-gen-processor.ts) owns the transaction lifecycle:
+//   - On unrecoverable error: this handler throws; outer ROLLBACKs.
+//   - On success: this handler returns finalized events in
+//     `finalizedEvents`; outer COMMITs and publishes those events.
+//
+// LLM-before-BEGIN trade-off (§D5 intent): the original design had the
+// LLM call complete BEFORE the txn opened so a slow model call wouldn't
+// hold a DB connection in a transaction. The unified contract opens the
+// txn in the outer scope before dispatching to this handler, so the LLM
+// call now runs UNDER the outer txn (Option B in the T12 refactor brief).
+// This is a deliberate trade against §D5's "LLM not under txn" intent in
+// exchange for a uniform per-stage contract. The controller may revisit
+// (Option A: per-stage flag that defers BEGIN for stage 7) if connection
+// hold time during stage 7 becomes a real operational concern.
 //
 // Cap-fire exception (§D5): unlike stages 1-6 where cap-fire means refund
 // + world_gen_failed, cap-fire at stage 7 means the world is functionally
-// complete — coherence is best-effort polish. We mark `worlds.status =
-// 'complete'`, emit `phase: complete`, log skipped coherence at WARN, do
-// NOT refund. The world ships with whatever incoherences the prep
-// generation produced.
+// complete — coherence is best-effort polish. The handler signals this to
+// the caller by returning `{ capExhausted: true, finalizedEvents: [{
+// type: 'phase', phase: 'complete' }] }` and zero cost. The outer scope
+// is responsible for marking worlds.status = 'complete' and publishing
+// the phase event after its COMMIT.
 //
 // Apply-time skipping (§3.6): if a patch references a UUID that doesn't
 // exist (LLM hallucinated an ID), the patch is logged at WARN and skipped
@@ -23,8 +41,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import type { Pool, PoolClient } from 'pg'
-import type { Redis } from 'ioredis'
+import type { PoolClient } from 'pg'
 import type pino from 'pino'
 import { generateText, Output } from 'ai'
 import { SONNET } from '../../models.js'
@@ -39,6 +56,8 @@ import { facts } from '../../../repo/facts.js'
 import { relationships } from '../../../repo/relationships.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import { readCostCap, sumCompletedStageCosts } from '../cost-cap.js'
+import type { PipelineEvent } from '../../../contract/pipeline-events.js'
+import type { StageDispatchResult } from '../world-gen-processor.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/coherence-pass.txt'),
@@ -58,27 +77,13 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 }
 
 export interface CoherencePassArgs {
-  readonly pool: Pool
-  readonly redisRealtime: Pick<Redis, 'publish'>
   readonly logger: Pick<pino.Logger, 'warn' | 'info'>
   readonly worldId: string
-  readonly campaignId: string
-  readonly userId: string
-  readonly keyPrefix: string
   // Map from real entity/relationship UUID → synthKey assigned by stages
   // 2/3/4. Stage 7's `entity-updated` / `edge-removed` / `edge-added`
   // events reference synthKey on the wire (§3.6); the handler looks up
   // each patch's UUID against this map before publishing.
   readonly synthKeyByEntityId: Readonly<Record<string, string>>
-}
-
-export interface CoherencePassResult {
-  readonly costUsd: number
-  readonly inputTokens: number
-  readonly outputTokens: number
-  // True when the pre-stage cap check fired. The processor uses this to
-  // skip its post-stage cap-and-refund branch (§D5 exception).
-  readonly capExhausted: boolean
 }
 
 // Internal in-memory inventory of the world's UUIDs at stage-7 entry.
@@ -197,7 +202,7 @@ interface ApplyContext {
 }
 
 interface ApplyResult {
-  readonly events: Record<string, unknown>[]
+  readonly events: PipelineEvent[]
 }
 
 type SynthKeyMap = Readonly<Record<string, string>>
@@ -308,7 +313,7 @@ async function applyFixRelationship(
   )
   const oldSynthKey = synthKeyByEntityId[patch.relationshipId]
   const newSynthKey = `coherence_pass/edges/${newId}`
-  const events: Record<string, unknown>[] = []
+  const events: PipelineEvent[] = []
   if (oldSynthKey !== undefined) {
     events.push({ type: 'edge-removed', synthKey: oldSynthKey, reason: 'coherence_deleted' })
     /* c8 ignore start — defense-in-depth: the `else` arm (missing synthKey
@@ -352,9 +357,10 @@ async function applyDeleteRelationship(
   }
 }
 
-// Apply one patch against the in-flight transaction. Returns 0..N SSE
-// event payloads (queued for post-COMMIT publish). Patches that reference
-// unknown UUIDs are silently skipped + logged at WARN per §3.6.
+// Apply one patch against the in-flight transaction. Returns 0..N event
+// payloads (queued for post-COMMIT publish by the outer scope). Patches
+// that reference unknown UUIDs are silently skipped + logged at WARN per
+// §3.6.
 async function applyPatch(
   client: PoolClient,
   patch: CoherencePatch,
@@ -375,42 +381,37 @@ async function applyPatch(
   }
 }
 
-async function publishEvent(
-  redisRealtime: Pick<Redis, 'publish'>,
-  keyPrefix: string,
-  campaignId: string,
-  payload: Record<string, unknown>,
-): Promise<void> {
-  const channel = `${keyPrefix}pipeline:campaign:${campaignId}`
-  await redisRealtime.publish(channel, JSON.stringify(payload))
-}
-
 /**
  * Run stage 7 — coherence pass.
  *
- * Pre-stage cap check: if cumulative cost from stages 1-6 already exceeds
- * the cap, mark world `complete`, emit `phase: complete`, log WARN, return
- * `{ capExhausted: true }`. The processor uses this signal to skip its
- * own cap-and-refund branch (§D5).
+ * The caller (runStage in world-gen-processor.ts) opens a client and has
+ * already issued BEGIN before invoking this handler. The handler:
  *
- * Happy path: load full world state → LLM call → validate output → BEGIN
- * → apply each patch (unknown IDs logged + skipped) → COMMIT → publish
- * per-patch SSE events. Returns real cost.
+ *   1. Pre-stage cap check: if cumulative cost from stages 1-6 already
+ *      exceeds the cap, return `{ capExhausted: true, finalizedEvents:
+ *      [{ type: 'phase', phase: 'complete' }] }` with zero cost. The
+ *      outer scope marks worlds.status='complete' and publishes the
+ *      phase event after COMMIT (§D5 exception).
+ *
+ *   2. Happy path: load full world state on the client → LLM call →
+ *      validate output → apply each patch on the client (unknown IDs
+ *      logged + skipped) → return the per-patch events in
+ *      `finalizedEvents` for the outer scope to publish post-COMMIT.
+ *
+ * Note: the LLM call runs UNDER the outer transaction (Option B in the
+ * T12 refactor). See the file header for the §D5 trade-off rationale.
  */
 export async function runCoherencePassStage(
+  client: PoolClient,
   args: CoherencePassArgs,
-): Promise<CoherencePassResult> {
-  const capUsd = await readCostCap(args.pool)
-  const completedCostUsd = await sumCompletedStageCosts(args.pool, args.worldId)
+): Promise<StageDispatchResult> {
+  const capUsd = await readCostCap(client)
+  const completedCostUsd = await sumCompletedStageCosts(client, args.worldId)
   if (completedCostUsd > capUsd) {
     // §D5 cap-fire exception: world is functionally complete; coherence
-    // is best-effort polish. Skip the LLM, mark world complete, do NOT
-    // refund.
-    await args.pool.query(`UPDATE worlds SET status = 'complete' WHERE id = $1`, [args.worldId])
-    await publishEvent(args.redisRealtime, args.keyPrefix, args.campaignId, {
-      type: 'phase',
-      phase: 'complete',
-    })
+    // is best-effort polish. Skip the LLM, do NOT refund. The outer
+    // scope marks worlds.status='complete' and publishes phase:complete
+    // after COMMIT.
     args.logger.warn(
       {
         stage: 'coherence_pass',
@@ -420,20 +421,16 @@ export async function runCoherencePassStage(
       },
       'coherence_pass: cost cap exhausted pre-stage; skipping coherence pass and marking world complete',
     )
-    return { costUsd: 0, inputTokens: 0, outputTokens: 0, capExhausted: true }
+    return {
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      capExhausted: true,
+      finalizedEvents: [{ type: 'phase', phase: 'complete' }],
+    }
   }
 
-  // LLM call completes ENTIRELY before BEGIN (§D5). We need a client for
-  // the world-inventory SELECTs; using a non-transactional client is
-  // fine because the read is at a single point-in-time (the LLM is
-  // about to be invoked, so any concurrent writer is a bug).
-  const client = await args.pool.connect()
-  let inventory: WorldInventory
-  try {
-    inventory = await loadWorldInventory(client, args.worldId)
-  } finally {
-    client.release()
-  }
+  const inventory = await loadWorldInventory(client, args.worldId)
 
   const worldDump = renderWorldDump(inventory)
   const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', worldDump)
@@ -448,39 +445,19 @@ export async function runCoherencePassStage(
 
   const output: CoherenceOutput = result.output
 
-  // BEGIN/COMMIT scope: apply every patch in order. Unknown-ID skips are
-  // logged + dropped without aborting the transaction. Each successful
-  // patch contributes 0..N event payloads to a post-COMMIT publish list.
-  const applyClient = await args.pool.connect()
-  const pendingEvents: Record<string, unknown>[] = []
-  try {
-    await applyClient.query('BEGIN')
-    for (const patch of output.patches) {
-      const { events } = await applyPatch(
-        applyClient,
-        patch,
-        { inv: inventory, logger: args.logger, stage: 'coherence_pass' },
-        args.synthKeyByEntityId,
-      )
-      pendingEvents.push(...events)
-    }
-    await applyClient.query('COMMIT')
-    /* c8 ignore start — ROLLBACK path: applyPatch + COMMIT do not throw
-     * under any tested fixture (the mock client succeeds on all writes).
-     * The catch branch exists for real-pg connection-drop / serialization
-     * errors that are exercised by the integration tests in T13. */
-  } catch (err) {
-    await applyClient.query('ROLLBACK')
-    throw err
-  } finally {
-    applyClient.release()
-  }
-  /* c8 ignore stop */
-
-  // Publish events ONLY after COMMIT — if COMMIT failed, the wire would
-  // otherwise tell the client about state that doesn't exist in the DB.
-  for (const event of pendingEvents) {
-    await publishEvent(args.redisRealtime, args.keyPrefix, args.campaignId, event)
+  // Apply every patch in order on the caller-owned transaction.
+  // Unknown-ID skips are logged + dropped without aborting. Each
+  // successful patch contributes 0..N event payloads that the outer
+  // scope publishes after its own COMMIT.
+  const finalizedEvents: PipelineEvent[] = []
+  for (const patch of output.patches) {
+    const { events } = await applyPatch(
+      client,
+      patch,
+      { inv: inventory, logger: args.logger, stage: 'coherence_pass' },
+      args.synthKeyByEntityId,
+    )
+    finalizedEvents.push(...events)
   }
 
   /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always
@@ -494,6 +471,7 @@ export async function runCoherencePassStage(
     inputTokens: result.usage.inputTokens ?? 0,
     outputTokens: result.usage.outputTokens ?? 0,
     capExhausted: false,
+    finalizedEvents,
   }
   /* c8 ignore stop */
 }

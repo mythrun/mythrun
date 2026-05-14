@@ -19,7 +19,7 @@ export class CostCapParseError extends Error {
   }
 }
 
-export async function readCostCap(pool: Pool): Promise<number> {
+export async function readCostCap(pool: Pool | PoolClient): Promise<number> {
   const result = await pool.query<{ value: string }>(
     `SELECT value FROM settings WHERE key = 'world_gen_cost_cap_usd'`,
   )

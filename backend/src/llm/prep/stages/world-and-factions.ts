@@ -5,16 +5,29 @@
 // Streams via Vercel SDK streamObject (maxRetries: 0). Iterates
 // partialObjectStream via streaming-extractor.ts; emits entity-added /
 // entity-updated events live as regions/factions take shape. At stream
-// end: validateOrRepair → BEGIN/INSERT/COMMIT → publish `finalized` per
-// entity. On repair-chain exhaustion or COMMIT failure: publish
-// `stage-reset { stage }` and rethrow so BullMQ retries the stage.
+// end: validateOrRepair → INSERT on the caller-passed client → return
+// `finalizedEvents` for the caller to publish after COMMIT.
+//
+// Unified dispatch contract (T13 wiring): the handler does NOT manage
+// its own transaction and does NOT publish `stage-reset` or `finalized`
+// events. The outer scope (runStage in world-gen-processor.ts) owns the
+// transaction lifecycle:
+//   - On unrecoverable error: this handler throws; outer ROLLBACKs and
+//     publishes stage-reset.
+//   - On success: this handler returns finalized events in
+//     `finalizedEvents`; outer COMMITs and publishes those events.
+//
+// Streaming events (entity-added / entity-updated / edge-added /
+// edge-removed) are still published mid-flight from this handler since
+// they fire as the LLM emits — they are not post-commit dependent.
 //
 // Cost is the sum of (a) the streaming Opus call's usage, plus
 // (b) the Haiku repair call's usage if invoked, plus (c) the Sonnet
 // repair call's usage if Haiku failed. Returned as a single aggregated
-// StageCost the world-gen processor writes to pipeline_runs.cost_usd.
+// StageDispatchResult the world-gen processor writes to
+// pipeline_runs.cost_usd.
 
-import type { Pool, PoolClient } from 'pg'
+import type { PoolClient } from 'pg'
 import type { Redis } from 'ioredis'
 import type { Job } from 'bullmq'
 import { readFileSync } from 'node:fs'
@@ -37,15 +50,15 @@ import {
   WorldAndFactionsSchema,
   type WorldAndFactionsTree,
 } from '../../schemas/world-and-factions.js'
-import type { StageCost } from '../world-gen-processor.js'
+import type { StageDispatchResult } from '../world-gen-processor.js'
+import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/world-and-factions.txt'),
   'utf8',
 )
 
-export interface RunWorldAndFactionsInput {
-  readonly pool: Pool
+export interface RunWorldAndFactionsArgs {
   readonly world: {
     readonly id: string
     readonly createdBy: string
@@ -63,15 +76,6 @@ interface FinalizedRow {
   readonly entityId: string
 }
 
-async function publishStageReset(
-  input: Pick<RunWorldAndFactionsInput, 'redisRealtime' | 'keyPrefix' | 'campaignId'>,
-): Promise<void> {
-  await input.redisRealtime.publish(
-    `${input.keyPrefix}pipeline:campaign:${input.campaignId}`,
-    JSON.stringify({ type: 'stage-reset', stage: 'world_and_factions' }),
-  )
-}
-
 interface ValidatedWithCost {
   readonly tree: WorldAndFactionsTree
   readonly costUsd: number
@@ -82,11 +86,9 @@ interface ValidatedWithCost {
 // Validate the streamed tree directly; on Zod failure walk the
 // Haiku→Sonnet repair chain per design §D3. Returns the validated tree
 // plus the accumulated repair-chain cost; throws if the chain exhausts.
-// The streamed-call cost is the caller's responsibility.
-async function validateOrRepair(
-  finalTree: unknown,
-  input: Pick<RunWorldAndFactionsInput, 'redisRealtime' | 'keyPrefix' | 'campaignId'>,
-): Promise<ValidatedWithCost> {
+// The streamed-call cost is the caller's responsibility. The outer scope
+// (runStage) catches the throw, ROLLBACKs, and publishes stage-reset.
+async function validateOrRepair(finalTree: unknown): Promise<ValidatedWithCost> {
   const direct = WorldAndFactionsSchema.safeParse(finalTree)
   if (direct.success) {
     return { tree: direct.data, costUsd: 0, inputTokens: 0, outputTokens: 0 }
@@ -134,7 +136,6 @@ async function validateOrRepair(
   inputTokens += sonnetInput
   outputTokens += sonnetOutput
   if (!sonnet.ok) {
-    await publishStageReset(input)
     throw new Error('world_and_factions: repair chain exhausted')
   }
   return { tree: sonnet.tree, costUsd, inputTokens, outputTokens }
@@ -175,69 +176,45 @@ async function persistEntities(args: PersistEntityArgs): Promise<void> {
   }
 }
 
-async function persistAndPublishFinalized(
-  input: RunWorldAndFactionsInput,
+async function persistTree(
+  client: PoolClient,
+  worldId: string,
   tree: WorldAndFactionsTree,
-): Promise<void> {
-  const client = await input.pool.connect()
-  try {
-    await client.query('BEGIN')
-    const finalized: FinalizedRow[] = []
-    await persistEntities({
-      client,
-      worldId: input.world.id,
-      entityType: 'location',
-      source: tree.regions,
-      synthArrayPath: 'regions',
-      out: finalized,
-    })
-    await persistEntities({
-      client,
-      worldId: input.world.id,
-      entityType: 'faction',
-      source: tree.factions,
-      synthArrayPath: 'factions',
-      out: finalized,
-    })
-    // worlds repo is closure-style and can't accept this client; write
-    // the one column it needs via inline SQL on the active transaction.
-    await client.query(
-      `UPDATE worlds SET world_overview = $1, updated_at = now() WHERE id = $2`,
-      [tree.world_overview, input.world.id],
-    )
-    await client.query('COMMIT')
-
-    for (const f of finalized) {
-      await input.redisRealtime.publish(
-        `${input.keyPrefix}pipeline:campaign:${input.campaignId}`,
-        JSON.stringify({ type: 'finalized', synthKey: f.synthKey, entityId: f.entityId }),
-      )
-    }
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK')
-      /* c8 ignore start — ROLLBACK-failure catch arm: protects against
-       * the rare case where the connection was already terminated by the
-       * prior failure (pg's "current transaction is aborted" cascade).
-       * The happy ROLLBACK path IS tested (COMMIT-failure test); this
-       * defensive branch never fires under the standard pg client. */
-    } catch {
-      /* swallow */
-    }
-    /* c8 ignore stop */
-    await publishStageReset(input)
-    throw err
-  } finally {
-    client.release()
-  }
+): Promise<readonly FinalizedRow[]> {
+  const finalized: FinalizedRow[] = []
+  await persistEntities({
+    client,
+    worldId,
+    entityType: 'location',
+    source: tree.regions,
+    synthArrayPath: 'regions',
+    out: finalized,
+  })
+  await persistEntities({
+    client,
+    worldId,
+    entityType: 'faction',
+    source: tree.factions,
+    synthArrayPath: 'factions',
+    out: finalized,
+  })
+  // worlds repo is closure-style and can't accept this client; write
+  // the one column it needs via inline SQL on the active transaction
+  // (owned by the caller).
+  await client.query(
+    `UPDATE worlds SET world_overview = $1, updated_at = now() WHERE id = $2`,
+    [tree.world_overview, worldId],
+  )
+  return finalized
 }
 
 export async function runWorldAndFactionsStage(
-  input: RunWorldAndFactionsInput,
-): Promise<StageCost> {
-  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', input.world.name).replace(
+  client: PoolClient,
+  args: RunWorldAndFactionsArgs,
+): Promise<StageDispatchResult> {
+  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.world.name).replace(
     '{{concept}}',
-    input.world.concept,
+    args.world.concept,
   )
 
   // maxRetries: 0 per design D2 — predictable cost attribution + repair
@@ -252,8 +229,8 @@ export async function runWorldAndFactionsStage(
     maxRetries: 0,
     providerOptions: {
       mythrun: {
-        worldId: input.world.id,
-        campaignId: input.campaignId,
+        worldId: args.world.id,
+        campaignId: args.campaignId,
         stage: 'world_and_factions',
       },
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- see top-of-file note
@@ -262,10 +239,10 @@ export async function runWorldAndFactionsStage(
 
   const { finalTree } = await runStreamingStage<unknown>(result.partialObjectStream, {
     stage: 'world_and_factions',
-    campaignId: input.campaignId,
-    job: input.job,
-    redisRealtime: input.redisRealtime,
-    keyPrefix: input.keyPrefix,
+    campaignId: args.campaignId,
+    job: args.job,
+    redisRealtime: args.redisRealtime,
+    keyPrefix: args.keyPrefix,
     arrays: [
       { path: 'regions', kind: 'location', role: 'entity' },
       { path: 'factions', kind: 'faction', role: 'entity' },
@@ -287,12 +264,20 @@ export async function runWorldAndFactionsStage(
     outputTokens: opusOutputTokens,
   })
 
-  const validation = await validateOrRepair(finalTree, input)
-  await persistAndPublishFinalized(input, validation.tree)
+  const validation = await validateOrRepair(finalTree)
+  const finalized = await persistTree(client, args.world.id, validation.tree)
+
+  const finalizedEvents: readonly PipelineEvent[] = finalized.map((f) => ({
+    type: 'finalized' as const,
+    synthKey: f.synthKey,
+    entityId: f.entityId,
+  }))
 
   return {
     costUsd: opusCostUsd + validation.costUsd,
     inputTokens: opusInputTokens + validation.inputTokens,
     outputTokens: opusOutputTokens + validation.outputTokens,
+    finalizedEvents,
+    capExhausted: false,
   }
 }

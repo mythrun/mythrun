@@ -42,6 +42,7 @@ import {
   StageNotImplementedError,
 } from './stages/stage-not-implemented.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
+import type { PipelineEvent } from '../../contract/pipeline-events.js'
 
 // Worker reads the seed-tables block from a constant placeholder until the
 // data file lands. The block only shapes random-table variance; the
@@ -98,6 +99,18 @@ export interface StageCost {
   readonly costUsd: number
   readonly inputTokens: number
   readonly outputTokens: number
+}
+
+// Returned by the streaming + coherence stage handlers (MYT-52 wave 4
+// refactor). All four handlers (world_and_factions, locations_and_npcs,
+// entity_relationships, coherence_pass) take a PoolClient + args and
+// return this shape. The outer scope (`runStage`) owns BEGIN/COMMIT and
+// publishes `finalizedEvents` only after COMMIT — the handler accumulates
+// them but does not publish. `capExhausted` only fires for stage 7's §D5
+// cap-fire exception; the other three always return false.
+export interface StageDispatchResult extends StageCost {
+  readonly finalizedEvents: readonly PipelineEvent[]
+  readonly capExhausted: boolean
 }
 
 type ClaimResult = 'claimed' | 'completed' | 'lost-race'

@@ -5,33 +5,47 @@
 // Streams via Vercel SDK streamObject (maxRetries: 0). Iterates
 // partialObjectStream via streaming-extractor.ts; emits entity-added /
 // entity-updated events live as locations/NPCs take shape. At stream
-// end: validateOrRepair → BEGIN/INSERT/COMMIT in a three-pass
-// resolver:
+// end: validateOrRepair → INSERT in a three-pass resolver against the
+// caller-owned client:
 //
-//   Pass 1: insert all locations + NPCs (entities + prose + facts) in
-//           a single transaction.
+//   Pass 1: insert all locations + NPCs (entities + prose + facts)
+//           against the caller's PoolClient (BEGIN is the caller's
+//           responsibility — see world-gen-processor.ts `runStage`).
 //   Pass 2: query entities.listByWorld(), filter to entity_type='location'
 //           (per §D8 kind-filter rule), build a name → entityId map. When
 //           multiple locations share a name (e.g. a stage-2 region named
 //           the same as a stage-3 city), prefer the OLDER (lowest UUIDv7)
 //           entity — stage 2 wins per §D8 name-collision rule.
 //   Pass 3: for each stage-3 location with a non-null parent_location,
-//           look up the name in the map. If unresolvable, log + publish
+//           look up the name in the map. If unresolvable, accumulate an
 //           `entity-updated { synthKey, patch: { parent_location: null } }`
-//           to sync the client view (it received the original name via
-//           `entity-added`) and persist the location parentless. If
-//           resolvable, INSERT entity_hierarchy { parent, child }.
+//           into the returned `finalizedEvents` (deferred — the caller
+//           publishes only after its COMMIT lands, so the client never
+//           observes a parent-cleared patch for a row that didn't
+//           persist) and persist the location parentless. If resolvable,
+//           INSERT entity_hierarchy { parent, child }.
 //
-// On repair-chain exhaustion OR COMMIT failure: publish
-// `stage-reset { stage }` and rethrow so BullMQ retries the stage.
+// Unified pipeline contract (T13):
+//   - Caller owns BEGIN/COMMIT/ROLLBACK on the passed `client`.
+//   - On unrecoverable error (repair-chain exhaustion, write failure),
+//     the handler throws. The caller ROLLBACKs and publishes the
+//     `stage-reset` event.
+//   - On success the handler returns a StageDispatchResult containing
+//     the StageCost plus the post-COMMIT events (`finalized` per
+//     persisted entity, plus `entity-updated{parent_location:null}` for
+//     unresolved-parent rows). Mid-stream `entity-added` /
+//     `entity-updated` events are published live by the streaming
+//     extractor; only post-COMMIT events are deferred to the caller.
+//   - `capExhausted` is unused for stage 3 (stage-7 concern) and is
+//     always `false`.
 //
 // NPC `home_location` is a narrative reference only — not persisted to
 // entity_hierarchy per design §3.2.
 //
 // Cost is the sum of the streaming Opus call + (optional) Haiku repair +
-// (optional) Sonnet repair, returned as a single StageCost.
+// (optional) Sonnet repair, returned as part of StageDispatchResult.
 
-import type { Pool, PoolClient } from 'pg'
+import type { PoolClient } from 'pg'
 import type { Redis } from 'ioredis'
 import type { Job } from 'bullmq'
 import { readFileSync } from 'node:fs'
@@ -57,15 +71,15 @@ import {
   type LocationEntry,
   type NpcEntry,
 } from '../../schemas/locations-and-npcs.js'
-import type { StageCost } from '../world-gen-processor.js'
+import type { PipelineEvent } from '../../../contract/pipeline-events.js'
+import type { StageDispatchResult } from '../world-gen-processor.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/locations-and-npcs.txt'),
   'utf8',
 )
 
-export interface RunLocationsAndNpcsInput {
-  readonly pool: Pool
+export interface RunLocationsAndNpcsArgs {
   readonly world: {
     readonly id: string
     readonly createdBy: string
@@ -102,37 +116,11 @@ interface ValidatedWithCost {
   readonly outputTokens: number
 }
 
-async function publishStageReset(
-  input: Pick<RunLocationsAndNpcsInput, 'redisRealtime' | 'keyPrefix' | 'campaignId'>,
-): Promise<void> {
-  await input.redisRealtime.publish(
-    `${input.keyPrefix}pipeline:campaign:${input.campaignId}`,
-    JSON.stringify({ type: 'stage-reset', stage: 'locations_and_npcs' }),
-  )
-}
-
-async function publishParentClearedPatch(
-  input: Pick<RunLocationsAndNpcsInput, 'redisRealtime' | 'keyPrefix' | 'campaignId'>,
-  synthKey: string,
-): Promise<void> {
-  await input.redisRealtime.publish(
-    `${input.keyPrefix}pipeline:campaign:${input.campaignId}`,
-    JSON.stringify({
-      type: 'entity-updated',
-      synthKey,
-      patch: { parent_location: null },
-    }),
-  )
-}
-
 // Validate the streamed tree directly; on Zod failure walk the
 // Haiku→Sonnet repair chain per design §D3. Returns the validated tree
 // plus the accumulated repair-chain cost; throws if the chain exhausts.
 // The streamed-call cost is the caller's responsibility.
-async function validateOrRepair(
-  finalTree: unknown,
-  input: Pick<RunLocationsAndNpcsInput, 'redisRealtime' | 'keyPrefix' | 'campaignId'>,
-): Promise<ValidatedWithCost> {
+async function validateOrRepair(finalTree: unknown): Promise<ValidatedWithCost> {
   const direct = LocationsAndNpcsSchema.safeParse(finalTree)
   if (direct.success) {
     return { tree: direct.data, costUsd: 0, inputTokens: 0, outputTokens: 0 }
@@ -180,7 +168,6 @@ async function validateOrRepair(
   inputTokens += sonnetInput
   outputTokens += sonnetOutput
   if (!sonnet.ok) {
-    await publishStageReset(input)
     throw new Error('locations_and_npcs: repair chain exhausted')
   }
   return { tree: sonnet.tree, costUsd, inputTokens, outputTokens }
@@ -278,9 +265,9 @@ async function buildNameToIdMap(
 // Pass 3: for each unresolved ref, resolve via the map or treat as
 // unresolvable. Resolvable rows go into entity_hierarchy; unresolvable
 // rows have their synthKey collected for a post-COMMIT entity-updated
-// `parent_location: null` patch (deferred — only published after the
-// transaction commits, so the client doesn't see the patch unless the
-// row actually landed).
+// `parent_location: null` patch (returned to the caller — only published
+// after the transaction commits, so the client doesn't see the patch
+// unless the row actually landed).
 async function resolveAndPersistHierarchy(
   client: PoolClient,
   unresolved: readonly UnresolvedRef[],
@@ -308,64 +295,55 @@ async function resolveAndPersistHierarchy(
   }
 }
 
-async function persistAndPublishFinalized(
-  input: RunLocationsAndNpcsInput,
+// Pass 1-3 driver: runs entirely against the caller-passed client. The
+// caller owns transaction lifecycle; this function only INSERTs.
+// Returns the post-COMMIT events the caller will publish after its
+// COMMIT lands.
+async function persistAndCollectEvents(
+  client: PoolClient,
+  worldId: string,
   tree: LocationsAndNpcsTree,
-): Promise<void> {
-  const client = await input.pool.connect()
-  try {
-    await client.query('BEGIN')
-    const finalized: FinalizedRow[] = []
-    const unresolved: UnresolvedRef[] = []
-    await persistLocations(client, input.world.id, tree.locations, finalized, unresolved)
-    await persistNpcs(client, input.world.id, tree.npcs, finalized)
+): Promise<readonly PipelineEvent[]> {
+  const finalized: FinalizedRow[] = []
+  const unresolved: UnresolvedRef[] = []
+  await persistLocations(client, worldId, tree.locations, finalized, unresolved)
+  await persistNpcs(client, worldId, tree.npcs, finalized)
 
-    const nameToId = await buildNameToIdMap(client, input.world.id)
-    const parentClearedSynthKeys: string[] = []
-    await resolveAndPersistHierarchy(client, unresolved, nameToId, parentClearedSynthKeys)
+  const nameToId = await buildNameToIdMap(client, worldId)
+  const parentClearedSynthKeys: string[] = []
+  await resolveAndPersistHierarchy(client, unresolved, nameToId, parentClearedSynthKeys)
 
-    await client.query('COMMIT')
-
-    // Post-commit publish: finalized for every entity, then parent-cleared
-    // patches for unresolvable references.
-    for (const f of finalized) {
-      await input.redisRealtime.publish(
-        `${input.keyPrefix}pipeline:campaign:${input.campaignId}`,
-        JSON.stringify({ type: 'finalized', synthKey: f.synthKey, entityId: f.entityId }),
-      )
-    }
-    for (const synthKey of parentClearedSynthKeys) {
-      await publishParentClearedPatch(input, synthKey)
-    }
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK')
-      /* c8 ignore start — ROLLBACK-failure catch arm: protects against
-       * the rare case where the connection was already terminated by the
-       * prior failure (pg's "current transaction is aborted" cascade).
-       * The happy ROLLBACK path IS tested (COMMIT-failure test); this
-       * defensive branch never fires under the standard pg client. */
-    } catch {
-      /* swallow */
-    }
-    /* c8 ignore stop */
-    await publishStageReset(input)
-    throw err
-  } finally {
-    client.release()
+  // Compose deferred post-COMMIT events: `finalized` per persisted
+  // entity, then `entity-updated{parent_location:null}` for unresolved
+  // refs. Caller publishes after its COMMIT.
+  const events: PipelineEvent[] = finalized.map(
+    (f): PipelineEvent => ({
+      type: 'finalized',
+      synthKey: f.synthKey,
+      entityId: f.entityId,
+    }),
+  )
+  for (const synthKey of parentClearedSynthKeys) {
+    events.push({
+      type: 'entity-updated',
+      synthKey,
+      patch: { parent_location: null },
+    })
   }
+  return events
 }
 
 export async function runLocationsAndNpcsStage(
-  input: RunLocationsAndNpcsInput,
-): Promise<StageCost> {
-  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', input.world.name)
-    .replace('{{tone}}', input.world.tone)
-    .replace('{{themes}}', input.world.themes)
-    .replace('{{era}}', input.world.era)
-    .replace('{{worldOverview}}', input.world.worldOverview)
-    .replace('{{regionsSummary}}', input.world.regionsSummary)
-    .replace('{{factionsSummary}}', input.world.factionsSummary)
+  client: PoolClient,
+  args: RunLocationsAndNpcsArgs,
+): Promise<StageDispatchResult> {
+  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.world.name)
+    .replace('{{tone}}', args.world.tone)
+    .replace('{{themes}}', args.world.themes)
+    .replace('{{era}}', args.world.era)
+    .replace('{{worldOverview}}', args.world.worldOverview)
+    .replace('{{regionsSummary}}', args.world.regionsSummary)
+    .replace('{{factionsSummary}}', args.world.factionsSummary)
 
   // maxRetries: 0 per design D2 — predictable cost attribution + repair
   // chain owns validation recovery + BullMQ stage retry owns transport
@@ -379,8 +357,8 @@ export async function runLocationsAndNpcsStage(
     maxRetries: 0,
     providerOptions: {
       mythrun: {
-        worldId: input.world.id,
-        campaignId: input.campaignId,
+        worldId: args.world.id,
+        campaignId: args.campaignId,
         stage: 'locations_and_npcs',
       },
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- see top-of-file note
@@ -389,10 +367,10 @@ export async function runLocationsAndNpcsStage(
 
   const { finalTree } = await runStreamingStage<unknown>(result.partialObjectStream, {
     stage: 'locations_and_npcs',
-    campaignId: input.campaignId,
-    job: input.job,
-    redisRealtime: input.redisRealtime,
-    keyPrefix: input.keyPrefix,
+    campaignId: args.campaignId,
+    job: args.job,
+    redisRealtime: args.redisRealtime,
+    keyPrefix: args.keyPrefix,
     arrays: [
       { path: 'locations', kind: 'location', role: 'entity' },
       { path: 'npcs', kind: 'npc', role: 'entity' },
@@ -414,12 +392,14 @@ export async function runLocationsAndNpcsStage(
     outputTokens: opusOutputTokens,
   })
 
-  const validation = await validateOrRepair(finalTree, input)
-  await persistAndPublishFinalized(input, validation.tree)
+  const validation = await validateOrRepair(finalTree)
+  const finalizedEvents = await persistAndCollectEvents(client, args.world.id, validation.tree)
 
   return {
     costUsd: opusCostUsd + validation.costUsd,
     inputTokens: opusInputTokens + validation.inputTokens,
     outputTokens: opusOutputTokens + validation.outputTokens,
+    finalizedEvents,
+    capExhausted: false,
   }
 }

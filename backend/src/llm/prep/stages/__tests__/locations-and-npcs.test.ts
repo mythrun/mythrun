@@ -4,9 +4,18 @@
 // Vercel SDK streamObject. Asserts the persistence contract (entities +
 // prose_kernels + facts + entity_hierarchy via the three-pass resolver)
 // and the repair-chain fallthrough behavior (Zod-fail → Haiku → Sonnet
-// → stage-reset). Also covers the §D8 corner cases: nested hierarchy
+// → throw). Also covers the §D8 corner cases: nested hierarchy
 // (region → city → inn), unresolvable parent_location (typo), and the
 // stage-2-wins name-collision rule.
+//
+// Unified-contract (T13) shape:
+//   - Tests acquire a PoolClient + BEGIN before invoking the handler.
+//   - Tests COMMIT explicitly after the handler returns.
+//   - finalizedEvents are inspected on the returned StageDispatchResult,
+//     NOT on Redis (the caller is responsible for publishing them after
+//     its own COMMIT).
+//   - On unrecoverable error the handler THROWS; the caller (here, the
+//     test) is responsible for ROLLBACK + publishing stage-reset.
 //
 // Pattern crib: src/llm/prep/stages/__tests__/world-and-factions.test.ts
 // — same scaffold, with the stage-2 seed entities (an Eredil region +
@@ -17,7 +26,7 @@
  * flags streamObject deprecated but design §D1 mandates it. */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import IoredisMock from 'ioredis-mock'
 import type { Job } from 'bullmq'
 import { fileURLToPath } from 'node:url'
@@ -163,17 +172,15 @@ function makeStream(tree: Tree): ReturnType<typeof streamObject> {
   } as unknown as ReturnType<typeof streamObject>
 }
 
-type StageInput = Parameters<typeof runLocationsAndNpcsStage>[0]
+type StageArgs = Parameters<typeof runLocationsAndNpcsStage>[1]
 
-function makeInput(opts: {
-  pool: Pool
+function makeArgs(opts: {
   worldId: string
   userId: string
   campaignId: string
   redisRealtime?: InstanceType<typeof IoredisMock>
-}): StageInput {
+}): StageArgs {
   return {
-    pool: opts.pool,
     world: {
       id: opts.worldId,
       createdBy: opts.userId,
@@ -190,6 +197,31 @@ function makeInput(opts: {
     job: fakeJob(),
     redisRealtime: opts.redisRealtime ?? new IoredisMock(),
     keyPrefix: 'test:',
+  }
+}
+
+// Helper: acquire a client and BEGIN — the unified contract puts txn
+// lifecycle in the CALLER's hands. Always pair with `commit` or
+// `rollback` below.
+async function beginTxn(pool: Pool): Promise<PoolClient> {
+  const client = await pool.connect()
+  await client.query('BEGIN')
+  return client
+}
+
+async function commit(client: PoolClient): Promise<void> {
+  try {
+    await client.query('COMMIT')
+  } finally {
+    client.release()
+  }
+}
+
+async function rollback(client: PoolClient): Promise<void> {
+  try {
+    await client.query('ROLLBACK')
+  } finally {
+    client.release()
   }
 }
 
@@ -253,11 +285,48 @@ describe('runLocationsAndNpcsStage', () => {
     )
   })
 
-  it('persists locations + npcs + prose + facts; resolves nested parent_location chain (region → city → inn)', async () => {
+  it('persists locations + npcs + prose + facts; resolves nested parent_location chain (region → city → inn); returns finalized events; does NOT publish stage-reset', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(nestedFixture('Eredil')))
 
-    const result = await runLocationsAndNpcsStage(makeInput({ pool, worldId, userId, campaignId }))
+    const redisRealtime = new IoredisMock()
+    const publishSpy = vi.spyOn(redisRealtime, 'publish')
+
+    const client = await beginTxn(pool)
+    const result = await runLocationsAndNpcsStage(
+      client,
+      makeArgs({ worldId, userId, campaignId, redisRealtime }),
+    )
+    await commit(client)
+
     expect(result.costUsd).toBeGreaterThan(0)
+    expect(result.capExhausted).toBe(false)
+
+    // finalizedEvents: 10 `finalized` (5 locations + 5 NPCs), 0
+    // entity-updated{parent_location:null} (all parents resolved).
+    const finalizedCount = result.finalizedEvents.filter((e) => e.type === 'finalized').length
+    expect(finalizedCount).toBe(10)
+    const parentClearedCount = result.finalizedEvents.filter(
+      (e) => e.type === 'entity-updated',
+    ).length
+    expect(parentClearedCount).toBe(0)
+
+    // Handler MUST NOT publish stage-reset (caller's job on throw; not
+    // applicable on success).
+    const stageResetPublished = publishSpy.mock.calls.some(([, payload]) => {
+      if (typeof payload !== 'string') return false
+      const parsed = JSON.parse(payload) as { type?: string }
+      return parsed.type === 'stage-reset'
+    })
+    expect(stageResetPublished).toBe(false)
+
+    // Handler MUST NOT publish `finalized` directly (deferred to caller
+    // via finalizedEvents).
+    const finalizedPublished = publishSpy.mock.calls.some(([, payload]) => {
+      if (typeof payload !== 'string') return false
+      const parsed = JSON.parse(payload) as { type?: string }
+      return parsed.type === 'finalized'
+    })
+    expect(finalizedPublished).toBe(false)
 
     // Entities: 5 locations + 5 NPCs from stage 3, plus the two stage-2
     // seeds (Eredil region + House Korren faction) = 12.
@@ -309,13 +378,18 @@ describe('runLocationsAndNpcsStage', () => {
     expect(eh.rows[1]).toEqual({ parent_name: 'Anul-dan', child_name: 'The Silent Bowstring' })
   })
 
-  it('unresolvable parent_location (LLM typo): persists parentless + publishes entity-updated { parent_location: null }', async () => {
+  it('unresolvable parent_location (LLM typo): persists parentless + returns entity-updated { parent_location: null } in finalizedEvents (NOT published mid-handler)', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(typoedTree()))
 
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    await runLocationsAndNpcsStage(makeInput({ pool, worldId, userId, campaignId, redisRealtime }))
+    const client = await beginTxn(pool)
+    const result = await runLocationsAndNpcsStage(
+      client,
+      makeArgs({ worldId, userId, campaignId, redisRealtime }),
+    )
+    await commit(client)
 
     // No entity_hierarchy row for the typo'd location.
     const eh = await pool.query<{ count: string }>(
@@ -326,22 +400,22 @@ describe('runLocationsAndNpcsStage', () => {
     )
     expect(eh.rows[0]?.count).toBe('0')
 
-    // entity-updated event with patch: { parent_location: null } for the typo'd synthKey.
-    const parentClearedPublished = publishSpy.mock.calls.some(([channel, payload]) => {
-      if (typeof channel !== 'string' || typeof payload !== 'string') return false
-      if (!channel.includes(`pipeline:campaign:${campaignId}`)) return false
-      const parsed = JSON.parse(payload) as {
-        type?: string
-        synthKey?: string
-        patch?: { parent_location?: string | null }
-      }
-      return (
-        parsed.type === 'entity-updated' &&
-        parsed.synthKey === 'locations_and_npcs/locations/2' &&
-        parsed.patch?.parent_location === null
-      )
+    // The handler returns the parent-cleared patch in finalizedEvents.
+    const parentClearedInBatch = result.finalizedEvents.some(
+      (e) =>
+        e.type === 'entity-updated' &&
+        e.synthKey === 'locations_and_npcs/locations/2' &&
+        (e.patch as { parent_location?: string | null }).parent_location === null,
+    )
+    expect(parentClearedInBatch).toBe(true)
+
+    // And does NOT publish that patch itself.
+    const parentClearedPublished = publishSpy.mock.calls.some(([, payload]) => {
+      if (typeof payload !== 'string') return false
+      const parsed = JSON.parse(payload) as { type?: string }
+      return parsed.type === 'entity-updated'
     })
-    expect(parentClearedPublished).toBe(true)
+    expect(parentClearedPublished).toBe(false)
   })
 
   it('name-collision: stage-2 entity wins (older) over a stage-3 location of the same name', async () => {
@@ -353,7 +427,9 @@ describe('runLocationsAndNpcsStage', () => {
 
     mockStreamObject.mockReturnValueOnce(makeStream(nestedFixture('Anul-dan')))
 
-    await runLocationsAndNpcsStage(makeInput({ pool, worldId, userId, campaignId }))
+    const client = await beginTxn(pool)
+    await runLocationsAndNpcsStage(client, makeArgs({ worldId, userId, campaignId }))
+    await commit(client)
 
     const eh = await pool.query<{ parent_id: string }>(
       `SELECT h.parent_entity_id AS parent_id
@@ -374,7 +450,13 @@ describe('runLocationsAndNpcsStage', () => {
       usage: { inputTokens: 1500, outputTokens: 800, totalTokens: 2300 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const result = await runLocationsAndNpcsStage(makeInput({ pool, worldId, userId, campaignId }))
+    const client = await beginTxn(pool)
+    const result = await runLocationsAndNpcsStage(
+      client,
+      makeArgs({ worldId, userId, campaignId }),
+    )
+    await commit(client)
+
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(1) // Haiku only
 
@@ -398,7 +480,13 @@ describe('runLocationsAndNpcsStage', () => {
       usage: { inputTokens: 1800, outputTokens: 900, totalTokens: 2700 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const result = await runLocationsAndNpcsStage(makeInput({ pool, worldId, userId, campaignId }))
+    const client = await beginTxn(pool)
+    const result = await runLocationsAndNpcsStage(
+      client,
+      makeArgs({ worldId, userId, campaignId }),
+    )
+    await commit(client)
+
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(2) // Haiku + Sonnet
 
@@ -409,7 +497,7 @@ describe('runLocationsAndNpcsStage', () => {
     expect(ent.rows[0]?.count).toBe('12')
   })
 
-  it('repair-chain exhausted: throws + publishes stage-reset', async () => {
+  it('repair-chain exhausted: throws; does NOT publish stage-reset (caller publishes after ROLLBACK)', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(emptyTree()))
 
     // Both Haiku and Sonnet return invalid (empty) output.
@@ -425,65 +513,68 @@ describe('runLocationsAndNpcsStage', () => {
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    await expect(
-      runLocationsAndNpcsStage(makeInput({ pool, worldId, userId, campaignId, redisRealtime })),
-    ).rejects.toThrow(/repair chain exhausted/)
+    const client = await beginTxn(pool)
+    try {
+      await expect(
+        runLocationsAndNpcsStage(client, makeArgs({ worldId, userId, campaignId, redisRealtime })),
+      ).rejects.toThrow(/repair chain exhausted/)
+    } finally {
+      await rollback(client)
+    }
 
-    const stageResetPublished = publishSpy.mock.calls.some(([channel, payload]) => {
-      if (typeof channel !== 'string' || typeof payload !== 'string') return false
-      if (!channel.includes(`pipeline:campaign:${campaignId}`)) return false
-      const parsed = JSON.parse(payload) as { type?: string; stage?: string }
-      return parsed.type === 'stage-reset' && parsed.stage === 'locations_and_npcs'
+    // Handler does NOT publish stage-reset under the unified contract;
+    // that's now the caller's responsibility.
+    const stageResetPublished = publishSpy.mock.calls.some(([, payload]) => {
+      if (typeof payload !== 'string') return false
+      const parsed = JSON.parse(payload) as { type?: string }
+      return parsed.type === 'stage-reset'
     })
-    expect(stageResetPublished).toBe(true)
+    expect(stageResetPublished).toBe(false)
   })
 
-  it('persistence COMMIT failure → ROLLBACK + publishes stage-reset and rethrows', async () => {
+  it('persistence write-failure: throws; does NOT publish stage-reset; rollback (test-driven) leaves stage-2 seeds intact', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(nestedFixture('Eredil')))
 
-    // Wrap pool.connect to inject a client that fails on COMMIT.
-    const realConnect = pool.connect.bind(pool)
-    async function fakeConnect(): Promise<Awaited<ReturnType<typeof pool.connect>>> {
-      const client = await realConnect()
-      const originalQuery = client.query.bind(client)
-      const patchedQuery = ((...args: unknown[]): unknown => {
-        const sql = args[0]
-        if (typeof sql === 'string' && sql.trim().toUpperCase() === 'COMMIT') {
-          return Promise.reject(new Error('simulated COMMIT failure'))
-        }
-        return (originalQuery as (...a: unknown[]) => unknown)(...args)
-      }) as typeof client.query
-      ;(client as unknown as { query: typeof client.query }).query = patchedQuery
-      return client as unknown as Awaited<ReturnType<typeof pool.connect>>
-    }
-    const connectSpy = vi.spyOn(pool, 'connect')
-    // mockImplementationOnce wants a sync callable returning a Promise;
-    // an async function literal trips the no-misused-promises rule, so
-    // we wrap via a sync function that returns the promise from fakeConnect.
-    connectSpy.mockImplementationOnce(((): Promise<unknown> => fakeConnect()) as never)
+    // Patch the client's query method to fail on the first
+    // entity_hierarchy INSERT — that mimics a write failure during
+    // Pass 3 of the resolver.
+    const client = await beginTxn(pool)
+    const originalQuery = client.query.bind(client)
+    const patchedQuery = ((...args: unknown[]): unknown => {
+      const sql = args[0]
+      if (typeof sql === 'string' && /INSERT INTO entity_hierarchy/i.test(sql)) {
+        return Promise.reject(new Error('simulated write failure'))
+      }
+      return (originalQuery as (...a: unknown[]) => unknown)(...args)
+    }) as typeof client.query
+    ;(client as unknown as { query: typeof client.query }).query = patchedQuery
 
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    await expect(
-      runLocationsAndNpcsStage(makeInput({ pool, worldId, userId, campaignId, redisRealtime })),
-    ).rejects.toThrow(/simulated COMMIT failure/)
+    try {
+      await expect(
+        runLocationsAndNpcsStage(client, makeArgs({ worldId, userId, campaignId, redisRealtime })),
+      ).rejects.toThrow(/simulated write failure/)
+    } finally {
+      // Restore the original query so ROLLBACK isn't itself blocked.
+      ;(client as unknown as { query: typeof client.query }).query = originalQuery
+      await rollback(client)
+    }
 
-    const stageResetPublished = publishSpy.mock.calls.some(([channel, payload]) => {
-      if (typeof channel !== 'string' || typeof payload !== 'string') return false
-      if (!channel.includes(`pipeline:campaign:${campaignId}`)) return false
-      const parsed = JSON.parse(payload) as { type?: string; stage?: string }
-      return parsed.type === 'stage-reset' && parsed.stage === 'locations_and_npcs'
+    // Handler does NOT publish stage-reset under the unified contract.
+    const stageResetPublished = publishSpy.mock.calls.some(([, payload]) => {
+      if (typeof payload !== 'string') return false
+      const parsed = JSON.parse(payload) as { type?: string }
+      return parsed.type === 'stage-reset'
     })
-    expect(stageResetPublished).toBe(true)
+    expect(stageResetPublished).toBe(false)
 
-    // ROLLBACK fired — no stage-3 entity rows landed (the 2 stage-2 seeds remain).
+    // After our ROLLBACK only the two stage-2 seeds remain.
     const counts = await pool.query<{ ent: string }>(
       `SELECT count(*)::text AS ent FROM entities WHERE world_id = $1`,
       [worldId],
     )
     expect(Number(counts.rows[0]?.ent)).toBe(2)
-
-    connectSpy.mockRestore()
   })
 })

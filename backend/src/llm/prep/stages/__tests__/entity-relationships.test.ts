@@ -175,7 +175,7 @@ describe('runEntityRelationshipsStage', () => {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: redis,
-      redisKeyPrefix: 'test:',
+      keyPrefix: 'test:',
     })
 
     // deleteByWorld called BEFORE insertMany (retry idempotency, design §D9)
@@ -202,6 +202,11 @@ describe('runEntityRelationshipsStage', () => {
     expect(result.costUsd).toBeCloseTo(0.03, 4)
     expect(result.inputTokens).toBe(4000)
     expect(result.outputTokens).toBe(1200)
+
+    // Stage 4 dispatch-contract fields: stage emits edges DURING the stream,
+    // so finalizedEvents is empty; stage 4 doesn't cap-fire.
+    expect(result.finalizedEvents).toEqual([])
+    expect(result.capExhausted).toBe(false)
 
     // Five edge-added events emitted
     const edgeEvents = redis.publishes.filter(
@@ -240,7 +245,7 @@ describe('runEntityRelationshipsStage', () => {
         ...baseArgs,
         job: fakeJob(),
         redisRealtime: redis,
-        redisKeyPrefix: 'test:',
+        keyPrefix: 'test:',
       }),
     ).resolves.toBeDefined()
 
@@ -280,7 +285,7 @@ describe('runEntityRelationshipsStage', () => {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
-      redisKeyPrefix: 'test:',
+      keyPrefix: 'test:',
     })
 
     // Only one hierarchy insert: E1→E4
@@ -316,7 +321,7 @@ describe('runEntityRelationshipsStage', () => {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
-      redisKeyPrefix: 'test:',
+      keyPrefix: 'test:',
     })
 
     expect(ai.generateText).toHaveBeenCalledTimes(1)
@@ -356,7 +361,7 @@ describe('runEntityRelationshipsStage', () => {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
-      redisKeyPrefix: 'test:',
+      keyPrefix: 'test:',
     })
 
     expect(ai.generateText).toHaveBeenCalledTimes(2)
@@ -364,7 +369,11 @@ describe('runEntityRelationshipsStage', () => {
     expect(result.outputTokens).toBe(800 + 800 + 1000)
   })
 
-  it('repair exhausted → throws LlmStructuredOutputError and publishes stage-reset', async () => {
+  it('repair exhausted → throws LlmStructuredOutputError; outer scope owns stage-reset', async () => {
+    // Per the unified stage-dispatch contract (MYT-52 T13), the handler does
+    // NOT publish `stage-reset` itself — it just throws. The outer
+    // `runStage` dispatcher in world-gen-processor catches, ROLLBACKs, and
+    // publishes stage-reset uniformly across all wave-4 stages.
     const invalidTree = {
       relationships: makeValidTree().relationships.slice(0, 3),
       hierarchy_stragglers: [],
@@ -394,15 +403,15 @@ describe('runEntityRelationshipsStage', () => {
         ...baseArgs,
         job: fakeJob(),
         redisRealtime: redis,
-        redisKeyPrefix: 'test:',
+        keyPrefix: 'test:',
       }),
     ).rejects.toThrow(/repair chain exhausted/i)
 
+    // Contract: handler does not publish stage-reset on repair exhaustion.
     const resetEvents = redis.publishes.filter(
       (p) => (p.payload as { type: string }).type === 'stage-reset',
     )
-    expect(resetEvents).toHaveLength(1)
-    expect((resetEvents[0]?.payload as { stage: string }).stage).toBe('entity_relationships')
+    expect(resetEvents).toHaveLength(0)
     expect(relationships.insertMany).not.toHaveBeenCalled()
   })
 
@@ -419,7 +428,7 @@ describe('runEntityRelationshipsStage', () => {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
-      redisKeyPrefix: 'test:',
+      keyPrefix: 'test:',
     })
 
     const call = vi.mocked(ai.streamObject).mock.calls.at(0)?.[0] as unknown as Record<
@@ -457,7 +466,7 @@ describe('runEntityRelationshipsStage', () => {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
-      redisKeyPrefix: 'test:',
+      keyPrefix: 'test:',
     })
 
     expect(entityHierarchy.insert).not.toHaveBeenCalled()
@@ -483,7 +492,7 @@ describe('runEntityRelationshipsStage', () => {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
-      redisKeyPrefix: 'test:',
+      keyPrefix: 'test:',
     })
 
     expect(entityHierarchy.insert).not.toHaveBeenCalled()

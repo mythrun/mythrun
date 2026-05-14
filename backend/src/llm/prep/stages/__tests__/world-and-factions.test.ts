@@ -3,17 +3,24 @@
 // Stage 2 (world_and_factions) integration test. Real Postgres + mocked
 // Vercel SDK streamObject. Asserts the persistence contract (entities +
 // prose_kernels + facts + worlds.world_overview) and the repair-chain
-// fallthrough behavior (Zod-fail → Haiku → Sonnet → stage-reset).
+// fallthrough behavior (Zod-fail → Haiku → Sonnet → throw).
+//
+// Unified dispatch contract: the test scaffold (not the handler) owns
+// the transaction lifecycle. Each test acquires a client, BEGINs, runs
+// the handler against the client, COMMITs (or ROLLBACKs on error), then
+// asserts pool-level state. The handler returns `finalizedEvents` for
+// the test to inspect; it does NOT publish `finalized` or `stage-reset`
+// itself — those are the outer scope's responsibility.
 //
 // Pattern crib: src/llm/prep/__tests__/structured-output-repair.test.ts
 // for the ai-module mock pattern; src/llm/prep/stages/__tests__/concept-intake.test.ts
-// for the stage-handler shape.
+// for the (client, args) stage-handler shape.
 
 /* eslint-disable @typescript-eslint/no-deprecated -- mirrors source: Vercel SDK
  * flags streamObject deprecated but design §D1 mandates it. */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import IoredisMock from 'ioredis-mock'
 import type { Job } from 'bullmq'
 import { fileURLToPath } from 'node:url'
@@ -35,7 +42,10 @@ vi.mock('ai', async () => {
 })
 
 import { streamObject, generateText } from 'ai'
-import { runWorldAndFactionsStage } from '../world-and-factions.js'
+import {
+  runWorldAndFactionsStage,
+  type RunWorldAndFactionsArgs,
+} from '../world-and-factions.js'
 
 const mockStreamObject = vi.mocked(streamObject)
 const mockGenerateText = vi.mocked(generateText)
@@ -128,22 +138,42 @@ function makeStream(tree: Tree): ReturnType<typeof streamObject> {
   } as unknown as ReturnType<typeof streamObject>
 }
 
-type StageInput = Parameters<typeof runWorldAndFactionsStage>[0]
-
-function makeInput(opts: {
-  pool: Pool
+function makeArgs(opts: {
   worldId: string
   userId: string
   campaignId: string
   redisRealtime?: InstanceType<typeof IoredisMock>
-}): StageInput {
+}): RunWorldAndFactionsArgs {
   return {
-    pool: opts.pool,
     world: { id: opts.worldId, createdBy: opts.userId, name: 'W', concept: 'C' },
     campaignId: opts.campaignId,
     job: fakeJob(),
+    // ioredis-mock implements the surface area the handler uses (`publish`)
+    // and matches Redis structurally for our purposes.
     redisRealtime: opts.redisRealtime ?? new IoredisMock(),
     keyPrefix: 'test:',
+  }
+}
+
+// Simulates the outer-scope dispatch wrapper: acquires a client, BEGINs,
+// runs the handler, COMMITs on success and ROLLBACKs on throw. The
+// handler under test is responsible for neither — the unified contract
+// puts that on the caller (world-gen-processor.runStage).
+async function withTxn<T>(
+  pool: Pool,
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const value = await fn(client)
+    await client.query('COMMIT')
+    return value
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
   }
 }
 
@@ -196,12 +226,13 @@ describe('runWorldAndFactionsStage', () => {
   it('persists regions + factions + prose + facts + world_overview', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
-    const result = await runWorldAndFactionsStage(
-      makeInput({ pool, worldId, userId, campaignId }),
+    const result = await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
     )
     expect(result.costUsd).toBeGreaterThan(0)
     expect(result.inputTokens).toBe(5000)
     expect(result.outputTokens).toBe(6000)
+    expect(result.capExhausted).toBe(false)
 
     const counts = await pool.query<{ ent: string; pk: string; f: string }>(
       `
@@ -223,10 +254,78 @@ describe('runWorldAndFactionsStage', () => {
     expect(w.rows[0]?.world_overview).toBeTruthy()
   })
 
+  it('returns one finalized event per persisted entity (regions then factions)', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
+
+    const result = await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+    )
+
+    expect(result.finalizedEvents).toHaveLength(6)
+    const synthKeys = result.finalizedEvents.map((e) =>
+      e.type === 'finalized' ? e.synthKey : null,
+    )
+    expect(synthKeys).toEqual([
+      'world_and_factions/regions/0',
+      'world_and_factions/regions/1',
+      'world_and_factions/regions/2',
+      'world_and_factions/factions/0',
+      'world_and_factions/factions/1',
+      'world_and_factions/factions/2',
+    ])
+
+    // Every finalized event carries a real entityId that maps to a row
+    // persisted under this world.
+    const entityIds: string[] = []
+    for (const event of result.finalizedEvents) {
+      if (event.type !== 'finalized') throw new Error('expected finalized event type')
+      expect(event.entityId.length).toBeGreaterThan(0)
+      entityIds.push(event.entityId)
+    }
+    const rows = await pool.query<{ id: string }>(
+      `SELECT id FROM entities WHERE world_id = $1`,
+      [worldId],
+    )
+    const persistedIds = new Set(rows.rows.map((r) => r.id))
+    for (const id of entityIds) {
+      expect(persistedIds.has(id)).toBe(true)
+    }
+  })
+
+  it('does NOT publish stage-reset or finalized itself (outer scope owns those)', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
+
+    const redisRealtime = new IoredisMock()
+    const publishSpy = vi.spyOn(redisRealtime, 'publish')
+
+    await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(
+        client,
+        makeArgs({ worldId, userId, campaignId, redisRealtime }),
+      ),
+    )
+
+    const types = publishSpy.mock.calls
+      .map(([, payload]) => {
+        if (typeof payload !== 'string') return null
+        try {
+          return (JSON.parse(payload) as { type?: string }).type ?? null
+        } catch {
+          return null
+        }
+      })
+      .filter((t): t is string => t !== null)
+
+    expect(types).not.toContain('stage-reset')
+    expect(types).not.toContain('finalized')
+  })
+
   it('stamps facts.narrative_status = undelivered and source = prep', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
-    await runWorldAndFactionsStage(makeInput({ pool, worldId, userId, campaignId }))
+    await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+    )
 
     const rows = await pool.query<{ narrative_status: string; source: string }>(
       `SELECT DISTINCT narrative_status, source FROM facts WHERE entity_id IN (SELECT id FROM entities WHERE world_id = $1)`,
@@ -238,7 +337,9 @@ describe('runWorldAndFactionsStage', () => {
   it('does NOT write to relationships table (stage 4 owns edges)', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
-    await runWorldAndFactionsStage(makeInput({ pool, worldId, userId, campaignId }))
+    await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+    )
     const c = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM relationships`,
     )
@@ -254,12 +355,13 @@ describe('runWorldAndFactionsStage', () => {
       usage: { inputTokens: 800, outputTokens: 700, totalTokens: 1500 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const result = await runWorldAndFactionsStage(
-      makeInput({ pool, worldId, userId, campaignId }),
+    const result = await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
     )
     // costUsd accumulates Opus stream + Haiku repair.
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(1) // only Haiku; no Sonnet escalation
+    expect(result.finalizedEvents).toHaveLength(6)
 
     const counts = await pool.query<{ ent: string }>(
       `SELECT count(*)::text AS ent FROM entities WHERE world_id = $1`,
@@ -281,11 +383,12 @@ describe('runWorldAndFactionsStage', () => {
       usage: { inputTokens: 1000, outputTokens: 900, totalTokens: 1900 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const result = await runWorldAndFactionsStage(
-      makeInput({ pool, worldId, userId, campaignId }),
+    const result = await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
     )
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(2) // Haiku + Sonnet
+    expect(result.finalizedEvents).toHaveLength(6)
 
     const counts = await pool.query<{ ent: string }>(
       `SELECT count(*)::text AS ent FROM entities WHERE world_id = $1`,
@@ -294,7 +397,7 @@ describe('runWorldAndFactionsStage', () => {
     expect(Number(counts.rows[0]?.ent)).toBe(6)
   })
 
-  it('Zod-fail → Haiku-fail → Sonnet-fail → publishes stage-reset and throws', async () => {
+  it('Zod-fail → Haiku-fail → Sonnet-fail → throws (outer scope owns ROLLBACK + stage-reset)', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(brokenTree()))
 
     // Both Haiku and Sonnet return broken output.
@@ -311,77 +414,30 @@ describe('runWorldAndFactionsStage', () => {
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
     await expect(
-      runWorldAndFactionsStage(
-        makeInput({ pool, worldId, userId, campaignId, redisRealtime }),
+      withTxn(pool, (client) =>
+        runWorldAndFactionsStage(
+          client,
+          makeArgs({ worldId, userId, campaignId, redisRealtime }),
+        ),
       ),
     ).rejects.toThrow(/repair chain exhausted/)
 
     expect(mockGenerateText).toHaveBeenCalledTimes(2) // Haiku + Sonnet
 
+    // Handler must NOT publish stage-reset itself — the outer scope does.
     const stageResetPublished = publishSpy.mock.calls.some(([channel, payload]) => {
       if (typeof channel !== 'string' || typeof payload !== 'string') return false
       if (!channel.includes(`pipeline:campaign:${campaignId}`)) return false
       const parsed = JSON.parse(payload) as { type?: string; stage?: string }
       return parsed.type === 'stage-reset' && parsed.stage === 'world_and_factions'
     })
-    expect(stageResetPublished).toBe(true)
+    expect(stageResetPublished).toBe(false)
 
-    // Persistence aborted — no rows landed.
+    // The test's withTxn ROLLBACKs on throw — no rows landed.
     const counts = await pool.query<{ ent: string }>(
       `SELECT count(*)::text AS ent FROM entities WHERE world_id = $1`,
       [worldId],
     )
     expect(Number(counts.rows[0]?.ent)).toBe(0)
-  })
-
-  it('persistence COMMIT failure → ROLLBACK + publishes stage-reset and rethrows', async () => {
-    mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
-
-    // Wrap pool.connect to inject a client that fails on COMMIT.
-    const realConnect = pool.connect.bind(pool)
-    async function fakeConnect(): Promise<Awaited<ReturnType<typeof pool.connect>>> {
-      const client = await realConnect()
-      const originalQuery = client.query.bind(client)
-      const patchedQuery = ((...args: unknown[]): unknown => {
-        const sql = args[0]
-        if (typeof sql === 'string' && sql.trim().toUpperCase() === 'COMMIT') {
-          return Promise.reject(new Error('simulated COMMIT failure'))
-        }
-        return (originalQuery as (...a: unknown[]) => unknown)(...args)
-      }) as typeof client.query
-      ;(client as unknown as { query: typeof client.query }).query = patchedQuery
-      return client as unknown as Awaited<ReturnType<typeof pool.connect>>
-    }
-    const connectSpy = vi.spyOn(pool, 'connect')
-    // The mockImplementationOnce signature wants a sync callable returning a
-    // Promise; async function literals trip the no-misused-promises rule, so
-    // we wrap via a sync function that returns the promise from fakeConnect.
-    connectSpy.mockImplementationOnce(((): Promise<unknown> => fakeConnect()) as never)
-
-    const redisRealtime = new IoredisMock()
-    const publishSpy = vi.spyOn(redisRealtime, 'publish')
-
-    await expect(
-      runWorldAndFactionsStage(
-        makeInput({ pool, worldId, userId, campaignId, redisRealtime }),
-      ),
-    ).rejects.toThrow(/simulated COMMIT failure/)
-
-    const stageResetPublished = publishSpy.mock.calls.some(([channel, payload]) => {
-      if (typeof channel !== 'string' || typeof payload !== 'string') return false
-      if (!channel.includes(`pipeline:campaign:${campaignId}`)) return false
-      const parsed = JSON.parse(payload) as { type?: string; stage?: string }
-      return parsed.type === 'stage-reset' && parsed.stage === 'world_and_factions'
-    })
-    expect(stageResetPublished).toBe(true)
-
-    // ROLLBACK fired — no rows landed.
-    const counts = await pool.query<{ ent: string }>(
-      `SELECT count(*)::text AS ent FROM entities WHERE world_id = $1`,
-      [worldId],
-    )
-    expect(Number(counts.rows[0]?.ent)).toBe(0)
-
-    connectSpy.mockRestore()
   })
 })

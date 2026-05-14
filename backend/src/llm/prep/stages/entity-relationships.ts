@@ -38,7 +38,7 @@ import {
 } from '../../schemas/entity-relationships.js'
 import { runStreamingStage } from '../streaming-extractor.js'
 import { repairStructuredOutput } from '../structured-output-repair.js'
-import type { StageCost } from '../world-gen-processor.js'
+import type { StageDispatchResult } from '../world-gen-processor.js'
 import { entities } from '../../../repo/entities.js'
 import { relationships } from '../../../repo/relationships.js'
 import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
@@ -67,7 +67,7 @@ export interface EntityRelationshipsArgs {
   readonly keyTensions: string
   readonly job: Pick<Job, 'updateProgress'>
   readonly redisRealtime: Pick<Redis, 'publish'>
-  readonly redisKeyPrefix: string
+  readonly keyPrefix: string
 }
 
 interface InventoryEntry {
@@ -88,14 +88,6 @@ function buildPrompt(args: EntityRelationshipsArgs, inventory: readonly Inventor
     .replace('{{themes}}', args.themes)
     .replace('{{keyTensions}}', args.keyTensions)
     .replace('{{entityInventory}}', renderInventory(inventory))
-}
-
-async function publishEvent(
-  args: EntityRelationshipsArgs,
-  payload: Record<string, unknown>,
-): Promise<void> {
-  const channel = `${args.redisKeyPrefix}pipeline:campaign:${args.campaignId}`
-  await args.redisRealtime.publish(channel, JSON.stringify(payload))
 }
 
 async function validateOrRepair(
@@ -229,7 +221,7 @@ async function persistStragglers(
 export async function runEntityRelationshipsStage(
   client: PoolClient,
   args: EntityRelationshipsArgs,
-): Promise<StageCost> {
+): Promise<StageDispatchResult> {
   // 1. Read entity inventory — the LLM operates on real UUIDs (design §D9).
   const inventory = await entities.listByWorld(client, args.worldId)
   const entityIds = new Set(inventory.map((e) => e.id))
@@ -253,24 +245,15 @@ export async function runEntityRelationshipsStage(
     campaignId: args.campaignId,
     job: args.job,
     redisRealtime: args.redisRealtime,
-    keyPrefix: args.redisKeyPrefix,
+    keyPrefix: args.keyPrefix,
     arrays: [{ path: 'relationships', kind: 'edge', role: 'edge' }],
   })
 
-  // 4. Validate + repair-chain.
-  let validatedTree: EntityRelationshipsOutput
-  let repairUsage: { inputTokens: number; outputTokens: number }
-  try {
-    const result = await validateOrRepair(finalTree)
-    validatedTree = result.tree
-    repairUsage = result.repairUsage
-  } catch (err) {
-    // Repair chain exhausted — publish stage-reset BEFORE re-throwing so the
-    // client knows to drop any partial entity/edge state for this stage
-    // (design §7.2 + §7.3). BullMQ retry recreates the stage.
-    await publishEvent(args, { type: 'stage-reset', stage: 'entity_relationships' })
-    throw err
-  }
+  // 4. Validate + repair-chain. On repair-exhausted we just throw; the
+  // outer dispatcher (`runStage` in world-gen-processor) is responsible for
+  // ROLLBACK + publishing `stage-reset` (design §7.2 + §7.3). BullMQ retry
+  // recreates the stage.
+  const { tree: validatedTree, repairUsage } = await validateOrRepair(finalTree)
 
   // 5. Pre-filter hallucinated UUIDs (design §D9 — never let an FK violation
   // reach Postgres).
@@ -303,5 +286,10 @@ export async function runEntityRelationshipsStage(
     costUsd: computeCostUsd({ inputTokens, outputTokens }),
     inputTokens,
     outputTokens,
+    // Stage 4 emits all edge events DURING the stream (`runStreamingStage`
+    // → `edge-added`); there are no post-commit events to bubble back.
+    finalizedEvents: [],
+    // Stage 4 does not consult the campaign cost cap — it can't cap-fire.
+    capExhausted: false,
   }
 }
