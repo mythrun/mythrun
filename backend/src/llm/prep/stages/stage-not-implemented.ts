@@ -1,9 +1,12 @@
 // backend/src/llm/prep/stages/stage-not-implemented.ts
 //
-// Per MYT-51 D7: stages 2 + 3 (world_and_factions, locations_and_npcs)
-// are placeholders that fail visibly with a typed error in the
-// non-streaming launch. When the streaming-stages ticket ships, real
-// handlers swap in.
+// Originally a placeholder for stages 2 + 3 per MYT-51 D7. MYT-52 wired the
+// real handlers; the dispatcher no longer falls back here, but the typed
+// error class survives — it's still raised by the world-gen-processor test
+// suite's streamObject mock to drive the existing "halt at first
+// non-implemented stage" tests, and handleStageError still discriminates
+// on instanceof StageNotImplementedError to flip world.status to 'failed'
+// without re-enqueueing the job.
 
 export class StageNotImplementedError extends Error {
   readonly code = 'stage_not_implemented'
@@ -11,12 +14,4 @@ export class StageNotImplementedError extends Error {
     super(`stage_not_implemented: ${stage}`)
     this.name = 'StageNotImplementedError'
   }
-}
-
-export function stageNotImplementedHandler(stage: string): () => Promise<never> {
-  // The handler returns a rejected promise. We use `Promise.reject` directly
-  // rather than `async () => { throw ... }` so ESLint's
-  // `@typescript-eslint/require-await` rule doesn't fire on an async function
-  // that has no await — the handler is intentionally synchronous-throws-wrapped.
-  return (): Promise<never> => Promise.reject(new StageNotImplementedError(stage))
 }
