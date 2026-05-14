@@ -4,6 +4,7 @@
 > **Date**: 2026-04-13
 > **Amended**: 2026-05-11 (Prep Pipeline milestone scoping pass — fork deferral, character portability, streaming entity events, dev tool, BullMQ worker provisioning, LLM client realignment to MYT-44, post-MYT-43 cost tracking)
 > **Amended**: 2026-05-12 (MYT-50 brainstorming — status surface consolidated to campaign-scoped routes; world-scoped HTTP surface dropped at launch; one Redis pub/sub channel `pipeline:campaign:{id}` covering the full lifecycle; `POST /api/campaigns` is the entry point, `POST /api/worlds` removed)
+> **Amended**: 2026-05-14 (MYT-52 design — stage list grew from 5 to 7: NEW `entity_relationships` ★ between stage 3 and `starting_situation`; NEW `coherence_pass` after `random_tables`. All edges now live in the new entity_relationships stage; stages 2+3 produce zero `relationships` rows. Prompt-repair chain un-deferred per §7's open follow-up. Cross-reference-ordering "deferred until stream end" passage in §8 is obsolete — edges live entirely in stage 4-new. Event union in §8 superseded by `backend/src/contract/pipeline-events.ts` (narrower shapes + 2 new arms: `entity-removed`, `edge-removed`). Dev-tool surface dropped the live SVG graph in favor of a wire-data inspector (`live-events-panel`) — graph rendering is a production-frontend concern. See `docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md` for the implementation contract.)
 > **Status**: Amended; ready for Linear-issue decomposition
 > **Parent**: `2026-04-06-production-architecture-overview.md`
 > **Depends on**:
@@ -161,12 +162,22 @@ Model selection uses MYT-44's tier-named constants — `HAIKU` / `SONNET` / `OPU
 
 - **Input**: `WorldConcept`, factions output, canonical names, 6 NPC name seeds, 6 NPC trait seeds (rolled from universal tables)
 - **Output**: 6 locations, 6 NPCs, referenced locations, cross-faction connections
-- **Persists**: Creates entities + prose kernels + facts + relationships + entity_hierarchy
+- **Persists**: Creates entities + prose kernels + facts + entity_hierarchy (parent_location resolution via two-pass name lookup per MYT-52 §D8). **NO `relationships` rows — all structured edges live in stage 4-new.**
 - **Model**: `OPUS`
 - **Prompt**: `locations-and-npcs.txt` (ported)
-- **Streaming**: Yes — `streamObject`. Highest-volume graph stage; entity events fire most heavily here. Cross-references (NPC → location, NPC → faction) emit only after both endpoints have stabilized client-side. See §8.
+- **Streaming**: Yes — `streamObject`. Highest-volume entity-streaming stage. Prose may freely *describe* relationships; structured `relationships` rows do not land here. See MYT-52 §3.2 + §D14.
 
-#### Stage 4: `starting_situation`
+#### Stage 4 (NEW per MYT-52): `entity_relationships` ★ streams edge events
+
+- **Input**: Full entity inventory + prose_kernels + facts from stages 2+3
+- **Output**: Structured relationships (incl. implicit ones extracted from prose) + optional `entity_hierarchy` stragglers
+- **Persists**: `relationships` (closed-enum `relationship_type` + free-text description); `entity_hierarchy` stragglers via ON CONFLICT DO NOTHING (stage 3's hierarchy writes win)
+- **Model**: `SONNET`
+- **Prompt**: `entity-relationships.txt` (new — references entity inventory by real UUIDs)
+- **Streaming**: Yes — `streamObject`. Emits `edge-added` events live (deferred-until-stage-end semantics from the pre-MYT-52 §8 are obsolete; edges arrive throughout this stage's stream rather than as a burst at the end of stage 3).
+- See MYT-52 §3.3 + §D4 + §D9 for the full contract.
+
+#### Stage 5: `starting_situation`
 
 - **Input**: All prior world data + canonical names
 - **Output**: 3 location hooks (location_name, why_interesting)
@@ -175,7 +186,7 @@ Model selection uses MYT-44's tier-named constants — `HAIKU` / `SONNET` / `OPU
 - **Prompt**: `starting-situation.txt` (ported)
 - **Streaming**: No — short JSON, no graph entities
 
-#### Stage 5: `random_tables`
+#### Stage 6: `random_tables`
 
 - **Input**: `WorldConcept` + seed tables from `data/tables/seed-tables.json`
 - **Output**: 2 campaign-specific d20 tables (20 entries each)
@@ -183,6 +194,17 @@ Model selection uses MYT-44's tier-named constants — `HAIKU` / `SONNET` / `OPU
 - **Model**: `HAIKU`
 - **Prompt**: `random-tables.txt` (ported)
 - **Streaming**: No
+
+#### Stage 7 (NEW per MYT-52): `coherence_pass`
+
+- **Input**: Full world state — all entities + prose_kernels + facts + relationships + entity_hierarchy (~10–14k tokens)
+- **Output**: Patches (fix_fact / fix_prose / fix_relationship / rename_entity / delete_relationship) — auto-fix only, no warnings arm
+- **Persists**: UPDATEs to existing rows + DELETEs to `relationships`. No new entities created.
+- **Model**: `SONNET`
+- **Prompt**: `coherence-pass.txt` (new — receives the full world dump as context)
+- **Streaming**: No — reconciliation, not generation. Patches apply in a coordinated burst at stage end, emitting `entity-updated` / `entity-removed` / `edge-removed` / `edge-added` events.
+- **Production-FE invisibility:** events still fire, but the production frontend filters coherence-pass events from user-visible rendering. The contract: by the time `phase: complete` fires, the world IS coherent; the user is not alerted that auditing happened.
+- See MYT-52 §3.6 + §D5 for the full contract.
 
 ### Credit Gate
 
@@ -219,7 +241,7 @@ The unique index `idx_pipeline_runs_unique` on `COALESCE(world_id, campaign_id),
 
 ### Completion
 
-When all 5 stages complete: set `worlds.status = 'complete'`. The world is now ready for campaign creation.
+When all 7 stages complete (including `coherence_pass`): set `worlds.status = 'complete'`. The world is now ready for campaign creation. (Special case per MYT-52 §D5: if the cost cap fires AT stage 7 specifically, the world still marks `complete` — coherence is best-effort polish, not a launch-blocker.)
 
 ---
 
@@ -485,13 +507,15 @@ A small helper (`recordPipelineUsage(pool, { runId, scopeId, stage, usage })`) w
 ### What's Dropped From the Original Spec
 
 - **`createLlmClient` / `generateStructured` / `wrapClientForStage`** — the prototype's hand-rolled SDK wrapper. Vercel SDK supersedes; not ported.
-- **3-tier prompt-repair chain (primary → Haiku → Sonnet)** — Vercel SDK's `maxRetries` covers transient retries. Structured-output failures throw `LlmStructuredOutputError` which the worker handles via BullMQ stage retry. The prototype's "ask Haiku to fix the malformed JSON" pattern is *not* ported. If structured-output failures prove costly in practice, re-introducing it as a custom Vercel `transformParams` middleware is a follow-up; not a launch dependency.
+- **3-tier prompt-repair chain (primary → Haiku → Sonnet)** — ~~Vercel SDK's `maxRetries` covers transient retries...~~ ~~not a launch dependency.~~ **REVISITED 2026-05-14: MYT-52 un-defers this.** The prototype's repair chain ships with MYT-52 because the UX cost of `stage-reset` (entities visibly disappearing from the live event log) is too high to accept on streaming stages. Repair-then-reset shrinks the disappearing-entities case from "any Zod failure" down to "Sonnet couldn't fix it either." See MYT-52 §D3 + §4.2 for the implementation contract.
 - **Per-process LLM client instance** — Vercel's model constants are module-scoped already; no factory needed.
 - **`getModelForStage` reading from `settings`** — runtime model selection is a non-launch feature. The hard-coded mapping in `pipeline-config.ts` plus a `settings` override hook is the launch shape; the override hook is wired but the only writer is a manual `UPDATE settings` for ops use. No admin UI.
 
 ---
 
 ## 8. Pipeline Status, Streaming, and Entity Events
+
+> **Amended 2026-05-14 (MYT-52):** the event-union sketch in this section was an early draft. The shipped wire contract lives at `backend/src/contract/pipeline-events.ts` and has narrower per-arm shapes: `entity-added` carries `synthKey` + `entityKind` + `data` (no `stage` field — consumers derive stage from synthKey prefix); `edge-added` carries `synthKey` + `from` + `to` + `relationship` + optional `description` (no `kind`/`data`); `finalized` is per-entity `{ synthKey, entityId }` (not the `{ mapping }` shape shown below). MYT-52 added two new arms — `entity-removed { synthKey, reason }` + `edge-removed { synthKey, reason }` — to preserve the "client never sees entities disappear silently" invariant under repair-chain drops and coherence_pass deletions. The "Cross-Reference Ordering (Edges)" passage below is also obsolete: all edges now live in stage 4-new (`entity_relationships`), not in stage 3. See MYT-52 design doc for the current contract.
 
 ### Status Model
 

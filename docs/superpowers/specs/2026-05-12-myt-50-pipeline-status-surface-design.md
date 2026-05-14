@@ -513,6 +513,10 @@ The discriminated-union type lives alongside the runtime constant so consumers g
 
 ### 4.9 `backend/dev-tool/coverage.json` modifications
 
+> **Superseded 2026-05-14 (MYT-52):** the 5 entity-event `exempt.events` entries shown below were a transitional carve-out — MYT-50 declared them "exempt pointing at MYT-52." MYT-52 now ships the rendering (a live-events inspector, NOT the originally-planned graph) and the `exempt.events` entries are DELETED in MYT-52's coverage migration. The events list ALSO gains 2 new arms (`entity-removed`, `edge-removed`) introduced during MYT-52's design-review for repair-chain + coherence-pass entity removal semantics. The block below reflects the MYT-50-ship state; see MYT-52 §8 Layer 4 for the migration.
+
+
+
 Append to existing arrays (preserve `version: 1`):
 
 ```json
