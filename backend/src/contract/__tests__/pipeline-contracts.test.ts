@@ -48,7 +48,9 @@ describe('PIPELINE_SSE_EVENTS', () => {
       'stage-reset',
       'entity-added',
       'entity-updated',
+      'entity-removed',
       'edge-added',
+      'edge-removed',
       'finalized',
     ]
     expect([...PIPELINE_SSE_EVENTS].sort()).toEqual([...expected].sort())
