@@ -24,7 +24,7 @@
 <!-- source: backend/dev-tool/coverage.json -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:9982e97835c9f19dc8153cf8bb2e71fb09470900333dfb34258a9280ce41e233 -->
+<!-- source-hash: sha256:944439a4840b904e6048fc86ddabd47805e3111eba96c9742fe2b41322531ae3 -->
 <!-- last-ticket: MYT-51 -->
 
 <h1>World gen</h1>
@@ -33,9 +33,12 @@
   The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a
   concept (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a
   3-axis Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked
-  transaction, and enqueues a BullMQ job. The worker walks five stages — three are wired in this
-  ticket (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>);
-  two are placeholders that fail visibly until the streaming-stages ticket replaces them. A cost-cap
+  transaction, and enqueues a BullMQ job. The worker walks seven stages — all wired in MYT-52
+  (<code>concept_intake</code>, <code>world_and_factions</code>, <code>locations_and_npcs</code>,
+  <code>entity_relationships</code>, <code>starting_situation</code>, <code>random_tables</code>,
+  <code>coherence_pass</code>). Four of those (stages 2/3/4 + 7) ship streaming output via
+  <code>streamObject</code> + structured-output repair; the others use the non-streaming
+  <code>generateText</code> + <code>Output.object</code> shape from MYT-51. A cost-cap
   circuit breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; if
   the cumulative cost ever exceeds it, the worker refunds the debited credit and marks the world
   failed.
