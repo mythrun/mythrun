@@ -8,7 +8,7 @@
 <!-- source: backend/src/contract/pipeline-events.ts -->
 <!-- source: backend/dev-tool/src/components/status-panel.ts -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md -->
-<!-- source-hash: sha256:189cbc0367f237c30f630e74eb17393fc4f26ce1b89e733e8ec095bb53c6d038 -->
+<!-- source-hash: sha256:fa6512e5d6f3a3562607d9752ff5004a650da2617b105475d94c2d3fad7a0c16 -->
 <!-- last-ticket: MYT-50 -->
 
 <h1>Pipeline status</h1>
@@ -47,10 +47,10 @@
   MYT-50 lands only the consumption side. The worker (MYT-49 shell, MYT-51+ real processors) is what
   publishes events to Redis; this page documents how those events reach attached clients. The
   contract files <code>backend/src/contract/pipeline-routes.ts</code> and
-  <code>pipeline-events.ts</code> declare the surface — two routes today, eleven event types (six
-  lifecycle events landed now, five entity events that arrive verbatim from the worker but render
-  later in MYT-52). The bridge itself is type-blind: every JSON payload published on a campaign
-  channel is forwarded to attached sinks unchanged.
+  <code>pipeline-events.ts</code> declare the surface — two routes today, thirteen event types (six
+  lifecycle events landed now, seven entity / edge events that arrive verbatim from the worker but
+  render later in MYT-52). The bridge itself is type-blind: every JSON payload published on a
+  campaign channel is forwarded to attached sinks unchanged.
 </p>
 
 <h2>The two endpoints</h2>
@@ -470,7 +470,8 @@
       >redis-cli PUBLISH "development:use1:pipeline:campaign:&lt;id&gt;"
       '{"type":"phase","phase":"world_gen"}'</code
     >. The panel's phase row updates within a frame's RTT. Unknown event types are silently ignored
-    — entity events from MYT-51 will flow through but won't render until MYT-52's live-graph lands.
+    — entity / edge events from MYT-51 will flow through but won't render until MYT-52's live-events
+    inspector panel lands.
   </li>
 </ol>
 
@@ -502,12 +503,16 @@
 <h2>Out of scope (Phase 0)</h2>
 
 <p>
-  Five entity-level event types (<code>stage-reset</code>, <code>entity-added</code>,
-  <code>entity-updated</code>, <code>edge-added</code>, <code>finalized</code>) are declared in
+  Seven entity / edge event types (<code>stage-reset</code>, <code>entity-added</code>,
+  <code>entity-updated</code>, <code>entity-removed</code>, <code>edge-added</code>,
+  <code>edge-removed</code>, <code>finalized</code>) are declared in
   <code>pipeline-events.ts</code> so MYT-51+ worker emissions don't have to expand the contract
-  piecemeal — but the dev tool's live-graph rendering surface for them lands in MYT-52. The bridge
-  forwards them verbatim today; consumers that don't know what to do with them silently ignore the
-  frame. Dev-tool coverage marks them <code>exempt</code> with a MYT-52 pointer.
+  piecemeal — but the dev tool's live-events inspector panel for them lands in MYT-52.
+  <code>entity-removed</code> and <code>edge-removed</code> were added during MYT-52 design review
+  for the repair-chain + coherence-pass delete paths so the "client never sees entities disappear
+  silently" invariant holds. The bridge forwards every arm verbatim today; consumers that don't know
+  what to do with a frame silently ignore it. Dev-tool coverage marks all seven
+  <code>exempt</code> with a MYT-52 pointer.
 </p>
 
 <p>
@@ -580,8 +585,8 @@
     <tr>
       <td><code>backend/src/contract/pipeline-events.ts</code></td>
       <td>
-        Eleven event-type strings (six MYT-50 lifecycle + five MYT-52 entity) plus the typed
-        <code>PipelineEvent</code> discriminated union.
+        Thirteen event-type strings (six MYT-50 lifecycle + seven MYT-52 entity / edge) plus the
+        typed <code>PipelineEvent</code> discriminated union.
       </td>
     </tr>
     <tr>

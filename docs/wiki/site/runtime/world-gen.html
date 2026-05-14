@@ -1108,11 +1108,12 @@
   emitted by this ticket are <code>phase</code> (on entry to <code>world_gen</code> and the terminal
   <code>world_ready</code> / <code>world_gen_failed</code>), <code>stage-started</code>,
   <code>stage-completed</code>, <code>cost-update</code> (cumulative USD), and
-  <code>stage-failed</code>. Five additional entity-level events (<code>stage-reset</code>,
-  <code>entity-added</code>, <code>entity-updated</code>, <code>edge-added</code>,
-  <code>finalized</code>) are reserved in the contract for the streaming stages ticket and arrive
-  verbatim through the bridge once that ships; the dev tool's status panel renders the lifecycle
-  events today and renders the entity events when the live-graph surface lands.
+  <code>stage-failed</code>. Seven additional entity / edge events (<code>stage-reset</code>,
+  <code>entity-added</code>, <code>entity-updated</code>, <code>entity-removed</code>,
+  <code>edge-added</code>, <code>edge-removed</code>, <code>finalized</code>) are reserved in the
+  contract for the streaming-stages ticket and arrive verbatim through the bridge once that ships;
+  the dev tool's status panel renders the lifecycle events today and renders the entity / edge
+  events when MYT-52's live-events inspector panel lands.
 </p>
 
 <h2 id="out-of-scope">Out of scope</h2>
