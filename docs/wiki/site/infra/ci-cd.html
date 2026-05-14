@@ -655,6 +655,81 @@
   </tbody>
 </table>
 
+<h2 id="the-pre-push-hook-local-mirror-of-ci">The pre-push hook (local mirror of CI)</h2>
+
+<p>
+  Every push to <code>main</code> from a developer's machine first passes through
+  <code>.husky/pre-push</code>, a four-stage gate that mirrors what CI is going to re-assert on the
+  push it just accepted. The hook runs in cheapest-first order — a one-second grep, a ~3 s
+  typecheck, a ~10 s lint, then the ~3 min coverage suite. Any non-zero step refuses the push and
+  prints the diagnostic the operator needs.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Hook locally, re-assert in CI — never trust the hook alone</strong> — a developer can
+  always <code>--no-verify</code> their way past Husky. The hook exists so red CI is impossible from
+  this machine in the normal flow, but every gate it runs is duplicated in
+  <code>lint-auth.yml</code> + <code>deploy.yml</code> so the production gate is the workflow, not
+  the local hook. The point of the hook is fast feedback (catch a typo in 3 s instead of 6 min of CI
+  queue), not coverage on its own.
+</aside>
+
+<p>The four stages, in order:</p>
+
+<ol>
+  <li>
+    <strong>Auth-narrowing pattern check.</strong> A single
+    <code>grep -rEn 'request\.user[!?]\.|request\.user as '</code> against
+    <code>backend/src/</code>, excluding <code>__tests__/</code> and <code>backend/src/auth/</code>.
+    Any match aborts with a pointer to the
+    <a href="../auth-billing/jwt-middleware.html">assign-then-check pattern</a> or
+    <code>requireUser(request)</code>. Mirrors <code>.github/workflows/lint-auth.yml</code> exactly.
+  </li>
+  <li>
+    <strong>Backend typecheck.</strong> <code>pnpm --filter @mythrun/backend typecheck</code>.
+  </li>
+  <li>
+    <strong>Backend lint.</strong> <code>pnpm --filter @mythrun/backend lint</code>. Exits non-zero
+    on errors, not warnings — the 21 outstanding <code>max-lines</code> warnings on a handful of
+    files are intentional and not gated.
+  </li>
+  <li>
+    <strong>Backend coverage suite.</strong>
+    <code>pnpm --filter @mythrun/backend test:coverage</code>. Vitest is configured with hard
+    thresholds at <strong>100% lines, 100% branches, 100% functions, 100% statements</strong>;
+    anything below fails the run.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>100% coverage as a hard threshold, not a soft target</strong> — Mythrun's production code
+  path goes through the boot-gate-managed connections (Postgres, Redis), the typed-error taxonomy,
+  and the auth + billing surfaces. Soft coverage targets let untested error arms accumulate
+  silently; the gate flips that — every new branch either has a test or carries a
+  <code>/* c8 ignore */</code> marker with a one-line rationale for why it's structurally
+  unreachable (e.g., <code>INSERT … RETURNING</code>'s never-empty rows, defense-in-depth
+  type-narrowing of pg's <code>QueryResult.rowCount</code>). The ignore markers are reviewed in PR
+  like any other code change.
+</aside>
+
+<p>
+  <code>backend/vitest.config.ts</code> carries the threshold config and the exclusion list
+  (<code>COVERAGE_EXCLUDES</code>). Excluded files are scripts and process entrypoints that vitest
+  can't reach — <code>src/server.ts</code> and <code>src/worker.ts</code> (they exit the process),
+  <code>src/db/migrate.ts</code> (one-shot CLI exercised by every integration test's
+  <code>beforeAll</code>), <code>src/scripts/**</code> (standalone debug tools),
+  <code>src/repo/index.ts</code> (re-export barrel), and a handful of pure-type files. Each entry in
+  <code>COVERAGE_EXCLUDES</code> carries a one-line justification; adding to the list is a design
+  decision, not a place to hide untested work.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Order: cheapest first, slowest last</strong> — a one-second grep gives the operator
+  feedback on the auth-narrowing violation before the 3-minute coverage suite even starts. If the
+  grep finds an offender, the typecheck never runs. This keeps the hook fast for the dominant case
+  (clean push) and fast-fail for the common-error case (lint or pattern violation).
+</aside>
+
 <h2 id="github-environment-configuration">GitHub Environment configuration</h2>
 
 <p>
@@ -955,15 +1030,17 @@
 
 <p>
   <code>.github/workflows/deploy.yml</code>, <code>.github/workflows/db-migrate.yml</code>,
-  <code>.github/dependabot.yml</code>, <code>backend/src/boot/migrations-current.ts</code>,
-  <code>backend/src/db/migrate.ts</code>, <code>infra/modules/serving/migrate.tf</code>.
+  <code>.github/workflows/lint-auth.yml</code>, <code>.github/dependabot.yml</code>,
+  <code>.husky/pre-push</code>, <code>backend/vitest.config.ts</code>,
+  <code>backend/src/boot/migrations-current.ts</code>, <code>backend/src/db/migrate.ts</code>,
+  <code>infra/modules/serving/migrate.tf</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-build-job">The build job</a></li><li style="padding-left:0"><a href="#the-deploy-staging-job">The deploy-staging job</a></li><li style="padding-left:0"><a href="#the-deploy-staging-worker-job">The deploy-staging-worker job</a></li><li style="padding-left:0"><a href="#why-terraform-env-var-changes-need-a-ci-run">Why Terraform env-var changes need a CI run</a></li><li style="padding-left:0"><a href="#dependabot-for-sha-pinned-actions">Dependabot for SHA-pinned actions</a></li><li style="padding-left:0"><a href="#the-db-migrate-workflow">The db-migrate workflow</a></li><li style="padding-left:12px"><a href="#db-migrate-gha-env-vars">GitHub Environment variables for db-migrate</a></li><li style="padding-left:0"><a href="#github-environment-configuration">GitHub Environment configuration</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rerun-a-failed-deploy">Rerun a failed deploy</a></li><li style="padding-left:12px"><a href="#trigger-a-manual-deploy">Trigger a manual deploy (no new commit)</a></li><li style="padding-left:12px"><a href="#roll-back-to-a-previous-revision">Roll back to a previous revision</a></li><li style="padding-left:12px"><a href="#bootstrap-a-new-service-from-placeholder">Bootstrap a new ECS service from :placeholder</a></li><li style="padding-left:12px"><a href="#roll-a-tf-env-var-change-into-the-live-service">Roll a TF env-var or secret-reference change into the live service</a></li><li style="padding-left:12px"><a href="#recover-from-pull-through-cache-cold-start">Recover from a pull-through cache cold start</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#workflow-triggers">Workflow triggers</a></li><li style="padding-left:12px"><a href="#job-level-environment">Job-level environment</a></li><li style="padding-left:12px"><a href="#timeouts">Timeouts</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-build-job">The build job</a></li><li style="padding-left:0"><a href="#the-deploy-staging-job">The deploy-staging job</a></li><li style="padding-left:0"><a href="#the-deploy-staging-worker-job">The deploy-staging-worker job</a></li><li style="padding-left:0"><a href="#why-terraform-env-var-changes-need-a-ci-run">Why Terraform env-var changes need a CI run</a></li><li style="padding-left:0"><a href="#dependabot-for-sha-pinned-actions">Dependabot for SHA-pinned actions</a></li><li style="padding-left:0"><a href="#the-db-migrate-workflow">The db-migrate workflow</a></li><li style="padding-left:12px"><a href="#db-migrate-gha-env-vars">GitHub Environment variables for db-migrate</a></li><li style="padding-left:0"><a href="#the-pre-push-hook-local-mirror-of-ci">The pre-push hook (local mirror of CI)</a></li><li style="padding-left:0"><a href="#github-environment-configuration">GitHub Environment configuration</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rerun-a-failed-deploy">Rerun a failed deploy</a></li><li style="padding-left:12px"><a href="#trigger-a-manual-deploy">Trigger a manual deploy (no new commit)</a></li><li style="padding-left:12px"><a href="#roll-back-to-a-previous-revision">Roll back to a previous revision</a></li><li style="padding-left:12px"><a href="#bootstrap-a-new-service-from-placeholder">Bootstrap a new ECS service from :placeholder</a></li><li style="padding-left:12px"><a href="#roll-a-tf-env-var-change-into-the-live-service">Roll a TF env-var or secret-reference change into the live service</a></li><li style="padding-left:12px"><a href="#recover-from-pull-through-cache-cold-start">Recover from a pull-through cache cold start</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#workflow-triggers">Workflow triggers</a></li><li style="padding-left:12px"><a href="#job-level-environment">Job-level environment</a></li><li style="padding-left:12px"><a href="#timeouts">Timeouts</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

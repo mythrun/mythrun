@@ -97,10 +97,16 @@ export const devCreditsRoutes: FastifyPluginAsync<DevCreditsRoutesOpts> = async 
 
       // The bypass auth plugin sets request.user.sub from the
       // x-mythrun-dev-sub header (or its default). Grant to that user.
-      const sub = request.user?.sub
-      if (typeof sub !== 'string' || sub.length === 0) {
+      // Cannot use `requireUser` here: the no-user branch is a typed 401
+      // response, not a thrown error — the dev-credits-edge.test.ts
+      // exercises this branch by registering the route WITHOUT the
+      // bypass plugin. Auth Lint forbids unsafe narrowing of request.user;
+      // we use plain assign-then-check to stay within the rule.
+      const authUser = request.user
+      if (!authUser || authUser.sub.length === 0) {
         return reply.code(401).send({ code: 'no_dev_identity' })
       }
+      const sub = authUser.sub
       const user = await repo.users.getByCognitoSub(sub)
       if (!user) {
         return reply.code(400).send({ code: 'unknown_dev_sub', sub })
@@ -137,10 +143,14 @@ export const devCreditsRoutes: FastifyPluginAsync<DevCreditsRoutesOpts> = async 
       },
     },
     async (request, reply) => {
-      const sub = request.user?.sub
-      if (typeof sub !== 'string' || sub.length === 0) {
+      // Same identity-narrowing pattern as POST above (assign-then-check
+      // to satisfy Auth Lint); the no-user branch is a typed 401 response,
+      // tested via the no-bypass-plugin harness.
+      const authUser = request.user
+      if (!authUser || authUser.sub.length === 0) {
         return reply.code(401).send({ code: 'no_dev_identity' })
       }
+      const sub = authUser.sub
       const user = await repo.users.getByCognitoSub(sub)
       if (!user) {
         return reply.code(400).send({ code: 'unknown_dev_sub', sub })

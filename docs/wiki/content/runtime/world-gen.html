@@ -24,7 +24,7 @@
 <!-- source: backend/dev-tool/coverage.json -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:e7f1e8018e71984f4ae0af4907a93b12c0f4c936b41bd307c17db039ec92d579 -->
+<!-- source-hash: sha256:15697f4bf92333e03076c29e4eb35fba6e318e1719f75189bb11aae6a71e405f -->
 <!-- last-ticket: MYT-51 -->
 
 <h1>World gen</h1>
@@ -559,12 +559,27 @@
   creation form (mode selector with freeform / guided sub-forms; freeform takes a textarea, guided
   takes three <code>{ title, whyILikeIt }</code> picks), a campaign details panel (paste a
   <code>campaignId</code> to load the campaign row, the world row, and the member list, plus a
-  Resume button that POSTs to the resume route), and a credit-ledger panel that lists the active
-  bypass user's <code>credit_ledger</code> rows and exposes a force-grant button hitting
-  <code>POST /api/dev/credits/grant</code> (dev-only — the route registers only when
-  <code>AUTH_MODE === 'bypass'</code> and lives behind the same six-layer bypass-plugin defense as
-  the rest of the dev surface).
+  Resume button that POSTs to the resume route), and a credit-ledger panel that maintains an
+  in-session log of grants it issued plus a force-grant button hitting
+  <code>POST /api/dev/credits/grant</code>. Both dev-only routes —
+  <code>POST /api/dev/credits/grant</code> and the read-side
+  <code>GET /api/dev/credits/me</code> (balance + the last 20 ledger entries) — register only when
+  <code>AUTH_MODE === 'bypass'</code> and live behind the same six-layer bypass-plugin defense as
+  the rest of the dev surface. Both routes resolve identity from <code>request.user.sub</code> — the
+  bypass plugin sets that from the <code>x-mythrun-dev-sub</code> header (the dev-tool's identity
+  dropdown), so a grant lands on the currently-active <code>dev-user-N</code> identity, not a pinned
+  sub. Unknown sub → 400, missing identity → 401.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Honor the header, don't pin the sub</strong> — earlier drafts pinned grants to
+  <code>bypass:dev-1</code> on the security argument that a buggy test header-spoofing into
+  <code>x-mythrun-dev-sub</code> could grant credits to an attacker sub. That argument is moot here:
+  the route is bypass-mode-gated by six plugin layers (no production exposure), and even in dev the
+  credits aren't fungible to anything real. Pinning produced a dead-end UX where a grant succeeded
+  but the credits landed on a sub the user couldn't spend them as. Honoring the header matches every
+  other dev-mode route.
+</aside>
 
 <p>
   The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in

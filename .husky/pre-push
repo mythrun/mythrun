@@ -1,32 +1,49 @@
 #!/usr/bin/env sh
 # Pre-push gate. Refuses the push if ANY of these fail:
-#   1. backend typecheck (`tsc --noEmit`)
-#   2. backend lint (`eslint src` — exits non-zero on errors, not warnings)
-#   3. backend vitest suite with 100% coverage thresholds on
+#   1. Auth Lint — mirrors .github/workflows/lint-auth.yml (forbid unsafe
+#      narrowing of request.user outside the auth module + tests).
+#   2. backend typecheck (`tsc --noEmit`)
+#   3. backend lint (`eslint src` — exits non-zero on errors, not warnings)
+#   4. backend vitest suite with 100% coverage thresholds on
 #      lines / branches / functions / statements (config:
 #      backend/vitest.config.ts COVERAGE_EXCLUDES + thresholds)
 #
-# The order is: cheapest first, slowest last. Typecheck fails in ~3s and
-# catches the obvious "you didn't compile-check before pushing" cases.
-# Lint fails in ~10s. The full coverage suite runs in ~3 minutes and is
-# the heaviest gate.
+# Order: cheapest first, slowest last. Auth Lint is a single grep (~1s),
+# typecheck ~3s, lint ~10s, full coverage suite ~3min.
 #
-# CI re-asserts all three steps in deploy.yml; this hook makes red CI
-# impossible from this machine. If any gate is failing locally, fix
-# the underlying issue — DO NOT bypass with `git push --no-verify`.
+# CI re-asserts all four steps (lint-auth.yml + deploy.yml); this hook
+# makes red CI impossible from this machine. If any gate is failing
+# locally, fix the underlying issue — DO NOT bypass with
+# `git push --no-verify`.
 #
 # To run the same checks manually:
+#   grep -rEn 'request\.user[!?]\.|request\.user as ' \
+#     backend/src/ --include='*.ts' \
+#     --exclude-dir=__tests__ --exclude-dir=auth
 #   pnpm --filter @mythrun/backend typecheck
 #   pnpm --filter @mythrun/backend lint
 #   pnpm --filter @mythrun/backend test:coverage
 
 set -e
 
-echo "→ pre-push gate (1/3): backend typecheck"
+echo "→ pre-push gate (1/4): auth-narrowing pattern check"
+# Mirror of .github/workflows/lint-auth.yml step. grep exits 0 on match,
+# 1 on no-match — invert via `if`. Forbids request.user! / request.user?
+# / request.user as outside backend/src/auth/** and __tests__/**.
+if grep -rEn 'request\.user[!?]\.|request\.user as ' \
+    backend/src/ --include='*.ts' \
+    --exclude-dir=__tests__ --exclude-dir=auth; then
+  echo ""
+  echo "✗ pre-push: auth-narrowing violation. Use requireUser(request) or"
+  echo "  assign-then-check (const u = request.user; if (!u) ...) instead."
+  exit 1
+fi
+
+echo "→ pre-push gate (2/4): backend typecheck"
 pnpm --filter @mythrun/backend typecheck
 
-echo "→ pre-push gate (2/3): backend lint"
+echo "→ pre-push gate (3/4): backend lint"
 pnpm --filter @mythrun/backend lint
 
-echo "→ pre-push gate (3/3): backend vitest suite + 100% coverage threshold"
+echo "→ pre-push gate (4/4): backend vitest suite + 100% coverage threshold"
 pnpm --filter @mythrun/backend test:coverage
