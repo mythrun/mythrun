@@ -35,10 +35,11 @@ import {
   sanitizeError,
   type WorldGenJobPayload,
 } from '../world-gen-processor.js'
+import { StageNotImplementedError } from '../stages/stage-not-implemented.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
-  return { ...actual, generateText: vi.fn() }
+  return { ...actual, generateText: vi.fn(), streamObject: vi.fn() }
 })
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -219,6 +220,11 @@ describe('world-gen-processor (MYT-51 T7)', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    await pool.query('DELETE FROM facts')
+    await pool.query('DELETE FROM relationships')
+    await pool.query('DELETE FROM entity_hierarchy')
+    await pool.query('DELETE FROM prose_kernels')
+    await pool.query('DELETE FROM entities')
     await pool.query('DELETE FROM random_table_entries')
     await pool.query('DELETE FROM random_tables')
     await pool.query('DELETE FROM pipeline_runs')
@@ -231,6 +237,20 @@ describe('world-gen-processor (MYT-51 T7)', () => {
       `INSERT INTO settings (key, value) VALUES ('world_gen_cost_cap_usd', '10.0')
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     )
+    // Default the new wave-4 LLM streamObject calls to throw
+    // StageNotImplementedError. The existing tests halt the world-gen
+    // loop at stage 2 (world_and_factions); the handler invokes
+    // streamObject, which now throws a typed terminal-stop error that
+    // handleStageError converts to a clean loop exit + world status='failed'.
+    // Tests that want stage 2 to actually run can override via
+    // mockReturnValueOnce. Same pattern for the stage-7 generateText path
+    // (coherence_pass) — its default per-call generateText mock is set
+    // alongside the stage-1 generator + judge in pushConceptIntakeResponses,
+    // so no top-level default is needed here.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- design §4.1 mandates streamObject for streaming stages; mocking the call path
+    vi.mocked(ai.streamObject).mockImplementation(() => {
+      throw new StageNotImplementedError('world_and_factions')
+    })
   })
 
   // ------------------------------------------------------------------

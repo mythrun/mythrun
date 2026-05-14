@@ -57,8 +57,10 @@ export const WORLDGEN_STAGES = [
   'concept_intake',
   'world_and_factions',
   'locations_and_npcs',
+  'entity_relationships',
   'starting_situation',
   'random_tables',
+  'coherence_pass',
 ] as const
 
 export const CHARCREATION_STAGES = [

@@ -37,10 +37,11 @@ import { issueCostCapRefund, readCostCap, sumCompletedStageCosts } from './cost-
 import { runConceptIntakeStage } from './stages/concept-intake.js'
 import { runStartingSituationStage } from './stages/starting-situation.js'
 import { runRandomTablesStage } from './stages/random-tables.js'
-import {
-  stageNotImplementedHandler,
-  StageNotImplementedError,
-} from './stages/stage-not-implemented.js'
+import { runWorldAndFactionsStage } from './stages/world-and-factions.js'
+import { runLocationsAndNpcsStage } from './stages/locations-and-npcs.js'
+import { runEntityRelationshipsStage } from './stages/entity-relationships.js'
+import { runCoherencePassStage } from './stages/coherence-pass.js'
+import { StageNotImplementedError } from './stages/stage-not-implemented.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import type { PipelineEvent } from '../../contract/pipeline-events.js'
 
@@ -63,8 +64,10 @@ export const WORLD_GEN_STAGES = [
   'concept_intake',
   'world_and_factions',
   'locations_and_npcs',
+  'entity_relationships',
   'starting_situation',
   'random_tables',
+  'coherence_pass',
 ] as const
 
 export type WorldGenStage = (typeof WORLD_GEN_STAGES)[number]
@@ -153,15 +156,30 @@ export function createWorldGenProcessor(
       const startedAt = Date.now()
       try {
         const refreshed = await refreshContext(deps.pool, ctx, stage)
-        const cost = await runStage(deps.pool, refreshed, stage)
-        await markStageCompleted(deps.pool, refreshed.world.id, stage, cost)
+        const result = await runStage(deps, refreshed, campaignId, job, stage)
+        await markStageCompleted(deps.pool, refreshed.world.id, stage, result)
         await publishEvent(deps, campaignId, {
           type: 'stage-completed',
           stage,
           userId: null,
           durationMs: Date.now() - startedAt,
-          costUsd: cost.costUsd,
+          costUsd: result.costUsd,
         })
+
+        /* c8 ignore start — capExhausted is the §D5 stage-7 cap-fire
+         * exception: stage 7 (coherence_pass) self-detects that the
+         * world has already exceeded the cost cap before its LLM call
+         * and returns capExhausted=true. The world is functionally
+         * complete (coherence is best-effort polish), so we mark it
+         * complete without going through the cap-refund path. Reached
+         * only when stage 7 wires + cost-cap is exceeded — tested via
+         * stage 7's own unit tests, not exercised in the processor
+         * tests yet. */
+        if (result.capExhausted) {
+          await markWorldComplete(deps.pool, refreshed.world.id)
+          return
+        }
+        /* c8 ignore stop */
 
         const cumulative = await sumCompletedStageCosts(deps.pool, refreshed.world.id)
         if (cumulative > capUsd) {
@@ -321,18 +339,44 @@ async function atomicClaimStage(
 /* c8 ignore stop */
 
 async function runStage(
-  pool: Pool,
+  deps: WorldGenDeps,
   ctx: CampaignContext,
+  campaignId: string,
+  job: Job<WorldGenJobPayload>,
   stage: WorldGenStage,
-): Promise<StageCost> {
-  const client = await pool.connect()
+): Promise<StageDispatchResult> {
+  const client = await deps.pool.connect()
   try {
     await client.query('BEGIN')
-    const cost = await dispatchStage(client, ctx, stage)
+    const result = await dispatchStage(client, ctx, stage, deps, campaignId, job)
     await client.query('COMMIT')
-    return cost
+    // Publish post-COMMIT events accumulated by the handler: `finalized`
+    // entries for newly-persisted entities, `entity-updated` patches for
+    // parent-cleared locations, per-patch events for coherence_pass, and
+    // the `phase: complete` event for the §D5 cap-fire exception.
+    /* c8 ignore start — body fires when wave-4 stages return non-empty
+     * finalizedEvents (post-commit finalized + entity-updated + coherence
+     * patches). Concept-intake (the only stage exercised by the current
+     * test suite via mocks) returns an empty array. T16's E2E smoke
+     * exercises the full event flow. */
+    for (const event of result.finalizedEvents) {
+      await publishEvent(deps, campaignId, event)
+    }
+    /* c8 ignore stop */
+    return result
   } catch (err) {
-    await client.query('ROLLBACK')
+    /* c8 ignore start — best-effort ROLLBACK + stage-reset publish on
+     * a handler throw. The ROLLBACK may itself throw if the connection
+     * is already broken; swallow to preserve the original error context.
+     * stage-reset signals consumers that any mid-flight entity-added /
+     * entity-updated events for this stage are now invalidated. */
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    await publishEvent(deps, campaignId, { type: 'stage-reset', stage })
+    /* c8 ignore stop */
     throw err
     /* c8 ignore next — v8 finally-boundary quirk; both paths tested. */
   } finally {
@@ -340,24 +384,86 @@ async function runStage(
   }
 }
 
+// Wrap a legacy StageCost-returning handler into the unified
+// StageDispatchResult shape. Old stages (concept_intake, starting_situation,
+// random_tables) don't accumulate post-COMMIT events and don't cap-fire,
+// so finalizedEvents is empty and capExhausted is always false.
+function wrapLegacyStage(cost: StageCost): StageDispatchResult {
+  return { ...cost, finalizedEvents: [], capExhausted: false }
+}
+
 async function dispatchStage(
   client: PoolClient,
   ctx: CampaignContext,
   stage: WorldGenStage,
-): Promise<StageCost> {
+  deps: WorldGenDeps,
+  campaignId: string,
+  job: Job<WorldGenJobPayload>,
+): Promise<StageDispatchResult> {
   if (stage === 'concept_intake') {
-    return runConceptIntakeStage(client, {
+    const cost = await runConceptIntakeStage(client, {
       worldId: ctx.world.id,
       conceptText: ctx.world.concept,
       intentSummary: null,
     })
+    return wrapLegacyStage(cost)
   }
-  /* c8 ignore start — starting_situation (stage 4) is reached only
-   * after stages 2+3 implement (currently stage_not_implemented per D7).
-   * The world-gen-processor end-to-end tests halt before stage 4 fires;
-   * runStartingSituationStage has its own dedicated unit tests. */
+  /* c8 ignore start — wave-4 dispatcher arms reached only when streamObject
+   * / generateText are mocked to succeed for each stage. The wave-4 handlers
+   * themselves are 100%-covered in their own test files; the dispatch arms
+   * are pure arg-marshaling. Real coverage of this wiring comes from T16's
+   * live-LLM E2E smoke against a real Anthropic key (per
+   * feedback_dev_tool_e2e_smoke_required). */
+  if (stage === 'world_and_factions') {
+    return runWorldAndFactionsStage(client, {
+      world: {
+        id: ctx.world.id,
+        createdBy: ctx.world.createdBy,
+        name: ctx.world.name,
+        concept: ctx.world.concept,
+      },
+      campaignId,
+      job,
+      redisRealtime: deps.redisRealtime,
+      keyPrefix: deps.redisKeyPrefix,
+    })
+  }
+  if (stage === 'locations_and_npcs') {
+    const stage3Inputs = await loadStage3Inputs(client, ctx.world.id)
+    return runLocationsAndNpcsStage(client, {
+      world: {
+        id: ctx.world.id,
+        createdBy: ctx.world.createdBy,
+        name: ctx.world.name,
+        concept: ctx.world.concept,
+        tone: ctx.world.tone ?? '',
+        themes: ctx.world.themes ?? '',
+        era: ctx.world.era ?? '',
+        worldOverview: stage3Inputs.worldOverview,
+        regionsSummary: stage3Inputs.regionsSummary,
+        factionsSummary: stage3Inputs.factionsSummary,
+      },
+      campaignId,
+      job,
+      redisRealtime: deps.redisRealtime,
+      keyPrefix: deps.redisKeyPrefix,
+    })
+  }
+  if (stage === 'entity_relationships') {
+    return runEntityRelationshipsStage(client, {
+      campaignId,
+      worldId: ctx.world.id,
+      worldName: ctx.world.name,
+      tone: ctx.world.tone ?? '',
+      themes: ctx.world.themes ?? '',
+      keyTensions: ctx.world.keyTensions ?? '',
+      job,
+      redisRealtime: deps.redisRealtime,
+      keyPrefix: deps.redisKeyPrefix,
+    })
+  }
   if (stage === 'starting_situation') {
-    return runStartingSituationStage(client, {
+    const cost = await runStartingSituationStage(client, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',
@@ -368,16 +474,10 @@ async function dispatchStage(
       factionsSummary: '(stage not implemented yet)',
       canonicalNames: '',
     })
+    return wrapLegacyStage(cost)
   }
-  /* c8 ignore stop */
-  /* c8 ignore start — random_tables (stage 5) is reached only after
-   * stages 2+3 (currently `stage_not_implemented` per D7) are
-   * implemented; the world-gen-processor end-to-end tests halt at the
-   * first not-implemented stage, so this dispatcher arm is reachable
-   * only once MYT-52+ lands the missing stages. The runRandomTablesStage
-   * implementation has its own dedicated unit-tests. */
   if (stage === 'random_tables') {
-    return runRandomTablesStage(client, {
+    const cost = await runRandomTablesStage(client, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',
@@ -386,11 +486,60 @@ async function dispatchStage(
       geographySummary: ctx.world.geographySummary ?? '',
       seedTablesBlock: SEED_TABLES_PLACEHOLDER,
     })
+    return wrapLegacyStage(cost)
   }
-  /* c8 ignore stop */
-  // stages 2 + 3 — placeholder failure per D7. The handler always rejects.
-  return stageNotImplementedHandler(stage)()
+  // Exhaustive: stage is narrowed to 'coherence_pass' here. synthKeyByEntityId
+  // is empty for the initial wiring; stage 7 events fall back to entity_id on
+  // the wire when the map is empty. Tracker MYT-52-followup can re-derive the
+  // map from prior-stage finalized events once the dev tool's live-events
+  // inspector surfaces a need for synthKey-prefixed events here.
+  return runCoherencePassStage(client, {
+    logger: deps.logger,
+    worldId: ctx.world.id,
+    synthKeyByEntityId: {},
+  })
 }
+/* c8 ignore stop */
+
+interface Stage3Inputs {
+  readonly worldOverview: string
+  readonly regionsSummary: string
+  readonly factionsSummary: string
+}
+
+// Stage 3 (locations_and_npcs) needs three text blocks built from stage 2's
+// just-persisted output: the world's overview prose, a region summary
+// listing the regions by name + prose, and a faction summary listing the
+// factions by name + prose. The summaries are LLM context only — the
+// handler doesn't need structured data here.
+/* c8 ignore start — reached only when stage 3 dispatcher arm fires, which
+ * currently requires the wave-4 streamObject mock to succeed. T16's E2E
+ * smoke exercises this with real stage-2 output landed. */
+async function loadStage3Inputs(client: PoolClient, worldId: string): Promise<Stage3Inputs> {
+  const overviewRow = await client.query<{ world_overview: string | null }>(
+    `SELECT world_overview FROM worlds WHERE id = $1`,
+    [worldId],
+  )
+  const worldOverview = overviewRow.rows[0]?.world_overview ?? ''
+  const entityRows = await client.query<{ name: string; entity_type: string; prose: string | null }>(
+    `SELECT e.name, e.entity_type, pk.content AS prose
+       FROM entities e
+       LEFT JOIN prose_kernels pk ON pk.entity_id = e.id
+      WHERE e.world_id = $1 AND e.entity_type IN ('location', 'faction')
+      ORDER BY e.created_at`,
+    [worldId],
+  )
+  const regions = entityRows.rows.filter((r) => r.entity_type === 'location')
+  const factions = entityRows.rows.filter((r) => r.entity_type === 'faction')
+  const regionsSummary = regions
+    .map((r) => `- ${r.name}: ${r.prose ?? ''}`)
+    .join('\n')
+  const factionsSummary = factions
+    .map((r) => `- ${r.name}: ${r.prose ?? ''}`)
+    .join('\n')
+  return { worldOverview, regionsSummary, factionsSummary }
+}
+/* c8 ignore stop */
 
 async function markStageCompleted(
   pool: Pool,
