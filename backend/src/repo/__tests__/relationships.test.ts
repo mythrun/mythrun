@@ -1,0 +1,150 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { Pool } from 'pg'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
+import pino, { type DestinationStream } from 'pino'
+import { createPgPool } from '../../db/postgres.js'
+import { runMigrations } from '../../db/migrate.js'
+import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
+import { uuidv7 } from '../uuidv7.js'
+import { entities } from '../entities.js'
+import { relationships } from '../relationships.js'
+
+const databaseUrl = process.env.DATABASE_URL ?? ''
+const here = fileURLToPath(import.meta.url)
+const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
+
+function silentLogger(): ReturnType<typeof pino> {
+  const sink: DestinationStream = { write: (): void => undefined }
+  return pino({ base: { component: 'migrate' } }, sink)
+}
+
+describe('relationships repo', () => {
+  let pool: Pool
+  let worldId: string
+  let entA: string
+  let entB: string
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createPgPool(databaseUrl, { max: 2 })
+    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
+    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
+    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+  })
+  afterAll(async () => {
+    await pool.end()
+  })
+  beforeEach(async () => {
+    await pool.query('DELETE FROM relationships')
+    await pool.query('DELETE FROM entities')
+    await pool.query('DELETE FROM worlds')
+    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    const userId = uuidv7()
+    worldId = uuidv7()
+    entA = uuidv7()
+    entB = uuidv7()
+    await pool.query(
+      `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+      [userId, `bypass:r-${userId.slice(-6)}`, 'R', `r${userId.slice(-6)}`],
+    )
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, 'W', 'C', 'generating')`,
+      [worldId, userId],
+    )
+    await entities.insert(pool, { id: entA, worldId, entityType: 'faction', name: 'A' })
+    await entities.insert(pool, { id: entB, worldId, entityType: 'location', name: 'B' })
+  })
+
+  it('insertMany writes relationship rows', async () => {
+    await relationships.insertMany(pool, [
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A controls B.' },
+    ])
+    const rows = await pool.query<{ relationship_type: string; description: string }>(
+      `SELECT relationship_type, description FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
+    expect(rows.rows[0]).toEqual({ relationship_type: 'controls', description: 'A controls B.' })
+  })
+
+  it('insertMany with empty array is a no-op', async () => {
+    await relationships.insertMany(pool, [])
+    const count = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM relationships`)
+    expect(count.rows[0]?.count).toBe('0')
+  })
+
+  it('listByWorld returns rows joined via source entity', async () => {
+    await relationships.insertMany(pool, [
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'X' },
+    ])
+    const rows = await relationships.listByWorld(pool, worldId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.relationshipType).toBe('controls')
+  })
+
+  it('deleteByWorld removes all relationships whose source entity is in the world', async () => {
+    await relationships.insertMany(pool, [
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'X' },
+    ])
+    await relationships.deleteByWorld(pool, worldId)
+    const count = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM relationships`)
+    expect(count.rows[0]?.count).toBe('0')
+  })
+
+  it('updateById updates the type + description', async () => {
+    await relationships.insertMany(pool, [
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old' },
+    ])
+    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    expect(row.rows[0]).toBeDefined()
+    const id = row.rows[0]?.id ?? ''
+    await relationships.updateById(pool, id, { relationshipType: 'rules', description: 'new' })
+    const after = await pool.query<{ relationship_type: string; description: string }>(
+      `SELECT relationship_type, description FROM relationships WHERE id = $1`, [id],
+    )
+    expect(after.rows[0]).toEqual({ relationship_type: 'rules', description: 'new' })
+  })
+
+  it('updateById applies a single-field patch (description only)', async () => {
+    // Covers the relationshipType-undefined branch of the conditional
+    // set-builder. The both-fields case is covered by the test above.
+    await relationships.insertMany(pool, [
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old' },
+    ])
+    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    expect(row.rows[0]).toBeDefined()
+    const id = row.rows[0]?.id ?? ''
+    const affected = await relationships.updateById(pool, id, { description: 'new' })
+    expect(affected).toBe(1)
+    const after = await pool.query<{ relationship_type: string; description: string }>(
+      `SELECT relationship_type, description FROM relationships WHERE id = $1`, [id],
+    )
+    // Type is unchanged; description rewritten.
+    expect(after.rows[0]).toEqual({ relationship_type: 'controls', description: 'new' })
+  })
+
+  it('updateById is a no-op when the patch is empty (returns 0)', async () => {
+    // Covers the sets.length === 0 early-return path.
+    await relationships.insertMany(pool, [
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'unchanged' },
+    ])
+    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    const id = row.rows[0]?.id ?? ''
+    const affected = await relationships.updateById(pool, id, {})
+    expect(affected).toBe(0)
+  })
+
+  it('deleteById removes a single row', async () => {
+    await relationships.insertMany(pool, [
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'x' },
+    ])
+    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    expect(row.rows[0]).toBeDefined()
+    await relationships.deleteById(pool, row.rows[0]?.id ?? '')
+    const count = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM relationships`)
+    expect(count.rows[0]?.count).toBe('0')
+  })
+})
