@@ -79,9 +79,18 @@ function buildWorldGenQueue(redisBatch: Redis): {
   //   `queue.add(..., { jobId: campaignId })` silently no-ops on a
   //   completed/failed job. The { count: 0 } config prunes terminal
   //   jobs so resume's enqueue contract holds.
+  //
+  // MYT-52 T1: `attempts: 2 + exponential backoff (30s)` — BullMQ's
+  // default is `attempts: 1` (no retries), which makes every "BullMQ
+  // retries the stage" recovery path in the MYT-52 design's §7.2 error
+  // matrix (transient API, persistence COMMIT, repair-chain exhausted,
+  // max-tokens truncation, in-stream error) fictional. The retry budget
+  // here is the surface those paths rely on.
   const bullmqQueue = new Queue(QUEUE_WORLD_GEN, {
     connection: redisBatch,
     defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 30000 },
       removeOnComplete: { count: 0 },
       removeOnFail: { count: 0 },
     },
