@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/post-spec-write.sh"
+            "command": "\"$(git rev-parse --show-toplevel)\"/.claude/hooks/post-spec-write.sh"
           }
         ]
       },
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/post-linear-close.sh"
+            "command": "\"$(git rev-parse --show-toplevel)\"/.claude/hooks/post-linear-close.sh"
           }
         ]
       },
@@ -34,7 +34,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/post-brainstorm-skill.sh"
+            "command": "\"$(git rev-parse --show-toplevel)\"/.claude/hooks/post-brainstorm-skill.sh"
           }
         ]
       },
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/post-bash-git-push.sh"
+            "command": "\"$(git rev-parse --show-toplevel)\"/.claude/hooks/post-bash-git-push.sh"
           }
         ]
       }
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/user-prompt-submit-ci-status.sh"
+            "command": "\"$(git rev-parse --show-toplevel)\"/.claude/hooks/user-prompt-submit-ci-status.sh"
           }
         ]
       }
