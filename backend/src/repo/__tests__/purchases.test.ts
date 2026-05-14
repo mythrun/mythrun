@@ -3,6 +3,7 @@ import { withTx, pool, ensureSchema } from './_helpers/with-tx.js'
 import { resetData } from './_helpers/reset-data.js'
 import { createTestUser } from './_helpers/create-test-user.js'
 import { purchases } from '../purchases.js'
+import type { ClientLike } from '../_types.js'
 import { uuidv7 } from '../uuidv7.js'
 
 beforeAll(async () => {
@@ -91,18 +92,17 @@ describe('repo.purchases', () => {
         throw new Error('should not be called for empty rows')
       },
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await purchases.insertMany(fakeTx as any, [])
+     
+    await purchases.insertMany(fakeTx, [])
   })
 
   it('markRefunded normalizes a null pg rowCount to 0 (defensive ?? branch)', async () => {
     // Construct a fake ClientLike whose UPDATE returns rowCount=null.
     // (Real pg never does this for UPDATE, but the `?? 0` exists for safety.)
     const fakeTx = {
-      query: async () => ({ rows: [], rowCount: null }),
+      query: () => Promise.resolve({ rows: [], rowCount: null }),
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await purchases.markRefunded(fakeTx as any, uuidv7())
+    const result = await purchases.markRefunded(fakeTx as unknown as ClientLike, uuidv7())
     expect(result.rowsAffected).toBe(0)
   })
 

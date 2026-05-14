@@ -96,9 +96,9 @@ describe('waitFor', () => {
     // rejection, the catch arm enters sleepWithAbort with signal.aborted
     // already true — exercising the synchronous early-reject branch.
     const controller = new AbortController()
-    const probe = vi.fn(async () => {
+    const probe = vi.fn(() => {
       controller.abort()
-      throw new Error('probe aborted itself')
+      return Promise.reject(new Error('probe aborted itself'))
     })
     const promise = waitFor({ label: 'racey', probe, signal: controller.signal })
     promise.catch(() => undefined)

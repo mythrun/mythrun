@@ -127,20 +127,18 @@ describe('insertCreditGrant', () => {
         realClient.release()
       }
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
+        connect: (): Promise<PoolClient> => {
           const insertedId = uuidv7()
-          const fake: Partial<PoolClient> = {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            query: ((..._args: unknown[]): Promise<unknown> => {
-              return Promise.resolve({ rows: [], rowCount: 0 })
-            }) as any,
+          const fake = {
+            query: (): Promise<{ rows: never[]; rowCount: number }> =>
+              Promise.resolve({ rows: [], rowCount: 0 }),
             release: () => {
               /* no-op */
             },
           }
           // Stash the id so the assertion line below can read it.
           ;(fake as { _id?: string })._id = insertedId
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const result = await insertCreditGrant(fakePool, {
@@ -173,10 +171,9 @@ describe('insertCreditGrant', () => {
       // ROLLBACK — exercises the inner try/catch around the rollback.
       let insertCalled = false
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: never[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('INSERT')) {
@@ -187,12 +184,12 @@ describe('insertCreditGrant', () => {
                 return Promise.reject(new Error('rollback also exploded'))
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       await expect(

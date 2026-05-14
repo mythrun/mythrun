@@ -515,7 +515,7 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
       const params: unknown[] = []
       let p = 1
       for (let i = 0; i < 25; i++) {
-        values.push(`($${p++}, $${p++}, 'world_gen', 1, 'admin', now() - interval '${String(i)} minutes')`)
+        values.push(`($${String(p++)}, $${String(p++)}, 'world_gen', 1, 'admin', now() - interval '${String(i)} minutes')`)
         params.push(uuidv7(), userId)
       }
       await pool.query(

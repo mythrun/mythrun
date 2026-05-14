@@ -50,8 +50,8 @@ function makeStubDeps(): AppDeps {
   const pool = {} as Pool
   return {
     pg: pool,
-    redisRealtime: new IoredisMock() as unknown as AppDeps['redisRealtime'],
-    redisBatch: new IoredisMock() as unknown as AppDeps['redisBatch'],
+    redisRealtime: new IoredisMock(),
+    redisBatch: new IoredisMock(),
     redisKeyPrefix: 'test:',
     repo: createRepo(pool),
     worldGenQueue: {

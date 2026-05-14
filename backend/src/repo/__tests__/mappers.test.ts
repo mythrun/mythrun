@@ -256,13 +256,13 @@ describe('toCreditEntry', () => {
 
   it('throws on unexpected credit_type value from DB', () => {
     expect(() =>
-      toCreditEntry({ ...creditEntryRow, credit_type: 'wild_card' as 'world_gen' }),
+      toCreditEntry({ ...creditEntryRow, credit_type: 'wild_card' }),
     ).toThrow(/unexpected credit_type value from DB: wild_card/)
   })
 
   it('throws on unexpected source_type value from DB', () => {
     expect(() =>
-      toCreditEntry({ ...creditEntryRow, source_type: 'mystery' as 'gift' }),
+      toCreditEntry({ ...creditEntryRow, source_type: 'mystery' }),
     ).toThrow(/unexpected source_type value from DB: mystery/)
   })
 })

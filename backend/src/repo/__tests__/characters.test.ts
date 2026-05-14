@@ -10,6 +10,7 @@ import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
 import { createCharactersRepo } from '../characters.js'
+import type { ClientLike } from '../_types.js'
 import {
   CharacterAlreadyInCampaignError,
   UserAlreadyHasCharacterInCampaignError,
@@ -103,11 +104,10 @@ describe('repo.characters', () => {
     it('defensively throws when INSERT returns no row (fake client)', async () => {
       const characters = createCharactersRepo(pool)
       const fakeTx = {
-        query: async () => ({ rows: [], rowCount: 0 }),
+        query: () => Promise.resolve({ rows: [], rowCount: 0 }),
       }
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        characters.create(fakeTx as any, { userId, ...baseCharacterInput }),
+        characters.create(fakeTx as unknown as ClientLike, { userId, ...baseCharacterInput }),
       ).rejects.toThrow(/INSERT returned no row/)
     })
 

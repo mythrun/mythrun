@@ -4,6 +4,7 @@ import { createPgPool } from '../../db/postgres.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
 import { createCreditsRepo, grantInTx } from '../credits.js'
+import type { ClientLike } from '../_types.js'
 import { uuidv7 } from '../uuidv7.js'
 import { resetData, resetCreditsData } from './_helpers/reset-data.js'
 import { ensureSchema, pool } from './_helpers/with-tx.js'
@@ -1010,8 +1011,7 @@ describe('credits repo (integration)', () => {
             userId: u.id,
             creditType: 'session',
             amount: 1,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            sourceType: 'debit' as any,
+            sourceType: 'debit' as unknown as 'gift',
           }),
         ).rejects.toThrow(/sourceType cannot be "debit"/)
         await client.query('ROLLBACK')
@@ -1062,9 +1062,9 @@ describe('credits repo (integration)', () => {
       const u = await users.create(pool, baseUserInput)
       let inserts = 0
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT id FROM users')) {
@@ -1100,13 +1100,12 @@ describe('credits repo (integration)', () => {
                 return Promise.resolve({ rows: [], rowCount: 0 })
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const credits = createCreditsRepo(fakePool)
@@ -1126,9 +1125,9 @@ describe('credits repo (integration)', () => {
       const users = createUsersRepo(pool)
       const u = await users.create(pool, baseUserInput)
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT id FROM users')) {
@@ -1156,13 +1155,12 @@ describe('credits repo (integration)', () => {
                 return Promise.resolve({ rows: [], rowCount: 0 })
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const credits = createCreditsRepo(fakePool)
@@ -1180,23 +1178,22 @@ describe('credits repo (integration)', () => {
       // Real PG would never have this state because the partial unique index
       // means an ON CONFLICT means a row exists. Drive the branch via fakery.
       const fakeTx = {
-        query: async (sqlOrConfig: unknown): Promise<unknown> => {
+        query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
           const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
           if (sql.startsWith('INSERT INTO credit_ledger')) {
             // ON CONFLICT DO NOTHING → no rows returned.
-            return { rows: [], rowCount: 0 }
+            return Promise.resolve({ rows: [], rowCount: 0 })
           }
           if (sql.startsWith('SELECT * FROM credit_ledger')) {
             // SELECT also returns no rows — defensive branch.
-            return { rows: [], rowCount: 0 }
+            return Promise.resolve({ rows: [], rowCount: 0 })
           }
-          return { rows: [], rowCount: 0 }
+          return Promise.resolve({ rows: [], rowCount: 0 })
         },
       }
       const credits = createCreditsRepo({} as unknown as Pool)
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        credits.recordClawback(fakeTx as any, {
+        credits.recordClawback(fakeTx as unknown as ClientLike, {
           userId: uuidv7(),
           creditType: 'session',
           amount: -1,
@@ -1207,9 +1204,9 @@ describe('credits repo (integration)', () => {
 
     it('atomicDebit maps pg lock_timeout (55P03) to DebitTimeoutError', async () => {
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT id FROM users')) {
@@ -1219,13 +1216,12 @@ describe('credits repo (integration)', () => {
               }
               if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const credits = createCreditsRepo(fakePool)
@@ -1242,9 +1238,9 @@ describe('credits repo (integration)', () => {
 
     it('atomicDebit maps pg statement_timeout (57014) to DebitTimeoutError', async () => {
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT id FROM users')) {
@@ -1254,13 +1250,12 @@ describe('credits repo (integration)', () => {
               }
               if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const credits = createCreditsRepo(fakePool)
@@ -1279,9 +1274,9 @@ describe('credits repo (integration)', () => {
       // Hits the `} catch { /* ignore */ }` around ROLLBACK in the outer
       // atomicDebit catch.
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT id FROM users')) {
@@ -1291,13 +1286,12 @@ describe('credits repo (integration)', () => {
                 return Promise.reject(new Error('rollback exploded too'))
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const credits = createCreditsRepo(fakePool)
@@ -1314,9 +1308,9 @@ describe('credits repo (integration)', () => {
     it('grant swallows ROLLBACK failure and rethrows the original error', async () => {
       // Hits the `} catch { /* ignore */ }` around ROLLBACK in `grant`.
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT id FROM users')) {
@@ -1326,13 +1320,12 @@ describe('credits repo (integration)', () => {
                 return Promise.reject(new Error('rollback exploded too'))
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const credits = createCreditsRepo(fakePool)

@@ -31,6 +31,8 @@ const COVERAGE_EXCLUDES: readonly string[] = [
   'src/billing/errors.ts',
   'src/billing/webhook-types.ts',
   'src/repo/types.ts',
+  // Minimal pg.ClientLike interface — type-only, no runtime code.
+  'src/repo/_types.ts',
   'src/contract/pipeline-jobs.ts',
   // Stripe SDK pricing-data fixture — module-level price tables that are
   // imported wholesale; the contract is "data is present + well-typed,"

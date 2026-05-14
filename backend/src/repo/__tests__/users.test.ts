@@ -6,6 +6,7 @@ import {
   LookupTimeoutError,
   type StripeCustomersClient,
 } from '../users.js'
+import type { ClientLike } from '../_types.js'
 import { resetData } from './_helpers/reset-data.js'
 import { ensureSchema, pool } from './_helpers/with-tx.js'
 
@@ -27,11 +28,10 @@ describe('users repo (integration)', () => {
   it('create defensively throws when INSERT returns no row (fake tx)', async () => {
     const repo = createUsersRepo(pool)
     const fakeTx = {
-      query: async () => ({ rows: [], rowCount: 0 }),
+      query: () => Promise.resolve({ rows: [], rowCount: 0 }),
     }
     await expect(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      repo.create(fakeTx as any, { cognitoSub: 'x', username: 'x', displayName: 'X' }),
+      repo.create(fakeTx as unknown as ClientLike, { cognitoSub: 'x', username: 'x', displayName: 'X' }),
     ).rejects.toThrow(/INSERT returned no row/)
   })
 
@@ -144,9 +144,9 @@ describe('users repo (integration)', () => {
     // (a) issue ROLLBACK (we accept that silently), and (b) rethrow as
     // LookupTimeoutError.
     const fakePool = {
-      connect: async (): Promise<PoolClient> => {
-        const fake: Partial<PoolClient> = {
-          query: ((sqlOrConfig: unknown): Promise<unknown> => {
+      connect: (): Promise<PoolClient> => {
+        const fake = {
+          query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
             const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
             if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
             if (sql.includes('SELECT * FROM users')) {
@@ -155,13 +155,12 @@ describe('users repo (integration)', () => {
             }
             if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
             return Promise.resolve({ rows: [], rowCount: 0 })
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          }) as any,
+          },
           release: () => {
             /* no-op */
           },
         }
-        return fake as PoolClient
+        return Promise.resolve(fake as unknown as PoolClient)
       },
     } as unknown as Pool
     const repo = createUsersRepo(fakePool)
@@ -175,9 +174,9 @@ describe('users repo (integration)', () => {
     // ROLLBACK also rejects. The function must swallow the ROLLBACK failure
     // and rethrow the original SELECT error verbatim (not LookupTimeoutError).
     const fakePool = {
-      connect: async (): Promise<PoolClient> => {
-        const fake: Partial<PoolClient> = {
-          query: ((sqlOrConfig: unknown): Promise<unknown> => {
+      connect: (): Promise<PoolClient> => {
+        const fake = {
+          query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
             const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
             if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
             if (sql.includes('SELECT * FROM users')) {
@@ -187,13 +186,12 @@ describe('users repo (integration)', () => {
               return Promise.reject(new Error('rollback also exploded'))
             }
             return Promise.resolve({ rows: [], rowCount: 0 })
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          }) as any,
+          },
           release: () => {
             /* no-op */
           },
         }
-        return fake as PoolClient
+        return Promise.resolve(fake as unknown as PoolClient)
       },
     } as unknown as Pool
     const repo = createUsersRepo(fakePool)
@@ -304,9 +302,9 @@ describe('users repo (integration)', () => {
       // SELECT FOR UPDATE statement. Other statements behave benignly.
       const fakePool = {
         query: pool.query.bind(pool),
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.includes('FOR UPDATE')) {
@@ -314,13 +312,12 @@ describe('users repo (integration)', () => {
               }
               if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
 
@@ -336,9 +333,9 @@ describe('users repo (integration)', () => {
 
       const fakePool = {
         query: pool.query.bind(pool),
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.includes('FOR UPDATE')) {
@@ -348,13 +345,12 @@ describe('users repo (integration)', () => {
                 return Promise.reject(new Error('rollback exploded too'))
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
 

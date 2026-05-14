@@ -48,6 +48,7 @@ describe('registerReadyRoute — non-Error throw branch (line 24 String(err) fal
   it("returns 503 with failed:['pg'] when pg.query rejects with a non-Error value", async () => {
     // Reject with a plain string, not an Error instance — forces probe()'s
     // ternary into the String(err) branch (line 24 in routes/health-ready.ts).
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- deliberately rejects with a non-Error to exercise the String(err) branch
     const deps = buildDeps(() => Promise.reject('boom-string-not-error'))
     app = Fastify({ logger: false })
     registerReadyRoute(app, deps)

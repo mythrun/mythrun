@@ -97,7 +97,7 @@ describe('worlds repo (integration)', () => {
 
   it('create defensively throws when INSERT returns no row (fake pool)', async () => {
     const fakePool = {
-      query: async () => ({ rows: [], rowCount: 0 }),
+      query: () => Promise.resolve({ rows: [], rowCount: 0 }),
     } as unknown as Pool
     const worlds = createWorldsRepo(fakePool)
     await expect(

@@ -105,7 +105,7 @@ describe('sessions repo (integration)', () => {
     // Real PG always returns a row from INSERT...RETURNING *. The defensive
     // `if (!row)` exists to surface a programmer error if that ever changes.
     const fakePool = {
-      query: async () => ({ rows: [], rowCount: 0 }),
+      query: () => Promise.resolve({ rows: [], rowCount: 0 }),
     } as unknown as Pool
     const sessions = createSessionsRepo(fakePool)
     await expect(

@@ -458,7 +458,7 @@ describe('invitesRoutes', () => {
       )
       // Pre-fill 5 additional members to bring the total to 6 (owner + 5).
       for (let i = 0; i < 5; i++) {
-        const filler = await seedUser(pool, `fill${i}`)
+        const filler = await seedUser(pool, `fill${String(i)}`)
         await pool.query(
           `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
            VALUES ($1, $2, $3, 'player', true)`,

@@ -283,7 +283,7 @@ describe('billing edge cases — upgrade-tier defensive branches', () => {
 
     const stripeStub = {
       subscriptions: {
-        retrieve: (_id: string): Promise<Stripe.Subscription> => Promise.resolve(emptyItemsSub),
+        retrieve: (): Promise<Stripe.Subscription> => Promise.resolve(emptyItemsSub),
         update: (): Promise<Stripe.Subscription> => {
           throw new Error('update should not be reached')
         },

@@ -257,7 +257,7 @@ describe('sse-connection', () => {
         throw new Error('handler-boom')
       },
     })
-    expect(() => sink.close('server-shutdown')).not.toThrow()
+    expect(() => { sink.close('server-shutdown'); }).not.toThrow()
     expect(warnSpy).toHaveBeenCalled()
   })
 

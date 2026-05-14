@@ -194,7 +194,7 @@ describe('campaigns repo (integration)', () => {
 
   it('create defensively throws when INSERT returns no row (fake pool)', async () => {
     const fakePool = {
-      query: async () => ({ rows: [], rowCount: 0 }),
+      query: () => Promise.resolve({ rows: [], rowCount: 0 }),
     } as unknown as Pool
     const campaigns = createCampaignsRepo(fakePool)
     await expect(
@@ -212,11 +212,11 @@ describe('campaigns repo (integration)', () => {
     // schema invariant has drifted.
     let call = 0
     const fakePool = {
-      query: async () => {
+      query: () => {
         call += 1
         // First call: INSERT...ON CONFLICT DO NOTHING returns 0 rows (conflict).
         // Second call: follow-up SELECT also returns 0 rows (impossible normally).
-        return { rows: [], rowCount: 0 }
+        return Promise.resolve({ rows: [], rowCount: 0 })
       },
     } as unknown as Pool
     const campaigns = createCampaignsRepo(fakePool)

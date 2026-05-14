@@ -105,9 +105,9 @@ describe('invites repo (integration)', () => {
 
     it('rollback failure during outer catch is swallowed; original error rethrown', async () => {
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.includes('FROM campaigns WHERE id')) {
@@ -118,13 +118,12 @@ describe('invites repo (integration)', () => {
                 return Promise.reject(new Error('rollback exploded'))
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
@@ -142,9 +141,9 @@ describe('invites repo (integration)', () => {
       // after INVITE_CODE_RETRIES iterations and throws InviteCreationError.
       let inserts = 0
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) {
                 return Promise.resolve({ rows: [], rowCount: 0 })
@@ -170,13 +169,12 @@ describe('invites repo (integration)', () => {
                 return Promise.resolve({ rows: [], rowCount: 0 })
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
@@ -346,7 +344,7 @@ describe('invites repo (integration)', () => {
     it('campaign deleted mid-accept (FK 23503 on INSERT) → campaignGone: true', async () => {
       // Drive the FK-violation branch by faking the INSERT to reject 23503.
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
+        connect: (): Promise<PoolClient> => {
           const inviteRow = {
             id: '019dccef-0000-7000-8000-000000000005',
             campaign_id: '019dccef-0000-7000-8000-000000000099',
@@ -357,8 +355,8 @@ describe('invites repo (integration)', () => {
             expires_at: null,
             created_at: new Date(),
           }
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT * FROM campaign_invites')) {
@@ -380,13 +378,12 @@ describe('invites repo (integration)', () => {
                 return Promise.resolve({ rows: [], rowCount: 0 })
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
@@ -399,7 +396,7 @@ describe('invites repo (integration)', () => {
 
     it('non-23503 INSERT error rethrows verbatim (e.g. generic DB error)', async () => {
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
+        connect: (): Promise<PoolClient> => {
           const inviteRow = {
             id: '019dccef-0000-7000-8000-000000000007',
             campaign_id: '019dccef-0000-7000-8000-000000000099',
@@ -410,8 +407,8 @@ describe('invites repo (integration)', () => {
             expires_at: null,
             created_at: new Date(),
           }
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT * FROM campaign_invites')) {
@@ -431,13 +428,12 @@ describe('invites repo (integration)', () => {
                 return Promise.resolve({ rows: [], rowCount: 0 })
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
@@ -454,7 +450,7 @@ describe('invites repo (integration)', () => {
       // row. Our INSERT...ON CONFLICT DO NOTHING returns 0 rows; we COMMIT
       // and report alreadyMember=true without incrementing uses.
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
+        connect: (): Promise<PoolClient> => {
           const inviteRow = {
             id: '019dccef-0000-7000-8000-000000000006',
             campaign_id: '019dccef-0000-7000-8000-000000000099',
@@ -465,8 +461,8 @@ describe('invites repo (integration)', () => {
             expires_at: null,
             created_at: new Date(),
           }
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT * FROM campaign_invites')) {
@@ -486,13 +482,12 @@ describe('invites repo (integration)', () => {
                 return Promise.resolve({ rows: [], rowCount: 0 })
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
@@ -508,9 +503,9 @@ describe('invites repo (integration)', () => {
 
     it('lock_timeout (55P03) maps to InviteTimeoutError(cause=lock) via fake pool', async () => {
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT * FROM campaign_invites')) {
@@ -520,13 +515,12 @@ describe('invites repo (integration)', () => {
               }
               if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
@@ -548,9 +542,9 @@ describe('invites repo (integration)', () => {
 
     it('statement_timeout (57014) maps to InviteTimeoutError(cause=statement)', async () => {
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT * FROM campaign_invites')) {
@@ -560,13 +554,12 @@ describe('invites repo (integration)', () => {
               }
               if (sql.startsWith('ROLLBACK')) return Promise.resolve({ rows: [], rowCount: 0 })
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
@@ -588,9 +581,9 @@ describe('invites repo (integration)', () => {
 
     it('ROLLBACK failure during catch is swallowed; original error rethrown', async () => {
       const fakePool = {
-        connect: async (): Promise<PoolClient> => {
-          const fake: Partial<PoolClient> = {
-            query: ((sqlOrConfig: unknown): Promise<unknown> => {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
               if (sql.startsWith('SELECT * FROM campaign_invites')) {
@@ -600,13 +593,12 @@ describe('invites repo (integration)', () => {
                 return Promise.reject(new Error('rollback exploded'))
               }
               return Promise.resolve({ rows: [], rowCount: 0 })
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            }) as any,
+            },
             release: () => {
               /* no-op */
             },
           }
-          return fake as PoolClient
+          return Promise.resolve(fake as unknown as PoolClient)
         },
       } as unknown as Pool
       const invitesRepo = createInvitesRepo(fakePool)
