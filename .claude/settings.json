@@ -37,6 +37,25 @@
             "command": ".claude/hooks/post-brainstorm-skill.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-bash-git-push.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/user-prompt-submit-ci-status.sh"
+          }
+        ]
       }
     ]
   }
