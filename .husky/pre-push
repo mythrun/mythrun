@@ -10,11 +10,13 @@
 #   5. wiki source-hash freshness (`pnpm wiki:check`) — mirrors the wiki
 #      CI workflow. Requires backend/.env.development so the schema page
 #      can resolve against a live Postgres.
+#   6. dev-tool verifier (`pnpm dev-tool:verify`) — only when the diff
+#      touches backend/dev-tool/** or the backend contract route sources.
 #
 # Order: cheapest first, slowest last. Auth Lint is a single grep (~1s),
 # typecheck ~3s, lint ~10s, full coverage suite ~3min, wiki:check ~2s.
 #
-# CI re-asserts all five steps (lint-auth.yml + deploy.yml + wiki.yml);
+# CI re-asserts all six steps (lint-auth.yml + deploy.yml + wiki.yml);
 # this hook makes red CI impossible from this machine. If any gate is
 # failing locally, fix the underlying issue — DO NOT bypass with
 # `git push --no-verify`.
@@ -27,10 +29,11 @@
 #   pnpm --filter @mythrun/backend lint
 #   pnpm --filter @mythrun/backend test:coverage
 #   set -a && . backend/.env.development && set +a && pnpm wiki:check
+#   pnpm dev-tool:verify
 
 set -e
 
-echo "→ pre-push gate (1/5): auth-narrowing pattern check"
+echo "→ pre-push gate (1/6): auth-narrowing pattern check"
 # Mirror of .github/workflows/lint-auth.yml step. grep exits 0 on match,
 # 1 on no-match — invert via `if`. Forbids request.user! / request.user?
 # / request.user as outside backend/src/auth/** and __tests__/**.
@@ -43,18 +46,29 @@ if grep -rEn 'request\.user[!?]\.|request\.user as ' \
   exit 1
 fi
 
-echo "→ pre-push gate (2/5): backend typecheck"
+echo "→ pre-push gate (2/6): backend typecheck"
 pnpm --filter @mythrun/backend typecheck
 
-echo "→ pre-push gate (3/5): backend lint"
+echo "→ pre-push gate (3/6): backend lint"
 pnpm --filter @mythrun/backend lint
 
-echo "→ pre-push gate (4/5): backend vitest suite + 100% coverage threshold"
+echo "→ pre-push gate (4/6): backend vitest suite + 100% coverage threshold"
 pnpm --filter @mythrun/backend test:coverage
 
-echo "→ pre-push gate (5/5): wiki source-hash freshness"
+echo "→ pre-push gate (5/6): wiki source-hash freshness"
 # Source backend/.env.development so DATABASE_URL is set for the schema
 # fragment build. The check itself is a fast hash diff against the live
 # source tree (~2s). Mirrors the wiki CI workflow.
 set -a && . backend/.env.development && set +a
 pnpm wiki:check
+
+echo "→ pre-push gate (6/6): dev-tool verifier"
+# Only run when the diff touches dev-tool subtree or backend contract
+# sources — verify is moderately expensive (JSDOM + per-panel boot) and
+# adds no value when the diff doesn't affect the dev-tool surface.
+diff_files=$(git diff --cached --name-only origin/main 2>/dev/null || git diff --name-only HEAD)
+if echo "$diff_files" | grep -qE '^(backend/dev-tool/|backend/src/contract/(backend-routes|pipeline-routes)\.ts)'; then
+  pnpm dev-tool:verify
+else
+  echo "  (diff doesn't touch dev-tool surface; skipping)"
+fi
