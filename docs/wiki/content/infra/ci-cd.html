@@ -7,7 +7,7 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:9f95074b8e820a64ecd672a827c3718664d6a66c30f75b4371a50592bac071f8 -->
+<!-- source-hash: sha256:fd95bcc64f2ce14f02e803bac183305ca156ebeb1a723c268a836850a9a10f54 -->
 <!-- last-ticket: MYT-49 -->
 
 <h1>CI/CD</h1>
@@ -339,10 +339,11 @@
 
 <p>
   Every push to <code>main</code> from a developer's machine first passes through
-  <code>.husky/pre-push</code>, a five-stage gate that mirrors what CI is going to re-assert on the
+  <code>.husky/pre-push</code>, a six-stage gate that mirrors what CI is going to re-assert on the
   push it just accepted. The hook runs in cheapest-first order — a one-second grep, a ~3 s
-  typecheck, a ~10 s lint, the ~3 min coverage suite, then a ~2 s wiki source-hash diff. Any non-zero
-  step refuses the push and prints the diagnostic the operator needs.
+  typecheck, a ~10 s lint, the ~3 min coverage suite, a ~2 s wiki source-hash diff, and (when the
+  diff touches the dev-tool surface) a ~30 s JSDOM verifier run. Any non-zero step refuses the
+  push and prints the diagnostic the operator needs.
 </p>
 
 <aside class="wiki-rationale">
@@ -354,7 +355,7 @@
   queue), not coverage on its own.
 </aside>
 
-<p>The five stages, in order:</p>
+<p>The six stages, in order:</p>
 
 <ol>
   <li>
@@ -385,6 +386,17 @@
     — a hash diff of every page's declared sources against the live tree. ~2 s. Mirrors the Wiki CI
     workflow. Added 2026-05-14 after three consecutive red CI runs from wave-3/wave-4 source additions
     that the earlier four-gate hook didn't catch.
+  </li>
+  <li>
+    <strong>Dev-tool verifier.</strong> Conditional — only runs when the diff touches
+    <code>backend/dev-tool/**</code> or <code>backend/src/contract/{backend-routes,pipeline-routes}.ts</code>.
+    Invokes <code>pnpm dev-tool:verify</code>, which boots a JSDOM environment per panel, identity-
+    bootstraps a dev sub, mounts each panel against the live backend, and asserts the panel reaches
+    its declared <code>data-state</code> ready / error / idle / loaded marker. Catches the bug class
+    that vitest unit tests miss (real-backend contract drift) — see the
+    <a href="../runtime/dev-tool.html">dev tool</a> page for the verifier + AUTHORING.md contract.
+    Added 2026-05-15 (<code>myth-e5mn</code>) after three dev-tool bugs shipped to the user despite
+    green unit tests + green <code>dev-tool:check</code>.
   </li>
 </ol>
 

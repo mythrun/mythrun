@@ -14,7 +14,7 @@
 <!-- source: docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:0caec6e9c27816924b9401ed4828e26de3cf1ec4868d485e37a7206b225a5345 -->
+<!-- source-hash: sha256:95fb371bb01f5ad8b7f5fda0d1790c494bb92b85947614d0d9e16d78d2f88cc7 -->
 <!-- last-ticket: MYT-52 -->
 
 <h1>Dev tool</h1>
@@ -61,10 +61,16 @@
   <code>src/api-client.ts</code> is the single <code>fetch</code> wrapper: every HTTP call in the
   app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
   every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
-  page and registers eight panels in order: identity switcher, health, campaign-create,
-  my-campaigns, pipeline-status, live-events (new in MYT-52), campaign-details, and credit-ledger.
-  <code>src/components/</code> holds the per-panel UI. Character-creation consumers will land
-  alongside their routes.
+  page, self-bootstraps the active dev sub against <code>POST /api/users/register</code> on first
+  load (per principle 3 of the dev-tool reliability contract), and registers twelve panels in order:
+  identity switcher, health, campaign-create, my-campaigns, pipeline-status, live-events,
+  campaign-details, credit-ledger, users, invites, session-ticket, and billing. The last four
+  landed in <code>myth-e5mn</code> as part of the full-backend-route-coverage retrofit.
+  <code>src/components/</code> holds the per-panel UI. The reliability harness
+  (<code>scripts/verify.ts</code>) + registry (<code>verify-registry.ts</code>) + contract
+  (<code>AUTHORING.md</code>) live alongside under <code>backend/dev-tool/</code> and are governed
+  by <code>myth-e5mn</code>'s seven principles. Character-creation consumers will land alongside
+  their routes.
 </p>
 
 <aside class="wiki-rationale">
