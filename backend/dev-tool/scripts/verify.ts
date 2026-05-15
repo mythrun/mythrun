@@ -34,7 +34,7 @@ async function probeReachable(url: string): Promise<boolean> {
   }
 }
 
-async function sanityCheckInfra(): Promise<boolean> {
+export async function sanityCheckInfra(): Promise<boolean> {
   const backendUp = await probeReachable(`${BACKEND_URL}/health`)
   const devToolUp = await probeReachable(`${DEV_TOOL_URL}/`)
   if (backendUp && devToolUp) return true
@@ -67,7 +67,7 @@ interface BootstrapResult {
 //      mismatched username on dev-user-1.
 //   2. POST /api/dev/credits/grant — adds `world_gen` credits to the
 //      ledger. The route returns 201 on success.
-async function bootstrapIdentity(): Promise<BootstrapResult> {
+export async function bootstrapIdentity(): Promise<BootstrapResult> {
   const registerRes = await fetch(`${BACKEND_URL}/api/users/register`, {
     method: 'POST',
     headers: {
@@ -213,7 +213,7 @@ function setupJsdomContext(): MountContext {
 // Polls every 50ms up to `timeoutMs` for either selector to match a
 // descendant of `parent`. ready takes precedence on tie. Returns
 // 'timeout' if neither matches by the deadline.
-async function pollForSelector(
+export async function pollForSelector(
   parent: HTMLElement,
   readySelector: string,
   errorSelector: string,
@@ -232,7 +232,7 @@ async function pollForSelector(
 // declared ready/error markers, applies the pattern-aware verdict, and
 // captures console.error noise. Always tears down the JSDOM context so
 // globals don't leak between panels.
-async function verifyPanel(name: string): Promise<PanelResult> {
+export async function verifyPanel(name: string): Promise<PanelResult> {
   const reg = PANEL_REGISTRY[name]
   if (!reg) {
     return { panel: name, status: 'boot-error', details: 'not in PANEL_REGISTRY' }
@@ -289,7 +289,7 @@ async function verifyPanel(name: string): Promise<PanelResult> {
 // test gates CI on drift; this runtime audit surfaces it on every
 // `pnpm dev-tool:verify` invocation so the human sees it without
 // re-running the test suite.
-function routeAudit(): string[] {
+export function routeAudit(): string[] {
   const exercised = new Set<string>()
   for (const reg of Object.values(PANEL_REGISTRY)) {
     for (const r of reg.exercises) {
@@ -344,7 +344,15 @@ async function main(): Promise<void> {
   process.exit(0)
 }
 
-void main().catch((err: unknown) => {
-  console.error('[verify] unexpected error:', err)
-  process.exit(1)
-})
+// Entry-point guard: only run main() when this module is invoked directly
+// as a script (e.g., `tsx scripts/verify.ts`). When imported by tests (or
+// any other consumer of the exported helpers), `main()` must NOT fire —
+// it talks to a real backend + dev-tool and would crash the test process.
+const entryPath = process.argv[1] ?? ''
+const isEntryPoint = import.meta.url === `file://${entryPath}`
+if (isEntryPoint) {
+  main().catch((err: unknown) => {
+    console.error('[verify] unexpected error:', err)
+    process.exit(1)
+  })
+}
