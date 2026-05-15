@@ -8,6 +8,7 @@ import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { entities } from '../entities.js'
+import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -22,6 +23,7 @@ describe('entities repo', () => {
   let pool: Pool
   let userId: string
   let worldId: string
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -32,23 +34,28 @@ describe('entities repo', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('entities')
   })
   afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; the seeded dev users
+    // + system user + demo world remain intact for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
   beforeEach(async () => {
-    await pool.query('DELETE FROM entities')
-    await pool.query('DELETE FROM worlds')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces the prior blanket DELETEs. We
+    // remove only THIS scope's rows from the prior iteration, so the
+    // seeded dev users + system user keep existing across tests.
+    await cleanupTestScope(pool, scope)
     userId = uuidv7()
     worldId = uuidv7()
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [userId, `bypass:ent-${userId.slice(-6)}`, 'Ent', `ent${userId.slice(-6)}`],
+      [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
     )
     await pool.query(
-      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, 'W', 'C', 'generating')`,
-      [worldId, userId],
+      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
+      [worldId, userId, scope.worldName(0)],
     )
   })
 
