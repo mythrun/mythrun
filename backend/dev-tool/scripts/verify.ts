@@ -9,8 +9,10 @@
 //   1 — at least one panel failed
 //   2 — infra not up (backend or dev-tool unreachable) and auto-boot failed
 
+import { JSDOM } from 'jsdom'
+
 import { PANEL_REGISTRY } from '../verify-registry.js'
-import { BACKEND_ROUTES } from '../../src/contract/backend-routes.js'
+import { setCurrentDevSub } from '../src/identity.js'
 
 const BACKEND_URL = 'http://localhost:3030'
 const DEV_TOOL_URL = 'http://127.0.0.1:5273'
@@ -96,6 +98,189 @@ async function bootstrapIdentity(): Promise<BootstrapResult> {
   return { userRegistered, creditsGranted: true }
 }
 
+interface MountContext {
+  readonly cleanup: () => void
+  readonly parent: HTMLDivElement
+  readonly consoleErrors: string[]
+}
+
+// Installs a fresh JSDOM window + document + localStorage + performance on
+// globalThis so panel modules' bare `window`/`document`/`localStorage`/
+// `performance` references resolve. Also wraps `fetch` so panel-relative
+// paths (`/api/...`) hit the backend at BACKEND_URL — mirroring Vite's
+// in-browser proxy behavior. Returns a cleanup that restores the pre-call
+// globals + closes the JSDOM window.
+function setupJsdomContext(): MountContext {
+  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+    url: DEV_TOOL_URL,
+    pretendToBeVisual: true,
+  })
+  const w = dom.window as unknown as Window & typeof globalThis
+  // Panel modules read these as bare globals (no DI), so JSDOM's
+  // window/document/localStorage/performance have to be installed on
+  // globalThis before any mount call runs. Cast through a Record so the
+  // assignments don't trip @typescript-eslint/no-unsafe-member-access.
+  // Save any prior values so cleanup restores them — Node ships its own
+  // `globalThis.performance` (perf hooks) and a default `fetch`; wiping
+  // those between panels breaks the next JSDOM construction.
+  const g = globalThis as unknown as Record<string, unknown>
+  const prior: Record<string, unknown> = {
+    window: g.window,
+    document: g.document,
+    localStorage: g.localStorage,
+    CustomEvent: g.CustomEvent,
+    Event: g.Event,
+    HTMLElement: g.HTMLElement,
+    Node: g.Node,
+  }
+  g.window = w
+  g.document = w.document
+  g.localStorage = w.localStorage
+  // Deliberately NOT overriding `globalThis.performance`. JSDOM reads
+  // Node's native `performance` during construction to build its own
+  // `window.performance`; if we install JSDOM's Performance onto
+  // globalThis between panels, the next JSDOM construction reads it
+  // back and recurses (PerformanceImpl.now calls performance.now which
+  // is itself).
+  // Constructors must be the JSDOM ones so events created in panel code
+  // (e.g., `new CustomEvent(...)` inside identity.ts) pass JSDOM's brand
+  // checks in dispatchEvent. Without this, Node's built-in CustomEvent
+  // gets used and dispatchEvent rejects it as "not of type Event".
+  g.CustomEvent = w.CustomEvent
+  g.Event = w.Event
+  g.HTMLElement = w.HTMLElement
+  g.Node = w.Node
+
+  // fetch wrapper: relative paths get prepended with BACKEND_URL so panel
+  // code written for the in-browser Vite proxy talks to the real backend.
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    let url: string
+    if (typeof input === 'string') {
+      url = input
+    } else if (input instanceof URL) {
+      url = input.toString()
+    } else {
+      url = input.url
+    }
+    if (url.startsWith('/')) {
+      return originalFetch(`${BACKEND_URL}${url}`, init)
+    }
+    return originalFetch(input, init)
+  }
+
+  // Capture console.error so we can surface unexpected logging as a
+  // verification failure (filtered via the panel's errorAllowlist).
+  const consoleErrors: string[] = []
+  const originalConsoleError = console.error
+  console.error = (...args: unknown[]): void => {
+    consoleErrors.push(args.map((a) => String(a)).join(' '))
+  }
+
+  const parent = w.document.createElement('div')
+  w.document.body.appendChild(parent)
+
+  return {
+    parent,
+    consoleErrors,
+    cleanup: () => {
+      console.error = originalConsoleError
+      globalThis.fetch = originalFetch
+      // Restore each prior global; delete if the slot was empty before
+      // (avoids wiping Node's built-in perf hooks / etc. between panels).
+      for (const key of [
+        'window',
+        'document',
+        'localStorage',
+        'CustomEvent',
+        'Event',
+        'HTMLElement',
+        'Node',
+      ] as const) {
+        if (prior[key] === undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+          delete g[key]
+        } else {
+          g[key] = prior[key]
+        }
+      }
+      dom.window.close()
+    },
+  }
+}
+
+// Polls every 50ms up to `timeoutMs` for either selector to match a
+// descendant of `parent`. ready takes precedence on tie. Returns
+// 'timeout' if neither matches by the deadline.
+async function pollForSelector(
+  parent: HTMLElement,
+  readySelector: string,
+  errorSelector: string,
+  timeoutMs: number,
+): Promise<'ready' | 'error' | 'timeout'> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (parent.querySelector(readySelector)) return 'ready'
+    if (parent.querySelector(errorSelector)) return 'error'
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return 'timeout'
+}
+
+// Mounts a single panel in a fresh JSDOM context, polls for its
+// declared ready/error markers, applies the pattern-aware verdict, and
+// captures console.error noise. Always tears down the JSDOM context so
+// globals don't leak between panels.
+async function verifyPanel(name: string): Promise<PanelResult> {
+  const reg = PANEL_REGISTRY[name]
+  if (!reg) {
+    return { panel: name, status: 'boot-error', details: 'not in PANEL_REGISTRY' }
+  }
+  const ctx = setupJsdomContext()
+  try {
+    setCurrentDevSub(DEV_SUB)
+    await reg.mount(ctx.parent)
+    const outcome = await pollForSelector(
+      ctx.parent,
+      reg.readySelector,
+      reg.errorSelector,
+      reg.readyTimeoutMs ?? 2000,
+    )
+    // Pattern-aware verdict. All three patterns currently use the same
+    // verdict logic — pattern field is structural metadata for future
+    // divergence (e.g., event-driven panels may eventually skip
+    // console.error checks during their event-bind phase).
+    if (outcome === 'error') {
+      const errText = ctx.parent.querySelector(reg.errorSelector)?.textContent ?? ''
+      return { panel: name, status: 'error', details: errText.trim().slice(0, 200) }
+    }
+    if (outcome === 'timeout') {
+      return {
+        panel: name,
+        status: 'marker-missing',
+        details: `neither ${reg.readySelector} nor ${reg.errorSelector} appeared within ${String(reg.readyTimeoutMs ?? 2000)}ms`,
+      }
+    }
+    // outcome === 'ready'; check console.error.
+    const filtered = ctx.consoleErrors.filter((msg) => {
+      if (!reg.errorAllowlist) return true
+      return !reg.errorAllowlist.some((allow) => msg.includes(allow))
+    })
+    if (filtered.length > 0) {
+      return {
+        panel: name,
+        status: 'console-error',
+        details: filtered.join(' | ').slice(0, 200),
+      }
+    }
+    return { panel: name, status: 'ok' }
+  } catch (err) {
+    return { panel: name, status: 'boot-error', details: String(err).slice(0, 200) }
+  } finally {
+    ctx.cleanup()
+  }
+}
+
 async function main(): Promise<void> {
   const infraUp = await sanityCheckInfra()
   if (!infraUp) {
@@ -108,11 +293,25 @@ async function main(): Promise<void> {
     `[bootstrap] ${DEV_SUB} ${bootstrap.userRegistered ? 'registered' : 'pre-existing'}; credits granted`,
   )
 
-  // Panel mounts and route audit land in Tasks 7, 8.
-  const panelCount = Object.keys(PANEL_REGISTRY).length
-  const routeCount = BACKEND_ROUTES.length
-  console.log(`[harness] ${String(panelCount)} panels registered; ${String(routeCount)} routes in contract`)
-  console.log('[status] panel-mount loop pending (Task 7)')
+  const panelNames = Object.keys(PANEL_REGISTRY)
+  const results: PanelResult[] = []
+  for (const name of panelNames) {
+    const result = await verifyPanel(name)
+    results.push(result)
+    const tag = result.status === 'ok' ? '✓' : '✗'
+    console.log(
+      `[panel:${name}] ${tag} ${result.status}${result.details ? ` — ${result.details}` : ''}`,
+    )
+  }
+
+  // Route audit lands in Task 8.
+
+  const failed = results.filter((r) => r.status !== 'ok')
+  if (failed.length > 0) {
+    console.log(`\n${String(failed.length)} panel(s) need attention.`)
+    process.exit(1)
+  }
+  console.log('\nAll panels ok.')
   process.exit(0)
 }
 
