@@ -1,16 +1,22 @@
 digraph world_gen {
-  // World-gen non-streaming pipeline. POST /api/campaigns lands the
+  // World-gen pipeline (7 stages, MYT-52). POST /api/campaigns lands the
   // request; cheap pre-checks (concurrent-gen guard, rejection-storm
   // cooldown, credit peek, queue-depth admission) fire BEFORE any LLM
   // call. Guided mode runs the synthesizer; both modes then hit the
   // 3-axis input gate. On allow, a single locked Postgres transaction
   // debits a credit, seeds the world / campaign / pipeline_runs rows,
-  // and the route enqueues a BullMQ world-gen job. The worker walks
-  // five stages — 1 (concept_intake), 4 (starting_situation),
-  // 5 (random_tables) are wired; 2 + 3 visibly fail via
-  // stage-not-implemented. The cost cap is re-read at the start of
-  // each stage; cumulative cost over cap refunds the credit and marks
-  // the world failed. Every lifecycle transition publishes to
+  // and the route enqueues a BullMQ world-gen job (attempts=2,
+  // exponential backoff). The worker walks seven stages: 1 +
+  // 4 + 5 are non-streaming Sonnet; 2 + 3 are streaming Opus with the
+  // partialObjectStream entity emitter; 4 (entity_relationships) is
+  // streaming Sonnet; 7 (coherence_pass) is non-streaming Sonnet. Each
+  // stage handler returns a StageDispatchResult { costUsd, tokens,
+  // finalizedEvents, capExhausted }; the outer runStage owns
+  // BEGIN/COMMIT and publishes finalizedEvents only AFTER COMMIT. The
+  // cost cap is re-read at the start of each stage; cumulative cost
+  // over cap refunds the credit and marks the world failed, except at
+  // stage 7 where cap-fire marks the world COMPLETE (coherence is
+  // best-effort polish). Lifecycle + entity events publish to
   // pipeline:campaign:{campaignId} for the status surface.
   rankdir=LR;
   compound=true;
@@ -28,7 +34,7 @@ digraph world_gen {
     synth [label="synthesize-concept.ts\nguided only — Sonnet\n→ concept + intentSummary"];
     gate  [label="input-gate.ts\nSonnet, 3 axes\n  srd_compat | clone_intent\n  | inappropriate\naggregate-confidence rule"];
     tx    [label="locked tx (Postgres)\n  advisory lock on user\n  debit credit_ledger\n  INSERT worlds (generating)\n  INSERT campaigns (setup)\n  INSERT campaign_members\n  seed pipeline_runs row"];
-    enq   [label="worldGenQueue.add\n  name: 'world-gen'\n  jobId: campaignId\n  (dedupe via removeOnComplete:0)"];
+    enq   [label="worldGenQueue.add\n  name: 'world-gen'\n  jobId: campaignId\n  attempts: 2\n  exponential backoff 30s\n  removeOn{Complete,Fail}: 0"];
   }
 
   subgraph cluster_redis {
@@ -45,14 +51,18 @@ digraph world_gen {
     color="ember";
     fontcolor="ember";
 
-    proc   [label="world-gen-processor.ts\nreadCostCap once per job\natomic claim per stage\nstuck-stage reset (>5min)", color="ember", fontcolor="ember"];
+    proc   [label="world-gen-processor.ts\nreadCostCap once per job\natomic claim per stage\nstuck-stage reset (>5min)\nrunStage owns BEGIN/COMMIT\npublishes finalizedEvents\n  only after COMMIT", color="ember", fontcolor="ember"];
 
-    s1     [label="stage 1\nconcept_intake\nSonnet + paint-job validator\n(judge + ≤3 attempts)"];
-    s2     [label="stages 2 + 3\nworld_and_factions\nlocations_and_npcs\nstageNotImplementedHandler"];
-    s4     [label="stage 4\nstarting_situation\nSonnet"];
-    s5     [label="stage 5\nrandom_tables\nSonnet"];
+    s1     [label="stage 1\nconcept_intake\nSonnet (non-stream)\npaint-job validator\n→ worlds.tone/themes/era…"];
+    s2     [label="stage 2\nworld_and_factions\nOpus streaming\nregions + factions\n→ entities + prose_kernels + facts\n→ worlds.world_overview"];
+    s3     [label="stage 3\nlocations_and_npcs\nOpus streaming\n3-pass parent resolver\n→ entities + prose + facts\n+ entity_hierarchy"];
+    s4     [label="stage 4\nentity_relationships\nSonnet streaming\ndeleteByWorld on retry\nUUID pre-filter for\nhallucinated refs\n→ relationships"];
+    s5     [label="stage 5\nstarting_situation\nSonnet (non-stream)\n→ worlds.starting_situation"];
+    s6     [label="stage 6\nrandom_tables\nSonnet (non-stream)\n→ worlds.random_tables"];
+    s7     [label="stage 7\ncoherence_pass\nSonnet (non-stream)\npatch types:\n  fix_fact / fix_prose\n  fix_relationship\n  rename_entity\n  delete_relationship\nunknown UUIDs: skip"];
 
-    capchk [label="cost-cap.ts\nsumCompletedStageCosts\n> cap?  → refund + fail"];
+    capchk [label="cost-cap.ts\nsumCompletedStageCosts\n> cap?  → refund + fail\n  (EXCEPT stage 7:\n   capExhausted → complete)"];
+    repair [label="structured-output-repair.ts\nHaiku → Sonnet\npreserves array length\non Zod failure"];
   }
 
   subgraph cluster_pg {
@@ -63,6 +73,7 @@ digraph world_gen {
     worlds        [label="worlds\nstatus: generating →\n  complete | failed"];
     settings      [label="settings\nworld_gen_cost_cap_usd"];
     ledger        [label="credit_ledger\ndebit + cost_cap_refund\n  + admin (dev)"];
+    entities_t    [label="entities + prose_kernels\n+ facts + relationships\n+ entity_hierarchy"];
   }
 
   // Request → pre-checks → LLM → tx → enqueue → 201
@@ -72,7 +83,7 @@ digraph world_gen {
   synth  -> gate;
   pre    -> gate  [label="if freeform", style=dashed];
   gate   -> tx    [label="verdict=allow"];
-  gate   -> client [label="422 concept_rejected", style=dashed];
+  gate   -> client [label="422 concept_rejected\nor content_filtered", style=dashed];
   tx     -> ledger [label="debit", style=dashed];
   tx     -> worlds [label="INSERT generating", style=dashed];
   tx     -> pipeline_runs [label="seed pending", style=dashed];
@@ -85,20 +96,51 @@ digraph world_gen {
   proc   -> settings [label="readCostCap", style=dotted];
   proc   -> s1;
   s1     -> s2;
-  s2     -> s4   [label="visible fail\nphase=world_gen_failed", style=dashed];
+  s2     -> s3;
+  s3     -> s4;
   s4     -> s5;
+  s5     -> s6;
+  s6     -> s7;
+
+  // Streaming stages drop through repair on Zod failure
+  s2     -> repair [label="on Zod fail", style=dotted];
+  s3     -> repair [style=dotted];
+  s4     -> repair [style=dotted];
+
+  // Cap check after every stage
   s1     -> capchk [style=dotted, label="after each stage"];
+  s2     -> capchk [style=dotted];
+  s3     -> capchk [style=dotted];
   s4     -> capchk [style=dotted];
   s5     -> capchk [style=dotted];
+  s6     -> capchk [style=dotted];
+  s7     -> capchk [style=dotted];
   capchk -> ledger [label="cost_cap_refund\n+1 credit", style=dashed];
   capchk -> worlds [label="status=failed", style=dashed];
 
+  // Persistence
+  s1     -> worlds [label="UPDATE\ntone/themes/era…", style=dotted];
+  s2     -> entities_t [label="regions + factions", style=dotted];
+  s3     -> entities_t [label="locations + NPCs\n+ parents", style=dotted];
+  s4     -> entities_t [label="relationships", style=dotted];
+  s5     -> worlds [label="starting_situation", style=dotted];
+  s6     -> worlds [label="random_tables", style=dotted];
+  s7     -> entities_t [label="patches (best-effort)", style=dotted];
+  s7     -> worlds [label="status=complete", style=dashed];
+
   // Stage results
   s1     -> pipeline_runs [label="completed +\n cost_usd", style=dotted];
-  s4     -> pipeline_runs [style=dotted];
-  s5     -> pipeline_runs [style=dotted];
-  s5     -> worlds        [label="status=complete", style=dashed];
+  s7     -> pipeline_runs [style=dotted];
 
-  // Worker publishes lifecycle events
-  proc   -> channel [label="phase / stage-started /\nstage-completed / cost-update /\nstage-failed", style=dashed];
+  // Worker publishes events: lifecycle + entity/edge.
+  // Mid-stream: entity-added / entity-updated / edge-added via the
+  // streaming extractor (synthKey: stage/arrayPath/index).
+  // Post-COMMIT: finalized (synthKey → entityId), plus stage-7 patch
+  // events (entity-updated, edge-removed, edge-added) and the §D5
+  // cap-fire phase:complete.
+  proc   -> channel [label="phase / stage-* /\ncost-update / stage-failed", style=dashed];
+  s2     -> channel [label="entity-added / -updated\n(mid-stream)\nfinalized (post-COMMIT)", style=dashed];
+  s3     -> channel [label="entity-added / -updated\nfinalized\nentity-updated\n  {parent_location: null}", style=dashed];
+  s4     -> channel [label="edge-added (mid-stream)", style=dashed];
+  s7     -> channel [label="entity-updated /\nedge-removed / edge-added\n(post-COMMIT)", style=dashed];
 }

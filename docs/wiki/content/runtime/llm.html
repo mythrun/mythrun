@@ -3,16 +3,19 @@
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
 <!-- source-hash: sha256:0150266f72fef2aabd261e4f803a5e062dd17d4cb3488df36fb98503de0f5e98 -->
-<!-- last-ticket: MYT-49 -->
+<!-- last-ticket: MYT-52 -->
 
 <h1>LLM client</h1>
 
 <p class="lead">
   The thin shell every Mythrun LLM call sits on top of. Three tier-named model constants
   (<code>HAIKU</code>, <code>SONNET</code>, <code>OPUS</code>), a logging + error-normalization
-  middleware, a typed error taxonomy, a file-based prompt loader, and the first call site —
-  <code>classifyProfanity</code> on the onboarding path. Everything heavier (provider mechanics,
-  retries, structured-output validation) is delegated to Vercel AI SDK v6.
+  middleware that handles both <code>generateText</code> and <code>streamObject</code> /
+  <code>streamText</code> call shapes, a typed error taxonomy (eight classes including the terminal
+  <code>LlmContentFilteredError</code>), and a file-based prompt loader. Consumers include the
+  onboarding profanity classifier, the world-gen input gate, the paint-job validator, the seven
+  world-gen stage handlers, and the structured-output repair chain. Everything heavier (provider
+  mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
 </p>
 
 <!-- @diagram: runtime/llm -->
@@ -151,7 +154,7 @@
   guarantee that.
 </p>
 
-<p>Six terminal states are possible; each produces exactly one log entry:</p>
+<p>Seven terminal states are possible; each produces exactly one log entry:</p>
 
 <table>
   <thead>
@@ -174,6 +177,14 @@
       <td>finish part with <code>finishReason.unified === 'error'</code></td>
       <td><code>llm.call</code> (info, with the unified reason)</td>
       <td>stream closes naturally — provider already shaped the error</td>
+    </tr>
+    <tr>
+      <td>Content-policy filter</td>
+      <td>finish part with <code>finishReason.unified === 'content-filter'</code></td>
+      <td><code>llm.error</code> (error, <code>reason: 'content-filter'</code>)</td>
+      <td>
+        <code>LlmContentFilteredError</code> raised through the controller — terminal, no retry
+      </td>
     </tr>
     <tr>
       <td>In-stream error</td>
@@ -201,6 +212,20 @@
     </tr>
   </tbody>
 </table>
+
+<aside class="wiki-rationale">
+  <strong>Content-policy filter is distinct from provider-graceful error</strong> — Anthropic's
+  <code>finishReason.unified</code> distinguishes <code>error</code> (the model itself failed
+  partway through and the provider shaped the error gracefully) from
+  <code>content-filter</code> (the safety classifier terminated generation because the prompt or its
+  continuation tripped content policy). Treating them the same would mean an output-quality failure
+  (retryable) and a policy failure (terminal — retrying the same payload hits the same filter) flow
+  through the same code path. The middleware's <code>wrapGenerate</code> also detects
+  <code>content-filter</code> on its non-streaming side and raises
+  <code>LlmContentFilteredError</code>, even though the SDK reports the call as a success. The error
+  maps to HTTP 422 with no <code>Retry-After</code> — the right next action is the user adjusting
+  their input.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Terminate-once via closure flag, not per-state idempotency</strong> — every state needs to
@@ -239,10 +264,11 @@
   <code>AI_NoObjectGeneratedError</code> (matched by name to avoid a brittle deep-import), or
   <code>APICallError</code> with status code dispatch. Unknown errors pass through unchanged so
   Fastify's default error handler still catches them as 500. Every mapped error preserves the
-  original as <code>cause</code> for stack-trace forensics. The middleware's <code>wrapGenerate</code>
-  also detects <code>finishReason.unified === 'content-filter'</code> on otherwise-successful calls
-  and raises <code>LlmContentFilteredError</code> from there — the call doesn't reject from the SDK,
-  but the response is unusable, so the middleware shapes it into the taxonomy at call-frame edge.
+  original as <code>cause</code> for stack-trace forensics. The middleware's
+  <code>wrapGenerate</code> also detects <code>finishReason.unified === 'content-filter'</code> on
+  otherwise-successful calls and raises <code>LlmContentFilteredError</code> from there — the call
+  doesn't reject from the SDK, but the response is unusable, so the middleware shapes it into the
+  taxonomy at call-frame edge.
 </p>
 
 <p>
@@ -475,7 +501,8 @@
         <code>LlmRateLimitedError</code>, <code>LlmOverloadedError</code>,
         <code>LlmAuthError</code>, <code>LlmInvalidRequestError</code>,
         <code>LlmContextTooLongError</code>, <code>LlmTimeoutError</code>,
-        <code>LlmStructuredOutputError</code>, <code>mapToMythrunError(err)</code>.
+        <code>LlmStructuredOutputError</code>, <code>LlmContentFilteredError</code>,
+        <code>mapToMythrunError(err)</code>.
       </td>
     </tr>
     <tr>
@@ -656,6 +683,10 @@
     <tr>
       <td><code>LlmStructuredOutputError</code></td>
       <td>502 (provider returned unparseable output)</td>
+    </tr>
+    <tr>
+      <td><code>LlmContentFilteredError</code></td>
+      <td>422 (<code>code: 'content_filtered'</code>; no <code>Retry-After</code>)</td>
     </tr>
   </tbody>
 </table>

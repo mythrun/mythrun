@@ -7,9 +7,11 @@
 <!-- source: backend/src/contract/pipeline-routes.ts -->
 <!-- source: backend/src/contract/pipeline-events.ts -->
 <!-- source: backend/dev-tool/src/components/status-panel.ts -->
+<!-- source: backend/dev-tool/src/components/live-events-panel.ts -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md -->
-<!-- source-hash: sha256:81b71ba66b937581627c8b9d6fa3c8dda230c82e192858b6fb2748e51dabd924 -->
-<!-- last-ticket: MYT-50 -->
+<!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
+<!-- source-hash: sha256:23864d736726a2be2f7ebe8cae919a2aec407a2822a8eb47b13884a890206701 -->
+<!-- last-ticket: MYT-52 -->
 
 <h1>Pipeline status</h1>
 
@@ -44,13 +46,17 @@
 </aside>
 
 <p>
-  MYT-50 lands only the consumption side. The worker (MYT-49 shell, MYT-51+ real processors) is what
-  publishes events to Redis; this page documents how those events reach attached clients. The
-  contract files <code>backend/src/contract/pipeline-routes.ts</code> and
-  <code>pipeline-events.ts</code> declare the surface — two routes today, thirteen event types (six
-  lifecycle events landed now, seven entity / edge events that arrive verbatim from the worker but
-  render later in MYT-52). The bridge itself is type-blind: every JSON payload published on a
-  campaign channel is forwarded to attached sinks unchanged.
+  The status surface itself is the consumption side: the worker (real processors landed across
+  MYT-49 / MYT-51 / MYT-52) is what publishes events to Redis; this page documents how those events
+  reach attached clients. The contract files
+  <code>backend/src/contract/pipeline-routes.ts</code> and <code>pipeline-events.ts</code> declare
+  the surface — two routes, thirteen event types. With MYT-52 landed all thirteen arms have
+  producers (six lifecycle from the processor, seven entity / edge from the streaming extractor +
+  the post-COMMIT <code>finalizedEvents</code> pipe) AND a consumer in the
+  <a href="./dev-tool.html#the-live-events-panel">dev tool's live-events panel</a>. The bridge
+  itself is type-blind: every JSON payload published on a campaign channel is forwarded to attached
+  sinks unchanged. The status panel applies the six lifecycle events live; the live-events panel
+  renders all thirteen as wire-data cards.
 </p>
 
 <h2>The two endpoints</h2>
@@ -454,14 +460,16 @@
     <code>pnpm db:up</code>, <code>pnpm dev</code>, <code>pnpm dev:dev-tool</code>.
   </li>
   <li>
-    Pick or create a campaign row in Postgres (until MYT-51 ships the real create flow, an
-    <code>INSERT INTO campaigns</code> via <code>psql</code> is the path). Note the <code>id</code>.
+    Create a campaign via the dev tool's create-panel (freeform mode is fastest — paste a 20+
+    character concept and submit). The 201 response carries the
+    <code>campaignId</code>; the my-campaigns panel below it shows the new row.
   </li>
   <li>
-    In the dev tool's Pipeline status panel, paste the <code>campaignId</code> into the input and
-    click Watch. The panel opens an <code>EventSource</code> on
-    <code>/api/campaigns/{id}/status/stream</code>; the first frame is the snapshot and renders the
-    phase + stages list.
+    Click the Watch button on the campaign in the my-campaigns panel. The
+    <a href="./dev-tool.html">dev tool</a> dispatches <code>mythrun.watchcampaign</code>; both the
+    pipeline-status panel and the live-events panel open SSE connections. The status panel renders
+    the snapshot's phase + stages list and applies lifecycle events live. The live-events panel
+    renders every event arm as a wire-data card.
   </li>
   <li>
     To smoke-test the live-event path without the worker, publish a fake event via
@@ -469,9 +477,10 @@
     <code
       >redis-cli PUBLISH "development:use1:pipeline:campaign:&lt;id&gt;"
       '{"type":"phase","phase":"world_gen"}'</code
-    >. The panel's phase row updates within a frame's RTT. Unknown event types are silently ignored
-    — entity / edge events from MYT-51 will flow through but won't render until MYT-52's live-events
-    inspector panel lands.
+    >. Both panels react within a frame's RTT — the status panel's phase row updates, and the
+    live-events panel appends a <code>phase world_gen</code> card. Unknown event types silently fall
+    through to the live-events panel's <code>other</code> bucket (rendered, but not interpreted by
+    the status panel).
   </li>
 </ol>
 
@@ -500,26 +509,23 @@
   share.
 </p>
 
-<h2>Out of scope (Phase 0)</h2>
-
-<p>
-  Seven entity / edge event types (<code>stage-reset</code>, <code>entity-added</code>,
-  <code>entity-updated</code>, <code>entity-removed</code>, <code>edge-added</code>,
-  <code>edge-removed</code>, <code>finalized</code>) are declared in
-  <code>pipeline-events.ts</code> so MYT-51+ worker emissions don't have to expand the contract
-  piecemeal — but the dev tool's live-events inspector panel for them lands in MYT-52.
-  <code>entity-removed</code> and <code>edge-removed</code> were added during MYT-52 design review
-  for the repair-chain + coherence-pass delete paths so the "client never sees entities disappear
-  silently" invariant holds. The bridge forwards every arm verbatim today; consumers that don't know
-  what to do with a frame silently ignore it. Dev-tool coverage marks all seven
-  <code>exempt</code> with a MYT-52 pointer.
-</p>
+<h2>Out of scope</h2>
 
 <p>
   JWT-expiry and membership-revocation eviction mid-stream are not handled. If a user is removed
   from a campaign while they're holding a stream open, they keep receiving events until the next
   close (idle, shutdown, or resync). The 30-minute idle timeout bounds the exposure window. A proper
   per-frame auth re-check is a post-launch hardening item.
+</p>
+
+<p>
+  The <code>entity-removed</code> arm is reserved in the contract but no current worker code path
+  produces it — the streaming-stages repair chain preserves array length, so dropped entities don't
+  reach the wire. The arm is in the contract so future repair-policy changes (e.g. a "drop
+  unrepairable rows" mode) don't have to expand the wire format piecemeal.
+  <code>job-failed</code> is similarly reserved — there's no current BullMQ-level terminal failure
+  path that publishes it; transient failures route through <code>stage-failed</code>
+  + retry instead.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -585,8 +591,10 @@
     <tr>
       <td><code>backend/src/contract/pipeline-events.ts</code></td>
       <td>
-        Thirteen event-type strings (six MYT-50 lifecycle + seven MYT-52 entity / edge) plus the
-        typed <code>PipelineEvent</code> discriminated union.
+        Thirteen event-type strings (six lifecycle + seven entity / edge) plus the typed
+        <code>PipelineEvent</code> discriminated union. Entity events carry a
+        <code>synthKey</code> of the form <code>${stage}/${arrayPath}/${index}</code>;
+        <code>finalized</code> binds it to the real <code>entityId</code> post-COMMIT.
       </td>
     </tr>
     <tr>

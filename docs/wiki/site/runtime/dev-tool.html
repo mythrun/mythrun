@@ -234,12 +234,10 @@
   <code>src/api-client.ts</code> is the single <code>fetch</code> wrapper: every HTTP call in the
   app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
   every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
-  page; <code>src/components/</code> holds the per-panel UI — currently the health panel, the
-  <a href="pipeline-status.html">pipeline status panel</a> (an SSE consumer for
-  <code>/api/campaigns/:campaignId/status/stream</code>), and the
-  <a href="world-gen.html">campaign-create</a>, <a href="world-gen.html">campaign-details</a>, and
-  <a href="world-gen.html">credit-ledger</a> panels added with the world-gen pipeline.
-  Character-creation consumers will land alongside their routes.
+  page and registers eight panels in order: identity switcher, health, campaign-create,
+  my-campaigns, pipeline-status, live-events (new in MYT-52), campaign-details, and credit-ledger.
+  <code>src/components/</code> holds the per-panel UI. Character-creation consumers will land
+  alongside their routes.
 </p>
 
 <aside class="wiki-rationale">
@@ -290,6 +288,105 @@
   authenticated routes work end-to-end; the dev tool holds the canonical list, the migration
   consumes it.
 </aside>
+
+<h2 id="the-live-events-panel">The live-events panel</h2>
+
+<p>
+  <code>backend/dev-tool/src/components/live-events-panel.ts</code> is the wire-data inspector for
+  the prep pipeline's SSE stream — every JSON payload published on
+  <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> renders as a card in chronological
+  order, with a derived current-entity inventory underneath. It is deliberately NOT a graph
+  renderer: the design spec (§6 of the MYT-52 streaming-stages document) is explicit that the panel
+  exists to make the wire format inspectable while the streaming stages are being authored and
+  debugged. A graph view of the world the LLM is generating is a different surface and belongs to
+  the eventual player-facing client.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Inspector, not visualizer</strong> — debugging a streaming-extractor bug needs to see the
+  exact wire payload of every event: the synthKey, the partial entity shape on each
+  <code>entity-updated</code>, the resolver's <code>{ parent_location: null }</code> patch, the
+  cap-fire <code>phase: complete</code> from stage 7. A graph visualization smooths over those
+  details — it shows "a region appeared" but not the seven incremental
+  <code>entity-updated</code> events that filled it in. The dev tool's audience is the engineer
+  authoring the streaming pipeline; the wire-data view is the closest thing to running
+  <code>redis-cli PSUBSCRIBE</code> with a real UI.
+</aside>
+
+<p>
+  Each event renders as a one-line compact summary (event type left-aligned, then primary identifier
+  and key metric — e.g. <code>stage-completed locations_and_npcs $0.1632</code>) with an indented
+  detail line underneath (duration, reason, name). Clicking the primary line expands a full JSON
+  dump of the event for the cases where the compact view loses fidelity.
+</p>
+
+<p>
+  Five filter chips sit at the top of the panel — <code>phase</code> (covers <code>phase</code> +
+  <code>cost-update</code>), <code>stage</code> (every <code>stage-*</code> arm including
+  <code>stage-reset</code>), <code>entity</code> (covers <code>entity-*</code> +
+  <code>finalized</code>), <code>edge</code>, and <code>other</code> as a catch-all for future arms
+  the contract grows. Toggling a chip off hides matching events from the log without evicting them
+  from the underlying buffer; re-toggle to bring them back. The chips collapse the thirteen event
+  arms into five practical buckets for human triage.
+</p>
+
+<h3 id="the-current-entity-inventory">The current-entity inventory</h3>
+
+<p>
+  Below the event log, <code>deriveInventory</code> walks the event entries in order and
+  reconstructs the current entity state. <code>entity-added</code> seeds a new row in the inventory
+  map keyed on <code>synthKey</code>. <code>entity-updated</code> applies the patch via RFC 7396
+  merge-patch semantics over top-level keys — null deletes a key, scalar replacements overwrite,
+  nested objects and arrays replace wholesale (no recursion per the contract).
+  <code>finalized</code> binds the synthKey's <code>displayId</code> to the real
+  <code>entityId</code>, which is what the inventory's leftmost column renders.
+  <code>entity-removed</code> deletes the row. <code>stage-reset</code> evicts every row whose
+  synthKey starts with the stage's prefix (e.g. <code>world_and_factions/</code>) — the ROLLBACK
+  invariant: a reset stage's mid-flight entities never persisted, so the client must drop them.
+</p>
+
+<p>
+  Edges aren't rendered as rows; the inventory tracks a simple
+  <code>edgeCount</code> that <code>edge-added</code> increments and
+  <code>edge-removed</code> decrements, surfaced as <code>N entities • M edges</code> in the summary
+  line. Visualizing the graph itself is out of scope; the count is what's useful at the wire-debug
+  level.
+</p>
+
+<h3 id="the-2000-event-cap">The 2000-event cap</h3>
+
+<p>
+  A streaming world-gen run emits hundreds of events — every partial-tree iteration in the streaming
+  extractor that closes a new field produces an <code>entity-updated</code>. With multiple campaigns
+  watched in a session, the event log would grow unbounded. The panel caps the buffer at 2000
+  entries; when an overflow lands, <code>applyCap</code> drops the oldest 100-event batch and
+  inserts a single synthetic <code>[…N earlier events dropped]</code> placeholder at the position of
+  the oldest remaining entry. Subsequent evictions accumulate into the placeholder rather than
+  chaining placeholders — the panel only ever shows one summary card at the top of the log.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>FIFO cap with a placeholder, not a circular buffer with no signal</strong> — silently
+  dropping events would let an engineer scroll up looking for the first
+  <code>entity-added</code> for a specific synthKey and not find it, with no indication of why. The
+  placeholder card makes the eviction visible: scrolling up hits
+  <code>[…137 earlier events dropped]</code> and stops there. The cap is a hard ceiling, not a
+  sliding window, so behaviour is deterministic across runs.
+</aside>
+
+<h3 id="wiring-to-the-sse-stream">Wiring to the SSE stream</h3>
+
+<p>
+  The panel listens for two custom DOM events. <code>mythrun.watchcampaign</code> (dispatched by the
+  campaign-details panel when the user clicks "Watch" on a campaign id) opens an SSE connection via
+  <code>openSse('/api/campaigns/:id/status/stream')</code> from <code>sse-client.ts</code>. The
+  first frame is the snapshot — explicitly ignored by the live panel (the status panel renders it).
+  Subsequent <code>message</code> frames are parsed as <code>LiveEvent</code> and pushed through the
+  cap-and-render pipeline. <code>mythrun.closewatch</code> (dispatched on identity switch by
+  <code>main.ts</code>'s <code>onIdentityChanged</code> hook) closes the connection, clears the
+  buffer, and resets the chips back to all-on. Switching identities is the cleanest "start over"
+  trigger; the panel doesn't ship its own close button at Phase 0.
+</p>
 
 <h2 id="the-ship-gate">The ship gate</h2>
 
@@ -558,7 +655,13 @@
     </tr>
     <tr>
       <td><code>backend/dev-tool/src/components/</code></td>
-      <td>Per-panel UI. Phase 0 ships the health panel; pipeline panels land in MYT-50 onward.</td>
+      <td>
+        Per-panel UI. <code>health-panel</code>, <code>status-panel</code> (snapshot + applied
+        lifecycle events), <code>live-events-panel</code> (wire-data inspector, all 13 event arms),
+        <code>campaign-create-panel</code>, <code>my-campaigns-panel</code>,
+        <code>campaign-details-panel</code>, <code>credit-ledger-panel</code>,
+        <code>identity-switcher</code>.
+      </td>
     </tr>
     <tr>
       <td><code>backend/dev-tool/coverage.json</code></td>
@@ -656,7 +759,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#bring-up">Bring-up</a></li><li style="padding-left:0"><a href="#the-identity-switcher">The identity switcher</a></li><li style="padding-left:0"><a href="#the-ship-gate">The ship gate</a></li><li style="padding-left:0"><a href="#the-exempt-list">The exempt list</a></li><li style="padding-left:0"><a href="#hard-rules">Hard rules</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-dev-tool-locally">Run the dev tool locally</a></li><li style="padding-left:12px"><a href="#add-a-pipeline-route-the-shape-the-gate-enforces">Add a pipeline route (the shape the gate enforces)</a></li><li style="padding-left:12px"><a href="#exempt-a-contract-entry">Exempt a contract entry (rare)</a></li><li style="padding-left:12px"><a href="#diagnose-a-failing-dev-tool-check">Diagnose a failing dev-tool:check</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#workspace-files">Workspace files</a></li><li style="padding-left:12px"><a href="#ship-gate-files">Ship gate files</a></li><li style="padding-left:12px"><a href="#bring-up-surface">Bring-up surface</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#bring-up">Bring-up</a></li><li style="padding-left:0"><a href="#the-identity-switcher">The identity switcher</a></li><li style="padding-left:0"><a href="#the-live-events-panel">The live-events panel</a></li><li style="padding-left:12px"><a href="#the-current-entity-inventory">The current-entity inventory</a></li><li style="padding-left:12px"><a href="#the-2000-event-cap">The 2000-event cap</a></li><li style="padding-left:12px"><a href="#wiring-to-the-sse-stream">Wiring to the SSE stream</a></li><li style="padding-left:0"><a href="#the-ship-gate">The ship gate</a></li><li style="padding-left:0"><a href="#the-exempt-list">The exempt list</a></li><li style="padding-left:0"><a href="#hard-rules">Hard rules</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-dev-tool-locally">Run the dev tool locally</a></li><li style="padding-left:12px"><a href="#add-a-pipeline-route-the-shape-the-gate-enforces">Add a pipeline route (the shape the gate enforces)</a></li><li style="padding-left:12px"><a href="#exempt-a-contract-entry">Exempt a contract entry (rare)</a></li><li style="padding-left:12px"><a href="#diagnose-a-failing-dev-tool-check">Diagnose a failing dev-tool:check</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#workspace-files">Workspace files</a></li><li style="padding-left:12px"><a href="#ship-gate-files">Ship gate files</a></li><li style="padding-left:12px"><a href="#bring-up-surface">Bring-up surface</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

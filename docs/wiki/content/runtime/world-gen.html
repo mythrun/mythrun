@@ -2,15 +2,22 @@
 <!-- source: backend/src/contract/pipeline-routes.ts -->
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/contract/pipeline-errors.ts -->
+<!-- source: backend/src/contract/pipeline-events.ts -->
 <!-- source: backend/src/llm/prep/synthesize-concept.ts -->
 <!-- source: backend/src/llm/prep/input-gate.ts -->
 <!-- source: backend/src/llm/prep/paint-job-validator.ts -->
 <!-- source: backend/src/llm/prep/cost-cap.ts -->
+<!-- source: backend/src/llm/prep/streaming-extractor.ts -->
+<!-- source: backend/src/llm/prep/structured-output-repair.ts -->
 <!-- source: backend/src/llm/prep/stages/concept-intake.ts -->
+<!-- source: backend/src/llm/prep/stages/world-and-factions.ts -->
+<!-- source: backend/src/llm/prep/stages/locations-and-npcs.ts -->
+<!-- source: backend/src/llm/prep/stages/entity-relationships.ts -->
 <!-- source: backend/src/llm/prep/stages/starting-situation.ts -->
 <!-- source: backend/src/llm/prep/stages/random-tables.ts -->
-<!-- source: backend/src/llm/prep/stages/stage-not-implemented.ts -->
+<!-- source: backend/src/llm/prep/stages/coherence-pass.ts -->
 <!-- source: backend/src/llm/prep/world-gen-processor.ts -->
+<!-- source: backend/src/server.ts -->
 <!-- source: backend/src/routes/dev-credits.ts -->
 <!-- source: backend/src/repo/credit-grants.ts -->
 <!-- source: backend/src/auth/rejection-storm.ts -->
@@ -23,9 +30,10 @@
 <!-- source: backend/dev-tool/src/components/credit-ledger-panel.ts -->
 <!-- source: backend/dev-tool/coverage.json -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md -->
+<!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:944439a4840b904e6048fc86ddabd47805e3111eba96c9742fe2b41322531ae3 -->
-<!-- last-ticket: MYT-51 -->
+<!-- source-hash: sha256:1d349fe56841dbed61c52898b41a98bd902418edd8731ba03ed173975e84524f -->
+<!-- last-ticket: MYT-52 -->
 
 <h1>World gen</h1>
 
@@ -33,15 +41,16 @@
   The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a
   concept (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a
   3-axis Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked
-  transaction, and enqueues a BullMQ job. The worker walks seven stages — all wired in MYT-52
-  (<code>concept_intake</code>, <code>world_and_factions</code>, <code>locations_and_npcs</code>,
-  <code>entity_relationships</code>, <code>starting_situation</code>, <code>random_tables</code>,
-  <code>coherence_pass</code>). Four of those (stages 2/3/4 + 7) ship streaming output via
-  <code>streamObject</code> + structured-output repair; the others use the non-streaming
-  <code>generateText</code> + <code>Output.object</code> shape from MYT-51. A cost-cap
-  circuit breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; if
-  the cumulative cost ever exceeds it, the worker refunds the debited credit and marks the world
-  failed.
+  transaction, and enqueues a BullMQ job. The worker walks seven stages — three non-streaming Sonnet
+  calls (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>),
+  three streaming stages with live entity emission (<code>world_and_factions</code> Opus,
+  <code>locations_and_npcs</code> Opus, <code>entity_relationships</code> Sonnet), and a final
+  non-streaming Sonnet <code>coherence_pass</code>. Each stage handler returns a unified
+  <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the outer
+  scope owns BEGIN/COMMIT and publishes the finalized events only after COMMIT. A cost-cap circuit
+  breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; over-cap
+  refunds the credit and marks the world failed — except at stage 7, where cap-fire marks the world
+  COMPLETE (coherence is best-effort polish).
 </p>
 
 <!-- @diagram: runtime/world-gen -->
@@ -69,12 +78,12 @@
   history). World-id is an internal join key. The route surface, the status SSE channel
   (<code>pipeline:campaign:{campaignId}</code>), and the BullMQ <code>jobId</code> all key on
   <code>campaignId</code>; the 201 response from the create flow returns only
-  <code>campaignId</code>. This is also why the create transaction seeds a
-  <code>pipeline_runs</code> row keyed on <code>world_id</code> +
-  <code>stage = 'concept_intake'</code> with <code>status = 'pending'</code> — a Redis blip between
-  COMMIT and <code>queue.add</code> presents as <code>world_gen_failed</code> via the existing
-  <code>derivePhase</code> rules instead of <code>not_started</code>, which the resume route's
-  <code>world_gen_failed</code> arm can recover from cleanly.
+  <code>campaignId</code>. The create transaction seeds a <code>pipeline_runs</code> row keyed on
+  <code>world_id</code> + <code>stage = 'concept_intake'</code> with
+  <code>status = 'pending'</code> so a Redis blip between COMMIT and <code>queue.add</code> presents
+  as <code>world_gen_failed</code> via the existing <code>derivePhase</code> rules instead of
+  <code>not_started</code>, which the resume route's <code>world_gen_failed</code> arm can recover
+  from cleanly.
 </aside>
 
 <p>
@@ -113,8 +122,11 @@
       <td>
         <code>201 { campaignId }</code> on success; <code>400 invalid_body</code> on Zod failure;
         <code>403 insufficient_credits</code>; <code>409 concurrent_generation_in_progress</code>;
-        <code>422 concept_rejected</code>; <code>429 rejection_storm_cooldown</code>;
-        <code>503 queue_full</code> (with <code>Retry-After: 60</code>).
+        <code>422 concept_rejected</code>; <code>422 content_filtered</code> (Anthropic's
+        content-policy filter rejected the prompt — terminal, no <code>Retry-After</code> because
+        retrying with the same payload hits the same filter);
+        <code>429 rejection_storm_cooldown</code>; <code>503 queue_full</code> (with
+        <code>Retry-After: 60</code>).
       </td>
     </tr>
     <tr>
@@ -149,7 +161,7 @@
         <code>202 { campaignId, action }</code> when the world-gen job is re-enqueued;
         <code>409</code>
         with a typed code on every phase that has no resume action (in-progress, already-complete,
-        terminal-failure, stuck-on-not-implemented-stage, world-gen-capped);
+        terminal-failure, stuck-on-not-implemented-stage, world-gen-capped, content-filtered);
         <code>422 phase_resume_not_yet_implemented</code> for <code>character_creation</code> /
         <code>post_creation</code> phases.
       </td>
@@ -161,12 +173,12 @@
       <td>
         <code>204 No Content</code> on success. The world row is the cascade root — deleting it
         removes the campaign + pipeline_runs + campaign_members + entities + prose_kernels + facts +
-        relationships + random_tables (and every other dependent) in one statement via the FK
-        chain's <code>ON DELETE CASCADE</code>. Refuses with
-        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code> while the world is
-        still <code>status='generating'</code> — deleting mid-generation would orphan the worker's
-        in-flight LLM cost and produce noisy BullMQ retry failures. Resume the campaign to terminal
-        failure (or wait for it to complete) before deleting.
+        relationships + entity_hierarchy + random_tables in one statement via the FK chain's
+        <code>ON DELETE CASCADE</code>. Refuses with <code>409 world_gen_in_progress</code> +
+        <code>Retry-After: 30</code> while the world is still <code>status='generating'</code> —
+        deleting mid-generation would orphan the worker's in-flight LLM cost and produce noisy
+        BullMQ retry failures. Resume the campaign to terminal failure (or wait for it to complete)
+        before deleting.
       </td>
     </tr>
   </tbody>
@@ -322,21 +334,28 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong><code>jobId = campaignId</code> for BullMQ-side dedupe</strong> — without it, the resume
-  flow's "re-enqueue on stuck stage" path could pile up duplicate jobs for the same campaign. With
-  it, BullMQ's dedupe rejects duplicates. The world-gen queue is configured with
-  <code>removeOnComplete: { count: 0 }</code> + <code>removeOnFail: { count: 0 }</code> so terminal
-  jobs are pruned, making the same <code>jobId</code> reusable after a previous run completed —
-  without that pruning the second <code>queue.add</code> on a resume would reject.
+  <strong>BullMQ job options are the load-bearing operational contract</strong> — the world-gen
+  queue is constructed with <code>attempts: 2</code> +
+  <code>backoff: { type: 'exponential', delay: 30000 }</code> +
+  <code>removeOnComplete: { count: 0 }</code> + <code>removeOnFail: { count: 0 }</code> in
+  <code>server.ts</code>'s <code>buildWorldGenQueue</code>. The two retries are what makes every
+  "BullMQ retries the stage" recovery path in the §7.2 error matrix real rather than fictional —
+  without <code>attempts: 2</code>, transient Anthropic 503s or persistence-COMMIT failures would
+  surface as terminal stage failures instead of self-healing. The
+  <code>removeOn*: { count: 0 }</code> pair prunes terminal jobs so the resume flow's
+  <code>queue.add</code> with <code>{ jobId: campaignId }</code> doesn't silently no-op on a
+  previously-completed run.
 </aside>
 
-<h2>The world-gen worker</h2>
+<h2>The seven stages</h2>
 
 <p>
-  The job is a single <code>{ campaignId }</code>. The processor in
-  <code>backend/src/llm/prep/world-gen-processor.ts</code> runs on the
-  <a href="./worker.html">worker service</a> at concurrency 3. The flow is a five-stage loop where
-  every iteration enforces the same per-stage invariant:
+  The processor in <code>backend/src/llm/prep/world-gen-processor.ts</code> runs on the
+  <a href="./worker.html">worker service</a> at concurrency 3. <code>WORLD_GEN_STAGES</code> is the
+  ordered tuple <code>concept_intake</code>, <code>world_and_factions</code>,
+  <code>locations_and_npcs</code>, <code>entity_relationships</code>,
+  <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>. Every
+  iteration enforces the same per-stage invariant:
 </p>
 
 <ol>
@@ -359,18 +378,20 @@
     affected means another worker raced and won the reset; this worker bails.
   </li>
   <li>
-    <strong
-      >Publish <code>stage-started</code>, run the handler, COMMIT <code>stage-completed</code> +
-      cost.</strong
-    >
-    The handler is wrapped in a BEGIN/ROLLBACK so a handler throw rolls back any partial UPDATEs to
-    the worlds row (concept_intake writes
-    <code>tone / themes / era / key_tensions / geography_summary</code>).
+    <strong>runStage wraps the handler in BEGIN/COMMIT.</strong> The outer scope acquires a
+    <code>PoolClient</code>, runs <code>BEGIN</code>, dispatches to the per-stage handler, and on
+    success COMMITs and publishes every event in the handler's returned
+    <code>finalizedEvents</code> array. On handler throw it runs <code>ROLLBACK</code> and publishes
+    <code>stage-reset</code> — the signal that any mid-flight <code>entity-added</code> /
+    <code>entity-updated</code> events for this stage are invalidated.
   </li>
   <li>
     <strong>Cost-cap check.</strong> After the COMMIT, <code>sumCompletedStageCosts</code> reads
     every completed <code>pipeline_runs</code> row for this world; if &gt; cap,
-    <code>issueCostCapRefund</code> fires (see below) and the loop exits.
+    <code>issueCostCapRefund</code> fires (refund row + worlds.status='failed') and the loop exits.
+    Stage 7 is the documented exception: if the handler returns <code>capExhausted: true</code>, the
+    world is marked <em>complete</em> instead — coherence is best-effort polish, not a correctness
+    gate.
   </li>
   <li>
     <strong>On stage failure.</strong> Write a sanitized error JSON to
@@ -387,9 +408,48 @@
   <strong>Read the cost cap once per stage, not once per job</strong> — a long-running world-gen job
   that started under an old cap and crossed a config-change boundary mid-run should observe the new
   cap on its next stage. The read is a single Postgres query against the
-  <code>settings</code> table; the cost of ~5 reads per run is negligible against the LLM-call cost
+  <code>settings</code> table; the cost of ~7 reads per run is negligible against the LLM-call cost
   inside each stage.
 </aside>
+
+<h3>The unified stage-handler contract</h3>
+
+<p>
+  Every wave-4 handler — <code>world_and_factions</code>, <code>locations_and_npcs</code>,
+  <code>entity_relationships</code>, <code>coherence_pass</code> — takes
+  <code>(client: PoolClient, args)</code> and returns
+  <code
+    >StageDispatchResult { costUsd, inputTokens, outputTokens, finalizedEvents, capExhausted }</code
+  >. The contract is what lets <code>runStage</code> own the transaction lifecycle from outside the
+  handler: handlers don't BEGIN, they don't COMMIT, they don't ROLLBACK, and they don't publish
+  post-COMMIT events. They write to the passed client and accumulate finalized events;
+  <code>runStage</code> publishes those events only after its COMMIT has landed, so a ROLLBACK on a
+  partially-streamed stage can't leave the client with a <code>finalized</code> event pointing at an
+  <code>entity_id</code> that doesn't exist.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Mid-stream entity events fire from the streaming extractor, not from the handler's return
+    value</strong
+  >
+  — <code>entity-added</code> / <code>entity-updated</code> / <code>edge-added</code> are emitted by
+  <code>streaming-extractor.ts</code> as the partial-tree iteration crosses the "entity is
+  emittable" boundary, BEFORE the handler reaches its INSERT phase. Those are speculative — they
+  tell the client "we see a region named Karadon taking shape." If the repair chain exhausts or the
+  persistence COMMIT fails, the outer <code>stage-reset</code> event invalidates them.
+  <code>finalized</code> events are different: they fire only after the persist COMMIT, so they
+  carry the real <code>entityId</code> and the client can trust them. The wire-format split is
+  deliberate.
+</aside>
+
+<p>
+  Legacy stages — <code>concept_intake</code>, <code>starting_situation</code>,
+  <code>random_tables</code> — were authored before the unified contract under a simpler
+  <code>StageCost</code> return type. <code>wrapLegacyStage</code> in the processor lifts each to
+  the new shape by setting <code>finalizedEvents: []</code> and <code>capExhausted: false</code>. No
+  call-site changes; the contract is uniform downstream.
+</p>
 
 <h3>Stage taxonomy</h3>
 
@@ -398,62 +458,310 @@
     <tr>
       <th>Stage</th>
       <th>Model</th>
+      <th>Mode</th>
       <th>Persists</th>
-      <th>Wired now?</th>
+      <th>Mid-stream events</th>
     </tr>
   </thead>
   <tbody>
     <tr>
       <td><code>concept_intake</code></td>
-      <td>Sonnet (via paint-job validator: generator + judge)</td>
+      <td>Sonnet (paint-job validator: generator + judge)</td>
+      <td>non-streaming</td>
       <td>
         <code
           >worlds.tone / themes / era / key_tensions / geography_summary / political_summary</code
         >
-        (one UPDATE inside the stage's transaction)
       </td>
-      <td>Yes (this ticket)</td>
+      <td>none</td>
     </tr>
     <tr>
       <td><code>world_and_factions</code></td>
-      <td>(streaming Opus — deferred)</td>
-      <td>(deferred)</td>
+      <td>Opus (streaming) + Haiku/Sonnet repair on Zod failure</td>
+      <td>streaming</td>
       <td>
-        <strong>No.</strong> <code>stageNotImplementedHandler</code> rejects with typed
-        <code>StageNotImplementedError</code>. Worker maps to
-        <code>phase = world_gen_failed</code> and returns without retry.
+        regions + factions as <code>entities</code> (type <code>location</code> /
+        <code>faction</code>) + <code>prose_kernels</code> + <code>facts</code>;
+        <code>worlds.world_overview</code>
+      </td>
+      <td>
+        <code>entity-added</code>, <code>entity-updated</code> as each region/faction's
+        <code>name</code> closes plus one other field; <code>finalized</code> per persisted entity
+        post-COMMIT
       </td>
     </tr>
     <tr>
       <td><code>locations_and_npcs</code></td>
-      <td>(streaming Opus — deferred)</td>
-      <td>(deferred)</td>
-      <td><strong>No.</strong> Same shape as <code>world_and_factions</code>.</td>
+      <td>Opus (streaming) + Haiku/Sonnet repair</td>
+      <td>streaming</td>
+      <td>
+        locations + NPCs as <code>entities</code> + <code>prose_kernels</code> + <code>facts</code>;
+        <code>entity_hierarchy</code> rows for resolved parent locations
+      </td>
+      <td>
+        <code>entity-added</code>, <code>entity-updated</code> mid-stream; post-COMMIT
+        <code>finalized</code> per persisted entity plus
+        <code>entity-updated { patch: { parent_location: null } }</code> for any location whose
+        parent name couldn't be resolved
+      </td>
+    </tr>
+    <tr>
+      <td><code>entity_relationships</code></td>
+      <td>Sonnet (streaming) + Haiku/Sonnet repair</td>
+      <td>streaming</td>
+      <td>
+        <code>relationships</code> rows + (occasional) <code>entity_hierarchy</code> stragglers
+        stage 3 missed
+      </td>
+      <td>
+        <code>edge-added</code> per relationship as <code>from</code>, <code>to</code>, and
+        <code>relationship</code> close together; no <code>finalized</code> for edges (edges have no
+        client-visible synth-to-real-id mapping)
+      </td>
     </tr>
     <tr>
       <td><code>starting_situation</code></td>
       <td>Sonnet</td>
-      <td><code>worlds.starting_situation</code> (prose block describing the opening scene)</td>
-      <td>Yes (this ticket)</td>
+      <td>non-streaming</td>
+      <td><code>worlds.starting_situation</code></td>
+      <td>none</td>
     </tr>
     <tr>
       <td><code>random_tables</code></td>
       <td>Sonnet</td>
+      <td>non-streaming</td>
+      <td><code>worlds.random_tables</code></td>
+      <td>none</td>
+    </tr>
+    <tr>
+      <td><code>coherence_pass</code></td>
+      <td>Sonnet</td>
+      <td>non-streaming</td>
       <td>
-        <code>worlds.random_tables</code> (per-world variance tables seeded from a generic seed
-        block; the seed-tables block is a constant placeholder for the non-streaming launch).
+        patch-driven: <code>fix_fact</code> updates <code>facts.content</code>,
+        <code>fix_prose</code> updates <code>prose_kernels</code>, <code>fix_relationship</code> is
+        a DELETE + INSERT on <code>relationships</code>, <code>rename_entity</code> updates
+        <code>entities.name</code>, <code>delete_relationship</code> DELETEs.
+        <strong>No new entities, ever</strong> — coherence never creates rows it didn't see.
       </td>
-      <td>Yes (this ticket)</td>
+      <td>
+        post-COMMIT: <code>entity-updated</code> per <code>fix_prose</code> /
+        <code>rename_entity</code>; <code>edge-removed</code> + <code>edge-added</code> for
+        <code>fix_relationship</code>; <code>edge-removed</code> for
+        <code>delete_relationship</code>. Plus the optional cap-fire
+        <code>{ type: 'phase', phase: 'complete' }</code> when stage 7 sees
+        <code>capExhausted</code> on entry.
+      </td>
     </tr>
   </tbody>
 </table>
 
+<h3>Streaming stages and the partial-tree iterator</h3>
+
+<p>
+  Stages 2, 3, and 4 all share <code>runStreamingStage</code> in
+  <code>streaming-extractor.ts</code>. The LLM emits a JSON tree via Vercel SDK's
+  <code>streamObject</code>; the SDK exposes a <code>partialObjectStream</code> async iterable that
+  yields successive partial tree snapshots as more tokens arrive. The extractor walks each snapshot,
+  looks at the configured arrays (<code>regions</code> + <code>factions</code> for stage 2,
+  <code>locations</code> + <code>npcs</code> for stage 3, <code>relationships</code> for stage 4),
+  and emits one of three events per array entry as it crosses thresholds:
+</p>
+
+<ul>
+  <li>
+    First time an entity entry is "emittable" — non-empty <code>name</code> plus at least one other
+    non-empty field — fire <code>entity-added</code> with the partial data shape.
+  </li>
+  <li>
+    Subsequent snapshots that change an already-emitted entity's fields fire
+    <code>entity-updated</code> with a key-level diff patch (RFC 7396 merge-patch semantics over
+    top-level keys; nested objects/arrays replace wholesale).
+  </li>
+  <li>
+    For edge arrays (stage 4), an entry is emittable once <code>from</code>, <code>to</code>, and
+    <code>relationship</code> are all non-empty. Each emission is a fresh <code>edge-added</code>;
+    there is no edge equivalent of <code>entity-updated</code> in the contract, so a
+    partial-then-refined edge surfaces as multiple <code>edge-added</code> events sharing a
+    synthKey.
+  </li>
+</ul>
+
+<p>
+  Every emitted event carries a <code>synthKey</code> of the form
+  <code>${stage}/${arrayPath}/${index}</code> — e.g. <code>world_and_factions/regions/2</code>. The
+  synthKey is stable for the duration of the stream and is what the post-COMMIT
+  <code>finalized</code> event uses to bind the speculative key to the real <code>entityId</code>:
+  <code>{ type: 'finalized', synthKey, entityId }</code>. The client's inventory reducer (in the
+  <a href="./dev-tool.html">dev tool</a>'s live-events panel) carries forward the
+  <code>entityId</code> on finalize and lets the dev tool show the real UUID alongside the entity's
+  name once persistence lands.
+</p>
+
 <aside class="wiki-rationale">
-  <strong>Stages 2 + 3 fail visibly, not silently</strong> — pretending the pipeline succeeded when
-  two stages didn't run would mislead every downstream consumer (the status surface, the dev tool,
-  the eventual SPA, the campaign-setup worker). A typed error that maps to
-  <code>world_gen_failed</code> lets the system stay honest about what's actually built. Resume
-  knows not to retry stuck-on-not-implemented; the operator can see the stage name in the error.
+  <strong>"Name closed plus one other field," not "name closed"</strong> — partial JSON streaming
+  shows <code>name</code> populated long before any prose / facts arrive, which would mean firing
+  <code>entity-added</code> with an empty entity that then receives every subsequent field as an
+  <code>entity-updated</code>. That's a stream of useless deltas. Waiting for one other field to
+  cross the empty boundary defers the first emit by tens of milliseconds and produces a meaningful
+  initial payload the client can render. Edges are different because the type's primary keys are all
+  three structural fields — there's no way to "see" a relationship taking shape until all three are
+  populated.
+</aside>
+
+<h3>Stage 3's three-pass parent resolver</h3>
+
+<p>
+  Stage 3 (<code>locations_and_npcs</code>) is the one streaming stage with a non-trivial
+  persistence shape, because location entries have an optional
+  <code>parent_location: string | null</code> field naming their parent — and the LLM names parents
+  by string, not by ID. The handler runs three passes against the caller's transaction:
+</p>
+
+<ol>
+  <li>
+    <strong>Pass 1 — insert everything.</strong> Walk locations, then NPCs; INSERT each entity, its
+    prose kernel, and its facts. Collect (synthKey, entityId) pairs into a
+    <code>finalized</code> list, and for every location whose <code>parent_location</code> is
+    non-null, collect an unresolved-ref <code>{ synthKey, childEntityId, parentName }</code>.
+  </li>
+  <li>
+    <strong>Pass 2 — build a name → entityId map.</strong> Query <code>entities.listByWorld</code>,
+    filter to <code>entity_type = 'location'</code>, and pick the OLDER entry on name collision
+    (lowest UUIDv7, which is the earlier insert because UUIDv7 is time-ordered). This is the "stage
+    2 wins on collision" rule from §D8 — if stage 3 names a city the same as a stage-2 region, the
+    region is the parent candidate.
+  </li>
+  <li>
+    <strong>Pass 3 — resolve or null out.</strong> For each unresolved ref, look up the parent name.
+    Resolvable → INSERT <code>entity_hierarchy { parent, child }</code>. Unresolvable → collect the
+    synthKey for a post-COMMIT
+    <code>entity-updated { synthKey, patch: { parent_location: null } }</code> event in
+    <code>finalizedEvents</code>. The client sees the parent get cleared only AFTER the row actually
+    lands; if the transaction ROLLBACKs, the patch event never publishes and the client's inventory
+    falls back to whatever <code>stage-reset</code> tells it.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Resolve by name in code, not by ID in the prompt</strong> — passing entity UUIDs into the
+  LLM context would let the LLM emit them in the <code>parent_location</code> field. The failure
+  mode is a hallucinated UUID — the LLM invents a plausible-looking ID that doesn't exist in
+  <code>entities</code>, the INSERT fails with an FK violation, the transaction ROLLBACKs. Names are
+  LLM-native: the LLM has seen them in the stage-2 + stage-3 context windows and won't hallucinate
+  them in the same way. The cost is the resolver pass and the "parent we can't find" edge case; the
+  benefit is durability against LLM ID hallucination.
+</aside>
+
+<h3>Stage 4's UUID pre-filter</h3>
+
+<p>
+  <code>entity_relationships</code> is the one stage that DOES feed entity UUIDs into the prompt —
+  relationships are inherently between identified entities and naming them by string here would
+  create ambiguity stage 3's resolver doesn't have to deal with. The handler loads
+  <code>entities.listByWorld</code> at stage start and renders the inventory as
+  <code>- ${uuid} [${kind}] ${name}</code> lines in the prompt. The LLM is instructed to use real
+  UUIDs only.
+</p>
+
+<p>
+  The LLM does hallucinate occasionally — emitting a UUID that's plausible-shaped but doesn't exist
+  in the world. The handler defends with a pre-INSERT filter: build a
+  <code>Set&lt;entityId&gt;</code> from the loaded inventory, drop every relationship row whose
+  <code>from</code> or <code>to</code> isn't in the set (WARN-logged but not thrown — it's a known
+  LLM failure mode, dropping doesn't corrupt the world). The same filter applies to any
+  hierarchy-straggler rows stage 4 emits as a fallback for stage 3's misses.
+</p>
+
+<p>
+  Stage 4 also handles retry idempotency: the very first DB action is
+  <code>relationships.deleteByWorld(client, worldId)</code>. If a previous attempt partial-wrote
+  relationships and the stage retried, the next run starts from a clean slate. Stage 3's
+  <code>entity_hierarchy</code> rows are not deleted on retry — the schema's
+  <code>UNIQUE(child_entity_id)</code> means a re-INSERT of the same child would conflict, so stage
+  4's straggler path pre-filters against the existing hierarchy table and skips already-parented
+  children (the "stage 3 wins" collision rule).
+</p>
+
+<h3>The structured-output repair chain</h3>
+
+<p>
+  Every streaming stage validates its final tree with the stage's Zod schema; if validation fails,
+  <code>repairStructuredOutput</code> in <code>structured-output-repair.ts</code> tries to repair
+  it. The chain is fixed: Haiku first, Sonnet if Haiku fails. Each repair call sends the broken tree
+  plus a serialized list of the Zod errors to the model with the prompt template at
+  <code>backend/src/llm/prompts/prep/repair.txt</code>, structured against the same schema. If
+  Sonnet also fails, the stage throws and the outer scope ROLLBACKs + publishes
+  <code>stage-reset</code>; BullMQ's <code>attempts: 2</code> picks up one more try.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The repair prompt enforces array length and ordering</strong> — the repair model is given
+  the broken tree and told to fix shape violations WITHOUT adding or dropping entries from any
+  array. Mythrun has no truth about how many regions a world "should" have; the streaming Opus call
+  is the source of truth on cardinality, and the repair pass is purely about coercing field-level
+  shape to match the schema. A repair that helpfully added a missing region would be invisibly
+  synthesizing world content under Haiku — a quality-degrading silent failure.
+</aside>
+
+<p>
+  Repair costs flow back to the caller through the stage's <code>StageDispatchResult.costUsd</code>:
+  the handler sums (a) the streaming model's reported usage, (b) the Haiku repair call's usage if
+  invoked, and (c) the Sonnet repair call's usage if Haiku failed. The cost lands in
+  <code>pipeline_runs.cost_usd</code> with the same row the stage's success commits, so the cost-cap
+  check sees the total.
+</p>
+
+<h3>Coherence pass and its cap-fire exception</h3>
+
+<p>
+  Stage 7 (<code>coherence_pass</code>) is non-streaming Sonnet plus a mechanical apply path. The
+  Sonnet call reads a compact dump of the world (entities, prose, facts, relationships) and returns
+  a list of discriminated-union patches:
+</p>
+
+<ul>
+  <li>
+    <code>fix_fact { fact_id, new_content }</code> — UPDATE one <code>facts.content</code> by id.
+  </li>
+  <li>
+    <code>fix_prose { entity_id, new_content }</code> — UPDATE one entity's
+    <code>prose_kernels.content</code>; emits <code>entity-updated</code>.
+  </li>
+  <li>
+    <code>fix_relationship { relationship_id, new_type, new_description }</code> — DELETE the
+    existing row, INSERT a replacement with the new fields. Emits <code>edge-removed</code> +
+    <code>edge-added</code>.
+  </li>
+  <li>
+    <code>rename_entity { entity_id, new_name }</code> — UPDATE <code>entities.name</code>; emits
+    <code>entity-updated { patch: { name } }</code>.
+  </li>
+  <li>
+    <code>delete_relationship { relationship_id }</code> — DELETE one row; emits
+    <code>edge-removed</code>.
+  </li>
+</ul>
+
+<p>
+  There is no <code>drop_entity</code> patch type. Coherence never deletes entities — that would
+  invalidate any prose, fact, or relationship the client has already seen referencing that entity.
+  If coherence references a UUID that doesn't exist (an LLM hallucination), the patch is WARN-logged
+  and skipped silently; other patches in the same batch still apply. The world isn't broken, the LLM
+  was just imprecise.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Cap-fire at stage 7 marks the world complete, not failed</strong> — stages 1–6 produce
+  load-bearing content. If the cap fires before stage 6 finishes, the world is missing things the
+  player will notice and the right answer is refund + restart. Stage 7 is best-effort polish: the
+  world functions without it. So <code>coherence-pass.ts</code> checks
+  <code>sumCompletedStageCosts &gt; cap</code> on entry; if true, it returns
+  <code>{ capExhausted: true, finalizedEvents: [{ type: 'phase', phase: 'complete' }] }</code> with
+  zero cost. The processor's <code>runStage</code> loop sees the flag, flips
+  <code>worlds.status = 'complete'</code> in lieu of the cap-fire refund, and returns. The trade-off
+  is consistent with the §D5 design intent: the user got a usable world, the cap held, no credit
+  refund was owed.
 </aside>
 
 <h3>The cost-cap circuit breaker</h3>
@@ -481,6 +789,112 @@
   again).
 </p>
 
+<h2>Pipeline events on the wire</h2>
+
+<p>
+  The processor and its stage handlers publish to
+  <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code>, the channel format the
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. Thirteen event arms are
+  declared in <code>PIPELINE_SSE_EVENTS</code> — six lifecycle arms plus seven entity / edge arms.
+  Every arm is now rendered by the dev tool's live-events panel; the contract has zero exempt
+  entries.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>When it fires</th>
+      <th>Producer</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>phase</code></td>
+      <td>
+        Entry to <code>world_gen</code> and on terminal <code>world_ready</code> /
+        <code>world_gen_failed</code> / <code>complete</code>.
+      </td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-started</code></td>
+      <td>After atomic claim, before the handler runs.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-completed</code></td>
+      <td>After COMMIT, with stage cost and duration.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-failed</code></td>
+      <td>After ROLLBACK, with the sanitized error code and <code>willRetry</code>.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-reset</code></td>
+      <td>After ROLLBACK on a streaming stage that already emitted mid-stream events.</td>
+      <td>Processor (runStage)</td>
+    </tr>
+    <tr>
+      <td><code>cost-update</code></td>
+      <td>After every stage's COMMIT, with cumulative USD.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>entity-added</code></td>
+      <td>First time a streamed entity entry crosses "name closed plus one other field."</td>
+      <td>Streaming extractor (stages 2/3)</td>
+    </tr>
+    <tr>
+      <td><code>entity-updated</code></td>
+      <td>
+        Mid-stream field diffs on already-added entities; also stage 3's parent-cleared patches and
+        stage 7's fix_prose / rename_entity patches (post-COMMIT).
+      </td>
+      <td>Streaming extractor (mid-stream); stages 3 + 7 (post-COMMIT)</td>
+    </tr>
+    <tr>
+      <td><code>entity-removed</code></td>
+      <td>
+        Currently never fires from world-gen. Reserved for future repair-chain drops; the contract
+        carries the arm so consumers don't have to special-case future cases.
+      </td>
+      <td>(reserved)</td>
+    </tr>
+    <tr>
+      <td><code>edge-added</code></td>
+      <td>
+        Stage 4 mid-stream as each relationship's three primary fields close; stage 7 post-COMMIT
+        for <code>fix_relationship</code> replacements.
+      </td>
+      <td>Streaming extractor (stage 4); stage 7</td>
+    </tr>
+    <tr>
+      <td><code>edge-removed</code></td>
+      <td>
+        Stage 7 post-COMMIT for <code>fix_relationship</code> (paired with edge-added) and
+        <code>delete_relationship</code>.
+      </td>
+      <td>Stage 7</td>
+    </tr>
+    <tr>
+      <td><code>finalized</code></td>
+      <td>
+        After persist COMMIT on each entity stage; binds <code>synthKey</code> →
+        <code>entityId</code>.
+      </td>
+      <td>Stages 2 + 3 (post-COMMIT, via the runStage finalizedEvents pipe)</td>
+    </tr>
+    <tr>
+      <td><code>job-failed</code></td>
+      <td>Reserved for BullMQ-level terminal failures. Currently no producer in world-gen.</td>
+      <td>(reserved)</td>
+    </tr>
+  </tbody>
+</table>
+
 <h2>Resume semantics</h2>
 
 <p>
@@ -507,7 +921,9 @@
         Read the latest failed <code>pipeline_runs.error</code>. If it contains
         <code>stage_not_implemented</code> → <code>409 phase_not_yet_implementable</code> with the
         stuck stage name. If it contains <code>world_gen_cost_cap_exceeded</code> →
-        <code>409 world_gen_capped</code>. Otherwise treat as a transient infra failure and
+        <code>409 world_gen_capped</code>. If it contains <code>content_filtered</code> (Anthropic
+        rejected the prompt) → <code>409 content_filtered</code> — retrying would hit the same
+        filter on the same source concept. Otherwise treat as a transient infra failure and
         re-enqueue the world-gen job (jobId-dedupe via BullMQ).
         <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code>.
       </td>
@@ -520,7 +936,7 @@
       <td><code>character_creation</code> | <code>post_creation</code></td>
       <td>
         <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. The downstream
-        ticket reference (MYT-52 / MYT-53) is logged server-side, not in the response.
+        ticket reference (MYT-53) is logged server-side, not in the response.
       </td>
     </tr>
     <tr>
@@ -546,51 +962,36 @@
   </tbody>
 </table>
 
-<aside class="wiki-rationale">
-  <strong>Re-enqueue requires terminal-job pruning</strong> — BullMQ's <code>jobId</code> dedupe
-  rejects a second <code>add</code> with the same id while the original job exists. The world-gen
-  queue is configured with <code>removeOnComplete: { count: 0 }</code> and
-  <code>removeOnFail: { count: 0 }</code> so terminal jobs are removed, making the same id reusable
-  on resume. This is THE showstopper fix called out in the implementation plan — without it, every
-  resume after the first run would silently 409 inside BullMQ even though the API surfaces a 202.
-</aside>
-
 <h2>The dev tool surface</h2>
 
 <p>
-  Three panels land in the <a href="./dev-tool.html">dev tool</a> alongside this ticket: a campaign
-  creation form (mode selector with freeform / guided sub-forms; freeform takes a textarea, guided
-  takes three <code>{ title, whyILikeIt }</code> picks), a campaign details panel (paste a
-  <code>campaignId</code> to load the campaign row, the world row, and the member list, plus a
-  Resume button that POSTs to the resume route), and a credit-ledger panel that maintains an
-  in-session log of grants it issued plus a force-grant button hitting
-  <code>POST /api/dev/credits/grant</code>. Both dev-only routes —
-  <code>POST /api/dev/credits/grant</code> and the read-side
+  Four panels in the <a href="./dev-tool.html">dev tool</a> drive and observe the world-gen
+  pipeline. The campaign-create form (freeform / guided sub-forms) posts to
+  <code>POST /api/campaigns</code>. The campaign-details panel loads a campaign by id and exposes a
+  Resume button. The live-events panel attaches to the SSE stream and renders every event arm — see
+  the <a href="./dev-tool.html#the-live-events-panel">live-events inspector</a> section. The
+  credit-ledger panel maintains an in-session log of grants and force-grants via the dev-only
+  <code>POST /api/dev/credits/grant</code>.
+</p>
+
+<p>
+  Both dev-only routes — <code>POST /api/dev/credits/grant</code> and the read-side
   <code>GET /api/dev/credits/me</code> (balance + the last 20 ledger entries) — register only when
   <code>AUTH_MODE === 'bypass'</code> and live behind the same six-layer bypass-plugin defense as
   the rest of the dev surface. Both routes resolve identity from <code>request.user.sub</code> — the
   bypass plugin sets that from the <code>x-mythrun-dev-sub</code> header (the dev-tool's identity
   dropdown), so a grant lands on the currently-active <code>dev-user-N</code> identity, not a pinned
-  sub. Unknown sub → 400, missing identity → 401.
+  sub.
 </p>
-
-<aside class="wiki-rationale">
-  <strong>Honor the header, don't pin the sub</strong> — earlier drafts pinned grants to
-  <code>bypass:dev-1</code> on the security argument that a buggy test header-spoofing into
-  <code>x-mythrun-dev-sub</code> could grant credits to an attacker sub. That argument is moot here:
-  the route is bypass-mode-gated by six plugin layers (no production exposure), and even in dev the
-  credits aren't fungible to anything real. Pinning produced a dead-end UX where a grant succeeded
-  but the credits landed on a sub the user couldn't spend them as. Honoring the header matches every
-  other dev-mode route.
-</aside>
 
 <p>
   The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in
-  <code>PIPELINE_ROUTES</code> and <code>PIPELINE_JOBS</code> must either be driven by a panel or
-  carry a typed exempt reason. Adding a new pipeline route or job is a four-file change in a single
-  PR — contract, handler, dev-tool panel, coverage entry — and
-  <code>pnpm dev-tool:check</code> red-CI's the merge otherwise. See
-  <a href="./dev-tool.html">dev tool</a> for the full ship-gate story.
+  <code>PIPELINE_ROUTES</code>, <code>PIPELINE_SSE_EVENTS</code>, and
+  <code>PIPELINE_JOBS</code> must either be driven by a panel or carry a typed exempt reason. With
+  MYT-52 landed, the exempt list is empty — the live-events panel renders all thirteen event arms.
+  Adding a new pipeline route or job is a four-file change in a single PR — contract, handler,
+  dev-tool panel, coverage entry — and <code>pnpm dev-tool:check</code> red-CI's the merge
+  otherwise.
 </p>
 
 <h2>Operating this piece</h2>
@@ -613,8 +1014,11 @@
   <li>
     Map <code>error.code</code> to action: <code>stage_not_implemented</code> → expected (resume
     will 409 phase_not_yet_implementable); <code>world_gen_cost_cap_exceeded</code> → the cap fired
-    (refund row exists in <code>credit_ledger</code>; resume will 409 world_gen_capped); any other
-    code → transient infra blip, resume re-enqueues.
+    (refund row exists in <code>credit_ledger</code>; resume will 409 world_gen_capped); any code
+    matching <code>content_filtered</code> → Anthropic content-policy filter rejected this prompt
+    (resume will 409 content_filtered — the user must adjust the source concept); any other code →
+    transient infra blip, resume re-enqueues. BullMQ's <code>attempts: 2</code> means most transient
+    errors self-heal before the user sees <code>world_gen_failed</code>.
   </li>
   <li>
     For a <code>world_gen</code>-stuck-running case, the worker's atomic-claim path will
@@ -624,7 +1028,7 @@
   </li>
 </ol>
 
-<h3 id="watch-the-cost-cap-fire">Watch the cost-cap fire</h3>
+<h3 id="watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</h3>
 <ol>
   <li>
     Set the cap low against the local Postgres:
@@ -649,6 +1053,29 @@
   </li>
 </ol>
 
+<h3 id="watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</h3>
+<ol>
+  <li>
+    Run a full world-gen to completion against the standard cap. Note the cumulative cost from the
+    final <code>cost-update</code> event in the live-events panel.
+  </li>
+  <li>
+    Lower the cap to a value below that cumulative figure but above the sum of stages 1–6:
+    <code>UPDATE settings SET value = '&lt;value&gt;' WHERE key = 'world_gen_cost_cap_usd';</code>.
+  </li>
+  <li>
+    Create a fresh campaign. Stages 1–6 run; stage 7 reads <code>sumCompletedStageCosts</code> on
+    entry, sees the value already over cap, and returns <code>{ capExhausted: true }</code> with a
+    single <code>{ type: 'phase', phase: 'complete' }</code> in <code>finalizedEvents</code>.
+  </li>
+  <li>
+    Confirm <code>worlds.status = 'complete'</code> (NOT failed); no refund row in
+    <code>credit_ledger</code>; <code>pipeline_runs</code> for stage 7 shows <code>completed</code>
+    with zero cost. The user got a polished-minus-coherence world; the cap held without the
+    refund-and-restart cycle.
+  </li>
+</ol>
+
 <h3 id="force-a-paint-job-rejection">Force a paint-job rejection</h3>
 <ol>
   <li>
@@ -664,9 +1091,9 @@
     retries with a fresh-direction amendment.
   </li>
   <li>
-    The dev tool's status panel will show <code>concept_intake</code> running for ~30–60 seconds
-    longer than usual when the validator retries (up to 3 attempts × 2 Sonnet calls per attempt). On
-    exhaustion, the stage fails with
+    The dev tool's live-events panel will show <code>concept_intake</code> running for ~30–60
+    seconds longer than usual when the validator retries (up to 3 attempts × 2 Sonnet calls per
+    attempt). On exhaustion, the stage fails with
     <code>code: 'concept_intake_paint_job_loop_exhausted'</code> and the phase flips to
     <code>world_gen_failed</code>.
   </li>
@@ -674,6 +1101,37 @@
     Resume re-enqueues (the loop-exhausted error isn't in the terminal-class list); a fresh attempt
     rolls a fresh judge call and may succeed. If it doesn't, the user is asked to refine the
     concept.
+  </li>
+</ol>
+
+<h3 id="trigger-the-repair-chain">Trigger the repair chain on a streaming stage</h3>
+<ol>
+  <li>
+    Streaming stages emit JSON via <code>streamObject</code>. The deterministic way to force a Zod
+    failure is to corrupt the schema in code (don't ship): in
+    <code>backend/src/llm/schemas/world-and-factions.ts</code>, tighten a field — e.g. require a
+    <code>z.string().regex(/^[A-Z]/)</code> name. Most LLM-generated regions will fail. Run a
+    world-gen and watch the live-events panel.
+  </li>
+  <li>
+    On stage 2's stream completion, the handler's <code>validateOrRepair</code> calls Haiku with the
+    broken tree + Zod errors. The Haiku call surfaces in CloudWatch logs as
+    <code>event: 'llm.call'</code> with <code>stage: 'world_and_factions'</code> and model =
+    <code>claude-haiku-4-5-20251001</code>.
+  </li>
+  <li>
+    Cost flows back through <code>StageDispatchResult.costUsd</code>; the
+    <code>pipeline_runs.cost_usd</code> for stage 2 carries the Opus stream cost PLUS the Haiku
+    repair cost. The <code>cost-update</code> event after stage 2 reflects the total.
+  </li>
+  <li>
+    If Haiku also fails the schema, Sonnet fires next; if Sonnet fails, the handler throws and
+    <code>runStage</code> ROLLBACKs + publishes <code>stage-reset</code>. BullMQ's
+    <code>attempts: 2</code> means the stage gets one more shot before terminal failure.
+  </li>
+  <li>
+    Revert the schema change. The intended production path is "repair fires occasionally on real LLM
+    output quirks"; the deliberate-schema-break is a forcing function for debugging the chain.
   </li>
 </ol>
 
@@ -689,21 +1147,22 @@
   <li>
     Inspect the latest failed pipeline_runs row's <code>error</code> column. If it's NULL or the
     code isn't in the terminal-class list (<code>stage_not_implemented</code>,
-    <code>world_gen_cost_cap_exceeded</code>), the resume route will re-enqueue cleanly.
+    <code>world_gen_cost_cap_exceeded</code>, <code>content_filtered</code>), the resume route will
+    re-enqueue cleanly.
   </li>
   <li>
     From the dev tool's campaign details panel (or via direct
     <code>POST /api/campaigns/:campaignId/resume</code>), click Resume. The response is
     <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code> on the
     <code>world_gen_failed</code> path or
-    <code>... 'world-gen-enqueued-after-orphan-recovery'</code> on the rarer
+    <code>... 'world-gen-enqueued-after-orphan-recovery' }</code> on the rarer
     <code>not_started</code> path.
   </li>
   <li>
     Confirm the worker picked up the job: the <code>pipeline:campaign:{campaignId}</code> Redis
     channel emits <code>phase = world_gen</code> and <code>stage-started</code> events almost
     immediately. If the resume returns a non-recoverable code (409 world_gen_capped, 409
-    phase_not_yet_implementable), the failure isn't a Redis blip — see the
+    content_filtered, 409 phase_not_yet_implementable), the failure isn't a Redis blip — see the
     <a href="#diagnose-a-stuck-world-gen">diagnose-a-stuck-world-gen</a> runbook.
   </li>
 </ol>
@@ -711,32 +1170,25 @@
 <h2>Integration with the status surface</h2>
 
 <p>
-  The processor publishes JSON event payloads on
+  The processor and its handlers publish JSON event payloads on
   <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> — the channel format the
-  <a href="./pipeline-status.html">pipeline status</a> surface listens on. The lifecycle events
-  emitted by this ticket are <code>phase</code> (on entry to <code>world_gen</code> and the terminal
-  <code>world_ready</code> / <code>world_gen_failed</code>), <code>stage-started</code>,
-  <code>stage-completed</code>, <code>cost-update</code> (cumulative USD), and
-  <code>stage-failed</code>. Seven additional entity / edge events (<code>stage-reset</code>,
-  <code>entity-added</code>, <code>entity-updated</code>, <code>entity-removed</code>,
-  <code>edge-added</code>, <code>edge-removed</code>, <code>finalized</code>) are reserved in the
-  contract for the streaming-stages ticket and arrive verbatim through the bridge once that ships;
-  the dev tool's status panel renders the lifecycle events today and renders the entity / edge
-  events when MYT-52's live-events inspector panel lands.
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. All thirteen arms in
+  <code>PIPELINE_SSE_EVENTS</code> are now in use: the six lifecycle arms from MYT-50 plus the seven
+  entity / edge arms wired by MYT-52 (<code>stage-reset</code>, <code>entity-added</code>,
+  <code>entity-updated</code>, <code>entity-removed</code>, <code>edge-added</code>,
+  <code>edge-removed</code>, <code>finalized</code>). The SSE bridge is type-blind — every JSON
+  payload published on a campaign channel is forwarded to attached sinks unchanged. The
+  <a href="./dev-tool.html#the-live-events-panel">dev tool's live-events panel</a> renders every
+  arm.
 </p>
 
 <h2>Out of scope</h2>
 
 <ul>
   <li>
-    <strong>Streaming stages 2 + 3</strong> (<code>world_and_factions</code>,
-    <code>locations_and_npcs</code>). The visible-failure shape locks in now; the real Opus
-    streaming handlers swap in via the streaming-stages ticket.
-  </li>
-  <li>
     <strong>Per-player character creation.</strong> The pipeline has a placeholder phase
     (<code>character_creation</code>); resume returns
-    <code>422 phase_resume_not_yet_implemented</code> on it. Lands after the streaming stages.
+    <code>422 phase_resume_not_yet_implemented</code> on it. Lands as MYT-53.
   </li>
   <li>
     <strong>Automatic refunds beyond the cost cap.</strong> Stage failures that aren't cost-cap
@@ -749,20 +1201,30 @@
     is reserved in the discriminated body shape but not stubbed at launch. An unknown
     <code>kind</code> produces a Zod 400, not a 501.
   </li>
+  <li>
+    <strong>Repair-chain entity drops.</strong> The contract reserves
+    <code>entity-removed { reason: 'repair_dropped' }</code> but no current code path produces it —
+    the repair prompt is constrained to preserve array length. The arm is in the contract so future
+    repair-policy changes don't have to expand the wire format piecemeal.
+  </li>
 </ul>
 
 <h2>Source</h2>
 
 <p>
   <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/routes/dev-credits.ts</code>,
-  <code>backend/src/llm/prep/</code>, <code>backend/src/auth/rejection-storm.ts</code>,
-  <code>backend/src/repo/credit-grants.ts</code>, <code>backend/src/repo/pipeline-runs.ts</code>,
-  <code>backend/src/contract/pipeline-routes.ts</code>,
+  <code>backend/src/llm/prep/</code> (processor, streaming-extractor, structured-output-repair, all
+  seven stage handlers under <code>stages/</code>),
+  <code>backend/src/auth/rejection-storm.ts</code>, <code>backend/src/repo/credit-grants.ts</code>,
+  <code>backend/src/repo/pipeline-runs.ts</code>, <code>backend/src/server.ts</code> (the
+  <code>buildWorldGenQueue</code> options), <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-jobs.ts</code>,
   <code>backend/src/contract/pipeline-errors.ts</code>,
+  <code>backend/src/contract/pipeline-events.ts</code>,
   <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>,
   <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>,
-  <code>backend/migrations/012_credit_ledger_admin_source.sql</code>. Design spec:
-  <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>; parent
-  spec: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+  <code>backend/migrations/012_credit_ledger_admin_source.sql</code>. Design specs:
+  <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>,
+  <code>docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md</code>; parent spec:
+  <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
 </p>

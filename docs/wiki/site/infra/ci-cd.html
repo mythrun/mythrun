@@ -659,10 +659,10 @@
 
 <p>
   Every push to <code>main</code> from a developer's machine first passes through
-  <code>.husky/pre-push</code>, a four-stage gate that mirrors what CI is going to re-assert on the
+  <code>.husky/pre-push</code>, a five-stage gate that mirrors what CI is going to re-assert on the
   push it just accepted. The hook runs in cheapest-first order — a one-second grep, a ~3 s
-  typecheck, a ~10 s lint, then the ~3 min coverage suite. Any non-zero step refuses the push and
-  prints the diagnostic the operator needs.
+  typecheck, a ~10 s lint, the ~3 min coverage suite, then a ~2 s wiki source-hash diff. Any non-zero
+  step refuses the push and prints the diagnostic the operator needs.
 </p>
 
 <aside class="wiki-rationale">
@@ -674,7 +674,7 @@
   queue), not coverage on its own.
 </aside>
 
-<p>The four stages, in order:</p>
+<p>The five stages, in order:</p>
 
 <ol>
   <li>
@@ -698,6 +698,13 @@
     <code>pnpm --filter @mythrun/backend test:coverage</code>. Vitest is configured with hard
     thresholds at <strong>100% lines, 100% branches, 100% functions, 100% statements</strong>;
     anything below fails the run.
+  </li>
+  <li>
+    <strong>Wiki source-hash freshness.</strong> Sources <code>backend/.env.development</code> so
+    <code>DATABASE_URL</code> is set for the schema fragment build, then runs <code>pnpm wiki:check</code>
+    — a hash diff of every page's declared sources against the live tree. ~2 s. Mirrors the Wiki CI
+    workflow. Added 2026-05-14 after three consecutive red CI runs from wave-3/wave-4 source additions
+    that the earlier four-gate hook didn't catch.
   </li>
 </ol>
 

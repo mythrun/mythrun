@@ -1157,6 +1157,98 @@
   over time," not "what can they spend right now."
 </p>
 
+<h2 id="the-world-content-namespaces-streaming-stages-share-a-caller-owned-transaction">The world-content namespaces: streaming stages share a caller-owned transaction</h2>
+
+<p>
+  MYT-52's streaming pipeline added four more transaction-scoped namespaces consumed by the prep
+  worker's wave-2/3/4 stage handlers: <code>entities</code>, <code>proseKernels</code>,
+  <code>facts</code>, <code>relationships</code>, and <code>entityHierarchy</code>. They follow the
+  same <code>ClientLike</code> shape the billing namespaces use — exported as plain object literals
+  whose methods take a client argument the caller has already opened. The
+  <a href="../runtime/world-gen.html">world-gen worker</a>'s <code>runStage</code> wraps each stage
+  handler in <code>BEGIN/COMMIT</code> on a <code>PoolClient</code> and passes that client straight
+  into every repo call — INSERT, UPDATE, DELETE, all on the same transaction. A handler throw
+  cascades to a single ROLLBACK that unwinds all the stage's writes atomically.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Caller-owned transaction, not per-method txs</strong> — a streaming stage writes hundreds
+  of rows: one <code>entities</code> + one <code>prose_kernels</code> + N <code>facts</code> per
+  region/faction/location/NPC. If each method opened its own transaction, a stage failure midway
+  would leave half the world's entities persisted without their facts and prose — visible to the
+  client through a future read query, but unfinishable by any retry. One caller-owned transaction
+  means the stage's commit boundary is the same as the cost-cap check's view of "completed work."
+</aside>
+
+<p>
+  <strong><code>entities</code></strong> exposes <code>insert(client, input)</code>,
+  <code>findByWorldAndName</code> (case-sensitive, returns null on miss), and
+  <code>listByWorld</code>. The <code>insert</code> caller supplies the <code>id</code>
+  (UUIDv7-generated app-side per the
+  <a href="./repository.html#uuidv7-in-its-own-seam">uuidv7 seam</a>) so the stage's finalized-event
+  payload can reference the row before the INSERT lands. <code>listByWorld</code>
+  is what stage 3's parent resolver calls in pass 2 to build the name → entityId map, and what stage
+  4 calls at stage start to build the entity-inventory the prompt feeds into the LLM.
+  <code>entity_type</code> is constrained by the table's CHECK to
+  <code>'npc' | 'location' | 'faction' | 'item'</code>; regions are persisted as
+  <code>type='location'</code> per the pipeline spec's flat enum.
+</p>
+
+<p>
+  <strong><code>proseKernels</code></strong> exposes <code>insert</code> +
+  <code>updateByEntityId</code>. The table has <code>UNIQUE(entity_id)</code> — exactly one prose
+  blob per entity — so <code>insert</code> errors on conflict (the stream-stages caller has
+  guaranteed fresh entities upstream). <code>updateByEntityId</code> is the coherence pass's
+  <code>fix_prose</code> path. The two are deliberately NOT collapsed into an upsert: the design
+  (§4.3) calls out the separation so the failure mode "INSERT collided" can't silently degrade to
+  "the LLM rewrote a region's lore in coherence pass." When a coherence patch needs to land, it goes
+  through <code>updateByEntityId</code> explicitly.
+</p>
+
+<p>
+  <strong><code>facts</code></strong> exposes <code>insertMany</code> +
+  <code>updateContentById</code>. <code>insertMany</code> runs a single parameterized multi-row
+  INSERT with one constant baked in — <code>narrative_status = 'undelivered'</code>. The LLM never
+  emits the narrative_status field; the persister stamps the value as part of the INSERT shape.
+  Play-runtime owns subsequent transitions of that column (<code>delivered</code> →
+  <code>developed</code> → <code>resolved</code>). <code>source</code> uses the column default
+  <code>'prep'</code>; no explicit value passed. <code>updateContentById</code> is the coherence
+  pass's <code>fix_fact</code> path.
+</p>
+
+<p>
+  <strong><code>relationships</code></strong> exposes <code>insertMany</code>,
+  <code>listByWorld</code>, <code>deleteByWorld</code>, <code>updateById</code>, and
+  <code>deleteById</code>. <code>deleteByWorld</code> is the stage-4 retry-idempotency primitive:
+  the very first DB action stage 4 takes is <code>relationships.deleteByWorld(worldId)</code>, so a
+  retry after a partial run lands in a clean slate. The schema has no
+  <code>UNIQUE(source, target, type)</code> constraint by intent — application code owns idempotency
+  at stage-start time, not at row-insert time. <code>updateById</code> + <code>deleteById</code> are
+  the coherence pass's <code>fix_relationship</code> (modelled as DELETE + INSERT, not in-place
+  UPDATE) and <code>delete_relationship</code> paths. The DELETE + INSERT shape is deliberate: it
+  produces a clean <code>edge-removed</code> + <code>edge-added</code>
+  event pair on the wire, matching the contract's "every relationship change is observable" rule.
+</p>
+
+<p>
+  <strong><code>entityHierarchy</code></strong> exposes a bare <code>insert(client, input)</code>.
+  The table has <code>UNIQUE(child_entity_id)</code> — at most one parent per entity — and the repo
+  deliberately does NOT include <code>ON CONFLICT</code>. The caller (stage 4's straggler insert)
+  pre-filters against the existing rows in <code>entity_hierarchy</code> to enforce the "stage 3
+  wins" collision rule from §D9, then INSERTs only rows that won't conflict. Keeping the policy in
+  the caller rather than the repo means future changes to the collision rule are a caller-side
+  decision, not a schema migration.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Stage 4 pre-filters; stage 3 just INSERTs</strong> — stage 3's parent resolver builds its
+  name → entityId map fresh from <code>entities.listByWorld</code> on every run, so it never sees a
+  stale collision; it INSERTs straight into <code>entity_hierarchy</code>. Stage 4's straggler path
+  runs AFTER stage 3 and can collide with rows stage 3 wrote in the same world's same retry-attempt
+  — hence the pre-filter. The two callers operate at different points in the pipeline and the
+  asymmetric error handling reflects that.
+</aside>
+
 <h2 id="the-four-billing-namespaces-transaction-scoped-no-pool-binding">The four billing namespaces: transaction-scoped, no pool binding</h2>
 
 <p>
@@ -1429,6 +1521,43 @@
       </td>
     </tr>
     <tr>
+      <td><code>src/repo/entities.ts</code></td>
+      <td>
+        <code>entities.insert</code> (caller-supplied UUID), <code>findByWorldAndName</code>,
+        <code>listByWorld</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/prose-kernels.ts</code></td>
+      <td>
+        <code>proseKernels.insert</code> (errors on UNIQUE conflict), <code>updateByEntityId</code>
+        (coherence-pass fix_prose path). Not collapsed into an upsert by design.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/facts.ts</code></td>
+      <td>
+        <code>facts.insertMany</code> (stamps <code>narrative_status='undelivered'</code> as a
+        constant; <code>source</code> via column default), <code>updateContentById</code>
+        (coherence-pass fix_fact).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/relationships.ts</code></td>
+      <td>
+        <code>relationships.insertMany</code>, <code>listByWorld</code>,
+        <code>deleteByWorld</code> (stage-4 retry idempotency), <code>updateById</code> (partial
+        patch), <code>deleteById</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/entity-hierarchy.ts</code></td>
+      <td>
+        <code>entityHierarchy.insert</code>. Caller pre-filters against the table's
+        <code>UNIQUE(child_entity_id)</code> — repo does NOT do <code>ON CONFLICT</code>.
+      </td>
+    </tr>
+    <tr>
       <td><code>src/repo/stripe-events.ts</code></td>
       <td><code>stripeEvents.recordOrSkip(tx, event_id, event_type)</code>.</td>
     </tr>
@@ -1471,7 +1600,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#namespace-boundaries-11-today-14-deferred">Namespace boundaries: 11 today, 14 deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:12px"><a href="#recordusage-budgetsummary">recordUsage and budgetSummary</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#the-four-billing-namespaces-transaction-scoped-no-pool-binding">The four billing namespaces: transaction-scoped, no pool binding</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#namespace-boundaries-11-today-14-deferred">Namespace boundaries: 11 today, 14 deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:12px"><a href="#recordusage-budgetsummary">recordUsage and budgetSummary</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#the-world-content-namespaces-streaming-stages-share-a-caller-owned-transaction">The world-content namespaces: streaming stages share a caller-owned transaction</a></li><li style="padding-left:0"><a href="#the-four-billing-namespaces-transaction-scoped-no-pool-binding">The four billing namespaces: transaction-scoped, no pool binding</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
