@@ -95,6 +95,22 @@ async function reseedSystemRows(pool: Pool): Promise<void> {
      VALUES ($1, $2, 'Demo Adventure', 'Trial-mode demo world. Narrative content authored separately.', 'complete', 'en', false, true)`,
     [DEMO_WORLD_ID, SYSTEM_USER_ID],
   )
+  // myth-40uh: reseed the 5 dev users (dev-user-1..5) the dev-tool's
+  // identity switcher ships. Migration 013 seeds them in production; the
+  // TRUNCATE above wipes them, so this re-insert keeps them surviving the
+  // reset for any subsequent dev-tool interaction within the same test
+  // session. Credits are NOT pre-seeded here (same reason as in migration
+  // 013 — credit_ledger.user_id is RESTRICT-FK, and DELETE FROM users
+  // patterns elsewhere would break).
+  await pool.query(
+    `INSERT INTO users (id, cognito_sub, display_name, username, free_trial_used)
+     VALUES
+       ('019700e0-0000-7000-8000-00000000d001', 'dev-user-1', 'Dev User 1', 'devuser1', true),
+       ('019700e0-0000-7000-8000-00000000d002', 'dev-user-2', 'Dev User 2', 'devuser2', true),
+       ('019700e0-0000-7000-8000-00000000d003', 'dev-user-3', 'Dev User 3', 'devuser3', true),
+       ('019700e0-0000-7000-8000-00000000d004', 'dev-user-4', 'Dev User 4', 'devuser4', true),
+       ('019700e0-0000-7000-8000-00000000d005', 'dev-user-5', 'Dev User 5', 'devuser5', true)`,
+  )
 }
 
 /**

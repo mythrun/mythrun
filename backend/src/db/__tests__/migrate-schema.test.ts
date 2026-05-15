@@ -568,6 +568,7 @@ describe('schema-parity (integration)', () => {
       '010_settings_world_gen_cost_cap.sql',
       '011_credit_ledger_cost_cap_refund.sql',
       '012_credit_ledger_admin_source.sql',
+      '013_seed_dev_users.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
