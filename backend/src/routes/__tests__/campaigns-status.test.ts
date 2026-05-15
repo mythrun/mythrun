@@ -34,6 +34,11 @@ import { uuidv7 } from '../../repo/uuidv7.js'
 import type { AppDeps } from '../../app-deps.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
 import { noopWorldGenQueue } from '../../__tests__/helpers/stub-deps.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -65,6 +70,7 @@ describe('campaigns status routes', () => {
   let redis: Redis
   let publisher: Redis
   let app: Awaited<ReturnType<typeof buildApp>>
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -77,6 +83,7 @@ describe('campaigns status routes', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('camp-status')
 
     const redisUrl = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
     redis = createRedisClient(redisUrl)
@@ -114,43 +121,36 @@ describe('campaigns status routes', () => {
     await app.mythrunSubscriber.close()
     await app.close()
     await publisher.quit()
+    await cleanupTestScope(pool, scope)
     await redis.quit()
     await pool.end()
   })
 
   beforeEach(async () => {
-    // Order matters: delete child rows before parents. campaign_members
-    // / pipeline_runs reference campaigns + users; campaigns references
-    // worlds + users; worlds references users. campaign_invites also
-    // references campaigns.
-    await pool.query('DELETE FROM pipeline_runs')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaign_invites')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query('DELETE FROM users')
+    // myth-5jdo: scoped cleanup replaces blanket DELETEs.
+    await cleanupTestScope(pool, scope)
   })
 
-  async function seedCampaignWithMember(): Promise<SeededCampaign> {
+  async function seedCampaignWithMember(index = 0): Promise<SeededCampaign> {
     const userId = uuidv7()
     // The bypass-plugin reads `x-mythrun-dev-sub` and sets request.user.sub
     // to that value; requireOnboarded then looks up users by cognito_sub.
     // Putting the same string in the users row + the request header is what
     // makes this user "known" to the auth chain.
-    const devSub = `bypass:test-${userId.slice(-6)}`
+    const devSub = scope.userSub(index)
     const worldId = uuidv7()
     const campaignId = uuidv7()
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [userId, devSub, 'Test', `t${userId.slice(-6)}`],
+      [userId, devSub, scope.displayName(index), scope.username(index)],
     )
     await pool.query(
-      `INSERT INTO worlds (id, created_by, name, concept) VALUES ($1, $2, 'W', 'C')`,
-      [worldId, userId],
+      `INSERT INTO worlds (id, created_by, name, concept) VALUES ($1, $2, $3, 'C')`,
+      [worldId, userId, scope.worldName(index)],
     )
     await pool.query(
-      `INSERT INTO campaigns (id, world_id, created_by, name) VALUES ($1, $2, $3, 'C')`,
-      [campaignId, worldId, userId],
+      `INSERT INTO campaigns (id, world_id, created_by, name) VALUES ($1, $2, $3, $4)`,
+      [campaignId, worldId, userId, scope.campaignName(index)],
     )
     await pool.query(
       `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -179,12 +179,12 @@ describe('campaigns status routes', () => {
   })
 
   it('GET /api/campaigns/:campaignId/status returns 403 for non-members', async () => {
-    const { campaignId } = await seedCampaignWithMember()
+    const { campaignId } = await seedCampaignWithMember(0)
     const otherUserId = uuidv7()
-    const otherSub = `bypass:other-${otherUserId.slice(-6)}`
+    const otherSub = scope.userSub(1)
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [otherUserId, otherSub, 'O', `o${otherUserId.slice(-6)}`],
+      [otherUserId, otherSub, scope.displayName(1), scope.username(1)],
     )
     const res = await app.inject({
       method: 'GET',

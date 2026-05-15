@@ -28,6 +28,11 @@ import { campaignsRoutes } from '../campaigns.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
 import type { WorldGenQueueLike } from '../campaigns.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -78,32 +83,33 @@ interface SeededUser {
   readonly devSub: string
 }
 
-async function seedUser(pool: Pool, label: string): Promise<SeededUser> {
+async function seedUser(pool: Pool, scope: TestScope, index: number): Promise<SeededUser> {
   const userId = uuidv7()
-  const devSub = `bypass:${label}-${userId.slice(-6)}`
+  const devSub = scope.userSub(index)
   await pool.query(
     `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-    [userId, devSub, label, `${label}${userId.slice(-6)}`],
+    [userId, devSub, scope.displayName(index), scope.username(index)],
   )
   return { userId, devSub }
 }
 
 async function seedCampaignOwnedBy(
   pool: Pool,
+  scope: TestScope,
   owner: SeededUser,
-  name: string,
+  index: number,
 ): Promise<{ campaignId: string; worldId: string }> {
   const worldId = uuidv7()
   const campaignId = uuidv7()
   await pool.query(
     `INSERT INTO worlds (id, created_by, name, concept, status)
      VALUES ($1, $2, $3, 'A long enough concept for the test', 'complete')`,
-    [worldId, owner.userId, `${name}-world`],
+    [worldId, owner.userId, scope.worldName(index)],
   )
   await pool.query(
     `INSERT INTO campaigns (id, world_id, created_by, name, status)
      VALUES ($1, $2, $3, $4, 'setup')`,
-    [campaignId, worldId, owner.userId, name],
+    [campaignId, worldId, owner.userId, scope.campaignName(index)],
   )
   await pool.query(
     `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -135,6 +141,7 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
   let pool: Pool
   let redis: Redis
   let app: FastifyInstance
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -145,9 +152,11 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('campaigns-list')
   })
 
   afterAll(async () => {
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
@@ -155,13 +164,8 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     vi.stubEnv('AUTH_MODE', 'bypass')
     vi.stubEnv('NODE_ENV', 'test')
     redis = new IoredisMock()
-    await pool.query('DELETE FROM pipeline_runs')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaign_invites')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query('DELETE FROM credit_ledger')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces blanket DELETEs.
+    await cleanupTestScope(pool, scope)
     app = await buildTestApp(pool, redis)
   })
 
@@ -171,7 +175,7 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
   })
 
   it('200 empty array for a user with no campaigns', async () => {
-    const u = await seedUser(pool, 'empty')
+    const u = await seedUser(pool, scope, 0)
     const res = await app.inject({
       method: 'GET',
       url: `/api/campaigns/mine`,
@@ -183,13 +187,13 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
   })
 
   it('200 returns owned campaigns and accepted-player memberships', async () => {
-    const owner = await seedUser(pool, 'owner')
-    const player = await seedUser(pool, 'player')
+    const owner = await seedUser(pool, scope, 0)
+    const player = await seedUser(pool, scope, 1)
 
     // Owner owns campaign A.
-    const a = await seedCampaignOwnedBy(pool, owner, 'CampaignA')
+    const a = await seedCampaignOwnedBy(pool, scope, owner, 0)
     // Player owns campaign B.
-    const b = await seedCampaignOwnedBy(pool, player, 'CampaignB')
+    const b = await seedCampaignOwnedBy(pool, scope, player, 1)
     // Owner is also an accepted player on player's campaign B.
     await pool.query(
       `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -209,10 +213,10 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
   })
 
   it('200 does NOT return campaigns the caller has no relationship to', async () => {
-    const me = await seedUser(pool, 'me')
-    const other = await seedUser(pool, 'other')
+    const me = await seedUser(pool, scope, 0)
+    const other = await seedUser(pool, scope, 1)
     // Other user's campaign — me has no membership row.
-    await seedCampaignOwnedBy(pool, other, 'NotMine')
+    await seedCampaignOwnedBy(pool, scope, other, 0)
 
     const res = await app.inject({
       method: 'GET',
@@ -225,9 +229,9 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
   })
 
   it('200 does NOT return campaigns where the invite is still pending', async () => {
-    const me = await seedUser(pool, 'me')
-    const other = await seedUser(pool, 'other')
-    const seed = await seedCampaignOwnedBy(pool, other, 'PendingInvite')
+    const me = await seedUser(pool, scope, 0)
+    const other = await seedUser(pool, scope, 1)
+    const seed = await seedCampaignOwnedBy(pool, scope, other, 0)
     // Pending invite — me hasn't accepted yet.
     await pool.query(
       `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -248,8 +252,8 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
   it('200 dedupes when the caller is both owner and a (second) member row', async () => {
     // Owners get a 'owner' row at create time. The listByUser join is
     // by user_id, so an owner is included exactly once via that row.
-    const me = await seedUser(pool, 'me')
-    await seedCampaignOwnedBy(pool, me, 'JustOne')
+    const me = await seedUser(pool, scope, 0)
+    await seedCampaignOwnedBy(pool, scope, me, 0)
     const res = await app.inject({
       method: 'GET',
       url: `/api/campaigns/mine`,

@@ -32,6 +32,11 @@ import { campaignsRoutes } from '../campaigns.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
 import type { WorldGenQueueLike, WorldGenJobLike } from '../campaigns.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -118,28 +123,29 @@ interface SeededCampaign {
 
 async function seedCampaign(
   pool: Pool,
+  scope: TestScope,
   opts: {
     worldStatus?: 'generating' | 'complete' | 'failed'
     campaignStatus?: 'setup' | 'active' | 'archived'
   } = {},
 ): Promise<SeededCampaign> {
   const userId = uuidv7()
-  const devSub = `bypass:resume-${userId.slice(-6)}`
+  const devSub = scope.userSub(0)
   const worldId = uuidv7()
   const campaignId = uuidv7()
   await pool.query(
     `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-    [userId, devSub, 'ResumeTest', `r${userId.slice(-6)}`],
+    [userId, devSub, scope.displayName(0), scope.username(0)],
   )
   await pool.query(
     `INSERT INTO worlds (id, created_by, name, concept, status)
-     VALUES ($1, $2, 'W', 'C', $3)`,
-    [worldId, userId, opts.worldStatus ?? 'generating'],
+     VALUES ($1, $2, $3, 'C', $4)`,
+    [worldId, userId, scope.worldName(0), opts.worldStatus ?? 'generating'],
   )
   await pool.query(
     `INSERT INTO campaigns (id, world_id, created_by, name, status)
-     VALUES ($1, $2, $3, 'C', $4)`,
-    [campaignId, worldId, userId, opts.campaignStatus ?? 'setup'],
+     VALUES ($1, $2, $3, $4, $5)`,
+    [campaignId, worldId, userId, scope.campaignName(0), opts.campaignStatus ?? 'setup'],
   )
   await pool.query(
     `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -211,6 +217,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
   let redis: Redis
   let queueSpy: QueueSpy
   let app: FastifyInstance
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -221,9 +228,11 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('camp-resume')
   })
 
   afterAll(async () => {
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
@@ -232,13 +241,8 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     vi.stubEnv('NODE_ENV', 'test')
     redis = new IoredisMock()
     queueSpy = createQueueSpy()
-    await pool.query('DELETE FROM pipeline_runs')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaign_invites')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query('DELETE FROM credit_ledger')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces blanket DELETEs.
+    await cleanupTestScope(pool, scope)
     app = await buildTestApp(pool, redis, queueSpy)
   })
 
@@ -253,7 +257,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=world_gen (active)', () => {
     it('409 world_gen_in_progress + Retry-After: 30', async () => {
-      const seed = await seedCampaign(pool)
+      const seed = await seedCampaign(pool, scope)
       // A running worldgen stage puts the phase in 'world_gen'.
       await insertRun(pool, {
         worldId: seed.worldId,
@@ -279,7 +283,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=world_gen_failed', () => {
     it('409 phase_not_yet_implementable on stage_not_implemented error', async () => {
-      const seed = await seedCampaign(pool, { worldStatus: 'failed' })
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'failed' })
       await insertRun(pool, {
         worldId: seed.worldId,
         stage: 'world_and_factions',
@@ -302,7 +306,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     })
 
     it('409 world_gen_capped on world_gen_cost_cap_exceeded error', async () => {
-      const seed = await seedCampaign(pool, { worldStatus: 'failed' })
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'failed' })
       await insertRun(pool, {
         worldId: seed.worldId,
         stage: 'starting_situation',
@@ -322,7 +326,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     })
 
     it('202 re-enqueued on transient infra-class failure', async () => {
-      const seed = await seedCampaign(pool, { worldStatus: 'failed' })
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'failed' })
       await insertRun(pool, {
         worldId: seed.worldId,
         stage: 'concept_intake',
@@ -359,7 +363,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=world_ready', () => {
     it('409 nothing_to_resume', async () => {
-      const seed = await seedCampaign(pool, { worldStatus: 'complete' })
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'complete' })
       // All worldgen stages completed → world_ready (campaign still in setup).
       for (const stage of ['concept_intake', 'starting_situation', 'random_tables']) {
         await insertRun(pool, {
@@ -387,7 +391,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=character_creation', () => {
     it('422 phase_resume_not_yet_implemented (downstream ticket NOT in body)', async () => {
-      const seed = await seedCampaign(pool, { worldStatus: 'complete' })
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'complete' })
       // World ready → a charcreation stage running puts us in 'character_creation'.
       await insertRun(pool, {
         worldId: seed.worldId,
@@ -424,7 +428,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=post_creation', () => {
     it('422 phase_resume_not_yet_implemented for post_creation', async () => {
-      const seed = await seedCampaign(pool, { worldStatus: 'complete' })
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'complete' })
       // Charcreation done; postcreation stage pending → 'post_creation'.
       await insertRun(pool, {
         worldId: seed.worldId,
@@ -465,7 +469,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=complete', () => {
     it('409 already_complete', async () => {
-      const seed = await seedCampaign(pool, {
+      const seed = await seedCampaign(pool, scope, {
         worldStatus: 'complete',
         campaignStatus: 'active',
       })
@@ -486,7 +490,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=failed', () => {
     it('409 terminal_failure when charcreation failed downstream', async () => {
-      const seed = await seedCampaign(pool, { worldStatus: 'complete' })
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'complete' })
       // World OK; later-stage failure puts us in 'failed' (not world_gen_failed).
       await insertRun(pool, {
         worldId: seed.worldId,
@@ -521,7 +525,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('phase=not_started', () => {
     it('202 enqueued-after-orphan-recovery when no job exists', async () => {
-      const seed = await seedCampaign(pool)
+      const seed = await seedCampaign(pool, scope)
       // No pipeline_runs rows → 'not_started'.
       queueSpy.setJob(null)
       const res = await app.inject({
@@ -547,7 +551,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     })
 
     it('409 world_gen_in_progress when a live job already exists', async () => {
-      const seed = await seedCampaign(pool)
+      const seed = await seedCampaign(pool, scope)
       queueSpy.setJob({
         isCompleted: () => false,
         isFailed: () => false,
@@ -564,7 +568,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     })
 
     it('202 enqueued-after-orphan-recovery when job exists but completed', async () => {
-      const seed = await seedCampaign(pool)
+      const seed = await seedCampaign(pool, scope)
       // Stale completed BullMQ job (would happen if `removeOnComplete` was
       // misconfigured, hence the SHOWSTOPPER fix tracked in D9). We still
       // recover: it's a no-op job, re-enqueue is safe.
@@ -588,12 +592,12 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
 
   describe('auth', () => {
     it('403 not_campaign_owner for a non-owner member', async () => {
-      const seed = await seedCampaign(pool)
+      const seed = await seedCampaign(pool, scope)
       const otherUserId = uuidv7()
-      const otherSub = `bypass:other-${otherUserId.slice(-6)}`
+      const otherSub = scope.userSub(1)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [otherUserId, otherSub, 'O', `o${otherUserId.slice(-6)}`],
+        [otherUserId, otherSub, scope.displayName(1), scope.username(1)],
       )
       await pool.query(
         `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -610,12 +614,12 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     })
 
     it('403 not_campaign_member for an entirely unrelated user', async () => {
-      const seed = await seedCampaign(pool)
+      const seed = await seedCampaign(pool, scope)
       const otherUserId = uuidv7()
-      const otherSub = `bypass:nope-${otherUserId.slice(-6)}`
+      const otherSub = scope.userSub(1)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [otherUserId, otherSub, 'O', `o${otherUserId.slice(-6)}`],
+        [otherUserId, otherSub, scope.displayName(1), scope.username(1)],
       )
       const res = await app.inject({
         method: 'POST',

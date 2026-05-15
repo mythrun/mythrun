@@ -6,24 +6,64 @@ import { createUsersRepo } from '../users.js'
 import { createCreditsRepo, grantInTx } from '../credits.js'
 import type { ClientLike } from '../_types.js'
 import { uuidv7 } from '../uuidv7.js'
-import { resetData, resetCreditsData } from './_helpers/reset-data.js'
 import { ensureSchema, pool } from './_helpers/with-tx.js'
+import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 
-const baseUserInput = {
-  cognitoSub: 'google_credits_test',
-  displayName: 'Credits Tester',
-  username: 'creditstester',
+// myth-5jdo: credits tests insert into `purchases` (the trial-burn flow
+// needs a real purchase row to satisfy the credit_ledger.source_purchase_id
+// FK). purchases.user_id RESTRICTS → users, and credit_ledger.source_purchase_id
+// RESTRICTS → purchases, so we must delete the scope's purchases AFTER
+// credit_ledger and BEFORE users. cleanupTestScope handles credit_ledger
+// + users; we sandwich the purchases delete between them by running our
+// own delete first (which is safe because credit_ledger rows pointing at
+// these purchases were already removed by the prior cleanupTestScope call),
+// then re-invoking cleanupTestScope. In practice the simpler flow is to
+// delete purchases right before cleanupTestScope; the helper's own
+// credit_ledger delete is idempotent and the purchases delete is too.
+async function cleanupCreditsScope(p: typeof pool, scope: TestScope): Promise<void> {
+  // credit_ledger first (RESTRICTs to both users and purchases via its FKs).
+  await p.query(
+    `DELETE FROM credit_ledger
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [`${scope.id}%`],
+  )
+  // purchases next (RESTRICTs to users).
+  await p.query(
+    `DELETE FROM purchases
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [`${scope.id}%`],
+  )
+  // Now the shared helper can safely cascade through the rest + delete users.
+  await cleanupTestScope(p, scope)
 }
 
 describe('credits repo (integration)', () => {
+  let scope: TestScope
+  let baseUserInput: { cognitoSub: string; displayName: string; username: string }
+
   beforeAll(async () => {
     await ensureSchema()
+    scope = makeTestScope('credits')
+    baseUserInput = {
+      cognitoSub: scope.userSub(0),
+      displayName: scope.displayName(0),
+      username: scope.username(0),
+    }
+  })
+
+  afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; the seeded dev users
+    // + system user + demo world remain intact for the next test file.
+    await cleanupCreditsScope(pool, scope)
   })
 
   beforeEach(async () => {
-    await resetData(pool)
+    // myth-5jdo: scoped cleanup replaces the prior resetData() blanket
+    // TRUNCATE. Only THIS scope's rows are removed between iterations;
+    // the seeded dev users + system user + demo world persist.
+    await cleanupCreditsScope(pool, scope)
   })
 
   describe('balance()', () => {
@@ -1381,24 +1421,28 @@ const RACE_ITERATIONS_PAIRED = 50
 
 describe('credits repo — concurrency (separate pool)', () => {
   let pool: Pool
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createPgPool(databaseUrl, { max: 4 })
     // Schema already prepared by the main suite's beforeAll. We only need a
     // fresh pool with concurrent-connection capacity.
+    scope = makeTestScope('credits-concurrency')
   })
 
   afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows before tearing down the
+    // pool. Idempotent w.r.t. the beforeEach cleanup.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
-  // The concurrency tests only touch users + credit_ledger; resetCreditsData
-  // is ~50x faster than the full TRUNCATE-38-tables resetData(). With 100
-  // iterations per race test, the difference is the gap between hitting the
-  // 60s timeout and finishing in ~10s.
+  // myth-5jdo: scoped cleanup replaces the prior resetCreditsData() call.
+  // Per-iteration cleanup inside the race-loop tests uses the same helper
+  // (only THIS scope's rows are wiped — fast on a near-empty table).
   beforeEach(async () => {
-    await resetCreditsData(pool)
+    await cleanupTestScope(pool, scope)
   })
 
   it('two parallel debits on user with 1 credit — exactly one succeeds', async () => {
@@ -1406,11 +1450,11 @@ describe('credits repo — concurrency (separate pool)', () => {
     const credits = createCreditsRepo(pool)
 
     for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
-      await resetCreditsData(pool)
+      await cleanupTestScope(pool, scope)
       const u = await users.create(pool, {
-        ...baseUserInput,
-        cognitoSub: `sub-race-${String(i)}`,
-        username: `race${String(i)}`,
+        cognitoSub: scope.userSub(i),
+        displayName: scope.displayName(i),
+        username: scope.username(i),
       })
       await credits.grant({
         userId: u.id,
@@ -1450,11 +1494,11 @@ describe('credits repo — concurrency (separate pool)', () => {
     const credits = createCreditsRepo(pool)
 
     for (let i = 0; i < RACE_ITERATIONS_CRITICAL; i++) {
-      await resetCreditsData(pool)
+      await cleanupTestScope(pool, scope)
       const u = await users.create(pool, {
-        ...baseUserInput,
-        cognitoSub: `sub-empty-${String(i)}`,
-        username: `empty${String(i)}`,
+        cognitoSub: scope.userSub(i),
+        displayName: scope.displayName(i),
+        username: scope.username(i),
       })
 
       const { InsufficientCreditsError } = await import('../credits-errors.js')
@@ -1494,11 +1538,11 @@ describe('credits repo — concurrency (separate pool)', () => {
     const credits = createCreditsRepo(pool)
 
     for (let i = 0; i < RACE_ITERATIONS_PAIRED; i++) {
-      await resetCreditsData(pool)
+      await cleanupTestScope(pool, scope)
       const u = await users.create(pool, {
-        ...baseUserInput,
-        cognitoSub: `sub-same-${String(i)}`,
-        username: `same${String(i)}`,
+        cognitoSub: scope.userSub(i),
+        displayName: scope.displayName(i),
+        username: scope.username(i),
       })
       await credits.grant({
         userId: u.id,
@@ -1542,9 +1586,9 @@ describe('credits repo — concurrency (separate pool)', () => {
     const fastCredits = createCreditsRepo(pool, { debitLockTimeoutMs: 200 })
 
     const u = await users.create(pool, {
-      ...baseUserInput,
-      cognitoSub: 'sub-lock-timeout',
-      username: 'locktimeout',
+      cognitoSub: scope.userSub(0),
+      displayName: scope.displayName(0),
+      username: scope.username(0),
     })
     await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
 
@@ -1592,9 +1636,9 @@ describe('credits repo — concurrency (separate pool)', () => {
     const users = createUsersRepo(pool)
     const credits = createCreditsRepo(pool)
     const u = await users.create(pool, {
-      ...baseUserInput,
-      cognitoSub: 'sub-rollback',
-      username: 'rollback',
+      cognitoSub: scope.userSub(0),
+      displayName: scope.displayName(0),
+      username: scope.username(0),
     })
     await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
 

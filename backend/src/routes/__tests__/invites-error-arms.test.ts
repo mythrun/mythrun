@@ -24,6 +24,11 @@ import {
   InviteCreationError,
   InviteTimeoutError,
 } from '../../repo/invites-errors.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 // Mock the invites repo factory. The routes plugin calls createRepo()
 // which composes createInvitesRepo() internally; we mock the inner
@@ -68,24 +73,25 @@ function silentLogger(): ReturnType<typeof pino> {
 
 async function seedOwnerAndCampaign(
   pool: Pool,
+  scope: TestScope,
 ): Promise<{ ownerSub: string; ownerId: string; campaignId: string }> {
   const ownerId = uuidv7()
-  const ownerSub = `bypass:err-${ownerId.slice(-6)}`
+  const ownerSub = scope.userSub(0)
   await pool.query(
     `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-    [ownerId, ownerSub, 'ErrOwner', `eo${ownerId.slice(-6)}`],
+    [ownerId, ownerSub, scope.displayName(0), scope.username(0)],
   )
   const worldId = uuidv7()
   const campaignId = uuidv7()
   await pool.query(
     `INSERT INTO worlds (id, created_by, name, concept, status)
-     VALUES ($1, $2, 'World', 'Concept', 'complete')`,
-    [worldId, ownerId],
+     VALUES ($1, $2, $3, 'Concept', 'complete')`,
+    [worldId, ownerId, scope.worldName(0)],
   )
   await pool.query(
     `INSERT INTO campaigns (id, world_id, created_by, name, status)
-     VALUES ($1, $2, $3, 'Test Campaign', 'setup')`,
-    [campaignId, worldId, ownerId],
+     VALUES ($1, $2, $3, $4, 'setup')`,
+    [campaignId, worldId, ownerId, scope.campaignName(0)],
   )
   await pool.query(
     `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -109,6 +115,7 @@ async function buildApp(pool: Pool): Promise<FastifyInstance> {
 describe('routes/invites — error mapping', () => {
   let pool: Pool
   let app: FastifyInstance
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -119,9 +126,13 @@ describe('routes/invites — error mapping', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('invites-error')
   })
 
   afterAll(async () => {
+    // myth-5jdo: scoped cleanup only — seeded dev users + system user
+    // survive for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
@@ -133,11 +144,8 @@ describe('routes/invites — error mapping', () => {
     stubGetCodePreview.mockReset()
     stubListForCampaign.mockReset()
     stubRevoke.mockReset()
-    await pool.query('DELETE FROM campaign_invites')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces the blanket DELETEs.
+    await cleanupTestScope(pool, scope)
     app = await buildApp(pool)
   })
 
@@ -147,7 +155,7 @@ describe('routes/invites — error mapping', () => {
   })
 
   it('500 invite_creation_error when repo.invites.create throws InviteCreationError', async () => {
-    const seed = await seedOwnerAndCampaign(pool)
+    const seed = await seedOwnerAndCampaign(pool, scope)
     stubCreate.mockRejectedValueOnce(new InviteCreationError(3))
     const res = await app.inject({
       method: 'POST',
@@ -159,7 +167,7 @@ describe('routes/invites — error mapping', () => {
   })
 
   it('rethrows non-Mythrun errors from invite-create handler (falls through to Fastify 500)', async () => {
-    const seed = await seedOwnerAndCampaign(pool)
+    const seed = await seedOwnerAndCampaign(pool, scope)
     stubCreate.mockRejectedValueOnce(new Error('some random repo failure'))
     const res = await app.inject({
       method: 'POST',
@@ -173,10 +181,10 @@ describe('routes/invites — error mapping', () => {
   it('503 invite_timeout when repo.invites.acceptInvite throws InviteTimeoutError', async () => {
     // Joiner user.
     const joinerId = uuidv7()
-    const joinerSub = `bypass:joiner-${joinerId.slice(-6)}`
+    const joinerSub = scope.userSub(1)
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [joinerId, joinerSub, 'Joiner', `j${joinerId.slice(-6)}`],
+      [joinerId, joinerSub, scope.displayName(1), scope.username(1)],
     )
     stubGetCodePreview.mockResolvedValueOnce({
       campaignId: uuidv7(),
@@ -198,10 +206,10 @@ describe('routes/invites — error mapping', () => {
 
   it('rethrows non-Timeout errors from accept handler (falls through to Fastify 500)', async () => {
     const joinerId = uuidv7()
-    const joinerSub = `bypass:joiner2-${joinerId.slice(-6)}`
+    const joinerSub = scope.userSub(2)
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [joinerId, joinerSub, 'Joiner2', `j2${joinerId.slice(-6)}`],
+      [joinerId, joinerSub, scope.displayName(2), scope.username(2)],
     )
     stubGetCodePreview.mockResolvedValueOnce({
       campaignId: uuidv7(),

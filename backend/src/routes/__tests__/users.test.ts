@@ -25,6 +25,11 @@ import pino, { type DestinationStream } from 'pino'
 import { createPgPool } from '../../db/postgres.js'
 import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 vi.mock('../../llm/profanity.js', () => ({
   classifyProfanity: vi.fn(),
@@ -82,6 +87,7 @@ async function buildApp(pool: Pool): Promise<FastifyInstance> {
 describe('usersRoutes', () => {
   let pool: Pool
   let app: FastifyInstance
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -92,17 +98,23 @@ describe('usersRoutes', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('users')
   })
 
   afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; the seeded dev users +
+    // system user + demo world remain intact for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
     classifyProfanityMock.mockReset()
     classifyProfanityMock.mockResolvedValue({ profane: false })
-    await pool.query('DELETE FROM credit_ledger')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces the blanket DELETEs from prior
+    // iteration. credit_ledger goes first (RESTRICT FK against users)
+    // and is handled inside cleanupTestScope.
+    await cleanupTestScope(pool, scope)
     app = await buildApp(pool)
   })
 
@@ -116,11 +128,14 @@ describe('usersRoutes', () => {
 
   describe('POST /api/users/register', () => {
     it('201 with user + created=true on happy path; grants 1 session credit and flips free_trial_used', async () => {
+      const sub = scope.userSub(0)
+      const username = scope.username(0)
+      const displayName = scope.displayName(0)
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-happy-1', 'content-type': 'application/json' },
-        payload: { username: 'alice123', displayName: 'Alice' },
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username, displayName },
       })
       expect(res.statusCode).toBe(201)
       expect(res.headers.location).toBe('/api/users/me')
@@ -129,16 +144,17 @@ describe('usersRoutes', () => {
         user: { username: string; displayName: string; freeTrialUsed: boolean }
       }>()
       expect(body.created).toBe(true)
-      expect(body.user.username).toBe('alice123')
-      expect(body.user.displayName).toBe('Alice')
+      expect(body.user.username).toBe(username)
+      expect(body.user.displayName).toBe(displayName)
       expect(body.user.freeTrialUsed).toBe(true)
 
       // Trial credit row landed.
       const ledger = await pool.query<{ amount: string; credit_type: string; source_type: string }>(
         `SELECT amount::text AS amount, credit_type, source_type
            FROM credit_ledger WHERE user_id = (
-             SELECT id FROM users WHERE cognito_sub = 'sub-happy-1'
+             SELECT id FROM users WHERE cognito_sub = $1
            )`,
+        [sub],
       )
       expect(ledger.rows).toHaveLength(1)
       expect(ledger.rows[0]?.credit_type).toBe('session')
@@ -151,7 +167,7 @@ describe('usersRoutes', () => {
         method: 'POST',
         url: '/api/users/register',
         headers: { 'content-type': 'application/json' },
-        payload: { username: 'bob1234', displayName: 'Bob' },
+        payload: { username: scope.username(0), displayName: scope.displayName(0) },
       })
       expect(res.statusCode).toBe(401)
       expect(res.json()).toEqual({ code: 'unauthenticated' })
@@ -161,8 +177,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-bad-1', 'content-type': 'application/json' },
-        payload: { username: 'ab', displayName: 'Bob' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: 'ab', displayName: scope.displayName(0) },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'format' })
@@ -172,8 +188,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-bad-2', 'content-type': 'application/json' },
-        payload: { username: 'a'.repeat(21), displayName: 'Bob' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: 'a'.repeat(21), displayName: scope.displayName(0) },
       })
       expect(res.statusCode).toBe(400)
     })
@@ -182,8 +198,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-bad-3', 'content-type': 'application/json' },
-        payload: { username: '_alice', displayName: 'Alice' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: '_alice', displayName: scope.displayName(0) },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'format' })
@@ -193,8 +209,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-bad-4', 'content-type': 'application/json' },
-        payload: { username: 'goodname' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: scope.username(0) },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'format' })
@@ -204,7 +220,7 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-bad-5', 'content-type': 'application/json' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
         // Arrays are typeof 'object' but parseRegisterBody treats them as
         // "no fields" → returns null → 400 username_invalid/format.
         payload: [],
@@ -217,9 +233,9 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-bad-6', 'content-type': 'application/json' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
         // username is a number → parseRegisterBody rejects on typeof check.
-        payload: { username: 12345, displayName: 'Bob' },
+        payload: { username: 12345, displayName: scope.displayName(0) },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'format' })
@@ -229,8 +245,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-bad-7', 'content-type': 'application/json' },
-        payload: { username: 'ok1234', displayName: 12345 },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: scope.username(0), displayName: 12345 },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'format' })
@@ -243,8 +259,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-prof-1', 'content-type': 'application/json' },
-        payload: { username: 'naughty1', displayName: 'Naughty' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: scope.username(0), displayName: scope.displayName(0) },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'offensive' })
@@ -255,8 +271,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-prof-2', 'content-type': 'application/json' },
-        payload: { username: 'noreason', displayName: 'NoReason' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: scope.username(0), displayName: scope.displayName(0) },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'username_invalid', reason: 'offensive' })
@@ -270,8 +286,8 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-prof-3', 'content-type': 'application/json' },
-        payload: { username: 'cleanname', displayName: 'Mythrun Staff' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: scope.username(0), displayName: 'Mythrun Staff' },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'display_name_invalid', reason: 'impersonation' })
@@ -284,47 +300,52 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-prof-4', 'content-type': 'application/json' },
-        payload: { username: 'cleanname2', displayName: 'BadDisplay' },
+        headers: { 'x-test-sub': scope.userSub(0), 'content-type': 'application/json' },
+        payload: { username: scope.username(0), displayName: 'BadDisplay' },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'display_name_invalid', reason: 'offensive' })
     })
 
     it('200 already_onboarded_same: same sub + same username re-register → returns existing row', async () => {
+      const sub = scope.userSub(0)
+      const username = scope.username(0)
       // First registration.
       await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-dup-1', 'content-type': 'application/json' },
-        payload: { username: 'reregister', displayName: 'Re Register' },
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username, displayName: scope.displayName(0) },
       })
       // Second attempt — same sub, same username.
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-dup-1', 'content-type': 'application/json' },
-        payload: { username: 'reregister', displayName: 'Re Register Two' },
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username, displayName: scope.displayName(1) },
       })
       expect(res.statusCode).toBe(200)
       expect(res.headers['content-location']).toBe('/api/users/me')
       const body = res.json<{ created: boolean; user: { username: string } }>()
       expect(body.created).toBe(false)
-      expect(body.user.username).toBe('reregister')
+      expect(body.user.username).toBe(username)
     })
 
     it('409 already_onboarded when same sub re-registers with a DIFFERENT username', async () => {
+      const sub = scope.userSub(0)
+      const firstUsername = scope.username(0)
+      const secondUsername = scope.username(1)
       await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-dup-2', 'content-type': 'application/json' },
-        payload: { username: 'firstname', displayName: 'First' },
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username: firstUsername, displayName: scope.displayName(0) },
       })
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-dup-2', 'content-type': 'application/json' },
-        payload: { username: 'secondname', displayName: 'Second' },
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username: secondUsername, displayName: scope.displayName(1) },
       })
       expect(res.statusCode).toBe(409)
       const body = res.json<{
@@ -333,39 +354,49 @@ describe('usersRoutes', () => {
         requestedUsername: string
       }>()
       expect(body.code).toBe('already_onboarded')
-      expect(body.currentUsername).toBe('firstname')
-      expect(body.requestedUsername).toBe('secondname')
+      expect(body.currentUsername).toBe(firstUsername)
+      expect(body.requestedUsername).toBe(secondUsername)
     })
 
     it('409 username_taken when DIFFERENT sub requests an existing username; suggestion is non-profane', async () => {
       // Seed an existing row.
+      const ownerSub = scope.userSub(0)
+      const otherSub = scope.userSub(1)
+      // The suggestion format is `${base}\d{3}` — the route appends 3
+      // digits to the requested username. Base + 3 digits must satisfy
+      // the 20-char username cap, so we use a short scoped marker that
+      // leaves the 3-digit headroom.
+      const taken = `${scope.id.replace(/-/g, '').slice(0, 13)}p`
       await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-taken-owner', 'content-type': 'application/json' },
-        payload: { username: 'popular', displayName: 'Popular' },
+        headers: { 'x-test-sub': ownerSub, 'content-type': 'application/json' },
+        payload: { username: taken, displayName: scope.displayName(0) },
       })
       // New sub asks for the same username.
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-taken-other', 'content-type': 'application/json' },
-        payload: { username: 'popular', displayName: 'Other' },
+        headers: { 'x-test-sub': otherSub, 'content-type': 'application/json' },
+        payload: { username: taken, displayName: scope.displayName(1) },
       })
       expect(res.statusCode).toBe(409)
       const body = res.json<{ code: string; suggestion: string }>()
       expect(body.code).toBe('username_taken')
       // suggestion = base + 3 digits.
-      expect(body.suggestion).toMatch(/^popular\d{3}$/)
+      expect(body.suggestion).toMatch(new RegExp(`^${taken}\\d{3}$`))
     })
 
     it('username_taken: suggestion retries when first generated suggestion is profane', async () => {
       // Seed an existing row.
+      const ownerSub = scope.userSub(0)
+      const otherSub = scope.userSub(1)
+      const taken = `${scope.id.replace(/-/g, '').slice(0, 13)}p`
       await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-taken-owner-2', 'content-type': 'application/json' },
-        payload: { username: 'popular2', displayName: 'Popular Two' },
+        headers: { 'x-test-sub': ownerSub, 'content-type': 'application/json' },
+        payload: { username: taken, displayName: scope.displayName(0) },
       })
       // For the conflict-driven re-registration:
       //   1st classify call → username profanity check (clean)
@@ -382,13 +413,13 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'sub-taken-other-2', 'content-type': 'application/json' },
-        payload: { username: 'popular2', displayName: 'Other Two' },
+        headers: { 'x-test-sub': otherSub, 'content-type': 'application/json' },
+        payload: { username: taken, displayName: scope.displayName(1) },
       })
       expect(res.statusCode).toBe(409)
       const body = res.json<{ code: string; suggestion: string }>()
       expect(body.code).toBe('username_taken')
-      expect(body.suggestion).toMatch(/^popular2\d{3}$/)
+      expect(body.suggestion).toMatch(new RegExp(`^${taken}\\d{3}$`))
     })
   })
 
@@ -400,8 +431,8 @@ describe('usersRoutes', () => {
     it('available=true for a clean, unseeded username', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/api/users/check-username?username=brandnew1',
-        headers: { 'x-test-sub': 'check-sub-1' },
+        url: `/api/users/check-username?username=${scope.username(0)}`,
+        headers: { 'x-test-sub': scope.userSub(0) },
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: true })
@@ -411,7 +442,7 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/users/check-username',
-        headers: { 'x-test-sub': 'check-sub-2' },
+        headers: { 'x-test-sub': scope.userSub(0) },
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: false, reason: 'format' })
@@ -421,7 +452,7 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/users/check-username?username=_bad',
-        headers: { 'x-test-sub': 'check-sub-3' },
+        headers: { 'x-test-sub': scope.userSub(0) },
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: false, reason: 'format' })
@@ -431,8 +462,8 @@ describe('usersRoutes', () => {
       classifyProfanityMock.mockResolvedValueOnce({ profane: true, reason: 'offensive' })
       const res = await app.inject({
         method: 'GET',
-        url: '/api/users/check-username?username=naughty1',
-        headers: { 'x-test-sub': 'check-sub-4' },
+        url: `/api/users/check-username?username=${scope.username(0)}`,
+        headers: { 'x-test-sub': scope.userSub(0) },
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: false, reason: 'offensive' })
@@ -442,8 +473,8 @@ describe('usersRoutes', () => {
       classifyProfanityMock.mockResolvedValueOnce({ profane: true })
       const res = await app.inject({
         method: 'GET',
-        url: '/api/users/check-username?username=noreason1',
-        headers: { 'x-test-sub': 'check-sub-5' },
+        url: `/api/users/check-username?username=${scope.username(0)}`,
+        headers: { 'x-test-sub': scope.userSub(0) },
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: false, reason: 'offensive' })
@@ -451,16 +482,19 @@ describe('usersRoutes', () => {
 
     it('available=false/taken when the username already exists', async () => {
       // Seed an existing row.
+      const ownerSub = scope.userSub(0)
+      const otherSub = scope.userSub(1)
+      const taken = scope.username(0)
       await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'check-owner', 'content-type': 'application/json' },
-        payload: { username: 'taken777', displayName: 'Taken' },
+        headers: { 'x-test-sub': ownerSub, 'content-type': 'application/json' },
+        payload: { username: taken, displayName: scope.displayName(0) },
       })
       const res = await app.inject({
         method: 'GET',
-        url: '/api/users/check-username?username=taken777',
-        headers: { 'x-test-sub': 'check-other' },
+        url: `/api/users/check-username?username=${taken}`,
+        headers: { 'x-test-sub': otherSub },
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: false, reason: 'taken' })
@@ -482,7 +516,7 @@ describe('usersRoutes', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/users/me',
-        headers: { 'x-test-sub': 'me-sub-not-seeded' },
+        headers: { 'x-test-sub': scope.userSub(0) },
       })
       expect(res.statusCode).toBe(403)
       expect(res.json()).toEqual({ code: 'username_required' })
@@ -490,21 +524,24 @@ describe('usersRoutes', () => {
 
     it('200 returns the caller users row', async () => {
       // Seed via register so the row + trial credit are in place.
+      const sub = scope.userSub(0)
+      const username = scope.username(0)
+      const displayName = scope.displayName(0)
       await app.inject({
         method: 'POST',
         url: '/api/users/register',
-        headers: { 'x-test-sub': 'me-sub-onboarded', 'content-type': 'application/json' },
-        payload: { username: 'meuser1', displayName: 'Me User' },
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username, displayName },
       })
       const res = await app.inject({
         method: 'GET',
         url: '/api/users/me',
-        headers: { 'x-test-sub': 'me-sub-onboarded' },
+        headers: { 'x-test-sub': sub },
       })
       expect(res.statusCode).toBe(200)
       const body = res.json<{ user: { username: string; displayName: string } }>()
-      expect(body.user.username).toBe('meuser1')
-      expect(body.user.displayName).toBe('Me User')
+      expect(body.user.username).toBe(username)
+      expect(body.user.displayName).toBe(displayName)
     })
   })
 })

@@ -28,6 +28,11 @@ import { uuidv7 } from '../../repo/uuidv7.js'
 import { bypassPlugin } from '../../auth/bypass-plugin.js'
 import { requireOnboarded } from '../../auth/require-onboarded.js'
 import { invitesRoutes } from '../invites.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -49,10 +54,20 @@ interface SeededUser {
   readonly username: string
 }
 
-async function seedUser(pool: Pool, slug: string): Promise<SeededUser> {
+// myth-5jdo: per-test user counter so each seed gets a scope-unique index
+// for cognito_sub + username. The display_name keeps the slug so existing
+// assertions (e.g., `expect(body.ownerDisplayName).toBe('owner')`) survive.
+let userCounter = 0
+
+async function seedUser(
+  pool: Pool,
+  scope: TestScope,
+  slug: string,
+): Promise<SeededUser> {
+  const idx = userCounter++
   const userId = uuidv7()
-  const devSub = `bypass:${slug}-${userId.slice(-6)}`
-  const username = `${slug}${userId.slice(-6)}`
+  const devSub = scope.userSub(idx)
+  const username = scope.username(idx)
   await pool.query(
     `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
     [userId, devSub, slug, username],
@@ -66,19 +81,23 @@ interface SeededCampaign {
   readonly worldId: string
 }
 
-async function seedCampaign(pool: Pool, ownerSlug = 'owner'): Promise<SeededCampaign> {
-  const owner = await seedUser(pool, ownerSlug)
+async function seedCampaign(
+  pool: Pool,
+  scope: TestScope,
+  ownerSlug = 'owner',
+): Promise<SeededCampaign> {
+  const owner = await seedUser(pool, scope, ownerSlug)
   const worldId = uuidv7()
   const campaignId = uuidv7()
   await pool.query(
     `INSERT INTO worlds (id, created_by, name, concept, status)
-     VALUES ($1, $2, 'World', 'Concept', 'complete')`,
-    [worldId, owner.userId],
+     VALUES ($1, $2, $3, 'Concept', 'complete')`,
+    [worldId, owner.userId, scope.worldName(0)],
   )
   await pool.query(
     `INSERT INTO campaigns (id, world_id, created_by, name, status)
-     VALUES ($1, $2, $3, 'Test Campaign', 'setup')`,
-    [campaignId, worldId, owner.userId],
+     VALUES ($1, $2, $3, $4, 'setup')`,
+    [campaignId, worldId, owner.userId, scope.campaignName(0)],
   )
   await pool.query(
     `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -102,6 +121,7 @@ async function buildApp(pool: Pool): Promise<FastifyInstance> {
 describe('invitesRoutes', () => {
   let pool: Pool
   let app: FastifyInstance
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -112,20 +132,24 @@ describe('invitesRoutes', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('invites')
   })
 
   afterAll(async () => {
+    // myth-5jdo: scoped cleanup only — seeded dev users + system user
+    // survive for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
     vi.stubEnv('AUTH_MODE', 'bypass')
     vi.stubEnv('NODE_ENV', 'test')
-    await pool.query('DELETE FROM campaign_invites')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces the blanket DELETEs. Reset the
+    // per-test user counter so each test's first seedUser maps to
+    // scope.userSub(0) / scope.username(0).
+    userCounter = 0
+    await cleanupTestScope(pool, scope)
     app = await buildApp(pool)
   })
 
@@ -140,7 +164,7 @@ describe('invitesRoutes', () => {
 
   describe('POST /api/campaigns/:id/invites', () => {
     it('201 with inviteCode + inviteUrl on owner happy path', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       const res = await app.inject({
         method: 'POST',
         url: `/api/campaigns/${campaignId}/invites`,
@@ -160,8 +184,8 @@ describe('invitesRoutes', () => {
     })
 
     it('403 not_campaign_owner when caller has no membership', async () => {
-      const { campaignId } = await seedCampaign(pool)
-      const stranger = await seedUser(pool, 'stranger')
+      const { campaignId } = await seedCampaign(pool, scope)
+      const stranger = await seedUser(pool, scope, 'stranger')
       const res = await app.inject({
         method: 'POST',
         url: `/api/campaigns/${campaignId}/invites`,
@@ -172,8 +196,8 @@ describe('invitesRoutes', () => {
     })
 
     it('403 not_campaign_owner when caller is a player, not owner', async () => {
-      const { campaignId } = await seedCampaign(pool)
-      const player = await seedUser(pool, 'player')
+      const { campaignId } = await seedCampaign(pool, scope)
+      const player = await seedUser(pool, scope, 'player')
       await pool.query(
         `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
          VALUES ($1, $2, $3, 'player', true)`,
@@ -189,7 +213,7 @@ describe('invitesRoutes', () => {
     })
 
     it('404 campaign_not_found when the campaign does not exist', async () => {
-      const owner = await seedUser(pool, 'lone')
+      const owner = await seedUser(pool, scope, 'lone')
       const ghostId = uuidv7()
       const res = await app.inject({
         method: 'POST',
@@ -201,7 +225,7 @@ describe('invitesRoutes', () => {
     })
 
     it('409 invite_cap_reached when the campaign already has 25 active invites', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       // Pre-seed 25 active invites.
       for (let i = 0; i < 25; i++) {
         await pool.query(
@@ -228,7 +252,7 @@ describe('invitesRoutes', () => {
 
   describe('GET /api/campaigns/:id/invites', () => {
     it('200 with empty list when no invites exist', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       const res = await app.inject({
         method: 'GET',
         url: `/api/campaigns/${campaignId}/invites`,
@@ -239,7 +263,7 @@ describe('invitesRoutes', () => {
     })
 
     it('200 lists active invites; primary flag set on the earliest entry', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, created_at)
          VALUES ($1, $2, $3, $4, now() - interval '2 hours'),
@@ -263,8 +287,8 @@ describe('invitesRoutes', () => {
     })
 
     it('403 not_campaign_owner for a non-owner caller', async () => {
-      const { campaignId } = await seedCampaign(pool)
-      const player = await seedUser(pool, 'player')
+      const { campaignId } = await seedCampaign(pool, scope)
+      const player = await seedUser(pool, scope, 'player')
       await pool.query(
         `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
          VALUES ($1, $2, $3, 'player', true)`,
@@ -285,7 +309,7 @@ describe('invitesRoutes', () => {
 
   describe('DELETE /api/campaigns/:id/invites/:inviteCode', () => {
     it('204 revokes the invite', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
          VALUES ($1, $2, $3, $4)`,
@@ -306,7 +330,7 @@ describe('invitesRoutes', () => {
     })
 
     it('404 invite_not_found when invite code does not exist', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       const res = await app.inject({
         method: 'DELETE',
         url: `/api/campaigns/${campaignId}/invites/nonexistent1`,
@@ -317,8 +341,8 @@ describe('invitesRoutes', () => {
     })
 
     it('403 not_campaign_owner when caller is not the owner', async () => {
-      const { campaignId } = await seedCampaign(pool)
-      const stranger = await seedUser(pool, 'stranger')
+      const { campaignId } = await seedCampaign(pool, scope)
+      const stranger = await seedUser(pool, scope, 'stranger')
       const res = await app.inject({
         method: 'DELETE',
         url: `/api/campaigns/${campaignId}/invites/whatevercode`,
@@ -334,7 +358,7 @@ describe('invitesRoutes', () => {
 
   describe('GET /api/invites/:inviteCode/preview', () => {
     it('200 returns campaignName + ownerUsername + valid=true', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
          VALUES ($1, $2, $3, $4)`,
@@ -348,7 +372,7 @@ describe('invitesRoutes', () => {
         ownerDisplayName: string
         valid: boolean
       }>()
-      expect(body.campaignName).toBe('Test Campaign')
+      expect(body.campaignName).toBe(scope.campaignName(0))
       expect(body.ownerUsername).toBe(owner.username)
       expect(body.ownerDisplayName).toBe('owner')
       expect(body.valid).toBe(true)
@@ -361,7 +385,7 @@ describe('invitesRoutes', () => {
     })
 
     it('200 valid=false when invite has expired', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, expires_at)
          VALUES ($1, $2, $3, $4, now() - interval '1 minute')`,
@@ -380,13 +404,13 @@ describe('invitesRoutes', () => {
 
   describe('POST /api/invites/:inviteCode/accept', () => {
     it('201 creates membership row + returns campaignId on happy path', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
          VALUES ($1, $2, $3, $4)`,
         [uuidv7(), campaignId, owner.userId, 'acceptHappy1'],
       )
-      const joiner = await seedUser(pool, 'joiner')
+      const joiner = await seedUser(pool, scope, 'joiner')
       const res = await app.inject({
         method: 'POST',
         url: '/api/invites/acceptHappy1/accept',
@@ -400,13 +424,13 @@ describe('invitesRoutes', () => {
     })
 
     it('200 alreadyMember=true when the caller is already a member', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
          VALUES ($1, $2, $3, $4)`,
         [uuidv7(), campaignId, owner.userId, 'acceptAlready'],
       )
-      const member = await seedUser(pool, 'member')
+      const member = await seedUser(pool, scope, 'member')
       await pool.query(
         `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
          VALUES ($1, $2, $3, 'player', true)`,
@@ -422,7 +446,7 @@ describe('invitesRoutes', () => {
     })
 
     it('404 invite_not_found for an unknown code', async () => {
-      const joiner = await seedUser(pool, 'joiner')
+      const joiner = await seedUser(pool, scope, 'joiner')
       const res = await app.inject({
         method: 'POST',
         url: '/api/invites/unknown01234/accept',
@@ -433,13 +457,13 @@ describe('invitesRoutes', () => {
     })
 
     it('410 invite_revoked when the invite is expired', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, expires_at)
          VALUES ($1, $2, $3, $4, now() - interval '1 minute')`,
         [uuidv7(), campaignId, owner.userId, 'revokedCode1'],
       )
-      const joiner = await seedUser(pool, 'joiner')
+      const joiner = await seedUser(pool, scope, 'joiner')
       const res = await app.inject({
         method: 'POST',
         url: '/api/invites/revokedCode1/accept',
@@ -450,7 +474,7 @@ describe('invitesRoutes', () => {
     })
 
     it('409 campaign_full when the campaign is at party-size cap (6)', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
          VALUES ($1, $2, $3, $4)`,
@@ -458,14 +482,14 @@ describe('invitesRoutes', () => {
       )
       // Pre-fill 5 additional members to bring the total to 6 (owner + 5).
       for (let i = 0; i < 5; i++) {
-        const filler = await seedUser(pool, `fill${String(i)}`)
+        const filler = await seedUser(pool, scope, `fill${String(i)}`)
         await pool.query(
           `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
            VALUES ($1, $2, $3, 'player', true)`,
           [uuidv7(), campaignId, filler.userId],
         )
       }
-      const joiner = await seedUser(pool, 'joiner')
+      const joiner = await seedUser(pool, scope, 'joiner')
       const res = await app.inject({
         method: 'POST',
         url: '/api/invites/capCode00001/accept',
@@ -480,7 +504,7 @@ describe('invitesRoutes', () => {
     it('410 campaign_gone when the campaign FK is broken (e.g. the campaign was deleted mid-accept)', async () => {
       // Seed campaign + invite, then DELETE the campaign so the membership
       // INSERT raises FK violation 23503 inside acceptInvite → campaignGone.
-      const { owner, campaignId, worldId } = await seedCampaign(pool)
+      const { owner, campaignId, worldId } = await seedCampaign(pool, scope)
       const code = 'goneCode00001'
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
@@ -514,7 +538,7 @@ describe('invitesRoutes', () => {
            NOT VALID`,
       )
 
-      const joiner = await seedUser(pool, 'joiner')
+      const joiner = await seedUser(pool, scope, 'joiner')
       const res = await app.inject({
         method: 'POST',
         url: `/api/invites/${code}/accept`,
@@ -523,9 +547,12 @@ describe('invitesRoutes', () => {
       expect(res.statusCode).toBe(410)
       expect(res.json()).toEqual({ code: 'campaign_gone' })
 
-      // Restore the FK as VALID for the next test (cleanup happens via
-      // beforeEach DROP SCHEMA on the next test run anyway, but for
-      // hygiene during this test suite).
+      // myth-5jdo: clear the orphaned invite row before scoped cleanup
+      // runs. Its created_by FK references the owner; if we leave it,
+      // the next beforeEach's cleanupTestScope can't delete the owner
+      // user. Pre-scope-cleanup deleted everything via blanket DELETE,
+      // which masked this orphan.
+      await pool.query(`DELETE FROM campaign_invites WHERE invite_code = $1`, [code])
       void worldId
     })
 
@@ -545,7 +572,7 @@ describe('invitesRoutes', () => {
       // accept's tx by exploiting the route's repo. The simplest test
       // path: spawn a low-timeout invites repo in a sibling app, then
       // hold the lock from the main pool, hit the route, expect 503.
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       const code = 'lockCode00001'
       await pool.query(
         `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
@@ -581,10 +608,14 @@ describe('invitesRoutes', () => {
         // short-timeout repo into the route plugin without duplicating
         // the registration; instead we exercise the repo helper directly
         // here AND assert the handler's mapping in a separate, mocked path.
+        // myth-5jdo: scope-prefixed sub + username so the row is reaped
+        // by cleanupTestScope. Use the userCounter slot the seedCampaign
+        // owner didn't already claim.
+        const joinerIdx = userCounter++
         const joinerId = uuidv7()
         await pool.query(
           `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-          [joinerId, 'bypass:lock-joiner-1', 'LockJoiner', `lj${joinerId.slice(-6)}`],
+          [joinerId, scope.userSub(joinerIdx), 'LockJoiner', scope.username(joinerIdx)],
         )
         await expect(
           fastInvitesRepo.acceptInvite({ code, userId: joinerId }),
@@ -603,7 +634,7 @@ describe('invitesRoutes', () => {
 
   describe('GET /api/campaigns/:id/members', () => {
     it('200 returns the member list for a member caller', async () => {
-      const { owner, campaignId } = await seedCampaign(pool)
+      const { owner, campaignId } = await seedCampaign(pool, scope)
       const res = await app.inject({
         method: 'GET',
         url: `/api/campaigns/${campaignId}/members`,
@@ -616,8 +647,8 @@ describe('invitesRoutes', () => {
     })
 
     it('403 not_campaign_member when caller is not a member', async () => {
-      const { campaignId } = await seedCampaign(pool)
-      const stranger = await seedUser(pool, 'stranger')
+      const { campaignId } = await seedCampaign(pool, scope)
+      const stranger = await seedUser(pool, scope, 'stranger')
       const res = await app.inject({
         method: 'GET',
         url: `/api/campaigns/${campaignId}/members`,
@@ -628,7 +659,7 @@ describe('invitesRoutes', () => {
     })
 
     it('404 campaign_not_found when the campaign does not exist', async () => {
-      const stranger = await seedUser(pool, 'stranger')
+      const stranger = await seedUser(pool, scope, 'stranger')
       const ghostId = uuidv7()
       const res = await app.inject({
         method: 'GET',
@@ -652,7 +683,7 @@ describe('invitesRoutes', () => {
       // requireOnboarded's preHandler 403s with username_required
       // BEFORE the handler even runs. (resolveUserId's branch is dead
       // in this app; the preHandler shields it.)
-      const { campaignId } = await seedCampaign(pool)
+      const { campaignId } = await seedCampaign(pool, scope)
       const res = await app.inject({
         method: 'POST',
         url: `/api/campaigns/${campaignId}/invites`,

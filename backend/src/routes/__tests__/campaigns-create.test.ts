@@ -31,6 +31,11 @@ import { campaignsRoutes } from '../campaigns.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
 import type { WorldGenQueueLike } from '../campaigns.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 // --- Module mocks ---------------------------------------------------------
 //
@@ -144,12 +149,17 @@ interface SeededUser {
   readonly devSub: string
 }
 
-async function seedUserWithCredits(pool: Pool, credits: number): Promise<SeededUser> {
+async function seedUserWithCredits(
+  pool: Pool,
+  scope: TestScope,
+  credits: number,
+  index = 0,
+): Promise<SeededUser> {
   const userId = uuidv7()
-  const devSub = `bypass:create-${userId.slice(-6)}`
+  const devSub = scope.userSub(index)
   await pool.query(
     `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-    [userId, devSub, 'CreateTest', `ct${userId.slice(-6)}`],
+    [userId, devSub, scope.displayName(index), scope.username(index)],
   )
   if (credits > 0) {
     await pool.query(
@@ -195,6 +205,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
   let redis: Redis
   let queueSpy: QueueSpy
   let app: FastifyInstance
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -205,9 +216,11 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('campaigns-create')
   })
 
   afterAll(async () => {
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
@@ -233,14 +246,8 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       usage: STUB_USAGE,
     })
 
-    // FK order matters: child tables before parents.
-    await pool.query('DELETE FROM pipeline_runs')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaign_invites')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query('DELETE FROM credit_ledger')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces blanket DELETEs.
+    await cleanupTestScope(pool, scope)
 
     app = await buildTestApp(pool, redis, queueSpy)
   })
@@ -256,13 +263,13 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
 
   describe('happy path', () => {
     it('201 freeform: returns campaignId, debits ledger, seeds pipeline_runs, enqueues job', async () => {
-      const { userId, devSub } = await seedUserWithCredits(pool, 1)
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'The Drowned Hills',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -329,7 +336,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     })
 
     it('201 guided: synthesizer ran; concept stored on worlds is the synthesized one', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const synthesizedConcept =
         'A rain-soaked archipelago where lighthouses are sentient and remember every shipwreck they have ever witnessed.'
       synthesizeConceptMock.mockResolvedValue({
@@ -347,7 +354,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'Lighthouse Chronicles',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -390,7 +397,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     it.each(['srd_incompat', 'clone_intent', 'inappropriate'] as const)(
       '422 with reason=%s',
       async (reason) => {
-        const { userId, devSub } = await seedUserWithCredits(pool, 1)
+        const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
         runInputGateMock.mockResolvedValue({
           verdict: 'reject',
           reason,
@@ -403,7 +410,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
           url: '/api/campaigns',
           headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
           payload: {
-            name: 'X',
+            name: scope.campaignName(0),
             world: {
               kind: 'new',
               source: {
@@ -443,7 +450,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     )
 
     it('422 guided-mode rejection includes synthesizedConcept', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const synth =
         'A clockwork bureaucracy of mountain-monks whose ledgers track every promise ever broken.'
       synthesizeConceptMock.mockResolvedValue({
@@ -468,7 +475,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'Bureaucracy',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -494,12 +501,12 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
 
   describe('body validation (400)', () => {
     it('400 on missing fields', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
-        payload: { name: 'X' },
+        payload: { name: scope.campaignName(0) },
       })
       expect(res.statusCode).toBe(400)
       const body = res.json<{ code: string }>()
@@ -507,13 +514,13 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     })
 
     it('400 on unknown world.kind (the existing-arm seam)', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: { kind: 'existing', sourceWorldId: 'doesnt-matter' },
         },
       })
@@ -521,13 +528,13 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     })
 
     it('400 on under-length concept', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: { mode: 'freeform', concept: 'too short' },
@@ -538,13 +545,13 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     })
 
     it('400 on wrong number of picks', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -567,13 +574,13 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
 
   describe('insufficient credits (403)', () => {
     it('403 when balance is 0 at the peek step (Phoenix-Imp1)', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 0)
+      const { devSub } = await seedUserWithCredits(pool, scope, 0)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -594,7 +601,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       // the route's peek runs. We simulate this by stubbing the input gate
       // to debit the user inside its execution — that runs between the
       // peek and the locked re-check.
-      const { userId, devSub } = await seedUserWithCredits(pool, 1)
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       runInputGateMock.mockImplementation(async () => {
         await pool.query(
           `INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, source_id)
@@ -615,7 +622,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -639,14 +646,14 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       // propagates up through executeCreateTransaction's outer catch and
       // out to the route handler, where it's NOT InsufficientCreditsError,
       // so the fall-through `throw err` fires.
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       runInputGateMock.mockRejectedValueOnce(new Error('input gate exploded'))
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -664,19 +671,19 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
 
   describe('concurrent-generation guard (409)', () => {
     it('409 when an in-flight world already exists for this user', async () => {
-      const { userId, devSub } = await seedUserWithCredits(pool, 1)
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       // Pre-seed an in-flight world + campaign for this user.
       const worldId = uuidv7()
       const campaignId = uuidv7()
       await pool.query(
         `INSERT INTO worlds (id, created_by, name, concept, status)
-         VALUES ($1, $2, 'In Flight', 'inflight', 'generating')`,
-        [worldId, userId],
+         VALUES ($1, $2, $3, 'inflight', 'generating')`,
+        [worldId, userId, scope.worldName(0)],
       )
       await pool.query(
         `INSERT INTO campaigns (id, world_id, created_by, name)
-         VALUES ($1, $2, $3, 'In Flight')`,
-        [campaignId, worldId, userId],
+         VALUES ($1, $2, $3, $4)`,
+        [campaignId, worldId, userId, scope.campaignName(0)],
       )
 
       const res = await app.inject({
@@ -684,7 +691,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -702,7 +709,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
 
   describe('rejection-storm cooldown (429)', () => {
     it('429 when Redis counter is at 4 (over the 3-per-hour threshold)', async () => {
-      const { userId, devSub } = await seedUserWithCredits(pool, 1)
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       // Set the counter past the threshold; key shape matches
       // rejection-storm.ts.
       await redis.set(`${REDIS_KEY_PREFIX}rejection_storm:${userId}`, '4', 'EX', 3600)
@@ -712,7 +719,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -733,7 +740,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     })
 
     it('increments storm counter on 422', async () => {
-      const { userId, devSub } = await seedUserWithCredits(pool, 1)
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       runInputGateMock.mockResolvedValue({
         verdict: 'reject',
         reason: 'srd_incompat',
@@ -747,7 +754,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -764,7 +771,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     })
 
     it('resets storm counter on successful 201', async () => {
-      const { userId, devSub } = await seedUserWithCredits(pool, 1)
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       // Pre-seed below threshold so cooldown is NOT active.
       await redis.set(`${REDIS_KEY_PREFIX}rejection_storm:${userId}`, '2', 'EX', 3600)
 
@@ -773,7 +780,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -791,7 +798,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
 
   describe('queue-depth admission (503)', () => {
     it('503 with Retry-After:60 when getJobCounts returns >20', async () => {
-      const { devSub } = await seedUserWithCredits(pool, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       queueSpy.setJobCounts(21)
 
       const res = await app.inject({
@@ -799,7 +806,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {
@@ -831,7 +838,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
           'x-mythrun-dev-sub': 'bypass:no-user-row',
         },
         payload: {
-          name: 'X',
+          name: scope.campaignName(0),
           world: {
             kind: 'new',
             source: {

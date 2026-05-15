@@ -102,8 +102,16 @@ export async function cleanupTestScope(
 
   // Worlds own entities + prose_kernels + facts + relationships +
   // entity_hierarchy + pipeline_runs + random_tables(+entries) via
-  // CASCADE chains.
+  // CASCADE chains. Match on name LIKE prefix AND on created_by — the
+  // latter catches worlds that pipeline stages renamed mid-test (e.g.
+  // concept_intake sets worlds.name = the LLM-generated name, which no
+  // longer matches the scope prefix).
   await client.query(`DELETE FROM worlds WHERE name LIKE $1`, [idPrefix])
+  await client.query(
+    `DELETE FROM worlds
+       WHERE created_by IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [idPrefix],
+  )
 
   // Sessions own session_messages + session_participants + session_preps +
   // session_usage via CASCADE; they're keyed on campaign_id which the

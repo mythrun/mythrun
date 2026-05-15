@@ -30,6 +30,11 @@ import { createPgPool } from '../../../../db/postgres.js'
 import { runMigrations } from '../../../../db/migrate.js'
 import { guardTestDatabase } from '../../../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../../../repo/uuidv7.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../../../repo/__tests__/_helpers/test-scope.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -142,10 +147,11 @@ function makeArgs(opts: {
   worldId: string
   userId: string
   campaignId: string
+  worldName: string
   redisRealtime?: InstanceType<typeof IoredisMock>
 }): RunWorldAndFactionsArgs {
   return {
-    world: { id: opts.worldId, createdBy: opts.userId, name: 'W', concept: 'C' },
+    world: { id: opts.worldId, createdBy: opts.userId, name: opts.worldName, concept: 'C' },
     campaignId: opts.campaignId,
     job: fakeJob(),
     // ioredis-mock implements the surface area the handler uses (`publish`)
@@ -179,6 +185,7 @@ async function withTxn<T>(
 
 describe('runWorldAndFactionsStage', () => {
   let pool: Pool
+  let scope: TestScope
   let userId: string
   let campaignId: string
   let worldId: string
@@ -192,34 +199,35 @@ describe('runWorldAndFactionsStage', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('world-factions')
   })
   afterAll(async () => {
+    // myth-5jdo: scoped cleanup before pool teardown.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
     mockStreamObject.mockReset()
     mockGenerateText.mockReset()
-    await pool.query('DELETE FROM facts')
-    await pool.query('DELETE FROM prose_kernels')
-    await pool.query('DELETE FROM entities')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces the prior blanket DELETEs.
+    // Entity/prose/fact rows live under the world we create, so the
+    // worlds CASCADE in cleanupTestScope drops them along the way.
+    await cleanupTestScope(pool, scope)
     userId = uuidv7()
     worldId = uuidv7()
     campaignId = uuidv7()
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [userId, `bypass:wf-${userId.slice(-6)}`, 'WF', `wf${userId.slice(-6)}`],
+      [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
     )
     await pool.query(
-      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, 'W', 'C', 'generating')`,
-      [worldId, userId],
+      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
+      [worldId, userId, scope.worldName(0)],
     )
     await pool.query(
-      `INSERT INTO campaigns (id, world_id, created_by, name, status) VALUES ($1, $2, $3, 'Smoke', 'setup')`,
-      [campaignId, worldId, userId],
+      `INSERT INTO campaigns (id, world_id, created_by, name, status) VALUES ($1, $2, $3, $4, 'setup')`,
+      [campaignId, worldId, userId, scope.campaignName(0)],
     )
   })
 
@@ -227,7 +235,7 @@ describe('runWorldAndFactionsStage', () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
     const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     expect(result.costUsd).toBeGreaterThan(0)
     expect(result.inputTokens).toBe(5000)
@@ -258,7 +266,7 @@ describe('runWorldAndFactionsStage', () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
     const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
 
     expect(result.finalizedEvents).toHaveLength(6)
@@ -301,7 +309,7 @@ describe('runWorldAndFactionsStage', () => {
     await withTxn(pool, (client) =>
       runWorldAndFactionsStage(
         client,
-        makeArgs({ worldId, userId, campaignId, redisRealtime }),
+        makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
       ),
     )
 
@@ -324,7 +332,7 @@ describe('runWorldAndFactionsStage', () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
     await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
 
     const rows = await pool.query<{ narrative_status: string; source: string }>(
@@ -338,7 +346,7 @@ describe('runWorldAndFactionsStage', () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
     await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     const c = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM relationships`,
@@ -356,7 +364,7 @@ describe('runWorldAndFactionsStage', () => {
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
     const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     // costUsd accumulates Opus stream + Haiku repair.
     expect(result.costUsd).toBeGreaterThan(0)
@@ -384,7 +392,7 @@ describe('runWorldAndFactionsStage', () => {
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
     const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId })),
+      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(2) // Haiku + Sonnet
@@ -417,7 +425,7 @@ describe('runWorldAndFactionsStage', () => {
       withTxn(pool, (client) =>
         runWorldAndFactionsStage(
           client,
-          makeArgs({ worldId, userId, campaignId, redisRealtime }),
+          makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
         ),
       ),
     ).rejects.toThrow(/repair chain exhausted/)

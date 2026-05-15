@@ -9,6 +9,11 @@ import { runMigrations } from '../../../db/migrate.js'
 import { createPgPool } from '../../../db/postgres.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../../repo/__tests__/_helpers/test-scope.js'
+import {
   readCostCap,
   sumCompletedStageCosts,
   issueCostCapRefund,
@@ -33,6 +38,7 @@ function silentLogger(): ReturnType<typeof pino> {
 
 describe('cost-cap', () => {
   let pool: Pool
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -43,26 +49,26 @@ describe('cost-cap', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('cost-cap')
   })
 
   afterAll(async () => {
+    // myth-5jdo: scoped cleanup before pool teardown — leaves seeded
+    // dev users + system user intact for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
-    await pool.query('DELETE FROM pipeline_runs')
-    await pool.query('DELETE FROM credit_ledger')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query('DELETE FROM users')
+    // myth-5jdo: scoped cleanup replaces the prior blanket DELETEs.
+    await cleanupTestScope(pool, scope)
     await pool.query(
       `INSERT INTO settings (key, value) VALUES ('world_gen_cost_cap_usd', '10.0')
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     )
   })
 
-  async function seedUserWorldCampaign(): Promise<{
+  async function seedUserWorldCampaign(userIndex = 0): Promise<{
     userId: string
     worldId: string
     campaignId: string
@@ -71,18 +77,18 @@ describe('cost-cap', () => {
     const worldId = uuidv7()
     const campaignId = uuidv7()
     await pool.query(
-      `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, 'T', 't1')`,
-      [userId, `s-${userId}`],
+      `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+      [userId, scope.userSub(userIndex), scope.displayName(userIndex), scope.username(userIndex)],
     )
     await pool.query(
       `INSERT INTO worlds (id, created_by, name, concept, status)
-       VALUES ($1, $2, 'W', 'C', 'generating')`,
-      [worldId, userId],
+       VALUES ($1, $2, $3, 'C', 'generating')`,
+      [worldId, userId, scope.worldName(userIndex)],
     )
     await pool.query(
       `INSERT INTO campaigns (id, world_id, created_by, name)
-       VALUES ($1, $2, $3, 'C')`,
-      [campaignId, worldId, userId],
+       VALUES ($1, $2, $3, $4)`,
+      [campaignId, worldId, userId, scope.campaignName(userIndex)],
     )
     return { userId, worldId, campaignId }
   }

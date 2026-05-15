@@ -31,6 +31,11 @@ import { createPgPool } from '../../../db/postgres.js'
 import { runMigrations } from '../../../db/migrate.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../../repo/__tests__/_helpers/test-scope.js'
+import {
   createWorldGenProcessor,
   sanitizeError,
   type WorldGenJobPayload,
@@ -142,24 +147,24 @@ interface Seeded {
   readonly campaignId: string
 }
 
-async function seedUserWorldCampaign(pool: Pool): Promise<Seeded> {
+async function seedUserWorldCampaign(pool: Pool, scope: TestScope): Promise<Seeded> {
   const userId = uuidv7()
   const worldId = uuidv7()
   const campaignId = uuidv7()
   await pool.query(
     `INSERT INTO users (id, cognito_sub, display_name, username)
-     VALUES ($1, $2, 'T', $3)`,
-    [userId, `s-${userId}`, `u${userId.slice(-8)}`],
+     VALUES ($1, $2, $3, $4)`,
+    [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
   )
   await pool.query(
     `INSERT INTO worlds (id, created_by, name, concept, status)
-     VALUES ($1, $2, 'pending-name', 'a concept for testing', 'generating')`,
-    [worldId, userId],
+     VALUES ($1, $2, $3, 'a concept for testing', 'generating')`,
+    [worldId, userId, scope.worldName(0)],
   )
   await pool.query(
     `INSERT INTO campaigns (id, world_id, created_by, name)
-     VALUES ($1, $2, $3, 'Test Campaign')`,
-    [campaignId, worldId, userId],
+     VALUES ($1, $2, $3, $4)`,
+    [campaignId, worldId, userId, scope.campaignName(0)],
   )
   // Match the create-campaign debit (the refund's polarity check is
   // satisfied because the refund row is amount=+1).
@@ -202,6 +207,7 @@ function makeDeps(pool: Pool): {
 
 describe('world-gen-processor (MYT-51 T7)', () => {
   let pool: Pool
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -212,27 +218,21 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('world-gen-proc')
   })
 
   afterAll(async () => {
+    // myth-5jdo: scoped cleanup before pool teardown.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
     vi.clearAllMocks()
-    await pool.query('DELETE FROM facts')
-    await pool.query('DELETE FROM relationships')
-    await pool.query('DELETE FROM entity_hierarchy')
-    await pool.query('DELETE FROM prose_kernels')
-    await pool.query('DELETE FROM entities')
-    await pool.query('DELETE FROM random_table_entries')
-    await pool.query('DELETE FROM random_tables')
-    await pool.query('DELETE FROM pipeline_runs')
-    await pool.query('DELETE FROM credit_ledger')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces the prior blanket DELETEs.
+    // Entity/prose/fact/random_table rows live under the world we
+    // create, so the worlds CASCADE in cleanupTestScope drops them.
+    await cleanupTestScope(pool, scope)
     await pool.query(
       `INSERT INTO settings (key, value) VALUES ('world_gen_cost_cap_usd', '10.0')
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
@@ -257,7 +257,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // 1. Happy path — 3 stages succeed, 2 + 3 fail with stage_not_implemented
   // ------------------------------------------------------------------
   it('runs implemented stages to completion, stops at stage_not_implemented', async () => {
-    const { worldId, campaignId } = await seedUserWorldCampaign(pool)
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
     pushConceptIntakeResponses()
     // stage 2 fires next (world_and_factions) → throws stage_not_implemented
     // and the loop exits. Stages 4 + 5 never run; no further mocks needed.
@@ -301,7 +301,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // 2. Idempotency — pre-completed stage is not re-run
   // ------------------------------------------------------------------
   it('skips an already-completed stage on retry', async () => {
-    const { worldId, campaignId } = await seedUserWorldCampaign(pool)
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
     // Seed concept_intake as completed; worker should NOT call its generator.
     await pool.query(
       `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
@@ -339,7 +339,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // 3. Stuck-stage reset — running for > 5min gets reclaimed
   // ------------------------------------------------------------------
   it('reclaims a stuck running stage and re-runs the handler', async () => {
-    const { worldId, campaignId } = await seedUserWorldCampaign(pool)
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
     await pool.query(
       `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
        VALUES ($1, $2, 'concept_intake', 'running', now() - INTERVAL '6 minutes', NULL)`,
@@ -367,7 +367,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // 4. Cost-cap refund — exceeding cap marks world failed + refund row
   // ------------------------------------------------------------------
   it('issues refund + marks world failed when the cost cap is exceeded', async () => {
-    const { userId, worldId, campaignId } = await seedUserWorldCampaign(pool)
+    const { userId, worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
     await pool.query(`UPDATE settings SET value = '0.0001' WHERE key = 'world_gen_cost_cap_usd'`)
     // Generator usage that produces a cost well above 0.0001: 1M input / 1M
     // output @ Sonnet ($3 + $15 = $18) — comfortably above cap.
@@ -415,7 +415,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // 5. Stage failure halts the loop — generic thrown error
   // ------------------------------------------------------------------
   it('does not run subsequent stages after a thrown failure', async () => {
-    const { worldId, campaignId } = await seedUserWorldCampaign(pool)
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
     // First generateText call throws (concept-intake generator).
     vi.mocked(ai.generateText).mockRejectedValueOnce(new Error('boom from anthropic'))
 
@@ -446,7 +446,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // 6. Atomic claim — two concurrent runs invoke the generator once total
   // ------------------------------------------------------------------
   it('atomic claim prevents two workers from running the same stage', async () => {
-    const { campaignId } = await seedUserWorldCampaign(pool)
+    const { campaignId } = await seedUserWorldCampaign(pool, scope)
     // Only push enough mock responses for ONE concept_intake run. If both
     // workers raced past the claim, the second would consume an undefined
     // mock and throw — the test catches the leak either way.

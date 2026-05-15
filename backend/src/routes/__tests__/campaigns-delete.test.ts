@@ -28,6 +28,11 @@ import { requireOnboarded } from '../../auth/require-onboarded.js'
 import { campaignsRoutes, type WorldGenQueueLike } from '../campaigns.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -80,24 +85,25 @@ interface SeededCampaign {
 
 async function seedOwnerCampaign(
   pool: Pool,
+  scope: TestScope,
   worldStatus: 'complete' | 'generating' | 'failed' = 'complete',
 ): Promise<SeededCampaign> {
   const ownerId = uuidv7()
-  const ownerSub = `bypass:delete-${ownerId.slice(-6)}`
+  const ownerSub = scope.userSub(0)
   const worldId = uuidv7()
   const campaignId = uuidv7()
   await pool.query(
     `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-    [ownerId, ownerSub, 'DelTest', `dt${ownerId.slice(-6)}`],
+    [ownerId, ownerSub, scope.displayName(0), scope.username(0)],
   )
   await pool.query(
     `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, $4, $5)`,
-    [worldId, ownerId, 'Test World', 'A test concept.', worldStatus],
+    [worldId, ownerId, scope.worldName(0), 'A test concept.', worldStatus],
   )
   await pool.query(
     `INSERT INTO campaigns (id, world_id, created_by, name, status)
      VALUES ($1, $2, $3, $4, 'setup')`,
-    [campaignId, worldId, ownerId, 'Test Campaign'],
+    [campaignId, worldId, ownerId, scope.campaignName(0)],
   )
   await pool.query(
     `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -135,6 +141,7 @@ describe('DELETE /api/campaigns/:campaignId', () => {
   let pool: Pool
   let redis: Redis
   let app: FastifyInstance
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -145,9 +152,11 @@ describe('DELETE /api/campaigns/:campaignId', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('camp-delete')
   })
 
   afterAll(async () => {
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
@@ -155,13 +164,8 @@ describe('DELETE /api/campaigns/:campaignId', () => {
     vi.stubEnv('AUTH_MODE', 'bypass')
     vi.stubEnv('NODE_ENV', 'test')
     redis = new IoredisMock()
-    // Children-first; worlds last because campaigns FK at it.
-    await pool.query('DELETE FROM pipeline_runs')
-    await pool.query('DELETE FROM campaign_members')
-    await pool.query('DELETE FROM campaign_invites')
-    await pool.query('DELETE FROM campaigns')
-    await pool.query('DELETE FROM worlds')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces blanket DELETEs.
+    await cleanupTestScope(pool, scope)
     app = await buildTestApp(pool, redis)
   })
 
@@ -171,7 +175,7 @@ describe('DELETE /api/campaigns/:campaignId', () => {
   })
 
   it('204 hard-deletes campaign + world + pipeline_runs via CASCADE', async () => {
-    const { ownerSub, campaignId, worldId } = await seedOwnerCampaign(pool, 'complete')
+    const { ownerSub, campaignId, worldId } = await seedOwnerCampaign(pool, scope, 'complete')
     const res = await app.inject({
       method: 'DELETE',
       url: `/api/campaigns/${campaignId}`,
@@ -203,7 +207,7 @@ describe('DELETE /api/campaigns/:campaignId', () => {
   })
 
   it('409 world_gen_in_progress when the world is mid-generation', async () => {
-    const { ownerSub, campaignId, worldId } = await seedOwnerCampaign(pool, 'generating')
+    const { ownerSub, campaignId, worldId } = await seedOwnerCampaign(pool, scope, 'generating')
     const res = await app.inject({
       method: 'DELETE',
       url: `/api/campaigns/${campaignId}`,
@@ -222,13 +226,13 @@ describe('DELETE /api/campaigns/:campaignId', () => {
   })
 
   it('403 not_campaign_member when caller has no membership row', async () => {
-    const { campaignId } = await seedOwnerCampaign(pool, 'complete')
+    const { campaignId } = await seedOwnerCampaign(pool, scope, 'complete')
     // Seed an unrelated user as the caller.
     const strangerId = uuidv7()
-    const strangerSub = `bypass:stranger-${strangerId.slice(-6)}`
+    const strangerSub = scope.userSub(1)
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [strangerId, strangerSub, 'Stranger', `s${strangerId.slice(-6)}`],
+      [strangerId, strangerSub, scope.displayName(1), scope.username(1)],
     )
     const res = await app.inject({
       method: 'DELETE',
@@ -240,12 +244,12 @@ describe('DELETE /api/campaigns/:campaignId', () => {
   })
 
   it('403 not_campaign_owner when caller is a player, not the owner', async () => {
-    const { campaignId } = await seedOwnerCampaign(pool, 'complete')
+    const { campaignId } = await seedOwnerCampaign(pool, scope, 'complete')
     const playerId = uuidv7()
-    const playerSub = `bypass:player-${playerId.slice(-6)}`
+    const playerSub = scope.userSub(1)
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [playerId, playerSub, 'Player', `p${playerId.slice(-6)}`],
+      [playerId, playerSub, scope.displayName(1), scope.username(1)],
     )
     await pool.query(
       `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -266,10 +270,10 @@ describe('DELETE /api/campaigns/:campaignId', () => {
     // That 404 branch exists as a safety net for a race where the membership
     // check passes but the campaign disappears between hook + handler.
     const ownerId = uuidv7()
-    const ownerSub = `bypass:owner-${ownerId.slice(-6)}`
+    const ownerSub = scope.userSub(0)
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-      [ownerId, ownerSub, 'Owner', `o${ownerId.slice(-6)}`],
+      [ownerId, ownerSub, scope.displayName(0), scope.username(0)],
     )
     const ghostCampaignId = uuidv7()
     const res = await app.inject({

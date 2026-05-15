@@ -23,12 +23,15 @@ import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { bypassPlugin } from '../../auth/bypass-plugin.js'
 import { devCreditsRoutes } from '../dev-credits.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
 const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
-
-const BYPASS_DEV_SUB = 'bypass:dev-1'
 
 function silentLogger(): ReturnType<typeof pino> {
   const sink: DestinationStream = {
@@ -65,6 +68,7 @@ async function buildTestApp(pool: Pool): Promise<FastifyInstance> {
 
 describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
   let pool: Pool
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -77,18 +81,21 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('dev-credits')
   })
 
   afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; seeded dev users +
+    // system user survive for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
-    // Clean credit_ledger + non-system users between tests. credit_ledger
-    // first because its user_id FK is RESTRICT against users (migration
-    // 004 commentary).
-    await pool.query('DELETE FROM credit_ledger')
-    await pool.query("DELETE FROM users WHERE cognito_sub != 'system:mythrun'")
+    // myth-5jdo: scoped cleanup replaces the blanket DELETEs from prior
+    // iteration. credit_ledger goes first because its user_id FK is
+    // RESTRICT against users (handled inside cleanupTestScope).
+    await cleanupTestScope(pool, scope)
   })
 
   afterEach(() => {
@@ -159,9 +166,10 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('201 with ledgerId + newBalance for a valid body', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
 
       const app = await buildTestApp(pool)
@@ -169,7 +177,7 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
         const res = await app.inject({
           method: 'POST',
           url: '/api/dev/credits/grant',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': sub },
           payload: { creditType: 'world_gen', amount: 5 },
         })
         expect(res.statusCode).toBe(201)
@@ -207,13 +215,15 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
     it('honors x-mythrun-dev-sub — credits land on the active dev sub', async () => {
       const bypassUserId = uuidv7()
       const otherUserId = uuidv7()
+      const bypassSub = scope.userSub(0)
+      const otherSub = scope.userSub(1)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [bypassUserId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [bypassUserId, bypassSub, scope.displayName(0), scope.username(0)],
       )
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [otherUserId, 'dev-user-2', 'Other', 'other2'],
+        [otherUserId, otherSub, scope.displayName(1), scope.username(1)],
       )
 
       const app = await buildTestApp(pool)
@@ -223,13 +233,13 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
           url: '/api/dev/credits/grant',
           headers: {
             'content-type': 'application/json',
-            'x-mythrun-dev-sub': 'dev-user-2',
+            'x-mythrun-dev-sub': otherSub,
           },
           payload: { creditType: 'session', amount: 3 },
         })
         expect(res.statusCode).toBe(201)
 
-        // Credits land on the header-pointed user, NOT on bypass:dev-1.
+        // Credits land on the header-pointed user, NOT on the first sub.
         const bypassBalance = await pool.query<{ balance: string }>(
           `SELECT COALESCE(SUM(amount), 0)::text AS balance
              FROM credit_ledger WHERE user_id = $1 AND credit_type = 'session'`,
@@ -268,16 +278,17 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('400 on negative amount', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       const app = await buildTestApp(pool)
       try {
         const res = await app.inject({
           method: 'POST',
           url: '/api/dev/credits/grant',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': sub },
           payload: { creditType: 'world_gen', amount: -1 },
         })
         expect(res.statusCode).toBe(400)
@@ -290,16 +301,17 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('400 on amount > 100', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       const app = await buildTestApp(pool)
       try {
         const res = await app.inject({
           method: 'POST',
           url: '/api/dev/credits/grant',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': sub },
           payload: { creditType: 'world_gen', amount: 101 },
         })
         expect(res.statusCode).toBe(400)
@@ -310,16 +322,17 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('400 on non-integer amount', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       const app = await buildTestApp(pool)
       try {
         const res = await app.inject({
           method: 'POST',
           url: '/api/dev/credits/grant',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': sub },
           payload: { creditType: 'world_gen', amount: 1.5 },
         })
         expect(res.statusCode).toBe(400)
@@ -330,16 +343,17 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('400 on missing fields', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       const app = await buildTestApp(pool)
       try {
         const res = await app.inject({
           method: 'POST',
           url: '/api/dev/credits/grant',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': sub },
           payload: { amount: 5 }, // missing creditType
         })
         expect(res.statusCode).toBe(400)
@@ -350,16 +364,17 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('400 on unknown creditType', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       const app = await buildTestApp(pool)
       try {
         const res = await app.inject({
           method: 'POST',
           url: '/api/dev/credits/grant',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': sub },
           payload: { creditType: 'mystery_credit', amount: 5 },
         })
         expect(res.statusCode).toBe(400)
@@ -381,16 +396,21 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('200 with zero balances + empty recent when the user has no ledger entries', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       const app = await buildTestApp(pool)
       try {
-        const res = await app.inject({ method: 'GET', url: '/api/dev/credits/me' })
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/dev/credits/me',
+          headers: { 'x-mythrun-dev-sub': sub },
+        })
         expect(res.statusCode).toBe(200)
         expect(res.json()).toEqual({
-          sub: BYPASS_DEV_SUB,
+          sub,
           balances: { world_gen: 0, session: 0 },
           recent: [],
         })
@@ -401,9 +421,10 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('200 sums non-expired balances per credit_type and returns recent entries newest-first', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       // Three world_gen grants (15 total) + one session grant (10).
       // Plus one expired world_gen grant (-5) that should be ignored.
@@ -423,14 +444,18 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
       const app = await buildTestApp(pool)
       try {
-        const res = await app.inject({ method: 'GET', url: '/api/dev/credits/me' })
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/dev/credits/me',
+          headers: { 'x-mythrun-dev-sub': sub },
+        })
         expect(res.statusCode).toBe(200)
         const body = res.json<{
           sub: string
           balances: { world_gen: number; session: number }
           recent: { amount: number; creditType: string; sourceType: string }[]
         }>()
-        expect(body.sub).toBe(BYPASS_DEV_SUB)
+        expect(body.sub).toBe(sub)
         // Expired row excluded; non-expired sum to 15 world_gen + 10 session.
         expect(body.balances).toEqual({ world_gen: 15, session: 10 })
         // Newest first by granted_at. Most recent is the session grant.
@@ -442,15 +467,17 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
       }
     })
 
-    it('honors x-mythrun-dev-sub — returns balance for the header-pointed user, not bypass:dev-1', async () => {
+    it('honors x-mythrun-dev-sub — returns balance for the header-pointed user, not the first sub', async () => {
       const bypassUserId = uuidv7()
       const otherUserId = uuidv7()
+      const bypassSub = scope.userSub(0)
+      const otherSub = scope.userSub(1)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES
            ($1, $2, $3, $4), ($5, $6, $7, $8)`,
         [
-          bypassUserId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1',
-          otherUserId, 'dev-user-2', 'Other', 'other2',
+          bypassUserId, bypassSub, scope.displayName(0), scope.username(0),
+          otherUserId, otherSub, scope.displayName(1), scope.username(1),
         ],
       )
       // Grant on bypass-user only — the header-pointed user has nothing.
@@ -464,11 +491,11 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
         const res = await app.inject({
           method: 'GET',
           url: '/api/dev/credits/me',
-          headers: { 'x-mythrun-dev-sub': 'dev-user-2' },
+          headers: { 'x-mythrun-dev-sub': otherSub },
         })
         expect(res.statusCode).toBe(200)
         const body = res.json<{ sub: string; balances: { world_gen: number; session: number } }>()
-        expect(body.sub).toBe('dev-user-2')
+        expect(body.sub).toBe(otherSub)
         expect(body.balances).toEqual({ world_gen: 0, session: 0 })
       } finally {
         await app.close()
@@ -506,9 +533,10 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('caps recent entries at 20 even when more exist', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
       // Seed 25 ledger entries spread across the last 25 minutes.
       const values: string[] = []
@@ -525,7 +553,11 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
       )
       const app = await buildTestApp(pool)
       try {
-        const res = await app.inject({ method: 'GET', url: '/api/dev/credits/me' })
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/dev/credits/me',
+          headers: { 'x-mythrun-dev-sub': sub },
+        })
         expect(res.statusCode).toBe(200)
         const body = res.json<{ recent: unknown[]; balances: { world_gen: number } }>()
         expect(body.recent).toHaveLength(20)
@@ -549,9 +581,10 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
 
     it('429 after 30 req/hour from the same IP', async () => {
       const userId = uuidv7()
+      const sub = scope.userSub(0)
       await pool.query(
         `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
-        [userId, BYPASS_DEV_SUB, 'BypassDev1', 'bypassdev1'],
+        [userId, sub, scope.displayName(0), scope.username(0)],
       )
 
       const app = await buildTestApp(pool)
@@ -565,6 +598,7 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
             headers: {
               'content-type': 'application/json',
               'x-forwarded-for': IP,
+              'x-mythrun-dev-sub': sub,
             },
             payload: { creditType: 'world_gen', amount: 1 },
           })
@@ -579,6 +613,7 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
           headers: {
             'content-type': 'application/json',
             'x-forwarded-for': IP,
+            'x-mythrun-dev-sub': sub,
           },
           payload: { creditType: 'world_gen', amount: 1 },
         })
