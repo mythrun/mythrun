@@ -11,6 +11,7 @@
 
 import { JSDOM } from 'jsdom'
 
+import { BACKEND_ROUTES } from '../../src/contract/backend-routes.js'
 import { PANEL_REGISTRY } from '../verify-registry.js'
 import { setCurrentDevSub } from '../src/identity.js'
 
@@ -281,6 +282,28 @@ async function verifyPanel(name: string): Promise<PanelResult> {
   }
 }
 
+// Route-exhaustion second pass. Builds the union of every panel's declared
+// `exercises` routes and returns the BACKEND_ROUTES entries (as
+// `"METHOD /path"` keys) that nothing exercises. Redundant with the
+// `verify-registry.test.ts` route-exhaustion invariant by design — the
+// test gates CI on drift; this runtime audit surfaces it on every
+// `pnpm dev-tool:verify` invocation so the human sees it without
+// re-running the test suite.
+function routeAudit(): string[] {
+  const exercised = new Set<string>()
+  for (const reg of Object.values(PANEL_REGISTRY)) {
+    for (const r of reg.exercises) {
+      exercised.add(`${r.method} ${r.path}`)
+    }
+  }
+  const uncovered: string[] = []
+  for (const route of BACKEND_ROUTES) {
+    const key = `${route.method} ${route.path}`
+    if (!exercised.has(key)) uncovered.push(key)
+  }
+  return uncovered
+}
+
 async function main(): Promise<void> {
   const infraUp = await sanityCheckInfra()
   if (!infraUp) {
@@ -304,14 +327,20 @@ async function main(): Promise<void> {
     )
   }
 
-  // Route audit lands in Task 8.
+  const uncovered = routeAudit()
+  for (const key of uncovered) {
+    console.log(`[coverage] ✗ route ${key} not exercised by any panel`)
+  }
 
   const failed = results.filter((r) => r.status !== 'ok')
-  if (failed.length > 0) {
-    console.log(`\n${String(failed.length)} panel(s) need attention.`)
+  const ok = failed.length === 0 && uncovered.length === 0
+  if (!ok) {
+    console.log(
+      `\n${String(failed.length)} panel(s) failed; ${String(uncovered.length)} route(s) uncovered.`,
+    )
     process.exit(1)
   }
-  console.log('\nAll panels ok.')
+  console.log('\nAll panels ok; all routes covered.')
   process.exit(0)
 }
 
