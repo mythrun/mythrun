@@ -141,6 +141,10 @@ interface DomRefs {
 function buildDom(): DomRefs {
   const card = document.createElement('section')
   card.className = 'card'
+  // Event-driven panel: form on mount, fetches only on click or
+  // mythrun.opendetails. data-state="idle" is the verify harness's
+  // steady-state marker.
+  card.setAttribute('data-state', 'idle')
 
   const title = document.createElement('h2')
   title.textContent = 'GET /api/campaigns/:campaignId (details)'

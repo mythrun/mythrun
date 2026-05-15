@@ -559,11 +559,14 @@ interface StubElement {
   className: string
   style: Record<string, string>
   dataset: Record<string, string>
+  attributes: Record<string, string>
   children: StubElement[]
   parentNode: StubElement | null
   listeners: Map<string, ((e: unknown) => void)[]>
   appendChild: (child: StubElement) => StubElement
   replaceChildren: (...children: StubElement[]) => void
+  setAttribute: (name: string, value: string) => void
+  getAttribute: (name: string) => string | null
   addEventListener: (type: string, cb: (e: unknown) => void) => void
   click: () => void
   scrollTop: number
@@ -579,6 +582,7 @@ function makeStubElement(tagName: string): StubElement {
     className: '',
     style: {},
     dataset: {},
+    attributes: {},
     children: [],
     parentNode: null,
     listeners: new Map(),
@@ -594,6 +598,12 @@ function makeStubElement(tagName: string): StubElement {
         c.parentNode = el
         el.children.push(c)
       }
+    },
+    setAttribute(name, value) {
+      el.attributes[name] = value
+    },
+    getAttribute(name) {
+      return el.attributes[name] ?? null
     },
     addEventListener(type, cb) {
       const list = el.listeners.get(type) ?? []

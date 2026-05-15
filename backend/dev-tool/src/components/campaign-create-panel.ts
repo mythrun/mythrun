@@ -184,6 +184,10 @@ function buildFreeformFields(): { wrap: HTMLElement; textarea: HTMLTextAreaEleme
 export function mountCampaignCreatePanel(parent: HTMLElement): void {
   const card = document.createElement('section')
   card.className = 'card'
+  // Action-only panel: the form is the steady state. data-state="ready"
+  // tells the verify harness the panel reached its expected post-mount
+  // state without conflating with fetch-on-mount panels.
+  card.setAttribute('data-state', 'ready')
 
   const title = document.createElement('h2')
   title.textContent = 'POST /api/campaigns (create)'

@@ -8,7 +8,14 @@
 //   1. Forward coverage: every panel module exporting a mount* function
 //      has a registry entry.
 //   2. Reverse coverage: every registry key is imported by main.ts.
-//   3. Route exhaustion: union(PANEL_REGISTRY.*.exercises) ⊇ BACKEND_ROUTES.
+//   3. Route exhaustion: union(PANEL_REGISTRY.*.exercises) ∪ EXEMPT_ROUTES
+//      ⊇ BACKEND_ROUTES.
+//
+// EXEMPT_ROUTES carries routes that intentionally cannot have a UI panel
+// — the Stripe webhook (signature-verified consumer, no human UI) and
+// POST /api/users/register (exercised by the harness's identity-bootstrap
+// step, not a UI surface). Anything added here must be justified in a
+// comment so future readers know why a panel wasn't authored.
 
 import type { BackendRoute } from '../src/contract/backend-routes.js'
 
@@ -20,6 +27,10 @@ import { mountStatusPanel } from './src/components/status-panel.js'
 import { mountLiveEventsPanel } from './src/components/live-events-panel.js'
 import { mountCampaignDetailsPanel } from './src/components/campaign-details-panel.js'
 import { mountCreditLedgerPanel } from './src/components/credit-ledger-panel.js'
+import { mountUsersPanel } from './src/components/users-panel.js'
+import { mountInvitesPanel } from './src/components/invites-panel.js'
+import { mountSessionTicketPanel } from './src/components/session-ticket-panel.js'
+import { mountBillingPanel } from './src/components/billing-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
@@ -51,6 +62,28 @@ function route(method: BackendRoute['method'], path: string): BackendRoute {
   return { method, path }
 }
 
+/**
+ * Routes that intentionally have no UI panel. The route audit treats these
+ * as covered. Adding to this list requires a short comment justifying why
+ * a panel can't / shouldn't exist — the default is to author a panel.
+ */
+export const EXEMPT_ROUTES: readonly BackendRoute[] = [
+  // POST /webhooks/stripe: signature-verified consumer of Stripe events.
+  // The HMAC over the raw body would reject any request not signed with
+  // Stripe's webhook secret — there's no useful UI surface a human could
+  // drive. Coverage of the webhook dispatch logic is enforced by the
+  // backend's billing/webhook tests.
+  { method: 'POST', path: '/webhooks/stripe' },
+
+  // POST /api/users/register: exercised by the verify harness's identity
+  // bootstrap step (scripts/verify.ts) AND the dev tool's main.ts
+  // self-bootstrap on first load. A standalone UI panel would only be
+  // useful for adversarial edge-case tests (profanity, mismatched
+  // sub-username, etc.), which the backend routes test suite already
+  // covers in depth.
+  { method: 'POST', path: '/api/users/register' },
+]
+
 export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
   'identity-switcher': {
     pattern: 'event-driven',
@@ -64,7 +97,7 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     mount: mountHealthPanel,
     readySelector: '[data-state="loaded"]',
     errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/health')],
+    exercises: [route('GET', '/health'), route('GET', '/health/ready')],
   },
   'campaign-create': {
     pattern: 'action-only',
@@ -116,6 +149,52 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     exercises: [
       route('POST', '/api/dev/credits/grant'),
       route('GET', '/api/dev/credits/me'),
+    ],
+  },
+  users: {
+    pattern: 'fetch-on-mount',
+    mount: mountUsersPanel,
+    readySelector: '[data-state="loaded"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [
+      route('GET', '/api/users/me'),
+      route('GET', '/api/users/check-username'),
+    ],
+  },
+  invites: {
+    pattern: 'action-only',
+    mount: mountInvitesPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [
+      route('POST', '/api/campaigns/:campaignId/invites'),
+      route('GET', '/api/campaigns/:campaignId/invites'),
+      route('DELETE', '/api/campaigns/:campaignId/invites/:inviteCode'),
+      route('GET', '/api/invites/:inviteCode/preview'),
+      route('POST', '/api/invites/:inviteCode/accept'),
+      route('GET', '/api/campaigns/:campaignId/members'),
+    ],
+  },
+  'session-ticket': {
+    pattern: 'action-only',
+    mount: mountSessionTicketPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/sessions/:id/ws-ticket')],
+  },
+  billing: {
+    pattern: 'action-only',
+    mount: mountBillingPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [
+      route('GET', '/api/billing/skus'),
+      route('GET', '/api/billing/balance'),
+      route('GET', '/api/billing/subscription'),
+      route('GET', '/api/billing/history'),
+      route('POST', '/api/billing/checkout'),
+      route('POST', '/api/billing/portal'),
+      route('POST', '/api/billing/upgrade-tier'),
     ],
   },
 }

@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { PANEL_REGISTRY } from '../verify-registry.js'
+import { EXEMPT_ROUTES, PANEL_REGISTRY } from '../verify-registry.js'
 import { BACKEND_ROUTES, type BackendRoute } from '../../src/contract/backend-routes.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -64,19 +64,33 @@ describe('PANEL_REGISTRY invariants', () => {
     }
   })
 
-  it.skip('route exhaustion — every BACKEND_ROUTE is exercised by some panel — SKIP until myth-e5mn Task 13 adds panels for billing/invites/sessions/users/webhook', () => {
-    const exercised = new Set<string>()
+  it('route exhaustion — every BACKEND_ROUTE is covered by a panel or EXEMPT_ROUTES', () => {
+    const covered = new Set<string>()
     for (const reg of Object.values(PANEL_REGISTRY)) {
       for (const r of reg.exercises) {
-        exercised.add(`${r.method} ${r.path}`)
+        covered.add(`${r.method} ${r.path}`)
       }
+    }
+    for (const r of EXEMPT_ROUTES) {
+      covered.add(`${r.method} ${r.path}`)
     }
     const uncovered: BackendRoute[] = []
     for (const route of BACKEND_ROUTES) {
-      if (!exercised.has(`${route.method} ${route.path}`)) {
+      if (!covered.has(`${route.method} ${route.path}`)) {
         uncovered.push(route)
       }
     }
-    expect(uncovered, `routes not exercised by any panel: ${JSON.stringify(uncovered)}`).toEqual([])
+    expect(
+      uncovered,
+      `routes not covered by any panel or exempt list: ${JSON.stringify(uncovered)}`,
+    ).toEqual([])
+  })
+
+  it('EXEMPT_ROUTES entries must be in BACKEND_ROUTES', () => {
+    const known = new Set(BACKEND_ROUTES.map((r) => `${r.method} ${r.path}`))
+    for (const r of EXEMPT_ROUTES) {
+      expect(known.has(`${r.method} ${r.path}`), `${r.method} ${r.path} not in BACKEND_ROUTES`)
+        .toBe(true)
+    }
   })
 })

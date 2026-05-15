@@ -84,6 +84,11 @@ function applyStageEvent(parsed: LiveEvent, stages: StageEntry[], stagesEl: HTML
 export function mountStatusPanel(parent: HTMLElement): void {
   const card = document.createElement('section')
   card.className = 'card'
+  // Event-driven panel: nothing fetches on mount; the watcher only
+  // activates when the create panel dispatches mythrun.watchcampaign
+  // or the user clicks Watch. data-state="idle" is the verify harness's
+  // signal that the panel reached its mount-time steady state.
+  card.setAttribute('data-state', 'idle')
 
   const title = document.createElement('h2')
   title.textContent = 'Pipeline status'

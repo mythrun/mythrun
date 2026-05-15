@@ -12,7 +12,7 @@
 import { JSDOM } from 'jsdom'
 
 import { BACKEND_ROUTES } from '../../src/contract/backend-routes.js'
-import { PANEL_REGISTRY } from '../verify-registry.js'
+import { EXEMPT_ROUTES, PANEL_REGISTRY } from '../verify-registry.js'
 import { setCurrentDevSub } from '../src/identity.js'
 
 const BACKEND_URL = 'http://localhost:3030'
@@ -283,23 +283,27 @@ export async function verifyPanel(name: string): Promise<PanelResult> {
 }
 
 // Route-exhaustion second pass. Builds the union of every panel's declared
-// `exercises` routes and returns the BACKEND_ROUTES entries (as
-// `"METHOD /path"` keys) that nothing exercises. Redundant with the
-// `verify-registry.test.ts` route-exhaustion invariant by design — the
-// test gates CI on drift; this runtime audit surfaces it on every
-// `pnpm dev-tool:verify` invocation so the human sees it without
-// re-running the test suite.
+// `exercises` routes PLUS the EXEMPT_ROUTES list (routes that intentionally
+// have no UI panel — Stripe webhook, register-via-bootstrap) and returns
+// the BACKEND_ROUTES entries (as `"METHOD /path"` keys) that nothing
+// covers. Redundant with the `verify-registry.test.ts` route-exhaustion
+// invariant by design — the test gates CI on drift; this runtime audit
+// surfaces it on every `pnpm dev-tool:verify` invocation so the human
+// sees it without re-running the test suite.
 export function routeAudit(): string[] {
-  const exercised = new Set<string>()
+  const covered = new Set<string>()
   for (const reg of Object.values(PANEL_REGISTRY)) {
     for (const r of reg.exercises) {
-      exercised.add(`${r.method} ${r.path}`)
+      covered.add(`${r.method} ${r.path}`)
     }
+  }
+  for (const r of EXEMPT_ROUTES) {
+    covered.add(`${r.method} ${r.path}`)
   }
   const uncovered: string[] = []
   for (const route of BACKEND_ROUTES) {
     const key = `${route.method} ${route.path}`
-    if (!exercised.has(key)) uncovered.push(key)
+    if (!covered.has(key)) uncovered.push(key)
   }
   return uncovered
 }

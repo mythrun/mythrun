@@ -68,9 +68,9 @@ Maintained as a table here. The verifier subagent updates this section on each r
 |---|---|---|
 | GET /health | health | fetch-on-mount |
 | GET /health/ready | health | fetch-on-mount |
-| POST /api/users/register | (bootstrap-only; no panel) | — |
-| GET /api/users/check-username | (TODO: needs panel) | — |
-| GET /api/users/me | (TODO: needs panel) | — |
+| POST /api/users/register | (exempt — exercised by harness bootstrap + main.ts self-bootstrap) | — |
+| GET /api/users/check-username | users | fetch-on-mount |
+| GET /api/users/me | users | fetch-on-mount |
 | POST /api/campaigns | campaign-create | action-only |
 | GET /api/campaigns/mine | my-campaigns | fetch-on-mount |
 | GET /api/campaigns/:campaignId | campaign-details | event-driven |
@@ -78,18 +78,30 @@ Maintained as a table here. The verifier subagent updates this section on each r
 | POST /api/campaigns/:campaignId/resume | campaign-details | event-driven |
 | GET /api/campaigns/:campaignId/status | status | event-driven |
 | GET /api/campaigns/:campaignId/status/stream | status, live-events | event-driven |
-| POST /api/sessions/:id/ws-ticket | (TODO: needs panel) | — |
-| POST /api/campaigns/:campaignId/invites | (TODO: needs panel) | — |
-| GET /api/campaigns/:campaignId/invites | (TODO: needs panel) | — |
-| DELETE /api/campaigns/:campaignId/invites/:inviteCode | (TODO: needs panel) | — |
-| GET /api/invites/:inviteCode | (TODO: needs panel) | — |
-| POST /api/invites/:inviteCode/accept | (TODO: needs panel) | — |
-| GET /api/campaigns/:campaignId/members | (TODO: needs panel) | — |
+| POST /api/sessions/:id/ws-ticket | session-ticket | action-only |
+| POST /api/campaigns/:campaignId/invites | invites | action-only |
+| GET /api/campaigns/:campaignId/invites | invites | action-only |
+| DELETE /api/campaigns/:campaignId/invites/:inviteCode | invites | action-only |
+| GET /api/invites/:inviteCode/preview | invites | action-only |
+| POST /api/invites/:inviteCode/accept | invites | action-only |
+| GET /api/campaigns/:campaignId/members | invites | action-only |
 | POST /api/dev/credits/grant | credit-ledger | action-only |
 | GET /api/dev/credits/me | credit-ledger | action-only |
-| (billing routes — fill in via Task 13) | — | — |
+| POST /webhooks/stripe | (exempt — Stripe-signed consumer, no human UI possible) | — |
+| GET /api/billing/skus | billing | action-only |
+| GET /api/billing/balance | billing | action-only |
+| GET /api/billing/subscription | billing | action-only |
+| GET /api/billing/history | billing | action-only |
+| POST /api/billing/checkout | billing | action-only |
+| POST /api/billing/portal | billing | action-only |
+| POST /api/billing/upgrade-tier | billing | action-only |
 
-The verifier subagent's first dispatch (Task 13) fills the TODO rows. Some routes may legitimately not need a panel (e.g., `POST /api/users/register` is exercised by the bootstrap step, not a UI panel) — those are noted with the appropriate `—`.
+Routes that intentionally have no UI panel live in `EXEMPT_ROUTES` in
+`verify-registry.ts`. Adding to that list requires justification — the
+default for any new backend route is to author a panel. The route
+audit (build-time test + runtime `dev-tool:verify` pass) treats
+`EXEMPT_ROUTES` union with `union(PANEL_REGISTRY.*.exercises)` as the
+covered surface.
 
 ---
 

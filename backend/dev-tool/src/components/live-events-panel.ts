@@ -384,6 +384,11 @@ interface ViewRefs {
 function buildView(): ViewRefs {
   const card = document.createElement('section')
   card.className = 'card'
+  // Event-driven panel: idle on mount, transitions to streaming state
+  // only when mythrun.watchcampaign fires. The verify harness keys on
+  // data-state="idle" to confirm the panel reached its mount-time
+  // steady state.
+  card.setAttribute('data-state', 'idle')
 
   const title = document.createElement('h2')
   title.textContent = 'Live SSE events'
