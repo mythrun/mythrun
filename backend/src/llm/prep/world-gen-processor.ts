@@ -134,6 +134,16 @@ export function createWorldGenProcessor(
     }
     /* c8 ignore stop */
 
+    // BullMQ retry recovery: if a prior attempt flipped worlds.status to
+    // 'failed' (handleStageError eagerly flips on any error), reset to
+    // 'generating' here so the retry runs in the correct state and the
+    // concurrent-generation guard remains accurate. First-attempt invocation
+    // is a no-op (status is already 'generating' from campaign create).
+    await deps.pool.query(
+      `UPDATE worlds SET status = 'generating' WHERE id = $1 AND status = 'failed'`,
+      [ctx.world.id],
+    )
+
     await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_gen' })
 
     const capUsd = await readCostCap(deps.pool)
@@ -634,6 +644,21 @@ async function handleStageError(
     await publishEvent(deps, ctx.campaign.id, { type: 'phase', phase: 'world_gen_failed' })
     return 'stop'
   }
+  // Non-NotImplemented error (LLM-upstream, structured-output, infra).
+  // Eagerly flip worlds.status='failed' on EVERY error attempt — without
+  // this, BullMQ's retries + the BullMQ-marked-failed terminal state both
+  // leave worlds.status='generating', which the concurrent-generation
+  // guard reads as "still running" and blocks the user from retrying.
+  // If the subsequent BullMQ retry succeeds, processWorldGen's per-attempt
+  // top-of-function reset flips status back to 'generating' before re-
+  // entering the stage loop. The retry path is sound; the brief 'failed'
+  // state during an in-flight retry is accurate — the previous attempt did
+  // fail.
+  //
+  // Saved 2026-05-15 after campaign 019e2d99-…-af07ada8ea7a's concept_intake
+  // failure left world.status='generating' indefinitely.
+  await deps.pool.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [ctx.world.id])
+  await publishEvent(deps, ctx.campaign.id, { type: 'phase', phase: 'world_gen_failed' })
   return 'rethrow'
 }
 

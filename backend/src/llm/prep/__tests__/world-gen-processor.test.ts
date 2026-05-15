@@ -431,11 +431,15 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(runs.rows.map((r) => r.stage)).toEqual(['concept_intake'])
     expect(runs.rows[0]?.status).toBe('failed')
 
-    // World status stayed 'generating' — only refund-path sets 'failed'.
+    // World status flipped to 'failed' so the concurrent-generation guard
+    // releases. Per myth-e5mn-followup: handleStageError now eagerly flips
+    // worlds.status='failed' on EVERY stage error (was previously gated to
+    // only StageNotImplementedError + cost-cap-refund), and processWorldGen's
+    // top-of-function reset flips back to 'generating' for the BullMQ retry.
     const w = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [
       worldId,
     ])
-    expect(w.rows[0]?.status).toBe('generating')
+    expect(w.rows[0]?.status).toBe('failed')
   })
 
   // ------------------------------------------------------------------

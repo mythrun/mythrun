@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { validateAndGenerateConcept, type PaintJobJudgement } from '../paint-job-validator.js'
+import { LlmStructuredOutputError } from '../../errors.js'
 import * as ai from 'ai'
 
 vi.mock('ai', async () => {
@@ -178,5 +179,133 @@ describe('validateAndGenerateConcept', () => {
     >
     expect(firstGenCall.temperature).toBeCloseTo(0.9)
     expect(secondGenCall.temperature).toBeCloseTo(1.0)
+  })
+
+  // ------------------------------------------------------------------
+  // SDK structured-output failure → Sonnet repair fallback
+  // ------------------------------------------------------------------
+
+  // A synthetic AI_NoObjectGeneratedError-shaped error: the original SDK
+  // error class carries `.text` (last attempted output) which the
+  // middleware preserves on the wrapping LlmStructuredOutputError's
+  // `.cause`. The fallback parses the text, runs safeParse, calls the
+  // repair LLM (Sonnet) via repairStructuredOutput, and uses its output
+  // if successful.
+  function mockSdkSchemaFailure(rawText: string): void {
+    const cause = Object.assign(new Error('AI_NoObjectGeneratedError'), {
+      name: 'AI_NoObjectGeneratedError',
+      text: rawText,
+    })
+    const err = new LlmStructuredOutputError('llm returned unparseable structured output', { cause })
+    vi.mocked(ai.generateText).mockRejectedValueOnce(err)
+  }
+
+  it('falls back to Sonnet repair when SDK throws structured-output error with parseable text', async () => {
+    // First gen call throws structured-output error; .cause.text is JSON
+    // that JSON.parses but fails the schema (concept too short → mock the
+    // shape that triggers safeParse failure). The repair call (also via
+    // ai.generateText, queued next) returns a valid draft.
+    const invalidText = JSON.stringify({ name: '', concept: '' }) // both empty → fails schema
+    mockSdkSchemaFailure(invalidText)
+    // repairStructuredOutput's inner generateText call:
+    mockGenerator({ name: 'RepairedName', concept: 'repaired concept text' })
+    // Judge call clears the repaired draft:
+    mockJudge({ flagged: false, confidence: 0.95 })
+
+    const TighterSchema = z.object({
+      name: z.string().min(1),
+      concept: z.string().min(1),
+    })
+
+    const result = await validateAndGenerateConcept({
+      basePrompt: 'Generate a world',
+      schema: TighterSchema,
+    })
+
+    expect(result.draft).toEqual({ name: 'RepairedName', concept: 'repaired concept text' })
+    expect(result.attempts).toBe(1)
+    // gen failure + repair gen + judge = 3 SDK calls total
+    expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(3)
+  })
+
+  it('uses the rawText directly when SDK rejects valid JSON (defensive fallback)', async () => {
+    // SDK throws but the text actually JSON-parses + passes Zod. The
+    // fallback uses the parsed value directly without calling the
+    // repair LLM. Tests the safe-parse-succeeds branch.
+    const validText = JSON.stringify({ name: 'DirectName', concept: 'direct concept' })
+    mockSdkSchemaFailure(validText)
+    mockJudge({ flagged: false, confidence: 0.95 })
+
+    const result = await validateAndGenerateConcept({
+      basePrompt: 'Generate a world',
+      schema: TestSchema,
+    })
+
+    expect(result.draft).toEqual({ name: 'DirectName', concept: 'direct concept' })
+    // gen failure + judge (no repair call needed) = 2 SDK calls
+    expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(2)
+  })
+
+  it('rethrows the original LlmStructuredOutputError when repair also fails', async () => {
+    // First gen call throws structured-output error; repair call also
+    // returns schema-invalid output → original error rethrows.
+    const invalidText = JSON.stringify({ name: '', concept: '' })
+    mockSdkSchemaFailure(invalidText)
+    // Repair LLM also returns invalid output:
+    mockGenerator({ name: '', concept: '' }) // still empty strings, still fails the tighter schema
+
+    const TighterSchema = z.object({
+      name: z.string().min(1),
+      concept: z.string().min(1),
+    })
+
+    await expect(
+      validateAndGenerateConcept({
+        basePrompt: 'Generate a world',
+        schema: TighterSchema,
+      }),
+    ).rejects.toThrow(/unparseable structured output/)
+  })
+
+  it('rethrows when SDK error has no .cause.text to repair', async () => {
+    // Structurally invalid LlmStructuredOutputError — no underlying SDK
+    // error, no rawText to feed the repair pass. Original error rethrows.
+    vi.mocked(ai.generateText).mockRejectedValueOnce(
+      new LlmStructuredOutputError('llm returned unparseable structured output'),
+    )
+
+    await expect(
+      validateAndGenerateConcept({
+        basePrompt: 'Generate a world',
+        schema: TestSchema,
+      }),
+    ).rejects.toThrow(/unparseable structured output/)
+  })
+
+  it('rethrows when SDK rawText is not JSON-parseable', async () => {
+    // SDK threw + .cause.text is present but not valid JSON. The fallback
+    // can't feed it to the repair LLM, so the original error rethrows.
+    mockSdkSchemaFailure('this is not json at all')
+
+    await expect(
+      validateAndGenerateConcept({
+        basePrompt: 'Generate a world',
+        schema: TestSchema,
+      }),
+    ).rejects.toThrow(/unparseable structured output/)
+  })
+
+  it('rethrows non-LlmStructuredOutputError errors verbatim (no fallback)', async () => {
+    // Generic upstream error (e.g., LlmRateLimitedError) is NOT a
+    // structured-output failure — the repair fallback shouldn't fire.
+    vi.mocked(ai.generateText).mockRejectedValueOnce(new Error('rate limited'))
+
+    await expect(
+      validateAndGenerateConcept({
+        basePrompt: 'Generate a world',
+        schema: TestSchema,
+      }),
+    ).rejects.toThrow(/rate limited/)
+    expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(1)
   })
 })
