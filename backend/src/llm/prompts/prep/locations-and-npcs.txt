@@ -48,9 +48,23 @@ Output the JSON in this shape:
 }
 ```
 
-### Critical streaming-UX rule
+### Entity-level access_level
 
-**Name field MUST be the FIRST key in every location and NPC object.** Output `{"name": "...", ...}` not `{..., "name": "..."}`. The downstream system reads the name as soon as it streams in to render live entity cards; if `name` arrives last, players see nothing until the entire object completes.
+Each location and NPC object ALSO has an `access_level` of `known`, `discoverable`, or `secret` — with the same semantic applied to the entity as a whole:
+  - `known` locations/NPCs are part of the visible world: named on maps, known by name to locals, the kind of people/places players would learn of when they arrive in a region.
+  - `discoverable` locations/NPCs exist but aren't advertised — a hidden grove uncovered through exploration, a contact who needs to be sought out, a magistrate whose office must be visited to be found.
+  - `secret` locations/NPCs are concealed — a hidden lair, a cult cell, an NPC pulling strings whom no one knows about until plot reveals them.
+
+Mix entity access levels too. Most locations and NPCs should be `known`. At least one per generated batch should be `discoverable` and at least one should be `secret`. Don't over-stuff the visible world with secrets; depth comes from a few well-placed hidden things, not from making everything mysterious.
+
+### Structural instructions
+
+- Name field MUST be the first key in every location and NPC object.
+- `access_level` MUST be the SECOND key (immediately after `name`). This is a streaming-correctness requirement — the system parses entries as they stream and consults `access_level` before the prose/facts arrive.
+- Fact `access_level` is exactly one of `known`, `discoverable`, `secret`.
+- No `narrative_status` field on facts; the system fills that in.
+
+The downstream system reads the name as soon as it streams in to render live entity cards; if `name` arrives last, players see nothing until the entire object completes.
 
 ### For each LOCATION:
 
@@ -59,7 +73,7 @@ Output the JSON in this shape:
 3. **facts** — 2–12 structured facts, each an object with:
    - **topic** — Short label (2–80 chars), e.g. "history", "rumor", "danger", "ownership".
    - **content** — 20–800 chars of the actual fact, in present tense, observational.
-   - **access_level** — One of `"public"` (anyone can see/learn by visiting), `"private"` (learned by spending time here or asking around), or `"secret"` (almost nobody knows).
+   - **access_level** — One of `"known"` (common knowledge to anyone in the locality — DM tells players for free, no roll), `"discoverable"` (findable through investigation, asking around, or successful skill checks — not actively concealed, just not common knowledge), or `"secret"` (load-bearing plot reveal, actively hidden; discovery drives the story forward).
    Do NOT include a `narrative_status` field — the system stamps that.
 4. **parent_location** — The NAME of the containing location, or `null` for a region-root location.
    - A city inside a region: `parent_location: "Eredil"` (where Eredil is the region name from stage 2).
@@ -84,5 +98,23 @@ Output the JSON in this shape:
 - Not every NPC needs a faction affiliation. Independent characters add color.
 - NPC secrets should be plausible, not melodramatic. Not everyone has a dark past.
 - If the campaign tone includes multiple registers (e.g. comedy with horror, whimsy with drama), distribute NPC voice types across the full tonal spectrum.
+
+PROSE-TIER CONSISTENCY (CRITICAL):
+
+Do NOT reveal `discoverable`-tier or `secret`-tier entities, facts, or plot reveals inside `known`-tier prose fields or fact `content`. The prose of a `known` location/NPC is the public-knowledge view — what anyone in the locality casually knows. If a `secret` truth about the location/NPC exists, it belongs in a `secret`-tier fact on that entity, NOT woven into the prose. Treat each tier as a separate "what-can-be-said-here" boundary.
+
+Examples:
+- BAD: A `known` tavern's prose says "The Hearth Inn is run by Brom, who secretly fences stolen goods from the south coast." (The fence reveal is plot — belongs in a `secret` fact on the NPC or location, not in the public prose.)
+- GOOD: A `known` tavern's prose says "The Hearth Inn is run by Brom, a quiet former-sailor who keeps the kitchen warm through the storm-season." A separate `secret` fact on Brom reads: "Brom moves stolen goods through the inn's cellar — coastal smuggling crews tip him in coin for safe storage."
+- GOOD: A `discoverable` NPC's prose can describe their reclusiveness ("rarely seen in public, spoken of in murmurs at the lamp-lighter's tavern") — the discoverable tier's narrative status (asking around, time spent) is what the prose can carry.
+
+CROSS-STAGE AWARENESS:
+
+Stage 2 (world_and_factions) classified the world's regions and factions before you. Your locations and NPCs should COMPLEMENT that classification, not duplicate the secret floor.
+
+- If stage 2 placed a `secret` cult faction in a region, your locations under that region should mix tiers — don't classify every location in a "secret-rich" region as `secret` itself.
+- If a region is `known`, its sub-locations can span any tier.
+- If a region is `discoverable` or `secret`, MOST of its locations should be at that tier or lower-visibility (revealing them via `known` locations would leak the parent's hiddenness).
+- Aim for a coherent overall world distribution, not a per-stage repeat of the floor (mostly-known, a few discoverable, a sprinkling of secret).
 
 Respond with ONLY the JSON object. No markdown fences, no commentary.

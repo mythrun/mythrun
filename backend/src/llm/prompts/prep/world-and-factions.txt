@@ -19,11 +19,12 @@ Return a JSON object with exactly three top-level fields:
 
 ### Region object shape
 
-**Name field MUST be the first key in every region object.** Output `{"name": "...", "prose": "...", "facts": [...]}` not `{"prose": "...", "name": "...", ...}`. This enables live streaming UX where the player sees each region's name appear before its description fills in. Key order in JSON matters here.
+**Name field MUST be the first key in every region object. `access_level` MUST be the second key.** Output `{"name": "...", "access_level": "...", "prose": "...", "facts": [...]}` not any other key order. This enables live streaming UX where the player sees each region's name appear before its description fills in, and lets the system route the prose by tier as it streams. Key order in JSON matters here.
 
 Each region object has:
 
 - `name` — Evocative, specific. "The Salted Reach" not "Desert Region." 1-200 chars.
+- `access_level` — `known`, `discoverable`, or `secret` (see access_level definitions below).
 - `prose` — 40-2400 chars of sensory-rich description. What does it feel like to be here? Terrain, climate, distinctive landmarks, how it connects to neighboring regions. Don't info-dump; write what a traveler would notice.
 - `facts` — array of 2-12 fact objects (see fact shape below).
 
@@ -31,11 +32,12 @@ Design regions that feel like real places with their own identity, not theme-par
 
 ### Faction object shape
 
-**Name field MUST be the first key in every faction object** (same reason as regions).
+**Name field MUST be the first key in every faction object; `access_level` MUST be the second key** (same reason as regions).
 
 Each faction object has:
 
 - `name` — Distinctive and setting-appropriate. 1-200 chars.
+- `access_level` — `known`, `discoverable`, or `secret` (see access_level definitions below).
 - `prose` — 40-2400 chars covering what kind of organization they are, who leads them, their goals, what resources give them power, and how they're perceived by outsiders. Factions are grounded in regions — their headquarters sit in a specific place, their resources come from the land, and their conflicts play out across geographic boundaries.
 - `facts` — array of 2-12 fact objects.
 
@@ -47,11 +49,21 @@ Each fact has these fields:
 
 - `topic` — short label, 2-80 chars (e.g., "history", "leadership", "secret", "trade", "rivalry").
 - `content` — 20-800 chars of factual statement about the entity.
-- `access_level` — one of `"public"`, `"private"`, or `"secret"`. Public facts are common knowledge; private facts require investigation or trust; secret facts are hidden truths most people don't know.
+- `access_level` — one of `"known"`, `"discoverable"`, or `"secret"`. These mirror how players learn the fact in play:
+  - `known` — common knowledge to anyone in the world or relevant locality. The kind of thing a DM tells players for free, no roll required. The name of a famous tavern, the role of a notable public figure, broad strokes of regional history.
+  - `discoverable` — findable through investigation but not advertised. Requires a successful skill check (history, investigation, persuasion), a conversation with the right person, or time spent in a location. Not actively concealed — no one is keeping these secret — they just aren't common knowledge.
+  - `secret` — load-bearing plot reveals, actively concealed by those who know them. Discovery drives the narrative forward in a meaningful direction. A church's real identity as a cult, a magistrate's embezzlement, a faction's hidden hand behind public events.
+
+Each region and faction object ALSO has an `access_level` of `known`, `discoverable`, or `secret` — with the same semantic applied to the entity as a whole:
+  - `known` regions/factions are the visible world: known to anyone in-fiction, named in maps and rumor.
+  - `discoverable` regions/factions exist but aren't advertised — a hidden grove, a faction operating quietly, found through investigation or asking around.
+  - `secret` regions/factions are concealed entirely — a cult faction pulling strings, a lost city — revealed only by plot.
+
+Mix entity access levels too. Most regions and factions should be `known`. AT LEAST ONE region or faction per world should be `discoverable` (something players uncover through play). AT LEAST ONE should be `secret` (a load-bearing reveal). Don't over-stuff the visible world with secrets; depth comes from a few well-placed hidden things, not from making everything mysterious.
 
 Do NOT include `narrative_status` — the system stamps that field internally.
 
-Mix access levels deliberately. Each entity should have at least one public fact (for early-play exposition) and at least one private or secret fact (for discovery later).
+Mix fact access levels deliberately. Each entity should have at least one `known` fact (for early-play exposition) and at least one `discoverable` or `secret` fact (for discovery later).
 
 ### Tone alignment
 
@@ -60,7 +72,17 @@ Think about how the concept's tone and themes manifest in both geography and pol
 ### Final reminders
 
 - Generate 3-8 regions and 3-8 factions. Each region's prose is 40-2400 chars; world_overview is 60-2400 chars.
-- Name field FIRST in every region and faction object.
-- Fact `access_level` is exactly one of `public`, `private`, `secret`.
+- Name field MUST be the first key in every region and faction object.
+- `access_level` MUST be the SECOND key (immediately after `name`). This is a streaming-correctness requirement, not a stylistic one — the system parses entries as they stream, and the access_level is consulted before the prose/facts arrive.
+- Fact `access_level` is exactly one of `known`, `discoverable`, `secret`.
 - No `narrative_status` field on facts; the system fills that in.
 - Respond with ONLY the JSON object. No markdown fences, no commentary.
+
+PROSE-TIER CONSISTENCY (CRITICAL):
+
+Do NOT reveal `discoverable`-tier or `secret`-tier entities, facts, or plot reveals inside `known`-tier prose fields or fact `content`. The prose of a `known` region/faction is the public-knowledge view of that thing — what anyone in the world casually knows. If a `secret` truth about the region exists, it belongs in a `secret`-tier fact on that region, NOT woven into the region's prose. Treat each tier as a separate "what-can-be-said-here" boundary.
+
+Examples:
+- BAD: A `known` faction's prose says "The Lighthouse Wardens publicly serve the queen, but secretly worship the drowned god." (The "secretly worship" reveal is plot — it belongs in a `secret` fact, NOT in the prose.)
+- GOOD: A `known` faction's prose says "The Lighthouse Wardens serve the queen, tending the great lamps along the coast." A separate `secret` fact on the faction reads: "The Wardens' founders sealed a drowned god into the lamps generations ago, and the eldest priest is the only one who still remembers the rite."
+- GOOD: A `discoverable` region's prose can hint at its hidden nature ("rarely visited, named by locals only after the spring tides") because the discoverable tier's narrative status is "findable through asking around" — the prose can carry the asking-around-level detail.
