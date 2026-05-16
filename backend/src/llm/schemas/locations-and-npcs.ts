@@ -17,14 +17,17 @@
 
 import { z } from 'zod'
 
+export const ACCESS_LEVEL = z.enum(['known', 'discoverable', 'secret'])
+
 export const factSchema = z.object({
   topic: z.string().min(2).max(80),
   content: z.string().min(20).max(800),
-  access_level: z.enum(['public', 'private', 'secret']),
+  access_level: ACCESS_LEVEL,
 })
 
 export const locationSchema = z.object({
   name: z.string().min(1).max(200),
+  access_level: ACCESS_LEVEL,
   prose: z.string().min(40).max(2400),
   facts: z.array(factSchema).min(2).max(12),
   parent_location: z.string().nullable(),
@@ -32,6 +35,7 @@ export const locationSchema = z.object({
 
 export const npcSchema = z.object({
   name: z.string().min(1).max(200),
+  access_level: ACCESS_LEVEL,
   prose: z.string().min(40).max(2400),
   facts: z.array(factSchema).min(2).max(12),
   home_location: z.string().nullable(),
