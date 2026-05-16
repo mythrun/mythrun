@@ -1,232 +1,207 @@
-// backend/src/llm/prep/__tests__/streaming-extractor.test.ts
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { runStreamingStage } from '../streaming-extractor.js'
 
-interface FakeJob {
-  updateProgress: (n: number) => Promise<void>
-}
-
-function fakeJob(): FakeJob & { progressCalls: number[] } {
-  const progressCalls: number[] = []
-  return {
-    progressCalls,
-    // eslint-disable-next-line @typescript-eslint/require-await
-    updateProgress: async (n: number): Promise<void> => {
-      progressCalls.push(n)
-    },
-  }
-}
-
 interface FakeRedis {
-  publish: (channel: string, message: string) => Promise<number>
+  publish: ReturnType<typeof vi.fn>
 }
 
-function fakeRedis(): FakeRedis & { publishes: { channel: string; payload: unknown }[] } {
-  const publishes: { channel: string; payload: unknown }[] = []
-  return {
-    publishes,
-    // eslint-disable-next-line @typescript-eslint/require-await
-    publish: async (channel: string, message: string): Promise<number> => {
-      publishes.push({ channel, payload: JSON.parse(message) as unknown })
-      return 1
-    },
-  }
+function makeRedis(): FakeRedis {
+  return { publish: vi.fn().mockResolvedValue(1) }
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await
-async function* twoFactionStream(): AsyncGenerator<{
-  factions?: Partial<{ name: string; prose: string }>[]
-}> {
-  // Three deltas: name appears alone (not emittable), then prose starts
-  // (emittable -> entity-added), then prose grows (entity-updated).
-  yield { factions: [{ name: 'House Eyrin' }] }
-  yield { factions: [{ name: 'House Eyrin', prose: 'The eyrie' }] }
-  yield { factions: [{ name: 'House Eyrin', prose: 'The eyrie clings to the cliffs.' }] }
+const fakeJob = { updateProgress: vi.fn() }
+
+async function* partials(snapshots: unknown[]): AsyncGenerator<unknown> {
+  for (const s of snapshots) yield s
 }
 
-describe('runStreamingStage', () => {
-  it('publishes entity-added when name is non-empty AND another field has begun', async () => {
-    const job = fakeJob()
-    const redis = fakeRedis()
-    const result = await runStreamingStage(twoFactionStream(), {
+describe('runStreamingStage — myth-exac closed-entry gate', () => {
+  it('emits entity-added exactly once per known-tier entry on closure', async () => {
+    const redis = makeRedis()
+    const stream = partials([
+      { regions: [{ name: 'R1' }] },
+      { regions: [{ name: 'R1', access_level: 'known' }] },
+      { regions: [{ name: 'R1', access_level: 'known', prose: 'p' }] },
+      { regions: [{ name: 'R1', access_level: 'known', prose: 'pp', facts: [] }, { name: 'R2' }] },
+    ])
+    await runStreamingStage(stream, {
       stage: 'world_and_factions',
-      campaignId: 'cmp-1',
-      job,
-      redisRealtime: redis,
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis as never,
       keyPrefix: 'test:',
-      arrays: [{ path: 'factions', kind: 'faction', role: 'entity' }],
+      arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+      bypassAccessFilter: false,
+      endpointTierMap: new Map(),
     })
-    const events = redis.publishes.map((p) => p.payload as { type: string; synthKey?: string })
-    const added = events.filter((e) => e.type === 'entity-added')
-    expect(added).toHaveLength(1)
-    expect(added[0]?.synthKey).toBe('world_and_factions/factions/0')
-    expect(result.finalTree.factions?.[0]?.name).toBe('House Eyrin')
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const r1Emits = events.filter((e) => e.type === 'entity-added' && e.name === 'R1')
+    expect(r1Emits).toHaveLength(1)
+    expect(r1Emits[0]).toMatchObject({
+      type: 'entity-added',
+      entityKind: 'location',
+      name: 'R1',
+    })
+    expect((r1Emits[0] as Record<string, unknown>).data).toBeUndefined()
   })
 
-  it('publishes entity-updated when emitted entry grows', async () => {
-    const job = fakeJob()
-    const redis = fakeRedis()
-    await runStreamingStage(twoFactionStream(), {
+  it('skips emission for discoverable/secret-tier entries', async () => {
+    const redis = makeRedis()
+    const stream = partials([
+      {
+        regions: [
+          { name: 'R1', access_level: 'discoverable', prose: 'p', facts: [] },
+          { name: 'R2', access_level: 'known', prose: 'pp', facts: [] },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
       stage: 'world_and_factions',
-      campaignId: 'cmp-1',
-      job,
-      redisRealtime: redis,
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis as never,
       keyPrefix: 'test:',
-      arrays: [{ path: 'factions', kind: 'faction', role: 'entity' }],
+      arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+      bypassAccessFilter: false,
+      endpointTierMap: new Map(),
     })
-    const updated = redis.publishes.filter(
-      (p) => (p.payload as { type: string }).type === 'entity-updated',
-    )
-    expect(updated.length).toBeGreaterThanOrEqual(1)
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const names = events.filter((e) => e.type === 'entity-added').map((e) => e.name)
+    expect(names).toEqual(['R2'])
   })
 
-  it('publishes one progress update per partial-tree iteration', async () => {
-    const job = fakeJob()
-    const redis = fakeRedis()
-    await runStreamingStage(twoFactionStream(), {
+  it('emits all tiers when bypassAccessFilter is true', async () => {
+    const redis = makeRedis()
+    const stream = partials([
+      {
+        regions: [
+          { name: 'R1', access_level: 'secret', prose: 'p', facts: [] },
+          { name: 'R2', access_level: 'discoverable', prose: 'p', facts: [] },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
       stage: 'world_and_factions',
-      campaignId: 'cmp-1',
-      job,
-      redisRealtime: redis,
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis as never,
       keyPrefix: 'test:',
-      arrays: [{ path: 'factions', kind: 'faction', role: 'entity' }],
+      arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+      bypassAccessFilter: true,
+      endpointTierMap: new Map(),
     })
-    expect(job.progressCalls.length).toBe(3) // three partial trees
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const names = events.filter((e) => e.type === 'entity-added').map((e) => e.name).sort()
+    expect(names).toEqual(['R1', 'R2'])
   })
 
-  it('skips entries where name is empty', async () => {
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async function* stream(): AsyncGenerator<{
-      factions?: Partial<{ name: string; prose: string }>[]
-    }> {
-      yield { factions: [{ name: '' }] }
-      yield { factions: [{ name: '', prose: 'mystery' }] }
-    }
-    const job = fakeJob()
-    const redis = fakeRedis()
-    await runStreamingStage(stream(), {
-      stage: 'world_and_factions',
-      campaignId: 'cmp-1',
-      job,
-      redisRealtime: redis,
-      keyPrefix: 'test:',
-      arrays: [{ path: 'factions', kind: 'faction', role: 'entity' }],
-    })
-    expect(
-      redis.publishes.filter((p) => (p.payload as { type: string }).type === 'entity-added'),
-    ).toHaveLength(0)
-  })
-
-  it('publishes edge-added when role is edge', async () => {
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async function* stream(): AsyncGenerator<{
-      rels?: Partial<{ from: string; to: string; relationship: string }>[]
-    }> {
-      yield { rels: [{ from: 'A', to: 'B', relationship: 'rules' }] }
-    }
-    const job = fakeJob()
-    const redis = fakeRedis()
-    await runStreamingStage(stream(), {
+  it('emits edge only when both endpoints are known-tier (no bypass)', async () => {
+    const redis = makeRedis()
+    const e1 = 'aaaaaaaa-0000-7000-8000-000000000001'
+    const e2 = 'aaaaaaaa-0000-7000-8000-000000000002'
+    const e3 = 'aaaaaaaa-0000-7000-8000-000000000003'
+    const endpointTierMap = new Map<string, 'known' | 'discoverable' | 'secret'>([
+      [e1, 'known'],
+      [e2, 'known'],
+      [e3, 'secret'],
+    ])
+    const stream = partials([
+      {
+        relationships: [
+          { from: e1, to: e2, relationship: 'controls' },
+          { from: e1, to: e3, relationship: 'fears' },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
       stage: 'entity_relationships',
-      campaignId: 'cmp-1',
-      job,
-      redisRealtime: redis,
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis as never,
       keyPrefix: 'test:',
-      arrays: [{ path: 'rels', kind: 'edge', role: 'edge' }],
+      arrays: [{ path: 'relationships', kind: 'edge', role: 'edge' }],
+      bypassAccessFilter: false,
+      endpointTierMap,
     })
-    const edgeAdded = redis.publishes.filter(
-      (p) => (p.payload as { type: string }).type === 'edge-added',
-    )
-    expect(edgeAdded).toHaveLength(1)
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const edges = events.filter((e) => e.type === 'edge-added')
+    expect(edges).toHaveLength(1)
+    expect(edges[0]).toMatchObject({ from: e1, to: e2, relationship: 'controls' })
+    expect((edges[0] as Record<string, unknown>).description).toBeUndefined()
   })
 
-  it('publishes a follow-up edge-added with growth when an edge entry grows', async () => {
-    // Covers the role=edge branch of the entry-updated path (lines 142-153
-    // of streaming-extractor.ts). An edge entry that closes (emit) and then
-    // grows (description appears) emits a second edge-added with the
-    // updated fields.
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async function* stream(): AsyncGenerator<{
-      rels?: Partial<{ from: string; to: string; relationship: string; description: string }>[]
-    }> {
-      yield { rels: [{ from: 'A', to: 'B', relationship: 'rules' }] }
-      yield { rels: [{ from: 'A', to: 'B', relationship: 'rules', description: 'Rules with iron fist.' }] }
-    }
-    const job = fakeJob()
-    const redis = fakeRedis()
-    await runStreamingStage(stream(), {
-      stage: 'entity_relationships',
-      campaignId: 'cmp-1',
-      job,
-      redisRealtime: redis,
-      keyPrefix: 'test:',
-      arrays: [{ path: 'rels', kind: 'edge', role: 'edge' }],
-    })
-    const edgeEvents = redis.publishes.filter(
-      (p) => (p.payload as { type: string }).type === 'edge-added',
-    )
-    expect(edgeEvents).toHaveLength(2)
-    const second = edgeEvents[1]?.payload as { description?: string }
-    expect(second.description).toBe('Rules with iron fist.')
-  })
-
-  it('skips non-array path values + null entries + no-change diffs (defensive guards)', async () => {
-    // Covers three defensive branches in one stream:
-    //   - Line 107: an array path that yields a non-array value (e.g., the
-    //     LLM emitted `regions: "oops"` as a string). Extractor skips it.
-    //   - Line 111: an array entry that isn't a record (e.g., null).
-    //   - Line 81: diffPatch returns null when nothing changed between the
-    //     previous emitted snapshot and the current entry.
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async function* stream(): AsyncGenerator<{
-      regions?: unknown
-      factions?: unknown[]
-    }> {
-      // First chunk: regions is wrong-shape (number), factions has a null + a real entry
-      yield { regions: 42, factions: [null, { name: 'A', prose: 'p' }] }
-      // Second chunk: regions wrong-shape again; factions has the SAME real entry (no change)
-      yield { regions: 42, factions: [null, { name: 'A', prose: 'p' }] }
-    }
-    const job = fakeJob()
-    const redis = fakeRedis()
-    await runStreamingStage(stream(), {
+  it('skips emission and logs when closed entry lacks access_level', async () => {
+    const redis = makeRedis()
+    const warn = vi.fn()
+    const stream = partials([
+      { regions: [{ name: 'R1', prose: 'p', facts: [] }, { name: 'R2' }] },
+    ])
+    await runStreamingStage(stream, {
       stage: 'world_and_factions',
-      campaignId: 'cmp-1',
-      job,
-      redisRealtime: redis,
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis as never,
       keyPrefix: 'test:',
-      arrays: [
-        { path: 'regions', kind: 'location', role: 'entity' },
-        { path: 'factions', kind: 'faction', role: 'entity' },
-      ],
+      arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+      bypassAccessFilter: false,
+      endpointTierMap: new Map(),
+      logger: { warn },
     })
-    // Exactly one entity-added: factions[1] in the first chunk.
-    const added = redis.publishes.filter(
-      (p) => (p.payload as { type: string }).type === 'entity-added',
-    )
-    expect(added).toHaveLength(1)
-    // Zero entity-updated: the second chunk had no diff.
-    const updated = redis.publishes.filter(
-      (p) => (p.payload as { type: string }).type === 'entity-updated',
-    )
-    expect(updated).toHaveLength(0)
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    expect(events.filter((e) => e.type === 'entity-added')).toEqual([])
+    expect(warn).toHaveBeenCalled()
   })
 
-  it('throws when partialObjectStream yields zero values', async () => {
-    // Covers the defensive throw at end-of-loop when nothing was emitted.
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async function* emptyStream(): AsyncGenerator {
-      // No yields.
-    }
-    await expect(
-      runStreamingStage(emptyStream(), {
-        stage: 'world_and_factions',
-        campaignId: 'cmp-1',
-        job: fakeJob(),
-        redisRealtime: fakeRedis(),
-        keyPrefix: 'test:',
-        arrays: [{ path: 'factions', kind: 'faction', role: 'entity' }],
-      }),
-    ).rejects.toThrow(/yielded no values/)
+  it('repeated partials with no new closure do not re-emit', async () => {
+    const redis = makeRedis()
+    const stream = partials([
+      {
+        regions: [
+          { name: 'R1', access_level: 'known', prose: 'p', facts: [] },
+          { name: 'R2' },
+        ],
+      },
+      {
+        regions: [
+          { name: 'R1', access_level: 'known', prose: 'p', facts: [] },
+          { name: 'R2', access_level: 'known' },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
+      stage: 'world_and_factions',
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis as never,
+      keyPrefix: 'test:',
+      arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+      bypassAccessFilter: false,
+      endpointTierMap: new Map(),
+    })
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    expect(events.filter((e) => e.type === 'entity-added').map((e) => e.name)).toEqual(['R1'])
+  })
+
+  it('last entry of array emits via post-loop pass on stream-end', async () => {
+    const redis = makeRedis()
+    const stream = partials([
+      {
+        regions: [
+          { name: 'R1', access_level: 'known', prose: 'p', facts: [] },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
+      stage: 'world_and_factions',
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis as never,
+      keyPrefix: 'test:',
+      arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+      bypassAccessFilter: false,
+      endpointTierMap: new Map(),
+    })
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    expect(events.filter((e) => e.type === 'entity-added').map((e) => e.name)).toEqual(['R1'])
   })
 })
