@@ -6,6 +6,12 @@ import type { Pool } from 'pg'
 import { createPgPool } from '../postgres.js'
 import { runMigrations } from '../migrate.js'
 import { guardTestDatabase } from './guard-db.js'
+import { uuidv7 } from '../../repo/uuidv7.js'
+
+// myth-exac T01: demo-world UUID seeded by migration 008. Used by the
+// migration-014 describe block to insert a sample entity + fact under a
+// known-good world without needing additional fixture setup.
+const DEMO_WORLD_ID = '019700e0-0000-7000-8000-000000000002'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 
@@ -67,6 +73,7 @@ const EXPECTED_IDX_NAMES = [
   'idx_credit_ledger_source_purchase',
   'idx_credit_ledger_user_type',
   'idx_entities_world',
+  'idx_entities_world_access',
   'idx_entities_world_type',
   'idx_facts_entity',
   'idx_facts_entity_access_status',
@@ -141,11 +148,15 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'entities',
+    check_clause: `CHECK ((access_level = ANY (ARRAY['known'::text, 'discoverable'::text, 'secret'::text])))`,
+  },
+  {
+    table_name: 'entities',
     check_clause: `CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))`,
   },
   {
     table_name: 'facts',
-    check_clause: `CHECK ((access_level = ANY (ARRAY['public'::text, 'private'::text, 'secret'::text])))`,
+    check_clause: `CHECK ((access_level = ANY (ARRAY['known'::text, 'discoverable'::text, 'secret'::text])))`,
   },
   {
     table_name: 'facts',
@@ -569,6 +580,7 @@ describe('schema-parity (integration)', () => {
       '011_credit_ledger_cost_cap_refund.sql',
       '012_credit_ledger_admin_source.sql',
       '013_seed_dev_users.sql',
+      '014_access_tier_rework.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -659,5 +671,93 @@ describe('schema-parity (integration)', () => {
       logger: makeSilentLogger(),
     })
     expect(second).toEqual([])
+  })
+})
+
+// myth-exac T01: targeted assertions for migration 014's three schema
+// surfaces — the facts CHECK rewrite, the entities access_level column,
+// and the worlds.dev_bypass_access_filter flag — plus the supporting
+// idx_entities_world_access index. Lives in a fresh describe so the
+// schema-parity test above stays self-contained.
+describe('migration 014 — access tier rework', () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createPgPool(databaseUrl, { max: 1 })
+    await resetSchema(pool)
+    await runMigrations({
+      pool,
+      migrationsDir: REAL_MIGRATIONS_DIR,
+      logger: makeSilentLogger(),
+    })
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  it('rewrites facts.access_level CHECK to (known, discoverable, secret)', async () => {
+    const entityId = uuidv7()
+    await pool.query(
+      `INSERT INTO entities (id, world_id, entity_type, name, access_level)
+       VALUES ($1, $2, 'location', 'X', 'known')`,
+      [entityId, DEMO_WORLD_ID],
+    )
+    // New vocabulary — should succeed.
+    await expect(
+      pool.query(
+        `INSERT INTO facts (id, entity_id, topic, access_level, content, narrative_status)
+         VALUES ($1, $2, 't', 'discoverable', 'c', 'undelivered')`,
+        [uuidv7(), entityId],
+      ),
+    ).resolves.toBeDefined()
+    // Old vocabulary — should fail under the rewritten CHECK.
+    await expect(
+      pool.query(
+        `INSERT INTO facts (id, entity_id, topic, access_level, content, narrative_status)
+         VALUES ($1, $2, 't', 'public', 'c', 'undelivered')`,
+        [uuidv7(), entityId],
+      ),
+    ).rejects.toThrow(/facts_access_level_check/)
+  })
+
+  it('adds entities.access_level NOT NULL DEFAULT known with CHECK', async () => {
+    const { rows } = await pool.query(
+      `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+       WHERE table_name='entities' AND column_name='access_level'`,
+    )
+    expect(rows).toEqual([
+      {
+        column_name: 'access_level',
+        data_type: 'text',
+        is_nullable: 'NO',
+        column_default: "'known'::text",
+      },
+    ])
+  })
+
+  it('adds worlds.dev_bypass_access_filter NOT NULL DEFAULT false', async () => {
+    const { rows } = await pool.query(
+      `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+       WHERE table_name='worlds' AND column_name='dev_bypass_access_filter'`,
+    )
+    expect(rows).toEqual([
+      {
+        column_name: 'dev_bypass_access_filter',
+        data_type: 'boolean',
+        is_nullable: 'NO',
+        column_default: 'false',
+      },
+    ])
+  })
+
+  it('creates idx_entities_world_access index', async () => {
+    const { rows } = await pool.query(
+      `SELECT indexname FROM pg_indexes WHERE tablename='entities' AND indexname='idx_entities_world_access'`,
+    )
+    expect(rows).toHaveLength(1)
   })
 })
