@@ -43,3 +43,19 @@ Each rationale must be a single sentence (~20-400 characters) explaining the con
 ## Your task
 
 Respond with ONLY a JSON object of the shape `{ "patches": [...] }` containing at most 40 patches. If you cannot find any inconsistencies worth correcting, emit `{ "patches": [] }`. No markdown fences, no commentary.
+
+PROSE-TIER CONSISTENCY (CRITICAL):
+
+When patching entity prose or facts, do NOT cross tier boundaries. A
+`known`-tier entity's prose is the public-knowledge view — what
+anyone in the world casually knows. Do NOT merge `discoverable` or
+`secret`-tier detail from neighboring entities into a `known`
+entity's prose, even if doing so would "improve coherence" — the
+tier boundary is load-bearing, and a leak via prose is a leak.
+
+If a patch needs information that lives in another entity, only use
+information from entities whose access_level is at or below the
+patched entity's tier. (Patches to `known` entities can only draw
+on `known` content. Patches to `discoverable` entities can draw on
+`known` or `discoverable`. Patches to `secret` entities can draw on
+anything.)

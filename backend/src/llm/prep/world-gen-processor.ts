@@ -507,6 +507,11 @@ async function dispatchStage(
     logger: deps.logger,
     worldId: ctx.world.id,
     synthKeyByEntityId: {},
+    // myth-exac T16: production path runs with the tier filter on so the
+    // FT-bound snapshot never sees a coherence patch for a non-known
+    // entity. The dev tool's bypass mode propagates through deps in a
+    // separate task — see myth-exac T17.
+    bypassAccessFilter: false,
   })
 }
 /* c8 ignore stop */

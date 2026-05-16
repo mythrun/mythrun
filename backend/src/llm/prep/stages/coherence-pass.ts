@@ -51,6 +51,7 @@ import {
   type CoherencePatch,
 } from '../../schemas/coherence-output.js'
 import { entities } from '../../../repo/entities.js'
+import type { AccessLevel } from '../../../repo/facts.js'
 import { proseKernels } from '../../../repo/prose-kernels.js'
 import { facts } from '../../../repo/facts.js'
 import { relationships } from '../../../repo/relationships.js'
@@ -84,13 +85,25 @@ export interface CoherencePassArgs {
   // events reference synthKey on the wire (§3.6); the handler looks up
   // each patch's UUID against this map before publishing.
   readonly synthKeyByEntityId: Readonly<Record<string, string>>
+  // myth-exac T16: when false (production), stage 7 only emits SSE
+  // events for patches targeting known-tier entities (edges require BOTH
+  // endpoints known). The DB writes still happen for non-known entities
+  // — coherence repairs them — but the FT client wouldn't have those
+  // entities in its snapshot, so surfacing entity-updated for them
+  // would hit a missing-key in the inspector's apply-patch code. The
+  // dev tool sets bypass=true to observe everything.
+  readonly bypassAccessFilter: boolean
 }
 
 // Internal in-memory inventory of the world's UUIDs at stage-7 entry.
-// Used both for (a) the world dump rendered into the prompt, and (b) the
-// unknown-ID skip filter applied to LLM-emitted patches.
+// Used for (a) the world dump rendered into the prompt, (b) the
+// unknown-ID skip filter applied to LLM-emitted patches, and (c) the
+// access-level tier check that gates SSE emission per myth-exac T16.
 interface WorldInventory {
-  readonly entitiesById: Map<string, { id: string; name: string; entityType: string }>
+  readonly entitiesById: Map<
+    string,
+    { id: string; name: string; entityType: string; accessLevel: AccessLevel }
+  >
   readonly proseByEntityId: Map<string, string>
   readonly factsById: Map<string, { id: string; entityId: string; content: string; topic: string; accessLevel: string }>
   readonly relationshipsById: Map<
@@ -108,7 +121,10 @@ interface WorldInventory {
 async function loadWorldInventory(client: PoolClient, worldId: string): Promise<WorldInventory> {
   const entityRows = await entities.listByWorld(client, worldId)
   const entitiesById = new Map(
-    entityRows.map((e) => [e.id, { id: e.id, name: e.name, entityType: e.entityType }]),
+    entityRows.map((e) => [
+      e.id,
+      { id: e.id, name: e.name, entityType: e.entityType, accessLevel: e.accessLevel },
+    ]),
   )
 
   const proseResult = await client.query<{ entity_id: string; content: string }>(
@@ -164,7 +180,9 @@ async function loadWorldInventory(client: PoolClient, worldId: string): Promise<
 function renderWorldDump(inv: WorldInventory): string {
   const lines: string[] = []
   for (const entity of inv.entitiesById.values()) {
-    lines.push(`## Entity ${entity.id} (${entity.entityType}): ${entity.name}`)
+    lines.push(
+      `## Entity ${entity.id} (${entity.entityType}) [access_level: ${entity.accessLevel}]: ${entity.name}`,
+    )
     const prose = inv.proseByEntityId.get(entity.id)
     if (prose !== undefined) {
       lines.push(`### Prose kernel`)
@@ -199,6 +217,27 @@ interface ApplyContext {
   readonly inv: WorldInventory
   readonly logger: Pick<pino.Logger, 'warn' | 'info'>
   readonly stage: 'coherence_pass'
+  // myth-exac T16: when true, every patch's SSE event surfaces in
+  // finalizedEvents regardless of tier. When false (production), only
+  // patches targeting known-tier entities surface events; non-known
+  // patches still persist to the DB but do NOT emit (the FT snapshot
+  // wouldn't contain them).
+  readonly bypassAccessFilter: boolean
+}
+
+// myth-exac T16: emit gates for stage-7 SSE events. DB writes happen
+// unconditionally upstream of these — the gates only decide whether
+// the corresponding event surfaces to the outer scope for publish.
+function shouldEmitEntityEvent(ctx: ApplyContext, entityId: string): boolean {
+  if (ctx.bypassAccessFilter) return true
+  return ctx.inv.entitiesById.get(entityId)?.accessLevel === 'known'
+}
+
+function shouldEmitEdgeEvent(ctx: ApplyContext, fromId: string, toId: string): boolean {
+  if (ctx.bypassAccessFilter) return true
+  const fromTier = ctx.inv.entitiesById.get(fromId)?.accessLevel
+  const toTier = ctx.inv.entitiesById.get(toId)?.accessLevel
+  return fromTier === 'known' && toTier === 'known'
 }
 
 interface ApplyResult {
@@ -245,7 +284,12 @@ async function applyFixProse(
     warnUnknown(ctx, patch.kind, 'entityId', patch.entityId)
     return { events: [] }
   }
+  // DB write happens unconditionally — coherence repairs every tier.
   await proseKernels.updateByEntityId(client, patch.entityId, { content: patch.newProse })
+  // myth-exac T16: SSE event only when target is known-tier (or bypass).
+  if (!shouldEmitEntityEvent(ctx, patch.entityId)) {
+    return { events: [] }
+  }
   const synthKey = synthKeyByEntityId[patch.entityId]
   /* c8 ignore start — defense-in-depth: in T13's integration the synthKey
    * map is always populated for every UUID; tests exercise the populated
@@ -272,10 +316,15 @@ async function applyRenameEntity(
     warnUnknown(ctx, patch.kind, 'entityId', patch.entityId)
     return { events: [] }
   }
+  // DB write happens unconditionally — coherence repairs every tier.
   await client.query(`UPDATE entities SET name = $1 WHERE id = $2`, [
     patch.newName,
     patch.entityId,
   ])
+  // myth-exac T16: SSE event only when target is known-tier (or bypass).
+  if (!shouldEmitEntityEvent(ctx, patch.entityId)) {
+    return { events: [] }
+  }
   const synthKey = synthKeyByEntityId[patch.entityId]
   /* c8 ignore start — defense-in-depth: see applyFixProse comment. */
   if (synthKey === undefined) {
@@ -300,7 +349,8 @@ async function applyFixRelationship(
     return { events: [] }
   }
   // Per §3.6: fix_relationship emits edge-removed + edge-added on a NEW
-  // synthKey (the edge entity is logically replaced).
+  // synthKey (the edge entity is logically replaced). DB writes happen
+  // unconditionally — myth-exac T16 only gates the SSE emit.
   await relationships.deleteById(client, patch.relationshipId)
   const newRelationshipType = patch.newType ?? existing.relationshipType
   const newDescription = patch.newDescription ?? existing.description
@@ -311,6 +361,14 @@ async function applyFixRelationship(
      VALUES ($1, $2, $3, $4, $5)`,
     [newId, existing.sourceEntityId, existing.targetEntityId, newRelationshipType, newDescription],
   )
+  // myth-exac T16: SSE event only when BOTH endpoints are known-tier
+  // (or bypass on). When either side isn't known the FT client wouldn't
+  // have that endpoint in its snapshot, so dropping the edge there is
+  // intentional — the inspector reads the underlying DB if it needs to
+  // surface the repair to the slow thinker.
+  if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
+    return { events: [] }
+  }
   const oldSynthKey = synthKeyByEntityId[patch.relationshipId]
   const newSynthKey = `coherence_pass/edges/${newId}`
   const events: PipelineEvent[] = []
@@ -329,7 +387,6 @@ async function applyFixRelationship(
     from: existing.sourceEntityId,
     to: existing.targetEntityId,
     relationship: newRelationshipType,
-    description: newDescription,
   })
   return { events }
 }
@@ -340,11 +397,18 @@ async function applyDeleteRelationship(
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
-  if (!ctx.inv.relationshipsById.has(patch.relationshipId)) {
+  const existing = ctx.inv.relationshipsById.get(patch.relationshipId)
+  if (existing === undefined) {
     warnUnknown(ctx, patch.kind, 'relationshipId', patch.relationshipId)
     return { events: [] }
   }
+  // DB write happens unconditionally — coherence repairs every tier.
   await relationships.deleteById(client, patch.relationshipId)
+  // myth-exac T16: SSE event only when BOTH endpoints are known-tier
+  // (or bypass on).
+  if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
+    return { events: [] }
+  }
   const synthKey = synthKeyByEntityId[patch.relationshipId]
   /* c8 ignore start — defense-in-depth: see applyFixProse comment. */
   if (synthKey === undefined) {
@@ -454,7 +518,12 @@ export async function runCoherencePassStage(
     const { events } = await applyPatch(
       client,
       patch,
-      { inv: inventory, logger: args.logger, stage: 'coherence_pass' },
+      {
+        inv: inventory,
+        logger: args.logger,
+        stage: 'coherence_pass',
+        bypassAccessFilter: args.bypassAccessFilter,
+      },
       args.synthKeyByEntityId,
     )
     finalizedEvents.push(...events)

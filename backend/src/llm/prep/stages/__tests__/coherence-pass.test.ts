@@ -64,16 +64,43 @@ const asLogger = (s: LoggerSpy): pino.Logger => s as unknown as pino.Logger
 // used to go through `pool.query`) AND the inventory/apply queries —
 // reflects the unified contract where the outer scope passes one
 // already-BEGUN client.
+interface AccessLevelOverrides {
+  readonly [entityId: string]: 'known' | 'discoverable' | 'secret'
+}
+
 function makeClient(
-  opts: { capUsd?: number; completedCostUsd?: number } = {},
+  opts: {
+    capUsd?: number
+    completedCostUsd?: number
+    accessLevels?: AccessLevelOverrides
+  } = {},
 ): ClientSpy {
   const capUsd = opts.capUsd ?? 3
   const completedCostUsd = opts.completedCostUsd ?? 0.5
+  const accessLevels = opts.accessLevels ?? {}
 
   const entityRows = [
-    { id: ENTITY_A, world_id: WORLD_ID, entity_type: 'location', name: 'Old Eredil' },
-    { id: ENTITY_B, world_id: WORLD_ID, entity_type: 'npc', name: 'Mara' },
-    { id: ENTITY_C, world_id: WORLD_ID, entity_type: 'location', name: 'The Wharf' },
+    {
+      id: ENTITY_A,
+      world_id: WORLD_ID,
+      entity_type: 'location',
+      name: 'Old Eredil',
+      access_level: accessLevels[ENTITY_A] ?? 'known',
+    },
+    {
+      id: ENTITY_B,
+      world_id: WORLD_ID,
+      entity_type: 'npc',
+      name: 'Mara',
+      access_level: accessLevels[ENTITY_B] ?? 'known',
+    },
+    {
+      id: ENTITY_C,
+      world_id: WORLD_ID,
+      entity_type: 'location',
+      name: 'The Wharf',
+      access_level: accessLevels[ENTITY_C] ?? 'known',
+    },
   ]
   const proseRows = [
     { entity_id: ENTITY_A, content: 'A weathered fishing village.' },
@@ -85,7 +112,7 @@ function makeClient(
       id: FACT_X,
       entity_id: ENTITY_A,
       topic: 'history',
-      access_level: 'public',
+      access_level: 'known',
       content: 'The village burned down in the great fire.',
     },
   ]
@@ -134,7 +161,12 @@ interface TestRun {
 }
 
 async function runStage(
-  poolOpts: { capUsd?: number; completedCostUsd?: number } = {},
+  poolOpts: {
+    capUsd?: number
+    completedCostUsd?: number
+    accessLevels?: AccessLevelOverrides
+    bypassAccessFilter?: boolean
+  } = {},
 ): Promise<TestRun & { result: Awaited<ReturnType<typeof runCoherencePassStage>> }> {
   const client = makeClient(poolOpts)
   const logger = makeLogger()
@@ -142,6 +174,7 @@ async function runStage(
     logger: asLogger(logger),
     worldId: WORLD_ID,
     synthKeyByEntityId: SYNTH,
+    bypassAccessFilter: poolOpts.bypassAccessFilter ?? false,
   })
   return { client, logger, result }
 }
@@ -227,9 +260,9 @@ describe('runCoherencePassStage', () => {
 
     const added = eventsOfType(result.finalizedEvents, 'edge-added')
     const edgeAdded = added.find((p) => p.relationship === 'distrusts')
-    expect(edgeAdded?.description).toBe(
-      'Mara distrusts the village elders and avoids the upper square.',
-    )
+    expect(edgeAdded).toBeDefined()
+    expect(edgeAdded?.from).toBe(ENTITY_A)
+    expect(edgeAdded?.to).toBe(ENTITY_B)
   })
 
   it('skips patches that reference unknown UUIDs and logs WARN, but applies the rest', async () => {
@@ -365,15 +398,19 @@ describe('runCoherencePassStage', () => {
     const { result } = await runStage()
     const added = eventsOfType(result.finalizedEvents, 'edge-added')
 
-    // First fix: relationship REL_R — newType='allies_with', description
-    // falls back to existing 'Mara distrusts the village elders.'
+    // First fix: relationship REL_R — newType='allies_with'. Endpoint
+    // entities unchanged; assert the edge-added event surfaces the new
+    // type with the original endpoints.
     const addedR = added.find((p) => p.relationship === 'allies_with')
-    expect(addedR?.description).toBe('Mara distrusts the village elders.')
+    expect(addedR).toBeDefined()
+    expect(addedR?.from).toBe(ENTITY_A)
+    expect(addedR?.to).toBe(ENTITY_B)
 
-    // Second fix: relationship REL_S — type falls back to 'employed_by',
-    // description replaces.
+    // Second fix: relationship REL_S — type falls back to 'employed_by'.
     const addedS = added.find((p) => p.relationship === 'employed_by')
-    expect(addedS?.description).toBe('Mara now serves as the wharf master, hand-picked.')
+    expect(addedS).toBeDefined()
+    expect(addedS?.from).toBe(ENTITY_B)
+    expect(addedS?.to).toBe(ENTITY_C)
   })
 
   it('renders the world dump into the {{worldDump}} placeholder of the prompt', async () => {
@@ -395,5 +432,196 @@ describe('runCoherencePassStage', () => {
     expect(prompt).toContain(REL_R)
     expect(prompt).toContain('rivalry')
     expect(prompt).not.toContain('{{worldDump}}')
+  })
+
+  // myth-exac T16 — tier-aware SSE emission.
+  //
+  // The DB writes happen for every patch (so coherence still repairs
+  // discoverable/secret entities), but the SSE events that surface in
+  // finalizedEvents are gated to known-tier entities (or any tier when
+  // bypassAccessFilter is true). The dev tool sets bypass=true to
+  // observe everything; production runs leave it false so the FT
+  // snapshot never receives an entity-updated for an entity it doesn't
+  // know about.
+
+  it('entity-updated fires for a patch targeting a known-tier entity', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [
+          {
+            kind: 'fix_prose',
+            entityId: ENTITY_A,
+            newProse: 'A rebuilt fishing village.',
+            rationale: 'Sharpening prose to match world facts.',
+          },
+        ],
+      },
+      usage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { result } = await runStage({
+      accessLevels: { [ENTITY_A]: 'known' },
+    })
+
+    const updates = eventsOfType(result.finalizedEvents, 'entity-updated')
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.synthKey).toBe(SYNTH[ENTITY_A])
+  })
+
+  it('entity-updated does NOT fire for a patch targeting a non-known entity, but the DB write still happens', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [
+          {
+            kind: 'fix_prose',
+            entityId: ENTITY_B,
+            newProse: 'A guarded harbormaster who knows the tides.',
+            rationale: 'Sharpening prose.',
+          },
+          {
+            kind: 'rename_entity',
+            entityId: ENTITY_C,
+            newName: 'The Old Wharf',
+            rationale: 'Disambiguate from new wharf.',
+          },
+        ],
+      },
+      usage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({
+      accessLevels: { [ENTITY_B]: 'discoverable', [ENTITY_C]: 'secret' },
+    })
+
+    // No SSE events emitted (both targets are non-known).
+    const updates = eventsOfType(result.finalizedEvents, 'entity-updated')
+    expect(updates).toHaveLength(0)
+
+    // DB writes still happened. Verify by checking the queries the
+    // handler made for the prose update + rename.
+    const sqlCalls = client.query.mock.calls.map((c: unknown[]) => c[0] as string)
+    expect(sqlCalls.some((sql) => sql.includes('prose_kernels'))).toBe(true)
+    expect(sqlCalls.some((sql) => sql.includes('UPDATE entities SET name'))).toBe(true)
+  })
+
+  it('edge-added / edge-removed fire only when both endpoints are known-tier', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [
+          // REL_R links ENTITY_A (known) ↔ ENTITY_B (discoverable).
+          // SSE must NOT fire for either edge-removed or edge-added.
+          {
+            kind: 'fix_relationship',
+            relationshipId: REL_R,
+            newType: 'distrusts',
+            newDescription: 'Mara distrusts the elders.',
+            rationale: 'Tone the rivalry down to distrust.',
+          },
+          // REL_S links ENTITY_B (discoverable) ↔ ENTITY_C (known).
+          // SSE must NOT fire here either.
+          {
+            kind: 'delete_relationship',
+            relationshipId: REL_S,
+            rationale: 'Redundant edge.',
+          },
+        ],
+      },
+      usage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { result } = await runStage({
+      accessLevels: { [ENTITY_B]: 'discoverable' },
+    })
+
+    expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(0)
+    expect(eventsOfType(result.finalizedEvents, 'edge-removed')).toHaveLength(0)
+  })
+
+  it('edge events fire when BOTH endpoints are known-tier', async () => {
+    // REL_R sources from ENTITY_A and targets ENTITY_B; with both known
+    // (the default in makeClient), the edge events must surface.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [
+          {
+            kind: 'fix_relationship',
+            relationshipId: REL_R,
+            newType: 'distrusts',
+            newDescription: 'Mara distrusts the elders.',
+            rationale: 'Tone down rivalry.',
+          },
+        ],
+      },
+      usage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { result } = await runStage()
+    expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(1)
+    expect(eventsOfType(result.finalizedEvents, 'edge-removed')).toHaveLength(1)
+  })
+
+  it('with bypassAccessFilter=true, ALL coherence patches fire SSE deltas regardless of tier', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [
+          {
+            kind: 'fix_prose',
+            entityId: ENTITY_B,
+            newProse: 'A guarded harbormaster.',
+            rationale: 'Sharpen.',
+          },
+          {
+            kind: 'rename_entity',
+            entityId: ENTITY_C,
+            newName: 'The Old Wharf',
+            rationale: 'Disambiguate.',
+          },
+          {
+            kind: 'fix_relationship',
+            relationshipId: REL_R,
+            newType: 'distrusts',
+            newDescription: 'Mara distrusts the elders.',
+            rationale: 'Tone down.',
+          },
+          {
+            kind: 'delete_relationship',
+            relationshipId: REL_S,
+            rationale: 'Redundant.',
+          },
+        ],
+      },
+      usage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { result } = await runStage({
+      accessLevels: { [ENTITY_B]: 'discoverable', [ENTITY_C]: 'secret' },
+      bypassAccessFilter: true,
+    })
+
+    // 5 events: 1 fix_prose + 1 rename + 1 fix_relationship (edge-removed
+    // + edge-added) + 1 delete_relationship → 5 total.
+    expect(result.finalizedEvents).toHaveLength(5)
+    expect(eventsOfType(result.finalizedEvents, 'entity-updated')).toHaveLength(2)
+    expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(1)
+    expect(eventsOfType(result.finalizedEvents, 'edge-removed')).toHaveLength(2)
+  })
+
+  it('world dump includes [access_level: …] per entity', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: { patches: [] },
+      usage: { inputTokens: 14000, outputTokens: 50, totalTokens: 14050 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    await runStage({
+      accessLevels: { [ENTITY_B]: 'discoverable', [ENTITY_C]: 'secret' },
+    })
+    const firstArg = mockGenerateText.mock.calls[0]?.[0] as
+      | { prompt: string }
+      | undefined
+    const prompt = firstArg?.prompt ?? ''
+    // Per-entity access-level annotation must be present in the dump.
+    expect(prompt).toContain('[access_level: known]')
+    expect(prompt).toContain('[access_level: discoverable]')
+    expect(prompt).toContain('[access_level: secret]')
   })
 })
