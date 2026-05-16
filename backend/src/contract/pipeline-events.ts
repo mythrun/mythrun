@@ -37,6 +37,7 @@ export type PipelinePhase =
   | 'not_started'
   | 'world_gen'
   | 'world_gen_failed'
+  | 'world_snapshot_ready' // myth-exac: stages 1-4 complete; stages 5-7 may still be running
   | 'world_ready'
   | 'character_creation'
   | 'post_creation'
@@ -87,7 +88,7 @@ export type PipelineEvent =
   // entities disappear silently" invariant by making the disappearance
   // explicit.
   | { type: 'stage-reset'; stage: string }
-  | { type: 'entity-added'; synthKey: string; entityKind: string; data: Record<string, unknown> }
+  | { type: 'entity-added'; synthKey: string; entityKind: string; name: string }
   | { type: 'entity-updated'; synthKey: string; patch: Record<string, unknown> }
   | { type: 'entity-removed'; synthKey: string; reason: 'repair_dropped' | 'coherence_removed' }
   | {
@@ -96,7 +97,6 @@ export type PipelineEvent =
       from: string
       to: string
       relationship: string
-      description?: string
     }
   | { type: 'edge-removed'; synthKey: string; reason: 'repair_dropped' | 'coherence_deleted' }
   | { type: 'finalized'; synthKey: string; entityId: string }
