@@ -14,7 +14,7 @@
 <!-- source: docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:e89ccc79dbb227bd7f1a92aa76c4984962243462feb7b875ad7c93d596bea0de -->
+<!-- source-hash: sha256:7b8f19d229f7608b4617d11f8ebd91c95e37fd74e7c981443e2106869c2fa740 -->
 <!-- last-ticket: MYT-52 -->
 
 <h1>Dev tool</h1>
@@ -277,12 +277,15 @@
 </aside>
 
 <p>
-  The Phase 0 contracts are empty, so today the gate is a no-op that proves the wiring works. The
-  shape locks in now:
-  <strong>adding a pipeline route is a three-file change in a single PR</strong> — append to
-  <code>pipeline-routes.ts</code>, add the UI in <code>backend/dev-tool/src/</code>, extend
-  <code>coverage.json</code>'s <code>routes</code> array. Forgetting any one of them red-CI's the
-  gate. Events and jobs follow the same pattern with their own contract files and arrays.
+  The contracts are populated and the gate is load-bearing: eight routes, thirteen events, and one
+  BullMQ job ride the registry today, and every entry is driven by a panel in the dev tool with
+  zero exempt entries. <strong>Adding a pipeline route is a three-file change in a single PR</strong>
+  — append to <code>pipeline-routes.ts</code>, add the UI in <code>backend/dev-tool/src/</code>,
+  extend <code>coverage.json</code>'s <code>routes</code> array. Forgetting any one of them red-CI's
+  the gate. Events and jobs follow the same pattern with their own contract files and arrays. The
+  <code>myth-e5mn</code> retrofit also added a Fastify <code>printRoutes</code> drift test against a
+  separate <code>backend-routes.ts</code> contract for the non-pipeline surface, so even routes that
+  don't belong to world-gen can't sneak past review without being declared.
 </p>
 
 <h2>The exempt list</h2>

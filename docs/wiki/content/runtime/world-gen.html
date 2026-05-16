@@ -32,7 +32,7 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:fca621baa3c47a55593872c55450cc29c592fbeac74607d80487af392b9365ac -->
+<!-- source-hash: sha256:59fb8114710d4713e906c5944e9f1c9827dc3b836e7b6108a0fb78d9838a8620 -->
 <!-- last-ticket: MYT-52 -->
 
 <h1>World gen</h1>
@@ -58,7 +58,7 @@
 <h2>How it fits together</h2>
 
 <p>
-  Five routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
+  Six routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
   the <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
   registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
   flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
@@ -69,7 +69,9 @@
   <a href="./pipeline-status.html">pipeline status</a>) that re-enqueues, 409s, or 422s depending on
   where the pipeline got stuck. <code>DELETE /api/campaigns/:campaignId</code> is the hard-delete
   cleanup path — owner-only, refuses while generating, cascades through the FK chain to remove the
-  world + every dependent row.
+  world + every dependent row. <code>PATCH /api/campaigns/:campaignId/name</code> is the rename path
+  for owners: <code>concept_intake</code> auto-names the campaign from the LLM-synthesized world
+  name, and this is how the owner overrides that default.
 </p>
 
 <aside class="wiki-rationale">
@@ -93,10 +95,13 @@
   Inside <code>kind: 'new'</code>, an inner discriminator on <code>source.mode</code> selects either
   <code>'freeform'</code> (a 20–4000-character free-text concept) or <code>'guided'</code> (exactly
   three <code>{ title, whyILikeIt }</code> picks the user assembled in a chooser UI). The
-  synthesizer fires only in the guided arm; both arms then converge on the input gate.
+  synthesizer fires only in the guided arm; both arms then converge on the input gate. The body
+  carries no campaign name — <code>concept_intake</code> auto-names the world (and propagates that
+  name to the campaign), and the owner overrides later via
+  <code>PATCH /api/campaigns/:campaignId/name</code>.
 </p>
 
-<h2>The five routes</h2>
+<h2>The six routes</h2>
 
 <table>
   <thead>
@@ -179,6 +184,17 @@
         deleting mid-generation would orphan the worker's in-flight LLM cost and produce noisy
         BullMQ retry failures. Resume the campaign to terminal failure (or wait for it to complete)
         before deleting.
+      </td>
+    </tr>
+    <tr>
+      <td><code>PATCH /api/campaigns/:campaignId/name</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>10 / min per USER</strong></td>
+      <td>
+        <code>200 { campaignId, name }</code> on success. Body is
+        <code>{ name: string }</code> trimmed, 1–200 chars. Affects <code>campaigns.name</code>
+        only — <code>worlds.name</code> stays as the synthesized identity. <code>400</code> on Zod
+        failure; <code>404</code> if the campaign isn't owned by the caller.
       </td>
     </tr>
   </tbody>
@@ -309,9 +325,14 @@
     step 2d above was an optimization, not a guarantee.
   </li>
   <li>
-    <code>INSERT worlds</code> (<code>status = 'generating'</code>),
-    <code>INSERT campaigns</code> (<code>status = 'setup'</code>),
-    <code>INSERT campaign_members</code> (<code>role = 'owner', invite_accepted = true</code>).
+    <code>INSERT worlds</code> (<code>status = 'generating'</code>, <code>name = 'Untitled'</code>),
+    <code>INSERT campaigns</code> (<code>status = 'setup'</code>, <code>name = 'Untitled'</code>),
+    <code>INSERT campaign_members</code> (<code>role = 'owner', invite_accepted = true</code>). The
+    create body never carries a name; stage 1 (<code>concept_intake</code>) backfills both
+    <code>worlds.name</code> and <code>campaigns.name</code> from the LLM-synthesized world name
+    once it lands (<code>UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'</code>,
+    which keeps an in-flight user rename from being clobbered). Users override later via
+    <code>PATCH /api/campaigns/:campaignId/name</code>.
   </li>
   <li>
     <code>INSERT credit_ledger</code> — a -1 debit. <code>source_type = 'debit'</code>,
@@ -470,8 +491,10 @@
       <td>non-streaming</td>
       <td>
         <code
-          >worlds.tone / themes / era / key_tensions / geography_summary / political_summary</code
-        >
+          >worlds.name / tone / themes / era / key_tensions / geography_summary /
+          political_summary</code
+        >; also propagates <code>worlds.name</code> to <code>campaigns.name</code> for rows still
+        holding the create-time <code>'Untitled'</code> placeholder (myth-4lhr)
       </td>
       <td>none</td>
     </tr>

@@ -7,7 +7,8 @@
     "GET /api/campaigns/:campaignId",
     "GET /api/campaigns/mine",
     "POST /api/campaigns/:campaignId/resume",
-    "DELETE /api/campaigns/:campaignId"
+    "DELETE /api/campaigns/:campaignId",
+    "PATCH /api/campaigns/:campaignId/name"
   ],
   "events": [
     "phase",
