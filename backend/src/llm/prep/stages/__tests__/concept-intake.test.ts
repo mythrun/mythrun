@@ -65,13 +65,20 @@ describe('runConceptIntakeStage', () => {
       intentSummary: null,
     })
 
-    expect(client.query).toHaveBeenCalledTimes(1)
-    const [sql, params] = client.query.mock.calls[0] as [string, unknown[]]
-    expect(sql).toContain('UPDATE worlds SET')
-    expect(sql).toContain('name = $2')
-    expect(params[0]).toBe('wld-1')
-    expect(params[1]).toBe('Aelmoor')
-    expect(params[2]).toBe(DRAFT.tone)
+    // myth-4lhr: concept_intake now issues TWO updates — worlds first
+    // (the existing path), then campaigns (the new name propagation so
+    // campaigns.name stops being 'Untitled').
+    expect(client.query).toHaveBeenCalledTimes(2)
+    const [worldsSql, worldsParams] = client.query.mock.calls[0] as [string, unknown[]]
+    expect(worldsSql).toContain('UPDATE worlds SET')
+    expect(worldsSql).toContain('name = $2')
+    expect(worldsParams[0]).toBe('wld-1')
+    expect(worldsParams[1]).toBe('Aelmoor')
+    expect(worldsParams[2]).toBe(DRAFT.tone)
+    const [campSql, campParams] = client.query.mock.calls[1] as [string, unknown[]]
+    expect(campSql).toContain('UPDATE campaigns SET name')
+    expect(campSql).toContain("name = 'Untitled'")
+    expect(campParams).toEqual(['wld-1', 'Aelmoor'])
 
     // (800+200)/1M * 3 + (600+100)/1M * 15 = 0.003 + 0.0105 = 0.0135
     expect(result.costUsd).toBeCloseTo(0.0135, 4)

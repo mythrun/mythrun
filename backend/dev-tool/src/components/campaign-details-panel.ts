@@ -136,6 +136,10 @@ interface DomRefs {
   readonly status: HTMLElement
   readonly body: HTMLElement
   readonly resumeStatus: HTMLElement
+  readonly renameInput: HTMLInputElement
+  readonly renameBtn: HTMLButtonElement
+  readonly renameRow: HTMLElement
+  readonly renameStatus: HTMLElement
 }
 
 function buildDom(): DomRefs {
@@ -179,12 +183,35 @@ function buildDom(): DomRefs {
   const resumeStatus = document.createElement('div')
   resumeStatus.className = 'result'
 
-  return { card, title, input, fetchBtn, resumeBtn, inputRow, status, body, resumeStatus }
+  // myth-4lhr: rename row. Hidden until a campaign is loaded; PATCHes
+  // /api/campaigns/:id/name on submit.
+  const renameInput = document.createElement('input')
+  renameInput.type = 'text'
+  renameInput.placeholder = 'new campaign name'
+  renameInput.style.width = '320px'
+  const renameBtn = document.createElement('button')
+  renameBtn.textContent = 'Rename'
+  renameBtn.style.marginLeft = '8px'
+  const renameRow = document.createElement('div')
+  renameRow.style.display = 'none'
+  renameRow.style.marginTop = '12px'
+  renameRow.appendChild(renameInput)
+  renameRow.appendChild(renameBtn)
+  const renameStatus = document.createElement('div')
+  renameStatus.className = 'result'
+
+  return {
+    card, title, input, fetchBtn, resumeBtn, inputRow, status, body, resumeStatus,
+    renameInput, renameBtn, renameRow, renameStatus,
+  }
 }
 
 export function mountCampaignDetailsPanel(parent: HTMLElement): void {
   const dom = buildDom()
-  const { card, title, input, fetchBtn, resumeBtn, inputRow, status, body, resumeStatus } = dom
+  const {
+    card, title, input, fetchBtn, resumeBtn, inputRow, status, body, resumeStatus,
+    renameInput, renameBtn, renameRow, renameStatus,
+  } = dom
 
   // Resume visibility depends on the current campaign's phase. We hit
   // /status to derive it (a single SSE-less read) right after /details,
@@ -211,6 +238,11 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
     status.textContent = `campaign: ${data.campaign.name} (status=${data.campaign.status})`
     renderWorld(body, data.world)
     renderMembers(body, data.members)
+    // myth-4lhr: show the rename row once a campaign is loaded; preload
+    // the current name so the user can edit-in-place.
+    renameInput.value = data.campaign.name
+    renameRow.style.display = 'block'
+    renameStatus.textContent = ''
 
     // Resume gating — surface the button only when phase reads
     // world_gen_failed. Other terminal phases (failed, complete) the
@@ -248,11 +280,41 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
     resumeBtn.disabled = false
   }
 
+  async function rename(): Promise<void> {
+    if (currentCampaignId === null) return
+    const newName = renameInput.value.trim()
+    if (newName.length === 0) {
+      renameStatus.textContent = 'name is required'
+      return
+    }
+    renameBtn.disabled = true
+    renameStatus.textContent = 'renaming...'
+    const res = await apiCall<{ campaignId: string; name: string }>(
+      `/api/campaigns/${currentCampaignId}/name`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      },
+    )
+    if (res.status === 200 && res.body !== null) {
+      renameStatus.textContent = `renamed to: ${res.body.name}`
+      // Reflect the new name in the status line.
+      status.textContent = status.textContent.replace(/^campaign: [^(]+/, `campaign: ${res.body.name} `)
+    } else {
+      renameStatus.textContent = `${String(res.status)} ${res.error ?? JSON.stringify(res.body)}`
+    }
+    renameBtn.disabled = false
+  }
+
   fetchBtn.addEventListener('click', () => {
     void fetchDetails()
   })
   resumeBtn.addEventListener('click', () => {
     void resume()
+  })
+  renameBtn.addEventListener('click', () => {
+    void rename()
   })
 
   // External clear hook (identity switch).
@@ -263,6 +325,9 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
     body.replaceChildren()
     resumeStatus.textContent = ''
     resumeBtn.style.display = 'none'
+    renameInput.value = ''
+    renameRow.style.display = 'none'
+    renameStatus.textContent = ''
   })
 
   // External open hook (dispatched by my-campaigns-panel's Details button).
@@ -279,5 +344,7 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
   card.appendChild(status)
   card.appendChild(body)
   card.appendChild(resumeStatus)
+  card.appendChild(renameRow)
+  card.appendChild(renameStatus)
   parent.appendChild(card)
 }

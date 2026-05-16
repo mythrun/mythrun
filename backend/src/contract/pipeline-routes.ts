@@ -17,6 +17,8 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'GET /api/campaigns/mine',
   'POST /api/campaigns/:campaignId/resume',
   'DELETE /api/campaigns/:campaignId',
+  // myth-4lhr — rename a campaign (auto-generated name → user override):
+  'PATCH /api/campaigns/:campaignId/name',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

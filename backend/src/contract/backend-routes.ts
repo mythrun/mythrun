@@ -30,6 +30,7 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/mine' },
   { method: 'GET', path: '/api/campaigns/:campaignId' },
   { method: 'DELETE', path: '/api/campaigns/:campaignId' },
+  { method: 'PATCH', path: '/api/campaigns/:campaignId/name' },
   { method: 'POST', path: '/api/campaigns/:campaignId/resume' },
   { method: 'GET', path: '/api/campaigns/:campaignId/status' },
   { method: 'GET', path: '/api/campaigns/:campaignId/status/stream' },

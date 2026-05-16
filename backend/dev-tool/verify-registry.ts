@@ -138,6 +138,7 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     exercises: [
       route('GET', '/api/campaigns/:campaignId'),
       route('DELETE', '/api/campaigns/:campaignId'),
+      route('PATCH', '/api/campaigns/:campaignId/name'),
       route('POST', '/api/campaigns/:campaignId/resume'),
     ],
   },

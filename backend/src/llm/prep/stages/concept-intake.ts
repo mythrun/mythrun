@@ -99,6 +99,14 @@ export async function runConceptIntakeStage(
       result.draft.follow_up_questions,
     ],
   )
+  // myth-4lhr: also propagate the LLM-synthesized name to the campaign
+  // that owns this world. The campaigns.name was inserted as 'Untitled'
+  // at create-time; this is where it gets its real name. Users can
+  // subsequently rename via PATCH /api/campaigns/:campaignId/name.
+  await client.query(
+    `UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'`,
+    [args.worldId, result.draft.name],
+  )
 
   return {
     costUsd: computeCostUsd({

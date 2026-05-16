@@ -34,6 +34,7 @@ vi.mock('../contract/pipeline-routes.js', () => ({
     'GET /api/campaigns/mine',
     'POST /api/campaigns/:campaignId/resume',
     'DELETE /api/campaigns/:campaignId',
+    'PATCH /api/campaigns/:campaignId/name',
     // Phantom entry — no plugin registers this route. The onReady hook
     // sees it in PIPELINE_ROUTES, can't find it in registeredPipelineRoutes,
     // and throws.

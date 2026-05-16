@@ -259,4 +259,94 @@ describe('GET /api/campaigns/:campaignId (MYT-51 T10)', () => {
     expect(res.statusCode).toBe(403)
     expect(res.json()).toEqual({ code: 'not_campaign_member' })
   })
+
+  // ------------------------------------------------------------------
+  // myth-4lhr: PATCH /api/campaigns/:campaignId/name
+  // ------------------------------------------------------------------
+
+  it('PATCH /name — 200 owner can rename their campaign', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const newName = `${scope.id}-renamed`
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/campaigns/${seed.campaignId}/name`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub, 'content-type': 'application/json' },
+      payload: { name: newName },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ campaignId: seed.campaignId, name: newName })
+
+    // DB row reflects the rename.
+    const row = await pool.query<{ name: string }>(
+      `SELECT name FROM campaigns WHERE id = $1`,
+      [seed.campaignId],
+    )
+    expect(row.rows[0]?.name).toBe(newName)
+  })
+
+  it('PATCH /name — 400 invalid_body on missing name', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/campaigns/${seed.campaignId}/name`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub, 'content-type': 'application/json' },
+      payload: {},
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json<{ code: string }>().code).toBe('invalid_body')
+  })
+
+  it('PATCH /name — 400 invalid_body on empty name (min(1) violation)', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/campaigns/${seed.campaignId}/name`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub, 'content-type': 'application/json' },
+      payload: { name: '' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('PATCH /name — 403 not_campaign_owner when a player attempts the rename', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const player = await seedUser(pool, scope, 1)
+    await pool.query(
+      `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+       VALUES ($1, $2, $3, 'player', true)`,
+      [uuidv7(), seed.campaignId, player.userId],
+    )
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/campaigns/${seed.campaignId}/name`,
+      headers: { 'x-mythrun-dev-sub': player.devSub, 'content-type': 'application/json' },
+      payload: { name: `${scope.id}-attempted-rename` },
+    })
+    expect(res.statusCode).toBe(403)
+    expect(res.json<{ code: string }>().code).toBe('not_campaign_owner')
+
+    // DB row is unchanged.
+    const row = await pool.query<{ name: string }>(
+      `SELECT name FROM campaigns WHERE id = $1`,
+      [seed.campaignId],
+    )
+    expect(row.rows[0]?.name).toBe(seed.campaignName)
+  })
+
+  it('PATCH /name — 403 not_campaign_member for a stranger', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const stranger = await seedUser(pool, scope, 2)
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/campaigns/${seed.campaignId}/name`,
+      headers: { 'x-mythrun-dev-sub': stranger.devSub, 'content-type': 'application/json' },
+      payload: { name: `${scope.id}-stranger-rename` },
+    })
+    expect(res.statusCode).toBe(403)
+    expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+  })
 })
