@@ -71,19 +71,23 @@ function fakeJob(): Job {
   return { updateProgress: vi.fn().mockResolvedValue(undefined) } as unknown as Job
 }
 
+type Tier = 'known' | 'discoverable' | 'secret'
+
 interface Fact {
   topic: string
   content: string
-  access_level: 'public' | 'private' | 'secret'
+  access_level: Tier
 }
 interface LocationBlock {
   name: string
+  access_level: Tier
   prose: string
   facts: Fact[]
   parent_location: string | null
 }
 interface NpcBlock {
   name: string
+  access_level: Tier
   prose: string
   facts: Fact[]
   home_location: string | null
@@ -93,18 +97,19 @@ interface Tree {
   npcs: NpcBlock[]
 }
 
-// Helper: fact array meeting the schema's min(2) floor.
+// Helper: fact array meeting the schema's min(2) floor. Tier values
+// reflect the T04 enum rename (known/discoverable/secret).
 function pubFacts(seed: string): Fact[] {
   return [
     {
       topic: 'history',
       content: `History of ${seed} stretches back generations beyond memory.`,
-      access_level: 'public',
+      access_level: 'known',
     },
     {
       topic: 'rumor',
       content: `A persistent rumor in ${seed} hints at hidden tunnels below.`,
-      access_level: 'private',
+      access_level: 'discoverable',
     },
   ]
 }
@@ -131,12 +136,14 @@ function nestedFixture(regionName: string): Tree {
   return {
     locations: locSeed.map(([name, prose, parent]) => ({
       name,
+      access_level: 'known' as const,
       prose,
       facts: pubFacts(name),
       parent_location: parent,
     })),
     npcs: npcSeed.map(([name, prose, home]) => ({
       name,
+      access_level: 'known' as const,
       prose,
       facts: pubFacts(name),
       home_location: home,
@@ -166,6 +173,46 @@ function emptyTree(): Tree {
   return { locations: [], npcs: [] }
 }
 
+// Mixed-tier fixture for the wire-filter tests. 5 locations covering
+// every tier (3 known, 1 discoverable, 1 secret), 5 NPCs all `known`
+// (we only need the locations to exercise the location-side filter;
+// NPCs hit the same code path through `persistNpcs`). All
+// parent_location are null to keep the resolver out of the assertion
+// surface — this test is about the wire filter, not the hierarchy
+// resolver.
+function mixedTierTree(): Tree {
+  const locSpec: readonly (readonly [string, Tier])[] = [
+    ['Anul-dan', 'known'],
+    ['Old Causeway', 'known'],
+    ['Broken Shrine', 'known'],
+    ['Hidden Vault', 'discoverable'],
+    ['Whisper Crypt', 'secret'],
+  ]
+  const npcSpec: readonly string[] = [
+    'Eilra of the Wharf',
+    'Master Vorin',
+    'Sister Anwe',
+    'Korr the Quiet',
+    'The Wandering Tinker',
+  ]
+  return {
+    locations: locSpec.map(([name, tier]) => ({
+      name,
+      access_level: tier,
+      prose: `A place known as ${name}. The light here changes slowly through the day.`,
+      facts: pubFacts(name),
+      parent_location: null,
+    })),
+    npcs: npcSpec.map((name) => ({
+      name,
+      access_level: 'known' as const,
+      prose: `A person known as ${name}. They keep to themselves and their work mostly.`,
+      facts: pubFacts(name),
+      home_location: null,
+    })),
+  }
+}
+
 function makeStream(tree: Tree): ReturnType<typeof streamObject> {
   function* gen(): Generator<Tree> {
     yield tree
@@ -185,6 +232,7 @@ function makeArgs(opts: {
   campaignId: string
   worldName: string
   redisRealtime?: InstanceType<typeof IoredisMock>
+  bypassAccessFilter?: boolean
 }): StageArgs {
   return {
     world: {
@@ -203,6 +251,7 @@ function makeArgs(opts: {
     job: fakeJob(),
     redisRealtime: opts.redisRealtime ?? new IoredisMock(),
     keyPrefix: 'test:',
+    bypassAccessFilter: opts.bypassAccessFilter ?? false,
   }
 }
 
@@ -583,5 +632,86 @@ describe('runLocationsAndNpcsStage', () => {
       [worldId],
     )
     expect(Number(counts.rows[0]?.ent)).toBe(2)
+  })
+
+  it('tier filter (bypassAccessFilter=false): persists all rows; finalizedEvents contains only `known` rows', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(mixedTierTree()))
+
+    const client = await beginTxn(pool)
+    const result = await runLocationsAndNpcsStage(
+      client,
+      makeArgs({
+        worldId,
+        userId,
+        campaignId,
+        worldName: scope.worldName(0),
+        bypassAccessFilter: false,
+      }),
+    )
+    await commit(client)
+
+    // DB insert always happens — 5 locations + 5 NPCs land regardless
+    // of tier. Plus the 2 stage-2 seeds = 12.
+    const ent = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM entities WHERE world_id = $1`,
+      [worldId],
+    )
+    expect(ent.rows[0]?.count).toBe('12')
+
+    // The fixture has 3 known + 1 discoverable + 1 secret locations
+    // plus 5 known NPCs. The wire filter keeps known-only:
+    // 3 location + 5 NPC = 8 `finalized` events. (parent_location is
+    // null for every entry → 0 entity-updated.)
+    const finalizedCount = result.finalizedEvents.filter((e) => e.type === 'finalized').length
+    expect(finalizedCount).toBe(8)
+    const parentClearedCount = result.finalizedEvents.filter(
+      (e) => e.type === 'entity-updated',
+    ).length
+    expect(parentClearedCount).toBe(0)
+
+    // Confirm the discoverable/secret synthKeys are NOT in the wire
+    // batch — only the three known locations (indices 0, 1, 2) are.
+    const finalizedSynthKeys = result.finalizedEvents
+      .filter((e) => e.type === 'finalized')
+      .map((e) => (e as { synthKey: string }).synthKey)
+    expect(finalizedSynthKeys).toContain('locations_and_npcs/locations/0')
+    expect(finalizedSynthKeys).toContain('locations_and_npcs/locations/1')
+    expect(finalizedSynthKeys).toContain('locations_and_npcs/locations/2')
+    expect(finalizedSynthKeys).not.toContain('locations_and_npcs/locations/3') // discoverable
+    expect(finalizedSynthKeys).not.toContain('locations_and_npcs/locations/4') // secret
+  })
+
+  it('tier filter (bypassAccessFilter=true): persists all rows; finalizedEvents contains every row regardless of tier', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(mixedTierTree()))
+
+    const client = await beginTxn(pool)
+    const result = await runLocationsAndNpcsStage(
+      client,
+      makeArgs({
+        worldId,
+        userId,
+        campaignId,
+        worldName: scope.worldName(0),
+        bypassAccessFilter: true,
+      }),
+    )
+    await commit(client)
+
+    const ent = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM entities WHERE world_id = $1`,
+      [worldId],
+    )
+    expect(ent.rows[0]?.count).toBe('12')
+
+    // Bypass on → every persisted row surfaces: 5 locations + 5 NPCs = 10.
+    const finalizedCount = result.finalizedEvents.filter((e) => e.type === 'finalized').length
+    expect(finalizedCount).toBe(10)
+
+    const finalizedSynthKeys = result.finalizedEvents
+      .filter((e) => e.type === 'finalized')
+      .map((e) => (e as { synthKey: string }).synthKey)
+    // Including the discoverable + secret rows that the filter dropped above.
+    expect(finalizedSynthKeys).toContain('locations_and_npcs/locations/3')
+    expect(finalizedSynthKeys).toContain('locations_and_npcs/locations/4')
   })
 })

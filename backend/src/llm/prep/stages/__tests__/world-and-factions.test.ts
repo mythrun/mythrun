@@ -68,13 +68,16 @@ function fakeJob(): Job {
   return { updateProgress: vi.fn().mockResolvedValue(undefined) } as unknown as Job
 }
 
+type AccessLevel = 'known' | 'discoverable' | 'secret'
+
 interface Fact {
   topic: string
   content: string
-  access_level: 'public' | 'private' | 'secret'
+  access_level: AccessLevel
 }
 interface NamedBlock {
   name: string
+  access_level: AccessLevel
   prose: string
   facts: Fact[]
 }
@@ -90,12 +93,13 @@ function fixtureTree(): Tree {
       'A forested kingdom on the edge of an ancient elven wood. '.repeat(2),
     regions: Array.from({ length: 3 }, (_, i) => ({
       name: `Region ${String(i)}`,
+      access_level: 'known' as const,
       prose: `Description of region ${String(i)}. `.repeat(3),
       facts: [
         {
           topic: 'history',
           content: 'Founded long ago by elven settlers.',
-          access_level: 'public' as const,
+          access_level: 'known' as const,
         },
         {
           topic: 'secret',
@@ -106,21 +110,36 @@ function fixtureTree(): Tree {
     })),
     factions: Array.from({ length: 3 }, (_, i) => ({
       name: `Faction ${String(i)}`,
+      access_level: 'known' as const,
       prose: `Description of faction ${String(i)}. `.repeat(3),
       facts: [
         {
           topic: 'goal',
           content: 'Reclaim the lost sword of the founders.',
-          access_level: 'public' as const,
+          access_level: 'known' as const,
         },
         {
           topic: 'enemy',
           content: 'Rivals with the Iron Coast factions.',
-          access_level: 'public' as const,
+          access_level: 'known' as const,
         },
       ],
     })),
   }
+}
+
+// Fixture where each region carries a distinct tier — exercises the
+// SSE-emit tier filter inside the persister (the DB insert still happens
+// for all three; only finalizedEvents is gated).
+function tieredFixtureTree(): Tree {
+  const base = fixtureTree()
+  const tiers: AccessLevel[] = ['known', 'discoverable', 'secret']
+  base.regions = base.regions.map((r, i) => ({
+    ...r,
+    access_level: tiers[i] ?? 'known',
+  }))
+  // factions stay 'known' so they don't pollute the region-filter count.
+  return base
 }
 
 function brokenTree(): Tree {
@@ -149,6 +168,7 @@ function makeArgs(opts: {
   campaignId: string
   worldName: string
   redisRealtime?: InstanceType<typeof IoredisMock>
+  bypassAccessFilter?: boolean
 }): RunWorldAndFactionsArgs {
   return {
     world: { id: opts.worldId, createdBy: opts.userId, name: opts.worldName, concept: 'C' },
@@ -158,6 +178,7 @@ function makeArgs(opts: {
     // and matches Redis structurally for our purposes.
     redisRealtime: opts.redisRealtime ?? new IoredisMock(),
     keyPrefix: 'test:',
+    bypassAccessFilter: opts.bypassAccessFilter ?? false,
   }
 }
 
@@ -447,5 +468,79 @@ describe('runWorldAndFactionsStage', () => {
       [worldId],
     )
     expect(Number(counts.rows[0]?.ent)).toBe(0)
+  })
+
+  // myth-exac T13: tier-aware persist. DB inserts always happen for all
+  // tiers; only finalizedEvents (the SSE-emitted entries) are gated. When
+  // bypassAccessFilter is false, only `known` entities surface as
+  // finalized events. When true, every persisted entity surfaces.
+  it('persists all tiers; finalizedEvents filtered to known when bypass=false', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(tieredFixtureTree()))
+
+    const result = await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(
+        client,
+        makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) }),
+      ),
+    )
+
+    // 3 regions (known, discoverable, secret) + 3 factions (known x3)
+    // all land in the DB.
+    const counts = await pool.query<{ ent: string }>(
+      `SELECT count(*)::text AS ent FROM entities WHERE world_id = $1`,
+      [worldId],
+    )
+    expect(Number(counts.rows[0]?.ent)).toBe(6)
+
+    const tiered = await pool.query<{ access_level: string; count: string }>(
+      `SELECT access_level, count(*)::text AS count
+         FROM entities WHERE world_id = $1 GROUP BY access_level`,
+      [worldId],
+    )
+    const byTier = new Map(tiered.rows.map((r) => [r.access_level, Number(r.count)]))
+    expect(byTier.get('known')).toBe(4) // 1 known region + 3 known factions
+    expect(byTier.get('discoverable')).toBe(1)
+    expect(byTier.get('secret')).toBe(1)
+
+    // finalizedEvents: only `known` items — 1 region + 3 factions = 4.
+    const synthKeys = result.finalizedEvents.map((e) =>
+      e.type === 'finalized' ? e.synthKey : null,
+    )
+    expect(synthKeys).toEqual([
+      'world_and_factions/regions/0',
+      'world_and_factions/factions/0',
+      'world_and_factions/factions/1',
+      'world_and_factions/factions/2',
+    ])
+  })
+
+  it('bypassAccessFilter=true emits finalized events for every persisted entity', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(tieredFixtureTree()))
+
+    const result = await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(
+        client,
+        makeArgs({
+          worldId,
+          userId,
+          campaignId,
+          worldName: scope.worldName(0),
+          bypassAccessFilter: true,
+        }),
+      ),
+    )
+
+    expect(result.finalizedEvents).toHaveLength(6)
+    const synthKeys = result.finalizedEvents.map((e) =>
+      e.type === 'finalized' ? e.synthKey : null,
+    )
+    expect(synthKeys).toEqual([
+      'world_and_factions/regions/0',
+      'world_and_factions/regions/1',
+      'world_and_factions/regions/2',
+      'world_and_factions/factions/0',
+      'world_and_factions/factions/1',
+      'world_and_factions/factions/2',
+    ])
   })
 })

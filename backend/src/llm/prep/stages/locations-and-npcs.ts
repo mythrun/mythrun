@@ -96,11 +96,21 @@ export interface RunLocationsAndNpcsArgs {
   readonly job: Job
   readonly redisRealtime: Redis
   readonly keyPrefix: string
+  // When true, the wire-tier filter is bypassed: all entities (regardless
+  // of access_level) are emitted as `entity-added` / surfaced in
+  // finalizedEvents. DB persistence is unaffected. Set true for dev-tool
+  // / debug runs that need to observe non-known entities; false for
+  // player-facing campaigns.
+  readonly bypassAccessFilter: boolean
 }
 
 interface FinalizedRow {
   readonly synthKey: string
   readonly entityId: string
+  // Carried so the post-COMMIT event push can apply the tier filter:
+  // DB insert always happens, but only `known` rows (or all when
+  // bypassed) become `finalized` events on the wire.
+  readonly accessLevel: 'known' | 'discoverable' | 'secret'
 }
 
 interface UnresolvedRef {
@@ -190,6 +200,7 @@ async function persistLocations(
       worldId,
       entityType: 'location',
       name: loc.name,
+      accessLevel: loc.access_level,
     })
     await proseKernels.insert(client, { entityId, content: loc.prose })
     await facts.insertMany(
@@ -202,7 +213,7 @@ async function persistLocations(
       })),
     )
     const synthKey = `locations_and_npcs/locations/${String(i)}`
-    finalized.push({ synthKey, entityId })
+    finalized.push({ synthKey, entityId, accessLevel: loc.access_level })
     if (loc.parent_location !== null) {
       unresolved.push({ synthKey, childEntityId: entityId, parentName: loc.parent_location })
     }
@@ -225,6 +236,7 @@ async function persistNpcs(
       worldId,
       entityType: 'npc',
       name: npc.name,
+      accessLevel: npc.access_level,
     })
     await proseKernels.insert(client, { entityId, content: npc.prose })
     await facts.insertMany(
@@ -236,7 +248,11 @@ async function persistNpcs(
         content: f.content,
       })),
     )
-    finalized.push({ synthKey: `locations_and_npcs/npcs/${String(i)}`, entityId })
+    finalized.push({
+      synthKey: `locations_and_npcs/npcs/${String(i)}`,
+      entityId,
+      accessLevel: npc.access_level,
+    })
   }
 }
 
@@ -303,6 +319,7 @@ async function persistAndCollectEvents(
   client: PoolClient,
   worldId: string,
   tree: LocationsAndNpcsTree,
+  bypassAccessFilter: boolean,
 ): Promise<readonly PipelineEvent[]> {
   const finalized: FinalizedRow[] = []
   const unresolved: UnresolvedRef[] = []
@@ -314,15 +331,19 @@ async function persistAndCollectEvents(
   await resolveAndPersistHierarchy(client, unresolved, nameToId, parentClearedSynthKeys)
 
   // Compose deferred post-COMMIT events: `finalized` per persisted
-  // entity, then `entity-updated{parent_location:null}` for unresolved
-  // refs. Caller publishes after its COMMIT.
-  const events: PipelineEvent[] = finalized.map(
-    (f): PipelineEvent => ({
-      type: 'finalized',
-      synthKey: f.synthKey,
-      entityId: f.entityId,
-    }),
-  )
+  // entity (tier-filtered: only `known` rows surface on the wire unless
+  // bypassed), then `entity-updated{parent_location:null}` for
+  // unresolved refs. Caller publishes after its COMMIT. DB persistence
+  // already happened for every row above regardless of tier.
+  const events: PipelineEvent[] = finalized
+    .filter((f) => bypassAccessFilter || f.accessLevel === 'known')
+    .map(
+      (f): PipelineEvent => ({
+        type: 'finalized',
+        synthKey: f.synthKey,
+        entityId: f.entityId,
+      }),
+    )
   for (const synthKey of parentClearedSynthKeys) {
     events.push({
       type: 'entity-updated',
@@ -375,6 +396,11 @@ export async function runLocationsAndNpcsStage(
       { path: 'locations', kind: 'location', role: 'entity' },
       { path: 'npcs', kind: 'npc', role: 'entity' },
     ],
+    bypassAccessFilter: args.bypassAccessFilter,
+    // Stage 3 has no edges — endpointTierMap is unused by the extractor
+    // for entity-only arrays, but the config requires it. Pass an empty
+    // map for type-conformance.
+    endpointTierMap: new Map(),
   })
 
   // Cost: primary Opus stream usage first; repair-chain usage layered on
@@ -393,7 +419,12 @@ export async function runLocationsAndNpcsStage(
   })
 
   const validation = await validateOrRepair(finalTree)
-  const finalizedEvents = await persistAndCollectEvents(client, args.world.id, validation.tree)
+  const finalizedEvents = await persistAndCollectEvents(
+    client,
+    args.world.id,
+    validation.tree,
+    args.bypassAccessFilter,
+  )
 
   return {
     costUsd: opusCostUsd + validation.costUsd,

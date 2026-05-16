@@ -69,6 +69,11 @@ export interface RunWorldAndFactionsArgs {
   readonly job: Job
   readonly redisRealtime: Redis
   readonly keyPrefix: string
+  // myth-exac T13: world-gen-processor threads the per-run flag here.
+  // When true, every persisted entity surfaces as a finalized event
+  // (used by author/dev tools). When false, only `known`-tier entities
+  // emit finalized events; the DB insert always happens regardless.
+  readonly bypassAccessFilter: boolean
 }
 
 interface FinalizedRow {
@@ -148,6 +153,9 @@ interface PersistEntityArgs {
   readonly source: readonly WorldAndFactionsTree['regions'][number][]
   readonly synthArrayPath: 'regions' | 'factions'
   readonly out: FinalizedRow[]
+  // myth-exac T13: when true, every persisted item surfaces as a
+  // finalized event regardless of tier. The DB insert is unaffected.
+  readonly bypassAccessFilter: boolean
 }
 
 async function persistEntities(args: PersistEntityArgs): Promise<void> {
@@ -158,6 +166,10 @@ async function persistEntities(args: PersistEntityArgs): Promise<void> {
       worldId: args.worldId,
       entityType: args.entityType,
       name: item.name,
+      // myth-exac T13: thread the LLM-emitted tier into the entity row.
+      // T08 made the Zod schema include `access_level`; T05 made the
+      // entities.insert require accessLevel. Closing the loop here.
+      accessLevel: item.access_level,
     })
     await proseKernels.insert(args.client, { entityId, content: item.prose })
     await facts.insertMany(
@@ -169,10 +181,17 @@ async function persistEntities(args: PersistEntityArgs): Promise<void> {
         content: f.content,
       })),
     )
-    args.out.push({
-      synthKey: `world_and_factions/${args.synthArrayPath}/${String(i)}`,
-      entityId,
-    })
+    // myth-exac T13: gate finalizedEvents (the SSE-emitted entries) by
+    // tier. The DB insert above already happened — only the player-
+    // visible event is filtered, mirroring streaming-extractor's
+    // mid-flight `entity-added` gating. Authors / dev-tool runs pass
+    // bypassAccessFilter=true to surface everything.
+    if (args.bypassAccessFilter || item.access_level === 'known') {
+      args.out.push({
+        synthKey: `world_and_factions/${args.synthArrayPath}/${String(i)}`,
+        entityId,
+      })
+    }
   }
 }
 
@@ -180,6 +199,7 @@ async function persistTree(
   client: PoolClient,
   worldId: string,
   tree: WorldAndFactionsTree,
+  bypassAccessFilter: boolean,
 ): Promise<readonly FinalizedRow[]> {
   const finalized: FinalizedRow[] = []
   await persistEntities({
@@ -189,6 +209,7 @@ async function persistTree(
     source: tree.regions,
     synthArrayPath: 'regions',
     out: finalized,
+    bypassAccessFilter,
   })
   await persistEntities({
     client,
@@ -197,6 +218,7 @@ async function persistTree(
     source: tree.factions,
     synthArrayPath: 'factions',
     out: finalized,
+    bypassAccessFilter,
   })
   // worlds repo is closure-style and can't accept this client; write
   // the one column it needs via inline SQL on the active transaction
@@ -247,6 +269,11 @@ export async function runWorldAndFactionsStage(
       { path: 'regions', kind: 'location', role: 'entity' },
       { path: 'factions', kind: 'faction', role: 'entity' },
     ],
+    // myth-exac T13: stage 2 has no edge endpoints — entities are emitted
+    // standalone, so the endpoint-tier map is empty. The bypass flag is
+    // threaded from the world-gen-processor.
+    bypassAccessFilter: args.bypassAccessFilter,
+    endpointTierMap: new Map(),
   })
 
   // Cost: primary Opus stream usage first; repair-chain usage layered on
@@ -265,7 +292,12 @@ export async function runWorldAndFactionsStage(
   })
 
   const validation = await validateOrRepair(finalTree)
-  const finalized = await persistTree(client, args.world.id, validation.tree)
+  const finalized = await persistTree(
+    client,
+    args.world.id,
+    validation.tree,
+    args.bypassAccessFilter,
+  )
 
   const finalizedEvents: readonly PipelineEvent[] = finalized.map((f) => ({
     type: 'finalized' as const,
