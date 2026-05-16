@@ -42,6 +42,8 @@ import type { StageDispatchResult } from '../world-gen-processor.js'
 import { entities } from '../../../repo/entities.js'
 import { relationships } from '../../../repo/relationships.js'
 import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
+import type { AccessLevel } from '../../../repo/facts.js'
+import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/entity-relationships.txt'),
@@ -68,6 +70,11 @@ export interface EntityRelationshipsArgs {
   readonly job: Pick<Job, 'updateProgress'>
   readonly redisRealtime: Pick<Redis, 'publish'>
   readonly keyPrefix: string
+  // myth-exac T15: when true, every persisted relationship surfaces as a
+  // `finalized` event regardless of endpoint tier. The DB insert and the
+  // streaming `edge-added` emission are both gated by the same flag.
+  // Authors / dev-tool runs pass true to see every edge in the wire feed.
+  readonly bypassAccessFilter: boolean
 }
 
 interface InventoryEntry {
@@ -146,6 +153,11 @@ interface AcceptedRow {
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
+  // myth-exac T15: the source-array index from the LLM stream. Carried
+  // forward so the post-commit `finalized` synthKey matches the streaming
+  // extractor's mid-flight `edge-added` synthKey
+  // (`entity_relationships/relationships/${sourceIndex}`).
+  readonly sourceIndex: number
 }
 
 interface PartitionedRows {
@@ -159,7 +171,7 @@ function partitionRelationships(
 ): PartitionedRows {
   const accepted: AcceptedRow[] = []
   let droppedCount = 0
-  for (const r of tree.relationships) {
+  for (const [i, r] of tree.relationships.entries()) {
     if (!entityIds.has(r.from) || !entityIds.has(r.to)) {
       droppedCount += 1
       continue
@@ -169,6 +181,7 @@ function partitionRelationships(
       targetEntityId: r.to,
       relationshipType: r.relationship,
       description: r.description,
+      sourceIndex: i,
     })
   }
   return { accepted, droppedCount }
@@ -225,6 +238,14 @@ export async function runEntityRelationshipsStage(
   // 1. Read entity inventory — the LLM operates on real UUIDs (design §D9).
   const inventory = await entities.listByWorld(client, args.worldId)
   const entityIds = new Set(inventory.map((e) => e.id))
+  // myth-exac T15: endpoint-tier map for stage 4 — the streaming extractor
+  // gates mid-flight `edge-added` events on whether BOTH endpoints are
+  // `known`. The post-commit `finalized` events are gated by the same
+  // check. Stage 4 is the only world-gen stage with edges, so it's the
+  // only stage that builds a non-empty map.
+  const endpointTierMap = new Map<string, AccessLevel>(
+    inventory.map((e) => [e.id, e.accessLevel]),
+  )
 
   // 2. Idempotency wipe — clear any prior stage-4 output before re-writing.
   await relationships.deleteByWorld(client, args.worldId)
@@ -247,6 +268,8 @@ export async function runEntityRelationshipsStage(
     redisRealtime: args.redisRealtime,
     keyPrefix: args.keyPrefix,
     arrays: [{ path: 'relationships', kind: 'edge', role: 'edge' }],
+    bypassAccessFilter: args.bypassAccessFilter,
+    endpointTierMap,
   })
 
   // 4. Validate + repair-chain. On repair-exhausted we just throw; the
@@ -272,8 +295,42 @@ export async function runEntityRelationshipsStage(
 
   // 6. Persist relationships + hierarchy stragglers (caller pre-filters
   // stragglers against existing entity_hierarchy rows; stage 3 wins).
-  await relationships.insertMany(client, accepted)
+  // myth-exac T15: insertMany returns the generated UUIDv7 ids in row
+  // order so we can emit a `finalized` event per tier-passing edge.
+  const relationshipIds = await relationships.insertMany(
+    client,
+    accepted.map((a) => ({
+      sourceEntityId: a.sourceEntityId,
+      targetEntityId: a.targetEntityId,
+      relationshipType: a.relationshipType,
+      description: a.description,
+    })),
+  )
   await persistStragglers(client, validatedTree, args.worldId, entityIds)
+
+  // myth-exac T15: tier-gate `finalized` events for relationships. The DB
+  // insert above is unaffected — every accepted (non-hallucinated) row
+  // persists. Only the wire surfacing is filtered: an edge surfaces post-
+  // commit only when BOTH endpoints are `known` (or bypass is on). This
+  // mirrors the streaming-extractor's mid-flight `edge-added` gating so
+  // the wire feed stays internally consistent.
+  const finalizedEvents: PipelineEvent[] = []
+  for (const [i, row] of accepted.entries()) {
+    const fromTier = endpointTierMap.get(row.sourceEntityId)
+    const toTier = endpointTierMap.get(row.targetEntityId)
+    const shouldFinalize =
+      args.bypassAccessFilter || (fromTier === 'known' && toTier === 'known')
+    if (!shouldFinalize) continue
+    const relationshipId = relationshipIds[i]
+    /* c8 ignore next 3 — defensive: insertMany returns one id per input row.
+     * The arms only fire if the repo contract is violated. */
+    if (relationshipId === undefined) continue
+    finalizedEvents.push({
+      type: 'finalized',
+      synthKey: `entity_relationships/relationships/${String(row.sourceIndex)}`,
+      entityId: relationshipId,
+    })
+  }
 
   // 7. Compute cost: streamObject usage + repair-chain usage.
   const streamUsage = await stream.usage
@@ -286,9 +343,7 @@ export async function runEntityRelationshipsStage(
     costUsd: computeCostUsd({ inputTokens, outputTokens }),
     inputTokens,
     outputTokens,
-    // Stage 4 emits all edge events DURING the stream (`runStreamingStage`
-    // → `edge-added`); there are no post-commit events to bubble back.
-    finalizedEvents: [],
+    finalizedEvents,
     // Stage 4 does not consult the campaign cost cap — it can't cap-fire.
     capExhausted: false,
   }

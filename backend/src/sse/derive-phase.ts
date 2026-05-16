@@ -9,6 +9,7 @@ export type PipelinePhase =
   | 'not_started'
   | 'world_gen'
   | 'world_gen_failed'
+  | 'world_snapshot_ready'
   | 'world_ready'
   | 'character_creation'
   | 'post_creation'
@@ -152,6 +153,19 @@ function computePhase(input: {
   // Worldgen failure surfaces if the world is failed AND no later-stage runs have made progress.
   if (world.status === 'failed') {
     return 'world_gen_failed'
+  }
+
+  // Snapshot-ready: stage 4 (entity_relationships) has committed but the
+  // world is still generating (stages 5-7 pending/running). The SSE
+  // initial frame surfaces this so mid-window subscribers learn the
+  // snapshot is fetchable even though worlds.status hasn't flipped yet.
+  // Must precede the `world_gen` running check, otherwise the running
+  // stage-5/6/7 row would shadow this branch.
+  if (
+    world.status === 'generating' &&
+    worldgen.some((r) => r.stage === 'entity_relationships' && r.status === 'completed')
+  ) {
+    return 'world_snapshot_ready'
   }
 
   // Worldgen running.

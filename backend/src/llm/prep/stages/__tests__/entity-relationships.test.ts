@@ -38,7 +38,17 @@ vi.mock('../../../../repo/entities.js', () => ({
 
 vi.mock('../../../../repo/relationships.js', () => ({
   relationships: {
-    insertMany: vi.fn().mockResolvedValue(undefined),
+    // myth-exac T15: insertMany now returns the generated UUIDv7 ids so the
+    // stage can emit `finalized` events keyed to relationship IDs (only for
+    // rows whose endpoints pass the tier filter). Default mock returns an
+    // ids array matching the input row count.
+    insertMany: vi
+      .fn()
+      .mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/require-await
+        async (_client: unknown, rows: readonly unknown[]): Promise<readonly string[]> =>
+          rows.map((_r, i) => `rel-${String(i)}`),
+      ),
     deleteByWorld: vi.fn().mockResolvedValue(undefined),
   },
 }))
@@ -150,13 +160,17 @@ const baseArgs = {
   tone: 'misted, melancholy',
   themes: 'guardianship, secrets',
   keyTensions: 'spirits chafe in lanterns',
+  bypassAccessFilter: false,
 }
 
 describe('runEntityRelationshipsStage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(entities.listByWorld).mockResolvedValue(INVENTORY)
-    vi.mocked(relationships.insertMany).mockResolvedValue(undefined)
+    vi.mocked(relationships.insertMany).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async (_client, rows) => rows.map((_r, i) => `rel-${String(i)}`),
+    )
     vi.mocked(relationships.deleteByWorld).mockResolvedValue(undefined)
     vi.mocked(entityHierarchy.insert).mockResolvedValue(undefined)
   })
@@ -203,9 +217,14 @@ describe('runEntityRelationshipsStage', () => {
     expect(result.inputTokens).toBe(4000)
     expect(result.outputTokens).toBe(1200)
 
-    // Stage 4 dispatch-contract fields: stage emits edges DURING the stream,
-    // so finalizedEvents is empty; stage 4 doesn't cap-fire.
-    expect(result.finalizedEvents).toEqual([])
+    // Stage 4 dispatch-contract fields: edges are also surfaced as post-commit
+    // `finalized` events (myth-exac T15) for rows whose endpoints both pass
+    // the tier filter. With all-known inventory + bypassAccessFilter=false
+    // every accepted relationship surfaces. Stage 4 doesn't cap-fire.
+    expect(result.finalizedEvents).toHaveLength(5)
+    for (const ev of result.finalizedEvents) {
+      expect(ev.type).toBe('finalized')
+    }
     expect(result.capExhausted).toBe(false)
 
     // Five edge-added events emitted
@@ -496,5 +515,95 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     expect(entityHierarchy.insert).not.toHaveBeenCalled()
+  })
+
+  it('myth-exac T15: tier filter on endpoints — inserts all rows in DB but only emits finalized for known→known', async () => {
+    // Mixed-tier inventory: E1 known, E2 known, E3 secret. The LLM emits
+    // 5 relationships (min schema cardinality) — one known→known, the rest
+    // touch the secret entity. Expected DB writes: 5 rows. Expected
+    // finalizedEvents: 1 (the known→known edge only).
+    vi.mocked(entities.listByWorld).mockResolvedValue([
+      { id: E1, worldId: 'wld-1', entityType: 'location', name: 'Iron Coast', accessLevel: 'known' },
+      { id: E2, worldId: 'wld-1', entityType: 'faction', name: 'Brotherhood', accessLevel: 'known' },
+      { id: E3, worldId: 'wld-1', entityType: 'npc', name: 'Hidden Cabal', accessLevel: 'secret' },
+    ])
+    const padded = {
+      relationships: [
+        // known → known (the only edge that should surface as finalized)
+        { from: E1, to: E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
+        // known → secret
+        { from: E1, to: E3, relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
+        // secret → secret
+        { from: E3, to: E3, relationship: 'allied_with', description: 'Cabal members protect each other' },
+        // secret → known
+        { from: E3, to: E1, relationship: 'pursues', description: 'Cabal watches the iron coast' },
+        // secret → known
+        { from: E3, to: E2, relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
+      ],
+      hierarchy_stragglers: [],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(padded),
+      object: Promise.resolve(padded),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const client = makeClient()
+    const result = await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    // DB: every accepted row is inserted, regardless of tier.
+    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly unknown[]
+    expect(insertedRows).toHaveLength(5)
+    // SSE: only the single known→known relationship surfaces.
+    const finalized = result.finalizedEvents.filter((e) => e.type === 'finalized')
+    expect(finalized).toHaveLength(1)
+    if (finalized[0]?.type !== 'finalized') throw new Error('expected finalized event')
+    // synthKey is keyed off the LLM-stream index (0 = the known→known edge).
+    expect(finalized[0].synthKey).toBe('entity_relationships/relationships/0')
+    expect(finalized[0].entityId).toBe('rel-0')
+  })
+
+  it('myth-exac T15: bypassAccessFilter=true surfaces every relationship regardless of endpoint tier', async () => {
+    // Same mixed-tier inventory but bypass on: every persisted row also
+    // emits a finalized event (dev-tool / author mode).
+    vi.mocked(entities.listByWorld).mockResolvedValue([
+      { id: E1, worldId: 'wld-1', entityType: 'location', name: 'Iron Coast', accessLevel: 'known' },
+      { id: E2, worldId: 'wld-1', entityType: 'faction', name: 'Brotherhood', accessLevel: 'known' },
+      { id: E3, worldId: 'wld-1', entityType: 'npc', name: 'Hidden Cabal', accessLevel: 'secret' },
+    ])
+    const tree = {
+      relationships: [
+        { from: E1, to: E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
+        { from: E1, to: E3, relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
+        { from: E3, to: E3, relationship: 'allied_with', description: 'Cabal members protect each other' },
+        { from: E3, to: E1, relationship: 'pursues', description: 'Cabal watches the iron coast' },
+        { from: E3, to: E2, relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
+      ],
+      hierarchy_stragglers: [],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(tree),
+      object: Promise.resolve(tree),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const client = makeClient()
+    const result = await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      bypassAccessFilter: true,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly unknown[]
+    expect(insertedRows).toHaveLength(5)
+    const finalized = result.finalizedEvents.filter((e) => e.type === 'finalized')
+    expect(finalized).toHaveLength(5)
   })
 })

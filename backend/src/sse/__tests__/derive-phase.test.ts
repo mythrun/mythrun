@@ -252,6 +252,70 @@ describe('derivePhase', () => {
     expect(charConceptStages.map((s) => s.userId).sort()).toEqual(['usr-1', 'usr-2'])
   })
 
+  it('returns world_snapshot_ready when worldStatus is generating AND entity_relationships completed', () => {
+    // myth-exac T17: stage-4 (entity_relationships) has committed the snapshot
+    // and the world is fetchable, but stages 5-7 are still running so
+    // worlds.status remains 'generating'. The SSE initial frame must
+    // surface this so mid-window subscribers learn the snapshot is ready.
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'generating' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({ stage: 'world_and_factions', status: 'completed' }),
+        run({ stage: 'locations_and_npcs', status: 'completed' }),
+        run({ stage: 'entity_relationships', status: 'completed' }),
+        run({ stage: 'starting_situation', status: 'running', completed_at: null }),
+      ],
+    })
+    expect(result.phase).toBe('world_snapshot_ready')
+  })
+
+  it('still returns world_gen when entity_relationships is not yet completed', () => {
+    // Counterpoint to the snapshot_ready case: entity_relationships hasn't
+    // committed yet, so the snapshot isn't fetchable. Phase stays world_gen.
+    const inProgress = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'generating' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({ stage: 'world_and_factions', status: 'completed' }),
+        run({ stage: 'locations_and_npcs', status: 'completed' }),
+        run({ stage: 'entity_relationships', status: 'running', completed_at: null }),
+      ],
+    })
+    expect(inProgress.phase).toBe('world_gen')
+
+    const absent = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'generating' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({ stage: 'world_and_factions', status: 'running', completed_at: null }),
+      ],
+    })
+    expect(absent.phase).toBe('world_gen')
+  })
+
+  it('returns world_ready when worldStatus is complete (new branch does not override later phases)', () => {
+    // Once worlds.status flips to 'complete' the snapshot_ready branch
+    // must not fire — world_ready (or downstream phases) take over.
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({ stage: 'world_and_factions', status: 'completed' }),
+        run({ stage: 'locations_and_npcs', status: 'completed' }),
+        run({ stage: 'entity_relationships', status: 'completed' }),
+        run({ stage: 'starting_situation', status: 'completed' }),
+        run({ stage: 'random_tables', status: 'completed' }),
+        run({ stage: 'coherence_pass', status: 'completed' }),
+      ],
+    })
+    expect(result.phase).toBe('world_ready')
+  })
+
   it('sort comparator handles null user_id alongside non-null values stably', () => {
     // Same-stage rows where one has user_id=null and one is a real user;
     // exercises the `a.user_id ?? ''` falsy arm in the per-player sort.

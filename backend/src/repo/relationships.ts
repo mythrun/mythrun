@@ -74,20 +74,27 @@ function toRelationshipRow(row: RelationshipDbRow): RelationshipRow {
   }
 }
 
-async function insertMany(client: ClientLike, rows: readonly InsertRelationshipInput[]): Promise<void> {
-  if (rows.length === 0) return
+// Returns the generated UUIDv7 ids in input order. Stage 4 (entity_relationships)
+// uses these ids to emit `finalized` events for relationships whose endpoints
+// pass the tier filter (myth-exac T15).
+async function insertMany(client: ClientLike, rows: readonly InsertRelationshipInput[]): Promise<readonly string[]> {
+  if (rows.length === 0) return []
   const values: string[] = []
   const params: unknown[] = []
+  const ids: string[] = []
   let p = 1
   for (const row of rows) {
+    const id = uuidv7()
+    ids.push(id)
     values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)})`)
-    params.push(uuidv7(), row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description)
+    params.push(id, row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description)
   }
   await client.query(
     `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
      VALUES ${values.join(', ')}`,
     params,
   )
+  return ids
 }
 
 async function listByWorld(client: ClientLike, worldId: string): Promise<Relationship[]> {
