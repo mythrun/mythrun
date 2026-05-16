@@ -61,8 +61,8 @@ describe('relationships repo', () => {
       `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
       [worldId, userId, scope.worldName(0)],
     )
-    await entities.insert(pool, { id: entA, worldId, entityType: 'faction', name: 'A' })
-    await entities.insert(pool, { id: entB, worldId, entityType: 'location', name: 'B' })
+    await entities.insert(pool, { id: entA, worldId, entityType: 'faction', name: 'A', accessLevel: 'known' })
+    await entities.insert(pool, { id: entB, worldId, entityType: 'location', name: 'B', accessLevel: 'known' })
   })
 
   it('insertMany writes relationship rows', async () => {

@@ -100,12 +100,12 @@ const E6 = '01923456-789a-7bcd-8ef0-123456789006'
 const GHOST = '01923456-789a-7bcd-8ef0-1234567890ff'
 
 const INVENTORY = [
-  { id: E1, worldId: 'wld-1', entityType: 'location' as const, name: 'The Iron Coast' },
-  { id: E2, worldId: 'wld-1', entityType: 'faction' as const, name: 'Silver Brotherhood' },
-  { id: E3, worldId: 'wld-1', entityType: 'npc' as const, name: 'Captain Aerion' },
-  { id: E4, worldId: 'wld-1', entityType: 'location' as const, name: 'Saltwatch Keep' },
-  { id: E5, worldId: 'wld-1', entityType: 'location' as const, name: 'Stormhaven' },
-  { id: E6, worldId: 'wld-1', entityType: 'npc' as const, name: 'Magister Vance' },
+  { id: E1, worldId: 'wld-1', entityType: 'location' as const, name: 'The Iron Coast', accessLevel: 'known' as const },
+  { id: E2, worldId: 'wld-1', entityType: 'faction' as const, name: 'Silver Brotherhood', accessLevel: 'known' as const },
+  { id: E3, worldId: 'wld-1', entityType: 'npc' as const, name: 'Captain Aerion', accessLevel: 'known' as const },
+  { id: E4, worldId: 'wld-1', entityType: 'location' as const, name: 'Saltwatch Keep', accessLevel: 'known' as const },
+  { id: E5, worldId: 'wld-1', entityType: 'location' as const, name: 'Stormhaven', accessLevel: 'known' as const },
+  { id: E6, worldId: 'wld-1', entityType: 'npc' as const, name: 'Magister Vance', accessLevel: 'known' as const },
 ]
 
 interface TreeRelationship {

@@ -60,8 +60,8 @@ describe('entityHierarchy repo', () => {
       `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
       [worldId, userId, scope.worldName(0)],
     )
-    await entities.insert(pool, { id: parentId, worldId, entityType: 'location', name: 'P' })
-    await entities.insert(pool, { id: childId, worldId, entityType: 'location', name: 'C' })
+    await entities.insert(pool, { id: parentId, worldId, entityType: 'location', name: 'P', accessLevel: 'known' })
+    await entities.insert(pool, { id: childId, worldId, entityType: 'location', name: 'C', accessLevel: 'known' })
   })
 
   it('insert writes a hierarchy row', async () => {
@@ -87,6 +87,7 @@ describe('entityHierarchy repo', () => {
       worldId: worldRow.world_id,
       entityType: 'location',
       name: 'Other',
+      accessLevel: 'known',
     })
     await expect(
       entityHierarchy.insert(pool, { parentEntityId: otherParent, childEntityId: childId }),

@@ -59,7 +59,7 @@ describe('proseKernels repo', () => {
       [worldId, userId, scope.worldName(0)],
     )
     await entities.insert(pool, {
-      id: entityId, worldId, entityType: 'location', name: 'X',
+      id: entityId, worldId, entityType: 'location', name: 'X', accessLevel: 'known',
     })
   })
 

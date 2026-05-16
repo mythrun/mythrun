@@ -59,15 +59,15 @@ describe('entities repo', () => {
     )
   })
 
-  it('insert writes a row and returns the inserted entity', async () => {
+  it('insert writes a row', async () => {
     const id = uuidv7()
-    const inserted = await entities.insert(pool, {
+    await entities.insert(pool, {
       id,
       worldId,
       entityType: 'location',
       name: 'Eredil',
+      accessLevel: 'known',
     })
-    expect(inserted).toEqual({ id, worldId, entityType: 'location', name: 'Eredil' })
 
     const row = await pool.query<{ entity_type: string; name: string }>(
       `SELECT entity_type, name FROM entities WHERE id = $1`,
@@ -83,16 +83,71 @@ describe('entities repo', () => {
 
   it('findByWorldAndName returns the entity when name matches', async () => {
     const id = uuidv7()
-    await entities.insert(pool, { id, worldId, entityType: 'faction', name: 'House Eyrin' })
+    await entities.insert(pool, {
+      id,
+      worldId,
+      entityType: 'faction',
+      name: 'House Eyrin',
+      accessLevel: 'known',
+    })
     const found = await entities.findByWorldAndName(pool, worldId, 'House Eyrin')
     expect(found?.id).toBe(id)
   })
 
   it('listByWorld returns all entities for the world', async () => {
-    await entities.insert(pool, { id: uuidv7(), worldId, entityType: 'location', name: 'A' })
-    await entities.insert(pool, { id: uuidv7(), worldId, entityType: 'faction', name: 'B' })
+    await entities.insert(pool, {
+      id: uuidv7(),
+      worldId,
+      entityType: 'location',
+      name: 'A',
+      accessLevel: 'known',
+    })
+    await entities.insert(pool, {
+      id: uuidv7(),
+      worldId,
+      entityType: 'faction',
+      name: 'B',
+      accessLevel: 'known',
+    })
     const rows = await entities.listByWorld(pool, worldId)
     expect(rows).toHaveLength(2)
     expect(rows.map((r) => r.name).sort()).toEqual(['A', 'B'])
+  })
+
+  // myth-exac T05: access_level threading + listByWorld filter.
+  it('insert writes access_level to the new column', async () => {
+    const entityId = uuidv7()
+    await entities.insert(pool, {
+      id: entityId,
+      worldId,
+      entityType: 'location',
+      name: `${scope.id}-loc`,
+      accessLevel: 'discoverable',
+    })
+    const { rows } = await pool.query<{ access_level: string }>(
+      `SELECT access_level FROM entities WHERE id = $1`,
+      [entityId],
+    )
+    expect(rows[0]?.access_level).toBe('discoverable')
+  })
+
+  it('listByWorld filters by accessLevels when provided', async () => {
+    for (const tier of ['known', 'discoverable', 'secret'] as const) {
+      await entities.insert(pool, {
+        id: uuidv7(),
+        worldId,
+        entityType: 'location',
+        name: `${scope.id}-${tier}`,
+        accessLevel: tier,
+      })
+    }
+    const known = await entities.listByWorld(pool, worldId, { accessLevels: ['known'] })
+    expect(known).toHaveLength(1)
+    expect(known[0]?.accessLevel).toBe('known')
+
+    const all = await entities.listByWorld(pool, worldId, {
+      accessLevels: ['known', 'discoverable', 'secret'],
+    })
+    expect(all).toHaveLength(3)
   })
 })
