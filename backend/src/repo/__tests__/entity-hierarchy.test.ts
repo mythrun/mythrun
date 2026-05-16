@@ -93,4 +93,64 @@ describe('entityHierarchy repo', () => {
       entityHierarchy.insert(pool, { parentEntityId: otherParent, childEntityId: childId }),
     ).rejects.toThrow()
   })
+
+  describe('listForWorld', () => {
+    // myth-exac T06: returns hierarchy rows scoped to the given world
+    // via JOIN to entities (entity_hierarchy has no world_id column).
+    // Snapshot-view (T19) uses this to scope parent→child edges to one
+    // world without leaking rows authored under a sibling world.
+    it('returns rows whose parent entity belongs to the world', async () => {
+      // Stage two worlds with one hierarchy row in each so the JOIN
+      // filter is doing real work (not "happens to be the only row").
+      const worldLookup = await pool.query<{ world_id: string }>(
+        `SELECT world_id FROM entities WHERE id = $1`,
+        [parentId],
+      )
+      const ownWorldRow = worldLookup.rows[0]
+      if (!ownWorldRow) throw new Error('parent entity world_id lookup failed')
+      const ownWorldId = ownWorldRow.world_id
+
+      // Insert the in-scope hierarchy row.
+      await entityHierarchy.insert(pool, { parentEntityId: parentId, childEntityId: childId })
+
+      // Now build a sibling world with its own parent/child entities + row.
+      const otherUserId = uuidv7()
+      const otherWorldId = uuidv7()
+      const otherParentId = uuidv7()
+      const otherChildId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [otherUserId, scope.userSub(1), scope.displayName(1), scope.username(1)],
+      )
+      await pool.query(
+        `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
+        [otherWorldId, otherUserId, scope.worldName(1)],
+      )
+      await entities.insert(pool, {
+        id: otherParentId, worldId: otherWorldId, entityType: 'location', name: 'OP', accessLevel: 'known',
+      })
+      await entities.insert(pool, {
+        id: otherChildId, worldId: otherWorldId, entityType: 'location', name: 'OC', accessLevel: 'known',
+      })
+      await entityHierarchy.insert(pool, {
+        parentEntityId: otherParentId, childEntityId: otherChildId,
+      })
+
+      const rows = await entityHierarchy.listForWorld(pool, ownWorldId)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.parentEntityId).toBe(parentId)
+      expect(rows[0]?.childEntityId).toBe(childId)
+    })
+
+    it('returns [] when the world has no hierarchy rows', async () => {
+      const worldLookup = await pool.query<{ world_id: string }>(
+        `SELECT world_id FROM entities WHERE id = $1`,
+        [parentId],
+      )
+      const ownWorldRow = worldLookup.rows[0]
+      if (!ownWorldRow) throw new Error('parent entity world_id lookup failed')
+      const rows = await entityHierarchy.listForWorld(pool, ownWorldRow.world_id)
+      expect(rows).toEqual([])
+    })
+  })
 })

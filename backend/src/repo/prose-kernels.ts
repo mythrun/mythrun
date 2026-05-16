@@ -14,6 +14,32 @@ export interface InsertProseKernelInput {
   readonly content: string
 }
 
+export interface ProseKernelRow {
+  readonly id: string
+  readonly entityId: string
+  readonly content: string
+  readonly createdAt: Date
+  readonly updatedAt: Date
+}
+
+interface ProseKernelDbRow {
+  readonly id: string
+  readonly entity_id: string
+  readonly content: string
+  readonly created_at: Date
+  readonly updated_at: Date
+}
+
+function toProseKernelRow(r: ProseKernelDbRow): ProseKernelRow {
+  return {
+    id: r.id,
+    entityId: r.entity_id,
+    content: r.content,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
 async function insert(client: ClientLike, input: InsertProseKernelInput): Promise<void> {
   await client.query(
     `INSERT INTO prose_kernels (id, entity_id, content) VALUES ($1, $2, $3)`,
@@ -34,4 +60,22 @@ async function updateByEntityId(
   return result.rowCount ?? 0
 }
 
-export const proseKernels = { insert, updateByEntityId } as const
+// myth-exac T06: snapshot-view primary read path. Returns prose kernels
+// for the given entity IDs. Empty input short-circuits to [] (matches
+// facts.listByEntities).
+async function listByEntities(
+  client: ClientLike,
+  entityIds: readonly string[],
+): Promise<readonly ProseKernelRow[]> {
+  if (entityIds.length === 0) return []
+  const result = await client.query<ProseKernelDbRow>(
+    `SELECT id, entity_id, content, created_at, updated_at
+       FROM prose_kernels
+      WHERE entity_id = ANY($1)
+      ORDER BY entity_id`,
+    [entityIds as string[]],
+  )
+  return result.rows.map(toProseKernelRow)
+}
+
+export const proseKernels = { insert, updateByEntityId, listByEntities } as const

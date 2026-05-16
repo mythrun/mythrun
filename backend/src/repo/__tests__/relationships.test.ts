@@ -153,4 +153,50 @@ describe('relationships repo', () => {
     const count = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM relationships`)
     expect(count.rows[0]?.count).toBe('0')
   })
+
+  describe('listAmong', () => {
+    // myth-exac T06: returns only relationships whose BOTH endpoints are
+    // in the provided entityIds set. Snapshot-view consumer (T19) uses
+    // this to scope relationships to a fact-filtered entity set.
+    it('returns relationships where both endpoints are in the id set (subset)', async () => {
+      // Seed a third entity so we can author a relationship that is
+      // partially-in-set (entA→entC) and confirm it is excluded.
+      const entC = uuidv7()
+      await entities.insert(pool, {
+        id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known',
+      })
+      await relationships.insertMany(pool, [
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },
+        { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C' },
+      ])
+
+      const rows = await relationships.listAmong(pool, [entA, entB])
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.sourceEntityId).toBe(entA)
+      expect(rows[0]?.targetEntityId).toBe(entB)
+      expect(rows[0]?.relationshipType).toBe('controls')
+    })
+
+    it('returns every relationship when the id set is a full superset', async () => {
+      const entC = uuidv7()
+      await entities.insert(pool, {
+        id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known',
+      })
+      await relationships.insertMany(pool, [
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },
+        { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C' },
+      ])
+
+      const rows = await relationships.listAmong(pool, [entA, entB, entC])
+      expect(rows).toHaveLength(2)
+    })
+
+    it('returns [] for an empty entity id list (no round-trip)', async () => {
+      await relationships.insertMany(pool, [
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },
+      ])
+      const rows = await relationships.listAmong(pool, [])
+      expect(rows).toEqual([])
+    })
+  })
 })

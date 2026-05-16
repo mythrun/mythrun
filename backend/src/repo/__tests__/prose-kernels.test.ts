@@ -91,4 +91,41 @@ describe('proseKernels repo', () => {
     const affected = await proseKernels.updateByEntityId(pool, entityId, { content: 'x' })
     expect(affected).toBe(0)
   })
+
+  describe('listByEntities', () => {
+    // myth-exac T06: snapshot-view primary read path. Returns kernels
+    // for the given entity IDs only. Empty input short-circuits to [].
+    it('returns kernels only for the given entity ids', async () => {
+      // Build a second entity in the same world so we can prove the
+      // filter is doing the work, not "happens to be the only row".
+      const worldLookup = await pool.query<{ world_id: string }>(
+        `SELECT world_id FROM entities WHERE id = $1`,
+        [entityId],
+      )
+      const worldRow = worldLookup.rows[0]
+      if (!worldRow) throw new Error('entity world_id lookup failed')
+      const otherEntityId = uuidv7()
+      await entities.insert(pool, {
+        id: otherEntityId,
+        worldId: worldRow.world_id,
+        entityType: 'location',
+        name: 'Y',
+        accessLevel: 'known',
+      })
+
+      await proseKernels.insert(pool, { entityId, content: 'first kernel' })
+      await proseKernels.insert(pool, { entityId: otherEntityId, content: 'second kernel' })
+
+      const rows = await proseKernels.listByEntities(pool, [entityId])
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.entityId).toBe(entityId)
+      expect(rows[0]?.content).toBe('first kernel')
+    })
+
+    it('returns [] for an empty entity id list (no round-trip)', async () => {
+      await proseKernels.insert(pool, { entityId, content: 'x' })
+      const rows = await proseKernels.listByEntities(pool, [])
+      expect(rows).toEqual([])
+    })
+  })
 })

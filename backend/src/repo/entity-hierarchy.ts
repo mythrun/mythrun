@@ -12,6 +12,26 @@ export interface InsertHierarchyInput {
   readonly childEntityId: string
 }
 
+export interface EntityHierarchyRow {
+  readonly id: string
+  readonly parentEntityId: string
+  readonly childEntityId: string
+}
+
+interface EntityHierarchyDbRow {
+  readonly id: string
+  readonly parent_entity_id: string
+  readonly child_entity_id: string
+}
+
+function toEntityHierarchyRow(r: EntityHierarchyDbRow): EntityHierarchyRow {
+  return {
+    id: r.id,
+    parentEntityId: r.parent_entity_id,
+    childEntityId: r.child_entity_id,
+  }
+}
+
 async function insert(client: ClientLike, input: InsertHierarchyInput): Promise<void> {
   await client.query(
     `INSERT INTO entity_hierarchy (id, parent_entity_id, child_entity_id) VALUES ($1, $2, $3)`,
@@ -19,4 +39,23 @@ async function insert(client: ClientLike, input: InsertHierarchyInput): Promise<
   )
 }
 
-export const entityHierarchy = { insert } as const
+// myth-exac T06: snapshot-view primary read path. Hierarchy is scoped
+// to a world via JOIN to entities (the table has no world_id column).
+// Filters on the parent's world; child must be in the same world by
+// the design's invariants, so the parent-side filter is sufficient.
+async function listForWorld(
+  client: ClientLike,
+  worldId: string,
+): Promise<readonly EntityHierarchyRow[]> {
+  const result = await client.query<EntityHierarchyDbRow>(
+    `SELECT eh.id, eh.parent_entity_id, eh.child_entity_id
+       FROM entity_hierarchy eh
+       JOIN entities pe ON pe.id = eh.parent_entity_id
+      WHERE pe.world_id = $1
+      ORDER BY eh.id`,
+    [worldId],
+  )
+  return result.rows.map(toEntityHierarchyRow)
+}
+
+export const entityHierarchy = { insert, listForWorld } as const
