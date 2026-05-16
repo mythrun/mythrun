@@ -9,17 +9,34 @@
 //
 // source defaults to 'prep' via the column default. Persister relies
 // on the default; no explicit value passed.
+//
+// myth-exac: AccessLevel enum renamed from (public/private/secret) to
+// (known/discoverable/secret). See migration 014.
 
 import type { ClientLike } from './_types.js'
 import { uuidv7 } from './uuidv7.js'
 
-export type AccessLevel = 'public' | 'private' | 'secret'
+export type AccessLevel = 'known' | 'discoverable' | 'secret'
+
+export type NarrativeStatus = 'undelivered' | 'delivered' | 'developed' | 'resolved'
 
 export interface InsertFactInput {
   readonly entityId: string
   readonly topic: string
   readonly accessLevel: AccessLevel
   readonly content: string
+}
+
+export interface FactRow {
+  readonly id: string
+  readonly entityId: string
+  readonly topic: string
+  readonly accessLevel: AccessLevel
+  readonly narrativeStatus: NarrativeStatus
+  readonly content: string
+  readonly source: string
+  readonly createdAt: Date
+  readonly updatedAt: Date
 }
 
 async function insertMany(client: ClientLike, rows: readonly InsertFactInput[]): Promise<void> {
@@ -55,4 +72,51 @@ async function updateContentById(
   return result.rowCount ?? 0
 }
 
-export const facts = { insertMany, updateContentById } as const
+interface FactDbRow {
+  readonly id: string
+  readonly entity_id: string
+  readonly topic: string
+  readonly access_level: AccessLevel
+  readonly narrative_status: NarrativeStatus
+  readonly content: string
+  readonly source: string
+  readonly created_at: Date
+  readonly updated_at: Date
+}
+
+function toFactRow(r: FactDbRow): FactRow {
+  return {
+    id: r.id,
+    entityId: r.entity_id,
+    topic: r.topic,
+    accessLevel: r.access_level,
+    narrativeStatus: r.narrative_status,
+    content: r.content,
+    source: r.source,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+// myth-exac: snapshot-view primary read path. Returns facts for the
+// given entity IDs filtered by access tier. Empty entity ID list
+// short-circuits to [] without a round-trip (covers the snapshot's
+// "world has no entities yet" case).
+async function listByEntities(
+  client: ClientLike,
+  entityIds: readonly string[],
+  opts: { readonly accessLevels: readonly AccessLevel[] },
+): Promise<readonly FactRow[]> {
+  if (entityIds.length === 0) return []
+  const result = await client.query<FactDbRow>(
+    `SELECT id, entity_id, topic, access_level, narrative_status, content,
+            source, created_at, updated_at
+       FROM facts
+      WHERE entity_id = ANY($1) AND access_level = ANY($2)
+      ORDER BY entity_id, id`,
+    [entityIds as string[], opts.accessLevels as string[]],
+  )
+  return result.rows.map(toFactRow)
+}
+
+export const facts = { insertMany, updateContentById, listByEntities } as const

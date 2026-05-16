@@ -63,7 +63,7 @@ describe('facts repo', () => {
 
   it('insertMany stamps narrative_status=undelivered and source=prep on every row', async () => {
     await facts.insertMany(pool, [
-      { entityId, topic: 'history', accessLevel: 'public', content: 'Founded long ago.' },
+      { entityId, topic: 'history', accessLevel: 'known', content: 'Founded long ago.' },
       { entityId, topic: 'secrets', accessLevel: 'secret', content: 'Hidden vault below.' },
     ])
     const rows = await pool.query<{
@@ -73,7 +73,7 @@ describe('facts repo', () => {
       [entityId],
     )
     expect(rows.rows).toEqual([
-      { topic: 'history', access_level: 'public', content: 'Founded long ago.', narrative_status: 'undelivered', source: 'prep' },
+      { topic: 'history', access_level: 'known', content: 'Founded long ago.', narrative_status: 'undelivered', source: 'prep' },
       { topic: 'secrets', access_level: 'secret', content: 'Hidden vault below.', narrative_status: 'undelivered', source: 'prep' },
     ])
   })
@@ -86,7 +86,7 @@ describe('facts repo', () => {
 
   it('updateContentById updates a single fact row', async () => {
     await facts.insertMany(pool, [
-      { entityId, topic: 'history', accessLevel: 'public', content: 'wrong' },
+      { entityId, topic: 'history', accessLevel: 'known', content: 'wrong' },
     ])
     const row = await pool.query<{ id: string }>(`SELECT id FROM facts WHERE entity_id = $1`, [entityId])
     const factId = row.rows[0]?.id
@@ -96,5 +96,42 @@ describe('facts repo', () => {
       `SELECT content FROM facts WHERE id = $1`, [factId],
     )
     expect(updated.rows[0]?.content).toBe('corrected')
+  })
+
+  describe('listByEntities (myth-exac)', () => {
+    it('returns facts for given entity IDs filtered by accessLevels', async () => {
+      // Reuse the outer beforeEach's world+entity (entityId) as entity 1; create entity 2 alongside it.
+      const ownerWorldRow = await pool.query<{ world_id: string }>(
+        `SELECT world_id FROM entities WHERE id = $1`,
+        [entityId],
+      )
+      const worldId = ownerWorldRow.rows[0]?.world_id
+      if (worldId === undefined) throw new Error('expected entity to have a world')
+
+      const entityId2 = uuidv7()
+      await entities.insert(pool, { id: entityId2, worldId, entityType: 'location', name: 'Y' })
+
+      await facts.insertMany(pool, [
+        { entityId, topic: 'a', accessLevel: 'known', content: 'k1' },
+        { entityId, topic: 'b', accessLevel: 'discoverable', content: 'd1' },
+        { entityId: entityId2, topic: 'c', accessLevel: 'secret', content: 's2' },
+      ])
+
+      const knownOnly = await facts.listByEntities(pool, [entityId, entityId2], {
+        accessLevels: ['known'],
+      })
+      expect(knownOnly).toHaveLength(1)
+      expect(knownOnly[0]?.content).toBe('k1')
+
+      const all = await facts.listByEntities(pool, [entityId, entityId2], {
+        accessLevels: ['known', 'discoverable', 'secret'],
+      })
+      expect(all).toHaveLength(3)
+    })
+
+    it('returns [] for empty entity ID list', async () => {
+      const rows = await facts.listByEntities(pool, [], { accessLevels: ['known'] })
+      expect(rows).toEqual([])
+    })
   })
 })
