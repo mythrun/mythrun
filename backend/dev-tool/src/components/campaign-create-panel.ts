@@ -216,6 +216,26 @@ export function mountCampaignCreatePanel(parent: HTMLElement): void {
   autoNameNote.style.color = '#888'
   autoNameNote.style.marginBottom = '8px'
 
+  // ---- dev bypass (myth-exac T22) --------------------------------------
+  // When checked, the POST body includes `devBypassAccessFilter: true`,
+  // which surfaces secret-tier facts in the SSE stream + snapshot so the
+  // dev can inspect what's normally hidden from the player. Default off.
+  const bypassRow = document.createElement('div')
+  bypassRow.style.display = 'flex'
+  bypassRow.style.alignItems = 'center'
+  bypassRow.style.gap = '6px'
+  bypassRow.style.marginTop = '8px'
+  const bypassCheckbox = document.createElement('input')
+  bypassCheckbox.type = 'checkbox'
+  bypassCheckbox.id = 'dev-bypass-access-filter'
+  const bypassLabel = document.createElement('label')
+  bypassLabel.setAttribute('for', 'dev-bypass-access-filter')
+  bypassLabel.textContent =
+    'Bypass access tiers (dev mode — see secrets in stream + snapshot)'
+  bypassLabel.style.fontSize = '12px'
+  bypassRow.appendChild(bypassCheckbox)
+  bypassRow.appendChild(bypassLabel)
+
   // ---- submit + status --------------------------------------------------
   const submitBtn = document.createElement('button')
   submitBtn.textContent = 'Create'
@@ -281,27 +301,33 @@ export function mountCampaignCreatePanel(parent: HTMLElement): void {
 
   function buildBody(): Record<string, unknown> | null {
     // myth-4lhr: no name in the body — concept_intake auto-names.
-    if (mode === 'freeform') {
-      const concept = conceptTextarea.value.trim()
-      return {
-        world: {
-          kind: 'new',
-          source: { mode: 'freeform', concept },
-        },
-      }
+    const body: Record<string, unknown> =
+      mode === 'freeform'
+        ? {
+            world: {
+              kind: 'new',
+              source: { mode: 'freeform', concept: conceptTextarea.value.trim() },
+            },
+          }
+        : {
+            world: {
+              kind: 'new',
+              source: {
+                mode: 'guided',
+                picks: titleInputs.map((titleEl, i) => ({
+                  title: titleEl.value.trim(),
+                  // whyInputs is the matching parallel array; length is the same
+                  // by construction (the for-loop above pushes both per row).
+                  whyILikeIt: (whyInputs[i]?.value ?? '').trim(),
+                })),
+              },
+            },
+          }
+    // myth-exac T22: dev-only flag to surface secret-tier facts.
+    if (bypassCheckbox.checked) {
+      body.devBypassAccessFilter = true
     }
-    const picks = titleInputs.map((titleEl, i) => ({
-      title: titleEl.value.trim(),
-      // whyInputs is the matching parallel array; length is the same
-      // by construction (the for-loop above pushes both per row).
-      whyILikeIt: (whyInputs[i]?.value ?? '').trim(),
-    }))
-    return {
-      world: {
-        kind: 'new',
-        source: { mode: 'guided', picks },
-      },
-    }
+    return body
   }
 
   function renderConceptRejected(body: ConceptRejectedBody, submittedMode: Mode): void {
@@ -428,6 +454,7 @@ export function mountCampaignCreatePanel(parent: HTMLElement): void {
     conceptTextarea.value = ''
     for (const t of titleInputs) t.value = ''
     for (const w of whyInputs) w.value = ''
+    bypassCheckbox.checked = false
     result.textContent = '(not yet submitted)'
     extraDetails.replaceChildren()
     clearCooldown()
@@ -440,6 +467,7 @@ export function mountCampaignCreatePanel(parent: HTMLElement): void {
   card.appendChild(autoNameNote)
   card.appendChild(freeformWrap)
   card.appendChild(guidedWrap)
+  card.appendChild(bypassRow)
   card.appendChild(submitBtn)
   card.appendChild(result)
   card.appendChild(extraDetails)
