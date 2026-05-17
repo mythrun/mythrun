@@ -73,6 +73,7 @@ const worldRow: WorldDbRow = {
   language: 'en',
   moderation_status: 'unreviewed',
   is_demo: false,
+  dev_bypass_access_filter: false,
   created_at: FIXED_DATE,
   updated_at: FIXED_DATE,
 }

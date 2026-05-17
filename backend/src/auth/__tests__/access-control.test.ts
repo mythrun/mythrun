@@ -73,6 +73,7 @@ const worldRow = (createdBy: string): World => ({
   language: 'en',
   moderationStatus: 'unreviewed',
   isDemo: false,
+  devBypassAccessFilter: false,
   createdAt: new Date(),
   updatedAt: new Date(),
 })

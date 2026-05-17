@@ -34,6 +34,7 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'POST', path: '/api/campaigns/:campaignId/resume' },
   { method: 'GET', path: '/api/campaigns/:campaignId/status' },
   { method: 'GET', path: '/api/campaigns/:campaignId/status/stream' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/world-snapshot' }, // myth-exac
 
   // Sessions
   { method: 'POST', path: '/api/sessions/:id/ws-ticket' },

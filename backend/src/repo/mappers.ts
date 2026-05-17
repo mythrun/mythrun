@@ -49,6 +49,7 @@ export interface WorldDbRow {
   readonly language: string
   readonly moderation_status: string
   readonly is_demo: boolean
+  readonly dev_bypass_access_filter: boolean
   readonly created_at: Date
   readonly updated_at: Date
 }
@@ -149,6 +150,7 @@ export function toWorld(row: WorldDbRow): World {
     language: row.language,
     moderationStatus: toModerationStatus(row.moderation_status),
     isDemo: row.is_demo,
+    devBypassAccessFilter: row.dev_bypass_access_filter,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

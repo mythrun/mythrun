@@ -54,6 +54,14 @@ export interface World {
   readonly language: string
   readonly moderationStatus: 'unreviewed' | 'approved' | 'flagged' | 'removed'
   readonly isDemo: boolean
+  /**
+   * myth-exac: dev-tool flag. When true (set on dev-tool-created worlds
+   * only), the world-snapshot endpoint widens the access-level filter to
+   * include `discoverable` + `secret` tiers — but ONLY when the requester
+   * is also in bypass-auth (defense in depth). Production worlds default
+   * to false; the flag is migration-014-pinned NOT NULL DEFAULT false.
+   */
+  readonly devBypassAccessFilter: boolean
   readonly createdAt: Date
   readonly updatedAt: Date
 }

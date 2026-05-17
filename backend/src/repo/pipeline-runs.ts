@@ -30,6 +30,14 @@ export interface PipelineRunsRepo {
    * on a not-yet-implemented stage / cost-cap fire). Spec lines 561–574.
    */
   readonly getLatestFailedForWorld: (worldId: string) => Promise<FailedRunRow | null>
+  /**
+   * myth-exac T20: returns true iff a pipeline_runs row exists for the
+   * given (worldId, stage) tuple in `completed` status. Used by the
+   * world-snapshot route to enforce the "not until stage 4 finishes"
+   * gate. world-scoped (user_id IS NULL) — char-creation stages aren't
+   * relevant to snapshot readiness.
+   */
+  readonly isStageCompleted: (worldId: string, stage: string) => Promise<boolean>
 }
 
 interface PipelineRunRowRaw {
@@ -69,6 +77,19 @@ const LATEST_FAILED_QUERY = `
    LIMIT 1
 `
 
+// myth-exac T20: snapshot-readiness gate. The world-scoped (user_id IS
+// NULL) row is what world-gen writes; char-creation stages are scoped
+// to a user_id and are irrelevant to snapshot fetching.
+const STAGE_COMPLETED_QUERY = `
+  SELECT 1
+    FROM pipeline_runs
+   WHERE world_id = $1
+     AND stage = $2
+     AND status = 'completed'
+     AND user_id IS NULL
+   LIMIT 1
+`
+
 export function createPipelineRunsRepo(pool: Pool): PipelineRunsRepo {
   return {
     async listLatestForCampaign(campaignId: string): Promise<readonly PipelineRunRow[]> {
@@ -78,6 +99,10 @@ export function createPipelineRunsRepo(pool: Pool): PipelineRunsRepo {
     async getLatestFailedForWorld(worldId: string): Promise<FailedRunRow | null> {
       const result = await pool.query<FailedRunRow>(LATEST_FAILED_QUERY, [worldId])
       return result.rows[0] ?? null
+    },
+    async isStageCompleted(worldId: string, stage: string): Promise<boolean> {
+      const result = await pool.query(STAGE_COMPLETED_QUERY, [worldId, stage])
+      return result.rows.length > 0
     },
   }
 }

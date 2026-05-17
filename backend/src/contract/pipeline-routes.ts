@@ -19,6 +19,8 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'DELETE /api/campaigns/:campaignId',
   // myth-4lhr — rename a campaign (auto-generated name → user override):
   'PATCH /api/campaigns/:campaignId/name',
+  // myth-exac — dev-tool snapshot inspector (owner-only, gated on stage 4):
+  'GET /api/campaigns/:campaignId/world-snapshot',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

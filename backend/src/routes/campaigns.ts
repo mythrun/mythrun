@@ -29,6 +29,8 @@ import { createRepo } from '../repo/index.js'
 import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
+import { requireUser } from '../auth/require-user.js'
+import { worldSnapshotView } from '../repo/world-snapshot-view.js'
 import { derivePhase, type PhaseAndStages, type PipelinePhase } from '../sse/derive-phase.js'
 import { openSseConnection } from '../sse/sse-connection.js'
 import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
@@ -478,6 +480,71 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       /* c8 ignore stop */
       const members = await repo.campaigns.listMembers(campaign.id)
       return reply.send({ campaign, world, members })
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/:campaignId/world-snapshot (myth-exac)
+  //
+  // Returns the known-tier slice of a world's persisted content for the
+  // dev-tool wiki inspector. Owner-only. 409 until stage 4
+  // (entity_relationships) completes — entities + facts + relationships
+  // are only fully written once that stage commits, so any earlier read
+  // would surface a partial world.
+  //
+  // Dev-mode bypass widens the projection to include the `discoverable`
+  // and `secret` tiers, but ONLY when the requester is also in bypass-auth
+  // (defense in depth: a dev-tool-created world's secrets must NOT leak
+  // via a prod-auth-user request, even if the world's dev_bypass_access_
+  // filter column says yes).
+  // -------------------------------------------------------------------------
+
+  app.get<{ Params: Params }>(
+    '/api/campaigns/:campaignId/world-snapshot',
+    {
+      config: {
+        // Per-IP. Snapshot composition is heavier than the status route
+        // (7 read queries) so we cap tighter — 30/min is plenty for the
+        // dev tool's polling cadence + manual inspection workflow.
+        rateLimit: { max: 30, timeWindow: '1 minute' },
+        pipelineRoute: true,
+      },
+      preHandler: requireCampaignMember(repo, 'owner'),
+    },
+    async (request, reply) => {
+      const campaign = await repo.campaigns.getById(request.params.campaignId)
+      /* c8 ignore start — `!campaign` arm: requireCampaignMember has
+       * already verified the row exists; deletion-mid-flight is the
+       * race this guard protects against. */
+      if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
+
+      // Pre-readiness gate: stage 4 (entity_relationships) must have
+      // committed for the snapshot to be coherent. Earlier stages leave
+      // the entity/relationships tables in a partial state.
+      const ready = await pipelineRunsRepo.isStageCompleted(
+        campaign.worldId,
+        'entity_relationships',
+      )
+      if (!ready) return reply.code(409).send({ code: 'snapshot_not_ready' })
+
+      const world = await repo.worlds.getById(campaign.worldId)
+      /* c8 ignore start — `!world` arm: campaigns.world_id is a FK with
+       * ON DELETE CASCADE; if the world is gone the campaign would be
+       * gone too and requireCampaignMember would have 403'd. */
+      if (!world) return reply.code(404).send({ code: 'world_not_found' })
+      /* c8 ignore stop */
+
+      // Bypass requires BOTH the per-world flag AND the requester being
+      // in bypass-auth (the bypass plugin attaches scopes: ['bypass']).
+      // jwt-mode users have scopes from the access token; production
+      // users never get the bypass scope so this branch can't fire
+      // outside dev/test.
+      const user = requireUser(request)
+      const bypass = world.devBypassAccessFilter && user.scopes.includes('bypass')
+
+      const snapshot = await worldSnapshotView.fetch(opts.pool, campaign.worldId, { bypass })
+      return reply.send(snapshot)
     },
   )
 
