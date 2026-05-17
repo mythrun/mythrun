@@ -64,9 +64,7 @@ const asLogger = (s: LoggerSpy): pino.Logger => s as unknown as pino.Logger
 // used to go through `pool.query`) AND the inventory/apply queries —
 // reflects the unified contract where the outer scope passes one
 // already-BEGUN client.
-interface AccessLevelOverrides {
-  readonly [entityId: string]: 'known' | 'discoverable' | 'secret'
-}
+type AccessLevelOverrides = Readonly<Record<string, 'known' | 'discoverable' | 'secret'>>;
 
 function makeClient(
   opts: {

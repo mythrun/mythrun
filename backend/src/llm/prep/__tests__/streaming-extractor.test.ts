@@ -5,13 +5,26 @@ interface FakeRedis {
   publish: ReturnType<typeof vi.fn>
 }
 
+interface SsePayload {
+  type: string
+  name?: string
+  from?: string
+  to?: string
+  relationship?: string
+  entityKind?: string
+  synthKey?: string
+  data?: unknown
+  description?: unknown
+}
+
 function makeRedis(): FakeRedis {
   return { publish: vi.fn().mockResolvedValue(1) }
 }
 
 const fakeJob = { updateProgress: vi.fn() }
 
-async function* partials(snapshots: unknown[]): AsyncGenerator<unknown> {
+// eslint-disable-next-line @typescript-eslint/require-await
+async function* partials(snapshots: unknown[]): AsyncGenerator {
   for (const s of snapshots) yield s
 }
 
@@ -28,13 +41,13 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       stage: 'world_and_factions',
       campaignId: 'c1',
       job: fakeJob,
-      redisRealtime: redis as never,
+      redisRealtime: redis,
       keyPrefix: 'test:',
       arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
       bypassAccessFilter: false,
       endpointTierMap: new Map(),
     })
-    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     const r1Emits = events.filter((e) => e.type === 'entity-added' && e.name === 'R1')
     expect(r1Emits).toHaveLength(1)
     expect(r1Emits[0]).toMatchObject({
@@ -42,7 +55,7 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       entityKind: 'location',
       name: 'R1',
     })
-    expect((r1Emits[0] as Record<string, unknown>).data).toBeUndefined()
+    expect(r1Emits[0]?.data).toBeUndefined()
   })
 
   it('skips emission for discoverable/secret-tier entries', async () => {
@@ -59,13 +72,13 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       stage: 'world_and_factions',
       campaignId: 'c1',
       job: fakeJob,
-      redisRealtime: redis as never,
+      redisRealtime: redis,
       keyPrefix: 'test:',
       arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
       bypassAccessFilter: false,
       endpointTierMap: new Map(),
     })
-    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     const names = events.filter((e) => e.type === 'entity-added').map((e) => e.name)
     expect(names).toEqual(['R2'])
   })
@@ -84,13 +97,13 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       stage: 'world_and_factions',
       campaignId: 'c1',
       job: fakeJob,
-      redisRealtime: redis as never,
+      redisRealtime: redis,
       keyPrefix: 'test:',
       arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
       bypassAccessFilter: true,
       endpointTierMap: new Map(),
     })
-    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     const names = events.filter((e) => e.type === 'entity-added').map((e) => e.name).sort()
     expect(names).toEqual(['R1', 'R2'])
   })
@@ -117,17 +130,17 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       stage: 'entity_relationships',
       campaignId: 'c1',
       job: fakeJob,
-      redisRealtime: redis as never,
+      redisRealtime: redis,
       keyPrefix: 'test:',
       arrays: [{ path: 'relationships', kind: 'edge', role: 'edge' }],
       bypassAccessFilter: false,
       endpointTierMap,
     })
-    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     const edges = events.filter((e) => e.type === 'edge-added')
     expect(edges).toHaveLength(1)
     expect(edges[0]).toMatchObject({ from: e1, to: e2, relationship: 'controls' })
-    expect((edges[0] as Record<string, unknown>).description).toBeUndefined()
+    expect(edges[0]?.description).toBeUndefined()
   })
 
   it('skips emission and logs when closed entry lacks access_level', async () => {
@@ -140,14 +153,14 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       stage: 'world_and_factions',
       campaignId: 'c1',
       job: fakeJob,
-      redisRealtime: redis as never,
+      redisRealtime: redis,
       keyPrefix: 'test:',
       arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
       bypassAccessFilter: false,
       endpointTierMap: new Map(),
       logger: { warn },
     })
-    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     expect(events.filter((e) => e.type === 'entity-added')).toEqual([])
     expect(warn).toHaveBeenCalled()
   })
@@ -172,13 +185,13 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       stage: 'world_and_factions',
       campaignId: 'c1',
       job: fakeJob,
-      redisRealtime: redis as never,
+      redisRealtime: redis,
       keyPrefix: 'test:',
       arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
       bypassAccessFilter: false,
       endpointTierMap: new Map(),
     })
-    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     expect(events.filter((e) => e.type === 'entity-added').map((e) => e.name)).toEqual(['R1'])
   })
 
@@ -195,13 +208,13 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
       stage: 'world_and_factions',
       campaignId: 'c1',
       job: fakeJob,
-      redisRealtime: redis as never,
+      redisRealtime: redis,
       keyPrefix: 'test:',
       arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
       bypassAccessFilter: false,
       endpointTierMap: new Map(),
     })
-    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string))
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     expect(events.filter((e) => e.type === 'entity-added').map((e) => e.name)).toEqual(['R1'])
   })
 })

@@ -38,6 +38,7 @@ describe('WorldAndFactionsSchema — myth-exac', () => {
     ).not.toThrow()
 
     // Missing access_level on region → fails
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { access_level: _, ...regionNoAccess } = goodRegion
     expect(() =>
       WorldAndFactionsSchema.parse({

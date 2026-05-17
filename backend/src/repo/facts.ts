@@ -114,7 +114,7 @@ async function listByEntities(
        FROM facts
       WHERE entity_id = ANY($1) AND access_level = ANY($2)
       ORDER BY entity_id, id`,
-    [entityIds as string[], opts.accessLevels as string[]],
+    [entityIds, opts.accessLevels],
   )
   return result.rows.map(toFactRow)
 }

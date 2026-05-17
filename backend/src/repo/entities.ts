@@ -94,7 +94,7 @@ async function listByWorld(
     const result = await client.query<EntityRow>(
       `SELECT id, world_id, entity_type, name, access_level
          FROM entities WHERE world_id = $1 AND access_level = ANY($2)`,
-      [worldId, accessLevels as string[]],
+      [worldId, accessLevels],
     )
     return result.rows.map(toEntity)
   }

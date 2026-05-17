@@ -51,6 +51,7 @@ describe('LocationsAndNpcsSchema — myth-exac', () => {
   })
 
   it('location requires access_level (no default)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { access_level: _, ...locationNoAccess } = goodLocation
     expect(() =>
       LocationsAndNpcsSchema.parse({
@@ -67,6 +68,7 @@ describe('LocationsAndNpcsSchema — myth-exac', () => {
   })
 
   it('npc requires access_level (no default)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { access_level: _, ...npcNoAccess } = goodNpc
     expect(() =>
       LocationsAndNpcsSchema.parse({

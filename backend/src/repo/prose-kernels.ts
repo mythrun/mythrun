@@ -73,7 +73,7 @@ async function listByEntities(
        FROM prose_kernels
       WHERE entity_id = ANY($1)
       ORDER BY entity_id`,
-    [entityIds as string[]],
+    [entityIds],
   )
   return result.rows.map(toProseKernelRow)
 }

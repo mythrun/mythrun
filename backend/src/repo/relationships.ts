@@ -123,7 +123,7 @@ async function listAmong(
        FROM relationships
       WHERE source_entity_id = ANY($1) AND target_entity_id = ANY($1)
       ORDER BY id`,
-    [entityIds as string[]],
+    [entityIds],
   )
   return result.rows.map(toRelationshipRow)
 }
