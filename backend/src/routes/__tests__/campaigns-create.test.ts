@@ -14,6 +14,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
+import fastifyPlugin from 'fastify-plugin'
 import rateLimit from '@fastify/rate-limit'
 import type { Pool } from 'pg'
 import IoredisMock from 'ioredis-mock'
@@ -31,6 +32,8 @@ import { campaignsRoutes } from '../campaigns.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
 import type { WorldGenQueueLike } from '../campaigns.js'
+import { REGISTERED_DECORATOR } from '../../auth/constants.js'
+import type { AuthUser } from '../../auth/types.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -187,6 +190,61 @@ async function buildTestApp(
     timeWindow: '1 minute',
   })
   await app.register(bypassPlugin)
+  await app.register(requireOnboarded, { pool })
+  await app.register(campaignsRoutes, {
+    pool,
+    subscriber: noopSubscriber(),
+    counter: noopCounter(),
+    redis,
+    redisKeyPrefix: REDIS_KEY_PREFIX,
+    worldGenQueue: queueSpy.queue,
+  })
+  await app.ready()
+  return app
+}
+
+// myth-exac T21: test-only auth plugin that attaches request.user with
+// caller-supplied scopes. Used to exercise the devBypassAccessFilter gate
+// independent of the real bypassPlugin — which enforces NODE_ENV at request
+// time and ALWAYS attaches `scopes: ['bypass']`. We need both axes:
+// scopes=[] (non-bypass auth) and NODE_ENV=production (prod env). Mirrors
+// the pattern in campaigns-snapshot.test.ts's noBypassScopeAuth.
+function customAuthImpl(
+  app: FastifyInstance,
+  opts: { readonly sub: string; readonly scopes: readonly string[] },
+): Promise<void> {
+  if (app.hasDecorator(REGISTERED_DECORATOR)) {
+    throw new Error('customAuth: auth already registered')
+  }
+  app.decorate(REGISTERED_DECORATOR, 'test-custom' as const)
+  // eslint-disable-next-line @typescript-eslint/require-await
+  app.addHook('onRequest', async (request) => {
+    if (request.routeOptions.url === undefined) return
+    if (request.routeOptions.config.auth === 'public') return
+    const user: AuthUser = {
+      sub: opts.sub,
+      cognitoUsername: 'test_custom',
+      scopes: Object.freeze([...opts.scopes]),
+    }
+    request.user = Object.freeze(user)
+  })
+  return Promise.resolve()
+}
+const customAuth = fastifyPlugin(customAuthImpl, {
+  fastify: '5.x',
+  name: 'mythrun-test-custom-auth',
+})
+
+async function buildCustomAuthApp(
+  pool: Pool,
+  redis: Redis,
+  queueSpy: QueueSpy,
+  authOpts: { readonly sub: string; readonly scopes: readonly string[] },
+): Promise<FastifyInstance> {
+  globalThis.fetch = (): Promise<Response> => Promise.reject(new Error('ECONNREFUSED'))
+  const app = Fastify({ logger: false, trustProxy: 1 })
+  await app.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' })
+  await app.register(customAuth, authOpts)
   await app.register(requireOnboarded, { pool })
   await app.register(campaignsRoutes, {
     pool,
@@ -821,6 +879,173 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       expect(body.code).toBe('queue_full')
       expect(res.headers['retry-after']).toBe('60')
       expect(runInputGateMock).not.toHaveBeenCalled()
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // myth-exac T21 — devBypassAccessFilter field gate + persistence
+  // -----------------------------------------------------------------------
+
+  describe('POST /api/campaigns devBypassAccessFilter — myth-exac', () => {
+    it('201 with devBypassAccessFilter:true under bypass-auth + dev env persists the flag', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+        payload: {
+          world: {
+            kind: 'new',
+            source: {
+              mode: 'freeform',
+              concept: 'A long enough concept string to clear the Zod bound trivially.',
+            },
+          },
+          devBypassAccessFilter: true,
+        },
+      })
+      expect(res.statusCode).toBe(201)
+      const body = res.json<{ campaignId: string }>()
+
+      const worlds = await pool.query<{ dev_bypass_access_filter: boolean }>(
+        `SELECT dev_bypass_access_filter FROM worlds
+         WHERE id = (SELECT world_id FROM campaigns WHERE id = $1)`,
+        [body.campaignId],
+      )
+      expect(worlds.rows[0]?.dev_bypass_access_filter).toBe(true)
+
+      // The debit + owner row + enqueue still happen — bypass only widens
+      // the access projection, it does NOT short-circuit the create flow.
+      const ledger = await pool.query<{ amount: string }>(
+        `SELECT amount::text AS amount FROM credit_ledger
+         WHERE user_id = $1 AND source_type = 'debit'`,
+        [userId],
+      )
+      expect(ledger.rows).toHaveLength(1)
+      expect(Number(ledger.rows[0]?.amount)).toBe(-1)
+    })
+
+    it('400 bypass_not_permitted under non-bypass auth (scopes=[])', async () => {
+      // Custom auth attaches scopes=[] (no 'bypass') while NODE_ENV stays
+      // 'test'. The gate's first conjunct fails.
+      await app.close()
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      app = await buildCustomAuthApp(pool, redis, queueSpy, {
+        sub: devSub,
+        scopes: [],
+      })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json' },
+        payload: {
+          world: {
+            kind: 'new',
+            source: {
+              mode: 'freeform',
+              concept: 'A long enough concept string to clear the Zod bound trivially.',
+            },
+          },
+          devBypassAccessFilter: true,
+        },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toEqual({ code: 'bypass_not_permitted' })
+
+      // Nothing got persisted — gate fires BEFORE the credit peek / INSERT.
+      const worlds = await pool.query(`SELECT id FROM worlds WHERE created_by = $1`, [userId])
+      expect(worlds.rows).toHaveLength(0)
+    })
+
+    it('400 bypass_not_permitted under bypass-auth + prod env', async () => {
+      // The route gate's second conjunct: NODE_ENV ∈ {development,test}.
+      // The real bypass plugin would reject NODE_ENV='production' at
+      // request time (Layer 2a re-check), so we use a custom auth plugin
+      // that fabricates scopes=['bypass'] without that layer — exactly the
+      // misconfigured-deploy scenario the route's NODE_ENV check defends
+      // against.
+      await app.close()
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+      app = await buildCustomAuthApp(pool, redis, queueSpy, {
+        sub: devSub,
+        scopes: ['bypass'],
+      })
+      vi.stubEnv('NODE_ENV', 'production')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json' },
+        payload: {
+          world: {
+            kind: 'new',
+            source: {
+              mode: 'freeform',
+              concept: 'A long enough concept string to clear the Zod bound trivially.',
+            },
+          },
+          devBypassAccessFilter: true,
+        },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toEqual({ code: 'bypass_not_permitted' })
+    })
+
+    it('201 with devBypassAccessFilter omitted → column defaults to false', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+        payload: {
+          world: {
+            kind: 'new',
+            source: {
+              mode: 'freeform',
+              concept: 'A long enough concept string to clear the Zod bound trivially.',
+            },
+          },
+        },
+      })
+      expect(res.statusCode).toBe(201)
+      const body = res.json<{ campaignId: string }>()
+
+      const worlds = await pool.query<{ dev_bypass_access_filter: boolean }>(
+        `SELECT dev_bypass_access_filter FROM worlds
+         WHERE id = (SELECT world_id FROM campaigns WHERE id = $1)`,
+        [body.campaignId],
+      )
+      expect(worlds.rows[0]?.dev_bypass_access_filter).toBe(false)
+    })
+
+    it('201 with devBypassAccessFilter:false → column persisted as false', async () => {
+      // Explicit false should behave the same as omitted (gate is a `=== true`
+      // check, so false skips it entirely).
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+        payload: {
+          world: {
+            kind: 'new',
+            source: {
+              mode: 'freeform',
+              concept: 'A long enough concept string to clear the Zod bound trivially.',
+            },
+          },
+          devBypassAccessFilter: false,
+        },
+      })
+      expect(res.statusCode).toBe(201)
+      const body = res.json<{ campaignId: string }>()
+      const worlds = await pool.query<{ dev_bypass_access_filter: boolean }>(
+        `SELECT dev_bypass_access_filter FROM worlds
+         WHERE id = (SELECT world_id FROM campaigns WHERE id = $1)`,
+        [body.campaignId],
+      )
+      expect(worlds.rows[0]?.dev_bypass_access_filter).toBe(false)
     })
   })
 

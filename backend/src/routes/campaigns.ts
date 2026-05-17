@@ -120,6 +120,12 @@ const CreateCampaignBodySchema = z.object({
       ]),
     }),
   ]),
+  // myth-exac T21: dev-tool opt-in for the world's persisted bypass flag.
+  // Gated server-side to {bypass-auth} ∩ {NODE_ENV ∈ {development,test}};
+  // production callers cannot set this. When true the world's snapshot
+  // endpoint widens to include discoverable + secret tiers (still
+  // intersected with a per-request bypass-scope check at read time).
+  devBypassAccessFilter: z.boolean().optional(),
 })
 
 type CreateCampaignBody = z.infer<typeof CreateCampaignBodySchema>
@@ -353,6 +359,24 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       const body = parsed.data
       const dbUser = requireDbUser(request)
 
+      // myth-exac T21: gate the dev-bypass field to bypass-auth + dev/test
+      // env. Production callers never carry the 'bypass' scope (the bypass
+      // plugin doesn't load in NODE_ENV=production), and the NODE_ENV check
+      // is defense-in-depth in case a misconfigured deploy ever inherits a
+      // bypass-attached token. Either layer alone would suffice; the AND
+      // matches the per-request defense-in-depth shape used by the
+      // world-snapshot read at line 544.
+      if (body.devBypassAccessFilter === true) {
+        const authUser = requireUser(request)
+        const isBypassAuth = authUser.scopes.includes('bypass')
+        const nodeEnv = process.env.NODE_ENV
+        const isDevEnv = nodeEnv === 'development' || nodeEnv === 'test'
+        if (!isBypassAuth || !isDevEnv) {
+          return reply.code(400).send({ code: 'bypass_not_permitted' })
+        }
+      }
+      const devBypassAccessFilter = body.devBypassAccessFilter ?? false
+
       // Step 2b: concurrent-generation guard.
       const inFlight = await opts.pool.query<{ id: string }>(
         `SELECT campaigns.id FROM campaigns
@@ -415,6 +439,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         txResult = await executeCreateTransaction(opts.pool, {
           userId: dbUser.id,
           concept,
+          devBypassAccessFilter,
         })
         /* c8 ignore start — v8 branch-coverage quirk on the catch-arm
          * if-block closing brace; both truthy (403) and falsy (rethrow
@@ -429,6 +454,21 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         throw err
       }
       /* c8 ignore stop */
+
+      // myth-exac T21: audit-log dev-bypass opt-in for every world it
+      // applies to. Logged AFTER the insert commits so the line implies a
+      // persisted state (a 5xx between commit and log would still leave the
+      // flag on the world; an absent log line means the row didn't land).
+      if (devBypassAccessFilter) {
+        request.log.info(
+          {
+            event: 'world.dev_bypass_access_filter.enabled',
+            campaignId: txResult.campaignId,
+            userId: dbUser.id,
+          },
+          'dev-mode access tier bypass enabled for new world',
+        )
+      }
 
       // Step 6: reset rejection-storm counter — user produced a passing
       // concept, so the slate is clean.
@@ -884,7 +924,7 @@ async function handleGateRejection(args: {
  */
 async function executeCreateTransaction(
   pool: Pool,
-  args: { userId: string; concept: string },
+  args: { userId: string; concept: string; devBypassAccessFilter: boolean },
 ): Promise<{ campaignId: string; worldId: string }> {
   const client = await pool.connect()
   try {
@@ -912,10 +952,15 @@ async function executeCreateTransaction(
     // LLM-synthesized name on completion (see stages/concept-intake.ts).
     // Users can subsequently PATCH /api/campaigns/:campaignId/name to
     // rename their campaign.
+    //
+    // myth-exac T21: dev_bypass_access_filter is always passed (false-by-
+    // default at the route handler) rather than relying on the migration's
+    // column default — keeps the INSERT shape deterministic and the
+    // route→DB contract auditable from a single line.
     await client.query(
-      `INSERT INTO worlds (id, created_by, name, concept, status)
-       VALUES ($1, $2, 'Untitled', $3, 'generating')`,
-      [worldId, args.userId, args.concept],
+      `INSERT INTO worlds (id, created_by, name, concept, status, dev_bypass_access_filter)
+       VALUES ($1, $2, 'Untitled', $3, 'generating', $4)`,
+      [worldId, args.userId, args.concept, args.devBypassAccessFilter],
     )
     await client.query(
       `INSERT INTO campaigns (id, world_id, created_by, name, status)
