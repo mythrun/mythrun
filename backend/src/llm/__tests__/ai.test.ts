@@ -17,6 +17,7 @@ import { z } from 'zod'
 import { LlmStructuredOutputError } from '../errors.js'
 import { logger } from '../logger.js'
 import { HAIKU, SONNET } from '../models.js'
+import type { LlmCallDiagnostic } from '../ai.js'
 
 vi.mock('ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ai')>()
@@ -294,6 +295,115 @@ describe('generateObject', () => {
     })
   })
 
+  // myth-t1qz Phase 4: the wrapper attaches a `.diagnostic` field to the
+  // rethrown LlmStructuredOutputError so downstream consumers (the world-gen
+  // processor's sanitizeError + stage-failed event) can surface call-site,
+  // raw text, and Zod issues without parsing pino logs.
+  it('attaches .diagnostic to rethrown error on terminal repair failure', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const originalErr = makeStructuredError('{"name":"this-name-is-way-too-long"}')
+    mockGenerateText.mockRejectedValueOnce(originalErr)
+    // Sonnet repair: still Zod-invalid.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'still-too-long-x' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/diagnostic-attached',
+        schemaName: 'TestSchema',
+        repairStrategy: 'sonnet',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(originalErr)
+    const diag = (caught as { diagnostic?: LlmCallDiagnostic }).diagnostic
+    expect(diag).toBeDefined()
+    expect(diag?.callSite).toBe('test/diagnostic-attached')
+    expect(diag?.schemaName).toBe('TestSchema')
+    expect(diag?.repairStrategy).toBe('sonnet')
+    expect(diag?.repairAttempted).toBe(true)
+    expect(diag?.repairOutcome).toBe('sonnet_failed')
+    expect(diag?.rawTextSnippet).toBe('{"name":"this-name-is-way-too-long"}')
+    expect(diag?.zodIssues).not.toBeNull()
+    expect(diag?.zodIssues?.length ?? 0).toBeGreaterThan(0)
+    expect(diag?.zodIssues?.[0]).toMatchObject({
+      path: expect.any(String) as unknown,
+      message: expect.any(String) as unknown,
+    })
+  })
+
+  it('attaches .diagnostic with repairAttempted=false + outcome=parse_failed when rawText is non-JSON', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const originalErr = makeStructuredError('not json at all { broken')
+    mockGenerateText.mockRejectedValueOnce(originalErr)
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/diagnostic-parse-failed',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(originalErr)
+    const diag = (caught as { diagnostic?: LlmCallDiagnostic }).diagnostic
+    expect(diag?.repairAttempted).toBe(false)
+    expect(diag?.repairOutcome).toBe('parse_failed')
+    expect(diag?.rawTextSnippet).toBe('not json at all { broken')
+    expect(diag?.zodIssues).toBeNull()
+  })
+
+  it('attaches .diagnostic with rawTextSnippet=null when rawText is undefined', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const originalErr = makeStructuredError(undefined)
+    mockGenerateText.mockRejectedValueOnce(originalErr)
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/diagnostic-no-raw-text',
+      })
+    } catch (err) {
+      caught = err
+    }
+    const diag = (caught as { diagnostic?: LlmCallDiagnostic }).diagnostic
+    expect(diag?.repairAttempted).toBe(false)
+    expect(diag?.repairOutcome).toBe('none')
+    expect(diag?.rawTextSnippet).toBeNull()
+    expect(diag?.zodIssues).toBeNull()
+  })
+
+  it('does NOT attach .diagnostic to non-LlmStructuredOutputError', async () => {
+    const unrelated = new Error('something else entirely')
+    mockGenerateText.mockRejectedValueOnce(unrelated)
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/diagnostic-unrelated',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(unrelated)
+    expect((caught as { diagnostic?: unknown }).diagnostic).toBeUndefined()
+  })
+
   it('rawText is undefined: WARN log + rethrow original error (no repair attempted)', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
     const originalErr = makeStructuredError(undefined)
@@ -540,6 +650,44 @@ describe('streamObject', () => {
     expect(finalObj).toEqual({ name: 'Liam' })
     // No follow-up generateText repair call — SDK-overzealous arm is enough.
     expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
+  it('streaming: attaches .diagnostic to rethrown error on terminal repair failure', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const objErr = makeStructuredError('{"name":"this-name-is-far-too-long-for-zod"}')
+    mockStreamObject.mockReturnValueOnce(
+      fakeStreamResult<TestShape>({
+        final: { name: 'partial' },
+        objectError: objErr,
+      }),
+    )
+    // Sonnet repair returns still-invalid Zod output.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'still-too-long-x' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    const result = streamObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'name something',
+      callSite: 'test/stream-diagnostic',
+      schemaName: 'TestSchema',
+    })
+
+    let caught: unknown
+    try {
+      await result.object
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(objErr)
+    const diag = (caught as { diagnostic?: LlmCallDiagnostic }).diagnostic
+    expect(diag).toBeDefined()
+    expect(diag?.callSite).toBe('test/stream-diagnostic')
+    expect(diag?.schemaName).toBe('TestSchema')
+    expect(diag?.repairOutcome).toBe('sonnet_failed')
+    expect(diag?.rawTextSnippet).toBe('{"name":"this-name-is-far-too-long-for-zod"}')
   })
 
   it('streaming: object rejects with non-LlmStructuredOutputError → passthrough', async () => {

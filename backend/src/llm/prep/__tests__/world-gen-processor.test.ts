@@ -477,6 +477,56 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   })
 
   // ------------------------------------------------------------------
+  // myth-t1qz Phase 4: diagnostic propagates through pipeline_runs.error
+  // and the stage-failed SSE event payload when an LLM call's wrapper
+  // attaches `.diagnostic` to the rethrown error.
+  // ------------------------------------------------------------------
+  it('propagates wrapper diagnostic into pipeline_runs.error and stage-failed event', async () => {
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    const wrapperErr: Error & { diagnostic?: unknown } = new Error(
+      'llm returned unparseable structured output',
+    )
+    wrapperErr.diagnostic = {
+      callSite: 'concept-intake/generator',
+      schemaName: 'ConceptIntakeSchema',
+      modelId: 'claude-sonnet-4-6',
+      repairStrategy: 'sonnet',
+      repairAttempted: true,
+      repairOutcome: 'sonnet_failed',
+      rawTextSnippet: '{"partial":"output"}',
+      zodIssues: [{ path: 'tone', message: 'Required' }],
+    }
+    vi.mocked(ai.generateText).mockRejectedValueOnce(wrapperErr)
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await expect(proc(makeJob(campaignId))).rejects.toBe(wrapperErr)
+
+    const row = await pool.query<{ error: string | null }>(
+      `SELECT error FROM pipeline_runs
+        WHERE world_id = $1 AND stage = 'concept_intake'`,
+      [worldId],
+    )
+    const errorJson = row.rows[0]?.error ?? ''
+    expect(errorJson).toContain('diagnostic')
+    expect(errorJson).toContain('concept-intake/generator')
+    expect(errorJson).toContain('sonnet_failed')
+    expect(errorJson.length).toBeLessThanOrEqual(2048)
+
+    const stageFailedPayloads = deps.publishSpy.mock.calls
+      .map((c) => String(c[1]))
+      .filter((s) => s.includes('"stage-failed"'))
+    expect(stageFailedPayloads).toHaveLength(1)
+    const parsed = JSON.parse(stageFailedPayloads[0] ?? '{}') as {
+      type: string
+      diagnostic?: { callSite?: string; repairOutcome?: string }
+    }
+    expect(parsed.diagnostic).toBeDefined()
+    expect(parsed.diagnostic?.callSite).toBe('concept-intake/generator')
+    expect(parsed.diagnostic?.repairOutcome).toBe('sonnet_failed')
+  })
+
+  // ------------------------------------------------------------------
   // 6. Atomic claim — two concurrent runs invoke the generator once total
   // ------------------------------------------------------------------
   it('atomic claim prevents two workers from running the same stage', async () => {
@@ -666,5 +716,59 @@ describe('sanitizeError', () => {
 
   it('handles non-Error throwables', () => {
     expect(sanitizeError('a string')).toEqual({ code: 'stage_failed', message: 'unknown error' })
+  })
+
+  // myth-t1qz Phase 4: when the wrapper attaches a `.diagnostic` field to a
+  // rethrown LlmStructuredOutputError, sanitizeError surfaces it onto the
+  // SanitizedError payload so it propagates into pipeline_runs.error JSON
+  // and the stage-failed SSE event.
+  it('surfaces wrapper-attached .diagnostic onto the sanitized payload', () => {
+    const err = new Error('llm returned unparseable structured output')
+    ;(err as { diagnostic?: unknown }).diagnostic = {
+      callSite: 'paint-job-validator/judge',
+      schemaName: 'PaintJobJudgeSchema',
+      modelId: 'claude-sonnet-4-6',
+      repairStrategy: 'sonnet',
+      repairAttempted: true,
+      repairOutcome: 'sonnet_failed',
+      rawTextSnippet: '{"flagged":"yes-but-wrong-type"}',
+      zodIssues: [{ path: 'flagged', message: 'Expected boolean, received string' }],
+    }
+    const out = sanitizeError(err)
+    expect(out.diagnostic).toBeDefined()
+    expect(out.diagnostic?.callSite).toBe('paint-job-validator/judge')
+    expect(out.diagnostic?.repairOutcome).toBe('sonnet_failed')
+    expect(out.diagnostic?.zodIssues?.[0]).toEqual({
+      path: 'flagged',
+      message: 'Expected boolean, received string',
+    })
+  })
+
+  it('rejects a malformed .diagnostic (drops the field entirely)', () => {
+    const err = new Error('something')
+    // Missing required fields — should NOT propagate.
+    ;(err as { diagnostic?: unknown }).diagnostic = { callSite: 'x' }
+    const out = sanitizeError(err)
+    expect(out.diagnostic).toBeUndefined()
+  })
+
+  it('truncates rawTextSnippet to fit the 2KB error JSON cap', () => {
+    const oversized = 'x'.repeat(4096)
+    const err = new Error('boom')
+    ;(err as { diagnostic?: unknown }).diagnostic = {
+      callSite: 'huge/snippet',
+      schemaName: 'BigSchema',
+      modelId: 'claude-sonnet-4-6',
+      repairStrategy: 'sonnet',
+      repairAttempted: true,
+      repairOutcome: 'sonnet_failed',
+      rawTextSnippet: oversized,
+      zodIssues: null,
+    }
+    const out = sanitizeError(err)
+    const json = JSON.stringify(out)
+    expect(json.length).toBeLessThanOrEqual(2048)
+    expect(out.diagnostic?.rawTextSnippet).toBeDefined()
+    expect((out.diagnostic?.rawTextSnippet ?? '').length).toBeLessThan(oversized.length)
   })
 })

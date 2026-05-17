@@ -33,6 +33,8 @@ import type { Job } from 'bullmq'
 import type { Pool, PoolClient } from 'pg'
 import type { Redis } from 'ioredis'
 import type pino from 'pino'
+import { z } from 'zod'
+import type { LlmCallDiagnostic } from '../ai.js'
 import { issueCostCapRefund, readCostCap, sumCompletedStageCosts } from './cost-cap.js'
 import { runConceptIntakeStage } from './stages/concept-intake.js'
 import { runStartingSituationStage } from './stages/starting-situation.js'
@@ -667,6 +669,22 @@ async function handleStageError(
 ): Promise<'stop' | 'rethrow'> {
   const sanitized = sanitizeError(err)
   const errorJson = JSON.stringify(sanitized)
+  // myth-t1qz Phase 4: surface the structured diagnostic at the processor
+  // boundary in addition to the wrapper's own pino log. The wrapper logs
+  // the same struct earlier in the call chain; this line ties it to the
+  // stage + world context so a single `grep world_gen.stage_failed` from
+  // worker logs returns one row with everything needed.
+  deps.logger.warn(
+    {
+      event: 'world_gen.stage_failed',
+      stage,
+      worldId: ctx.world.id,
+      campaignId: ctx.campaign.id,
+      errorCode: sanitized.code,
+      diagnostic: sanitized.diagnostic,
+    },
+    'stage failed with diagnostic detail',
+  )
   await markStageFailed(deps.pool, ctx.world.id, stage, errorJson)
   const isNotImplemented = err instanceof StageNotImplementedError
   await publishEvent(deps, ctx.campaign.id, {
@@ -675,6 +693,7 @@ async function handleStageError(
     userId: null,
     errorCode: sanitized.code,
     willRetry: !isNotImplemented,
+    ...(sanitized.diagnostic !== undefined ? { diagnostic: sanitized.diagnostic } : {}),
   })
   if (isNotImplemented) {
     // Terminal expected stop — flip worlds.status to 'failed' so the
@@ -715,15 +734,77 @@ async function publishEvent(
   await deps.redisRealtime.publish(channel, JSON.stringify(payload))
 }
 
-interface SanitizedError {
+export interface SanitizedError {
   readonly code: string
   readonly message: string
+  // myth-t1qz Phase 4: present when the underlying error was an
+  // LlmStructuredOutputError that passed through the wrapper and got a
+  // `.diagnostic` attached. Absent for non-LLM stage failures (DB errors,
+  // cost-cap, stage-not-implemented) and for LLM errors that bypassed the
+  // wrapper (Phase 3's lint rule forbids those in product code).
+  readonly diagnostic?: LlmCallDiagnostic
 }
 
-// Strict allowlist — only `code` (typed) and a length-capped `message` survive
-// the boundary. Raw provider error chains (`err.cause`, `err.stack`, response
-// objects with embedded API keys / connection strings) are dropped.
+// Total error JSON cap for pipeline_runs.error. Production rows are
+// inspected in dev tools + grep'd; a hard 2KB ceiling keeps the column
+// from being abused as a log surface. The raw-text snippet is the only
+// field that can plausibly hit this; everything else is bounded by call-
+// site + schema-name length.
+const MAX_ERROR_JSON_BYTES = 2048
+
+// Strict Zod shape for the wrapper-attached `.diagnostic` field. We
+// duck-type the unknown payload and only accept it if it matches; a
+// partial / malformed diagnostic is dropped silently rather than
+// propagated as a half-typed object.
+const DiagnosticSchema = z.object({
+  callSite: z.string(),
+  schemaName: z.string(),
+  modelId: z.string(),
+  repairStrategy: z.enum(['sonnet', 'haiku-then-sonnet']),
+  repairAttempted: z.boolean(),
+  repairOutcome: z.enum([
+    'recovered',
+    'sdk_validated_but_zod_failed',
+    'repaired_by_haiku',
+    'repaired_by_sonnet',
+    'parse_failed',
+    'haiku_failed',
+    'sonnet_failed',
+    'none',
+  ]),
+  rawTextSnippet: z.string().nullable(),
+  zodIssues: z
+    .array(z.object({ path: z.string(), message: z.string() }))
+    .nullable(),
+})
+
+function extractDiagnostic(err: unknown): LlmCallDiagnostic | undefined {
+  if (err === null || typeof err !== 'object') return undefined
+  const raw = (err as { diagnostic?: unknown }).diagnostic
+  if (raw === undefined) return undefined
+  const parsed = DiagnosticSchema.safeParse(raw)
+  if (!parsed.success) return undefined
+  return parsed.data
+}
+
+// Strict allowlist — only `code` (typed), a length-capped `message`, and
+// the wrapper-attached LlmCallDiagnostic (when present + well-shaped)
+// survive the boundary. Raw provider error chains (`err.cause`,
+// `err.stack`, response objects with embedded API keys / connection
+// strings) are dropped.
+//
+// Total JSON length is capped at MAX_ERROR_JSON_BYTES. If a diagnostic's
+// rawTextSnippet would push past the cap, it is truncated further (the
+// other diagnostic fields are bounded structural strings; the snippet is
+// the only one that can grow).
 export function sanitizeError(err: unknown): SanitizedError {
+  const base = sanitizeErrorBase(err)
+  const diagnostic = extractDiagnostic(err)
+  if (diagnostic === undefined) return base
+  return capErrorJsonSize({ ...base, diagnostic })
+}
+
+function sanitizeErrorBase(err: unknown): SanitizedError {
   if (err instanceof StageNotImplementedError) {
     return { code: err.code, message: `stage ${err.stage} not implemented` }
   }
@@ -734,4 +815,48 @@ export function sanitizeError(err: unknown): SanitizedError {
     return { code, message }
   }
   return { code: 'stage_failed', message: 'unknown error' }
+}
+
+function capErrorJsonSize(sanitized: SanitizedError): SanitizedError {
+  let working = sanitized
+  let encoded = JSON.stringify(working)
+  if (encoded.length <= MAX_ERROR_JSON_BYTES) return working
+
+  // Truncate rawTextSnippet to fit. Compute overflow + leave headroom for
+  // the JSON-escape overhead (quotes, escapes) by stepping back a few
+  // extra bytes.
+  const diag = working.diagnostic
+  if (diag !== undefined && diag.rawTextSnippet !== null) {
+    const overflow = encoded.length - MAX_ERROR_JSON_BYTES
+    const newLen = Math.max(0, diag.rawTextSnippet.length - overflow - 16)
+    working = {
+      ...working,
+      diagnostic: { ...diag, rawTextSnippet: diag.rawTextSnippet.slice(0, newLen) },
+    }
+    encoded = JSON.stringify(working)
+  }
+
+  // Defensive final clamp: if zodIssues / other fields still push past
+  // the cap, drop zodIssues entirely. The rawTextSnippet truncation pass
+  // above always succeeds in practice because rawTextSnippet is already
+  // snippet()'d to ≤2048 by the wrapper. Reached only when the structural
+  // overhead (code + message + diagnostic envelope) is itself unusual.
+  /* c8 ignore start */
+  if (encoded.length > MAX_ERROR_JSON_BYTES && working.diagnostic !== undefined) {
+    working = { ...working, diagnostic: { ...working.diagnostic, zodIssues: null } }
+    encoded = JSON.stringify(working)
+  }
+  /* c8 ignore stop */
+
+  /* c8 ignore start — last-resort drop of the entire diagnostic field if
+   * the bounded structural fields STILL push past 2KB. In practice the
+   * truncation passes above always succeed because rawTextSnippet is
+   * already snippet()'d to ≤2048 by the wrapper, and the structural
+   * fields fit in <512 bytes. Defensive against a future caller stuffing
+   * a multi-KB callSite or schemaName. */
+  if (encoded.length > MAX_ERROR_JSON_BYTES) {
+    working = { code: working.code, message: working.message }
+  }
+  /* c8 ignore stop */
+  return working
 }

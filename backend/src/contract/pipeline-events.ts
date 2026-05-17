@@ -12,6 +12,14 @@
 // added during MYT-52 design review to handle repair-chain removals +
 // coherence delete_relationship semantics consistently with the
 // "client never sees entities disappear" invariant.
+//
+// myth-t1qz Phase 4: stage-failed gains an OPTIONAL `diagnostic` field
+// carrying the wrapper-attached `LlmCallDiagnostic` (call site, schema,
+// model, repair outcome, raw-text snippet, Zod issues). Non-LLM failures
+// (DB errors, cost-cap, stage-not-implemented) won't have one. The
+// `LlmCallDiagnostic` shape is owned by backend/src/llm/ai.ts; we mirror
+// it as a structural type here to avoid an import cycle from the
+// contract layer into llm/.
 
 export const PIPELINE_SSE_EVENTS: readonly string[] = [
   // Lifecycle (MYT-50 — landed):
@@ -32,6 +40,30 @@ export const PIPELINE_SSE_EVENTS: readonly string[] = [
 ] as const
 
 export type PipelineSseEvent = (typeof PIPELINE_SSE_EVENTS)[number]
+
+// Mirror of WrapperDiagnostic from backend/src/llm/ai.ts. Kept structurally
+// identical so the canonical type can be re-aliased there as
+// `LlmCallDiagnostic = PipelineStageDiagnostic`. The contract layer
+// deliberately doesn't import from llm/ to avoid pulling SDK + Anthropic
+// transitively into the wire-format module.
+export interface PipelineStageDiagnostic {
+  readonly callSite: string
+  readonly schemaName: string
+  readonly modelId: string
+  readonly repairStrategy: 'sonnet' | 'haiku-then-sonnet'
+  readonly repairAttempted: boolean
+  readonly repairOutcome:
+    | 'recovered'
+    | 'sdk_validated_but_zod_failed'
+    | 'repaired_by_haiku'
+    | 'repaired_by_sonnet'
+    | 'parse_failed'
+    | 'haiku_failed'
+    | 'sonnet_failed'
+    | 'none'
+  readonly rawTextSnippet: string | null
+  readonly zodIssues: readonly { readonly path: string; readonly message: string }[] | null
+}
 
 export type PipelinePhase =
   | 'not_started'
@@ -63,6 +95,11 @@ export type PipelineEvent =
       userId: string | null
       errorCode: string
       willRetry: boolean
+      // myth-t1qz Phase 4: optional wrapper diagnostic. Present when the
+      // failure originated from a schema-validated LLM call where the
+      // wrapper attached `.diagnostic` to the rethrown error; absent for
+      // non-LLM stage failures (DB errors, cost-cap, stage-not-implemented).
+      diagnostic?: PipelineStageDiagnostic
     }
   // cost-update is ABSOLUTE (not delta); emitted only post-COMMIT.
   | { type: 'cost-update'; cumulativeUsd: number }

@@ -80,6 +80,39 @@ const VALID_STAGES = new Set<WorldGenStage>([
 
 export type RepairStrategy = 'sonnet' | 'haiku-then-sonnet'
 
+/**
+ * myth-t1qz Phase 4: the diagnostic payload the wrapper attaches to a
+ * rethrown `LlmStructuredOutputError`. Same shape as the structured pino
+ * binding the wrapper emits at WARN — exposed via `error.diagnostic` so
+ * downstream consumers (world-gen-processor → `sanitizeError` →
+ * pipeline_runs.error + stage-failed SSE event) can surface call-site,
+ * raw text, and Zod issues without parsing log lines.
+ *
+ * Absent on:
+ *   - non-LLM errors (DB / cost-cap / stage-not-implemented)
+ *   - LlmStructuredOutputError instances that didn't pass through the
+ *     wrapper (legacy direct `from 'ai'` callers — Phase 3's lint rule
+ *     forbids these in product code).
+ */
+export interface LlmCallDiagnostic {
+  readonly callSite: string
+  readonly schemaName: string
+  readonly modelId: string
+  readonly repairStrategy: RepairStrategy
+  readonly repairAttempted: boolean
+  readonly repairOutcome:
+    | 'recovered'
+    | 'sdk_validated_but_zod_failed'
+    | 'repaired_by_haiku'
+    | 'repaired_by_sonnet'
+    | 'parse_failed'
+    | 'haiku_failed'
+    | 'sonnet_failed'
+    | 'none'
+  readonly rawTextSnippet: string | null
+  readonly zodIssues: readonly { readonly path: string; readonly message: string }[] | null
+}
+
 export interface GenerateObjectOpts<T> {
   readonly model: LanguageModel
   readonly schema: z.ZodType<T>
@@ -388,6 +421,43 @@ function logRepair<T>(
   logger[level](bindings, msg)
 }
 
+// myth-t1qz Phase 4: build a downstream-visible diagnostic struct from
+// the same repair-context + attempt shape that `logRepair` consumes.
+// `repairAttempted` is true whenever a repair model call was actually
+// dispatched — i.e., the parse succeeded but Zod rejected, regardless of
+// the final outcome. The `sdk_validated_but_zod_failed`,
+// `repaired_by_haiku`, and `repaired_by_sonnet` arms are non-terminal
+// (caller doesn't reach the attachDiagnostic path), so we don't have to
+// special-case them here — the wrapper only attaches on terminal rethrow.
+function buildDiagnostic<T>(
+  ctx: RepairContext<T>,
+  attempt: RepairAttempt<T>,
+): LlmCallDiagnostic {
+  const repairAttempted =
+    attempt.outcome === 'haiku_failed' ||
+    attempt.outcome === 'sonnet_failed'
+  return {
+    callSite: ctx.callSite,
+    schemaName: ctx.schemaName,
+    modelId: modelLabel(ctx.model),
+    repairStrategy: ctx.repairStrategy,
+    repairAttempted,
+    repairOutcome: attempt.outcome,
+    rawTextSnippet: attempt.rawTextSnippet ?? null,
+    zodIssues:
+      attempt.zodIssues === undefined
+        ? null
+        : attempt.zodIssues.map((issue) => ({
+            path: issue.path.map((p) => String(p)).join('.'),
+            message: issue.message,
+          })),
+  }
+}
+
+function attachDiagnostic(err: Error, diagnostic: LlmCallDiagnostic): void {
+  ;(err as { diagnostic?: LlmCallDiagnostic }).diagnostic = diagnostic
+}
+
 /**
  * Schema-validated `generateText` replacement. Returns the SDK output, the
  * SDK usage, and a `repairAttempted` flag indicating whether the fallback
@@ -443,6 +513,7 @@ export async function generateObject<T>(
       }
     }
     logRepair(ctx, attempt, 'warn')
+    attachDiagnostic(err, buildDiagnostic(ctx, attempt))
     throw err
   }
 }
@@ -499,6 +570,7 @@ export function streamObject<T>(
         return attempt.result.output
       }
       logRepair(ctx, attempt, 'warn')
+      attachDiagnostic(err, buildDiagnostic(ctx, attempt))
       throw err
     },
   )
