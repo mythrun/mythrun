@@ -68,6 +68,44 @@ export default tseslint.config(
       '@typescript-eslint/no-non-null-assertion': 'error',
       'mythrun/no-stripe-price-mutations': 'error',
       'mythrun/no-stripe-subscription-price-mutation': 'error',
+      // myth-t1qz: direct 'ai' SDK imports are banned across the repo.
+      // The canonical entry point is `backend/src/llm/ai.ts` — its
+      // `generateObject` / `streamObject` wrap the SDK with repair-fallback
+      // and structured diagnostic logging on schema-mismatch failures.
+      // Allowed importers (whitelisted via per-file override below):
+      //   - backend/src/llm/ai.ts (the wrapper itself)
+      //   - backend/src/llm/models.ts (constructs the LanguageModel; needs
+      //     `wrapLanguageModel` and would cycle through the wrapper)
+      //   - backend/src/llm/prep/structured-output-repair.ts (the repair
+      //     helper the wrapper CALLS; cannot route back through the wrapper)
+      // Test files may keep direct `vi.mock('ai', ...)` for SDK mocking.
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'ai',
+              message:
+                "Direct 'ai' imports are banned. Use backend/src/llm/ai.ts (the canonical wrapper). See myth-t1qz.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Whitelist the three files that must import 'ai' directly.
+    // The wrapper itself + the repair helper it depends on + the model
+    // constructor (wrapLanguageModel callsite). Adding new entries here
+    // requires a strong justification — the wrapper subsumes every other
+    // schema-validated call pattern.
+    files: [
+      'backend/src/llm/ai.ts',
+      'backend/src/llm/models.ts',
+      'backend/src/llm/prep/structured-output-repair.ts',
+    ],
+    rules: {
+      'no-restricted-imports': 'off',
     },
   },
   {
@@ -77,9 +115,13 @@ export default tseslint.config(
     // naturally has many lines and breaking it up purely for lint
     // compliance adds indirection without improving readability.
     // The rule still applies to production code where it carries signal.
+    //
+    // Tests may also `vi.mock('ai', ...)` and import SDK types directly
+    // for mock factories. Disable no-restricted-imports for test files.
     files: ['**/__tests__/**', '**/*.test.ts', '**/*.test.cjs', '**/*.test.mjs'],
     rules: {
       'max-lines-per-function': 'off',
+      'no-restricted-imports': 'off',
     },
   },
   eslintConfigPrettier,

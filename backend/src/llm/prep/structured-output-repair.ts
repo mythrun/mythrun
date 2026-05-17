@@ -12,7 +12,10 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-// eslint-disable-next-line no-restricted-imports -- repair helper itself, see Phase 3 lint rule
+// This file is one of three whitelisted in eslint.config.js for direct
+// 'ai' imports (the others are llm/ai.ts and llm/models.ts). Routing
+// through the wrapper here would create a cycle: wrapper's repair path
+// calls this helper, which would call the wrapper, which calls back here.
 import { generateText, Output, type LanguageModel, type LanguageModelUsage } from 'ai'
 import { z } from 'zod'
 import type { WorldGenStage } from './streaming-extractor.js'
