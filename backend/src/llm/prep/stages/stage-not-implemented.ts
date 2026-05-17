@@ -10,6 +10,9 @@
 
 export class StageNotImplementedError extends Error {
   readonly code = 'stage_not_implemented'
+  // myth-uppw: terminal — the dispatcher has no handler for this stage;
+  // re-enqueueing won't materialize one.
+  readonly terminal = true
   constructor(readonly stage: string) {
     super(`stage_not_implemented: ${stage}`)
     this.name = 'StageNotImplementedError'

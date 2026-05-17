@@ -44,6 +44,7 @@ import { runLocationsAndNpcsStage } from './stages/locations-and-npcs.js'
 import { runEntityRelationshipsStage } from './stages/entity-relationships.js'
 import { runCoherencePassStage } from './stages/coherence-pass.js'
 import { StageNotImplementedError } from './stages/stage-not-implemented.js'
+import { isTerminalError } from '../errors.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import type { PipelineEvent } from '../../contract/pipeline-events.js'
 
@@ -669,6 +670,14 @@ async function handleStageError(
 ): Promise<'stop' | 'rethrow'> {
   const sanitized = sanitizeError(err)
   const errorJson = JSON.stringify(sanitized)
+  // myth-uppw: a terminal error is one whose retry produces the same
+  // failure — content filter trips on the same prompt, paint-job
+  // exhaustion means the concept fundamentally mirrors a copyrighted
+  // work, structured-output failed after the wrapper's repair chain
+  // (Phase 1-4 of myth-t1qz), etc. These should NOT trigger a BullMQ
+  // retry. Transient errors (rate-limit, overload, timeout, generic
+  // network) keep the existing rethrow → BullMQ-retry path.
+  const terminal = isTerminalError(err)
   // myth-t1qz Phase 4: surface the structured diagnostic at the processor
   // boundary in addition to the wrapper's own pino log. The wrapper logs
   // the same struct earlier in the call chain; this line ties it to the
@@ -681,48 +690,33 @@ async function handleStageError(
       worldId: ctx.world.id,
       campaignId: ctx.campaign.id,
       errorCode: sanitized.code,
+      terminal,
       diagnostic: sanitized.diagnostic,
     },
     'stage failed with diagnostic detail',
   )
   await markStageFailed(deps.pool, ctx.world.id, stage, errorJson)
-  const isNotImplemented = err instanceof StageNotImplementedError
   await publishEvent(deps, ctx.campaign.id, {
     type: 'stage-failed',
     stage,
     userId: null,
     errorCode: sanitized.code,
-    willRetry: !isNotImplemented,
+    willRetry: !terminal,
     ...(sanitized.diagnostic !== undefined ? { diagnostic: sanitized.diagnostic } : {}),
   })
-  if (isNotImplemented) {
-    // Terminal expected stop — flip worlds.status to 'failed' so the
-    // concurrent-generation guard releases. Without this, the world
-    // sits in 'generating' forever and the user can't create another
-    // campaign. Cost-cap already does this via issueCostCapRefund; the
-    // stage-not-implemented path needs an equivalent terminal-state
-    // marker. The phase derivation will continue to read
-    // world_gen_failed from the pipeline_runs row's failed status.
-    await deps.pool.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [ctx.world.id])
-    await publishEvent(deps, ctx.campaign.id, { type: 'phase', phase: 'world_gen_failed' })
-    return 'stop'
-  }
-  // Non-NotImplemented error (LLM-upstream, structured-output, infra).
   // Eagerly flip worlds.status='failed' on EVERY error attempt — without
   // this, BullMQ's retries + the BullMQ-marked-failed terminal state both
   // leave worlds.status='generating', which the concurrent-generation
   // guard reads as "still running" and blocks the user from retrying.
-  // If the subsequent BullMQ retry succeeds, processWorldGen's per-attempt
-  // top-of-function reset flips status back to 'generating' before re-
-  // entering the stage loop. The retry path is sound; the brief 'failed'
-  // state during an in-flight retry is accurate — the previous attempt did
-  // fail.
+  // If a subsequent BullMQ retry (only on non-terminal errors) succeeds,
+  // processWorldGen's per-attempt top-of-function reset flips status back
+  // to 'generating' before re-entering the stage loop.
   //
   // Saved 2026-05-15 after campaign 019e2d99-…-af07ada8ea7a's concept_intake
   // failure left world.status='generating' indefinitely.
   await deps.pool.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [ctx.world.id])
   await publishEvent(deps, ctx.campaign.id, { type: 'phase', phase: 'world_gen_failed' })
-  return 'rethrow'
+  return terminal ? 'stop' : 'rethrow'
 }
 
 async function publishEvent(

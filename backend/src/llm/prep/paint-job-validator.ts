@@ -40,6 +40,10 @@ const MAX_ATTEMPTS = 3
 
 export class PaintJobLoopExhaustedError extends Error {
   readonly code = 'concept_intake_paint_job_loop_exhausted'
+  // myth-uppw: terminal — the concept fundamentally mirrors a copyrighted
+  // work and the judge has rejected 3 attempts at pivoting. Re-running
+  // the same prompt = same flag. User must adjust the concept text.
+  readonly terminal = true
   constructor(readonly lastJudgement: PaintJobJudgement) {
     super(
       /* c8 ignore start — `?? 'unknown'` arm fires only when the

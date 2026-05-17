@@ -527,6 +527,128 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   })
 
   // ------------------------------------------------------------------
+  // myth-uppw: terminal errors (paint-job-exhausted, content-filter,
+  // structured-output, auth, etc.) stop the BullMQ retry — proc resolves
+  // cleanly. Retryable errors (rate-limit, overload, timeout) rethrow so
+  // BullMQ's retry policy fires.
+  // ------------------------------------------------------------------
+  it('terminal LlmStructuredOutputError stops the processor (no BullMQ rethrow)', async () => {
+    const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+    // The wrapper would normally produce this after the repair chain
+    // exhausts. We synthesize it directly via the generator mock.
+    const { LlmStructuredOutputError } = await import('../../errors.js')
+    const terminalErr = new LlmStructuredOutputError('repair chain exhausted')
+    vi.mocked(ai.generateText).mockRejectedValueOnce(terminalErr)
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    // proc resolves (no rethrow) because terminal errors return 'stop'
+    // from handleStageError.
+    await expect(proc(makeJob(campaignId))).resolves.toBeUndefined()
+
+    // stage-failed event payload: willRetry must be false.
+    const stageFailed = deps.publishSpy.mock.calls
+      .map((c) => String(c[1]))
+      .filter((s) => s.includes('"stage-failed"'))
+      .map((s) => JSON.parse(s) as { willRetry?: boolean; errorCode?: string })
+    expect(stageFailed).toHaveLength(1)
+    expect(stageFailed[0]?.willRetry).toBe(false)
+    expect(stageFailed[0]?.errorCode).toBe('llm_structured_output_failed')
+
+    // worlds.status flipped to 'failed' — concurrent-gen guard releases.
+    const { rows } = await pool.query<{ status: string }>(
+      `SELECT status FROM worlds WHERE id = $1`,
+      [worldId],
+    )
+    expect(rows[0]?.status).toBe('failed')
+  })
+
+  it('terminal LlmContentFilteredError stops the processor', async () => {
+    const { campaignId } = await seedUserWorldCampaign(pool, scope)
+    const { LlmContentFilteredError } = await import('../../errors.js')
+    vi.mocked(ai.generateText).mockRejectedValueOnce(
+      new LlmContentFilteredError('content filter tripped'),
+    )
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await expect(proc(makeJob(campaignId))).resolves.toBeUndefined()
+
+    const stageFailed = deps.publishSpy.mock.calls
+      .map((c) => String(c[1]))
+      .filter((s) => s.includes('"stage-failed"'))
+      .map((s) => JSON.parse(s) as { willRetry?: boolean; errorCode?: string })
+    expect(stageFailed[0]?.willRetry).toBe(false)
+    expect(stageFailed[0]?.errorCode).toBe('llm_content_filtered')
+  })
+
+  it('terminal PaintJobLoopExhaustedError stops the processor', async () => {
+    const { campaignId } = await seedUserWorldCampaign(pool, scope)
+    // Synthesize a paint-job-exhausted error directly via the duck-typed
+    // shape that isTerminalError recognizes. We don't import the real
+    // class to keep the test focused on the predicate boundary.
+    const exhausted = Object.assign(new Error('paint-job exhausted'), {
+      code: 'concept_intake_paint_job_loop_exhausted',
+      terminal: true,
+    })
+    vi.mocked(ai.generateText).mockRejectedValueOnce(exhausted)
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await expect(proc(makeJob(campaignId))).resolves.toBeUndefined()
+
+    const stageFailed = deps.publishSpy.mock.calls
+      .map((c) => String(c[1]))
+      .filter((s) => s.includes('"stage-failed"'))
+      .map((s) => JSON.parse(s) as { willRetry?: boolean; errorCode?: string })
+    expect(stageFailed[0]?.willRetry).toBe(false)
+    expect(stageFailed[0]?.errorCode).toBe('concept_intake_paint_job_loop_exhausted')
+  })
+
+  it('retryable LlmRateLimitedError rethrows (BullMQ retries)', async () => {
+    const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+    const { LlmRateLimitedError } = await import('../../errors.js')
+    const transientErr = new LlmRateLimitedError('429 backoff')
+    vi.mocked(ai.generateText).mockRejectedValueOnce(transientErr)
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await expect(proc(makeJob(campaignId))).rejects.toBe(transientErr)
+
+    const stageFailed = deps.publishSpy.mock.calls
+      .map((c) => String(c[1]))
+      .filter((s) => s.includes('"stage-failed"'))
+      .map((s) => JSON.parse(s) as { willRetry?: boolean; errorCode?: string })
+    expect(stageFailed[0]?.willRetry).toBe(true)
+    expect(stageFailed[0]?.errorCode).toBe('llm_rate_limited')
+
+    // Eager worlds.status='failed' still fires — BullMQ's retry path resets
+    // back to 'generating' on the next attempt. See handleStageError comment.
+    const { rows } = await pool.query<{ status: string }>(
+      `SELECT status FROM worlds WHERE id = $1`,
+      [worldId],
+    )
+    expect(rows[0]?.status).toBe('failed')
+  })
+
+  it('retryable LlmOverloadedError rethrows', async () => {
+    const { campaignId } = await seedUserWorldCampaign(pool, scope)
+    const { LlmOverloadedError } = await import('../../errors.js')
+    const transientErr = new LlmOverloadedError('529 overloaded')
+    vi.mocked(ai.generateText).mockRejectedValueOnce(transientErr)
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await expect(proc(makeJob(campaignId))).rejects.toBe(transientErr)
+
+    const stageFailed = deps.publishSpy.mock.calls
+      .map((c) => String(c[1]))
+      .filter((s) => s.includes('"stage-failed"'))
+      .map((s) => JSON.parse(s) as { willRetry?: boolean })
+    expect(stageFailed[0]?.willRetry).toBe(true)
+  })
+
+  // ------------------------------------------------------------------
   // 6. Atomic claim — two concurrent runs invoke the generator once total
   // ------------------------------------------------------------------
   it('atomic claim prevents two workers from running the same stage', async () => {

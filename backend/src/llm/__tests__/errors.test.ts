@@ -15,6 +15,7 @@ import {
   LlmTimeoutError,
   LlmStructuredOutputError,
   LlmContentFilteredError,
+  isTerminalError,
   mapToMythrunError,
 } from '../errors.js'
 import { logAndNormalizeMiddleware } from '../middleware.js'
@@ -250,5 +251,76 @@ describe('content-filter mapping (LlmContentFilteredError)', () => {
         model: stubModel,
       }),
     ).rejects.toBeInstanceOf(LlmContentFilteredError)
+  })
+})
+
+// myth-uppw: each typed error carries a stable `code` (replaces the generic
+// 'stage_failed' fallback) and a `terminal` boolean used by the
+// world-gen-processor's handleStageError to decide retry-or-stop.
+describe('typed LLM errors — code + terminal classification', () => {
+  it.each([
+    ['LlmRateLimitedError', new LlmRateLimitedError('x'), 'llm_rate_limited', false],
+    ['LlmOverloadedError', new LlmOverloadedError('x'), 'llm_overloaded', false],
+    ['LlmTimeoutError', new LlmTimeoutError('x'), 'llm_timeout', false],
+    ['LlmAuthError', new LlmAuthError('x'), 'llm_auth_failed', true],
+    ['LlmInvalidRequestError', new LlmInvalidRequestError('x'), 'llm_invalid_request', true],
+    ['LlmContextTooLongError', new LlmContextTooLongError('x'), 'llm_context_too_long', true],
+    [
+      'LlmStructuredOutputError',
+      new LlmStructuredOutputError('x'),
+      'llm_structured_output_failed',
+      true,
+    ],
+    ['LlmContentFilteredError', new LlmContentFilteredError('x'), 'llm_content_filtered', true],
+  ])('%s has expected code + terminal flag', (_name, err, code, terminal) => {
+    const e = err as Error & { code?: unknown; terminal?: unknown }
+    expect(e.code).toBe(code)
+    expect(e.terminal).toBe(terminal)
+  })
+})
+
+describe('isTerminalError', () => {
+  it('returns true for errors with terminal:true', () => {
+    expect(isTerminalError(new LlmStructuredOutputError('x'))).toBe(true)
+    expect(isTerminalError(new LlmContentFilteredError('x'))).toBe(true)
+    expect(isTerminalError(new LlmAuthError('x'))).toBe(true)
+    expect(isTerminalError(new LlmContextTooLongError('x'))).toBe(true)
+    expect(isTerminalError(new LlmInvalidRequestError('x'))).toBe(true)
+  })
+
+  it('returns false for errors with terminal:false', () => {
+    expect(isTerminalError(new LlmRateLimitedError('x'))).toBe(false)
+    expect(isTerminalError(new LlmOverloadedError('x'))).toBe(false)
+    expect(isTerminalError(new LlmTimeoutError('x'))).toBe(false)
+  })
+
+  it('returns false for generic Error without terminal field', () => {
+    expect(isTerminalError(new Error('generic'))).toBe(false)
+  })
+
+  it('returns false for non-Error values (defensive)', () => {
+    expect(isTerminalError(null)).toBe(false)
+    expect(isTerminalError(undefined)).toBe(false)
+    expect(isTerminalError('string error')).toBe(false)
+    expect(isTerminalError(42)).toBe(false)
+    expect(isTerminalError({})).toBe(false)
+  })
+
+  it('returns true for duck-typed error-like objects with terminal:true', () => {
+    // Cross-module boundary or test-fixture shape — the predicate shouldn't
+    // require instanceof of every known class. PaintJobLoopExhaustedError
+    // lives in paint-job-validator.ts and is recognized via this path.
+    const ducklike = Object.assign(new Error('paint-job-exhausted'), {
+      terminal: true,
+      code: 'concept_intake_paint_job_loop_exhausted',
+    })
+    expect(isTerminalError(ducklike)).toBe(true)
+  })
+
+  it('returns false for terminal:truthy-but-not-=== true', () => {
+    // Strict equality check guards against accidental truthiness from
+    // string / number values getting through.
+    expect(isTerminalError(Object.assign(new Error('x'), { terminal: 'true' }))).toBe(false)
+    expect(isTerminalError(Object.assign(new Error('x'), { terminal: 1 }))).toBe(false)
   })
 })

@@ -1,42 +1,62 @@
 import { APICallError } from '@ai-sdk/provider'
 
+// myth-uppw: each typed error carries a stable `code` so `sanitizeError`
+// in world-gen-processor surfaces a useful identifier in pipeline_runs.error
+// and the stage-failed SSE event, rather than falling back to 'stage_failed'.
+// The TERMINAL constant on each terminal class is used by isTerminalError
+// to decide whether BullMQ should retry.
+
 export class LlmRateLimitedError extends Error {
+  readonly code = 'llm_rate_limited'
+  readonly terminal = false
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmRateLimitedError'
   }
 }
 export class LlmOverloadedError extends Error {
+  readonly code = 'llm_overloaded'
+  readonly terminal = false
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmOverloadedError'
   }
 }
 export class LlmAuthError extends Error {
+  readonly code = 'llm_auth_failed'
+  readonly terminal = true
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmAuthError'
   }
 }
 export class LlmInvalidRequestError extends Error {
+  readonly code = 'llm_invalid_request'
+  readonly terminal = true
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmInvalidRequestError'
   }
 }
 export class LlmContextTooLongError extends Error {
+  readonly code = 'llm_context_too_long'
+  readonly terminal = true
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmContextTooLongError'
   }
 }
 export class LlmTimeoutError extends Error {
+  readonly code = 'llm_timeout'
+  readonly terminal = false
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmTimeoutError'
   }
 }
 export class LlmStructuredOutputError extends Error {
+  readonly code = 'llm_structured_output_failed'
+  readonly terminal = true
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmStructuredOutputError'
@@ -53,10 +73,37 @@ export class LlmStructuredOutputError extends Error {
  * `content_filtered` (409) until the user acts.
  */
 export class LlmContentFilteredError extends Error {
+  readonly code = 'llm_content_filtered'
+  readonly terminal = true
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'LlmContentFilteredError'
   }
+}
+
+/**
+ * myth-uppw: terminal-error predicate. Returns true when the error is
+ * one whose retry produces the same outcome — the worker MUST NOT
+ * BullMQ-retry these. Returns false for transient errors (rate limit,
+ * overload, network timeout) where backoff has a chance to help, and
+ * for non-Error values (defensive — pass through to the existing
+ * 'stage_failed' generic path).
+ *
+ * Duck-typed on `.terminal` rather than instanceof so:
+ *   (a) error classes added in the future can self-declare terminal-ness
+ *       at the class definition site
+ *   (b) errors that cross module boundaries (e.g., through structured
+ *       clone in test fixtures) don't trip instanceof checks
+ *
+ * NOTE: PaintJobLoopExhaustedError lives in paint-job-validator.ts (it
+ * needs the PaintJobJudgement type) and self-declares `terminal: true`
+ * via the same convention. Don't import that class here — keep this
+ * module free of LLM-stage dependencies.
+ */
+export function isTerminalError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  const terminal = (err as { terminal?: unknown }).terminal
+  return terminal === true
 }
 
 const CONTEXT_WINDOW_RE = /context window|too long|maximum context/i
