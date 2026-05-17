@@ -31,6 +31,7 @@ import { mountUsersPanel } from './src/components/users-panel.js'
 import { mountInvitesPanel } from './src/components/invites-panel.js'
 import { mountSessionTicketPanel } from './src/components/session-ticket-panel.js'
 import { mountBillingPanel } from './src/components/billing-panel.js'
+import { mountWorldSnapshotPanel } from './src/components/world-snapshot-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
@@ -141,6 +142,17 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
       route('PATCH', '/api/campaigns/:campaignId/name'),
       route('POST', '/api/campaigns/:campaignId/resume'),
     ],
+  },
+  'world-snapshot': {
+    // Idle until a campaign is watched (via mythrun.watchcampaign) AND the
+    // pipeline crosses into world_snapshot_ready. The verifier mounts the
+    // panel against a freshly-started backend with no active watch, so the
+    // post-mount steady state is 'idle' — matching status / live-events.
+    pattern: 'event-driven',
+    mount: mountWorldSnapshotPanel,
+    readySelector: '[data-state="idle"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/world-snapshot')],
   },
   'credit-ledger': {
     pattern: 'action-only',
