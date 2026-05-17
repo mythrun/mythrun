@@ -31,7 +31,7 @@ const PaintJobJudgementSchema = z.object({
   flagged: z.boolean(),
   confidence: z.number().min(0).max(1),
   mirroredWork: z.string().nullable(),
-  specificDriftAxes: z.array(z.string().min(1).max(80)).max(8),
+  specificDriftAxes: z.array(z.string().min(1).max(400)).max(8),
 })
 export type PaintJobJudgement = z.infer<typeof PaintJobJudgementSchema>
 
