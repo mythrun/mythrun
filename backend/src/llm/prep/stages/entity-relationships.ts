@@ -26,18 +26,20 @@ import type { PoolClient } from 'pg'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { streamObject } from 'ai'
+// Routes through the canonical streaming wrapper (myth-t1qz). The
+// wrapper preserves partialObjectStream + usage + textStream and replaces
+// `object` with a repair-aware promise that runs the Haiku→Sonnet repair
+// chain on LlmStructuredOutputError from the underlying SDK call.
+import { streamObject } from '../../ai.js'
 import type { Job } from 'bullmq'
 import type { Redis } from 'ioredis'
-import { SONNET, HAIKU } from '../../models.js'
+import { SONNET } from '../../models.js'
 import { logger } from '../../logger.js'
-import { LlmStructuredOutputError } from '../../errors.js'
 import {
   EntityRelationshipsSchema,
   type EntityRelationshipsOutput,
 } from '../../schemas/entity-relationships.js'
 import { runStreamingStage } from '../streaming-extractor.js'
-import { repairStructuredOutput } from '../structured-output-repair.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
 import { entities } from '../../../repo/entities.js'
 import { relationships } from '../../../repo/relationships.js'
@@ -95,57 +97,6 @@ function buildPrompt(args: EntityRelationshipsArgs, inventory: readonly Inventor
     .replace('{{themes}}', args.themes)
     .replace('{{keyTensions}}', args.keyTensions)
     .replace('{{entityInventory}}', renderInventory(inventory))
-}
-
-async function validateOrRepair(
-  tree: unknown,
-): Promise<{ tree: EntityRelationshipsOutput; repairUsage: { inputTokens: number; outputTokens: number } }> {
-  const direct = EntityRelationshipsSchema.safeParse(tree)
-  if (direct.success) {
-    return { tree: direct.data, repairUsage: { inputTokens: 0, outputTokens: 0 } }
-  }
-
-  const haiku = await repairStructuredOutput({
-    tree,
-    schema: EntityRelationshipsSchema,
-    zodErrors: direct.error,
-    model: HAIKU,
-    stage: 'entity_relationships',
-    providerOptions: { mythrun: { stage: 'entity_relationships' } },
-  })
-  if (haiku.ok) {
-    return {
-      tree: haiku.tree,
-      repairUsage: {
-        /* c8 ignore next 2 — `?? 0` defensive: Anthropic SDK always populates usage. */
-        inputTokens: haiku.usage.inputTokens ?? 0,
-        outputTokens: haiku.usage.outputTokens ?? 0,
-      },
-    }
-  }
-
-  const sonnet = await repairStructuredOutput({
-    tree,
-    schema: EntityRelationshipsSchema,
-    zodErrors: haiku.errors,
-    model: SONNET,
-    stage: 'entity_relationships',
-    providerOptions: { mythrun: { stage: 'entity_relationships' } },
-  })
-  if (sonnet.ok) {
-    return {
-      tree: sonnet.tree,
-      repairUsage: {
-        /* c8 ignore next 4 — `?? 0` defensive on both repair attempts' usage. */
-        inputTokens: (haiku.usage.inputTokens ?? 0) + (sonnet.usage.inputTokens ?? 0),
-        outputTokens: (haiku.usage.outputTokens ?? 0) + (sonnet.usage.outputTokens ?? 0),
-      },
-    }
-  }
-
-  throw new LlmStructuredOutputError(
-    'entity_relationships: repair chain exhausted; falling back to BullMQ retry',
-  )
 }
 
 interface AcceptedRow {
@@ -250,18 +201,23 @@ export async function runEntityRelationshipsStage(
   // 2. Idempotency wipe — clear any prior stage-4 output before re-writing.
   await relationships.deleteByWorld(client, args.worldId)
 
-  // 3. Stream the relationships via Sonnet + streamObject.
+  // 3. Stream the relationships via Sonnet + streamObject. The wrapper
+  // (myth-t1qz) drives the Haiku→Sonnet repair chain inside
+  // `await stream.object` on LlmStructuredOutputError.
   const prompt = buildPrompt(args, inventory)
-  // eslint-disable-next-line @typescript-eslint/no-deprecated -- design §4.1 mandates streamObject for streaming stages
   const stream = streamObject({
     model: SONNET,
     schema: EntityRelationshipsSchema,
     prompt,
     temperature: 0.4,
     maxRetries: 0,
+    callSite: 'entity-relationships',
+    schemaName: 'EntityRelationshipsSchema',
+    repairStrategy: 'haiku-then-sonnet',
+    providerOptions: { mythrun: { stage: 'entity_relationships' } },
   })
 
-  const { finalTree } = await runStreamingStage<unknown>(stream.partialObjectStream, {
+  await runStreamingStage<unknown>(stream.partialObjectStream, {
     stage: 'entity_relationships',
     campaignId: args.campaignId,
     job: args.job,
@@ -272,11 +228,14 @@ export async function runEntityRelationshipsStage(
     endpointTierMap,
   })
 
-  // 4. Validate + repair-chain. On repair-exhausted we just throw; the
-  // outer dispatcher (`runStage` in world-gen-processor) is responsible for
-  // ROLLBACK + publishing `stage-reset` (design §7.2 + §7.3). BullMQ retry
+  // 4. The wrapper's `object` promise resolves to the validated tree (or
+  // a repaired tree when the SDK threw a structured-output error and
+  // the Haiku→Sonnet chain recovered). If the chain exhausts the wrapper
+  // rethrows the original LlmStructuredOutputError; the outer dispatcher
+  // (`runStage` in world-gen-processor) is responsible for ROLLBACK +
+  // publishing `stage-reset` (design §7.2 + §7.3). BullMQ retry
   // recreates the stage.
-  const { tree: validatedTree, repairUsage } = await validateOrRepair(finalTree)
+  const validatedTree: EntityRelationshipsOutput = await stream.object
 
   // 5. Pre-filter hallucinated UUIDs (design §D9 — never let an FK violation
   // reach Postgres).
@@ -332,12 +291,14 @@ export async function runEntityRelationshipsStage(
     })
   }
 
-  // 7. Compute cost: streamObject usage + repair-chain usage.
+  // 7. Compute cost: streamObject usage. Repair-chain usage (when fired)
+  // is folded inside the wrapper and not separately attributed here —
+  // see ai.ts header on cost-accounting boundaries.
   const streamUsage = await stream.usage
   /* c8 ignore start — `?? 0` defensive: Anthropic SDK populates usage on the
    * final usage emission; the optional-chain narrowing is defense-in-depth. */
-  const inputTokens = (streamUsage.inputTokens ?? 0) + repairUsage.inputTokens
-  const outputTokens = (streamUsage.outputTokens ?? 0) + repairUsage.outputTokens
+  const inputTokens = streamUsage.inputTokens ?? 0
+  const outputTokens = streamUsage.outputTokens ?? 0
   /* c8 ignore stop */
   return {
     costUsd: computeCostUsd({ inputTokens, outputTokens }),

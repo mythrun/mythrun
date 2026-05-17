@@ -13,7 +13,7 @@ import type { PoolClient } from 'pg'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { generateText, Output } from 'ai'
+import { generateObject } from '../../ai.js'
 import { z } from 'zod'
 import { SONNET } from '../../models.js'
 
@@ -77,12 +77,14 @@ export async function runStartingSituationStage(
     .replace('{{factions_summary}}', args.factionsSummary)
     .replace('{{canonical_names}}', args.canonicalNames)
 
-  const result = await generateText({
+  const result = await generateObject({
     model: SONNET,
-    output: Output.object({ schema: StartingSituationsSchema }),
+    schema: StartingSituationsSchema,
     prompt,
     temperature: 0.7,
     maxRetries: 3,
+    callSite: 'starting-situation',
+    schemaName: 'StartingSituationsSchema',
   })
 
   await client.query(`UPDATE worlds SET starting_situations = $2 WHERE id = $1`, [

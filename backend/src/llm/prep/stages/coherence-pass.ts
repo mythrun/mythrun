@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import type { PoolClient } from 'pg'
 import type pino from 'pino'
-import { generateText, Output } from 'ai'
+import { generateObject } from '../../ai.js'
 import { SONNET } from '../../models.js'
 import {
   CoherenceOutputSchema,
@@ -499,12 +499,14 @@ export async function runCoherencePassStage(
   const worldDump = renderWorldDump(inventory)
   const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', worldDump)
 
-  const result = await generateText({
+  const result = await generateObject({
     model: SONNET,
-    output: Output.object({ schema: CoherenceOutputSchema }),
+    schema: CoherenceOutputSchema,
     prompt,
     temperature: 0.4,
     maxRetries: 1,
+    callSite: 'coherence-pass',
+    schemaName: 'CoherenceOutputSchema',
   })
 
   const output: CoherenceOutput = result.output

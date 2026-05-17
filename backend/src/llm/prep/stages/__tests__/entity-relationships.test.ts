@@ -60,10 +60,27 @@ vi.mock('../../../../repo/entity-hierarchy.js', () => ({
 }))
 
 import * as ai from 'ai'
+import { LlmStructuredOutputError } from '../../../errors.js'
 import { runEntityRelationshipsStage } from '../entity-relationships.js'
 import { entities } from '../../../../repo/entities.js'
 import { relationships } from '../../../../repo/relationships.js'
 import { entityHierarchy } from '../../../../repo/entity-hierarchy.js'
+
+// myth-t1qz: under the wrapper, repair fires when the SDK rejects
+// `.object` with LlmStructuredOutputError. The wrapper inspects
+// `.cause.text`, JSON.parses + Zod-checks, then on Zod-fail calls
+// repairStructuredOutput → ai.generateText (mocked).
+function makeRejectedObject(brokenTreeForCause: unknown): Promise<unknown> {
+  const cause = Object.assign(new Error('AI_NoObjectGeneratedError'), {
+    name: 'AI_NoObjectGeneratedError',
+    text: JSON.stringify(brokenTreeForCause),
+  })
+  const rejection = Promise.reject<unknown>(
+    new LlmStructuredOutputError('llm returned unparseable structured output', { cause }),
+  )
+  rejection.catch(() => undefined)
+  return rejection
+}
 
 interface QuerySpy {
   query: ReturnType<typeof vi.fn>
@@ -323,7 +340,7 @@ describe('runEntityRelationshipsStage', () => {
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(invalidTree),
-      object: Promise.resolve(invalidTree),
+      object: makeRejectedObject(invalidTree),
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 800, totalTokens: 4800 }),
     } as never)
 
@@ -355,7 +372,7 @@ describe('runEntityRelationshipsStage', () => {
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(invalidTree),
-      object: Promise.resolve(invalidTree),
+      object: makeRejectedObject(invalidTree),
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 800, totalTokens: 4800 }),
     } as never)
 
@@ -384,8 +401,10 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     expect(ai.generateText).toHaveBeenCalledTimes(2)
-    expect(result.inputTokens).toBe(4000 + 1000 + 1200)
-    expect(result.outputTokens).toBe(800 + 800 + 1000)
+    // myth-t1qz: repair-chain usage is folded inside the wrapper and not
+    // separately attributed to the stage's result.inputTokens.
+    expect(result.inputTokens).toBe(4000)
+    expect(result.outputTokens).toBe(800)
   })
 
   it('repair exhausted → throws LlmStructuredOutputError; outer scope owns stage-reset', async () => {
@@ -399,7 +418,7 @@ describe('runEntityRelationshipsStage', () => {
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(invalidTree),
-      object: Promise.resolve(invalidTree),
+      object: makeRejectedObject(invalidTree),
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 800, totalTokens: 4800 }),
     } as never)
 
@@ -424,7 +443,7 @@ describe('runEntityRelationshipsStage', () => {
         redisRealtime: redis,
         keyPrefix: 'test:',
       }),
-    ).rejects.toThrow(/repair chain exhausted/i)
+    ).rejects.toThrow(/unparseable structured output/i)
 
     // Contract: handler does not publish stage-reset on repair exhaustion.
     const resetEvents = redis.publishes.filter(

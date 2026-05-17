@@ -47,6 +47,7 @@ vi.mock('ai', async () => {
 })
 
 import { streamObject, generateText } from 'ai'
+import { LlmStructuredOutputError } from '../../../errors.js'
 import {
   runWorldAndFactionsStage,
   type RunWorldAndFactionsArgs,
@@ -158,6 +159,37 @@ function makeStream(tree: Tree): ReturnType<typeof streamObject> {
   return {
     partialObjectStream: gen(),
     object: Promise.resolve(tree),
+    usage: Promise.resolve({ inputTokens: 5000, outputTokens: 6000, totalTokens: 11000 }),
+  } as unknown as ReturnType<typeof streamObject>
+}
+
+// myth-t1qz: simulates the canonical wrapper's "SDK rejected with
+// LlmStructuredOutputError" path. The wrapper inspects `.cause.text` on
+// the error, runs JSON.parse + safeParse, and on Zod-fail calls
+// repairStructuredOutput (which routes through the mocked `ai.generateText`).
+function makeBrokenObjectStream(
+  tree: Tree,
+  brokenTreeForCause: Tree,
+): ReturnType<typeof streamObject> {
+  function* gen(): Generator<Tree> {
+    yield tree
+  }
+  const cause = Object.assign(new Error('AI_NoObjectGeneratedError'), {
+    name: 'AI_NoObjectGeneratedError',
+    text: JSON.stringify(brokenTreeForCause),
+  })
+  const rejection = new LlmStructuredOutputError(
+    'llm returned unparseable structured output',
+    { cause },
+  )
+  // .catch on the promise prevents an unhandled rejection if the wrapper
+  // installs its .then handler asynchronously; the wrapper's .then still
+  // fires the rejection path.
+  const objectPromise = Promise.reject<Tree>(rejection)
+  objectPromise.catch(() => undefined)
+  return {
+    partialObjectStream: gen(),
+    object: objectPromise,
     usage: Promise.resolve({ inputTokens: 5000, outputTokens: 6000, totalTokens: 11000 }),
   } as unknown as ReturnType<typeof streamObject>
 }
@@ -376,7 +408,13 @@ describe('runWorldAndFactionsStage', () => {
   })
 
   it('Zod-fail at stream end → Haiku repair succeeds → persists repaired tree', async () => {
-    mockStreamObject.mockReturnValueOnce(makeStream(brokenTree()))
+    // myth-t1qz: under the wrapper, repair fires when the SDK rejects
+    // `.object` with LlmStructuredOutputError (carrying the broken raw
+    // text on .cause). The wrapper parses + Zod-checks the rawText, then
+    // calls repairStructuredOutput → which calls ai.generateText (mocked).
+    mockStreamObject.mockReturnValueOnce(
+      makeBrokenObjectStream(brokenTree(), brokenTree()),
+    )
 
     // Haiku repair returns a valid tree.
     mockGenerateText.mockResolvedValueOnce({
@@ -387,7 +425,8 @@ describe('runWorldAndFactionsStage', () => {
     const result = await withTxn(pool, (client) =>
       runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
-    // costUsd accumulates Opus stream + Haiku repair.
+    // Opus stream cost surfaces (the wrapper folds repair-chain cost
+    // internally — see ai.ts header).
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(1) // only Haiku; no Sonnet escalation
     expect(result.finalizedEvents).toHaveLength(6)
@@ -400,7 +439,9 @@ describe('runWorldAndFactionsStage', () => {
   })
 
   it('Zod-fail → Haiku-fail → Sonnet-success → persists Sonnet-repaired tree', async () => {
-    mockStreamObject.mockReturnValueOnce(makeStream(brokenTree()))
+    mockStreamObject.mockReturnValueOnce(
+      makeBrokenObjectStream(brokenTree(), brokenTree()),
+    )
 
     // Haiku fails; Sonnet returns a valid tree.
     mockGenerateText.mockResolvedValueOnce({
@@ -427,7 +468,9 @@ describe('runWorldAndFactionsStage', () => {
   })
 
   it('Zod-fail → Haiku-fail → Sonnet-fail → throws (outer scope owns ROLLBACK + stage-reset)', async () => {
-    mockStreamObject.mockReturnValueOnce(makeStream(brokenTree()))
+    mockStreamObject.mockReturnValueOnce(
+      makeBrokenObjectStream(brokenTree(), brokenTree()),
+    )
 
     // Both Haiku and Sonnet return broken output.
     mockGenerateText.mockResolvedValueOnce({
@@ -449,7 +492,7 @@ describe('runWorldAndFactionsStage', () => {
           makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
         ),
       ),
-    ).rejects.toThrow(/repair chain exhausted/)
+    ).rejects.toThrow(/unparseable structured output/)
 
     expect(mockGenerateText).toHaveBeenCalledTimes(2) // Haiku + Sonnet
 

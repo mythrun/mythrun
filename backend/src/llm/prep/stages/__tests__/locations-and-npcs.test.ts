@@ -53,6 +53,7 @@ vi.mock('ai', async () => {
 })
 
 import { streamObject, generateText } from 'ai'
+import { LlmStructuredOutputError } from '../../../errors.js'
 import { runLocationsAndNpcsStage } from '../locations-and-npcs.js'
 
 const mockStreamObject = vi.mocked(streamObject)
@@ -220,6 +221,34 @@ function makeStream(tree: Tree): ReturnType<typeof streamObject> {
   return {
     partialObjectStream: gen(),
     object: Promise.resolve(tree),
+    usage: Promise.resolve({ inputTokens: 8000, outputTokens: 10000, totalTokens: 18000 }),
+  } as unknown as ReturnType<typeof streamObject>
+}
+
+// myth-t1qz: simulates the canonical wrapper's "SDK rejected with
+// LlmStructuredOutputError" path. The wrapper inspects `.cause.text` on
+// the error, runs JSON.parse + safeParse, and on Zod-fail calls
+// repairStructuredOutput (which routes through the mocked `ai.generateText`).
+function makeBrokenObjectStream(
+  tree: Tree,
+  brokenTreeForCause: Tree,
+): ReturnType<typeof streamObject> {
+  function* gen(): Generator<Tree> {
+    yield tree
+  }
+  const cause = Object.assign(new Error('AI_NoObjectGeneratedError'), {
+    name: 'AI_NoObjectGeneratedError',
+    text: JSON.stringify(brokenTreeForCause),
+  })
+  const objectPromise = Promise.reject<Tree>(
+    new LlmStructuredOutputError('llm returned unparseable structured output', {
+      cause,
+    }),
+  )
+  objectPromise.catch(() => undefined)
+  return {
+    partialObjectStream: gen(),
+    object: objectPromise,
     usage: Promise.resolve({ inputTokens: 8000, outputTokens: 10000, totalTokens: 18000 }),
   } as unknown as ReturnType<typeof streamObject>
 }
@@ -498,7 +527,11 @@ describe('runLocationsAndNpcsStage', () => {
   })
 
   it('Zod-fail → Haiku-repair-success: persists the repaired tree', async () => {
-    mockStreamObject.mockReturnValueOnce(makeStream(brokenTree()))
+    // myth-t1qz: repair fires when the SDK rejects `.object` with
+    // LlmStructuredOutputError carrying the broken raw text on .cause.
+    mockStreamObject.mockReturnValueOnce(
+      makeBrokenObjectStream(brokenTree(), brokenTree()),
+    )
 
     // Haiku repair returns a valid tree.
     mockGenerateText.mockResolvedValueOnce({
@@ -524,7 +557,9 @@ describe('runLocationsAndNpcsStage', () => {
   })
 
   it('Zod-fail → Haiku-fail → Sonnet-success: persists the Sonnet-repaired tree', async () => {
-    mockStreamObject.mockReturnValueOnce(makeStream(brokenTree()))
+    mockStreamObject.mockReturnValueOnce(
+      makeBrokenObjectStream(brokenTree(), brokenTree()),
+    )
 
     // Haiku fails (still broken); Sonnet succeeds.
     mockGenerateText.mockResolvedValueOnce({
@@ -554,7 +589,9 @@ describe('runLocationsAndNpcsStage', () => {
   })
 
   it('repair-chain exhausted: throws; does NOT publish stage-reset (caller publishes after ROLLBACK)', async () => {
-    mockStreamObject.mockReturnValueOnce(makeStream(emptyTree()))
+    mockStreamObject.mockReturnValueOnce(
+      makeBrokenObjectStream(emptyTree(), emptyTree()),
+    )
 
     // Both Haiku and Sonnet return invalid (empty) output.
     mockGenerateText.mockResolvedValueOnce({
@@ -573,7 +610,7 @@ describe('runLocationsAndNpcsStage', () => {
     try {
       await expect(
         runLocationsAndNpcsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime })),
-      ).rejects.toThrow(/repair chain exhausted/)
+      ).rejects.toThrow(/unparseable structured output/)
     } finally {
       await rollback(client)
     }

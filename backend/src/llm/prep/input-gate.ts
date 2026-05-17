@@ -3,10 +3,10 @@
 // verdict logic computed in code (deterministic, easy to test) from the
 // model's per-axis confidences.
 //
-// Uses `generateText` + `Output.object({ schema })` — the AI SDK v6
-// canonical pattern. `generateObject` is deprecated in v6.
+// Routes through the canonical `generateObject` wrapper (myth-t1qz):
+// schema-repair fallback + structured diagnostic logging on failure.
 
-import { generateText, Output, type LanguageModelUsage } from 'ai'
+import { generateObject, type LanguageModelUsage } from '../ai.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -67,12 +67,14 @@ export async function runInputGate(args: InputGateArgs): Promise<InputGateVerdic
     '{{intentSummary}}',
     intentSummaryBlock,
   )
-  const result = await generateText({
+  const result = await generateObject({
     model: SONNET,
-    output: Output.object({ schema: InputGateSchema }),
+    schema: InputGateSchema,
     prompt,
     temperature: 0.2,
     maxRetries: 3,
+    callSite: 'input-gate',
+    schemaName: 'InputGateSchema',
   })
   return computeVerdict(result.output, result.usage)
 }

@@ -7,10 +7,10 @@
 // the user, never appended to concept_intake's prompt. The input gate
 // DOES receive it (D5 + Roc-Imp7) to close the prompt-injection path.
 //
-// Uses `generateText` + `Output.object({ schema })` — the AI SDK v6
-// canonical pattern. `generateObject` is deprecated in v6.
+// Routes through the canonical `generateObject` wrapper (myth-t1qz):
+// schema-repair fallback + structured diagnostic logging on failure.
 
-import { generateText, Output, type LanguageModelUsage } from 'ai'
+import { generateObject, type LanguageModelUsage } from '../ai.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -64,12 +64,14 @@ export async function synthesizeConcept(
     throw new Error(`synthesizeConcept requires exactly 3 picks, got ${String(picks.length)}`)
   }
   /* c8 ignore stop */
-  const result = await generateText({
+  const result = await generateObject({
     model: SONNET,
-    output: Output.object({ schema: SynthesizerOutput }),
+    schema: SynthesizerOutput,
     prompt: buildPrompt(picks),
     temperature: 0.9,
     maxRetries: 3,
+    callSite: 'synthesize-concept',
+    schemaName: 'SynthesizerOutput',
   })
   return { ...result.output, usage: result.usage }
 }

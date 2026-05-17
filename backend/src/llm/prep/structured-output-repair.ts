@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
+// eslint-disable-next-line no-restricted-imports -- repair helper itself, see Phase 3 lint rule
 import { generateText, Output, type LanguageModel, type LanguageModelUsage } from 'ai'
 import { z } from 'zod'
 import type { WorldGenStage } from './streaming-extractor.js'

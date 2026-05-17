@@ -21,7 +21,7 @@ import type { PoolClient } from 'pg'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { generateText, Output } from 'ai'
+import { generateObject } from '../../ai.js'
 import { z } from 'zod'
 import { HAIKU } from '../../models.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
@@ -90,12 +90,14 @@ export async function runRandomTablesStage(
     .replace('{{geography_summary}}', args.geographySummary)
     .replace('{{seed_tables}}', args.seedTablesBlock)
 
-  const result = await generateText({
+  const result = await generateObject({
     model: HAIKU,
-    output: Output.object({ schema: RandomTablesSchema }),
+    schema: RandomTablesSchema,
     prompt,
     temperature: 0.8,
     maxRetries: 3,
+    callSite: 'random-tables',
+    schemaName: 'RandomTablesSchema',
   })
 
   // Idempotency: delete prior rows for this world before re-inserting.

@@ -1,4 +1,4 @@
-import { generateText, Output } from 'ai'
+import { generateObject } from './ai.js'
 import { HAIKU } from './models.js'
 import { ProfanitySchema, type ProfanityResult } from './schemas/profanity.js'
 import { loadPrompt } from './prompts.js'
@@ -17,18 +17,18 @@ import { loadPrompt } from './prompts.js'
  * from Vercel's APICallError / TooManyRequestsError /
  * AI_NoObjectGeneratedError before they leave the SDK call frame).
  *
- * Uses `generateText` with `Output.object({ schema })` — the v6-canonical
- * pattern. `generateObject` is deprecated in v6 in favor of this unified
- * `generateText` + output shape that supports tool-calling alongside
- * structured output.
+ * Routes through the canonical `generateObject` wrapper (myth-t1qz):
+ * schema-repair fallback + structured diagnostic logging on failure.
  */
 export async function classifyProfanity(text: string): Promise<ProfanityResult> {
-  const result = await generateText({
+  const result = await generateObject({
     model: HAIKU,
-    output: Output.object({ schema: ProfanitySchema }),
+    schema: ProfanitySchema,
     system: loadPrompt('auth', 'profanity'),
     prompt: text,
     maxRetries: 3,
+    callSite: 'username-profanity-classifier',
+    schemaName: 'ProfanitySchema',
   })
   return result.output
 }

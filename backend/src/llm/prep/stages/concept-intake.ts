@@ -80,6 +80,7 @@ export async function runConceptIntakeStage(
   const result = await validateAndGenerateConcept({
     basePrompt: prompt,
     schema: WorldConceptSchema,
+    schemaName: 'WorldConceptSchema',
   })
 
   await client.query(

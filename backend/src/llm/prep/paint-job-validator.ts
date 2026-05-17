@@ -1,5 +1,5 @@
 // Per MYT-51 D6 (revised after Wyvern-C1 + Wyvern-C2):
-//   - Inner generateText call uses maxRetries: 1 (validator is sole retry
+//   - Inner generator call uses maxRetries: 1 (validator is sole retry
 //     authority; without this the SDK's internal 3-retry policy and the
 //     validator's 3-attempt loop multiply into 12 worst-case Sonnet calls).
 //   - Distinct judge prompt (fresh Sonnet call, not a self-check).
@@ -10,17 +10,17 @@
 //   - All generator + judge usage accumulates into totalUsage so the
 //     stage's cost cap correctly observes every call.
 //
-// Uses `generateText` + `Output.object({ schema })` — the AI SDK v6
-// canonical pattern. `generateObject` is deprecated in v6.
+// Routes through the canonical `generateObject` wrapper (myth-t1qz):
+// generator + judge both gain Sonnet-tier schema-repair fallback and
+// structured diagnostic logging on failure. The previous bespoke
+// `callWithRepairFallback` helper was subsumed by the wrapper.
 
-import { generateText, Output, type LanguageModelUsage } from 'ai'
+import { z } from 'zod'
+import { generateObject, type LanguageModelUsage } from '../ai.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { z } from 'zod'
 import { SONNET } from '../models.js'
-import { LlmStructuredOutputError } from '../errors.js'
-import { repairStructuredOutput } from './structured-output-repair.js'
 
 const JUDGE_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../prompts/prep/paint-job-validator.txt'),
@@ -55,6 +55,10 @@ export class PaintJobLoopExhaustedError extends Error {
 export interface ValidateAndGenerateArgs<TDraft> {
   readonly basePrompt: string
   readonly schema: z.ZodType<TDraft>
+  // Optional human-readable schema name surfaced in wrapper diagnostic
+  // logs (myth-t1qz). Defaults to 'WorldConceptDraft' when the caller
+  // doesn't supply one.
+  readonly schemaName?: string
 }
 
 // `totalUsage` is normalized to the SDK's canonical names
@@ -75,6 +79,7 @@ export interface ValidateAndGenerateResult<TDraft> {
 export async function validateAndGenerateConcept<TDraft>(
   args: ValidateAndGenerateArgs<TDraft>,
 ): Promise<ValidateAndGenerateResult<TDraft>> {
+  const generatorSchemaName = args.schemaName ?? 'WorldConceptDraft'
   let totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
   let lastJudgement: PaintJobJudgement | null = null
 
@@ -83,15 +88,26 @@ export async function validateAndGenerateConcept<TDraft>(
       attempt === 1 ? args.basePrompt : buildRetryPrompt(args.basePrompt, lastJudgement)
     const temperature = attempt === 1 ? 0.9 : 1.0
 
-    const genResult = await callWithRepairFallback<TDraft>({ prompt, temperature, schema: args.schema })
+    const genResult = await generateObject<TDraft>({
+      model: SONNET,
+      schema: args.schema,
+      prompt,
+      temperature,
+      maxRetries: 1,
+      callSite: 'paint-job-validator/generator',
+      schemaName: generatorSchemaName,
+      repairStrategy: 'sonnet',
+    })
     totalUsage = addUsage(totalUsage, genResult.usage)
 
-    const judgeResult = await generateText({
+    const judgeResult = await generateObject({
       model: SONNET,
-      output: Output.object({ schema: PaintJobJudgementSchema }),
+      schema: PaintJobJudgementSchema,
       prompt: JUDGE_TEMPLATE.replace('{{draft}}', JSON.stringify(genResult.output, null, 2)),
       temperature: 0.1,
       maxRetries: 3,
+      callSite: 'paint-job-validator/judge',
+      schemaName: 'PaintJobJudgementSchema',
     })
     totalUsage = addUsage(totalUsage, judgeResult.usage)
     lastJudgement = judgeResult.output
@@ -134,91 +150,6 @@ function buildRetryPrompt(basePrompt: string, lastJudgement: PaintJobJudgement |
     `different faction archetype, different plot shape. The output must read as a fresh original world, ` +
     `not a corrected version of the prior attempt.`
   )
-}
-
-// Wraps the SDK generateText call with a Sonnet repair fallback on
-// AI_NoObjectGeneratedError. The SDK's `Output.object` already retries
-// internally up to maxRetries times; when it gives up it throws (mapped
-// here to LlmStructuredOutputError via the middleware). For concept_intake
-// — the only stage whose author didn't get the wave-4 repair-chain
-// architecture — we add an explicit Sonnet repair step: extract the
-// model's last attempted text from the cause's `.text` property, run
-// repairStructuredOutput, and use its result if it succeeds. If the
-// repair also fails, surface the original error so handleStageError can
-// route it.
-//
-// Usage of the repair call is accumulated into the caller's totalUsage
-// so cost-cap accounting stays honest.
-async function callWithRepairFallback<TDraft>(args: {
-  readonly prompt: string
-  readonly temperature: number
-  readonly schema: z.ZodType<TDraft>
-}): Promise<{ output: TDraft; usage: LanguageModelUsage }> {
-  try {
-    const result = await generateText({
-      model: SONNET,
-      output: Output.object<TDraft>({ schema: args.schema }),
-      prompt: args.prompt,
-      temperature: args.temperature,
-      maxRetries: 3,
-    })
-    return { output: result.output, usage: result.usage }
-  } catch (err) {
-    if (!(err instanceof LlmStructuredOutputError)) {
-      throw err
-    }
-    // Extract the last raw model output from the AI_NoObjectGeneratedError
-    // (carried on .cause). If it's parseable, hand it to repairStructured-
-    // Output for a Sonnet self-correction pass.
-    const cause = err.cause as { text?: string } | undefined
-    const rawText = cause?.text
-    if (rawText === undefined) {
-      throw err
-    }
-    let parsed: unknown
-    try {
-      const cleaned = rawText
-        .replace(/^```(?:json)?\s*/m, '')
-        .replace(/```\s*$/m, '')
-        .trim()
-      parsed = JSON.parse(cleaned)
-    } catch {
-      // Model output wasn't even JSON; nothing for the repair pass to fix up.
-      throw err
-    }
-    const safe = args.schema.safeParse(parsed)
-    if (safe.success) {
-      // Defensive: the SDK rejected it but Zod accepts it. Use it.
-      const zeroUsage: LanguageModelUsage = {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        inputTokenDetails: {
-          noCacheTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
-        outputTokenDetails: {
-          textTokens: 0,
-          reasoningTokens: 0,
-        },
-      }
-      return { output: safe.data, usage: zeroUsage }
-    }
-    const repair = await repairStructuredOutput<TDraft>({
-      tree: parsed,
-      schema: args.schema,
-      zodErrors: safe.error,
-      model: SONNET,
-      stage: 'concept_intake',
-      providerOptions: { mythrun: { stage: 'concept_intake' } },
-    })
-    if (repair.ok) {
-      return { output: repair.tree, usage: repair.usage }
-    }
-    // Repair didn't fix it either; surface the original error.
-    throw err
-  }
 }
 
 function addUsage(

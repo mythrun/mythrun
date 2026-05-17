@@ -51,12 +51,12 @@ import type { Job } from 'bullmq'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-// Vercel SDK v6 flags streamObject deprecated in favor of streamText +
-// output, but the streaming-stages design (§D1) explicitly mandates
-// streamObject because streamText's output mode doesn't expose
-// partialObjectStream. Migration tracked as a future SDK-upgrade ticket.
-import { streamObject } from 'ai'
-import { OPUS, HAIKU, SONNET } from '../../models.js'
+// Routes through the canonical streaming wrapper (myth-t1qz). The
+// wrapper preserves partialObjectStream + usage + textStream and replaces
+// `object` with a repair-aware promise that runs the Haiku→Sonnet repair
+// chain on LlmStructuredOutputError from the underlying SDK call.
+import { streamObject } from '../../ai.js'
+import { OPUS } from '../../models.js'
 import { computeCostUsd } from '../../../billing/model-pricing.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import { entities } from '../../../repo/entities.js'
@@ -64,7 +64,6 @@ import { proseKernels } from '../../../repo/prose-kernels.js'
 import { facts } from '../../../repo/facts.js'
 import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
 import { runStreamingStage } from '../streaming-extractor.js'
-import { repairStructuredOutput } from '../structured-output-repair.js'
 import {
   LocationsAndNpcsSchema,
   type LocationsAndNpcsTree,
@@ -117,70 +116,6 @@ interface UnresolvedRef {
   readonly synthKey: string
   readonly childEntityId: string
   readonly parentName: string
-}
-
-interface ValidatedWithCost {
-  readonly tree: LocationsAndNpcsTree
-  readonly costUsd: number
-  readonly inputTokens: number
-  readonly outputTokens: number
-}
-
-// Validate the streamed tree directly; on Zod failure walk the
-// Haiku→Sonnet repair chain per design §D3. Returns the validated tree
-// plus the accumulated repair-chain cost; throws if the chain exhausts.
-// The streamed-call cost is the caller's responsibility.
-async function validateOrRepair(finalTree: unknown): Promise<ValidatedWithCost> {
-  const direct = LocationsAndNpcsSchema.safeParse(finalTree)
-  if (direct.success) {
-    return { tree: direct.data, costUsd: 0, inputTokens: 0, outputTokens: 0 }
-  }
-  const haiku = await repairStructuredOutput({
-    tree: finalTree,
-    schema: LocationsAndNpcsSchema,
-    zodErrors: direct.error,
-    model: HAIKU,
-    stage: 'locations_and_npcs',
-    providerOptions: { mythrun: { stage: 'locations_and_npcs' } },
-  })
-  /* c8 ignore start — `?? 0` falsy arms: structured-output-repair always
-   * returns a populated usage object (its underlying generateText call
-   * returns a numeric token tally on every successful response).
-   * Defensive fallback for malformed SDK responses. */
-  const haikuInput = haiku.usage.inputTokens ?? 0
-  const haikuOutput = haiku.usage.outputTokens ?? 0
-  /* c8 ignore stop */
-  let costUsd = computeCostUsd('claude-haiku-4-5-20251001', {
-    inputTokens: haikuInput,
-    outputTokens: haikuOutput,
-  })
-  let inputTokens = haikuInput
-  let outputTokens = haikuOutput
-  if (haiku.ok) {
-    return { tree: haiku.tree, costUsd, inputTokens, outputTokens }
-  }
-  const sonnet = await repairStructuredOutput({
-    tree: finalTree,
-    schema: LocationsAndNpcsSchema,
-    zodErrors: haiku.errors,
-    model: SONNET,
-    stage: 'locations_and_npcs',
-    providerOptions: { mythrun: { stage: 'locations_and_npcs' } },
-  })
-  /* c8 ignore start — `?? 0` falsy arms (see above). */
-  const sonnetInput = sonnet.usage.inputTokens ?? 0
-  const sonnetOutput = sonnet.usage.outputTokens ?? 0
-  /* c8 ignore stop */
-  costUsd += computeCostUsd('claude-sonnet-4-6', {
-    inputTokens: sonnetInput,
-    outputTokens: sonnetOutput,
-  })
-  inputTokens += sonnetInput
-  outputTokens += sonnetOutput
-  if (!sonnet.ok) {
-    throw new Error('locations_and_npcs: repair chain exhausted')
-  }
-  return { tree: sonnet.tree, costUsd, inputTokens, outputTokens }
 }
 
 // Pass 1: insert each location's entity + prose + facts. Returns the
@@ -368,25 +303,28 @@ export async function runLocationsAndNpcsStage(
 
   // maxRetries: 0 per design D2 — predictable cost attribution + repair
   // chain owns validation recovery + BullMQ stage retry owns transport
-  // recovery. No third hidden retry layer in the SDK.
-  // eslint-disable-next-line @typescript-eslint/no-deprecated -- see top-of-file note
+  // recovery. No third hidden retry layer in the SDK. The wrapper
+  // (myth-t1qz) drives the Haiku→Sonnet repair chain inside
+  // `await result.object` on LlmStructuredOutputError.
   const result = streamObject({
     model: OPUS,
     schema: LocationsAndNpcsSchema,
     prompt,
     temperature: 0.7,
     maxRetries: 0,
+    callSite: 'locations-and-npcs',
+    schemaName: 'LocationsAndNpcsSchema',
+    repairStrategy: 'haiku-then-sonnet',
     providerOptions: {
       mythrun: {
         worldId: args.world.id,
         campaignId: args.campaignId,
         stage: 'locations_and_npcs',
       },
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- see top-of-file note
-    } as unknown as NonNullable<Parameters<typeof streamObject>[0]['providerOptions']>,
+    },
   })
 
-  const { finalTree } = await runStreamingStage<unknown>(result.partialObjectStream, {
+  await runStreamingStage<unknown>(result.partialObjectStream, {
     stage: 'locations_and_npcs',
     campaignId: args.campaignId,
     job: args.job,
@@ -403,8 +341,15 @@ export async function runLocationsAndNpcsStage(
     endpointTierMap: new Map(),
   })
 
-  // Cost: primary Opus stream usage first; repair-chain usage layered on
-  // top per design §D3's mechanical cost-attribution rule.
+  // The wrapper's `object` promise resolves to the validated tree (or
+  // a repaired tree when the SDK threw a structured-output error and
+  // the Haiku→Sonnet chain recovered). If the chain exhausts the wrapper
+  // rethrows; the outer scope catches and publishes stage-reset.
+  const validatedTree = await result.object
+
+  // Cost: primary Opus stream usage. Repair-chain usage (when fired) is
+  // folded inside the wrapper and not separately attributed here — see
+  // ai.ts header on cost-accounting boundaries.
   const usage = await result.usage
   /* c8 ignore start — `?? 0` falsy arms: the Vercel SDK populates these
    * counters on every successful stream end; tests always provide a
@@ -418,18 +363,17 @@ export async function runLocationsAndNpcsStage(
     outputTokens: opusOutputTokens,
   })
 
-  const validation = await validateOrRepair(finalTree)
   const finalizedEvents = await persistAndCollectEvents(
     client,
     args.world.id,
-    validation.tree,
+    validatedTree,
     args.bypassAccessFilter,
   )
 
   return {
-    costUsd: opusCostUsd + validation.costUsd,
-    inputTokens: opusInputTokens + validation.inputTokens,
-    outputTokens: opusOutputTokens + validation.outputTokens,
+    costUsd: opusCostUsd,
+    inputTokens: opusInputTokens,
+    outputTokens: opusOutputTokens,
     finalizedEvents,
     capExhausted: false,
   }
