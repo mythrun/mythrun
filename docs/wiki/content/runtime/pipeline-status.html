@@ -10,8 +10,9 @@
 <!-- source: backend/dev-tool/src/components/live-events-panel.ts -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
-<!-- source-hash: sha256:1f0b1ede205f123436d69b8045a67477be7dd8169d0b35628addfa81b54822fa -->
-<!-- last-ticket: MYT-52 -->
+<!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
+<!-- source-hash: sha256:142fd35775565d023821997eb1e9a870cbece5340b2b62482eaf10c5b8714e3e -->
+<!-- last-ticket: myth-exac -->
 
 <h1>Pipeline status</h1>
 
@@ -182,6 +183,15 @@
       <td>
         <code>worlds.status = 'failed'</code>, or any worldgen stage has a
         <code>failed</code> latest attempt with no later-stage progress.
+      </td>
+    </tr>
+    <tr>
+      <td><code>world_snapshot_ready</code></td>
+      <td>
+        <code>worlds.status = 'generating'</code> AND stage 4 (<code>entity_relationships</code>)
+        has a <code>completed</code> latest attempt. Stages 5–7 may still be running. The myth-exac
+        snapshot endpoint becomes fetchable in this phase; the SSE client uses the signal to fire
+        its initial <code>GET /world-snapshot</code>.
       </td>
     </tr>
     <tr>

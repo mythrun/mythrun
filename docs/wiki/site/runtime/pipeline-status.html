@@ -389,6 +389,15 @@
       </td>
     </tr>
     <tr>
+      <td><code>world_snapshot_ready</code></td>
+      <td>
+        <code>worlds.status = 'generating'</code> AND stage 4 (<code>entity_relationships</code>)
+        has a <code>completed</code> latest attempt. Stages 5–7 may still be running. The myth-exac
+        snapshot endpoint becomes fetchable in this phase; the SSE client uses the signal to fire
+        its initial <code>GET /world-snapshot</code>.
+      </td>
+    </tr>
+    <tr>
       <td><code>post_creation</code></td>
       <td>
         Any post-creation stage (<code>materialize_relationships</code>,

@@ -572,7 +572,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="entities" id="schema-table-entities">
   <summary>
     <span class="schema-table-name">entities</span>
-    <span class="schema-table-meta">9 columns · 2 indexes · 1 CHECK · 16 FKs</span>
+    <span class="schema-table-meta">10 columns · 3 indexes · 2 CHECKs · 16 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -640,15 +640,24 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="access_level">
+        <td><code>access_level</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'known'::text</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
     <li><code>idx_entities_world</code> — (world_id)</li>
+    <li><code>idx_entities_world_access</code> — (world_id, access_level)</li>
     <li><code>idx_entities_world_type</code> — (world_id, entity_type)</li>
   </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
+    <li><code>CHECK ((access_level = ANY (ARRAY['known'::text, 'discoverable'::text, 'secret'::text])))</code></li>
     <li><code>CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))</code></li>
   </ul>
 </details>
@@ -764,7 +773,7 @@ END)</code></li>
   </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
-    <li><code>CHECK ((access_level = ANY (ARRAY['public'::text, 'private'::text, 'secret'::text])))</code></li>
+    <li><code>CHECK ((access_level = ANY (ARRAY['known'::text, 'discoverable'::text, 'secret'::text])))</code></li>
     <li><code>CHECK ((narrative_status = ANY (ARRAY['undelivered'::text, 'delivered'::text, 'developed'::text, 'resolved'::text])))</code></li>
   </ul>
 </details>
@@ -1151,7 +1160,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="worlds" id="schema-table-worlds">
   <summary>
     <span class="schema-table-name">worlds</span>
-    <span class="schema-table-meta">22 columns · 1 index · 2 CHECKs · 16 FKs</span>
+    <span class="schema-table-meta">23 columns · 1 index · 2 CHECKs · 16 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1305,6 +1314,13 @@ END)</code></li>
       </tr>
       <tr data-column-name="is_demo">
         <td><code>is_demo</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="dev_bypass_access_filter">
+        <td><code>dev_bypass_access_filter</code></td>
         <td><code>boolean</code></td>
         <td>NO</td>
         <td><code>false</code></td>

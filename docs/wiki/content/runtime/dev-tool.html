@@ -4,6 +4,10 @@
 <!-- source: backend/dev-tool/src/identity.ts -->
 <!-- source: backend/dev-tool/src/main.ts -->
 <!-- source: backend/dev-tool/src/components/live-events-panel.ts -->
+<!-- source: backend/dev-tool/src/components/world-snapshot-panel.ts -->
+<!-- source: backend/dev-tool/src/components/world-snapshot-render.ts -->
+<!-- source: backend/dev-tool/src/components/world-snapshot-types.ts -->
+<!-- source: backend/dev-tool/src/components/campaign-create-panel.ts -->
 <!-- source: backend/dev-tool/coverage.json -->
 <!-- source: backend/scripts/dev-tool-check.ts -->
 <!-- source: backend/src/dev-tool-check/check-coverage.ts -->
@@ -13,9 +17,10 @@
 <!-- source: .github/workflows/dev-tool-check.yml -->
 <!-- source: docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
+<!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:7b8f19d229f7608b4617d11f8ebd91c95e37fd74e7c981443e2106869c2fa740 -->
-<!-- last-ticket: MYT-52 -->
+<!-- source-hash: sha256:c684eb7aab01f7649b97d13ecb2642f6586139f0c0cc1682221ecf62ca8d3182 -->
+<!-- last-ticket: myth-exac -->
 
 <h1>Dev tool</h1>
 
@@ -62,10 +67,11 @@
   app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
   every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
   page, self-bootstraps the active dev sub against <code>POST /api/users/register</code> on first
-  load (per principle 3 of the dev-tool reliability contract), and registers twelve panels in order:
-  identity switcher, health, campaign-create, my-campaigns, pipeline-status, live-events,
-  campaign-details, credit-ledger, users, invites, session-ticket, and billing. The last four
-  landed in <code>myth-e5mn</code> as part of the full-backend-route-coverage retrofit.
+  load (per principle 3 of the dev-tool reliability contract), and registers thirteen panels in
+  order: identity switcher, health, campaign-create, my-campaigns, pipeline-status, live-events,
+  world-snapshot, campaign-details, credit-ledger, users, invites, session-ticket, and billing. The
+  world-snapshot panel landed under myth-exac; the four after credit-ledger landed in
+  <code>myth-e5mn</code> as part of the full-backend-route-coverage retrofit.
   <code>src/components/</code> holds the per-panel UI. The reliability harness
   (<code>scripts/verify.ts</code>) + registry (<code>verify-registry.ts</code>) + contract
   (<code>AUTHORING.md</code>) live alongside under <code>backend/dev-tool/</code> and are governed
@@ -221,6 +227,72 @@
   trigger; the panel doesn't ship its own close button at Phase 0.
 </p>
 
+<h2 id="the-world-snapshot-panel">The world-snapshot panel</h2>
+
+<p>
+  The wiki-style inspector for the persisted world. Sits between the live-events panel and the
+  campaign-details panel in the layout. It listens on the same SSE stream the live-events panel
+  watches; the moment the phase advances to <code>world_snapshot_ready</code> (after stage 4
+  commits), it fires a single <code>GET /api/campaigns/:campaignId/world-snapshot</code> and renders
+  the response as a two-pane view: a tree of entities-by-kind on the left, a per-entity detail card
+  on the right. The detail card shows the entity's name, kind, prose kernel content, facts, in/out
+  relationships, and stat block (when present).
+</p>
+
+<p>
+  The panel runs a small state machine: <code>idle</code> on mount (no campaign watched),
+  <code>loading</code> while the snapshot fetch is in flight, <code>ready</code> once the response
+  is rendered, <code>error</code> on any HTTP failure. The current state is written to the panel
+  root's <code>data-state</code> attribute, which is what the dev-tool verifier (see
+  <code>backend/dev-tool/scripts/verify.ts</code>) keys on to assert the post-mount steady state is
+  <code>idle</code>. The DOM exposes two further <code>data-region</code> markers —
+  <code>entity-tree</code> on the left pane and <code>entity-detail</code> on the right — so the
+  verifier can target each pane independently.
+</p>
+
+<p>
+  After the initial snapshot lands, the panel stays attached to the SSE stream and applies stage 7
+  (<code>coherence_pass</code>) deltas in place. <code>entity-updated</code> applies a merge-patch
+  to the matching entity row (resolved by <code>synthKey</code> through a
+  <code>Map&lt;synthKey, entityId&gt;</code> the panel builds from <code>finalized</code> events);
+  <code>edge-added</code> and <code>edge-removed</code> mutate the relationships array. The user
+  watches the world settle without a refetch. Reconnect recovery is fetch-and-replace, not merge —
+  any in-flight deltas that arrive between the refetch and steady state re-apply harmlessly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A tree-and-detail view, not a graph render</strong> — the snapshot inspector's audience is
+  the engineer authoring world-gen content. Graph layouts are visually pleasing but make it hard to
+  read what's actually in any one entity; a flat tree grouped by kind plus a detailed card for the
+  selected node is the closest analog to the eventual player-facing wiki, and it lets the engineer
+  click through every persisted entity in turn while reading the deltas accumulating in the
+  live-events panel above.
+</aside>
+
+<h2>The campaign-create panel's access-tier bypass</h2>
+
+<p>
+  The campaign-create panel surfaces an opt-in checkbox — "Bypass access tiers (dev mode — see
+  secrets in stream + snapshot)" — that flips a per-world dev-only flag at create time. When
+  checked, the POST body includes <code>devBypassAccessFilter: true</code>; the create route writes
+  <code>true</code> into <code>worlds.dev_bypass_access_filter</code>; the streaming extractor and
+  stage 7 stop tier-filtering their event publication for that world, and the snapshot endpoint
+  widens its tier filter to include <code>discoverable</code> + <code>secret</code>
+  rows. The checkbox defaults OFF. See the world-gen wiki page's
+  <a href="./world-gen.html">dev-mode bypass section</a> for the gating semantics (production users
+  can't reach this code path; the snapshot endpoint additionally requires the requesting user to be
+  in bypass-auth mode for the wider tier set to surface).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Per-world flag plus per-request scope, not a global toggle</strong> — a global "show
+  secrets" switch would mean a single misclick exposes every dev-created world's hidden material to
+  anyone with a bypass-auth identity. Scoping the flag to the world (set at create time, immutable
+  thereafter) and gating the wider response on the requesting user also being in bypass-auth means
+  the failure mode "accidentally inspect a secret-laden world from a prod-auth context" is
+  structurally impossible — both axes have to align.
+</aside>
+
 <h2>The ship gate</h2>
 
 <p>
@@ -278,9 +350,9 @@
 
 <p>
   The contracts are populated and the gate is load-bearing: eight routes, thirteen events, and one
-  BullMQ job ride the registry today, and every entry is driven by a panel in the dev tool with
-  zero exempt entries. <strong>Adding a pipeline route is a three-file change in a single PR</strong>
-  — append to <code>pipeline-routes.ts</code>, add the UI in <code>backend/dev-tool/src/</code>,
+  BullMQ job ride the registry today, and every entry is driven by a panel in the dev tool with zero
+  exempt entries. <strong>Adding a pipeline route is a three-file change in a single PR</strong> —
+  append to <code>pipeline-routes.ts</code>, add the UI in <code>backend/dev-tool/src/</code>,
   extend <code>coverage.json</code>'s <code>routes</code> array. Forgetting any one of them red-CI's
   the gate. Events and jobs follow the same pattern with their own contract files and arrays. The
   <code>myth-e5mn</code> retrofit also added a Fastify <code>printRoutes</code> drift test against a
@@ -494,9 +566,10 @@
       <td>
         Per-panel UI. <code>health-panel</code>, <code>status-panel</code> (snapshot + applied
         lifecycle events), <code>live-events-panel</code> (wire-data inspector, all 13 event arms),
-        <code>campaign-create-panel</code>, <code>my-campaigns-panel</code>,
-        <code>campaign-details-panel</code>, <code>credit-ledger-panel</code>,
-        <code>identity-switcher</code>.
+        <code>world-snapshot-panel</code> (myth-exac wiki-style inspector — tree + detail, applies
+        coherence deltas in-place), <code>campaign-create-panel</code> (with the access-tier bypass
+        checkbox), <code>my-campaigns-panel</code>, <code>campaign-details-panel</code>,
+        <code>credit-ledger-panel</code>, <code>identity-switcher</code>.
       </td>
     </tr>
     <tr>

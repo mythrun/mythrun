@@ -22,18 +22,23 @@
 <!-- source: backend/src/repo/credit-grants.ts -->
 <!-- source: backend/src/auth/rejection-storm.ts -->
 <!-- source: backend/src/repo/pipeline-runs.ts -->
+<!-- source: backend/src/repo/world-snapshot-view.ts -->
+<!-- source: backend/src/sse/derive-phase.ts -->
 <!-- source: backend/migrations/010_settings_world_gen_cost_cap.sql -->
 <!-- source: backend/migrations/011_credit_ledger_cost_cap_refund.sql -->
 <!-- source: backend/migrations/012_credit_ledger_admin_source.sql -->
+<!-- source: backend/migrations/014_access_tier_rework.sql -->
 <!-- source: backend/dev-tool/src/components/campaign-create-panel.ts -->
 <!-- source: backend/dev-tool/src/components/campaign-details-panel.ts -->
 <!-- source: backend/dev-tool/src/components/credit-ledger-panel.ts -->
+<!-- source: backend/dev-tool/src/components/world-snapshot-panel.ts -->
 <!-- source: backend/dev-tool/coverage.json -->
 <!-- source: docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
+<!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:59fb8114710d4713e906c5944e9f1c9827dc3b836e7b6108a0fb78d9838a8620 -->
-<!-- last-ticket: MYT-52 -->
+<!-- source-hash: sha256:4f3e6a51c90e1c9c9a2c55cafec77786a46f644cc65e429975e15c19e9d6c889 -->
+<!-- last-ticket: myth-exac -->
 
 <h1>World gen</h1>
 
@@ -45,12 +50,15 @@
   calls (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>),
   three streaming stages with live entity emission (<code>world_and_factions</code> Opus,
   <code>locations_and_npcs</code> Opus, <code>entity_relationships</code> Sonnet), and a final
-  non-streaming Sonnet <code>coherence_pass</code>. Each stage handler returns a unified
-  <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the outer
-  scope owns BEGIN/COMMIT and publishes the finalized events only after COMMIT. A cost-cap circuit
-  breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; over-cap
-  refunds the credit and marks the world failed — except at stage 7, where cap-fire marks the world
-  COMPLETE (coherence is best-effort polish).
+  non-streaming Sonnet <code>coherence_pass</code>. After stage 4 commits the pipeline fires a
+  <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable through
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still running, and
+  stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage handler returns a
+  unified <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the
+  outer scope owns BEGIN/COMMIT and publishes the finalized events only after COMMIT. A cost-cap
+  circuit breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage;
+  over-cap refunds the credit and marks the world failed — except at stage 7, where cap-fire marks
+  the world COMPLETE (coherence is best-effort polish).
 </p>
 
 <!-- @diagram: runtime/world-gen -->
@@ -58,20 +66,23 @@
 <h2>How it fits together</h2>
 
 <p>
-  Six routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
+  Seven routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
   the <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
   registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
   flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
   world row, and the member list for a campaign the caller is a member of.
   <code>GET /api/campaigns/mine</code> lists every campaign the caller created or joined.
   <code>POST /api/campaigns/:campaignId/resume</code> is the recovery surface: a polymorphic switch
-  over the eight phases <code>derivePhase</code> reports (see
+  over the nine phases <code>derivePhase</code> reports (see
   <a href="./pipeline-status.html">pipeline status</a>) that re-enqueues, 409s, or 422s depending on
   where the pipeline got stuck. <code>DELETE /api/campaigns/:campaignId</code> is the hard-delete
   cleanup path — owner-only, refuses while generating, cascades through the FK chain to remove the
   world + every dependent row. <code>PATCH /api/campaigns/:campaignId/name</code> is the rename path
   for owners: <code>concept_intake</code> auto-names the campaign from the LLM-synthesized world
   name, and this is how the owner overrides that default.
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the owner-only known-tier view of
+  the persisted world, fetchable once the new <code>world_snapshot_ready</code> phase has fired
+  (after stage 4 commits).
 </p>
 
 <aside class="wiki-rationale">
@@ -101,7 +112,7 @@
   <code>PATCH /api/campaigns/:campaignId/name</code>.
 </p>
 
-<h2>The six routes</h2>
+<h2>The seven routes</h2>
 
 <table>
   <thead>
@@ -192,9 +203,24 @@
       <td><strong>10 / min per USER</strong></td>
       <td>
         <code>200 { campaignId, name }</code> on success. Body is
-        <code>{ name: string }</code> trimmed, 1–200 chars. Affects <code>campaigns.name</code>
-        only — <code>worlds.name</code> stays as the synthesized identity. <code>400</code> on Zod
+        <code>{ name: string }</code> trimmed, 1–200 chars. Affects <code>campaigns.name</code> only
+        — <code>worlds.name</code> stays as the synthesized identity. <code>400</code> on Zod
         failure; <code>404</code> if the campaign isn't owned by the caller.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/world-snapshot</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>30 / min per IP</strong></td>
+      <td>
+        <code
+          >200 { world, entities, facts, relationships, proseKernels, entityHierarchy, statBlocks
+          }</code
+        >
+        on success — the known-tier slice through the <code>worldSnapshotView</code> projection.
+        <code>409 snapshot_not_ready</code> when stage 4 (<code>entity_relationships</code>) hasn't
+        yet committed; <code>404</code> if the campaign or its world is gone underneath. Dev-mode
+        bypass widens the tier filter to all three tiers — see the bypass section below.
       </td>
     </tr>
   </tbody>
@@ -330,8 +356,9 @@
     <code>INSERT campaign_members</code> (<code>role = 'owner', invite_accepted = true</code>). The
     create body never carries a name; stage 1 (<code>concept_intake</code>) backfills both
     <code>worlds.name</code> and <code>campaigns.name</code> from the LLM-synthesized world name
-    once it lands (<code>UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'</code>,
-    which keeps an in-flight user rename from being clobbered). Users override later via
+    once it lands (<code
+      >UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'</code
+    >, which keeps an in-flight user rename from being clobbered). Users override later via
     <code>PATCH /api/campaigns/:campaignId/name</code>.
   </li>
   <li>
@@ -588,27 +615,42 @@
   yields successive partial tree snapshots as more tokens arrive. The extractor walks each snapshot,
   looks at the configured arrays (<code>regions</code> + <code>factions</code> for stage 2,
   <code>locations</code> + <code>npcs</code> for stage 3, <code>relationships</code> for stage 4),
-  and emits one of three events per array entry as it crosses thresholds:
+  and emits exactly one identity-only event per array entry once the LLM has finished writing it:
 </p>
 
 <ul>
   <li>
-    First time an entity entry is "emittable" — non-empty <code>name</code> plus at least one other
-    non-empty field — fire <code>entity-added</code> with the partial data shape.
+    For entity entries (stages 2 + 3), the extractor fires
+    <code>entity-added { synthKey, kind, name }</code> the first time the array length advances past
+    that entry's index — i.e. when the LLM has moved on to the next sibling, which is when the
+    closed entry is in hand. The last entry of each array closes in a post-loop pass after the
+    <code>for await</code> exits.
   </li>
   <li>
-    Subsequent snapshots that change an already-emitted entity's fields fire
-    <code>entity-updated</code> with a key-level diff patch (RFC 7396 merge-patch semantics over
-    top-level keys; nested objects/arrays replace wholesale).
+    For edge entries (stage 4), the extractor fires
+    <code>edge-added { synthKey, from, to, relationship }</code> on the same closed-entry boundary.
   </li>
   <li>
-    For edge arrays (stage 4), an entry is emittable once <code>from</code>, <code>to</code>, and
-    <code>relationship</code> are all non-empty. Each emission is a fresh <code>edge-added</code>;
-    there is no edge equivalent of <code>entity-updated</code> in the contract, so a
-    partial-then-refined edge surfaces as multiple <code>edge-added</code> events sharing a
-    synthKey.
+    Mid-stream <code>entity-updated</code> events do NOT fire from the extractor. Field-level deltas
+    during streaming are NOT on the wire — the client receives an identity-only signal that "an
+    entity with this name and kind is now persisted-bound," nothing more. Prose, facts, and
+    statblocks for the entity arrive through the post-stage-4 snapshot fetch, not through deltas.
   </li>
 </ul>
+
+<aside class="wiki-rationale">
+  <strong
+    >Identity-only mid-stream + a known-tier snapshot at stage 4, not field-level deltas</strong
+  >
+  — the previous wire format streamed every partial field of every entity as successive
+  <code>entity-updated</code> patches. That meant the client saw plot-bearing prose before the
+  access-tier classification of the entity was even known (the LLM emits
+  <code>access_level</code> as one of the last fields it writes), creating a window where
+  discoverable / secret material could leak through the stream. Narrowing mid-stream to identity
+  only and persisting the body through a tier-filtered snapshot at the stage-4 boundary closes that
+  window: the client never sees a field it isn't entitled to, even transiently, because tier-aware
+  fields don't flow on the wire at all.
+</aside>
 
 <p>
   Every emitted event carries a <code>synthKey</code> of the form
@@ -622,14 +664,15 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>"Name closed plus one other field," not "name closed"</strong> — partial JSON streaming
-  shows <code>name</code> populated long before any prose / facts arrive, which would mean firing
-  <code>entity-added</code> with an empty entity that then receives every subsequent field as an
-  <code>entity-updated</code>. That's a stream of useless deltas. Waiting for one other field to
-  cross the empty boundary defers the first emit by tens of milliseconds and produces a meaningful
-  initial payload the client can render. Edges are different because the type's primary keys are all
-  three structural fields — there's no way to "see" a relationship taking shape until all three are
-  populated.
+  <strong>Closed-entry gate, not "name plus one other field"</strong> — the earlier emit gate fired
+  <code>entity-added</code> the moment <code>name</code> and one neighbouring field had been
+  written, then streamed every subsequent field as an <code>entity-updated</code>. After myth-exac
+  the wire format no longer carries entity bodies at all, so the previous trigger would race the
+  access-tier classification (the LLM writes <code>access_level</code> late in the entry) and leak
+  identity for entities that will be filtered out at persistence time. The current gate waits until
+  the LLM has finished the entire entry — detected by the array advancing past that index, or by the
+  post-loop pass for the last entry of each array — at which point <code>access_level</code> is in
+  hand and the tier-filter decision can be made before any byte hits the channel.
 </aside>
 
 <h3>Stage 3's three-pass parent resolver</h3>
@@ -835,8 +878,9 @@
     <tr>
       <td><code>phase</code></td>
       <td>
-        Entry to <code>world_gen</code> and on terminal <code>world_ready</code> /
-        <code>world_gen_failed</code> / <code>complete</code>.
+        Entry to <code>world_gen</code>; on stage-4 commit (<code>world_snapshot_ready</code> —
+        snapshot endpoint becomes fetchable, stages 5–7 continue); on terminal
+        <code>world_ready</code> / <code>world_gen_failed</code> / <code>complete</code>.
       </td>
       <td>Processor</td>
     </tr>
@@ -867,16 +911,23 @@
     </tr>
     <tr>
       <td><code>entity-added</code></td>
-      <td>First time a streamed entity entry crosses "name closed plus one other field."</td>
+      <td>
+        Stage 2/3 entity entries close in the stream (post-myth-exac: identity-only payload —
+        <code>{ synthKey, kind, name }</code>). Only fires for entries whose
+        <code>access_level === 'known'</code>, unless the world's
+        <code>dev_bypass_access_filter</code> flag is set.
+      </td>
       <td>Streaming extractor (stages 2/3)</td>
     </tr>
     <tr>
       <td><code>entity-updated</code></td>
       <td>
-        Mid-stream field diffs on already-added entities; also stage 3's parent-cleared patches and
-        stage 7's fix_prose / rename_entity patches (post-COMMIT).
+        Stage 3's post-COMMIT parent-cleared patches and stage 7's <code>fix_prose</code> /
+        <code>rename_entity</code> patches. No longer fires mid-stream — the streaming extractor
+        ships an identity-only <code>entity-added</code> once per entry and nothing else for that
+        synthKey until coherence.
       </td>
-      <td>Streaming extractor (mid-stream); stages 3 + 7 (post-COMMIT)</td>
+      <td>Stages 3 + 7 (post-COMMIT)</td>
     </tr>
     <tr>
       <td><code>entity-removed</code></td>
@@ -889,8 +940,10 @@
     <tr>
       <td><code>edge-added</code></td>
       <td>
-        Stage 4 mid-stream as each relationship's three primary fields close; stage 7 post-COMMIT
-        for <code>fix_relationship</code> replacements.
+        Stage 4 as each relationship entry closes (identity-only —
+        <code>{ synthKey, from, to, relationship }</code>); stage 7 post-COMMIT for
+        <code>fix_relationship</code> replacements. Edges only emit when both endpoints are
+        known-tier entities in the world's tier map (or bypass is on).
       </td>
       <td>Streaming extractor (stage 4); stage 7</td>
     </tr>
@@ -918,12 +971,164 @@
   </tbody>
 </table>
 
-<h2>Resume semantics</h2>
+<h2>The snapshot phase and the world-snapshot endpoint</h2>
 
 <p>
-  <code>POST /api/campaigns/:campaignId/resume</code> dispatches off <code>derivePhase</code>'s
-  eight phases via an exhaustive switch with an <code>assertNever</code> default. Most arms 409 with
-  a typed code; two have real recovery logic.
+  The pipeline ends with three non-streaming stages (5–7) that, in the old shape, finished before
+  any consumer could read the world. Two facts changed with myth-exac: stage 7
+  (<code>coherence_pass</code>) edits prose and renames entities, so the persisted state isn't fully
+  settled until it finishes; and the dev tool's wiki-style inspector wants the persisted world the
+  moment it's coherent — well before stages 5/6/7 add their finishing touches. Both pull in the same
+  direction: the pipeline now emits a <code>world_snapshot_ready</code> phase the moment stage 4
+  (<code>entity_relationships</code>) commits.
+</p>
+
+<p>
+  <code>derivePhase</code> in <code>backend/src/sse/derive-phase.ts</code> returns
+  <code>world_snapshot_ready</code> when the world is still <code>generating</code> but a stage-4
+  <code>completed</code> row exists; the worker publishes the phase event directly from
+  <code>world-gen-processor.ts</code> immediately after stage 4 commits (and on idempotent re-entry
+  past a completed stage-4 row, so a reconnecting subscriber catches up). Stages 5 + 6 + 7 then
+  continue under this phase. When stage 7 commits and <code>worlds.status</code> flips to
+  <code>complete</code>, the phase advances to <code>world_ready</code>; if the cost cap fires the
+  world ends at <code>complete</code> (stage 7's cap-fire exception) or <code>failed</code> (any
+  earlier stage).
+</p>
+
+<p>
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is owner-only,
+  rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the pre-readiness
+  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes.
+  The response is a <code>WorldSnapshot</code>: a <code>WorldSummary</code> projection of the worlds
+  row, the entities, their prose kernels and facts, the relationships among them, the entity
+  hierarchy rows for resolved parents, and stat blocks for entities that have them. Seven read
+  queries — most run in parallel — make up the composition; <code>world-snapshot-view.ts</code>
+  owns it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>An explicit <code>WorldSummary</code> projection, not <code>SELECT *</code></strong> — the
+  <code>worlds</code> table holds plot-bearing columns the Fast Thinker must never see:
+  <code>key_tensions</code>, <code>political_summary</code>, <code>starting_situations</code>,
+  <code>follow_up_questions</code>, <code>geography_summary</code>, <code>world_overview</code>, and
+  (notably) <code>dev_bypass_access_filter</code>. The snapshot view explicitly selects
+  <code>id</code>, <code>name</code>, <code>concept</code>, <code>tone</code>, <code>themes</code>,
+  and <code>era</code> only. New columns added to the <code>worlds</code> table never reach the wire
+  automatically — adding a column requires authoring a deliberate addition to the projection. This
+  is the inverse of the usual repo-mapper default: most repos return the row shape; this one returns
+  an allowlist.
+</aside>
+
+<h3>Three-tier access classification</h3>
+
+<p>
+  Facts and entities carry an <code>access_level</code> column with three values:
+  <code>known</code>, <code>discoverable</code>, <code>secret</code>. The classification is grounded
+  in D&amp;D-mechanic semantics — <code>known</code> is no-roll player knowledge (the things anyone
+  in this city would casually know), <code>discoverable</code> is roll-required information (the
+  kind of thing an Investigation or Insight check would surface), <code>secret</code> is
+  actively-hidden plot material the player must earn through play. Migration 014 renamed
+  <code>facts.access_level</code> from the old <code>(public, private, secret)</code> vocabulary,
+  added the same column to <code>entities</code> with <code>NOT NULL DEFAULT 'known'</code>, and
+  added a covering index <code>(world_id, access_level)</code> for the snapshot endpoint's primary
+  filter.
+</p>
+
+<p>
+  The snapshot endpoint filters every read by tier. Without bypass, only
+  <code>access_level = 'known'</code> rows surface — known-tier entities, known-tier facts of those
+  entities, relationships where both endpoints are known-tier, prose kernels for known entities
+  only, hierarchy rows whose parent and child are both known, stat blocks referenced by known
+  entities only. The streaming extractor applies the same filter to the wire format: it consults the
+  entry's <code>access_level</code> at the closed-entry gate and only fires
+  <code>entity-added</code> for known-tier entities. Stage 4's edge emit checks both endpoints
+  against the world's <code>endpointTierMap</code> and skips edges that cross into the hidden tiers.
+  Stage 7's coherence patches do the same — a <code>fix_prose</code> patch targeting a
+  discoverable-tier entity persists silently in the database but does not fire an
+  <code>entity-updated</code> on the wire.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Prose-tier consistency at the prompt level</strong> — tier filtering on the wire isn't
+  enough on its own. If the LLM writes
+  <code
+    >"The Saltwind Coast is famous for its fish markets; the smugglers' tunnels under the market
+    square…"</code
+  >
+  into a <em>known</em>-tier region's prose, the smuggler detail leaks the second the region's
+  <code>entity-added</code> ships, because the entity is known-tier and its prose travels with it
+  through the snapshot endpoint. The generation prompts for stages 2, 3, and 7 carry a prose-tier
+  consistency constraint: the prose and fact content of a tier-T entity may only reveal information
+  that is itself tier-T or lower (less hidden). Discoverable facts about a known entity belong on a
+  <em>discoverable</em>-tier fact, not woven into the entity's <em>known</em>-tier prose. Each tier
+  is a separate "what-can-be-said-here" boundary. Filtering content on the wire enforces the shape;
+  the prompt constraint enforces the meaning.
+</aside>
+
+<h3>Post-snapshot deltas on the same channel</h3>
+
+<p>
+  After the snapshot is fetched, the SSE stream stays open and stage 7's coherence pass emits its
+  patches as deltas on the same channel. The client applies each delta in place against its local
+  copy of the snapshot — <code>entity-updated</code> patches replace top-level keys (RFC 7396
+  merge-patch semantics) on the named entity, <code>edge-added</code> appends a new relationship,
+  <code>edge-removed</code> drops one. The delta channel reuses the same event arms the streaming
+  extractor uses; the discriminator is the phase the client is in, not the event shape. Coherence
+  doesn't delete entities — there's no <code>entity-removed</code> on the post-snapshot path today.
+</p>
+
+<p>
+  Reconnect recovery is fetch-and-replace, not replay. <code>EventSource</code> auto-reconnects on
+  transport failure; on re-open, if the phase is at or past <code>world_snapshot_ready</code>, the
+  client re-fetches the snapshot and discards its local copy. Any in-flight coherence deltas that
+  arrive between the snapshot fetch and steady state re-apply harmlessly — the fresh snapshot
+  already reflects them. The pattern avoids the need for an event cursor / replay log; the
+  authoritative snapshot is cheap enough to refetch outright.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Replace, not merge, on reconnect</strong> — a missed <code>edge-removed</code> during a
+  disconnect would otherwise leave a stale edge in the client's local state forever. The
+  fetch-and-replace pattern evicts whatever the client thought was true and resyncs to the
+  authoritative server state. Idempotent, no out-of-order risk, and the only cost is a few extra
+  read queries on the rare reconnect — well worth not having to ship a per-client cursor.
+</aside>
+
+<h3>Dev-mode access-filter bypass</h3>
+
+<p>
+  <code>worlds.dev_bypass_access_filter</code> is a per-world boolean that opts a single world out
+  of the tier filter. When set, the streaming extractor publishes <code>entity-added</code> /
+  <code>edge-added</code> for entries of any tier, stage 7's coherence pass emits deltas for any
+  tier it patches, and the snapshot endpoint widens its tier filter to
+  <code>['known', 'discoverable', 'secret']</code>. The wire-shape stays narrow — identity-only
+  events, allowlist-projection snapshot — but the set of <em>which</em> events fire and which rows
+  the snapshot includes grows.
+</p>
+
+<p>
+  The flag is set at world-creation time. The dev tool's campaign-create panel surfaces an opt-in
+  checkbox; when checked, the POST body carries <code>devBypassAccessFilter: true</code>, and the
+  create route writes <code>true</code> into the new world's column. Production users can't reach
+  this code path: the route gates the body field on <code>AUTH_MODE === 'bypass'</code> plus
+  <code>NODE_ENV</code> being <code>development</code> or <code>test</code>, and the
+  six-layer-defense bypass plugin (see
+  <a href="../auth-billing/jwt-middleware.html">JWT middleware</a>) refuses to load anywhere else.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Defense-in-depth at the snapshot endpoint, not just at create</strong> — the world's flag
+  is necessary but not sufficient. The snapshot handler additionally checks that the
+  <em>requesting</em> user is in bypass-auth mode (the bypass plugin attaches a
+  <code>scopes: ['bypass']</code> hint). A dev-tool-created world's secrets must not leak to a
+  prod-auth requester, even if the world's column says yes. Both axes — world flag and user scope —
+  have to align for the wider tier set to surface.
+</aside>
+
+<p>
+  <code>POST /api/campaigns/:campaignId/resume</code> dispatches off <code>derivePhase</code>'s nine
+  phases via an exhaustive switch with an <code>assertNever</code> default. Most arms 409 with a
+  typed code; two have real recovery logic.
 </p>
 
 <table>
@@ -937,6 +1142,14 @@
     <tr>
       <td><code>world_gen</code></td>
       <td><code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>.</td>
+    </tr>
+    <tr>
+      <td><code>world_snapshot_ready</code></td>
+      <td>
+        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>. Stage 4 has committed
+        (the snapshot is fetchable) but stages 5–7 are still running; from the resume-policy
+        perspective the job is still in flight.
+      </td>
     </tr>
     <tr>
       <td><code>world_gen_failed</code></td>
@@ -988,12 +1201,18 @@
 <h2>The dev tool surface</h2>
 
 <p>
-  Four panels in the <a href="./dev-tool.html">dev tool</a> drive and observe the world-gen
+  Five panels in the <a href="./dev-tool.html">dev tool</a> drive and observe the world-gen
   pipeline. The campaign-create form (freeform / guided sub-forms) posts to
-  <code>POST /api/campaigns</code>. The campaign-details panel loads a campaign by id and exposes a
-  Resume button. The live-events panel attaches to the SSE stream and renders every event arm — see
-  the <a href="./dev-tool.html#the-live-events-panel">live-events inspector</a> section. The
-  credit-ledger panel maintains an in-session log of grants and force-grants via the dev-only
+  <code>POST /api/campaigns</code> and exposes a "Bypass access tiers" opt-in checkbox that flips
+  the world's <code>dev_bypass_access_filter</code> column at create time. The campaign-details
+  panel loads a campaign by id and exposes a Resume button. The live-events panel attaches to the
+  SSE stream and renders every event arm — see the
+  <a href="./dev-tool.html#the-live-events-panel">live-events inspector</a> section. The new
+  <a href="./dev-tool.html#the-world-snapshot-panel">world-snapshot panel</a> attaches to the same
+  SSE stream, waits for <code>world_snapshot_ready</code>, fetches the snapshot endpoint, and
+  renders it as a tree-of-entities-by-kind + per-entity detail card; stage 7's coherence deltas
+  apply in place so the user watches the world settle without a refetch. The credit-ledger panel
+  maintains an in-session log of grants and force-grants via the dev-only
   <code>POST /api/dev/credits/grant</code>.
 </p>
 
@@ -1239,15 +1458,19 @@
   <code>backend/src/llm/prep/</code> (processor, streaming-extractor, structured-output-repair, all
   seven stage handlers under <code>stages/</code>),
   <code>backend/src/auth/rejection-storm.ts</code>, <code>backend/src/repo/credit-grants.ts</code>,
-  <code>backend/src/repo/pipeline-runs.ts</code>, <code>backend/src/server.ts</code> (the
+  <code>backend/src/repo/pipeline-runs.ts</code>,
+  <code>backend/src/repo/world-snapshot-view.ts</code>,
+  <code>backend/src/sse/derive-phase.ts</code>, <code>backend/src/server.ts</code> (the
   <code>buildWorldGenQueue</code> options), <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-jobs.ts</code>,
   <code>backend/src/contract/pipeline-errors.ts</code>,
   <code>backend/src/contract/pipeline-events.ts</code>,
   <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>,
   <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>,
-  <code>backend/migrations/012_credit_ledger_admin_source.sql</code>. Design specs:
+  <code>backend/migrations/012_credit_ledger_admin_source.sql</code>,
+  <code>backend/migrations/014_access_tier_rework.sql</code>. Design specs:
   <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>,
-  <code>docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md</code>; parent spec:
-  <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+  <code>docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md</code>,
+  <code>docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md</code>;
+  parent spec: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
 </p>

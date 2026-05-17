@@ -1,6 +1,6 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:fd5100a460be8be4da8cf6be3d044ee5a913c0dfa06903a9d94d28eabe41215d -->
+<!-- source-hash: sha256:0d04291f3505332363aac44df68ee7d0c815cd6fef2d0d01df72253e31019759 -->
 <!-- last-ticket: MYT-52 -->
 
 <h1>Repository layer</h1>
@@ -638,61 +638,80 @@
 <p>
   <strong><code>entities</code></strong> exposes <code>insert(client, input)</code>,
   <code>findByWorldAndName</code> (case-sensitive, returns null on miss), and
-  <code>listByWorld</code>. The <code>insert</code> caller supplies the <code>id</code>
-  (UUIDv7-generated app-side per the
+  <code>listByWorld(client, worldId, opts?)</code>. The <code>insert</code> caller supplies the
+  <code>id</code> (UUIDv7-generated app-side per the
   <a href="./repository.html#uuidv7-in-its-own-seam">uuidv7 seam</a>) so the stage's finalized-event
   payload can reference the row before the INSERT lands. <code>listByWorld</code>
   is what stage 3's parent resolver calls in pass 2 to build the name → entityId map, and what stage
-  4 calls at stage start to build the entity-inventory the prompt feeds into the LLM.
+  4 calls at stage start to build the entity-inventory the prompt feeds into the LLM. The optional
+  <code>opts.accessLevels</code> argument (added under myth-exac) constrains results to the named
+  tier set — the world-snapshot view passes <code>['known']</code> in the standard case and
+  <code>['known', 'discoverable', 'secret']</code> when dev-mode bypass is in effect.
   <code>entity_type</code> is constrained by the table's CHECK to
   <code>'npc' | 'location' | 'faction' | 'item'</code>; regions are persisted as
   <code>type='location'</code> per the pipeline spec's flat enum.
+  <code>entities.access_level</code> defaults to <code>'known'</code> at insert time and is
+  CHECK-constrained to the same three-tier vocabulary as <code>facts.access_level</code>.
 </p>
 
 <p>
-  <strong><code>proseKernels</code></strong> exposes <code>insert</code> +
-  <code>updateByEntityId</code>. The table has <code>UNIQUE(entity_id)</code> — exactly one prose
-  blob per entity — so <code>insert</code> errors on conflict (the stream-stages caller has
-  guaranteed fresh entities upstream). <code>updateByEntityId</code> is the coherence pass's
-  <code>fix_prose</code> path. The two are deliberately NOT collapsed into an upsert: the design
-  (§4.3) calls out the separation so the failure mode "INSERT collided" can't silently degrade to
-  "the LLM rewrote a region's lore in coherence pass." When a coherence patch needs to land, it goes
-  through <code>updateByEntityId</code> explicitly.
+  <strong><code>proseKernels</code></strong> exposes <code>insert</code>,
+  <code>updateByEntityId</code>, and <code>listByEntities</code> (added under myth-exac for the
+  world-snapshot view's composition pass). The table has <code>UNIQUE(entity_id)</code> — exactly
+  one prose blob per entity — so <code>insert</code> errors on conflict (the stream-stages caller
+  has guaranteed fresh entities upstream). <code>updateByEntityId</code> is the coherence pass's
+  <code>fix_prose</code> path. The two write paths are deliberately NOT collapsed into an upsert:
+  the design (§4.3) calls out the separation so the failure mode "INSERT collided" can't silently
+  degrade to "the LLM rewrote a region's lore in coherence pass." When a coherence patch needs to
+  land, it goes through <code>updateByEntityId</code> explicitly.
+  <code>listByEntities</code> short-circuits to <code>[]</code> on empty input.
 </p>
 
 <p>
-  <strong><code>facts</code></strong> exposes <code>insertMany</code> +
-  <code>updateContentById</code>. <code>insertMany</code> runs a single parameterized multi-row
-  INSERT with one constant baked in — <code>narrative_status = 'undelivered'</code>. The LLM never
-  emits the narrative_status field; the persister stamps the value as part of the INSERT shape.
-  Play-runtime owns subsequent transitions of that column (<code>delivered</code> →
-  <code>developed</code> → <code>resolved</code>). <code>source</code> uses the column default
-  <code>'prep'</code>; no explicit value passed. <code>updateContentById</code> is the coherence
-  pass's <code>fix_fact</code> path.
+  <strong><code>facts</code></strong> exposes <code>insertMany</code>,
+  <code>updateContentById</code>, and
+  <code>listByEntities(client, ids, { accessLevels })</code> (added under myth-exac for the
+  world-snapshot view). <code>insertMany</code> runs a single parameterized multi-row INSERT with
+  one constant baked in — <code>narrative_status = 'undelivered'</code>. The LLM never emits the
+  narrative_status field; the persister stamps the value as part of the INSERT shape. Play-runtime
+  owns subsequent transitions of that column (<code>delivered</code> → <code>developed</code> →
+  <code>resolved</code>). <code>source</code> uses the column default <code>'prep'</code>; no
+  explicit value passed. <code>updateContentById</code> is the coherence pass's
+  <code>fix_fact</code> path. <code>listByEntities</code> applies a mandatory tier filter — the
+  caller is required to name the access levels it's authorized to see, so a future caller can't
+  accidentally read the full unfiltered set by omitting the option.
+  <code>facts.access_level</code> was renamed under migration 014 from
+  <code>(public, private, secret)</code> to <code>(known, discoverable, secret)</code>; the new
+  vocabulary mirrors D&amp;D-mechanic semantics.
 </p>
 
 <p>
   <strong><code>relationships</code></strong> exposes <code>insertMany</code>,
-  <code>listByWorld</code>, <code>deleteByWorld</code>, <code>updateById</code>, and
-  <code>deleteById</code>. <code>deleteByWorld</code> is the stage-4 retry-idempotency primitive:
-  the very first DB action stage 4 takes is <code>relationships.deleteByWorld(worldId)</code>, so a
-  retry after a partial run lands in a clean slate. The schema has no
-  <code>UNIQUE(source, target, type)</code> constraint by intent — application code owns idempotency
-  at stage-start time, not at row-insert time. <code>updateById</code> + <code>deleteById</code> are
-  the coherence pass's <code>fix_relationship</code> (modelled as DELETE + INSERT, not in-place
-  UPDATE) and <code>delete_relationship</code> paths. The DELETE + INSERT shape is deliberate: it
-  produces a clean <code>edge-removed</code> + <code>edge-added</code>
+  <code>listByWorld</code>, <code>listAmong</code> (added under myth-exac for the world-snapshot
+  view — filters at the DB level to pairs where both endpoints are in a given entity-id set),
+  <code>deleteByWorld</code>, <code>updateById</code>, and <code>deleteById</code>.
+  <code>deleteByWorld</code> is the stage-4 retry-idempotency primitive: the very first DB action
+  stage 4 takes is <code>relationships.deleteByWorld(worldId)</code>, so a retry after a partial run
+  lands in a clean slate. The schema has no <code>UNIQUE(source, target, type)</code> constraint by
+  intent — application code owns idempotency at stage-start time, not at row-insert time.
+  <code>updateById</code> + <code>deleteById</code> are the coherence pass's
+  <code>fix_relationship</code> (modelled as DELETE + INSERT, not in-place UPDATE) and
+  <code>delete_relationship</code> paths. The DELETE + INSERT shape is deliberate: it produces a
+  clean <code>edge-removed</code> + <code>edge-added</code>
   event pair on the wire, matching the contract's "every relationship change is observable" rule.
 </p>
 
 <p>
-  <strong><code>entityHierarchy</code></strong> exposes a bare <code>insert(client, input)</code>.
-  The table has <code>UNIQUE(child_entity_id)</code> — at most one parent per entity — and the repo
-  deliberately does NOT include <code>ON CONFLICT</code>. The caller (stage 4's straggler insert)
-  pre-filters against the existing rows in <code>entity_hierarchy</code> to enforce the "stage 3
-  wins" collision rule from §D9, then INSERTs only rows that won't conflict. Keeping the policy in
-  the caller rather than the repo means future changes to the collision rule are a caller-side
-  decision, not a schema migration.
+  <strong><code>entityHierarchy</code></strong> exposes <code>insert(client, input)</code> and
+  <code>listForWorld(client, worldId)</code> (added under myth-exac to feed the world-snapshot view;
+  the <code>entity_hierarchy</code> table has no <code>world_id</code> column, so the query joins
+  through <code>entities</code> to constrain to world-internal rows). The table has
+  <code>UNIQUE(child_entity_id)</code> — at most one parent per entity — and the repo deliberately
+  does NOT include <code>ON CONFLICT</code>. The caller (stage 4's straggler insert) pre-filters
+  against the existing rows in <code>entity_hierarchy</code> to enforce the "stage 3 wins" collision
+  rule from §D9, then INSERTs only rows that won't conflict. Keeping the policy in the caller rather
+  than the repo means future changes to the collision rule are a caller-side decision, not a schema
+  migration.
 </p>
 
 <aside class="wiki-rationale">
