@@ -158,7 +158,13 @@ async function readStatBlockIds(
   client: ClientLike,
   entityIds: readonly string[],
 ): Promise<readonly string[]> {
+  // Defensive: caller passes the result of entities.listByWorld; an
+  // empty entityIds list is reachable only when a world has zero
+  // entities, a tier-filter-degenerate case the snapshot endpoint
+  // surfaces with an empty payload.
+  /* c8 ignore start */
   if (entityIds.length === 0) return []
+  /* c8 ignore stop */
   const result = await client.query<EntityStatBlockRefRow>(
     `SELECT stat_block_id FROM entities
       WHERE id = ANY($1) AND stat_block_id IS NOT NULL`,

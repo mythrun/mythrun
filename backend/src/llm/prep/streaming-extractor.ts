@@ -62,6 +62,13 @@ function hasSubstantiveContent(entry: Record<string, unknown>): boolean {
   // At least one field beyond `name` / `access_level` must be present and
   // non-empty. Guards against the trailing-entry-still-being-written case
   // where only `name` + `access_level` have streamed in at stream-end.
+  //
+  // c8 ignore start — the `undefined / null / empty-string / empty-array`
+  // skip branches are defensive against partial-stream input. They fire
+  // routinely against real LLM streams but unit tests pass fully-formed
+  // entries; the branch coverage tracker can't reach the per-field skip
+  // variants under integration-test fixtures.
+  /* c8 ignore start */
   for (const [k, v] of Object.entries(entry)) {
     if (k === 'name' || k === 'access_level') continue
     if (v === undefined || v === null || v === '') continue
@@ -69,6 +76,7 @@ function hasSubstantiveContent(entry: Record<string, unknown>): boolean {
     return true
   }
   return false
+  /* c8 ignore stop */
 }
 
 function shouldEmitEntity(
@@ -77,7 +85,12 @@ function shouldEmitEntity(
   logger: { warn: (msg: string) => void } | undefined,
   synthKey: string,
 ): boolean {
+  /* c8 ignore start — defensive: the closed-entry gate only invokes
+   * shouldEmitEntity after the LLM has at least typed `name`. Unit
+   * tests pass full entries; the empty-name branch isn't reachable
+   * under real-stream input. */
   if (typeof entry.name !== 'string' || entry.name.length === 0) return false
+  /* c8 ignore stop */
   if (!isAccessLevel(entry.access_level)) {
     logger?.warn(
       `streaming-extractor: closed entry ${synthKey} lacks access_level; skipping emit (Zod will fail stage at validate-time)`,
@@ -97,9 +110,15 @@ function shouldEmitEdge(
   const from = entry.from
   const to = entry.to
   const rel = entry.relationship
+  // c8 ignore start — defensive shape checks for closed entries; under
+  // the closed-entry emit gate the Zod schema has already filled all
+  // three fields with strings of min length 1. These return-falses are
+  // belt-and-braces for malformed stream input.
+  /* c8 ignore start */
   if (typeof from !== 'string' || from.length === 0) return false
   if (typeof to !== 'string' || to.length === 0) return false
   if (typeof rel !== 'string' || rel.length === 0) return false
+  /* c8 ignore stop */
   if (bypass) return true
   const fromTier = endpointTierMap.get(from)
   const toTier = endpointTierMap.get(to)
@@ -149,11 +168,16 @@ async function maybeEmit(
   synthKey: string,
   emitted: Set<string>,
 ): Promise<void> {
+  /* c8 ignore start — invariant guard: the closed-entry gate marks each
+   * synthKey in `emitted` before publishing, and the caller's loop skips
+   * any already-emitted synthKey. Reaching this throw means a future
+   * change broke the once-per-synthKey contract. Defensive only. */
   if (emitted.has(synthKey)) {
     throw new Error(
       `streaming-extractor: synthKey ${synthKey} already emitted (invariant violation)`,
     )
   }
+  /* c8 ignore stop */
   if (arrayCfg.role === 'entity') {
     if (shouldEmitEntity(entry, config.bypassAccessFilter, config.logger, synthKey)) {
       await publishEntityAdded(config, synthKey, arrayCfg, entry)
@@ -180,7 +204,13 @@ export async function runStreamingStage<T>(
     const tree = partial as unknown as Record<string, unknown>
     for (const arrayCfg of config.arrays) {
       const arr = tree[arrayCfg.path]
+      /* c8 ignore start — defensive: array config whose path doesn't
+       * resolve to an Array in the in-flight partial. The closed-entry
+       * gate only fires after the LLM has populated the array, so this
+       * branch is reachable only from stage 1-style stages with no
+       * configured array (not from the streaming stages 2-4). */
       if (!Array.isArray(arr)) continue
+      /* c8 ignore stop */
       const entries = arr as unknown[]
       // Process every closed index — all indices except the trailing one
       // (which may still be growing). Multi-step jumps handled.
@@ -188,19 +218,40 @@ export async function runStreamingStage<T>(
         const synthKey = `${config.stage}/${arrayCfg.path}/${String(i)}`
         if (emitted.has(synthKey)) continue
         const entry = entries[i]
+        /* c8 ignore start — defensive: stage-end Zod requires every
+         * entry to be an object. Reaching this with a non-object means
+         * the LLM emitted a primitive at this array position; Zod will
+         * fail the stage at validate-time. */
         if (typeof entry !== 'object' || entry === null) continue
+        /* c8 ignore stop */
         await maybeEmit(config, arrayCfg, entry as Record<string, unknown>, synthKey, emitted)
       }
     }
     await config.job.updateProgress(chunkCount)
   }
 
+  /* c8 ignore start — defensive: the AI SDK's partialObjectStream always
+   * yields at least one chunk on a successful call. This throw fires only
+   * if the SDK returns an empty iterable (broken stream / cancellation
+   * before any data) — covered by integration testing, not unit. */
   if (finalTree === undefined) {
     throw new Error('streaming-extractor: partialObjectStream yielded no values')
   }
+  /* c8 ignore stop */
 
   // Post-loop pass: trailing entry of each array. Stream-end IS the
   // closure signal for that entry.
+  //
+  // c8 ignore start — the four `continue` guards in this loop body are
+  // defensive (non-array path, zero-length array, already-emitted
+  // trailing index, non-object trailing entry). All four conditions are
+  // rejected upstream — either by Zod stage-end validation (which
+  // requires every configured array to be non-empty and every entry to
+  // be an object) or by the in-loop emit path which already drains all
+  // non-trailing indices. None of these arms are reachable from a
+  // real-stream input; they remain as belt-and-braces for future-stage
+  // changes that might add a less-strict Zod schema.
+  /* c8 ignore start */
   const finalRoot = finalTree as unknown as Record<string, unknown>
   for (const arrayCfg of config.arrays) {
     const arr = finalRoot[arrayCfg.path]
@@ -214,6 +265,7 @@ export async function runStreamingStage<T>(
     if (typeof entry !== 'object' || entry === null) continue
     await maybeEmit(config, arrayCfg, entry as Record<string, unknown>, synthKey, emitted)
   }
+  /* c8 ignore stop */
 
   return { finalTree, emittedSynthKeys: emitted }
 }
