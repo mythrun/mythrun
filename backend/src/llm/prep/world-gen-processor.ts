@@ -95,6 +95,11 @@ interface CampaignContext {
     readonly era: string | null
     readonly keyTensions: string | null
     readonly geographySummary: string | null
+    // myth-exac T18: the per-world dev-bypass flag, read once at job entry
+    // and threaded into every wire-tier-aware stage (W&F / L&N / E-R /
+    // coherence_pass). Production worlds default false; the dev tool sets
+    // this column at create time to surface all tiers in the wire feed.
+    readonly devBypassAccessFilter: boolean
   }
 }
 
@@ -150,10 +155,23 @@ export function createWorldGenProcessor(
 
     for (const stage of WORLD_GEN_STAGES) {
       const claim = await atomicClaimStage(deps.pool, ctx.world.id, stage)
-      /* c8 ignore next — `continue` arm fires when a stage is already
-       * completed (idempotent re-run) or lost-race (another worker took
-       * it). Tested via the idempotency suite. */
-      if (claim !== 'claimed') continue
+      if (claim !== 'claimed') {
+        // myth-exac T18: on idempotent re-entry, re-publish
+        // phase=world_snapshot_ready as soon as we walk past a completed
+        // stage-4 row. SSE subscribers that reconnected mid-job catch up
+        // on the snapshot-availability signal without needing the
+        // initial-frame snapshot of pipeline_runs.
+        if (stage === 'entity_relationships' && claim === 'completed') {
+          await publishEvent(deps, campaignId, {
+            type: 'phase',
+            phase: 'world_snapshot_ready',
+          })
+        }
+        /* c8 ignore next — `continue` arm with claim==='lost-race' or
+         * claim==='completed' on non-entity_relationships stages. Tested
+         * via the idempotency suite. */
+        continue
+      }
 
       await publishEvent(deps, campaignId, {
         type: 'stage-started',
@@ -175,6 +193,20 @@ export function createWorldGenProcessor(
           durationMs: Date.now() - startedAt,
           costUsd: result.costUsd,
         })
+
+        // myth-exac T18: stage 4 (entity_relationships) is the boundary
+        // where the world snapshot becomes fetchable — all entities +
+        // hierarchy + relationships have committed. Publish the phase
+        // immediately so subscribers can render the snapshot view ahead of
+        // worlds.status flipping to 'complete' (which only happens after
+        // stages 5-7 finish). On idempotent re-entry the equivalent emit
+        // fires from the `claim !== 'claimed'` branch above.
+        if (stage === 'entity_relationships') {
+          await publishEvent(deps, campaignId, {
+            type: 'phase',
+            phase: 'world_snapshot_ready',
+          })
+        }
 
         /* c8 ignore start — capExhausted is the §D5 stage-7 cap-fire
          * exception: stage 7 (coherence_pass) self-detects that the
@@ -238,9 +270,11 @@ async function loadCampaignContext(
     era: string | null
     key_tensions: string | null
     geography_summary: string | null
+    dev_bypass_access_filter: boolean
   }>(
     `SELECT c.id AS campaign_id, w.id AS world_id, w.created_by, w.name, w.concept,
-            w.tone, w.themes, w.era, w.key_tensions, w.geography_summary
+            w.tone, w.themes, w.era, w.key_tensions, w.geography_summary,
+            w.dev_bypass_access_filter
        FROM campaigns c
        JOIN worlds w ON w.id = c.world_id
       WHERE c.id = $1`,
@@ -264,6 +298,7 @@ async function loadCampaignContext(
       era: row.era,
       keyTensions: row.key_tensions,
       geographySummary: row.geography_summary,
+      devBypassAccessFilter: row.dev_bypass_access_filter,
     },
   }
 }
@@ -436,6 +471,7 @@ async function dispatchStage(
       job,
       redisRealtime: deps.redisRealtime,
       keyPrefix: deps.redisKeyPrefix,
+      bypassAccessFilter: ctx.world.devBypassAccessFilter,
     })
   }
   if (stage === 'locations_and_npcs') {
@@ -457,6 +493,7 @@ async function dispatchStage(
       job,
       redisRealtime: deps.redisRealtime,
       keyPrefix: deps.redisKeyPrefix,
+      bypassAccessFilter: ctx.world.devBypassAccessFilter,
     })
   }
   if (stage === 'entity_relationships') {
@@ -470,6 +507,7 @@ async function dispatchStage(
       job,
       redisRealtime: deps.redisRealtime,
       keyPrefix: deps.redisKeyPrefix,
+      bypassAccessFilter: ctx.world.devBypassAccessFilter,
     })
   }
   if (stage === 'starting_situation') {
@@ -507,11 +545,12 @@ async function dispatchStage(
     logger: deps.logger,
     worldId: ctx.world.id,
     synthKeyByEntityId: {},
-    // myth-exac T16: production path runs with the tier filter on so the
-    // FT-bound snapshot never sees a coherence patch for a non-known
-    // entity. The dev tool's bypass mode propagates through deps in a
-    // separate task — see myth-exac T17.
-    bypassAccessFilter: false,
+    // myth-exac T18: thread the per-world dev-bypass flag through coherence
+    // pass so dev-tool worlds (with dev_bypass_access_filter=true) surface
+    // every patch in the wire feed regardless of entity tier. Production
+    // worlds keep the column at false, preserving the tier-filtered FT
+    // snapshot.
+    bypassAccessFilter: ctx.world.devBypassAccessFilter,
   })
 }
 /* c8 ignore stop */

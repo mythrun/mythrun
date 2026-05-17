@@ -930,6 +930,14 @@ async function dispatchResume(ctx: ResumeContext): Promise<FastifyReply> {
     case 'world_gen':
       ctx.reply.header('Retry-After', '30')
       return ctx.reply.code(409).send({ code: 'world_gen_in_progress' })
+    case 'world_snapshot_ready':
+      // myth-exac T18: stage 4 has committed (snapshot is fetchable) but
+      // stages 5-7 are still pending — world-gen is still in progress from
+      // the resume-policy perspective. Mirror the `world_gen` arm so the
+      // client retries in 30s rather than treating the snapshot-ready
+      // signal as a terminal "resumable" state.
+      ctx.reply.header('Retry-After', '30')
+      return ctx.reply.code(409).send({ code: 'world_gen_in_progress' })
     case 'world_gen_failed':
       return resumeFromWorldGenFailed(ctx)
     case 'world_ready':

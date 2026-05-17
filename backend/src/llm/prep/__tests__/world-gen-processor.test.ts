@@ -41,10 +41,31 @@ import {
   type WorldGenJobPayload,
 } from '../world-gen-processor.js'
 import { StageNotImplementedError } from '../stages/stage-not-implemented.js'
+import * as worldAndFactionsModule from '../stages/world-and-factions.js'
+import * as locationsAndNpcsModule from '../stages/locations-and-npcs.js'
+import * as entityRelationshipsModule from '../stages/entity-relationships.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return { ...actual, generateText: vi.fn(), streamObject: vi.fn() }
+})
+
+// myth-exac T18: per-stage module mocks let the new tests drive stages 2-4
+// to succeed at the dispatcher boundary without bringing up the
+// streamObject + repair-chain machinery. The legacy tests below leave the
+// default mock (vi.mocked(streamObject) throws StageNotImplementedError)
+// untouched, so the existing 6 scenarios still halt at stage 2.
+vi.mock('../stages/world-and-factions.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stages/world-and-factions.js')>()
+  return { ...actual, runWorldAndFactionsStage: vi.fn() }
+})
+vi.mock('../stages/locations-and-npcs.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stages/locations-and-npcs.js')>()
+  return { ...actual, runLocationsAndNpcsStage: vi.fn() }
+})
+vi.mock('../stages/entity-relationships.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stages/entity-relationships.js')>()
+  return { ...actual, runEntityRelationshipsStage: vi.fn() }
 })
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -250,6 +271,19 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- design §4.1 mandates streamObject for streaming stages; mocking the call path
     vi.mocked(ai.streamObject).mockImplementation(() => {
       throw new StageNotImplementedError('world_and_factions')
+    })
+    // myth-exac T18: mirror the streamObject default at the per-stage
+    // module boundary so the legacy 6 tests still halt at stage 2 with
+    // stage_not_implemented. The new T18 tests override these via
+    // mockImplementationOnce / mockResolvedValueOnce.
+    vi.mocked(worldAndFactionsModule.runWorldAndFactionsStage).mockImplementation(() => {
+      throw new StageNotImplementedError('world_and_factions')
+    })
+    vi.mocked(locationsAndNpcsModule.runLocationsAndNpcsStage).mockImplementation(() => {
+      throw new StageNotImplementedError('locations_and_npcs')
+    })
+    vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage).mockImplementation(() => {
+      throw new StageNotImplementedError('entity_relationships')
     })
   })
 
@@ -465,6 +499,146 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     // the judge inside paint-job-validator. If both workers had raced past
     // the claim we'd see 4 calls.
     expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(2)
+  })
+
+  // ------------------------------------------------------------------
+  // myth-exac T18: world_snapshot_ready phase emit + bypass threading.
+  // ------------------------------------------------------------------
+
+  // Empty stage-dispatch result for the wave-4 module mocks. The dispatcher
+  // returns this shape; finalizedEvents=[] avoids any post-COMMIT publish.
+  const EMPTY_STAGE_RESULT = {
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    finalizedEvents: [],
+    capExhausted: false,
+  } as const
+
+  it('publishes phase=world_snapshot_ready exactly once after stage 4 commits', async () => {
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    // Pre-stage 1-3 as completed so the loop reaches stage 4 fresh; the
+    // wave-4 module mocks (stage 2 + 3) won't fire because their atomic
+    // claims short-circuit on the pre-seeded 'completed' rows.
+    for (const stage of ['concept_intake', 'world_and_factions', 'locations_and_npcs'] as const) {
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
+                                    completed_at, cost_usd, input_tokens, output_tokens, user_id)
+         VALUES ($1, $2, $3, 'completed', now(), now(), 0, 0, 0, NULL)`,
+        [uuidv7(), worldId, stage],
+      )
+    }
+    // Stage 4 succeeds; stage 5 onward throws to halt the loop so the test
+    // doesn't have to drive stages 5-7 to completion.
+    vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage).mockResolvedValueOnce(
+      EMPTY_STAGE_RESULT,
+    )
+    vi.mocked(ai.generateText).mockRejectedValueOnce(
+      new StageNotImplementedError('starting_situation'),
+    )
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await proc(makeJob(campaignId))
+
+    // Stage 4 row should be completed (not pre-seeded; the mocked handler
+    // wrote nothing but markStageCompleted ran on the success path).
+    const stage4 = await pool.query<{ status: string }>(
+      `SELECT status FROM pipeline_runs
+        WHERE world_id = $1 AND stage = 'entity_relationships'`,
+      [worldId],
+    )
+    expect(stage4.rows[0]?.status).toBe('completed')
+
+    // The dispatcher mock was invoked exactly once (no idempotent re-entry
+    // in this test) so the emit must fire from the fresh-commit branch.
+    expect(
+      vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage),
+    ).toHaveBeenCalledTimes(1)
+
+    const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
+    const snapshotReadyEmits = phaseStrings.filter((p) =>
+      p.includes('"world_snapshot_ready"'),
+    )
+    expect(snapshotReadyEmits).toHaveLength(1)
+  })
+
+  it('re-publishes phase=world_snapshot_ready on retry re-entry when stage 4 is already completed', async () => {
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    // Pre-stage 1-4 all as completed. The loop will walk past each via the
+    // `claim !== 'claimed'` branch; stage 4's idempotent skip must emit
+    // world_snapshot_ready for reconnecting SSE subscribers.
+    for (const stage of [
+      'concept_intake',
+      'world_and_factions',
+      'locations_and_npcs',
+      'entity_relationships',
+    ] as const) {
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
+                                    completed_at, cost_usd, input_tokens, output_tokens, user_id)
+         VALUES ($1, $2, $3, 'completed', now(), now(), 0, 0, 0, NULL)`,
+        [uuidv7(), worldId, stage],
+      )
+    }
+    // Stage 5 throws StageNotImplementedError to terminate the loop cleanly
+    // without driving the remaining stages.
+    vi.mocked(ai.generateText).mockRejectedValueOnce(
+      new StageNotImplementedError('starting_situation'),
+    )
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await proc(makeJob(campaignId))
+
+    // The stage-4 handler must NOT have re-run.
+    expect(
+      vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage),
+    ).not.toHaveBeenCalled()
+
+    const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
+    const snapshotReadyEmits = phaseStrings.filter((p) =>
+      p.includes('"world_snapshot_ready"'),
+    )
+    expect(snapshotReadyEmits).toHaveLength(1)
+  })
+
+  it('threads worlds.dev_bypass_access_filter into every wave-4 stage RunArgs', async () => {
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    // Flip the world's dev-bypass column on. The processor reads this at job
+    // entry and threads it into the dispatcher args for stages 2/3/4 (+ 7).
+    await pool.query(`UPDATE worlds SET dev_bypass_access_filter = true WHERE id = $1`, [worldId])
+    pushConceptIntakeResponses()
+
+    // Wave-4 stage mocks: each succeeds and returns the empty result so the
+    // dispatcher walks all the way through stage 4. We assert against the
+    // captured RunArgs after the job completes.
+    vi.mocked(worldAndFactionsModule.runWorldAndFactionsStage).mockResolvedValueOnce(
+      EMPTY_STAGE_RESULT,
+    )
+    vi.mocked(locationsAndNpcsModule.runLocationsAndNpcsStage).mockResolvedValueOnce(
+      EMPTY_STAGE_RESULT,
+    )
+    vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage).mockResolvedValueOnce(
+      EMPTY_STAGE_RESULT,
+    )
+    // Stage 5 throws to halt the loop after stage 4 commits.
+    vi.mocked(ai.generateText).mockRejectedValueOnce(
+      new StageNotImplementedError('starting_situation'),
+    )
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await proc(makeJob(campaignId))
+
+    // Each wave-4 dispatcher arm must have been called with
+    // bypassAccessFilter=true threaded through from the world row.
+    const wfCall = vi.mocked(worldAndFactionsModule.runWorldAndFactionsStage).mock.calls[0]
+    expect(wfCall?.[1].bypassAccessFilter).toBe(true)
+    const lnCall = vi.mocked(locationsAndNpcsModule.runLocationsAndNpcsStage).mock.calls[0]
+    expect(lnCall?.[1].bypassAccessFilter).toBe(true)
+    const erCall = vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage).mock.calls[0]
+    expect(erCall?.[1].bypassAccessFilter).toBe(true)
   })
 })
 
