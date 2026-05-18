@@ -57,10 +57,10 @@ describe('VocabularyEntrySchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects definition longer than 400 chars', () => {
+  it('rejects definition longer than 800 chars', () => {
     const result = VocabularyEntrySchema.safeParse({
       term: 'x',
-      definition: 'a'.repeat(401),
+      definition: 'a'.repeat(801),
       source: 'stage_1_5',
     })
     expect(result.success).toBe(false)
@@ -134,39 +134,41 @@ describe('VocabularyRegistrySchema', () => {
 })
 
 describe('VocabularyIntakeOutputSchema', () => {
-  it('accepts model output without source/access_level (handler stamps them)', () => {
+  // Per myth-pfke's design pivot: model output is entries-only. No
+  // adjacent_franchises, no avoids, no source, no access_level. Handler
+  // stamps source + access_level + adjacent_franchises:[] before storage.
+  it('accepts entries-only model output', () => {
     const result = VocabularyIntakeOutputSchema.safeParse({
       entries: [
         {
           term: 'the unwitched',
-          definition: 'non-magical people; this world\'s term for those without arcane sight.',
-          avoids: 'muggle',
+          definition: "non-magical people; this world's term for those without arcane sight.",
         },
       ],
-      adjacent_franchises: ['Harry Potter'],
     })
     expect(result.success).toBe(true)
   })
 
-  it('strips source field from model output entries (handler stamps the canonical value)', () => {
-    // myth-pfke smoke surfaced: Sonnet sometimes emits passthrough source
-    // even when the prompt says to omit. Schema strips extras silently
-    // rather than rejecting — the handler's stamp-pass would overwrite
-    // anything the model emitted in this slot anyway.
+  it('strips extras (source, avoids, adjacent_franchises) from model output', () => {
+    // Sonnet sometimes emits passthrough fields even when the prompt says
+    // to omit. Zod default strips them silently; the handler's stamp-pass
+    // overwrites anything the model emitted in those slots anyway.
     const result = VocabularyIntakeOutputSchema.safeParse({
       entries: [
         {
           term: 'x',
           definition: 'long enough definition.',
           source: 'stage_1_5',
+          avoids: 'muggle',
         },
       ],
-      adjacent_franchises: [],
+      adjacent_franchises: ['Harry Potter'],
     })
     expect(result.success).toBe(true)
     if (result.success) {
-      // Source stripped by Zod default behavior.
       expect(result.data.entries[0]).not.toHaveProperty('source')
+      expect(result.data.entries[0]).not.toHaveProperty('avoids')
+      expect(result.data).not.toHaveProperty('adjacent_franchises')
     }
   })
 
@@ -177,16 +179,12 @@ describe('VocabularyIntakeOutputSchema', () => {
     }
     const result = VocabularyIntakeOutputSchema.safeParse({
       entries: new Array(31).fill(entry),
-      adjacent_franchises: [],
     })
     expect(result.success).toBe(false)
   })
 
-  it('accepts empty entries + empty adjacent_franchises (degenerate world)', () => {
-    const result = VocabularyIntakeOutputSchema.safeParse({
-      entries: [],
-      adjacent_franchises: [],
-    })
+  it('accepts empty entries (degenerate world)', () => {
+    const result = VocabularyIntakeOutputSchema.safeParse({ entries: [] })
     expect(result.success).toBe(true)
   })
 })

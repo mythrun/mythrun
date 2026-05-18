@@ -15,47 +15,37 @@ You have already distilled the concept. Your job now is to generate this world's
 
 ## Your Task
 
-### Part 1: identify adjacent franchises
-
-Identify the existing-fiction franchises this world is most adjacent to — Harry Potter, Star Wars, Lord of the Rings, the Marvel Cinematic Universe, the Forgotten Realms / Eberron / Dragonlance / Greyhawk (all WotC-D&D-owned settings outside the SRD), Redwall, Dune, Game of Thrones, anything else. Use your knowledge of fiction broadly. If the world isn't notably adjacent to anything, return an empty list. Cap: 8.
-
-### Part 2: generate the world's vocabulary
-
 Generate 12-25 entries covering this world's distinctive terms. NO PRE-DEFINED CATEGORIES — cover whatever vocabulary domains this world's premise demands. Examples drawn from the breadth of stories this format supports:
 
 - Crown of Candy: food-themed deities (the Bulb, the Sweet, the Sour), food-themed nations, food-themed magic terminology.
 - Mentopolis: 1940s noir slang merged with personified-emotion entities.
-- Starstruck Odyssey: Force-equivalents, named ship classes, alien species that aren't Star Wars's species names.
+- Starstruck Odyssey: Force-equivalents, named ship classes, alien species.
 - The Unsleeping City: NYC-flavor magical institutions (the Spirit of NYC, the Vox Populi), neighborhoods reimagined as supernatural jurisdictions.
 - Burrow's End: animal-fable territory terms, predator-and-prey language.
 - A Court of Fey & Flowers: fae court honorifics, flower-magic terminology.
-- Veil & Chalk (HP-adjacent): "the unwitched" instead of "muggle", "the Concordat of Concealment" instead of "Statute of Secrecy", "the Ash Network" instead of "Floo network".
-- A generic D&D fantasy: pantheon names that aren't Mystra/Bane/Selûne; calendar that isn't Forgotten Realms; faction names that aren't the Harpers/Zhentarim.
+- A generic D&D fantasy: a pantheon, a calendar, named historical events, faction names, in-world oaths and slang.
 
 For each entry, populate:
 
 - `term`: this world's term (1-80 chars). Specific, evocative, fits the world's tone.
-- `definition`: a 30-400 char prose definition explaining the term's meaning, scope, and how it's used in context. The definition tells downstream prose-generators HOW to use the term correctly.
-- `avoids` (optional, 1-80 chars): IF this term is replacing an iconic neologism from an adjacent franchise, populate this with the franchise's term. E.g., `avoids: "muggle"` when the term is "the unwitched". The avoids field is the IP-defense signal — populate it whenever applicable.
-- `usage_notes` (optional, ≤200 chars): capitalization, register, or stylistic constraints. E.g., "always lowercase, never preceded by 'mere'".
+- `definition`: a 10-800 char prose definition explaining the term's meaning, scope, and how it's used in context. The definition tells downstream prose-generators HOW to use the term correctly.
+- `usage_notes` (optional, ≤400 chars): capitalization, register, or stylistic constraints. E.g., "always lowercase, never preceded by 'mere'".
 
 DO NOT generate entries for:
 
-- D&D 5e SRD-canonical mechanics: spell names, class names, race names, magic schools, ability scores, saving throws.
+- **D&D 5e SRD-canonical mechanics. These are the platform's system layer — Mythrun runs on them. Examples that must NEVER be substituted or world-renamed:** class names (`cleric`, `wizard`, `rogue`, `paladin`, `sorcerer`, `warlock`, `bard`, `barbarian`, `druid`, `fighter`, `monk`, `ranger`), race names (`elf`, `dwarf`, `halfling`, `gnome`, `dragonborn`, `tiefling`, etc.), magic schools, ability scores, saving throws, spell names from the SRD, AND game-mechanic phrases like "adventuring party", "skill check", "wild magic surge", "house rule". The world's distinctive vocabulary lives ABOVE this layer, not in place of it.
 - Generic fantasy nouns: wand, sword, magic, dragon, witch, wizard.
 - Boring proper nouns that aren't worth a glossary entry: every NPC name, every minor village.
 
-Quality bar: every entry should be something a player would benefit from seeing in a world-glossary wiki section. Distinctive, defining, worth remembering.
+Quality bar: every entry should be something a player would benefit from seeing in a world-glossary wiki section. Distinctive, defining, worth remembering. Trust your own judgment about IP-iconic vocabulary — you naturally avoid franchise-specific neologisms (Statute of Secrecy, midi-chlorian, mithril, Mystra). You don't need an explicit list; just don't reach for them. Generate this world's own terms freely.
 
 Respond with ONLY a JSON object matching this shape:
 
 {
-  "adjacent_franchises": ["string", ...],
   "entries": [
     {
       "term": "string",
       "definition": "string",
-      "avoids": "string (optional)",
       "usage_notes": "string (optional)"
     }
   ]

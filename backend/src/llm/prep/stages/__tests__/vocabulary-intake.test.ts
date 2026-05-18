@@ -47,18 +47,18 @@ const ARGS = {
   keyTensions: 'The veil is cracking',
 }
 
+// Per myth-pfke's design pivot: stage 1.5 model output is entries-only
+// (no adjacent_franchises, no avoids). Handler stamps source + access_level
+// on each entry and stamps adjacent_franchises: [] on the registry.
 const MODEL_OUTPUT = {
-  adjacent_franchises: ['Harry Potter'],
   entries: [
     {
       term: 'the unwitched',
       definition: "non-magical people; this world's term for those without arcane sight.",
-      avoids: 'muggle',
     },
     {
       term: 'the Concordat of Concealment',
       definition: 'the law forbidding magical revelation to the unwitched.',
-      avoids: 'Statute of Secrecy',
     },
   ],
 }
@@ -84,19 +84,21 @@ describe('runVocabularyIntakeStage', () => {
     )
 
     // Persistence: single UPDATE call to worlds.vocabulary_registry with
-    // the model-output augmented with source + access_level on each entry.
+    // the model-output augmented with source + access_level on each entry,
+    // and an empty adjacent_franchises array stamped by the handler.
     expect(client.query).toHaveBeenCalledTimes(1)
     const [sql, params] = client.query.mock.calls[0] as [string, unknown[]]
     expect(sql).toMatch(/UPDATE worlds.*SET vocabulary_registry/i)
     const payload = JSON.parse(params[1] as string) as {
       adjacent_franchises: string[]
-      entries: { term: string; source: string; access_level: string; avoids?: string }[]
+      entries: { term: string; source: string; access_level: string }[]
     }
-    expect(payload.adjacent_franchises).toEqual(['Harry Potter'])
+    // Stage 1.5 always stamps adjacent_franchises empty per the design
+    // pivot (IP-mirror detection lives in paint-job-validator).
+    expect(payload.adjacent_franchises).toEqual([])
     expect(payload.entries).toHaveLength(2)
     expect(payload.entries[0]).toMatchObject({
       term: 'the unwitched',
-      avoids: 'muggle',
       source: 'stage_1_5',
       access_level: 'known',
     })
@@ -109,9 +111,9 @@ describe('runVocabularyIntakeStage', () => {
     expect(result.outputTokens).toBe(2000)
   })
 
-  it('accepts empty entries + empty adjacent_franchises (degenerate world)', async () => {
+  it('accepts empty entries (degenerate world)', async () => {
     mockGenerateText.mockResolvedValueOnce({
-      output: { adjacent_franchises: [], entries: [] },
+      output: { entries: [] },
       finishReason: 'stop',
       usage: SONNET_USAGE,
     } as never)
@@ -150,7 +152,7 @@ describe('runVocabularyIntakeStage', () => {
     // should NOT NaN-out the cost when that happens. Mirrors the peer
     // pattern at random-tables.test.ts:101.
     mockGenerateText.mockResolvedValueOnce({
-      output: { adjacent_franchises: [], entries: [] },
+      output: { entries: [] },
       finishReason: 'stop',
       usage: {},
     } as never)
@@ -168,7 +170,7 @@ describe('runVocabularyIntakeStage', () => {
 
   it('substitutes all template placeholders into the prompt', async () => {
     mockGenerateText.mockResolvedValueOnce({
-      output: { adjacent_franchises: [], entries: [] },
+      output: { entries: [] },
       finishReason: 'stop',
       usage: SONNET_USAGE,
     } as never)

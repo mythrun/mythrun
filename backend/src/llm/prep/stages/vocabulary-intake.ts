@@ -78,15 +78,18 @@ export async function runVocabularyIntakeStage(
     maxRetries: 3,
   })
 
-  // Stamp source + access_level. The model omits both (schema enforces);
-  // we apply them here so storage is canonical.
+  // Stamp source + access_level on each entry (the model omits both per
+  // the IntakeOutput schema; the handler applies them so storage is
+  // canonical). adjacent_franchises is always empty from stage 1.5 —
+  // IP-mirror detection lives in the paint-job-validator at concept_intake.
+  // See the schema's header comment for the design rationale.
   const registry: VocabularyRegistry = {
     entries: result.output.entries.map((e) => ({
       ...e,
       source: 'stage_1_5' as const,
       access_level: 'known' as const,
     })),
-    adjacent_franchises: result.output.adjacent_franchises,
+    adjacent_franchises: [],
   }
 
   await client.query(

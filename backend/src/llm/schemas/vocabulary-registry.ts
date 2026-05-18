@@ -13,12 +13,13 @@ import { z } from 'zod'
 
 export const VocabularyEntrySchema = z.object({
   term: z.string().min(1).max(80),
-  // myth-pfke smoke surfaced: real Sonnet sometimes emits terse glossary
-  // definitions (10-30 char). Floor at 10 — anything shorter is a model
-  // error, not a stylistic choice. Upper bound stays at 400.
-  definition: z.string().min(10).max(400),
+  // myth-pfke smoke surfaced: real Sonnet emits both terse (10-30 char)
+  // and expansive (400-800 char) definitions depending on the world's
+  // complexity. Floor at 10, ceiling at 800 — empirical range from the
+  // experimental A/B run on a sword-and-sorcery prompt.
+  definition: z.string().min(10).max(800),
   avoids: z.string().min(1).max(80).optional(),
-  usage_notes: z.string().min(1).max(200).optional(),
+  usage_notes: z.string().min(1).max(400).optional(),
   source: z.enum(['stage_1_5', 'consolidation', 'scribe_runtime']),
   access_level: z.enum(['known', 'discoverable', 'secret']).default('known'),
 })
@@ -30,22 +31,34 @@ export const VocabularyRegistrySchema = z.object({
 })
 export type VocabularyRegistry = z.infer<typeof VocabularyRegistrySchema>
 
-// Stage 1.5 model output: model OMITS source + access_level (handler
-// stamps both). Originally `.strict()` rejected extras to surface model
-// drift. Removed after the myth-pfke smoke showed Sonnet sometimes
-// emits a passthrough `source` field or extra metadata keys even when
-// the prompt says not to. Default Zod behavior (strip extras silently)
-// is safer — the handler's stamp-pass overwrites anything the model
-// emitted in those slots anyway. The wrapper's repair-fallback only
-// fires for LlmStructuredOutputError, and AI_NoObjectGeneratedError
-// from Output.object validation bypasses middleware mapping (a known
-// latent bug in the wrapper — see follow-up bead), so we keep the
-// schema lenient enough that the first-pass Zod parse succeeds.
+// Stage 1.5 model output: model emits ONLY `entries` (no source,
+// access_level, avoids, or adjacent_franchises). The handler stamps
+// source='stage_1_5' + access_level='known' per-entry and stamps an
+// empty adjacent_franchises array on the registry document.
+//
+// IP-mirror detection lives in the paint-job-validator at concept_intake,
+// not here. The vocabulary-intake A/B experiments in myth-pfke surfaced
+// that naming franchises in this prompt was net-harmful: it caused
+// paranoid substitutions including SRD-class outlawings (cleric →
+// "Voidpriest", adventuring party → "Company"), missed actual adjacencies
+// (Star Wars-coded prompt got 0 franchises identified), and had spotty
+// signal (fired hard on genre LABELS, silent on franchise CONTENTS).
+// The model's intrinsic IP-instincts handle franchise-vocabulary avoidance
+// without explicit prompting.
+//
+// The `avoids` field on VocabularyEntrySchema is retained for future
+// Scribe-runtime use (a runtime caller might mark an entry as replacing
+// a specific IP word). Stage 1.5 does not populate it.
 export const VocabularyIntakeOutputSchema = z.object({
   entries: z
-    .array(VocabularyEntrySchema.omit({ source: true, access_level: true }))
+    .array(
+      VocabularyEntrySchema.omit({
+        source: true,
+        access_level: true,
+        avoids: true,
+      }),
+    )
     .min(0)
     .max(30),
-  adjacent_franchises: z.array(z.string().min(1).max(80)).max(8),
 })
 export type VocabularyIntakeOutput = z.infer<typeof VocabularyIntakeOutputSchema>
