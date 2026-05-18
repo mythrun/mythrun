@@ -759,8 +759,11 @@ describe('streamObject', () => {
 
     // The bug-mode would fail HERE — `result.partialObjectStream` would
     // be undefined and the for-await would throw on Symbol.asyncIterator.
+    // partials are typed `unknown[]` to match the SDK's DeepPartial<T>
+    // shape on partialObjectStream (other streamObject tests in this file
+    // do the same).
     expect(result.partialObjectStream).toBeDefined()
-    const partials: TestShape[] = []
+    const partials: unknown[] = []
     for await (const p of result.partialObjectStream) partials.push(p)
     expect(partials).toEqual([{ name: 'partial' }, { name: 'Riley' }])
 
