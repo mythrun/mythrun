@@ -120,6 +120,25 @@ covered surface.
 
 ---
 
+## Push-time enforcement: the `.dev-tool-verifier-ok` marker
+
+`.claude/hooks/pre-push-dev-tool-verify.sh` blocks `git push` when the unpushed commits modify `backend/dev-tool/**` unless `tmp/.dev-tool-verifier-ok` contains the SHA-256 of the current `git ls-tree HEAD -r backend/dev-tool` output. The marker is the deterministic signal that the verifier subagent saw and approved this exact committed tree state. Any subsequent commit to `backend/dev-tool/**` shifts the hash and invalidates the marker.
+
+**Controller marker protocol** — after a verifier dispatch reports success, do all three steps below in order, then push:
+
+1. `git add` + `git commit` the subagent's working-tree edits (panels, registry, coverage inventory). The subagent does NOT commit per its authority list above.
+2. Write the marker against the post-commit HEAD:
+   ```bash
+   mkdir -p tmp && git ls-tree HEAD -r backend/dev-tool | sha256sum | awk '{print $1}' > tmp/.dev-tool-verifier-ok
+   ```
+3. `git push`. The PreToolUse hook recomputes the hash and allows the push.
+
+If the marker doesn't yet exist or is stale, the push is denied with the exact reason and a hash hint pointing at the current dev-tool tree. The fix is always: dispatch the verifier subagent (the prompt at the end of this file), then redo the controller protocol from step 1.
+
+**The subagent does NOT write the marker itself.** The marker hashes HEAD, and HEAD doesn't include the subagent's edits until the controller commits them. A subagent-written marker would always be stale-by-one-commit and produce false denies.
+
+---
+
 ## Subagent dispatch prompt for dev-tool-verifier
 
 ```
