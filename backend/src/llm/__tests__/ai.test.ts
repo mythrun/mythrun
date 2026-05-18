@@ -709,6 +709,70 @@ describe('streamObject', () => {
     await expect(result.object).rejects.toBe(unrelated)
   })
 
+  it('preserves SDK prototype getters (regression: wrapper must not spread the SDK result)', async () => {
+    // Real SDK returns a DefaultStreamObjectResult class instance whose
+    // partialObjectStream / textStream / fullStream / warnings / usage
+    // are PROTOTYPE getters. Object spread copies own enumerable
+    // properties only and would silently drop all of those, leaving the
+    // consumer reading `undefined.Symbol.asyncIterator`. This fixture
+    // simulates the prototype-getter shape so the spread bug cannot
+    // sneak back in unnoticed.
+    class FakeSdkStreamResult<T> {
+      readonly #partials: readonly T[]
+      readonly #final: T
+      constructor(partials: readonly T[], final: T) {
+        this.#partials = partials
+        this.#final = final
+      }
+      get partialObjectStream(): AsyncGenerator<T> {
+        const partials = this.#partials
+        async function* gen(): AsyncGenerator<T> {
+          for (const p of partials) yield p
+        }
+        return gen()
+      }
+      get object(): Promise<T> {
+        return Promise.resolve(this.#final)
+      }
+      get usage(): Promise<ReturnType<typeof makeUsage>> {
+        return Promise.resolve(makeUsage(100, 50))
+      }
+      get warnings(): Promise<undefined> {
+        return Promise.resolve(undefined)
+      }
+    }
+
+    const sdkResult = new FakeSdkStreamResult<TestShape>(
+      [{ name: 'partial' }, { name: 'Riley' }],
+      { name: 'Riley' },
+    )
+    mockStreamObject.mockReturnValueOnce(
+      sdkResult as unknown as ReturnType<typeof ai.streamObject>,
+    )
+
+    const result = streamObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'name something',
+      callSite: 'test/stream-prototype-getters',
+    })
+
+    // The bug-mode would fail HERE — `result.partialObjectStream` would
+    // be undefined and the for-await would throw on Symbol.asyncIterator.
+    expect(result.partialObjectStream).toBeDefined()
+    const partials: TestShape[] = []
+    for await (const p of result.partialObjectStream) partials.push(p)
+    expect(partials).toEqual([{ name: 'partial' }, { name: 'Riley' }])
+
+    // usage + warnings (also prototype getters) must survive.
+    const usage = await result.usage
+    expect(usage.inputTokens).toBe(100)
+    await expect(result.warnings).resolves.toBeUndefined()
+
+    // The wrapped `object` shadow must still resolve.
+    await expect(result.object).resolves.toEqual({ name: 'Riley' })
+  })
+
   it('streaming: forwards opts to the SDK', () => {
     mockStreamObject.mockReturnValueOnce(
       fakeStreamResult<TestShape>({ final: { name: 'Mo' } }),

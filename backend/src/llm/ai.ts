@@ -575,10 +575,20 @@ export function streamObject<T>(
     },
   )
 
-  return {
-    ...sdkResult,
-    object: wrappedObject,
-  } as unknown as StreamObjectResult<DeepPartial<T>, T, never>
+  // `sdkResult` is a class instance (DefaultStreamObjectResult) whose
+  // hot fields — partialObjectStream, textStream, fullStream, warnings,
+  // usage — are prototype getters. Object spread copies only own
+  // enumerable properties, so `{ ...sdkResult }` would silently drop
+  // every one of those getters and the consumer would see `undefined`
+  // for partialObjectStream. Mutate in place via defineProperty so the
+  // prototype chain is preserved and only `object` is shadowed.
+  Object.defineProperty(sdkResult, 'object', {
+    value: wrappedObject,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  })
+  return sdkResult as unknown as StreamObjectResult<DeepPartial<T>, T, never>
 }
 
 /**
