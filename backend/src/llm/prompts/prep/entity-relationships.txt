@@ -7,6 +7,10 @@
 
 You are formalizing the structured relationships between entities in a freshly-generated D&D 5e world. Stages 2 and 3 produced regions, factions, locations, and NPCs along with prose that often describes how those entities relate. Your job is to extract those relationships into a strict structured form so downstream systems can reason about them mechanically.
 
+## World Vocabulary
+
+{{vocabularyRegistry}}
+
 ## World Summary
 
 - **Name:** {{worldName}}
