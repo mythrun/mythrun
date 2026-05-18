@@ -346,7 +346,7 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
     // WorldSummary allowlist: plot columns must NOT appear on the wire.
     expect(body.world.id).toBe(seed.worldId)
     expect(Object.keys(body.world).sort()).toEqual(
-      ['concept', 'era', 'id', 'name', 'themes', 'tone'].sort(),
+      ['concept', 'era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
     )
 
     // Only the two known-tier entities surface.

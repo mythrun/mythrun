@@ -69,8 +69,12 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
   // three facts (mixed tiers), three prose kernels, and two
   // relationships (known→known and known→discoverable). The world row
   // is populated with plot-bearing columns to prove the allowlist
-  // suppresses them.
-  async function seedFixture(): Promise<SeededFixture> {
+  // suppresses them. When `vocabularyRegistry` is provided, it overrides
+  // the column's default empty registry so registry-filtering assertions
+  // can exercise mixed-tier entry sets.
+  async function seedFixture(opts?: {
+    readonly vocabularyRegistry?: unknown
+  }): Promise<SeededFixture> {
     const userId = uuidv7()
     const worldId = uuidv7()
     const known1 = uuidv7()
@@ -81,16 +85,29 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
        VALUES ($1, $2, $3, $4)`,
       [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
     )
-    await pool.query(
-      `INSERT INTO worlds (id, created_by, name, concept, tone, themes, status,
-                            dev_bypass_access_filter, era, key_tensions,
-                            political_summary, starting_situations,
-                            follow_up_questions)
-       VALUES ($1, $2, $3, 'c', 't', 'th', 'generating', false,
-               'an era', 'key tensions', 'political secrets',
-               'unrevealed starting situation', 'q?')`,
-      [worldId, userId, scope.worldName(0)],
-    )
+    if (opts?.vocabularyRegistry !== undefined) {
+      await pool.query(
+        `INSERT INTO worlds (id, created_by, name, concept, tone, themes, status,
+                              dev_bypass_access_filter, era, key_tensions,
+                              political_summary, starting_situations,
+                              follow_up_questions, vocabulary_registry)
+         VALUES ($1, $2, $3, 'c', 't', 'th', 'generating', false,
+                 'an era', 'key tensions', 'political secrets',
+                 'unrevealed starting situation', 'q?', $4::jsonb)`,
+        [worldId, userId, scope.worldName(0), JSON.stringify(opts.vocabularyRegistry)],
+      )
+    } else {
+      await pool.query(
+        `INSERT INTO worlds (id, created_by, name, concept, tone, themes, status,
+                              dev_bypass_access_filter, era, key_tensions,
+                              political_summary, starting_situations,
+                              follow_up_questions)
+         VALUES ($1, $2, $3, 'c', 't', 'th', 'generating', false,
+                 'an era', 'key tensions', 'political secrets',
+                 'unrevealed starting situation', 'q?')`,
+        [worldId, userId, scope.worldName(0)],
+      )
+    }
     await entities.insert(pool, {
       id: known1, worldId, entityType: 'location',
       name: `${scope.id}-k1`, accessLevel: 'known',
@@ -128,7 +145,7 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
     expect(snap.world.id).toBe(worldId)
     expect(snap.world.name).toBe(scope.worldName(0))
     expect(Object.keys(snap.world).sort()).toEqual(
-      ['concept', 'era', 'id', 'name', 'themes', 'tone'].sort(),
+      ['concept', 'era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
     )
 
     // Critically — these MUST NOT appear under any tier.
@@ -175,9 +192,10 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
     const snap = await worldSnapshotView.fetch(pool, worldId, { bypass: true })
 
     // Same allowlist applies under bypass. Bypass widens entity/fact
-    // tiers, not the world projection.
+    // tiers (and registry entry tiers), but the world's own column
+    // projection stays narrow.
     expect(Object.keys(snap.world).sort()).toEqual(
-      ['concept', 'era', 'id', 'name', 'themes', 'tone'].sort(),
+      ['concept', 'era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
     )
     expect('starting_situations' in snap.world).toBe(false)
     expect('key_tensions' in snap.world).toBe(false)
@@ -196,6 +214,133 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
 
     // All three prose kernels surface.
     expect(snap.proseKernels).toHaveLength(3)
+  })
+
+  it('surfaces a non-empty vocabulary registry (all-known tier, with adjacent_franchises) when bypass:false', async () => {
+    const { worldId } = await seedFixture({
+      vocabularyRegistry: {
+        entries: [
+          {
+            term: 'glimwick',
+            definition:
+              'a hand-warmer charm used by hedge-witches; emits a soft amber glow in cold',
+            source: 'stage_1_5',
+            access_level: 'known',
+          },
+          {
+            term: 'fenring',
+            definition:
+              'the brackish marsh that rings the lowland villages and floods every spring',
+            source: 'stage_1_5',
+            access_level: 'known',
+          },
+          {
+            term: 'cinder-coin',
+            definition:
+              'a small bronze token traded at hearthside markets; held to ward off chill',
+            source: 'stage_1_5',
+            access_level: 'known',
+          },
+        ],
+        adjacent_franchises: ['studio ghibli', 'dishonored'],
+      },
+    })
+
+    const snap = await worldSnapshotView.fetch(pool, worldId, { bypass: false })
+
+    expect(snap.world.vocabularyRegistry.entries).toHaveLength(3)
+    expect(snap.world.vocabularyRegistry.entries.map((e) => e.term).sort()).toEqual(
+      ['cinder-coin', 'fenring', 'glimwick'],
+    )
+    expect(snap.world.vocabularyRegistry.adjacent_franchises).toEqual([
+      'studio ghibli',
+      'dishonored',
+    ])
+  })
+
+  it('filters discoverable + secret entries out of the registry when bypass:false (adjacent_franchises still surface)', async () => {
+    const { worldId } = await seedFixture({
+      vocabularyRegistry: {
+        entries: [
+          {
+            term: 'glimwick',
+            definition:
+              'a hand-warmer charm used by hedge-witches; emits a soft amber glow in cold',
+            source: 'stage_1_5',
+            access_level: 'known',
+          },
+          {
+            term: 'wayfen oath',
+            definition:
+              'an old promise sworn between the marsh-clans; rumored to bind across generations',
+            source: 'stage_1_5',
+            access_level: 'discoverable',
+          },
+          {
+            term: 'ashroot',
+            definition:
+              'the secret name of the burned king buried under the fenring; never spoken aloud',
+            source: 'stage_1_5',
+            access_level: 'secret',
+          },
+        ],
+        adjacent_franchises: ['studio ghibli', 'dishonored'],
+      },
+    })
+
+    const snap = await worldSnapshotView.fetch(pool, worldId, { bypass: false })
+
+    expect(snap.world.vocabularyRegistry.entries).toHaveLength(1)
+    expect(snap.world.vocabularyRegistry.entries[0]?.term).toBe('glimwick')
+    expect(snap.world.vocabularyRegistry.entries[0]?.access_level).toBe('known')
+    // Adjacent franchises are metadata, not player-secret content — they
+    // surface regardless of the tier filter.
+    expect(snap.world.vocabularyRegistry.adjacent_franchises).toEqual([
+      'studio ghibli',
+      'dishonored',
+    ])
+  })
+
+  it('surfaces all registry tiers (known + discoverable + secret) when bypass:true', async () => {
+    const { worldId } = await seedFixture({
+      vocabularyRegistry: {
+        entries: [
+          {
+            term: 'glimwick',
+            definition:
+              'a hand-warmer charm used by hedge-witches; emits a soft amber glow in cold',
+            source: 'stage_1_5',
+            access_level: 'known',
+          },
+          {
+            term: 'wayfen oath',
+            definition:
+              'an old promise sworn between the marsh-clans; rumored to bind across generations',
+            source: 'stage_1_5',
+            access_level: 'discoverable',
+          },
+          {
+            term: 'ashroot',
+            definition:
+              'the secret name of the burned king buried under the fenring; never spoken aloud',
+            source: 'stage_1_5',
+            access_level: 'secret',
+          },
+        ],
+        adjacent_franchises: ['studio ghibli', 'dishonored'],
+      },
+    })
+
+    const snap = await worldSnapshotView.fetch(pool, worldId, { bypass: true })
+
+    expect(snap.world.vocabularyRegistry.entries).toHaveLength(3)
+    expect(snap.world.vocabularyRegistry.entries.map((e) => e.access_level).sort()).toEqual(
+      ['discoverable', 'known', 'secret'],
+    )
+    expect(snap.world.vocabularyRegistry.adjacent_franchises).toEqual([
+      'studio ghibli',
+      'dishonored',
+    ])
   })
 
   it('throws when the world id does not exist', async () => {

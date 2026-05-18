@@ -36,6 +36,10 @@ import type { EntityHierarchyRow } from './entity-hierarchy.js'
 import { entityHierarchy } from './entity-hierarchy.js'
 import type { StatBlockRow } from './stat-blocks.js'
 import { statBlocks } from './stat-blocks.js'
+import {
+  VocabularyRegistrySchema,
+  type VocabularyRegistry,
+} from '../llm/schemas/vocabulary-registry.js'
 
 // Allowlist projection of the worlds table. Plot-bearing columns
 // (key_tensions, political_summary, starting_situations,
@@ -49,6 +53,7 @@ export interface WorldSummary {
   readonly tone: string | null
   readonly themes: string | null
   readonly era: string | null
+  readonly vocabularyRegistry: VocabularyRegistry
 }
 
 export interface WorldSnapshot {
@@ -68,6 +73,7 @@ interface WorldSummaryDbRow {
   readonly tone: string | null
   readonly themes: string | null
   readonly era: string | null
+  readonly vocabulary_registry: unknown
 }
 
 interface EntityStatBlockRefRow {
@@ -87,13 +93,23 @@ async function fetch(
   //    no plot-bearing column ever lands on the wire shape — even if
   //    the worlds table grows new columns later.
   const worldResult = await client.query<WorldSummaryDbRow>(
-    `SELECT id, name, concept, tone, themes, era FROM worlds WHERE id = $1`,
+    `SELECT id, name, concept, tone, themes, era, vocabulary_registry
+       FROM worlds WHERE id = $1`,
     [worldId],
   )
   const worldRow = worldResult.rows[0]
   if (worldRow === undefined) {
     throw new Error(`world-snapshot-view: world ${worldId} not found`)
   }
+  // jsonb arrives as already-parsed JSON; the migration's column default
+  // + CHECK constraint guarantee top-level shape. .parse narrows to the
+  // VocabularyRegistry type. Entries are tier-filtered against the same
+  // accessLevels list used for entities/facts; adjacent_franchises is
+  // metadata (not player-secret content) and always surfaces.
+  const fullRegistry = VocabularyRegistrySchema.parse(worldRow.vocabulary_registry)
+  const filteredEntries = fullRegistry.entries.filter((e) =>
+    accessLevels.includes(e.access_level),
+  )
   const world: WorldSummary = {
     id: worldRow.id,
     name: worldRow.name,
@@ -101,6 +117,10 @@ async function fetch(
     tone: worldRow.tone,
     themes: worldRow.themes,
     era: worldRow.era,
+    vocabularyRegistry: {
+      entries: filteredEntries,
+      adjacent_franchises: fullRegistry.adjacent_franchises,
+    },
   }
 
   // 2. Tier-filtered entities. Empty result is fine — the rest of the
