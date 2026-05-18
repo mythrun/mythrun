@@ -517,6 +517,43 @@ describe('generateObject', () => {
     }
     expect(repairCall.providerOptions.mythrun.stage).toBe('world_and_factions')
   })
+
+  it('maps a raw AI_NoObjectGeneratedError to LlmStructuredOutputError so repair fires (myth-pfke)', async () => {
+    // myth-pfke smoke surfaced: Output.object validation in the SDK throws
+    // AI_NoObjectGeneratedError DIRECTLY (bypassing middleware which only
+    // wraps the inner LanguageModel). Without the catch routing through
+    // mapToMythrunError, the wrapper's `instanceof LlmStructuredOutputError`
+    // check rethrew the unmapped error and repair never fired. This test
+    // simulates the bypassed-middleware path by throwing a name-tagged Error
+    // directly from the mocked SDK and asserts the wrapper recovers via
+    // Sonnet repair.
+    const rawError = new Error('No object generated: response did not match schema.')
+    Object.assign(rawError, {
+      name: 'AI_NoObjectGeneratedError',
+      text: '{"name":"too-long-for-zod"}',
+    })
+    // Override cause to mimic SDK shape exposing `text` on the throw itself
+    // (mapToMythrunError wraps as { cause: rawError }, attemptRepair reads
+    // `mapped.cause.text`).
+    Object.defineProperty(rawError, 'cause', { value: { text: '{"name":"too-long-for-zod"}', name: 'AI_NoObjectGeneratedError' }, enumerable: true })
+    mockGenerateText.mockRejectedValueOnce(rawError)
+    // Sonnet repair call succeeds.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'Ada' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'name something',
+      callSite: 'test/no-object-error-mapping',
+    })
+    expect(result.output).toEqual({ name: 'Ada' })
+    expect(result.repairAttempted).toBe(true)
+    expect(infoSpy).toHaveBeenCalled()
+  })
 })
 
 describe('streamObject', () => {
