@@ -31,6 +31,7 @@ import {
   applyEdgeRemoved,
   applyEntityUpdated,
   renderDetail,
+  renderGlossarySection,
   renderTree,
   renderWorldHeading,
 } from './world-snapshot-render.js'
@@ -52,6 +53,7 @@ interface ViewRefs {
   readonly worldHeading: HTMLElement
   readonly tree: HTMLElement
   readonly detail: HTMLElement
+  readonly glossary: HTMLElement
   readonly retryBtn: HTMLButtonElement
 }
 
@@ -109,13 +111,27 @@ function buildView(): ViewRefs {
   splitRow.appendChild(tree)
   splitRow.appendChild(detail)
 
+  // myth-pfke T13 — glossary region. Placed beneath the tree/detail split
+  // so the vocabulary registry sits as a full-width section under the
+  // entity inspector. Spec ships glossary with the initial snapshot; no
+  // granular per-entry SSE events in v1, so renderAll() is the only call
+  // site (initial load + reconnect-driven re-render).
+  const glossary = document.createElement('div')
+  glossary.style.fontFamily = 'var(--mono)'
+  glossary.style.fontSize = '12px'
+  glossary.style.marginTop = '12px'
+  glossary.style.border = '1px solid var(--border)'
+  glossary.style.padding = '8px'
+  glossary.setAttribute('data-region', 'glossary')
+
   card.appendChild(title)
   card.appendChild(status)
   card.appendChild(retryBtn)
   card.appendChild(worldHeading)
   card.appendChild(splitRow)
+  card.appendChild(glossary)
 
-  return { card, status, worldHeading, tree, detail, retryBtn }
+  return { card, status, worldHeading, tree, detail, glossary, retryBtn }
 }
 
 // ---- Controller state ----
@@ -183,11 +199,16 @@ function attachController(refs: ViewRefs): void {
         selectEntity(eid)
       })
       renderDetail(refs.detail, state.snapshot, state.selectedEntityId)
+      // myth-pfke T13 — glossary repaints on every full snapshot render.
+      // Covers initial load, reconnect-driven re-fetch, and any caller
+      // that drops back through renderAll() after a delta.
+      renderGlossarySection(refs.glossary, state.snapshot.world.vocabularyRegistry)
     } else {
       renderWorldHeading(refs.worldHeading, null)
       refs.tree.replaceChildren()
       refs.detail.replaceChildren()
       refs.detail.textContent = '(select an entity)'
+      refs.glossary.replaceChildren()
     }
   }
 
