@@ -47,7 +47,7 @@ import {
 } from 'ai'
 import type { LanguageModelV3Middleware } from '@ai-sdk/provider'
 import { z } from 'zod'
-import { LlmStructuredOutputError } from './errors.js'
+import { LlmStructuredOutputError, mapToMythrunError } from './errors.js'
 import { logger } from './logger.js'
 import { HAIKU, SONNET } from './models.js'
 import { repairStructuredOutput } from './prep/structured-output-repair.js'
@@ -501,10 +501,19 @@ export async function generateObject<T>(
       repairAttempted: false,
     }
   } catch (err) {
-    if (!(err instanceof LlmStructuredOutputError)) {
-      throw err
+    // myth-pfke smoke surfaced: AI_NoObjectGeneratedError from the SDK's
+    // Output.object validation bypasses the middleware (which only sees
+    // the inner LanguageModel's stream/generate, not the post-call schema
+    // check). Without this map, the catch's instanceof check rethrows
+    // the unmapped error and the repair path never fires — every schema
+    // validation failure becomes a stage failure. Routing through
+    // mapToMythrunError converts AI_NoObjectGeneratedError to
+    // LlmStructuredOutputError so the repair pipeline runs.
+    const mapped = err instanceof LlmStructuredOutputError ? err : mapToMythrunError(err)
+    if (!(mapped instanceof LlmStructuredOutputError)) {
+      throw mapped
     }
-    const attempt = await attemptRepair<T>(err, ctx)
+    const attempt = await attemptRepair<T>(mapped, ctx)
     if (attempt.result !== undefined) {
       logRepair(ctx, attempt, 'info')
       return {
@@ -514,8 +523,8 @@ export async function generateObject<T>(
       }
     }
     logRepair(ctx, attempt, 'warn')
-    attachDiagnostic(err, buildDiagnostic(ctx, attempt))
-    throw err
+    attachDiagnostic(mapped, buildDiagnostic(ctx, attempt))
+    throw mapped
   }
 }
 

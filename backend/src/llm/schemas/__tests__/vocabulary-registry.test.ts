@@ -39,10 +39,10 @@ describe('VocabularyEntrySchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects definition shorter than 30 chars', () => {
+  it('rejects definition shorter than 10 chars', () => {
     const result = VocabularyEntrySchema.safeParse({
       term: 'x',
-      definition: 'too short',
+      definition: 'short',
       source: 'stage_1_5',
     })
     expect(result.success).toBe(false)
@@ -148,26 +148,32 @@ describe('VocabularyIntakeOutputSchema', () => {
     expect(result.success).toBe(true)
   })
 
-  it('rejects model output entries with source field present', () => {
-    // Model must NOT emit source — the handler stamps it. If the model
-    // emits source, we want to know (schema rejects to surface the drift).
+  it('strips source field from model output entries (handler stamps the canonical value)', () => {
+    // myth-pfke smoke surfaced: Sonnet sometimes emits passthrough source
+    // even when the prompt says to omit. Schema strips extras silently
+    // rather than rejecting — the handler's stamp-pass would overwrite
+    // anything the model emitted in this slot anyway.
     const result = VocabularyIntakeOutputSchema.safeParse({
       entries: [
         {
           term: 'x',
-          definition: 'a sufficiently long definition that satisfies the min(30) check.',
+          definition: 'long enough definition.',
           source: 'stage_1_5',
         },
       ],
       adjacent_franchises: [],
     })
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      // Source stripped by Zod default behavior.
+      expect(result.data.entries[0]).not.toHaveProperty('source')
+    }
   })
 
   it('rejects entries exceeding cap of 30', () => {
     const entry = {
       term: 'x',
-      definition: 'a sufficiently long definition that satisfies the min(30) check.',
+      definition: 'long enough definition.',
     }
     const result = VocabularyIntakeOutputSchema.safeParse({
       entries: new Array(31).fill(entry),

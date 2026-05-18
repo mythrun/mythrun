@@ -13,7 +13,10 @@ import { z } from 'zod'
 
 export const VocabularyEntrySchema = z.object({
   term: z.string().min(1).max(80),
-  definition: z.string().min(30).max(400),
+  // myth-pfke smoke surfaced: real Sonnet sometimes emits terse glossary
+  // definitions (10-30 char). Floor at 10 — anything shorter is a model
+  // error, not a stylistic choice. Upper bound stays at 400.
+  definition: z.string().min(10).max(400),
   avoids: z.string().min(1).max(80).optional(),
   usage_notes: z.string().min(1).max(200).optional(),
   source: z.enum(['stage_1_5', 'consolidation', 'scribe_runtime']),
@@ -27,14 +30,20 @@ export const VocabularyRegistrySchema = z.object({
 })
 export type VocabularyRegistry = z.infer<typeof VocabularyRegistrySchema>
 
-// Stage 1.5 model output: must NOT include source or access_level.
-// The handler stamps both fields. .strict() rejects extra keys so the
-// model can't sneak source through.
+// Stage 1.5 model output: model OMITS source + access_level (handler
+// stamps both). Originally `.strict()` rejected extras to surface model
+// drift. Removed after the myth-pfke smoke showed Sonnet sometimes
+// emits a passthrough `source` field or extra metadata keys even when
+// the prompt says not to. Default Zod behavior (strip extras silently)
+// is safer — the handler's stamp-pass overwrites anything the model
+// emitted in those slots anyway. The wrapper's repair-fallback only
+// fires for LlmStructuredOutputError, and AI_NoObjectGeneratedError
+// from Output.object validation bypasses middleware mapping (a known
+// latent bug in the wrapper — see follow-up bead), so we keep the
+// schema lenient enough that the first-pass Zod parse succeeds.
 export const VocabularyIntakeOutputSchema = z.object({
   entries: z
-    .array(
-      VocabularyEntrySchema.omit({ source: true, access_level: true }).strict(),
-    )
+    .array(VocabularyEntrySchema.omit({ source: true, access_level: true }))
     .min(0)
     .max(30),
   adjacent_franchises: z.array(z.string().min(1).max(80)).max(8),
