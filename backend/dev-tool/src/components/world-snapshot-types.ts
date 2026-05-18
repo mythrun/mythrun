@@ -19,6 +19,28 @@ export interface WorldSummary {
   readonly tone: string | null
   readonly themes: string | null
   readonly era: string | null
+  readonly vocabularyRegistry: VocabularyRegistry // myth-pfke
+}
+
+// myth-pfke: per-world vocabulary registry types — mirror of the backend's
+// VocabularyRegistry / VocabularyEntry shapes. Same justification as the
+// other types in this file for the duplication (tsconfig boundaries
+// between dev-tool and backend prevent cross-import).
+
+export type VocabularyEntrySource = 'stage_1_5' | 'consolidation' | 'scribe_runtime'
+
+export interface VocabularyEntry {
+  readonly term: string
+  readonly definition: string
+  readonly avoids?: string
+  readonly usage_notes?: string
+  readonly source: VocabularyEntrySource
+  readonly access_level: AccessLevel
+}
+
+export interface VocabularyRegistry {
+  readonly entries: readonly VocabularyEntry[]
+  readonly adjacent_franchises: readonly string[]
 }
 
 export interface EntityRow {

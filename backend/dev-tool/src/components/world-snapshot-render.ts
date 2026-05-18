@@ -11,6 +11,9 @@ import type {
   EntityRow,
   EntityType,
   LocalSnapshot,
+  VocabularyEntry,
+  VocabularyEntrySource,
+  VocabularyRegistry,
 } from './world-snapshot-types.js'
 
 export const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
@@ -354,4 +357,75 @@ export function applyEdgeAdded(
 export function applyEdgeRemoved(snap: LocalSnapshot, relationshipId: string): void {
   const idx = snap.relationships.findIndex((r) => r.id === relationshipId)
   if (idx >= 0) snap.relationships.splice(idx, 1)
+}
+
+// ---- Glossary (myth-pfke) ----
+
+const SOURCE_LABELS: Record<VocabularyEntrySource, string> = {
+  stage_1_5: 'From world creation',
+  consolidation: 'From consolidation',
+  scribe_runtime: 'From play',
+}
+
+const SOURCE_ORDER: readonly VocabularyEntrySource[] = [
+  'stage_1_5',
+  'consolidation',
+  'scribe_runtime',
+]
+
+function groupEntriesBySource(
+  entries: readonly VocabularyEntry[],
+): Map<VocabularyEntrySource, VocabularyEntry[]> {
+  const map = new Map<VocabularyEntrySource, VocabularyEntry[]>()
+  for (const src of SOURCE_ORDER) map.set(src, [])
+  for (const entry of entries) map.get(entry.source)?.push(entry)
+  return map
+}
+
+export function renderGlossarySection(
+  container: HTMLElement,
+  registry: VocabularyRegistry,
+): void {
+  container.replaceChildren()
+  const heading = document.createElement('h3')
+  heading.textContent = 'Glossary'
+  container.appendChild(heading)
+
+  if (registry.entries.length === 0 && registry.adjacent_franchises.length === 0) {
+    const empty = document.createElement('p')
+    empty.textContent = 'No vocabulary registered for this world.'
+    container.appendChild(empty)
+    return
+  }
+
+  if (registry.adjacent_franchises.length > 0) {
+    const sub = document.createElement('p')
+    sub.textContent = `Adjacent franchises: ${registry.adjacent_franchises.join(', ')}`
+    container.appendChild(sub)
+  }
+
+  const grouped = groupEntriesBySource(registry.entries)
+  for (const source of SOURCE_ORDER) {
+    const group = grouped.get(source) ?? []
+    if (group.length === 0) continue
+    const groupHeading = document.createElement('h4')
+    groupHeading.textContent = `${SOURCE_LABELS[source]} (${String(group.length)})`
+    container.appendChild(groupHeading)
+
+    const dl = document.createElement('dl')
+    for (const entry of group) {
+      const dt = document.createElement('dt')
+      dt.textContent = entry.term
+      dl.appendChild(dt)
+
+      const dd = document.createElement('dd')
+      const avoidance = entry.avoids !== undefined ? ` (use instead of "${entry.avoids}")` : ''
+      const usage = entry.usage_notes !== undefined ? ` — ${entry.usage_notes}` : ''
+      // textContent: never innerHTML. Server-returned strings flow through
+      // the DOM as literal text — XSS-safe.
+      dd.textContent = `${entry.definition}${avoidance}${usage}`
+      dl.appendChild(dd)
+    }
+    container.appendChild(dl)
+  }
 }
