@@ -10,6 +10,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { generateText } from 'ai'
 import { runCoherencePassStage } from '../coherence-pass.js'
 import type { PipelineEvent } from '../../../../contract/pipeline-events.js'
+import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
+
+const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
 
 vi.mock('ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ai')>()
@@ -164,6 +167,7 @@ async function runStage(
     completedCostUsd?: number
     accessLevels?: AccessLevelOverrides
     bypassAccessFilter?: boolean
+    vocabularyRegistry?: VocabularyRegistry
   } = {},
 ): Promise<TestRun & { result: Awaited<ReturnType<typeof runCoherencePassStage>> }> {
   const client = makeClient(poolOpts)
@@ -171,6 +175,7 @@ async function runStage(
   const result = await runCoherencePassStage(asClient(client), {
     logger: asLogger(logger),
     worldId: WORLD_ID,
+    vocabularyRegistry: poolOpts.vocabularyRegistry ?? EMPTY_REGISTRY,
     synthKeyByEntityId: SYNTH,
     bypassAccessFilter: poolOpts.bypassAccessFilter ?? false,
   })
@@ -602,6 +607,37 @@ describe('runCoherencePassStage', () => {
     expect(eventsOfType(result.finalizedEvents, 'entity-updated')).toHaveLength(2)
     expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(1)
     expect(eventsOfType(result.finalizedEvents, 'edge-removed')).toHaveLength(2)
+  })
+
+  // myth-pfke task 9f: vocabulary registry placeholder substitution.
+  it('substitutes {{vocabularyRegistry}} with the rendered registry prose', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: { patches: [] },
+      usage: { inputTokens: 14000, outputTokens: 50, totalTokens: 14050 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const registry: VocabularyRegistry = {
+      entries: [
+        {
+          term: 'the unwitched',
+          definition:
+            "non-magical people; this world's term for those without arcane sight.",
+          avoids: 'muggle',
+          source: 'stage_1_5',
+          access_level: 'known',
+        },
+      ],
+      adjacent_franchises: ['Harry Potter'],
+    }
+
+    await runStage({ vocabularyRegistry: registry })
+    const firstArg = mockGenerateText.mock.calls[0]?.[0] as
+      | { prompt: string }
+      | undefined
+    const prompt = firstArg?.prompt ?? ''
+    expect(prompt).toContain("This world's distinctive vocabulary:")
+    expect(prompt).toContain('the unwitched')
+    expect(prompt).not.toContain('{{vocabularyRegistry}}')
   })
 
   it('world dump includes [access_level: …] per entity', async () => {

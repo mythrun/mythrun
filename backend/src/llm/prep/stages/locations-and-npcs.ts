@@ -72,6 +72,8 @@ import {
 } from '../../schemas/locations-and-npcs.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
+import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
+import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/locations-and-npcs.txt'),
@@ -91,6 +93,7 @@ export interface RunLocationsAndNpcsArgs {
     readonly regionsSummary: string
     readonly factionsSummary: string
   }
+  readonly vocabularyRegistry: VocabularyRegistry
   readonly campaignId: string
   readonly job: Job
   readonly redisRealtime: Redis
@@ -300,6 +303,7 @@ export async function runLocationsAndNpcsStage(
     .replace('{{worldOverview}}', args.world.worldOverview)
     .replace('{{regionsSummary}}', args.world.regionsSummary)
     .replace('{{factionsSummary}}', args.world.factionsSummary)
+    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
 
   // maxRetries: 0 per design D2 — predictable cost attribution + repair
   // chain owns validation recovery + BullMQ stage retry owns transport

@@ -59,6 +59,8 @@ import { uuidv7 } from '../../../repo/uuidv7.js'
 import { readCostCap, sumCompletedStageCosts } from '../cost-cap.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
+import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
+import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/coherence-pass.txt'),
@@ -80,6 +82,7 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 export interface CoherencePassArgs {
   readonly logger: Pick<pino.Logger, 'warn' | 'info'>
   readonly worldId: string
+  readonly vocabularyRegistry: VocabularyRegistry
   // Map from real entity/relationship UUID → synthKey assigned by stages
   // 2/3/4. Stage 7's `entity-updated` / `edge-removed` / `edge-added`
   // events reference synthKey on the wire (§3.6); the handler looks up
@@ -497,7 +500,10 @@ export async function runCoherencePassStage(
   const inventory = await loadWorldInventory(client, args.worldId)
 
   const worldDump = renderWorldDump(inventory)
-  const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', worldDump)
+  const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', worldDump).replace(
+    '{{vocabularyRegistry}}',
+    renderVocabularyRegistry(args.vocabularyRegistry),
+  )
 
   const result = await generateObject({
     model: SONNET,

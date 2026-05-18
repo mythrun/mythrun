@@ -25,6 +25,8 @@ import { generateObject } from '../../ai.js'
 import { z } from 'zod'
 import { HAIKU } from '../../models.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
+import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
+import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/random-tables.txt'),
@@ -57,6 +59,7 @@ export interface RandomTablesArgs {
   readonly era: string
   readonly geographySummary: string
   readonly seedTablesBlock: string
+  readonly vocabularyRegistry: VocabularyRegistry
 }
 
 export interface StageCostResult {
@@ -89,6 +92,7 @@ export async function runRandomTablesStage(
     .replace('{{era}}', args.era)
     .replace('{{geography_summary}}', args.geographySummary)
     .replace('{{seed_tables}}', args.seedTablesBlock)
+    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
 
   const result = await generateObject({
     model: HAIKU,

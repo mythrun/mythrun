@@ -52,6 +52,7 @@ import {
   runWorldAndFactionsStage,
   type RunWorldAndFactionsArgs,
 } from '../world-and-factions.js'
+import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
 
 const mockStreamObject = vi.mocked(streamObject)
 const mockGenerateText = vi.mocked(generateText)
@@ -194,6 +195,10 @@ function makeBrokenObjectStream(
   } as unknown as ReturnType<typeof streamObject>
 }
 
+function emptyRegistry(): VocabularyRegistry {
+  return { entries: [], adjacent_franchises: [] }
+}
+
 function makeArgs(opts: {
   worldId: string
   userId: string
@@ -201,9 +206,11 @@ function makeArgs(opts: {
   worldName: string
   redisRealtime?: InstanceType<typeof IoredisMock>
   bypassAccessFilter?: boolean
+  vocabularyRegistry?: VocabularyRegistry
 }): RunWorldAndFactionsArgs {
   return {
     world: { id: opts.worldId, createdBy: opts.userId, name: opts.worldName, concept: 'C' },
+    vocabularyRegistry: opts.vocabularyRegistry ?? emptyRegistry(),
     campaignId: opts.campaignId,
     job: fakeJob(),
     // ioredis-mock implements the surface area the handler uses (`publish`)
@@ -555,6 +562,43 @@ describe('runWorldAndFactionsStage', () => {
       'world_and_factions/factions/1',
       'world_and_factions/factions/2',
     ])
+  })
+
+  // myth-pfke task 9a: vocabulary registry placeholder substitution.
+  it('substitutes {{vocabularyRegistry}} with the rendered registry prose', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
+    const registry: VocabularyRegistry = {
+      entries: [
+        {
+          term: 'the unwitched',
+          definition:
+            "non-magical people; this world's term for those without arcane sight.",
+          avoids: 'muggle',
+          source: 'stage_1_5',
+          access_level: 'known',
+        },
+      ],
+      adjacent_franchises: ['Harry Potter'],
+    }
+
+    await withTxn(pool, (client) =>
+      runWorldAndFactionsStage(
+        client,
+        makeArgs({
+          worldId,
+          userId,
+          campaignId,
+          worldName: scope.worldName(0),
+          vocabularyRegistry: registry,
+        }),
+      ),
+    )
+
+    const captured = mockStreamObject.mock.calls[0]?.[0] as { prompt: string } | undefined
+    const prompt = captured?.prompt ?? ''
+    expect(prompt).toContain("This world's distinctive vocabulary:")
+    expect(prompt).toContain('the unwitched')
+    expect(prompt).not.toContain('{{vocabularyRegistry}}')
   })
 
   it('bypassAccessFilter=true emits finalized events for every persisted entity', async () => {

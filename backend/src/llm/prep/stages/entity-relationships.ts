@@ -46,6 +46,8 @@ import { relationships } from '../../../repo/relationships.js'
 import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
 import type { AccessLevel } from '../../../repo/facts.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
+import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
+import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/entity-relationships.txt'),
@@ -69,6 +71,7 @@ export interface EntityRelationshipsArgs {
   readonly tone: string
   readonly themes: string
   readonly keyTensions: string
+  readonly vocabularyRegistry: VocabularyRegistry
   readonly job: Pick<Job, 'updateProgress'>
   readonly redisRealtime: Pick<Redis, 'publish'>
   readonly keyPrefix: string
@@ -97,6 +100,7 @@ function buildPrompt(args: EntityRelationshipsArgs, inventory: readonly Inventor
     .replace('{{themes}}', args.themes)
     .replace('{{keyTensions}}', args.keyTensions)
     .replace('{{entityInventory}}', renderInventory(inventory))
+    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
 }
 
 interface AcceptedRow {

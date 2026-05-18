@@ -502,6 +502,7 @@ async function dispatchStage(
         name: ctx.world.name,
         concept: ctx.world.concept,
       },
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
       campaignId,
       job,
       redisRealtime: deps.redisRealtime,
@@ -524,6 +525,7 @@ async function dispatchStage(
         regionsSummary: stage3Inputs.regionsSummary,
         factionsSummary: stage3Inputs.factionsSummary,
       },
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
       campaignId,
       job,
       redisRealtime: deps.redisRealtime,
@@ -539,6 +541,7 @@ async function dispatchStage(
       tone: ctx.world.tone ?? '',
       themes: ctx.world.themes ?? '',
       keyTensions: ctx.world.keyTensions ?? '',
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
       job,
       redisRealtime: deps.redisRealtime,
       keyPrefix: deps.redisKeyPrefix,
@@ -556,6 +559,7 @@ async function dispatchStage(
       npcsSummary: '(stage not implemented yet)',
       factionsSummary: '(stage not implemented yet)',
       canonicalNames: '',
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
     })
     return wrapLegacyStage(cost)
   }
@@ -568,6 +572,7 @@ async function dispatchStage(
       era: ctx.world.era ?? '',
       geographySummary: ctx.world.geographySummary ?? '',
       seedTablesBlock: SEED_TABLES_PLACEHOLDER,
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
     })
     return wrapLegacyStage(cost)
   }
@@ -579,6 +584,7 @@ async function dispatchStage(
   return runCoherencePassStage(client, {
     logger: deps.logger,
     worldId: ctx.world.id,
+    vocabularyRegistry: ctx.world.vocabularyRegistry,
     synthKeyByEntityId: {},
     // myth-exac T18: thread the per-world dev-bypass flag through coherence
     // pass so dev-tool worlds (with dev_bypass_access_filter=true) surface

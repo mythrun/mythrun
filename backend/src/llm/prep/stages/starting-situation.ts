@@ -16,6 +16,8 @@ import { resolve, dirname } from 'node:path'
 import { generateObject } from '../../ai.js'
 import { z } from 'zod'
 import { SONNET } from '../../models.js'
+import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
+import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/starting-situation.txt'),
@@ -46,6 +48,7 @@ export interface StartingSituationArgs {
   readonly npcsSummary: string
   readonly factionsSummary: string
   readonly canonicalNames: string
+  readonly vocabularyRegistry: VocabularyRegistry
 }
 
 export interface StageCostResult {
@@ -76,6 +79,7 @@ export async function runStartingSituationStage(
     .replace('{{npcs_summary}}', args.npcsSummary)
     .replace('{{factions_summary}}', args.factionsSummary)
     .replace('{{canonical_names}}', args.canonicalNames)
+    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
 
   const result = await generateObject({
     model: SONNET,

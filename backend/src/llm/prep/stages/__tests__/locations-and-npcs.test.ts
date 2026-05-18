@@ -55,6 +55,7 @@ vi.mock('ai', async () => {
 import { streamObject, generateText } from 'ai'
 import { LlmStructuredOutputError } from '../../../errors.js'
 import { runLocationsAndNpcsStage } from '../locations-and-npcs.js'
+import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
 
 const mockStreamObject = vi.mocked(streamObject)
 const mockGenerateText = vi.mocked(generateText)
@@ -255,6 +256,10 @@ function makeBrokenObjectStream(
 
 type StageArgs = Parameters<typeof runLocationsAndNpcsStage>[1]
 
+function emptyRegistry(): VocabularyRegistry {
+  return { entries: [], adjacent_franchises: [] }
+}
+
 function makeArgs(opts: {
   worldId: string
   userId: string
@@ -262,6 +267,7 @@ function makeArgs(opts: {
   worldName: string
   redisRealtime?: InstanceType<typeof IoredisMock>
   bypassAccessFilter?: boolean
+  vocabularyRegistry?: VocabularyRegistry
 }): StageArgs {
   return {
     world: {
@@ -276,6 +282,7 @@ function makeArgs(opts: {
       regionsSummary: '- Eredil — a misted coastal region',
       factionsSummary: '- House Korren — the dominant merchant clan',
     },
+    vocabularyRegistry: opts.vocabularyRegistry ?? emptyRegistry(),
     campaignId: opts.campaignId,
     job: fakeJob(),
     redisRealtime: opts.redisRealtime ?? new IoredisMock(),
@@ -716,6 +723,45 @@ describe('runLocationsAndNpcsStage', () => {
     expect(finalizedSynthKeys).toContain('locations_and_npcs/locations/2')
     expect(finalizedSynthKeys).not.toContain('locations_and_npcs/locations/3') // discoverable
     expect(finalizedSynthKeys).not.toContain('locations_and_npcs/locations/4') // secret
+  })
+
+  // myth-pfke task 9b: vocabulary registry placeholder substitution.
+  it('substitutes {{vocabularyRegistry}} with the rendered registry prose', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(nestedFixture('Eredil')))
+    const registry: VocabularyRegistry = {
+      entries: [
+        {
+          term: 'the unwitched',
+          definition:
+            "non-magical people; this world's term for those without arcane sight.",
+          avoids: 'muggle',
+          source: 'stage_1_5',
+          access_level: 'known',
+        },
+      ],
+      adjacent_franchises: ['Harry Potter'],
+    }
+
+    const client = await beginTxn(pool)
+    await runLocationsAndNpcsStage(
+      client,
+      makeArgs({
+        worldId,
+        userId,
+        campaignId,
+        worldName: scope.worldName(0),
+        vocabularyRegistry: registry,
+      }),
+    )
+    await commit(client)
+
+    const captured = vi.mocked(streamObject).mock.calls[0]?.[0] as
+      | { prompt: string }
+      | undefined
+    const prompt = captured?.prompt ?? ''
+    expect(prompt).toContain("This world's distinctive vocabulary:")
+    expect(prompt).toContain('the unwitched')
+    expect(prompt).not.toContain('{{vocabularyRegistry}}')
   })
 
   it('tier filter (bypassAccessFilter=true): persists all rows; finalizedEvents contains every row regardless of tier', async () => {

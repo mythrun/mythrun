@@ -7,6 +7,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { runRandomTablesStage } from '../random-tables.js'
 import * as ai from 'ai'
+import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
+
+const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -52,6 +55,7 @@ const baseArgs = {
   era: 'a lantern-age',
   geographySummary: 'A windswept highland archipelago.',
   seedTablesBlock: '### Generic Travel Encounters\n  1. A merchant\n  2. A bandit',
+  vocabularyRegistry: EMPTY_REGISTRY,
 }
 
 describe('runRandomTablesStage', () => {
@@ -138,5 +142,42 @@ describe('runRandomTablesStage', () => {
     expect(prompt).toContain('Generic Travel Encounters')
     expect(prompt).not.toContain('{{name}}')
     expect(prompt).not.toContain('{{seed_tables}}')
+  })
+
+  // myth-pfke task 9e: vocabulary registry placeholder substitution.
+  it('substitutes {{vocabularyRegistry}} with the rendered registry prose', async () => {
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: TABLES,
+      finishReason: 'stop',
+      usage: { inputTokens: 2000, outputTokens: 1500, totalTokens: 3500 },
+    } as never)
+
+    const registry: VocabularyRegistry = {
+      entries: [
+        {
+          term: 'the unwitched',
+          definition:
+            "non-magical people; this world's term for those without arcane sight.",
+          avoids: 'muggle',
+          source: 'stage_1_5',
+          access_level: 'known',
+        },
+      ],
+      adjacent_franchises: ['Harry Potter'],
+    }
+
+    const client = makeClient()
+    await runRandomTablesStage(client as never, {
+      ...baseArgs,
+      vocabularyRegistry: registry,
+    })
+
+    const captured = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as
+      | { prompt: string }
+      | undefined
+    const prompt = captured?.prompt ?? ''
+    expect(prompt).toContain("This world's distinctive vocabulary:")
+    expect(prompt).toContain('the unwitched')
+    expect(prompt).not.toContain('{{vocabularyRegistry}}')
   })
 })

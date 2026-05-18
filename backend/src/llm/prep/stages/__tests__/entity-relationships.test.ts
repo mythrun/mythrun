@@ -65,6 +65,9 @@ import { runEntityRelationshipsStage } from '../entity-relationships.js'
 import { entities } from '../../../../repo/entities.js'
 import { relationships } from '../../../../repo/relationships.js'
 import { entityHierarchy } from '../../../../repo/entity-hierarchy.js'
+import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
+
+const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
 
 // myth-t1qz: under the wrapper, repair fires when the SDK rejects
 // `.object` with LlmStructuredOutputError. The wrapper inspects
@@ -177,6 +180,7 @@ const baseArgs = {
   tone: 'misted, melancholy',
   themes: 'guardianship, secrets',
   keyTensions: 'spirits chafe in lanterns',
+  vocabularyRegistry: EMPTY_REGISTRY,
   bypassAccessFilter: false,
 }
 
@@ -585,6 +589,47 @@ describe('runEntityRelationshipsStage', () => {
     // synthKey is keyed off the LLM-stream index (0 = the known→known edge).
     expect(finalized[0].synthKey).toBe('entity_relationships/relationships/0')
     expect(finalized[0].entityId).toBe('rel-0')
+  })
+
+  // myth-pfke task 9c: vocabulary registry placeholder substitution.
+  it('substitutes {{vocabularyRegistry}} with the rendered registry prose', async () => {
+    const tree = makeValidTree()
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(tree),
+      object: Promise.resolve(tree),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const registry: VocabularyRegistry = {
+      entries: [
+        {
+          term: 'the unwitched',
+          definition:
+            "non-magical people; this world's term for those without arcane sight.",
+          avoids: 'muggle',
+          source: 'stage_1_5',
+          access_level: 'known',
+        },
+      ],
+      adjacent_franchises: ['Harry Potter'],
+    }
+
+    const client = makeClient()
+    await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      vocabularyRegistry: registry,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    const captured = vi.mocked(ai.streamObject).mock.calls[0]?.[0] as
+      | { prompt: string }
+      | undefined
+    const prompt = captured?.prompt ?? ''
+    expect(prompt).toContain("This world's distinctive vocabulary:")
+    expect(prompt).toContain('the unwitched')
+    expect(prompt).not.toContain('{{vocabularyRegistry}}')
   })
 
   it('myth-exac T15: bypassAccessFilter=true surfaces every relationship regardless of endpoint tier', async () => {

@@ -51,6 +51,8 @@ import {
 } from '../../schemas/world-and-factions.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
+import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
+import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/world-and-factions.txt'),
@@ -64,6 +66,7 @@ export interface RunWorldAndFactionsArgs {
     readonly name: string
     readonly concept: string
   }
+  readonly vocabularyRegistry: VocabularyRegistry
   readonly campaignId: string
   readonly job: Job
   readonly redisRealtime: Redis
@@ -168,10 +171,9 @@ export async function runWorldAndFactionsStage(
   client: PoolClient,
   args: RunWorldAndFactionsArgs,
 ): Promise<StageDispatchResult> {
-  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.world.name).replace(
-    '{{concept}}',
-    args.world.concept,
-  )
+  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.world.name)
+    .replace('{{concept}}', args.world.concept)
+    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
 
   // maxRetries: 0 per design D2 — predictable cost attribution + repair
   // chain owns validation recovery + BullMQ stage retry owns transport
