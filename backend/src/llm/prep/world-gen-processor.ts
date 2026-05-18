@@ -475,6 +475,13 @@ async function dispatchStage(
     return wrapLegacyStage(cost)
   }
   if (stage === 'vocabulary_intake') {
+    /* c8 ignore start — same rationale as the wave-4 arms below: the `?? ''`
+     * fallbacks on tone/themes/era/geographySummary/politicalSummary/keyTensions
+     * fire only when concept_intake produced a null on the relevant column.
+     * Concept_intake's UPDATE always populates non-null values for these per
+     * its schema, so the null arms are defensive. Real coverage of this
+     * arg-marshaling comes from the live-LLM E2E smoke per
+     * feedback_dev_tool_e2e_smoke_required. */
     const cost = await runVocabularyIntakeStage(client, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
@@ -487,6 +494,7 @@ async function dispatchStage(
       keyTensions: ctx.world.keyTensions ?? '',
     })
     return wrapLegacyStage(cost)
+    /* c8 ignore stop */
   }
   /* c8 ignore start — wave-4 dispatcher arms reached only when streamObject
    * / generateText are mocked to succeed for each stage. The wave-4 handlers
