@@ -197,6 +197,28 @@ You may NOT run:
    - `pnpm --filter @mythrun/dev-tool test` — green.
    - `pnpm dev-tool:verify` — green (all panels ok, no uncovered routes — or uncovered routes are all in the Escalated section).
    - `pnpm dev-tool:check` — green (manifest matches).
+   - **REAL-LLM E2E SMOKE — REQUIRED, NOT OPTIONAL.** This is THE step. Typecheck / lint / tests / JSDOM-verify all run against mocks or shallow DOM; none of them prove the wire works. You MUST drive at least the canonical world-gen flow end-to-end against the running stack at the WIRE LEVEL — `curl` for HTTP, `curl --no-buffer` (or `sse-cat`) for SSE, `docker compose exec postgres psql` for DB inspection. Browser automation does NOT count. Mocked tests do NOT count. JSDOM `pnpm dev-tool:verify` does NOT count. If you skip this step you have not done your job.
+
+     **Canonical smoke flow:**
+     1. Resolve the dev sub via the dev tool's identity bootstrap (the same mechanism `backend/dev-tool/src/main.ts` uses — read it; the header is `x-mythrun-dev-sub`).
+     2. POST `/api/campaigns` with the body shape required by `CreateCampaignBodySchema` (see `backend/src/routes/campaigns.ts`): a discriminated `{world: {kind: 'new', source: {mode: 'freeform', concept: <≥20-char prompt>}}}`. As of myth-4lhr the name is NOT a body field — campaigns are inserted with a placeholder name and `concept_intake` auto-names from the LLM. Example concept: "a port city where wizards trade secrets for moonlight." Assert HTTP 201 + a campaign id + a world id in the response. If the response is not 201, inspect the body, root-cause the failure, fix or escalate. Do not proceed.
+     3. Open the SSE stream at `/api/campaigns/:campaignId/status/stream`. Read events until a terminal phase event (`world_snapshot_ready`, `world_ready`, or `failed`) arrives within a 3-minute budget. Tee the stream to a log so you can inspect event ordering on failure.
+     4. Query Postgres directly for:
+        - `worlds.status` for the new world id — must be the terminal state matching the SSE event. Not `pending`, not `null`, not stuck mid-pipeline.
+        - `pipeline_runs` entries for the new world id — every stage that fired should be `completed` or `failed` with a reason; no rows stuck `in_progress`.
+        - `credit_ledger` debits for the dev sub — credit was actually charged for the work.
+     5. Confirm no untrapped 5xx in the backend logs (`docker compose logs --tail=200` against whichever container runs the backend) and no PG-level errors logged.
+
+     **Failure → root cause → fix → re-run.** Do NOT report success with a failing smoke. Failure modes this step catches that nothing else does:
+     - Untyped 500 on `LlmAuthError` (the smoke surfaces the bare 500; mocked tests don't)
+     - Schema-too-tight Zod validation killing a stage on real LLM output shape
+     - BullMQ worker not registered or stuck on the queue
+     - Credit ledger not debiting (revenue hole)
+     - SSE event ordering bugs (events arrive out of expected order)
+     - PG constraint surprises on real-world entity / fact / relationship shape
+     - Anthropic API auth lapses (silent 401 the panel never surfaces)
+
+     The smoke costs ~$1–2 of Anthropic per dispatch. That is the price of catching what MYT-51 shipped through — 756 passing tests and two never-driven bugs in production. Pay it every dispatch.
 
 6. **Update the coverage inventory** in `AUTHORING.md` if new routes/panels landed.
 
@@ -211,6 +233,17 @@ You may NOT run:
 - removed panel: <name> (route deleted upstream)
 - (nothing changed)
 
+## E2E smoke result (REQUIRED — must report, never omit)
+- campaign id: <id>
+- world id: <id>
+- terminal phase reached: world_snapshot_ready | world_ready | failed | (timeout — never reached)
+- HTTP status on POST /api/campaigns: <code>
+- worlds.status post-smoke: <value>
+- pipeline_runs post-smoke: <count completed> completed, <count failed> failed, <count in_progress> stuck
+- credit_ledger debit recorded: yes | no | (not checked — explain)
+- backend errors observed: <none, or list of 5xx / PG / worker errors>
+- verdict: PASS | FAIL (any FAIL means do not report success — fix and re-run)
+
 ## Bugs fixed
 - <one bullet per fix, file + summary>
 - (none)
@@ -219,6 +252,8 @@ You may NOT run:
 - <one bullet per unresolved issue, with rationale>
 - (none)
 ```
+
+If the "E2E smoke result" section is missing or its verdict is FAIL, the controller WILL re-dispatch you. There is no way to ship dev-tool changes without a passing smoke. Do not waste a dispatch — run the smoke.
 
 Do NOT commit. Leave files in the working tree; the controller stages and commits everything.
 ```
