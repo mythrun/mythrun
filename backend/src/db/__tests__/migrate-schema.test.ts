@@ -207,6 +207,10 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
     table_name: 'worlds',
     check_clause: `CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))`,
   },
+  {
+    table_name: 'worlds',
+    check_clause: `CHECK (((jsonb_typeof(vocabulary_registry) = 'object'::text) AND (jsonb_typeof((vocabulary_registry -> 'entries'::text)) = 'array'::text) AND (jsonb_typeof((vocabulary_registry -> 'adjacent_franchises'::text)) = 'array'::text)))`,
+  },
 ]
 
 const EXPECTED_FK_DELETE_RULES: readonly {
@@ -581,6 +585,7 @@ describe('schema-parity (integration)', () => {
       '012_credit_ledger_admin_source.sql',
       '013_seed_dev_users.sql',
       '014_access_tier_rework.sql',
+      '015_vocabulary_registry.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

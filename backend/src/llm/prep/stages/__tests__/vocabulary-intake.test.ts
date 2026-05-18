@@ -88,7 +88,10 @@ describe('runVocabularyIntakeStage', () => {
     expect(client.query).toHaveBeenCalledTimes(1)
     const [sql, params] = client.query.mock.calls[0] as [string, unknown[]]
     expect(sql).toMatch(/UPDATE worlds.*SET vocabulary_registry/i)
-    const payload = JSON.parse(params[1] as string)
+    const payload = JSON.parse(params[1] as string) as {
+      adjacent_franchises: string[]
+      entries: { term: string; source: string; access_level: string; avoids?: string }[]
+    }
     expect(payload.adjacent_franchises).toEqual(['Harry Potter'])
     expect(payload.entries).toHaveLength(2)
     expect(payload.entries[0]).toMatchObject({
@@ -97,8 +100,8 @@ describe('runVocabularyIntakeStage', () => {
       source: 'stage_1_5',
       access_level: 'known',
     })
-    expect(payload.entries[1].source).toBe('stage_1_5')
-    expect(payload.entries[1].access_level).toBe('known')
+    expect(payload.entries[1]?.source).toBe('stage_1_5')
+    expect(payload.entries[1]?.access_level).toBe('known')
 
     // Cost: Sonnet pricing ($3/MTok input, $15/MTok output)
     expect(result.costUsd).toBeCloseTo((5000 / 1_000_000) * 3 + (2000 / 1_000_000) * 15, 6)
@@ -120,7 +123,10 @@ describe('runVocabularyIntakeStage', () => {
     )
 
     const [, params] = client.query.mock.calls[0] as [string, unknown[]]
-    const payload = JSON.parse(params[1] as string)
+    const payload = JSON.parse(params[1] as string) as {
+      entries: unknown[]
+      adjacent_franchises: unknown[]
+    }
     expect(payload.entries).toEqual([])
     expect(payload.adjacent_franchises).toEqual([])
   })

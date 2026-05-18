@@ -37,6 +37,7 @@ import { z } from 'zod'
 import type { LlmCallDiagnostic } from '../ai.js'
 import { issueCostCapRefund, readCostCap, sumCompletedStageCosts } from './cost-cap.js'
 import { runConceptIntakeStage } from './stages/concept-intake.js'
+import { runVocabularyIntakeStage } from './stages/vocabulary-intake.js'
 import { runStartingSituationStage } from './stages/starting-situation.js'
 import { runRandomTablesStage } from './stages/random-tables.js'
 import { runWorldAndFactionsStage } from './stages/world-and-factions.js'
@@ -47,6 +48,10 @@ import { StageNotImplementedError } from './stages/stage-not-implemented.js'
 import { isTerminalError } from '../errors.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import type { PipelineEvent } from '../../contract/pipeline-events.js'
+import {
+  VocabularyRegistrySchema,
+  type VocabularyRegistry,
+} from '../schemas/vocabulary-registry.js'
 
 // Worker reads the seed-tables block from a constant placeholder until the
 // data file lands. The block only shapes random-table variance; the
@@ -65,6 +70,7 @@ const SENTINEL_USER_UUID = '00000000-0000-0000-0000-000000000000'
 
 export const WORLD_GEN_STAGES = [
   'concept_intake',
+  'vocabulary_intake',
   'world_and_factions',
   'locations_and_npcs',
   'entity_relationships',
@@ -98,6 +104,11 @@ interface CampaignContext {
     readonly era: string | null
     readonly keyTensions: string | null
     readonly geographySummary: string | null
+    // myth-pfke: stage 1.5 (vocabulary_intake) reads political_summary from
+    // the just-written concept-intake output; downstream stages consume
+    // vocabulary_registry (populated by stage 1.5) via the renderer block.
+    readonly politicalSummary: string | null
+    readonly vocabularyRegistry: VocabularyRegistry
     // myth-exac T18: the per-world dev-bypass flag, read once at job entry
     // and threaded into every wire-tier-aware stage (W&F / L&N / E-R /
     // coherence_pass). Production worlds default false; the dev tool sets
@@ -273,11 +284,13 @@ async function loadCampaignContext(
     era: string | null
     key_tensions: string | null
     geography_summary: string | null
+    political_summary: string | null
     dev_bypass_access_filter: boolean
+    vocabulary_registry: unknown
   }>(
     `SELECT c.id AS campaign_id, w.id AS world_id, w.created_by, w.name, w.concept,
             w.tone, w.themes, w.era, w.key_tensions, w.geography_summary,
-            w.dev_bypass_access_filter
+            w.political_summary, w.dev_bypass_access_filter, w.vocabulary_registry
        FROM campaigns c
        JOIN worlds w ON w.id = c.world_id
       WHERE c.id = $1`,
@@ -301,7 +314,12 @@ async function loadCampaignContext(
       era: row.era,
       keyTensions: row.key_tensions,
       geographySummary: row.geography_summary,
+      politicalSummary: row.political_summary,
       devBypassAccessFilter: row.dev_bypass_access_filter,
+      // jsonb arrives as already-parsed JSON; the migration's column default
+      // + CHECK constraint guarantee the shape, so .parse is a defensive
+      // narrow rather than a real validation step.
+      vocabularyRegistry: VocabularyRegistrySchema.parse(row.vocabulary_registry),
     },
   }
 }
@@ -453,6 +471,20 @@ async function dispatchStage(
       worldId: ctx.world.id,
       conceptText: ctx.world.concept,
       intentSummary: null,
+    })
+    return wrapLegacyStage(cost)
+  }
+  if (stage === 'vocabulary_intake') {
+    const cost = await runVocabularyIntakeStage(client, {
+      worldId: ctx.world.id,
+      worldName: ctx.world.name,
+      concept: ctx.world.concept,
+      tone: ctx.world.tone ?? '',
+      themes: ctx.world.themes ?? '',
+      era: ctx.world.era ?? '',
+      geographySummary: ctx.world.geographySummary ?? '',
+      politicalSummary: ctx.world.politicalSummary ?? '',
+      keyTensions: ctx.world.keyTensions ?? '',
     })
     return wrapLegacyStage(cost)
   }

@@ -41,6 +41,7 @@ import {
   type WorldGenJobPayload,
 } from '../world-gen-processor.js'
 import { StageNotImplementedError } from '../stages/stage-not-implemented.js'
+import * as vocabularyIntakeModule from '../stages/vocabulary-intake.js'
 import * as worldAndFactionsModule from '../stages/world-and-factions.js'
 import * as locationsAndNpcsModule from '../stages/locations-and-npcs.js'
 import * as entityRelationshipsModule from '../stages/entity-relationships.js'
@@ -55,6 +56,12 @@ vi.mock('ai', async () => {
 // streamObject + repair-chain machinery. The legacy tests below leave the
 // default mock (vi.mocked(streamObject) throws StageNotImplementedError)
 // untouched, so the existing 6 scenarios still halt at stage 2.
+// myth-pfke: vocabulary-intake (stage 1.5) gets the same per-module mock
+// pattern so the legacy tests still halt at the first non-concept stage.
+vi.mock('../stages/vocabulary-intake.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stages/vocabulary-intake.js')>()
+  return { ...actual, runVocabularyIntakeStage: vi.fn() }
+})
 vi.mock('../stages/world-and-factions.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../stages/world-and-factions.js')>()
   return { ...actual, runWorldAndFactionsStage: vi.fn() }
@@ -276,6 +283,15 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     // module boundary so the legacy 6 tests still halt at stage 2 with
     // stage_not_implemented. The new T18 tests override these via
     // mockImplementationOnce / mockResolvedValueOnce.
+    // myth-pfke: vocabulary-intake (stage 1.5) defaults to a clean
+    // succeed-with-zero-cost so concept_intake-only tests still flow to
+    // the next not-yet-implemented stage (world_and_factions). Tests that
+    // halt explicitly at stage 1.5 override via mockImplementationOnce.
+    vi.mocked(vocabularyIntakeModule.runVocabularyIntakeStage).mockResolvedValue({
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    })
     vi.mocked(worldAndFactionsModule.runWorldAndFactionsStage).mockImplementation(() => {
       throw new StageNotImplementedError('world_and_factions')
     })
@@ -293,8 +309,10 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   it('runs implemented stages to completion, stops at stage_not_implemented', async () => {
     const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
     pushConceptIntakeResponses()
-    // stage 2 fires next (world_and_factions) → throws stage_not_implemented
-    // and the loop exits. Stages 4 + 5 never run; no further mocks needed.
+    // Stages 1 + 1.5 succeed (vocabulary_intake's beforeEach default
+    // resolves with zero cost); stage 2 fires next (world_and_factions) →
+    // throws stage_not_implemented and the loop exits. Stages 3+ never
+    // run; no further mocks needed.
 
     const deps = makeDeps(pool)
     const proc = createWorldGenProcessor(deps)
@@ -306,6 +324,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     )
     const byStage = new Map(runs.rows.map((r) => [r.stage, r]))
     expect(byStage.get('concept_intake')?.status).toBe('completed')
+    expect(byStage.get('vocabulary_intake')?.status).toBe('completed')
     expect(byStage.get('world_and_factions')?.status).toBe('failed')
     expect(byStage.get('world_and_factions')?.error).toContain('stage_not_implemented')
     // The loop exits at stage 2, so stages 3-5 never get rows.
@@ -689,10 +708,15 @@ describe('world-gen-processor (MYT-51 T7)', () => {
 
   it('publishes phase=world_snapshot_ready exactly once after stage 4 commits', async () => {
     const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
-    // Pre-stage 1-3 as completed so the loop reaches stage 4 fresh; the
-    // wave-4 module mocks (stage 2 + 3) won't fire because their atomic
+    // Pre-stages 1, 1.5, 2, 3 as completed so the loop reaches stage 4
+    // fresh; the wave-4 module mocks won't fire because their atomic
     // claims short-circuit on the pre-seeded 'completed' rows.
-    for (const stage of ['concept_intake', 'world_and_factions', 'locations_and_npcs'] as const) {
+    for (const stage of [
+      'concept_intake',
+      'vocabulary_intake',
+      'world_and_factions',
+      'locations_and_npcs',
+    ] as const) {
       await pool.query(
         `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
                                     completed_at, cost_usd, input_tokens, output_tokens, user_id)
@@ -737,11 +761,12 @@ describe('world-gen-processor (MYT-51 T7)', () => {
 
   it('re-publishes phase=world_snapshot_ready on retry re-entry when stage 4 is already completed', async () => {
     const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
-    // Pre-stage 1-4 all as completed. The loop will walk past each via the
-    // `claim !== 'claimed'` branch; stage 4's idempotent skip must emit
-    // world_snapshot_ready for reconnecting SSE subscribers.
+    // Pre-stage 1, 1.5, 2, 3, 4 all as completed. The loop will walk past
+    // each via the `claim !== 'claimed'` branch; stage 4's idempotent skip
+    // must emit world_snapshot_ready for reconnecting SSE subscribers.
     for (const stage of [
       'concept_intake',
+      'vocabulary_intake',
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',

@@ -24,6 +24,7 @@ import type { AccessLevel } from '../../repo/facts.js'
 
 export type WorldGenStage =
   | 'concept_intake'
+  | 'vocabulary_intake'
   | 'world_and_factions'
   | 'locations_and_npcs'
   | 'entity_relationships'
