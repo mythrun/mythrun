@@ -132,17 +132,6 @@ interface SeedResult {
   readonly factionId: string
 }
 
-function streamObjectMockReturn(payload: unknown): ReturnType<typeof ai.streamObject> {
-  return {
-    object: Promise.resolve(payload),
-    usage: Promise.resolve({
-      inputTokens: 2000,
-      outputTokens: 1000,
-      totalTokens: 3000,
-    }),
-  } as unknown as ReturnType<typeof ai.streamObject>
-}
-
 function makeJob(
   campaignId: string,
   userId: string,
