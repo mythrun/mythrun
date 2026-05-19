@@ -175,7 +175,29 @@ export function createWorldGenProcessor(
 
     await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_gen' })
 
-    const capUsd = await readCostCap(deps.pool)
+    // Cost-cap precheck. Wrapped so a missing/malformed
+    // settings.world_gen_cost_cap_usd row (resetData truncation in dev,
+    // or a manual delete) marks the world failed with a clear code
+    // instead of throwing through to BullMQ, which would retry once
+    // and then evict the job (`removeOnFail: { count: 0 }`) — leaving
+    // worlds.status='generating' + pipeline_runs='pending' forever.
+    let capUsd: number
+    try {
+      capUsd = await readCostCap(deps.pool)
+    } catch (err) {
+      /* c8 ignore next */
+      const message = err instanceof Error ? err.message : String(err)
+      await deps.pool.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [ctx.world.id])
+      await publishEvent(deps, campaignId, {
+        type: 'phase',
+        phase: 'world_gen_failed',
+      })
+      deps.logger.error(
+        { campaignId, worldId: ctx.world.id, err: message },
+        'world-gen: cost-cap precheck failed; world marked failed without retry',
+      )
+      return
+    }
 
     for (const stage of WORLD_GEN_STAGES) {
       const claim = await atomicClaimStage(deps.pool, {

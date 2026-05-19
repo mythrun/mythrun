@@ -466,6 +466,37 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   })
 
   // ------------------------------------------------------------------
+  // 4b. Cost-cap precheck failure — settings row missing → world failed
+  //     without BullMQ retry. Defends against resetData truncating the
+  //     settings table and a stale dev DB stranding worlds in 'generating'.
+  // ------------------------------------------------------------------
+  it('marks world failed (no retry) when cost-cap settings row is missing', async () => {
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    await pool.query(`DELETE FROM settings WHERE key = 'world_gen_cost_cap_usd'`)
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    // Must resolve cleanly (not reject) so BullMQ does not retry.
+    await proc(makeJob(campaignId))
+
+    const w = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [
+      worldId,
+    ])
+    expect(w.rows[0]?.status).toBe('failed')
+
+    // No pipeline_runs rows created — failure happens before stage 1 claim.
+    const runs = await pool.query<{ stage: string }>(
+      `SELECT stage FROM pipeline_runs WHERE world_id = $1`,
+      [worldId],
+    )
+    expect(runs.rows).toHaveLength(0)
+
+    // phase=world_gen_failed published so the UI doesn't hang on 'world_gen'.
+    const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
+    expect(phaseStrings.some((p) => p.includes('"world_gen_failed"'))).toBe(true)
+  })
+
+  // ------------------------------------------------------------------
   // 5. Stage failure halts the loop — generic thrown error
   // ------------------------------------------------------------------
   it('does not run subsequent stages after a thrown failure', async () => {

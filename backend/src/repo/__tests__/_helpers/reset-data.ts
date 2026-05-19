@@ -112,6 +112,17 @@ async function reseedSystemRows(pool: Pool): Promise<void> {
        ('019700e0-0000-7000-8000-00000000d004', 'dev-user-4', 'Dev User 4', 'devuser4', true),
        ('019700e0-0000-7000-8000-00000000d005', 'dev-user-5', 'Dev User 5', 'devuser5', true)`,
   )
+  // Reseed the cost-cap settings rows that migrations 010 + 016 insert.
+  // The world-gen and character-creation workers both read these on every
+  // job to enforce per-campaign cost ceilings; if the rows go missing,
+  // worker code throws on parse. Subsequent dev-tool flows against the
+  // same DB then stuck on a worker that fails-and-evicts before it can
+  // update pipeline_runs. Values match the seeding migrations verbatim.
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES
+       ('world_gen_cost_cap_usd', '10.0'),
+       ('character_creation_cost_cap_usd', '5.00')`,
+  )
 }
 
 /**
