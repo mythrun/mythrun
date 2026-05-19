@@ -41,6 +41,17 @@ if [[ "$cmd" == *"--dry-run"* ]]; then exit 0; fi
 sha=$(git rev-parse HEAD 2>/dev/null || true)
 if [[ -z "$sha" ]]; then exit 0; fi
 
+# PostToolUse fires on EVERY Bash invocation — including failed ones.
+# A push that was rejected by a pre-push hook (e.g. wiki:check drift)
+# never reached the remote, so arming a CI timer for HEAD would later
+# report "no_runs" and look like a CI signal when it's just a failed
+# push. Verify by comparing HEAD to the upstream tracking ref: on a
+# successful `git push origin <branch>`, git fast-forwards the local
+# `refs/remotes/origin/<branch>` to the new sha; on a rejection it
+# stays at the prior remote HEAD. Skip the timer if they diverge.
+upstream=$(git rev-parse '@{u}' 2>/dev/null || true)
+if [[ -z "$upstream" || "$upstream" != "$sha" ]]; then exit 0; fi
+
 # Repo root for absolute paths inside the detached subshell. The
 # subshell loses cwd inheritance via `disown`, so we pin it explicitly.
 repo_root=$(git rev-parse --show-toplevel)
