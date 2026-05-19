@@ -203,6 +203,12 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
   })
 
   afterAll(async () => {
+    // Same FK ordering as beforeEach — `characters` first, then scope.
+    await pool.query(
+      `DELETE FROM characters
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+      [`${scope.id}%`],
+    )
     await cleanupTestScope(pool, scope)
     await pool.end()
   })
@@ -210,6 +216,17 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
   beforeEach(async () => {
     vi.stubEnv('AUTH_MODE', 'bypass')
     vi.stubEnv('NODE_ENV', 'test')
+    // T17 inserts `characters` rows owned by scope users. Those rows
+    // survive the campaign CASCADE (characters decoupled from campaigns
+    // in migration 009), so cleanupTestScope's users-delete pass would
+    // hit the characters_user_id_fkey RESTRICT FK. Wipe the scope's
+    // characters first; the join table (campaign_characters) goes via
+    // the campaigns CASCADE that cleanupTestScope already runs.
+    await pool.query(
+      `DELETE FROM characters
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+      [`${scope.id}%`],
+    )
     await cleanupTestScope(pool, scope)
     queueSpy = createQueueSpy()
     app = await buildTestApp(pool, queueSpy.queue)
@@ -584,6 +601,404 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
       })
       expect(res.statusCode).toBe(403)
       expect(res.json<{ code: string }>().code).toBe('not_campaign_owner')
+    })
+  })
+
+  // ======================================================================
+  // T15: POST /api/campaigns/:campaignId/characters
+  //
+  // Any member (owner OR player) can submit. Route guards:
+  //   400 bad_body                       — Zod parse fail
+  //   400 concept_or_guided_required     — neither field non-empty
+  //   404 campaign_not_found             — no campaigns row
+  //   409 world_not_complete             — worlds.status != 'complete'
+  //   409 starting_situation_not_chosen  — campaigns.starting_situation_index NULL
+  //   409 concept_locked                 — existing row in 'processing'/'completed'
+  //   200 { conceptId, status }          — UPSERT
+  // ======================================================================
+  describe('POST /characters (T15)', () => {
+    // Seed a campaign with the starting situation already chosen so happy-path
+    // tests don't have to do it inline. Returns the standard SeededCampaign.
+    async function seedCampaignWithSituation(
+      owner: SeededUser,
+      index = 0,
+      situationIndex = 1,
+    ): Promise<SeededCampaign> {
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, index)
+      await pool.query(
+        `UPDATE campaigns SET starting_situation_index = $2 WHERE id = $1`,
+        [seed.campaignId, situationIndex],
+      )
+      return seed
+    }
+
+    const longConcept = 'a road-weary cleric who lost their faith long ago'
+    const longGrounding = 'arrived at the tavern seeking word of an old companion'
+
+    it('200 — owner submits with both texts; returns conceptId + status=submitted', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {
+          conceptText: longConcept,
+          situationGroundingText: longGrounding,
+        },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{ conceptId: string; status: string }>()
+      expect(body.status).toBe('submitted')
+      expect(body.conceptId).toMatch(/^[0-9a-f-]{36}$/i)
+
+      const row = await pool.query<{ id: string; concept_text: string; status: string }>(
+        `SELECT id, concept_text, status FROM character_concepts
+         WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(row.rows[0]?.id).toBe(body.conceptId)
+      expect(row.rows[0]?.concept_text).toBe(longConcept)
+      expect(row.rows[0]?.status).toBe('submitted')
+    })
+
+    it('200 — player (non-owner) submits successfully', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const player = await seedUser(pool, scope, 1)
+      const seed = await seedCampaignWithSituation(owner)
+      await addMember(pool, seed.campaignId, player, 'player')
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': player.devSub },
+        payload: {
+          conceptText: longConcept,
+          situationGroundingText: longGrounding,
+        },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json<{ status: string }>().status).toBe('submitted')
+    })
+
+    it("200 — re-POST while status='submitted' UPSERTs the row (same conceptId, refreshed text)", async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const first = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(first.statusCode).toBe(200)
+      const firstId = first.json<{ conceptId: string }>().conceptId
+
+      const newConcept = 'a curious tinker with too many keys on their belt loop'
+      const second = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: newConcept, situationGroundingText: longGrounding },
+      })
+      expect(second.statusCode).toBe(200)
+      expect(second.json<{ conceptId: string; status: string }>()).toEqual({
+        conceptId: firstId,
+        status: 'submitted',
+      })
+
+      const row = await pool.query<{ concept_text: string }>(
+        `SELECT concept_text FROM character_concepts WHERE id = $1`,
+        [firstId],
+      )
+      expect(row.rows[0]?.concept_text).toBe(newConcept)
+    })
+
+    it("200 — re-POST after status='failed' resets row to 'submitted'", async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'failed')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json<{ status: string }>().status).toBe('submitted')
+    })
+
+    it("409 concept_locked when existing status='processing'", async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'processing')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('concept_locked')
+    })
+
+    it("409 concept_locked when existing status='completed'", async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'completed')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('concept_locked')
+    })
+
+    it('409 starting_situation_not_chosen when index is NULL', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('starting_situation_not_chosen')
+    })
+
+    it("409 world_not_complete when worlds.status != 'complete'", async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0, 'generating')
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('world_not_complete')
+    })
+
+    it('400 concept_or_guided_required when neither conceptText nor guidedChoices is present', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('concept_or_guided_required')
+    })
+
+    it('400 bad_body when situationGroundingText is < 20 chars', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: 'too short' },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('bad_body')
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': stranger.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+  })
+
+  // ======================================================================
+  // T16: GET /api/campaigns/:campaignId/starting-situations
+  // ======================================================================
+  describe('GET /starting-situations (T16)', () => {
+    const sampleEntries = [
+      { index: 0, locationEntityId: '00000000-0000-0000-0000-000000000001', prose: 'A rainy port.' },
+      { index: 1, locationEntityId: '00000000-0000-0000-0000-000000000002', prose: 'A dusty crossroads.' },
+      { index: 2, locationEntityId: '00000000-0000-0000-0000-000000000003', prose: 'An abandoned shrine.' },
+    ]
+
+    it('200 — 3 entries + chosenIndex (when set)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await pool.query(
+        `UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`,
+        [seed.worldId, JSON.stringify(sampleEntries)],
+      )
+      await pool.query(
+        `UPDATE campaigns SET starting_situation_index = 2 WHERE id = $1`,
+        [seed.campaignId],
+      )
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/starting-situations`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ situations: sampleEntries, chosenIndex: 2 })
+    })
+
+    it('200 — 3 entries + chosenIndex=null when not yet picked', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await pool.query(
+        `UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`,
+        [seed.worldId, JSON.stringify(sampleEntries)],
+      )
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/starting-situations`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ situations: sampleEntries, chosenIndex: null })
+    })
+
+    it('404 world_not_ready when entries array is empty', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      // Default starting_situation_entries is '[]'::jsonb — no UPDATE needed.
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/starting-situations`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(404)
+      expect(res.json<{ code: string }>().code).toBe('world_not_ready')
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await pool.query(
+        `UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`,
+        [seed.worldId, JSON.stringify(sampleEntries)],
+      )
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/starting-situations`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+  })
+
+  // ======================================================================
+  // T17: GET /api/campaigns/:campaignId/characters (roster)
+  // ======================================================================
+  describe('GET /characters roster (T17)', () => {
+    // Insert a `characters` row + `campaign_characters` join for a given user.
+    // Used by the "one member completed" branch of the happy-path test.
+    async function attachCharacter(
+      campaignId: string,
+      userId: string,
+      name: string,
+    ): Promise<string> {
+      const characterId = uuidv7()
+      await pool.query(
+        `INSERT INTO characters (
+           id, user_id, name, level, class, species, background,
+           str, dex, con, int, wis, cha,
+           hit_points, max_hit_points, armor_class, proficiency_bonus
+         ) VALUES ($1, $2, $3, 1, 'Cleric', 'Human', 'Sage',
+                   10, 10, 10, 10, 10, 10, 10, 10, 10, 2)`,
+        [characterId, userId, name],
+      )
+      await pool.query(
+        `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+         VALUES ($1, $2, $3, $4)`,
+        [uuidv7(), campaignId, characterId, userId],
+      )
+      return characterId
+    }
+
+    it('200 — 3-member campaign: completed+characterId / submitted / no-concept', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const p1 = await seedUser(pool, scope, 1)
+      const p2 = await seedUser(pool, scope, 2)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await addMember(pool, seed.campaignId, p1, 'player')
+      await addMember(pool, seed.campaignId, p2, 'player')
+
+      // owner: completed concept + persisted character
+      await insertConcept(pool, seed.campaignId, owner.userId, 'completed')
+      const ownerCharId = await attachCharacter(seed.campaignId, owner.userId, 'Brother Anselm')
+      // p1: submitted concept, no character yet
+      await insertConcept(pool, seed.campaignId, p1.userId, 'submitted')
+      // p2: no concept row at all
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{
+        members: {
+          userId: string
+          displayName: string
+          conceptStatus: string
+          characterId?: string
+        }[]
+      }>()
+      expect(body.members).toHaveLength(3)
+      // Order is by campaign_members.joined_at — owner joined first.
+      const byUser = Object.fromEntries(body.members.map((m) => [m.userId, m]))
+
+      expect(byUser[owner.userId]).toEqual({
+        userId: owner.userId,
+        displayName: scope.displayName(0),
+        conceptStatus: 'completed',
+        characterId: ownerCharId,
+      })
+      expect(byUser[p1.userId]).toEqual({
+        userId: p1.userId,
+        displayName: scope.displayName(1),
+        conceptStatus: 'submitted',
+      })
+      expect(byUser[p2.userId]).toEqual({
+        userId: p2.userId,
+        displayName: scope.displayName(2),
+        conceptStatus: 'none',
+      })
+      // characterId is OMITTED when null, not present-as-null.
+      expect('characterId' in (byUser[p1.userId] ?? {})).toBe(false)
+      expect('characterId' in (byUser[p2.userId] ?? {})).toBe(false)
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
     })
   })
 })
