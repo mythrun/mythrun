@@ -18,6 +18,8 @@ import {
   sumCompletedStageCosts,
   issueCostCapRefund,
   CostCapParseError,
+  readCharacterCreationCostCap,
+  sumCharacterCreationStageCosts,
 } from '../cost-cap.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -212,6 +214,104 @@ describe('cost-cap', () => {
       expect(ledger.rows[0]?.amount).toBe(-1)
       expect(ledger.rows[1]?.amount).toBe(1)
       expect(ledger.rows[1]?.source_type).toBe('cost_cap_refund')
+    })
+  })
+
+  describe('readCharacterCreationCostCap', () => {
+    it('reads the seeded $5.00 default from migration 016', async () => {
+      const cap = await readCharacterCreationCostCap(pool)
+      expect(cap).toBeCloseTo(5.0)
+    })
+
+    it('throws CostCapParseError if the row is missing', async () => {
+      await pool.query(`DELETE FROM settings WHERE key = 'character_creation_cost_cap_usd'`)
+      await expect(readCharacterCreationCostCap(pool)).rejects.toBeInstanceOf(CostCapParseError)
+      // Restore for the next test in this describe.
+      await pool.query(
+        `INSERT INTO settings (key, value) VALUES ('character_creation_cost_cap_usd', '5.00')
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      )
+    })
+
+    it('throws CostCapParseError if the value is not a positive number', async () => {
+      await pool.query(
+        `UPDATE settings SET value = 'not-a-number' WHERE key = 'character_creation_cost_cap_usd'`,
+      )
+      await expect(readCharacterCreationCostCap(pool)).rejects.toBeInstanceOf(CostCapParseError)
+      await pool.query(
+        `UPDATE settings SET value = '-1' WHERE key = 'character_creation_cost_cap_usd'`,
+      )
+      await expect(readCharacterCreationCostCap(pool)).rejects.toBeInstanceOf(CostCapParseError)
+      // Restore for subsequent tests.
+      await pool.query(
+        `UPDATE settings SET value = '5.00' WHERE key = 'character_creation_cost_cap_usd'`,
+      )
+    })
+  })
+
+  describe('sumCharacterCreationStageCosts', () => {
+    it('returns 0 when no rows', async () => {
+      const { campaignId } = await seedUserWorldCampaign()
+      const sum = await sumCharacterCreationStageCosts(pool, campaignId)
+      expect(sum).toBe(0)
+    })
+
+    it('sums completed rows for the given campaign across all user_ids', async () => {
+      // Per spec §Cost-cap coverage: char-creation rows are keyed on
+      // (campaign_id, user_id) with world_id NULL. The aggregator must
+      // sum across every user's per-player runs for the campaign.
+      const { campaignId, userId: userId0 } = await seedUserWorldCampaign(0)
+      // Second user — separate row in `users` so the FK on pipeline_runs
+      // resolves. We don't need campaign_members here because the SUM
+      // query reads pipeline_runs directly.
+      const userId1 = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [userId1, scope.userSub(1), scope.displayName(1), scope.username(1)],
+      )
+      // Four completed per-player rows (2 stages × 2 users) — sums to 0.12.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_concepts', 'completed', now(), 0.03, $3)`,
+        [uuidv7(), campaignId, userId0],
+      )
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_details', 'completed', now(), 0.03, $3)`,
+        [uuidv7(), campaignId, userId0],
+      )
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_concepts', 'completed', now(), 0.03, $3)`,
+        [uuidv7(), campaignId, userId1],
+      )
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_details', 'completed', now(), 0.03, $3)`,
+        [uuidv7(), campaignId, userId1],
+      )
+      const sum = await sumCharacterCreationStageCosts(pool, campaignId)
+      expect(sum).toBeCloseTo(0.12, 6)
+    })
+
+    it('excludes non-completed rows and world-gen rows (user_id IS NULL)', async () => {
+      const { campaignId, userId, worldId } = await seedUserWorldCampaign()
+      // Running row — excluded by status filter.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_concepts', 'running', now(), 0.10, $3)`,
+        [uuidv7(), campaignId, userId],
+      )
+      // World-gen row (user_id NULL) keyed via world_id — excluded by the
+      // user_id IS NOT NULL filter even though the same campaign_id-less
+      // row would never match anyway.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'concept_intake', 'completed', now(), 1.00, NULL)`,
+        [uuidv7(), worldId],
+      )
+      const sum = await sumCharacterCreationStageCosts(pool, campaignId)
+      expect(sum).toBe(0)
     })
   })
 })
