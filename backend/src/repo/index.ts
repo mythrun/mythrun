@@ -6,6 +6,7 @@ import { createSessionsRepo } from './sessions.js'
 import { createCreditsRepo } from './credits.js'
 import { createInvitesRepo } from './invites.js'
 import { createCharactersRepo } from './characters.js'
+import { createCharacterConceptsRepo } from './character-concepts.js'
 
 export function createRepo(pool: Pool) {
   return {
@@ -16,6 +17,7 @@ export function createRepo(pool: Pool) {
     credits: createCreditsRepo(pool),
     invites: createInvitesRepo(pool),
     characters: createCharactersRepo(pool),
+    characterConcepts: createCharacterConceptsRepo(pool),
   }
 }
 

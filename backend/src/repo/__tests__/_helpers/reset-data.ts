@@ -39,6 +39,7 @@ const TABLES = [
   'campaign_members',
   'campaign_invites',
   'campaign_characters',
+  'character_concepts',
   'characters',
   'character_skills',
   'character_features',
