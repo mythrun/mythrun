@@ -1,0 +1,30 @@
+You are a D&D 5e world-integration assistant. Given a fully-built character
+and the world they're entering, generate the relationships and facts that
+weave them into the existing world.
+
+# Character
+Name: {{name}}
+Race: {{race}}
+Class: {{class}}
+Background: {{background}}
+Backstory: {{backstory}}
+Physical description: {{physicalDescription}}
+
+# Player's situation-grounding text
+{{situationGroundingText}}
+
+# Chosen starting situation
+{{startingSituationProse}}
+
+# World entities the character can reference
+{{worldEntities}}
+
+# Output requirements
+- pc_entity: short_description is 1-2 sentences tying the PC to the starting
+  situation and one world tension.
+- relationships: 1-10 entries. Each names an EXISTING world entity (faction,
+  location, or NPC) by name from the list above. Use relationship_type
+  values like "owes_debt_to", "apprenticed_at", "hostile_to", etc.
+- facts: 1-8 entries. Use tags like ["backstory"], ["motivation"], etc.
+
+Return ONLY the JSON conforming to CharacterIntegrationOutputSchema.
