@@ -1,4 +1,8 @@
-const ALLOWED_DBS = /^mythrun(_test|_ci)?$/
+// Tests target the dedicated test DB (`mythrun_test`) or a per-worktree
+// variant (`mythrun_test_<worktree>`). The dev DB (`mythrun_dev`) and any
+// other name is rejected — destructive operations (TRUNCATE CASCADE,
+// DROP SCHEMA) must never run against dev or production data.
+const ALLOWED_DBS = /^mythrun_test(_.+)?$/
 
 // Async signature is intentional: a future iteration will query pg_stat_database
 // to verify the DB is empty before running destructive tests. Keeping the
@@ -16,7 +20,7 @@ export async function guardTestDatabase(databaseUrl: string): Promise<void> {
   if (!isLocal || !ALLOWED_DBS.test(dbName)) {
     throw new Error(
       `Refusing to run destructive tests against ${url.hostname}/${dbName}. ` +
-        `Tests require localhost with one of: mythrun, mythrun_test, mythrun_ci.`,
+        `Tests require localhost with a database name matching /^mythrun_test(_.+)?$/.`,
     )
   }
 }

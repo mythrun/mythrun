@@ -18,10 +18,16 @@ describe('guardTestDatabase', () => {
     )
   })
 
-  it('accepts localhost mythrun', async () => {
-    await expect(
-      guardTestDatabase('postgresql://u:p@localhost:5432/mythrun'),
-    ).resolves.toBeUndefined()
+  it('rejects bare mythrun (dev DB historical name)', async () => {
+    await expect(guardTestDatabase('postgresql://u:p@localhost:5432/mythrun')).rejects.toThrow(
+      /Refusing/,
+    )
+  })
+
+  it('rejects mythrun_dev (dev DB)', async () => {
+    await expect(guardTestDatabase('postgresql://u:p@localhost:5432/mythrun_dev')).rejects.toThrow(
+      /Refusing/,
+    )
   })
 
   it('accepts 127.0.0.1 mythrun_test', async () => {
@@ -30,9 +36,15 @@ describe('guardTestDatabase', () => {
     ).resolves.toBeUndefined()
   })
 
-  it('accepts 127.0.0.1 mythrun_ci', async () => {
+  it('accepts localhost mythrun_test', async () => {
     await expect(
-      guardTestDatabase('postgresql://u:p@127.0.0.1:5432/mythrun_ci'),
+      guardTestDatabase('postgresql://u:p@localhost:5432/mythrun_test'),
+    ).resolves.toBeUndefined()
+  })
+
+  it('accepts worktree variant mythrun_test_feature', async () => {
+    await expect(
+      guardTestDatabase('postgresql://u:p@127.0.0.1:5432/mythrun_test_feature'),
     ).resolves.toBeUndefined()
   })
 })

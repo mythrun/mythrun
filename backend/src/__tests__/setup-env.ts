@@ -36,6 +36,31 @@ process.env.STRIPE_SECRET_KEY ??= 'rk_test_baseline_for_setup_env'
 process.env.STRIPE_WEBHOOK_SECRET ??= 'PLACEHOLDER'
 process.env.ANTHROPIC_API_KEY ??= 'sk-ant-test-baseline-for-setup-env'
 
+// Tests target the test database, not the dev database. The bridge:
+// `.env.development` (loaded above) defines both DATABASE_URL (dev DB)
+// and DATABASE_URL_TEST (test DB). Production code reads DATABASE_URL;
+// tests run in this same process, so we overwrite DATABASE_URL with
+// DATABASE_URL_TEST before any test imports the repo layer. The safety
+// fence below refuses to run if the resulting DB name isn't on the
+// test-database allowlist — guards against accidentally pointing tests
+// at the dev DB or production.
+const testDbUrl = process.env.DATABASE_URL_TEST
+if (testDbUrl === undefined || testDbUrl === '') {
+  throw new Error(
+    'setup-env: DATABASE_URL_TEST is not set. Tests must target mythrun_test, ' +
+      'not the dev DB. Add DATABASE_URL_TEST to .env.development or .env.worktree.',
+  )
+}
+process.env.DATABASE_URL = testDbUrl
+
+const dbName = new URL(testDbUrl).pathname.slice(1)
+if (!/^mythrun_test(_.+)?$/.test(dbName)) {
+  throw new Error(
+    `setup-env: DATABASE_URL_TEST points at database "${dbName}", which does not ` +
+      'match the test-database allowlist /^mythrun_test(_.+)?$/. Refusing to run.',
+  )
+}
+
 // Global teardown: any test that uses `vi.stubEnv(...)` to mutate process.env
 // gets cleanup automatically so env-mutations don't leak to sibling tests
 // across Vitest's parallel workers. The bypass-plugin tests rely on this.
