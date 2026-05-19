@@ -994,11 +994,12 @@
   <code>world_and_factions</code>, <code>locations_and_npcs</code>,
   <code>entity_relationships</code>, <code>starting_situation</code>, <code>random_tables</code>,
   <code>coherence_pass</code>. The list grew by one entry — <code>vocabulary_intake</code> is the
-  new stage 1.5 that generates the per-world <a href="#vocabulary-registry">vocabulary registry</a>
-  before any downstream prose-bearing stage runs. Counting prose continues to call the streaming
-  Opus + Sonnet block "the seven stages" because <code>vocabulary_intake</code> is a structured
-  pre-pass with no entity emission; section headings and the cost-cap discussion treat it as a
-  cheap setup call. Every iteration enforces the same per-stage invariant:
+  new stage 1.5 that generates the per-world
+  <a href="#vocabulary-registry">vocabulary registry</a> before any downstream prose-bearing stage
+  runs. Counting prose continues to call the streaming Opus + Sonnet block "the seven stages"
+  because <code>vocabulary_intake</code> is a structured pre-pass with no entity emission; section
+  headings and the cost-cap discussion treat it as a cheap setup call. Every iteration enforces the
+  same per-stage invariant:
 </p>
 
 <ol>
@@ -1179,7 +1180,12 @@
       <td><code>starting_situation</code></td>
       <td>Sonnet</td>
       <td>non-streaming</td>
-      <td><code>worlds.starting_situation</code></td>
+      <td>
+        <code>worlds.starting_situations</code> (prose blob) +
+        <code>worlds.starting_situation_entries</code> (the three structured
+        <code>{ index, locationEntityId, prose }</code> rows MYT-53's character-creation flow picks
+        one from)
+      </td>
       <td>none</td>
     </tr>
     <tr>
@@ -1215,47 +1221,44 @@
 <h3 id="vocabulary-registry">Vocabulary registry</h3>
 
 <p>
-  Every world has a <strong>vocabulary registry</strong> — a per-world glossary of distinctive
-  terms generated at stage 1.5 (<code>vocabulary_intake</code>) and injected into the system
-  prompt of every downstream world-gen stage. The registry's primary purpose is to give each
-  world its own distinctive voice across whatever vocabulary domains its premise demands
-  (calendar terms, pantheon names, honorifics, in-world slang, named concepts). IP-drift
-  defense (avoiding verbatim use of franchise-iconic neologisms like
-  <em>Statute of Secrecy</em> or <em>Mystra</em>) falls out as a consequence: stage 1.5
-  identifies which fiction franchises the world is adjacent to and generates the world's own
-  term for each iconic neologism, recording the IP term in the entry's
+  Every world has a <strong>vocabulary registry</strong> — a per-world glossary of distinctive terms
+  generated at stage 1.5 (<code>vocabulary_intake</code>) and injected into the system prompt of
+  every downstream world-gen stage. The registry's primary purpose is to give each world its own
+  distinctive voice across whatever vocabulary domains its premise demands (calendar terms, pantheon
+  names, honorifics, in-world slang, named concepts). IP-drift defense (avoiding verbatim use of
+  franchise-iconic neologisms like <em>Statute of Secrecy</em> or <em>Mystra</em>) falls out as a
+  consequence: stage 1.5 identifies which fiction franchises the world is adjacent to and generates
+  the world's own term for each iconic neologism, recording the IP term in the entry's
   <code>avoids</code> field.
 </p>
 
 <p>
   The registry is stored as <code>worlds.vocabulary_registry jsonb</code> with shape
   <code>{entries: [...], adjacent_franchises: [...]}</code> (migration 015,
-  <code>NOT NULL DEFAULT '{"entries": [], "adjacent_franchises": []}'</code> with a CHECK
-  constraint pinning the top-level shape). Each entry carries
-  <code>{term, definition, avoids?, usage_notes?, source, access_level}</code>. Downstream
-  stages 2-7 render the registry as deterministic prose via
-  <code>renderVocabularyRegistry()</code> and substitute it into a
-  <code>{{vocabularyRegistry}}</code> placeholder at the top of their prompt templates.
-  Anthropic prompt caching keeps the per-stage cost negligible since the registry is stable
-  across a single world's stages.
+  <code>NOT NULL DEFAULT '{"entries": [], "adjacent_franchises": []}'</code> with a CHECK constraint
+  pinning the top-level shape). Each entry carries
+  <code>{term, definition, avoids?, usage_notes?, source, access_level}</code>. Downstream stages
+  2-7 render the registry as deterministic prose via <code>renderVocabularyRegistry()</code> and
+  substitute it into a <code>{{vocabularyRegistry}}</code> placeholder at the top of their prompt
+  templates. Anthropic prompt caching keeps the per-stage cost negligible since the registry is
+  stable across a single world's stages.
 </p>
 
 <p>
-  The <code>GET /api/campaigns/:campaignId/world-snapshot</code> endpoint exposes the
-  registry on the <code>WorldSummary</code> as <code>vocabularyRegistry</code>,
-  filtered by the same <code>access_level</code> tier list as entities and facts:
-  without dev bypass only <code>known</code>-tier entries surface;
-  <code>adjacent_franchises</code> is metadata (not player-secret content) and always surfaces.
+  The <code>GET /api/campaigns/:campaignId/world-snapshot</code> endpoint exposes the registry on
+  the <code>WorldSummary</code> as <code>vocabularyRegistry</code>, filtered by the same
+  <code>access_level</code> tier list as entities and facts: without dev bypass only
+  <code>known</code>-tier entries surface; <code>adjacent_franchises</code> is metadata (not
+  player-secret content) and always surfaces.
 </p>
 
 <p>
-  A consolidation pass that appends terms surfaced during world-gen and character creation
-  is designed but deferred (bead <code>myth-1uw6</code>). The per-player character-creation
-  pipeline landed in MYT-53 (see <a href="character-creation.html">Character creation</a>),
-  but the consolidation hook is not yet wired in — that's the deferred bead's scope. The
-  vocabulary registry's data shape, append-only semantics, and <code>source</code> tag on
-  each entry are designed to support both that consolidation pass and a future Scribe
-  runtime write-back.
+  A consolidation pass that appends terms surfaced during world-gen and character creation is
+  designed but deferred (bead <code>myth-1uw6</code>). The per-player character-creation pipeline
+  landed in MYT-53 (see <a href="character-creation.html">Character creation</a>), but the
+  consolidation hook is not yet wired in — that's the deferred bead's scope. The vocabulary
+  registry's data shape, append-only semantics, and <code>source</code> tag on each entry are
+  designed to support both that consolidation pass and a future Scribe runtime write-back.
 </p>
 
 <h3 id="streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</h3>
@@ -1665,12 +1668,12 @@
   <code>follow_up_questions</code>, <code>geography_summary</code>, <code>world_overview</code>, and
   (notably) <code>dev_bypass_access_filter</code>. The snapshot view explicitly selects
   <code>id</code>, <code>name</code>, <code>concept</code>, <code>tone</code>, <code>themes</code>,
-  <code>era</code>, and <code>vocabulary_registry</code> — the registry is the one jsonb column
-  that does cross the wire, with its entries tier-filtered against the same access-level list as
-  entities and facts before they're attached to <code>WorldSummary.vocabularyRegistry</code>. New
-  columns added to the <code>worlds</code> table never reach the wire automatically — adding a
-  column requires authoring a deliberate addition to the projection. This is the inverse of the
-  usual repo-mapper default: most repos return the row shape; this one returns an allowlist.
+  <code>era</code>, and <code>vocabulary_registry</code> — the registry is the one jsonb column that
+  does cross the wire, with its entries tier-filtered against the same access-level list as entities
+  and facts before they're attached to <code>WorldSummary.vocabularyRegistry</code>. New columns
+  added to the <code>worlds</code> table never reach the wire automatically — adding a column
+  requires authoring a deliberate addition to the projection. This is the inverse of the usual
+  repo-mapper default: most repos return the row shape; this one returns an allowlist.
 </aside>
 
 <h3 id="three-tier-access-classification">Three-tier access classification</h3>
@@ -1825,11 +1828,10 @@
     <tr>
       <td><code>character_creation</code> | <code>post_creation</code></td>
       <td>
-        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53
-        landed the character-creation pipeline itself, but resume from those phases
-        remains unimplemented — re-trigger via owner-side
-        <code>POST /start-character-creation</code> instead. The downstream ticket
-        reference is logged server-side, not in the response.
+        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53 landed the
+        character-creation pipeline itself, but resume from those phases remains unimplemented —
+        re-trigger via owner-side <code>POST /start-character-creation</code> instead. The
+        downstream ticket reference is logged server-side, not in the response.
       </td>
     </tr>
     <tr>
@@ -2085,13 +2087,12 @@
 
 <ul>
   <li>
-    <strong>Resume for the <code>character_creation</code> phase.</strong> MYT-53 landed
-    the per-player character-creation pipeline on the <code>campaign-setup</code> queue
-    (see <a href="character-creation.html">Character creation</a>), but the
+    <strong>Resume for the <code>character_creation</code> phase.</strong> MYT-53 landed the
+    per-player character-creation pipeline on the <code>campaign-setup</code> queue (see
+    <a href="character-creation.html">Character creation</a>), but the
     <code>POST /resume</code> endpoint here in world-gen still returns
-    <code>422 phase_resume_not_yet_implemented</code> when the campaign has advanced into
-    the <code>character_creation</code> phase — resume support for that phase is a
-    follow-up bead.
+    <code>422 phase_resume_not_yet_implemented</code> when the campaign has advanced into the
+    <code>character_creation</code> phase — resume support for that phase is a follow-up bead.
   </li>
   <li>
     <strong>Automatic refunds beyond the cost cap.</strong> Stage failures that aren't cost-cap

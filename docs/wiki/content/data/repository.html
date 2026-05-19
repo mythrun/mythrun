@@ -1,6 +1,6 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:5aa4925642eecdfd6d15010c7962af5a4567252f877f067f6fa7e635e6cbf105 -->
+<!-- source-hash: sha256:b2fd6386ec3f5346b3d219f8efdab69b1b9239a481a3fa40555238dae12b8c0d -->
 <!-- last-ticket: MYT-52 -->
 
 <h1>Repository layer</h1>
@@ -87,9 +87,9 @@
   <code>invites</code> followed in MYT-38 alongside its routes consumer; the multi-step
   <code>acceptInvite</code> transaction (lock invite → membership check first → expiry check → cap
   check → INSERT with ON CONFLICT → uses-bump) only fell into shape with the HTTP layer co-designed.
-  <code>characters</code> lands ahead of its MYT-53 campaign-setup consumer for a different reason:
-  migration 009 reshapes the storage contract (user-owned + join table), and authoring the
-  campaign-setup pipeline against the final shape is cheaper than chasing schema churn
+  <code>characters</code> was landed ahead of MYT-53's campaign-setup consumer for a different
+  reason: migration 009 reshaped the storage contract (user-owned + join table), and authoring the
+  campaign-setup pipeline against the final shape was cheaper than chasing schema churn
   mid-milestone. The deferral list is in the v2 design spec;
   <code>bd list --label=repo-deferred</code> is the live view.
 </aside>
@@ -102,8 +102,16 @@
   <code>users.softDelete</code> and <code>campaigns.transferOwnership</code> follow the same rule:
   no consumer in flight, no API design today. <code>characters</code> ships the portable-shape
   primitives (<code>create</code>, <code>addToCampaign</code>, <code>listForCampaign</code>,
-  <code>findUserCharacterForCampaign</code>) but holds back skill / feature / equipment / spell
-  satellite APIs and any update path until MYT-53 picks up the character-creation flow.
+  <code>findUserCharacterForCampaign</code>); MYT-53's character-creation processor reaches the four
+  satellite tables (skills / features / equipment / spells) and the
+  <code>characters.entity_id</code> backfill directly through its per-stage SQL rather than through
+  a satellite repo, because those operations are owned end-to-end by the stage handlers.
+  <code>character_concepts</code> follows the rule: its own repo
+  (<code>backend/src/repo/character-concepts.ts</code>) ships under MYT-53 with exactly the
+  primitives the routes and the worker need (<code>upsert</code>, <code>getByCampaignAndUser</code>,
+  <code>listSubmittedByCampaign</code>, the four status flips, and the transactional
+  <code>flipAllSubmittedToProcessing</code> the fan-out route wraps in a BEGIN/COMMIT with the
+  BullMQ enqueue), because the concept lifecycle has a real consumer to shape it against.
 </p>
 
 <h2>Camel out, snake in: mappers at the boundary</h2>
@@ -442,15 +450,19 @@
   <strong><code>characters</code></strong> — <code>create</code>, <code>addToCampaign</code>,
   <code>listForCampaign</code>, <code>findUserCharacterForCampaign</code>. The split mirrors
   migration 009's two-step storage contract: <code>create</code> writes the user-owned row;
-  <code>addToCampaign</code> writes the <code>campaign_characters</code> join row. Both are expected
-  to live inside the same caller-controlled transaction at the MYT-53 campaign-setup call site —
+  <code>addToCampaign</code> writes the <code>campaign_characters</code> join row.
   <code>create</code> takes a <code>ClientLike</code> rather than reading from the closure's pool
-  (the same shape <code>users.create</code> uses for the onboarding flow).
-  <code>addToCampaign</code> opens its own short transaction off the pool because the join INSERT is
-  a single statement and the typed unique-violation translation only needs to span that one
-  statement. <code>listForCampaign</code> joins through <code>campaign_characters</code> ordered by
-  <code>joined_at, id</code>; <code>findUserCharacterForCampaign</code> is the per-player lookup
-  route handlers will use to answer "what character does this player have in this campaign?"
+  (the same shape <code>users.create</code> uses for the onboarding flow) so callers can compose it
+  with their own transaction. <code>addToCampaign</code> opens its own short transaction off the
+  pool because the join INSERT is a single statement and the typed unique-violation translation only
+  needs to span that one statement. <code>listForCampaign</code> joins through
+  <code>campaign_characters</code> ordered by <code>joined_at, id</code>;
+  <code>findUserCharacterForCampaign</code> is the per-player lookup the read routes use to answer
+  "what character does this player have in this campaign?" In practice MYT-53's character-creation
+  processor reaches the <code>characters</code>, <code>campaign_characters</code>, and
+  four-satellite-table writes through its own per-stage SQL (the whole sheet is one tightly coupled
+  transaction inside <code>character-sheet.ts</code>); the typed <code>characters</code> repo
+  primitives are the read-side surface today.
 </p>
 
 <aside class="wiki-rationale">
@@ -984,6 +996,17 @@
         <code>CharacterAlreadyInCampaignError</code>,
         <code>UserAlreadyHasCharacterInCampaignError</code> — thrown by
         <code>addToCampaign</code> on the two <code>campaign_characters</code> UNIQUE violations.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/character-concepts.ts</code></td>
+      <td>
+        <code>createCharacterConceptsRepo(pool)</code> — <code>upsert</code> (member submission; ON
+        CONFLICT (campaign_id, user_id) DO UPDATE), <code>getByCampaignAndUser</code>,
+        <code>listSubmittedByCampaign</code>, the four status flips (<code>markProcessing</code>,
+        <code>markCompleted</code>, <code>markFailed</code>, the transactional
+        <code>flipAllSubmittedToProcessing(client, ...)</code> the fan-out route wraps in a
+        BEGIN/COMMIT alongside the BullMQ enqueue).
       </td>
     </tr>
     <tr>

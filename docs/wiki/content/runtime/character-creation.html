@@ -18,33 +18,35 @@
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md -->
-<!-- source-hash: sha256:3d81b86e962eb46f9c53c73444ae9d83c8f04112c7e7784dc4df171866419b2d -->
+<!-- source-hash: sha256:f849930b649f88e8bdc462610c9061e83ba6f9300205766204957eadcf58daa5 -->
 <!-- last-ticket: MYT-53 -->
 
 <h1>Character creation</h1>
 
 <p class="lead">
-  The per-player parallel character-creation surface. After world-gen completes and the wiki snapshot
-  is fetchable, the owner picks one of the three generated starting situations for the entire party,
-  members each submit a character (a concept text plus a situation-grounding text), and the owner
-  triggers fan-out. Fan-out enqueues one <code>character-creation</code> job per submitted player on
-  the <code>campaign-setup</code> BullMQ queue; each job walks four stages
+  The per-player parallel character-creation surface. After world-gen completes and the wiki
+  snapshot is fetchable, the owner picks one of the three generated starting situations for the
+  entire party, members each submit a character (a concept text plus a situation-grounding text),
+  and the owner triggers fan-out. Fan-out enqueues one <code>character-creation</code> job per
+  submitted player on the <code>campaign-setup</code> BullMQ queue; each job walks four stages
   (<code>location_selection</code> → <code>character_concept</code> → <code>character_sheet</code> →
   <code>character_integration</code>) and ends with the PC as a real <code>entities</code> row of
   type <code>'pc'</code>, joined to a populated <code>characters</code> row, with PC↔world
-  relationships and facts written into the world. Cross-PC weaving and the owner's
+  relationships and facts written into the world. The status panel and live-events feed render
+  per-player progress via the existing campaign-scoped channel. Cross-PC weaving and the owner's
   established-relationships prompt are MYT-54's scope; MYT-53 is per-player only.
 </p>
 
 <h2>How it fits together</h2>
 
 <p>
-  Character creation is phase 4 of the campaign lifecycle. Phase 2 (<a href="./world-gen.html">world
-  generation</a>) and phase 3 (wiki read via
-  <code>GET /api/campaigns/:campaignId/world-snapshot</code>) ship today. Phase 5 (cross-PC
-  integration) is MYT-54; phase 1 (pre-world-gen lobby retrofit) is a separate bead. MYT-53 owns the
-  middle three steps — owner picks situation, members submit characters, owner triggers fan-out —
-  plus the four-stage per-player worker pipeline that turns those submissions into PCs in the world.
+  Character creation is phase 4 of the campaign lifecycle. Phase 2 (<a href="./world-gen.html"
+    >world generation</a
+  >) and phase 3 (wiki read via <code>GET /api/campaigns/:campaignId/world-snapshot</code>) ship
+  today. Phase 5 (cross-PC integration) is MYT-54; phase 1 (pre-world-gen lobby retrofit) is a
+  separate bead. MYT-53 owns the middle three steps — owner picks situation, members submit
+  characters, owner triggers fan-out — plus the four-stage per-player worker pipeline that turns
+  those submissions into PCs in the world.
 </p>
 
 <pre><code>                    ┌──────────────────────────────────────────────────┐
@@ -91,13 +93,14 @@ creation            │   campaigns.starting_situation_index ← {0,1,2}   │
                     │   │     campaign_characters join + bulk-INSERT   │
                     │   │     character_skills / _features /           │
                     │   │     _equipment / _spells                     │
-                    │   └── 4. character_integration ★ stream (Opus)   │
-                    │         streamObject; INSERT entities row        │
+                    │   └── 4. character_integration (Opus)            │
+                    │         generateObject; INSERT entities row      │
                     │         (entity_type='pc'), links                │
                     │         characters.entity_id, writes PC↔world    │
                     │         relationships + facts including the      │
                     │         deferred "starts at $location" fact.     │
-                    │         Streams entity-added + edge-added events │
+                    │         Post-commit publishes entity-added +     │
+                    │         edge-added events                        │
                     │                                                  │
                     │ pipeline_runs.user_id distinguishes per-player   │
                     │ rows; the status panel renders per-player        │
@@ -112,8 +115,8 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <strong>Strict order, not permissive</strong> — players cannot submit characters until the owner
   has chosen a starting situation. The strictness eliminates a class of edge cases ("what if a
   player submitted before the owner picked?") and makes the frontend trivial: the
-  <code>POST /characters</code> route returns
-  <code>409 'starting_situation_not_chosen'</code> until <code>campaigns.starting_situation_index</code>
+  <code>POST /characters</code> route returns <code>409 'starting_situation_not_chosen'</code> until
+  <code>campaigns.starting_situation_index</code>
   is set, and the lobby displays a "waiting on owner" state. The owner choosing one situation for
   the entire party (not per-character) is the other half of the same simplification — different
   characters cannot have different starting situations and still play together.
@@ -147,13 +150,14 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Both fields required in v1; <code>guidedChoices</code> reserved for later</strong> — the
-  POST body schema accepts an optional <code>guidedChoices</code> object (defaulted to
-  <code>{}</code>), and the route asserts at least one of
-  <code>{ conceptText, guidedChoices }</code> is present (400
-  <code>concept_or_guided_required</code>). In v1 the guided path is never populated and
-  <code>conceptText</code> is effectively required; a future guided-character-creation bead lights
-  up the picker UI and the deterministic-assembly path in stages 2–3 without reshaping the endpoint.
+  <strong>Both fields required in v1; guided-choices deferred to its own bead</strong> — the
+  freeform path is the only consumer today, so the body schema is a two-field object with both
+  strings required (20..4000 / 20..2000, mirroring the CHECK bounds in migration 016). The
+  <code>character_concepts.guided_choices JSONB</code> column persists as the default
+  <code>{}</code>; a future guided-character-creation bead lights up the picker UI, extends the body
+  schema to accept a third field, and lights up the deterministic-assembly path in stages 2–3
+  without reshaping the route. Dropping the optional field today means a sharper 400 on bad bodies
+  and one less branch to keep covered.
 </aside>
 
 <h2>The nine routes</h2>
@@ -171,8 +175,8 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       <td><code>POST /api/campaigns/:campaignId/starting-situation</code></td>
       <td>Owner</td>
       <td>
-        Sets <code>campaigns.starting_situation_index</code> to one of
-        <code>{0, 1, 2}</code>. Idempotent while all <code>character_concepts</code> rows are still
+        Sets <code>campaigns.starting_situation_index</code> to one of <code>{0, 1, 2}</code>.
+        Idempotent while all <code>character_concepts</code> rows are still
         <code>'submitted'</code> or absent.
       </td>
     </tr>
@@ -199,9 +203,9 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       <td>Member</td>
       <td>
         UPSERTs the caller's <code>character_concepts</code> row with
-        <code>{ conceptText, guidedChoices?, situationGroundingText }</code>. Allowed when the row
-        is absent, <code>'submitted'</code>, or <code>'failed'</code> (failed → submitted resets the
-        row). Returns <code>409 'concept_locked'</code> for <code>'processing'</code> /
+        <code>{ conceptText, situationGroundingText }</code>. Allowed when the row is absent,
+        <code>'submitted'</code>, or <code>'failed'</code> (failed → submitted resets the row).
+        Returns <code>409 'concept_locked'</code> for <code>'processing'</code> /
         <code>'completed'</code>.
       </td>
     </tr>
@@ -217,9 +221,9 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       <td><code>GET /api/campaigns/:campaignId/characters</code></td>
       <td>Member</td>
       <td>
-        Per-member roster: <code>userId</code>, display name, concept status
-        (<code>none | submitted | processing | completed | failed</code>), and
-        <code>characterId</code> once the row exists.
+        Per-member roster: <code>userId</code>, display name, concept status (<code
+          >none | submitted | processing | completed | failed</code
+        >), and <code>characterId</code> once the row exists.
       </td>
     </tr>
     <tr>
@@ -258,13 +262,16 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Why <code>character_concepts</code> is its own table, not a column on
-  <code>campaign_members</code></strong> — <code>campaign_members</code> is a join table; concept
-  input is conceptually separate from membership. One row per
-  <code>(campaign_id, user_id)</code> matches <code>campaign_members</code>'s grain exactly, and a
-  composite FK to <code>(campaign_members.campaign_id, campaign_members.user_id)</code> means
-  removing a member cascades the concept row out. The concept lifecycle (status, error JSON,
-  resubmit edits) stays self-contained rather than mixing with membership state.
+  <strong
+    >Why <code>character_concepts</code> is its own table, not a column on
+    <code>campaign_members</code></strong
+  >
+  — <code>campaign_members</code> is a join table; concept input is conceptually separate from
+  membership. One row per <code>(campaign_id, user_id)</code> matches
+  <code>campaign_members</code>'s grain exactly, and a composite FK to
+  <code>(campaign_members.campaign_id, campaign_members.user_id)</code> means removing a member
+  cascades the concept row out. The concept lifecycle (status, error JSON, resubmit edits) stays
+  self-contained rather than mixing with membership state.
 </aside>
 
 <h2>The four stages</h2>
@@ -323,39 +330,40 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       <td>
         Ability scores, HP / max HP / AC / proficiency bonus, plus the four sub-tables
         (<code>character_skills</code>, <code>character_features</code>,
-        <code>character_equipment</code>, <code>character_spells</code>). Single transaction:
-        INSERT into <code>characters</code> (narrative + mechanics together) + INSERT into
+        <code>character_equipment</code>, <code>character_spells</code>). Single transaction: INSERT
+        into <code>characters</code> (narrative + mechanics together) + INSERT into
         <code>campaign_characters</code> + bulk-INSERT into the four sub-tables.
         <code>characters.entity_id</code> stays NULL until stage 4.
       </td>
     </tr>
     <tr>
-      <td><code>character_integration</code> ★</td>
-      <td>Opus <code>streamObject</code></td>
-      <td>~15–30s</td>
+      <td><code>character_integration</code></td>
+      <td>Opus <code>generateObject</code></td>
+      <td>~24–30s</td>
       <td>~$0.10</td>
       <td>
         INSERTs the PC <code>entities</code> row (<code>entity_type='pc'</code>,
         <code>access_level='known'</code>), backfills <code>characters.entity_id</code>, writes
         PC↔world relationship rows + PC↔world fact rows including the deferred
         <em>"starts at $location"</em> fact (re-derived from
-        <code>campaigns.starting_situation_index</code> + <code>worlds.starting_situation_entries</code>).
-        Streams <code>entity-added</code> when the PC is created and <code>edge-added</code> for
-        each relationship.
+        <code>campaigns.starting_situation_index</code> +
+        <code>worlds.starting_situation_entries</code>). After the COMMIT lands, the handler
+        publishes <code>entity-added</code> for the PC and <code>edge-added</code> for each
+        persisted relationship to the campaign's pipeline channel.
       </td>
     </tr>
   </tbody>
 </table>
 
 <p>
-  The table's per-stage costs are the lower-bound point estimate (2K input / 1–2K output per
-  Sonnet call, 2K input / 1K output for Opus). Realistic per-player cost is
-  <strong>$0.20–$0.50</strong> once the world snapshot input (8–15K tokens for a full world) and
-  the player's grounding text reach normal sizes. A cost-cap circuit breaker reads
-  <code>settings.character_creation_cost_cap_usd</code> (default <code>$5.00</code>) at the start
-  of each per-player job; over-cap aborts the player's stages with
-  <code>character_creation_cost_cap_exceeded</code>, leaving other parallel jobs untouched. The
-  $5 default covers ~10 players at the realistic upper bound, with headroom for the multiplayer
+  The table's per-stage costs are the lower-bound point estimate (2K input / 1–2K output per Sonnet
+  call, 2K input / 1K output for Opus). Realistic per-player cost is
+  <strong>$0.20–$0.50</strong> once the world snapshot input (8–15K tokens for a full world) and the
+  player's grounding text reach normal sizes. A cost-cap circuit breaker reads
+  <code>settings.character_creation_cost_cap_usd</code> (default <code>$5.00</code>) at the start of
+  each per-player job; over-cap aborts the player's stages with
+  <code>character_creation_cost_cap_exceeded</code>, leaving other parallel jobs untouched. The $5
+  default covers ~10 players at the realistic upper bound, with headroom for the multiplayer
   concurrency target of 5–8 per party.
 </p>
 
@@ -364,10 +372,23 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   four stages as Opus. Stages 2–3 produce bounded structured output (a portable-character payload,
   D&amp;D 5e SRD-compliant mechanical rows); Sonnet handles that reliably and is ~3× cheaper input,
   5× cheaper output. Stage 4 is the load-bearing PC↔world integration: it receives the world
-  snapshot, the player's grounding text, and the chosen situation, and produces a coherent
-  narrative weave (relationships + facts tagged with the PC entity) while also streaming for SSE
-  consumption. The narrative-judgement and cross-reference work matches the Slow Thinker role;
-  Opus is the right tier here.
+  snapshot, the player's grounding text, and the chosen situation, and produces a coherent narrative
+  weave (relationships + facts tagged with the PC entity). The narrative-judgement and
+  cross-reference work matches the Slow Thinker role; Opus is the right tier here.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Stage 4 is <code>generateObject</code>, not <code>streamObject</code></strong> — the spec
+  sketched stage 4 as a streaming call so per-chunk entity / edge previews could feed the live
+  graph. In practice stage 4 has no per-chunk consumer: the SSE <code>entity-added</code> +
+  <code>edge-added</code> events fire AFTER the transactional COMMIT, never from
+  <code>partialObjectStream</code> chunks, so the live graph only learns about a PC and its edges
+  once the row is durable. The Vercel AI SDK's <code>streamObject</code> is pull-based —
+  <code>await stream.object</code> never settles unless the caller concurrently iterates
+  <code>partialObjectStream</code> — which means a stage 4 that awaited the object without iterating
+  hung indefinitely. <code>generateObject</code> is eagerly executed, returns the same validated
+  tree in the same wall-time (real-Anthropic smoke: ~24s), and matches the post-commit-only event
+  shape the handler actually emits.
 </aside>
 
 <h2>Lifecycle and late joiners</h2>
@@ -376,11 +397,12 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   A member can submit a character as soon as two gates are satisfied:
   <code>worlds.status = 'complete'</code> and
   <code>campaigns.starting_situation_index IS NOT NULL</code>. Until both gates hold, POST
-  <code>/characters</code> returns <code>409</code> with the specific gate code
-  (<code>world_not_complete</code> or <code>starting_situation_not_chosen</code>). Once a row exists
-  in <code>'submitted'</code>, the player can re-POST to update the prose; the route refuses
-  updates while the row is <code>'processing'</code> or <code>'completed'</code> (409
-  <code>concept_locked</code>).
+  <code>/characters</code> returns <code>409</code> with the specific gate code (<code
+    >world_not_complete</code
+  >
+  or <code>starting_situation_not_chosen</code>). Once a row exists in <code>'submitted'</code>, the
+  player can re-POST to update the prose; the route refuses updates while the row is
+  <code>'processing'</code> or <code>'completed'</code> (409 <code>concept_locked</code>).
 </p>
 
 <p>
@@ -391,13 +413,18 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </p>
 
 <ol>
-  <li>Late member accepts an invite. Their <code>campaign_members</code> row exists; no
-    <code>character_concepts</code> row yet.</li>
-  <li>Late member POSTs <code>/characters</code>. New row created,
-    <code>status='submitted'</code>.</li>
-  <li>Owner re-POSTs <code>/start-character-creation</code>. Atomic claim flips only the new row to
+  <li>
+    Late member accepts an invite. Their <code>campaign_members</code> row exists; no
+    <code>character_concepts</code> row yet.
+  </li>
+  <li>
+    Late member POSTs <code>/characters</code>. New row created, <code>status='submitted'</code>.
+  </li>
+  <li>
+    Owner re-POSTs <code>/start-character-creation</code>. Atomic claim flips only the new row to
     <code>'processing'</code>, enqueues that one job. Other members' <code>'completed'</code> rows
-    are untouched.</li>
+    are untouched.
+  </li>
   <li>Late-joiner's character creation runs in parallel with any other in-flight jobs.</li>
 </ol>
 
@@ -406,24 +433,23 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <code>character_concepts.status='failed'</code> and writes the error JSON; the player can re-POST
   <code>/characters</code> to reset the row to <code>'submitted'</code> and the owner re-triggers
   fan-out. The processor's re-run is idempotent at the stage boundary, not delete-and-recreate:
-  stage 3 detects an existing <code>characters</code> row for <code>(campaign_id, user_id)</code>
-  and UPDATEs rather than INSERTs (TRUNCATE-then-INSERT on the four sub-tables); stage 4 detects an
-  existing <code>characters.entity_id</code> and skips the entity creation (TRUNCATE-then-INSERT on
-  PC-tagged relationships / facts). The frontend reframes the second prompt for late joiners
-  ("describe the situation the party is currently in and how your character fits") but both forms
-  map to the same <code>situation_grounding_text</code> column.
+  stage 3 detects an existing <code>characters</code> row for
+  <code>(campaign_id, user_id)</code> and UPDATEs rather than INSERTs (TRUNCATE-then-INSERT on the
+  four sub-tables); stage 4 detects an existing <code>characters.entity_id</code> and skips the
+  entity creation (TRUNCATE-then-INSERT on PC-tagged relationships / facts). The frontend reframes
+  the second prompt for late joiners ("describe the situation the party is currently in and how your
+  character fits") but both forms map to the same <code>situation_grounding_text</code> column.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Resubmit-after-failure is idempotent on stage outputs, not a clean slate</strong> — the
-  alternative (DELETE the partial PC + sub-table rows on failure) would force the player to
-  re-enter their prose just because stage 4 timed out once. Idempotent re-runs let a transient
-  Anthropic 503 self-heal without losing the player's input or the work stages 2–3 already
-  completed. The <code>UNIQUE(campaign_id, user_id)</code> on
-  <code>campaign_characters</code> + <code>UNIQUE(world_id, name)</code> on
-  <code>entities</code> would otherwise turn the re-run into a constraint violation. Players who
-  genuinely want a clean slate (different name, race, class) re-roll through an admin path — there
-  is no member-facing DELETE in v1.
+  alternative (DELETE the partial PC + sub-table rows on failure) would force the player to re-enter
+  their prose just because stage 4 timed out once. Idempotent re-runs let a transient Anthropic 503
+  self-heal without losing the player's input or the work stages 2–3 already completed. The
+  <code>UNIQUE(campaign_id, user_id)</code> on <code>campaign_characters</code> +
+  <code>UNIQUE(world_id, name)</code> on <code>entities</code> would otherwise turn the re-run into
+  a constraint violation. Players who genuinely want a clean slate (different name, race, class)
+  re-roll through an admin path — there is no member-facing DELETE in v1.
 </aside>
 
 <h2>Cross-PC integration is MYT-54, not MYT-53</h2>
@@ -436,18 +462,24 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </p>
 
 <ul>
-  <li>MYT-54 adds a post-fan-out barrier that waits for every per-player job to reach
-    <code>'completed'</code>.</li>
-  <li>MYT-54 adds an owner-only prompt at fan-out time: "any established relationships between
-    characters to give the LLM upfront?"</li>
-  <li>MYT-54's cross-PC integration stage reads that input and every per-player PC, then writes
-    cross-PC relationship edges and cross-references in facts.</li>
+  <li>
+    MYT-54 adds a post-fan-out barrier that waits for every per-player job to reach
+    <code>'completed'</code>.
+  </li>
+  <li>
+    MYT-54 adds an owner-only prompt at fan-out time: "any established relationships between
+    characters to give the LLM upfront?"
+  </li>
+  <li>
+    MYT-54's cross-PC integration stage reads that input and every per-player PC, then writes
+    cross-PC relationship edges and cross-references in facts.
+  </li>
 </ul>
 
 <p>
-  MYT-53's data shapes are designed so MYT-54 can layer on without reshaping per-player output —
-  PC entities, relationships, and facts already exist as first-class rows that the cross-PC pass
-  can read and amend.
+  MYT-53's data shapes are designed so MYT-54 can layer on without reshaping per-player output — PC
+  entities, relationships, and facts already exist as first-class rows that the cross-PC pass can
+  read and amend.
 </p>
 
 <h2>Operating this piece</h2>
@@ -455,11 +487,16 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 <h3>Exercise the routes end-to-end</h3>
 
 <p>
-  T23 lands <code>backend/dev-tool/src/components/character-creation-panel.ts</code>, which binds to
+  The character-creation panel
+  (<code>backend/dev-tool/src/components/character-creation-panel.ts</code>) binds to
   <code>mythrun.watchcampaign</code>, renders the per-member roster, and exposes the owner action
-  buttons ("Pick starting situation" and "Start character creation"). Until T23 ships, the routes
-  are exercised via curl + SSE inspection + direct <code>psql</code> on the
-  <code>character_concepts</code> and <code>characters</code> tables. The route-audit contract test
+  buttons ("Pick starting situation", "Start character creation", "Archive") alongside the member
+  submission form (concept + grounding textareas). Switching identities via the dev-tool's identity
+  switcher lets one operator impersonate every player against a single campaign, walk the full
+  submit → fan-out → completed flow, and inspect each PC's portable view via the same panel. Direct
+  <code>psql</code> + <code>curl</code> remain useful for shape verification — concept rows in
+  <code>character_concepts</code>, PC rows in <code>entities</code>, the four sub-table rows in
+  <code>character_*</code> — but the panel is the primary driver. The route-audit contract test
   (<code>backend/src/contract/__tests__/pipeline-routes.test.ts</code>) verifies registration drift
   as a side-effect of any backend type-check.
 </p>
@@ -472,9 +509,9 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <code>starting_situation</code> now emits a structured three-entry array alongside the existing
   prose blob, so <code>GET /starting-situations</code> can render the
   <code>{ index, locationEntityId, prose }</code> shape members pick from. Downstream: the
-  <a href="./pipeline-status.html">pipeline status</a> surface carries per-player events on the
-  same campaign-scoped channel (<code>pipeline:campaign:{campaignId}</code>) — each event payload
-  carries <code>user_id</code> so subscribers can route per-player. The dev tool's
+  <a href="./pipeline-status.html">pipeline status</a> surface carries per-player events on the same
+  campaign-scoped channel (<code>pipeline:campaign:{campaignId}</code>) — each event payload carries
+  <code>user_id</code> so subscribers can route per-player. The dev tool's
   <a href="./dev-tool.html#the-live-events-panel">live-events panel</a> renders character-creation
   lifecycle and entity / edge events the same way it renders world-gen events.
 </p>
@@ -490,9 +527,10 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <li>
     <code>character_concepts</code> — one row per <code>(campaign_id, user_id)</code>. Carries
     <code>concept_text</code>, <code>situation_grounding_text</code>, <code>guided_choices</code>
-    (always <code>{}</code> in v1), <code>status</code>
-    (<code>submitted | processing | completed | failed</code>), and an <code>error</code> JSONB.
-    Composite FK to <code>campaign_members(campaign_id, user_id) ON DELETE CASCADE</code>.
+    JSONB (reserved for the guided-mode follow-on; the route never writes it in v1),
+    <code>status</code> (<code>submitted | processing | completed | failed</code>), and an
+    <code>error</code> JSONB. Composite FK to
+    <code>campaign_members(campaign_id, user_id) ON DELETE CASCADE</code>.
   </li>
   <li>
     <code>campaigns.starting_situation_index SMALLINT</code> — CHECKed to NULL or
@@ -505,17 +543,16 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   </li>
   <li>
     <code>entities.entity_type</code> CHECK extended to allow <code>'pc'</code> — PCs are
-    conceptually distinct from NPCs (one is owned by a real user, the other is purely
-    game-fiction), so reusing <code>'npc'</code> would force every "list NPCs" path to add a
-    PC-exclusion filter.
+    conceptually distinct from NPCs (one is owned by a real user, the other is purely game-fiction),
+    so reusing <code>'npc'</code> would force every "list NPCs" path to add a PC-exclusion filter.
   </li>
 </ul>
 
 <p>
   The migration also seeds <code>settings('character_creation_cost_cap_usd', '5.00')</code>; the
   worker reads it at the start of each per-player job via the
-  <code>sumCharacterCreationStageCosts(campaignId)</code> aggregation in
-  <code>cost-cap.ts</code>, filtered on
+  <code>sumCharacterCreationStageCosts(campaignId)</code> aggregation in <code>cost-cap.ts</code>,
+  filtered on
   <code>WHERE campaign_id = $1 AND user_id IS NOT NULL AND status = 'completed'</code> so
   character-creation costs and world-gen costs are budgeted separately.
 </p>
@@ -527,14 +564,14 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <code>backend/src/routes/campaign-characters.ts</code>,
   <code>backend/src/llm/prep/character-creation-processor.ts</code>,
   <code>backend/src/llm/prep/stages/</code> (location-selection, character-concept, character-sheet,
-  character-integration), <code>backend/src/llm/prompts/prep/character-{concept,sheet,integration}.txt</code>,
+  character-integration),
+  <code>backend/src/llm/prompts/prep/character-{concept,sheet,integration}.txt</code>,
   <code>backend/src/llm/schemas/character-{concept,sheet,integration}.ts</code>,
   <code>backend/src/repo/character-concepts.ts</code>,
   <code>backend/src/llm/prep/cost-cap.ts</code> (the
   <code>sumCharacterCreationStageCosts</code> extension),
   <code>backend/src/llm/prep/stages/starting-situation.ts</code> (extended to emit the structured
-  entries array). Contract wiring:
-  <code>backend/src/contract/pipeline-routes.ts</code>,
+  entries array). Contract wiring: <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-jobs.ts</code>,
   <code>backend/src/contract/backend-routes.ts</code>. Design spec:
   <code>docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md</code>.
