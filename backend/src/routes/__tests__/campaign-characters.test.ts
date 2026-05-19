@@ -1001,4 +1001,316 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
       expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
     })
   })
+
+  // ======================================================================
+  // T18: GET /api/campaigns/:campaignId/characters/:charId
+  //
+  // Member-only character read. Returns the characters row plus the four
+  // child tables (skills/features/equipment/spells) projected to their
+  // meaningful columns. 404 character_not_in_campaign when the join row
+  // is missing — protects against fishing for characters across campaigns.
+  // ======================================================================
+  describe('GET /characters/:charId (T18)', () => {
+    // Insert a `characters` row plus join + a populated sub-table row per
+    // child table (skills/features/equipment/spells). Returns the new id.
+    async function attachFullCharacter(
+      campaignId: string,
+      userId: string,
+      name: string,
+    ): Promise<string> {
+      const characterId = uuidv7()
+      await pool.query(
+        `INSERT INTO characters (
+           id, user_id, name, level, class, species, background,
+           str, dex, con, int, wis, cha,
+           hit_points, max_hit_points, armor_class, proficiency_bonus
+         ) VALUES ($1, $2, $3, 3, 'Wizard', 'Half-Elf', 'Sage',
+                   10, 12, 11, 16, 13, 10, 18, 18, 12, 2)`,
+        [characterId, userId, name],
+      )
+      await pool.query(
+        `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+         VALUES ($1, $2, $3, $4)`,
+        [uuidv7(), campaignId, characterId, userId],
+      )
+      await pool.query(
+        `INSERT INTO character_skills (id, character_id, skill_name, proficiency_level)
+         VALUES ($1, $2, 'Arcana', 'proficient'),
+                ($3, $2, 'History', 'expertise')`,
+        [uuidv7(), characterId, uuidv7()],
+      )
+      await pool.query(
+        `INSERT INTO character_features
+           (id, character_id, feature_name, feature_source, description)
+         VALUES ($1, $2, 'Arcane Recovery', 'Wizard', 'Recover spell slots on short rest.')`,
+        [uuidv7(), characterId],
+      )
+      await pool.query(
+        `INSERT INTO character_equipment (id, character_id, item_name, quantity, equipped)
+         VALUES ($1, $2, 'Quarterstaff', 1, true),
+                ($3, $2, 'Component Pouch', 1, false)`,
+        [uuidv7(), characterId, uuidv7()],
+      )
+      await pool.query(
+        `INSERT INTO character_spells (id, character_id, spell_name, spell_level, prepared)
+         VALUES ($1, $2, 'Magic Missile', 1, true)`,
+        [uuidv7(), characterId],
+      )
+      return characterId
+    }
+
+    it('200 — returns character + populated sub-tables (skills/features/equipment/spells)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const charId = await attachFullCharacter(seed.campaignId, owner.userId, 'Eladrin Sage')
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/characters/${charId}`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{
+        character: { id: string; name: string; class: string; level: number }
+        skills: { skill_name: string; proficiency_level: string }[]
+        features: { feature_name: string; feature_source: string; description: string }[]
+        equipment: { item_name: string; quantity: number; equipped: boolean }[]
+        spells: { spell_name: string; spell_level: number; prepared: boolean }[]
+      }>()
+      expect(body.character.id).toBe(charId)
+      expect(body.character.name).toBe('Eladrin Sage')
+      expect(body.character.class).toBe('Wizard')
+      expect(body.character.level).toBe(3)
+      expect(body.skills).toHaveLength(2)
+      expect(body.skills.map((s) => s.skill_name).sort()).toEqual(['Arcana', 'History'])
+      expect(body.features).toHaveLength(1)
+      expect(body.features[0]?.feature_name).toBe('Arcane Recovery')
+      expect(body.equipment).toHaveLength(2)
+      expect(body.equipment.map((e) => e.item_name).sort()).toEqual([
+        'Component Pouch',
+        'Quarterstaff',
+      ])
+      expect(body.spells).toHaveLength(1)
+      expect(body.spells[0]?.spell_name).toBe('Magic Missile')
+      // Sub-table responses project only the meaningful columns — no id.
+      expect('id' in (body.skills[0] ?? {})).toBe(false)
+      expect('id' in (body.features[0] ?? {})).toBe(false)
+      expect('id' in (body.equipment[0] ?? {})).toBe(false)
+      expect('id' in (body.spells[0] ?? {})).toBe(false)
+    })
+
+    it('404 character_not_in_campaign — charId is unknown (or not joined to this campaign)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const unknownCharId = uuidv7()
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/characters/${unknownCharId}`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(404)
+      expect(res.json<{ code: string }>().code).toBe('character_not_in_campaign')
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const charId = await attachFullCharacter(seed.campaignId, owner.userId, 'Eladrin Sage')
+      const stranger = await seedUser(pool, scope, 1)
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/characters/${charId}`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+  })
+
+  // ======================================================================
+  // T19a: GET /api/campaigns/:campaignId/hierarchy
+  //
+  // Member-only. Returns the world's entity_hierarchy rows verbatim
+  // (camelCase via entityHierarchy.listForWorld's mapper). No tier
+  // filtering in v1 — flagged as a follow-up.
+  // ======================================================================
+  describe('GET /hierarchy (T19)', () => {
+    // Insert a parent entity + a child entity + the hierarchy row.
+    // Both entities live in the given world; entity_hierarchy itself has
+    // no world_id column — the listForWorld query joins through the
+    // parent entity.
+    async function seedHierarchyPair(
+      worldId: string,
+      parentName: string,
+      childName: string,
+    ): Promise<{ parentId: string; childId: string; hierarchyId: string }> {
+      const parentId = uuidv7()
+      const childId = uuidv7()
+      const hierarchyId = uuidv7()
+      await pool.query(
+        `INSERT INTO entities (id, world_id, entity_type, name)
+         VALUES ($1, $2, 'location', $3), ($4, $2, 'location', $5)`,
+        [parentId, worldId, parentName, childId, childName],
+      )
+      await pool.query(
+        `INSERT INTO entity_hierarchy (id, parent_entity_id, child_entity_id)
+         VALUES ($1, $2, $3)`,
+        [hierarchyId, parentId, childId],
+      )
+      return { parentId, childId, hierarchyId }
+    }
+
+    it('200 — returns 2 parent-child rows for the world', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const pair1 = await seedHierarchyPair(seed.worldId, 'Kingdom', 'Capital City')
+      const pair2 = await seedHierarchyPair(seed.worldId, 'Capital City', 'Royal Palace')
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/hierarchy`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{
+        hierarchy: { id: string; parentEntityId: string; childEntityId: string }[]
+      }>()
+      expect(body.hierarchy).toHaveLength(2)
+      const byId = Object.fromEntries(body.hierarchy.map((r) => [r.id, r]))
+      expect(byId[pair1.hierarchyId]).toEqual({
+        id: pair1.hierarchyId,
+        parentEntityId: pair1.parentId,
+        childEntityId: pair1.childId,
+      })
+      expect(byId[pair2.hierarchyId]).toEqual({
+        id: pair2.hierarchyId,
+        parentEntityId: pair2.parentId,
+        childEntityId: pair2.childId,
+      })
+    })
+
+    it('200 — empty hierarchy returns []', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/hierarchy`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ hierarchy: [] })
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/hierarchy`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+  })
+
+  // ======================================================================
+  // T19b: GET /api/campaigns/:campaignId/random-tables
+  //
+  // Member-only. Returns the world's random_tables joined to their
+  // random_table_entries in a nested shape: each table carries an
+  // `entries: [{rollMin, rollMax, content}]` array.
+  // ======================================================================
+  describe('GET /random-tables (T19)', () => {
+    // Insert one random_table + N entries. Returns the table id.
+    async function seedRandomTable(
+      worldId: string,
+      name: string,
+      category: string,
+      entries: { rollMin: number; rollMax: number; content: string }[],
+    ): Promise<string> {
+      const tableId = uuidv7()
+      await pool.query(
+        `INSERT INTO random_tables (id, world_id, name, category)
+         VALUES ($1, $2, $3, $4)`,
+        [tableId, worldId, name, category],
+      )
+      for (const e of entries) {
+        await pool.query(
+          `INSERT INTO random_table_entries (id, table_id, roll_min, roll_max, content)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [uuidv7(), tableId, e.rollMin, e.rollMax, e.content],
+        )
+      }
+      return tableId
+    }
+
+    it('200 — 1 table with 3 entries, nested shape', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const tableId = await seedRandomTable(seed.worldId, 'Tavern Patrons', 'social', [
+        { rollMin: 1, rollMax: 3, content: 'a hooded courier nursing ale' },
+        { rollMin: 4, rollMax: 6, content: 'two off-duty city guards' },
+        { rollMin: 7, rollMax: 10, content: 'a merchant counting coins' },
+      ])
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/random-tables`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{
+        tables: {
+          id: string
+          name: string
+          category: string
+          entries: { rollMin: number; rollMax: number; content: string }[]
+        }[]
+      }>()
+      expect(body.tables).toHaveLength(1)
+      const t = body.tables[0]
+      expect(t?.id).toBe(tableId)
+      expect(t?.name).toBe('Tavern Patrons')
+      expect(t?.category).toBe('social')
+      expect(t?.entries).toHaveLength(3)
+      // Sorted by roll_min.
+      expect(t?.entries[0]).toEqual({
+        rollMin: 1,
+        rollMax: 3,
+        content: 'a hooded courier nursing ale',
+      })
+      expect(t?.entries[2]).toEqual({
+        rollMin: 7,
+        rollMax: 10,
+        content: 'a merchant counting coins',
+      })
+    })
+
+    it('200 — empty list returns { tables: [] }', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/random-tables`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ tables: [] })
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/random-tables`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+  })
 })

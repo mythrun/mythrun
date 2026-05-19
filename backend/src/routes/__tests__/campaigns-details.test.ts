@@ -163,6 +163,17 @@ describe('GET /api/campaigns/:campaignId (MYT-51 T10)', () => {
   })
 
   afterAll(async () => {
+    // T20 test inserts a `characters` row owned by a scope user. Characters
+    // survived the campaigns CASCADE after migration 009 decoupled them
+    // from campaigns, so cleanupTestScope's users-delete pass hits the
+    // characters_user_id_fkey RESTRICT FK. Wipe scope characters first;
+    // the join table (campaign_characters) is taken out by the campaigns
+    // CASCADE that cleanupTestScope already runs.
+    await pool.query(
+      `DELETE FROM characters
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+      [`${scope.id}%`],
+    )
     await cleanupTestScope(pool, scope)
     await pool.end()
   })
@@ -171,7 +182,13 @@ describe('GET /api/campaigns/:campaignId (MYT-51 T10)', () => {
     vi.stubEnv('AUTH_MODE', 'bypass')
     vi.stubEnv('NODE_ENV', 'test')
     redis = new IoredisMock()
-    // myth-5jdo: scoped cleanup replaces blanket DELETEs.
+    // myth-5jdo: scoped cleanup replaces blanket DELETEs. Same characters-
+    // first ordering as afterAll for the T20-introduced characters rows.
+    await pool.query(
+      `DELETE FROM characters
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+      [`${scope.id}%`],
+    )
     await cleanupTestScope(pool, scope)
     app = await buildTestApp(pool, redis)
   })
@@ -348,5 +365,78 @@ describe('GET /api/campaigns/:campaignId (MYT-51 T10)', () => {
     })
     expect(res.statusCode).toBe(403)
     expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+  })
+
+  // ------------------------------------------------------------------
+  // MYT-53 T20: GET /api/campaigns/:campaignId now returns a
+  // `characters[]` field listing each completed concept's persisted PC.
+  // The field is always present (empty array when no concepts have
+  // finished). Joins character_concepts.status='completed' to
+  // campaign_characters to characters and projects userId / characterId
+  // / name / class / level.
+  // ------------------------------------------------------------------
+
+  it('GET /:campaignId — characters: [] when no completed concepts', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${seed.campaignId}`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{
+      characters: { userId: string; characterId: string; name: string; class: string; level: number }[]
+    }>()
+    expect(body.characters).toEqual([])
+  })
+
+  it('GET /:campaignId — characters[] surfaces a completed concept + its persisted PC', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+
+    // Concept + persisted character for the owner.
+    const characterId = uuidv7()
+    await pool.query(
+      `INSERT INTO characters (
+         id, user_id, name, level, class, species, background,
+         str, dex, con, int, wis, cha,
+         hit_points, max_hit_points, armor_class, proficiency_bonus
+       ) VALUES ($1, $2, $3, 4, 'Rogue', 'Halfling', 'Urchin',
+                 10, 16, 12, 12, 12, 10, 22, 22, 14, 2)`,
+      [characterId, owner.userId, `${scope.id}-Mira`],
+    )
+    await pool.query(
+      `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+       VALUES ($1, $2, $3, $4)`,
+      [uuidv7(), seed.campaignId, characterId, owner.userId],
+    )
+    await pool.query(
+      `INSERT INTO character_concepts (
+         id, campaign_id, user_id, concept_text,
+         situation_grounding_text, guided_choices, status
+       ) VALUES ($1, $2, $3, 'a sharp-tongued thief running from a past life',
+                 'arrived at the tavern chasing a rumor of a fence',
+                 '{}'::jsonb, 'completed')`,
+      [uuidv7(), seed.campaignId, owner.userId],
+    )
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${seed.campaignId}`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{
+      characters: { userId: string; characterId: string; name: string; class: string; level: number }[]
+    }>()
+    expect(body.characters).toHaveLength(1)
+    expect(body.characters[0]).toEqual({
+      userId: owner.userId,
+      characterId,
+      name: `${scope.id}-Mira`,
+      class: 'Rogue',
+      level: 4,
+    })
   })
 })

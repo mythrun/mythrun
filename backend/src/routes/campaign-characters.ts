@@ -28,6 +28,8 @@ import type { FastifyPluginAsync } from 'fastify'
 import type { Pool } from 'pg'
 import { z } from 'zod'
 import { createRepo } from '../repo/index.js'
+import { entityHierarchy } from '../repo/entity-hierarchy.js'
+import type { CharacterDbRow } from '../repo/mappers.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
 
@@ -357,6 +359,167 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
         ...(r.character_id !== null ? { characterId: r.character_id } : {}),
       }))
       return reply.code(200).send({ members })
+    },
+  )
+
+  // --------------------------------------------------------------------
+  // T18: GET /characters/:charId — full character read for one PC.
+  //
+  // The join check protects against fishing for a character_id by
+  // probing every campaign the caller is a member of. The 4 sub-table
+  // queries run in parallel; each projects the meaningful columns only
+  // (dropping uuid ids so the response shape stays grep-friendly for
+  // the dev tool's inspector).
+  // --------------------------------------------------------------------
+  app.get<{ Params: { campaignId: string; charId: string } }>(
+    '/api/campaigns/:campaignId/characters/:charId',
+    {
+      preHandler: requireCampaignMember(repo),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const join = await opts.pool.query<{ character_id: string }>(
+        `SELECT character_id FROM campaign_characters
+         WHERE campaign_id = $1 AND character_id = $2`,
+        [req.params.campaignId, req.params.charId],
+      )
+      if (join.rows.length === 0) {
+        return reply.code(404).send({ code: 'character_not_in_campaign' })
+      }
+
+      const [c, skills, features, equipment, spells] = await Promise.all([
+        opts.pool.query<CharacterDbRow>(`SELECT * FROM characters WHERE id = $1`, [
+          req.params.charId,
+        ]),
+        opts.pool.query<{ skill_name: string; proficiency_level: string }>(
+          `SELECT skill_name, proficiency_level FROM character_skills WHERE character_id = $1`,
+          [req.params.charId],
+        ),
+        opts.pool.query<{ feature_name: string; feature_source: string; description: string }>(
+          `SELECT feature_name, feature_source, description FROM character_features WHERE character_id = $1`,
+          [req.params.charId],
+        ),
+        opts.pool.query<{ item_name: string; quantity: number; equipped: boolean }>(
+          `SELECT item_name, quantity, equipped FROM character_equipment WHERE character_id = $1`,
+          [req.params.charId],
+        ),
+        opts.pool.query<{ spell_name: string; spell_level: number; prepared: boolean }>(
+          `SELECT spell_name, spell_level, prepared FROM character_spells WHERE character_id = $1`,
+          [req.params.charId],
+        ),
+      ])
+      return reply.code(200).send({
+        character: c.rows[0],
+        skills: skills.rows,
+        features: features.rows,
+        equipment: equipment.rows,
+        spells: spells.rows,
+      })
+    },
+  )
+
+  // --------------------------------------------------------------------
+  // T19a: GET /hierarchy — world entity hierarchy.
+  //
+  // Member-only. Returns the full parent-child list for the campaign's
+  // world via entityHierarchy.listForWorld. No tier filtering in v1 —
+  // the repo doesn't support it yet. Tier-aware filtering is a follow-up
+  // bead (the dev tool currently relies on the snapshot view for tier
+  // gating; this route is the bulk-hierarchy surface for the wiki
+  // inspector + future graph UI).
+  // --------------------------------------------------------------------
+  app.get<{ Params: { campaignId: string } }>(
+    '/api/campaigns/:campaignId/hierarchy',
+    {
+      preHandler: requireCampaignMember(repo),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const camp = await opts.pool.query<{ world_id: string }>(
+        `SELECT world_id FROM campaigns WHERE id = $1`,
+        [req.params.campaignId],
+      )
+      const worldId = camp.rows[0]?.world_id
+      /* c8 ignore start — `!worldId` arm: requireCampaignMember has
+       * already verified the campaign row exists; deletion-mid-flight
+       * is the race this guard handles. */
+      if (!worldId) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
+      const hierarchy = await entityHierarchy.listForWorld(opts.pool, worldId)
+      return reply.code(200).send({ hierarchy })
+    },
+  )
+
+  // --------------------------------------------------------------------
+  // T19b: GET /random-tables — world's random tables + nested entries.
+  //
+  // Two queries: (1) tables, (2) entries scoped to those table ids via
+  // ANY($1::uuid[]). The second query is skipped when the table list is
+  // empty (avoids a pointless `WHERE table_id = ANY('{}')` round-trip).
+  // The handler nests entries under each table; the client doesn't have
+  // to do a join itself.
+  // --------------------------------------------------------------------
+  app.get<{ Params: { campaignId: string } }>(
+    '/api/campaigns/:campaignId/random-tables',
+    {
+      preHandler: requireCampaignMember(repo),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const camp = await opts.pool.query<{ world_id: string }>(
+        `SELECT world_id FROM campaigns WHERE id = $1`,
+        [req.params.campaignId],
+      )
+      const worldId = camp.rows[0]?.world_id
+      /* c8 ignore start — `!worldId` arm: same defense-in-depth as
+       * the /hierarchy route above. */
+      if (!worldId) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
+
+      const tables = await opts.pool.query<{ id: string; name: string; category: string }>(
+        `SELECT id, name, category FROM random_tables WHERE world_id = $1 ORDER BY name`,
+        [worldId],
+      )
+      const tableIds = tables.rows.map((r) => r.id)
+      const entries =
+        tableIds.length === 0
+          ? {
+              rows: [] as {
+                table_id: string
+                roll_min: number
+                roll_max: number
+                content: string
+              }[],
+            }
+          : await opts.pool.query<{
+              table_id: string
+              roll_min: number
+              roll_max: number
+              content: string
+            }>(
+              `SELECT table_id, roll_min, roll_max, content
+               FROM random_table_entries
+               WHERE table_id = ANY($1::uuid[])
+               ORDER BY table_id, roll_min`,
+              [tableIds],
+            )
+      const entriesByTable = new Map<
+        string,
+        { rollMin: number; rollMax: number; content: string }[]
+      >()
+      for (const r of entries.rows) {
+        const arr = entriesByTable.get(r.table_id) ?? []
+        arr.push({ rollMin: r.roll_min, rollMax: r.roll_max, content: r.content })
+        entriesByTable.set(r.table_id, arr)
+      }
+      return reply.code(200).send({
+        tables: tables.rows.map((t) => ({
+          id: t.id,
+          name: t.name,
+          category: t.category,
+          entries: entriesByTable.get(t.id) ?? [],
+        })),
+      })
     },
   )
 }

@@ -519,7 +519,34 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       if (!world) return reply.code(404).send({ code: 'world_not_found' })
       /* c8 ignore stop */
       const members = await repo.campaigns.listMembers(campaign.id)
-      return reply.send({ campaign, world, members })
+      // MYT-53 T20: surface the campaign's persisted PCs (one row per
+      // completed character_concept). The concept→join→character chain
+      // is the ground truth — a `campaign_characters` row without a
+      // matching completed concept would be a worker bug, so we filter
+      // on `cc.status='completed'` to avoid surfacing half-built rows.
+      const charactersResult = await opts.pool.query<{
+        user_id: string
+        character_id: string
+        name: string
+        class: string
+        level: number
+      }>(
+        `SELECT cc.user_id, c.id AS character_id, c.name, c.class, c.level
+         FROM character_concepts cc
+         JOIN campaign_characters cm
+           ON cm.campaign_id = cc.campaign_id AND cm.user_id = cc.user_id
+         JOIN characters c ON c.id = cm.character_id
+         WHERE cc.campaign_id = $1 AND cc.status = 'completed'`,
+        [campaign.id],
+      )
+      const characters = charactersResult.rows.map((r) => ({
+        userId: r.user_id,
+        characterId: r.character_id,
+        name: r.name,
+        class: r.class,
+        level: r.level,
+      }))
+      return reply.send({ campaign, world, members, characters })
     },
   )
 
