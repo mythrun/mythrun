@@ -137,6 +137,16 @@ export interface StageDispatchResult extends StageCost {
 
 type ClaimResult = 'claimed' | 'completed' | 'lost-race'
 
+// myth-tuok T6: discriminated union over the two atomic-claim shapes the
+// pipeline_runs table supports. World-level claims (concept_intake →
+// coherence_pass) key on (world_id, stage) with user_id NULL; per-player
+// claims (character creation, T11) key on (campaign_id, stage, user_id).
+// The unique index on COALESCE(world_id, campaign_id), stage,
+// COALESCE(user_id, sentinel) handles both shapes in one composite key.
+export type ClaimRequest =
+  | { kind: 'world'; worldId: string; stage: string }
+  | { kind: 'campaign-user'; campaignId: string; userId: string; stage: string }
+
 export function createWorldGenProcessor(
   deps: WorldGenDeps,
 ): (job: Job<WorldGenJobPayload>) => Promise<void> {
@@ -168,7 +178,11 @@ export function createWorldGenProcessor(
     const capUsd = await readCostCap(deps.pool)
 
     for (const stage of WORLD_GEN_STAGES) {
-      const claim = await atomicClaimStage(deps.pool, ctx.world.id, stage)
+      const claim = await atomicClaimStage(deps.pool, {
+        kind: 'world',
+        worldId: ctx.world.id,
+        stage,
+      })
       if (claim !== 'claimed') {
         // myth-exac T18: on idempotent re-entry, re-publish
         // phase=world_snapshot_ready as soon as we walk past a completed
@@ -341,12 +355,30 @@ async function refreshContext(
   /* c8 ignore stop */
 }
 
-async function atomicClaimStage(
+// myth-tuok T6: thin dispatcher over the world-level and per-player claim
+// paths. The two paths share the same ON CONFLICT / stuck-reset shape but
+// key on different columns (world_id+IS-NULL-user vs. campaign_id+user_id),
+// so they're separated into dedicated helpers rather than parameterized
+// inside a single body. T11 (character-creation processor) calls this via
+// `{kind: 'campaign-user', ...}` to claim per-player rows on the same
+// pipeline_runs table.
+export async function atomicClaimStage(
   pool: Pool,
-  worldId: string,
-  stage: WorldGenStage,
+  req: ClaimRequest,
 ): Promise<ClaimResult> {
   const id = uuidv7()
+  if (req.kind === 'world') {
+    return claimWorldStage(pool, id, req.worldId, req.stage)
+  }
+  return claimCampaignUserStage(pool, id, req.campaignId, req.userId, req.stage)
+}
+
+async function claimWorldStage(
+  pool: Pool,
+  newId: string,
+  worldId: string,
+  stage: string,
+): Promise<ClaimResult> {
   // Insert a new claim, or coerce a pending/failed row into 'running'. The
   // ON CONFLICT WHERE clause filters by the EXISTING row's status — if the
   // row is 'completed' or another worker has already flipped it to 'running'
@@ -365,7 +397,7 @@ async function atomicClaimStage(
                    error = NULL, completed_at = NULL
        WHERE pipeline_runs.status IN ('pending', 'failed')
      RETURNING id`,
-    [id, worldId, stage],
+    [newId, worldId, stage],
   )
   if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
 
@@ -401,8 +433,69 @@ async function atomicClaimStage(
    * either claims (rowCount > 0) or the row is no longer matched. */
   if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
   return 'lost-race'
+  /* c8 ignore stop */
 }
-/* c8 ignore stop */
+
+// myth-tuok T6: per-player claim path for character-creation (T11) and
+// future per-user pipeline stages. Keyed on campaign_id + user_id; mirrors
+// the world-level path's structure (insert/ON CONFLICT → existing-row
+// inspection → stuck-reset). The shared unique index on
+// COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel)
+// guarantees one row per (campaign, stage, user).
+async function claimCampaignUserStage(
+  pool: Pool,
+  newId: string,
+  campaignId: string,
+  userId: string,
+  stage: string,
+): Promise<ClaimResult> {
+  const insertResult = await pool.query<{ id: string }>(
+    `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+     VALUES ($1, $2, $3, 'running', now(), $4)
+     ON CONFLICT (
+       COALESCE(world_id, campaign_id),
+       stage,
+       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
+     )
+     DO UPDATE SET status = 'running', started_at = now(),
+                   error = NULL, completed_at = NULL
+       WHERE pipeline_runs.status IN ('pending', 'failed')
+     RETURNING id`,
+    [newId, campaignId, stage, userId],
+  )
+  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
+
+  const existing = await pool.query<{ status: string; started_at: Date | null }>(
+    `SELECT status, started_at FROM pipeline_runs
+      WHERE campaign_id = $1 AND stage = $2 AND user_id = $3`,
+    [campaignId, stage, userId],
+  )
+  const row = existing.rows[0]
+  /* c8 ignore start — defensive arms mirror the world-level path: the
+   * SELECT was triggered by an ON CONFLICT in the preceding INSERT, so
+   * the row is guaranteed to exist and to be in one of the three valid
+   * statuses. */
+  if (row === undefined) return 'lost-race'
+  if (row.status === 'completed') return 'completed'
+  if (row.status !== 'running') return 'lost-race'
+  /* c8 ignore stop */
+
+  const stuckReset = await pool.query<{ id: string }>(
+    `UPDATE pipeline_runs
+        SET status = 'running', started_at = now(), error = NULL
+      WHERE campaign_id = $1 AND stage = $2 AND user_id = $3
+        AND status = 'running'
+        AND started_at < now() - INTERVAL '5 minutes'
+      RETURNING id`,
+    [campaignId, stage, userId],
+  )
+  /* c8 ignore start — mirrors world-level stuck-reset: tests stage rows
+   * so the query either claims (rowCount > 0) or the row is no longer
+   * matched. */
+  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
+  return 'lost-race'
+  /* c8 ignore stop */
+}
 
 async function runStage(
   deps: WorldGenDeps,

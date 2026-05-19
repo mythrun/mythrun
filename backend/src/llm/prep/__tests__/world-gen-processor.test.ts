@@ -36,6 +36,7 @@ import {
   type TestScope,
 } from '../../../repo/__tests__/_helpers/test-scope.js'
 import {
+  atomicClaimStage,
   createWorldGenProcessor,
   sanitizeError,
   type WorldGenJobPayload,
@@ -917,5 +918,136 @@ describe('sanitizeError', () => {
     expect(json.length).toBeLessThanOrEqual(2048)
     expect(out.diagnostic?.rawTextSnippet).toBeDefined()
     expect((out.diagnostic?.rawTextSnippet ?? '').length).toBeLessThan(oversized.length)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// myth-tuok T6: atomicClaimStage refactor — discriminated-union signature
+// supports BOTH the world-level claim (existing behavior, user_id IS NULL)
+// AND a new per-player claim keyed on (campaign_id, stage, user_id). The
+// character-creation processor (T11) reuses this primitive for per-user
+// stages on the same pipeline_runs table.
+// ---------------------------------------------------------------------------
+describe('atomicClaimStage with userId', () => {
+  let pool: Pool
+  let scope: TestScope
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createPgPool(databaseUrl, { max: 4 })
+    // Schema is already migrated by the main describe block's beforeAll
+    // (single shared DB). Running migrations again is idempotent but
+    // unnecessary; just acquire a pool and a fresh scope.
+    scope = makeTestScope('atomic-claim-userid')
+  })
+
+  afterAll(async () => {
+    await cleanupTestScope(pool, scope)
+    await pool.end()
+  })
+
+  beforeEach(async () => {
+    await cleanupTestScope(pool, scope)
+  })
+
+  it('claims a per-player row keyed on (campaign_id, stage, user_id)', async () => {
+    // Seed a user + a campaign (no world needed — the per-player row keys
+    // on campaign_id directly per the unique index's
+    // COALESCE(world_id, campaign_id) projection).
+    const userId = uuidv7()
+    const worldId = uuidv7()
+    const campaignId = uuidv7()
+    await pool.query(
+      `INSERT INTO users (id, cognito_sub, display_name, username)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
+    )
+    // Worlds row required because campaigns.world_id is a NOT NULL FK.
+    // The per-player claim itself does NOT touch worlds; this is purely
+    // to satisfy the campaign FK.
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status)
+       VALUES ($1, $2, $3, 'a concept for testing', 'generating')`,
+      [worldId, userId, scope.worldName(0)],
+    )
+    await pool.query(
+      `INSERT INTO campaigns (id, world_id, created_by, name)
+       VALUES ($1, $2, $3, $4)`,
+      [campaignId, worldId, userId, scope.campaignName(0)],
+    )
+
+    const first = await atomicClaimStage(pool, {
+      kind: 'campaign-user',
+      campaignId,
+      userId,
+      stage: 'character_concept',
+    })
+    expect(first).toBe('claimed')
+
+    // Confirm the row landed under the expected key shape.
+    const row = await pool.query<{
+      world_id: string | null
+      campaign_id: string
+      user_id: string
+      stage: string
+      status: string
+    }>(
+      `SELECT world_id, campaign_id, user_id, stage, status FROM pipeline_runs
+        WHERE campaign_id = $1 AND user_id = $2 AND stage = $3`,
+      [campaignId, userId, 'character_concept'],
+    )
+    expect(row.rows).toHaveLength(1)
+    expect(row.rows[0]?.world_id).toBeNull()
+    expect(row.rows[0]?.campaign_id).toBe(campaignId)
+    expect(row.rows[0]?.user_id).toBe(userId)
+    expect(row.rows[0]?.status).toBe('running')
+
+    // A second claim with the same args immediately afterwards sees the
+    // row in 'running' state with a fresh started_at → must NOT reclaim.
+    const second = await atomicClaimStage(pool, {
+      kind: 'campaign-user',
+      campaignId,
+      userId,
+      stage: 'character_concept',
+    })
+    expect(second).toBe('lost-race')
+  })
+
+  it('still supports the world-level (user_id IS NULL) shape', async () => {
+    const userId = uuidv7()
+    const worldId = uuidv7()
+    await pool.query(
+      `INSERT INTO users (id, cognito_sub, display_name, username)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, scope.userSub(1), scope.displayName(1), scope.username(1)],
+    )
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status)
+       VALUES ($1, $2, $3, 'a concept for testing', 'generating')`,
+      [worldId, userId, scope.worldName(1)],
+    )
+
+    const result = await atomicClaimStage(pool, {
+      kind: 'world',
+      worldId,
+      stage: 'concept_intake',
+    })
+    expect(result).toBe('claimed')
+
+    const row = await pool.query<{
+      world_id: string
+      campaign_id: string | null
+      user_id: string | null
+      status: string
+    }>(
+      `SELECT world_id, campaign_id, user_id, status FROM pipeline_runs
+        WHERE world_id = $1 AND stage = $2`,
+      [worldId, 'concept_intake'],
+    )
+    expect(row.rows).toHaveLength(1)
+    expect(row.rows[0]?.world_id).toBe(worldId)
+    expect(row.rows[0]?.campaign_id).toBeNull()
+    expect(row.rows[0]?.user_id).toBeNull()
+    expect(row.rows[0]?.status).toBe('running')
   })
 })
