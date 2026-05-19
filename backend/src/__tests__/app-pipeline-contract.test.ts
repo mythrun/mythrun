@@ -26,7 +26,12 @@ vi.mock('../repo/users.js', () => ({
 
 vi.mock('../contract/pipeline-routes.js', () => ({
   PIPELINE_ROUTES: [
-    // The real entries — these stay registered by the real routes/plugins:
+    // The real entries — these stay registered by the real routes/plugins.
+    // EVERY entry the campaigns + campaign-characters plugins register
+    // must be listed here, otherwise the forward-check onRoute hook
+    // (app.ts:146-167) throws BEFORE the reverse-check onReady hook gets
+    // to fire — and this test is specifically about the reverse-check
+    // path.
     'GET /api/campaigns/:campaignId/status',
     'GET /api/campaigns/:campaignId/status/stream',
     'POST /api/campaigns',
@@ -36,6 +41,15 @@ vi.mock('../contract/pipeline-routes.js', () => ({
     'DELETE /api/campaigns/:campaignId',
     'PATCH /api/campaigns/:campaignId/name',
     'GET /api/campaigns/:campaignId/world-snapshot',
+    // MYT-53 per-player character creation (campaign-characters plugin):
+    'POST /api/campaigns/:campaignId/starting-situation',
+    'POST /api/campaigns/:campaignId/start-character-creation',
+    'POST /api/campaigns/:campaignId/characters',
+    'GET /api/campaigns/:campaignId/starting-situations',
+    'GET /api/campaigns/:campaignId/characters',
+    'GET /api/campaigns/:campaignId/characters/:charId',
+    'GET /api/campaigns/:campaignId/hierarchy',
+    'GET /api/campaigns/:campaignId/random-tables',
     // Phantom entry — no plugin registers this route. The onReady hook
     // sees it in PIPELINE_ROUTES, can't find it in registeredPipelineRoutes,
     // and throws.

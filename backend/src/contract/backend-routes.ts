@@ -35,6 +35,16 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/status' },
   { method: 'GET', path: '/api/campaigns/:campaignId/status/stream' },
   { method: 'GET', path: '/api/campaigns/:campaignId/world-snapshot' }, // myth-exac
+  // MYT-53 — per-player parallel character creation
+  { method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/start-character-creation' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/archive' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/characters' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/characters' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/characters/:charId' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/hierarchy' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/random-tables' },
 
   // Sessions
   { method: 'POST', path: '/api/sessions/:id/ws-ticket' },

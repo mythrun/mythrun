@@ -509,3 +509,31 @@ async function markStageFailed(
     [campaignId, stage, message, userId],
   )
 }
+
+// -- BullMQ processor factory ----------------------------------------------
+//
+// myth-epo4 T22: thin closure that adapts `runCharacterCreationJob` to
+// BullMQ's `(job) => Promise<void>` shape. Mirrors createWorldGenProcessor
+// in world-gen-processor.ts. Deps are closed over once at boot; the
+// returned function is what `new Worker('campaign-setup', fn, ...)` calls
+// per job.
+
+/** Deps closed over by the BullMQ processor for character-creation jobs.
+ *  `publishEvent` is supplied by server.ts and writes JSON-encoded events
+ *  to `${redisKeyPrefix}pipeline:campaign:${campaignId}` on the realtime
+ *  Redis client — same channel the pipeline subscriber PSUBSCRIBE's on. */
+export interface CreateCharacterCreationProcessorDeps {
+  readonly pool: Pool
+  readonly publishEvent: (
+    campaignId: string,
+    event: Record<string, unknown>,
+  ) => Promise<void>
+}
+
+export function createCharacterCreationProcessor(
+  deps: CreateCharacterCreationProcessorDeps,
+): (job: Job<CharacterCreationJobPayload>) => Promise<void> {
+  return async (job) => {
+    await runCharacterCreationJob(deps, job)
+  }
+}

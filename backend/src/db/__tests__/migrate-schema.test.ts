@@ -25,6 +25,7 @@ const EXPECTED_TABLES = [
   'campaign_invites',
   'campaign_members',
   'campaigns',
+  'character_concepts',
   'character_equipment',
   'character_features',
   'character_skills',
@@ -68,6 +69,7 @@ const EXPECTED_IDX_NAMES = [
   'idx_campaign_members_campaign',
   'idx_campaign_members_user',
   'idx_campaigns_created_by',
+  'idx_character_concepts_campaign_status',
   'idx_characters_user',
   'idx_credit_ledger_source_billing_history',
   'idx_credit_ledger_source_purchase',
@@ -116,7 +118,23 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'campaigns',
+    check_clause: `CHECK (((starting_situation_index IS NULL) OR ((starting_situation_index >= 0) AND (starting_situation_index <= 2))))`,
+  },
+  {
+    table_name: 'campaigns',
     check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))`,
+  },
+  {
+    table_name: 'character_concepts',
+    check_clause: `CHECK (((concept_text IS NULL) OR ((length(concept_text) >= 20) AND (length(concept_text) <= 4000))))`,
+  },
+  {
+    table_name: 'character_concepts',
+    check_clause: `CHECK (((length(situation_grounding_text) >= 20) AND (length(situation_grounding_text) <= 2000)))`,
+  },
+  {
+    table_name: 'character_concepts',
+    check_clause: `CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text])))`,
   },
   {
     table_name: 'character_skills',
@@ -152,7 +170,7 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'entities',
-    check_clause: `CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text])))`,
+    check_clause: `CHECK ((entity_type = ANY (ARRAY['npc'::text, 'location'::text, 'faction'::text, 'item'::text, 'pc'::text])))`,
   },
   {
     table_name: 'facts',
@@ -202,6 +220,10 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   {
     table_name: 'worlds',
     check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))`,
+  },
+  {
+    table_name: 'worlds',
+    check_clause: `CHECK ((jsonb_typeof(starting_situation_entries) = 'array'::text))`,
   },
   {
     table_name: 'worlds',
@@ -283,6 +305,51 @@ const EXPECTED_FK_DELETE_RULES: readonly {
     table_name: 'campaigns',
     column_name: 'world_id',
     foreign_table_name: 'worlds',
+    delete_rule: 'CASCADE',
+  },
+  // character_concepts: composite FK to (campaign_id, user_id) on
+  // campaign_members ON DELETE CASCADE, plus separate FKs to campaigns
+  // and users — Postgres projects each constraint per-column in
+  // information_schema.key_column_usage, so campaign_id appears under
+  // two distinct constraints (the composite + the direct campaign FK)
+  // and similarly for user_id (the composite + the direct user FK).
+  // The migration's INFORMATION_SCHEMA join (delete_rule from
+  // referential_constraints, table_name from key_column_usage) yields
+  // these six rows in (column_name, foreign_table_name) order.
+  {
+    table_name: 'character_concepts',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaign_members',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_concepts',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaign_members',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_concepts',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_concepts',
+    column_name: 'user_id',
+    foreign_table_name: 'campaign_members',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_concepts',
+    column_name: 'user_id',
+    foreign_table_name: 'campaign_members',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_concepts',
+    column_name: 'user_id',
+    foreign_table_name: 'users',
     delete_rule: 'CASCADE',
   },
   {
@@ -586,6 +653,7 @@ describe('schema-parity (integration)', () => {
       '013_seed_dev_users.sql',
       '014_access_tier_rework.sql',
       '015_vocabulary_registry.sql',
+      '016_character_concepts.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -631,7 +699,7 @@ describe('schema-parity (integration)', () => {
          JOIN information_schema.constraint_column_usage ccu USING (constraint_name)
          JOIN information_schema.referential_constraints rc USING (constraint_name)
         WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
-        ORDER BY tc.table_name, kcu.column_name`,
+        ORDER BY tc.table_name, kcu.column_name, ccu.table_name`,
     )
     expect(fks.rows).toEqual(EXPECTED_FK_DELETE_RULES)
 

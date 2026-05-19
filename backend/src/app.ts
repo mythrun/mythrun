@@ -18,6 +18,7 @@ import { sessionsRoutes } from './routes/sessions.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
 import { campaignsRoutes } from './routes/campaigns.js'
+import { campaignCharactersPlugin } from './routes/campaign-characters.js'
 import { devCreditsRoutes } from './routes/dev-credits.js'
 import { PIPELINE_ROUTES } from './contract/pipeline-routes.js'
 import { createPipelineSubscriber, type PipelineSubscriber } from './sse/pipeline-subscriber.js'
@@ -308,6 +309,25 @@ export const buildApp = async (
     worldGenQueue: deps.worldGenQueue,
   })
 
+  // myth-epo4 T22 / MYT-53: per-player character-creation routes
+  // (POST /starting-situation, /start-character-creation, /archive,
+  // /characters; GET /starting-situations, /characters, /characters/:charId,
+  // /hierarchy, /random-tables). Mounted after the campaigns plugin so the
+  // routes inherit the same JWT + onboarded + per-campaign-membership gates
+  // installed above. characterCreationQueue is forwarded only when present
+  // — the boot-gate-disabled fallback path and the unit-test stubs leave it
+  // undefined; the start-character-creation route responds 503
+  // 'queue_not_ready' in that state (intentional gate per MYT-53 D-?).
+  // The `...(cond ? { key: v } : {})` spread is required by
+  // exactOptionalPropertyTypes: `characterCreationQueue: undefined` is not
+  // assignable to the `characterCreationQueue?: ...` plugin opts.
+  await app.register(campaignCharactersPlugin, {
+    pool: deps.pg,
+    ...(deps.characterCreationQueue
+      ? { characterCreationQueue: deps.characterCreationQueue }
+      : {}),
+  })
+
   // Dev-only credit-grant route (MYT-51 T11). The plugin itself gates
   // on AUTH_MODE === 'bypass' (defense in depth — Roc-C1); this outer
   // gate is the belt-and-suspenders second layer so a future caller
@@ -328,21 +348,22 @@ export const buildApp = async (
 export type ShutdownSignal = 'SIGTERM' | 'SIGINT'
 export type ShutdownHandler = (signal: ShutdownSignal) => Promise<void>
 
-/** MYT-51 T12: structural contract for the world-gen BullMQ Worker as
+/** MYT-51 T12 / myth-epo4 T22: structural contract for a BullMQ Worker as
  *  seen by the shutdown handler. Declared here (rather than importing
  *  BullMQ's `Worker` class type directly) so the ShutdownClients shape
  *  isn't coupled to BullMQ's generic-heavy class type; shutdown tests
- *  inject a hand-rolled spy that satisfies this same shape. */
-export interface WorldGenWorkerLike {
+ *  inject a hand-rolled spy that satisfies this same shape. Reused for
+ *  both the world-gen worker and the character-creation worker — the
+ *  drain order is the only thing that's queue-specific. */
+export interface BullMqWorkerLike {
   close(): Promise<void>
 }
 
-/** MYT-51 T12: structural contract for the world-gen BullMQ Queue as
- *  seen by the shutdown handler. Same rationale as WorldGenWorkerLike —
- *  the queue's request-time surface (add / getJobCounts / getJob) lives
- *  in routes/campaigns.ts's WorldGenQueueLike; shutdown only needs
- *  `close()`. */
-export interface WorldGenQueueShutdown {
+/** MYT-51 T12 / myth-epo4 T22: structural contract for a BullMQ Queue as
+ *  seen by the shutdown handler. The queue's request-time surface
+ *  (add / getJobCounts / getJob) lives in the route plugins' own
+ *  Queue-like interfaces; shutdown only needs `close()`. */
+export interface BullMqQueueShutdown {
   close(): Promise<void>
 }
 
@@ -363,11 +384,21 @@ export interface ShutdownClients {
   /** MYT-51 T12: world-gen BullMQ Worker. Closed BEFORE the queue +
    *  app.close so in-flight stage processing can drain (BullMQ's
    *  worker.close() awaits the current job's processor function). */
-  readonly worldGenWorker: WorldGenWorkerLike
+  readonly worldGenWorker: BullMqWorkerLike
   /** MYT-51 T12: world-gen BullMQ Queue. Closed AFTER its worker has
    *  drained so the worker's emit-completed/emit-failed lifecycle
    *  events still have a live queue to publish on. */
-  readonly worldGenQueue: WorldGenQueueShutdown
+  readonly worldGenQueue: BullMqQueueShutdown
+  /** myth-epo4 T22 / MYT-53: character-creation (`campaign-setup`)
+   *  BullMQ Worker. Same drain semantics as the world-gen worker — closed
+   *  before its queue so an in-flight job can finish its per-stage
+   *  processor cleanly. Drained AFTER the world-gen pair because the
+   *  two are independent; ordering here is arbitrary, kept stable for the
+   *  shutdown trace. */
+  readonly characterCreationWorker: BullMqWorkerLike
+  /** myth-epo4 T22 / MYT-53: character-creation BullMQ Queue. Closed
+   *  AFTER its worker has drained, same rationale as worldGenQueue. */
+  readonly characterCreationQueue: BullMqQueueShutdown
 }
 
 export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): ShutdownHandler => {
@@ -393,14 +424,24 @@ export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): 
       //   4. worldGenQueue.close() releases the queue's Redis-side
       //      connection bookkeeping. After the worker has drained,
       //      nothing else uses the queue handle.
-      //   5. app.close stops HTTP (no in-flight queries past this).
-      //   6. pg.end drains the pool.
-      //   7. redis QUIT (realtime + batch) — graceful, flushes
+      //   5. characterCreationWorker.close() — same semantics as
+      //      worldGenWorker for the per-player `campaign-setup` queue
+      //      added in MYT-53. The two workers run on independent
+      //      BullMQ connections; close serially anyway because BullMQ's
+      //      `close()` does its own Redis-side cleanup that we want to
+      //      observe linearly in shutdown logs.
+      //   6. characterCreationQueue.close() — same rationale as
+      //      worldGenQueue.close().
+      //   7. app.close stops HTTP (no in-flight queries past this).
+      //   8. pg.end drains the pool.
+      //   9. redis QUIT (realtime + batch) — graceful, flushes
       //      in-flight commands; vs disconnect which rips the socket.
       clients.stopPeriodicLog()
       await clients.subscriber.close()
       await clients.worldGenWorker.close()
       await clients.worldGenQueue.close()
+      await clients.characterCreationWorker.close()
+      await clients.characterCreationQueue.close()
       await app.close()
       await clients.pg.end()
       await clients.redisRealtime.quit()

@@ -40,6 +40,10 @@ interface MockClients {
   // MYT-51 T12: world-gen BullMQ worker + queue, drained as part of shutdown.
   worldGenWorker: { close: ReturnType<typeof vi.fn> }
   worldGenQueue: { close: ReturnType<typeof vi.fn> }
+  // myth-epo4 T22 / MYT-53: character-creation BullMQ worker + queue,
+  // drained AFTER the world-gen pair (see createShutdown drain order).
+  characterCreationWorker: { close: ReturnType<typeof vi.fn> }
+  characterCreationQueue: { close: ReturnType<typeof vi.fn> }
 }
 
 function makeMockClients(): MockClients {
@@ -51,6 +55,8 @@ function makeMockClients(): MockClients {
     stopPeriodicLog: vi.fn(),
     worldGenWorker: { close: vi.fn().mockResolvedValue(undefined) },
     worldGenQueue: { close: vi.fn().mockResolvedValue(undefined) },
+    characterCreationWorker: { close: vi.fn().mockResolvedValue(undefined) },
+    characterCreationQueue: { close: vi.fn().mockResolvedValue(undefined) },
   }
 }
 
@@ -74,7 +80,7 @@ describe('createShutdown', () => {
     process.exit = originalExit
   })
 
-  it('drains in order: stopPeriodicLog → subscriber.close → worldGenWorker.close → worldGenQueue.close → app.close → pg.end → redis.quit (both), then exit(0)', async () => {
+  it('drains in order: stopPeriodicLog → subscriber.close → worldGenWorker.close → worldGenQueue.close → characterCreationWorker.close → characterCreationQueue.close → app.close → pg.end → redis.quit (both), then exit(0)', async () => {
     const app = await buildApp(
       makeBuildAppDeps(),
       { mode: 'bypass' },
@@ -96,6 +102,14 @@ describe('createShutdown', () => {
     })
     clients.worldGenQueue.close.mockImplementation(() => {
       callOrder.push('worldGenQueue.close')
+      return Promise.resolve()
+    })
+    clients.characterCreationWorker.close.mockImplementation(() => {
+      callOrder.push('characterCreationWorker.close')
+      return Promise.resolve()
+    })
+    clients.characterCreationQueue.close.mockImplementation(() => {
+      callOrder.push('characterCreationQueue.close')
       return Promise.resolve()
     })
     vi.spyOn(app, 'close').mockImplementation((() => {
@@ -127,6 +141,8 @@ describe('createShutdown', () => {
       stopPeriodicLog: clients.stopPeriodicLog,
       worldGenWorker: clients.worldGenWorker,
       worldGenQueue: clients.worldGenQueue,
+      characterCreationWorker: clients.characterCreationWorker,
+      characterCreationQueue: clients.characterCreationQueue,
     })
     await handler('SIGTERM')
 
@@ -135,6 +151,8 @@ describe('createShutdown', () => {
       'subscriber.close',
       'worldGenWorker.close',
       'worldGenQueue.close',
+      'characterCreationWorker.close',
+      'characterCreationQueue.close',
       'app.close',
       'pg.end',
       'redis-realtime.quit',
@@ -161,6 +179,8 @@ describe('createShutdown', () => {
       stopPeriodicLog: clients.stopPeriodicLog,
       worldGenWorker: clients.worldGenWorker,
       worldGenQueue: clients.worldGenQueue,
+      characterCreationWorker: clients.characterCreationWorker,
+      characterCreationQueue: clients.characterCreationQueue,
     })
     await handler('SIGTERM')
 
@@ -186,6 +206,8 @@ describe('createShutdown', () => {
       stopPeriodicLog: clients.stopPeriodicLog,
       worldGenWorker: clients.worldGenWorker,
       worldGenQueue: clients.worldGenQueue,
+      characterCreationWorker: clients.characterCreationWorker,
+      characterCreationQueue: clients.characterCreationQueue,
     })
     await handler('SIGTERM')
 

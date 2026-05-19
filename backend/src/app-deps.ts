@@ -2,6 +2,7 @@ import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { Repo } from './repo/index.js'
 import type { WorldGenQueueLike } from './routes/campaigns.js'
+import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
 
 export interface AppDeps {
   pg: Pool
@@ -20,4 +21,10 @@ export interface AppDeps {
    *  BullMQ's full generic-heavy class type, and tests inject hand-rolled
    *  spies that satisfy the same shape. */
   worldGenQueue: WorldGenQueueLike
+  /** myth-epo4 T22 / MYT-53: BullMQ Queue handle for `campaign-setup` jobs
+   *  (per-player character creation). Optional because tests and the
+   *  boot-gate-disabled fallback path don't construct a real queue — the
+   *  plugin route returns 503 'queue_not_ready' in that state. Typed as the
+   *  minimal CharacterCreationQueueLike contract; routes only call `.add()`. */
+  characterCreationQueue?: CharacterCreationQueueLike
 }

@@ -21,6 +21,20 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'PATCH /api/campaigns/:campaignId/name',
   // myth-exac — dev-tool snapshot inspector (owner-only, gated on stage 4):
   'GET /api/campaigns/:campaignId/world-snapshot',
+  // MYT-53 — per-player parallel character creation. NOTE:
+  // POST /archive is intentionally NOT here — the route is a campaign-
+  // level state flip (setup/active → archived), not a stage in the prep
+  // pipeline, so its handler omits the `config: { pipelineRoute: true }`
+  // marker. It is still surfaced in `backend-routes.ts` as a registered
+  // route, just not as a pipeline-status surface.
+  'POST /api/campaigns/:campaignId/starting-situation',
+  'POST /api/campaigns/:campaignId/start-character-creation',
+  'POST /api/campaigns/:campaignId/characters',
+  'GET /api/campaigns/:campaignId/starting-situations',
+  'GET /api/campaigns/:campaignId/characters',
+  'GET /api/campaigns/:campaignId/characters/:charId',
+  'GET /api/campaigns/:campaignId/hierarchy',
+  'GET /api/campaigns/:campaignId/random-tables',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

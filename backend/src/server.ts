@@ -7,8 +7,8 @@ import type {
 import {
   buildApp,
   createShutdown,
-  type WorldGenQueueShutdown,
-  type WorldGenWorkerLike,
+  type BullMqQueueShutdown,
+  type BullMqWorkerLike,
 } from './app.js'
 import type { RegisterAuthOptions } from './auth/index.js'
 import { loadEnv, type Env } from './config/env.js'
@@ -22,8 +22,15 @@ import { createRepo } from './repo/index.js'
 import { getStripeClient } from './billing/stripe-client.js'
 import { probeStripeContract } from './billing/probe.js'
 import { createWorldGenProcessor } from './llm/prep/world-gen-processor.js'
-import { CONCURRENCY_WORLD_GEN, QUEUE_WORLD_GEN } from './worker/bullmq-config.js'
+import { createCharacterCreationProcessor } from './llm/prep/character-creation-processor.js'
+import {
+  CONCURRENCY_CAMPAIGN_SETUP,
+  CONCURRENCY_WORLD_GEN,
+  QUEUE_CAMPAIGN_SETUP,
+  QUEUE_WORLD_GEN,
+} from './worker/bullmq-config.js'
 import type { WorldGenQueueLike } from './routes/campaigns.js'
+import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
 import type { Logger as PinoLogger } from 'pino'
 
 // Build a RegisterAuthOptions from a loaded Env without emitting `undefined`
@@ -110,13 +117,102 @@ function buildWorldGenQueue(redisBatch: Redis): {
   return { bullmqQueue, worldGenQueue }
 }
 
+/** myth-epo4 T22 / MYT-53: build the character-creation BullMQ queue + its
+ *  plugin-facing adapter. Parallels `buildWorldGenQueue` for the
+ *  `campaign-setup` queue. Returns the raw `bullmqQueue` (for shutdown.close)
+ *  AND the `CharacterCreationQueueLike` adapter that the campaign-characters
+ *  plugin's POST /start-character-creation route uses to enqueue jobs.
+ *
+ *  Job-options policy mirrors world-gen's D9 fix: `removeOnComplete:
+ *  { count: 0 } + removeOnFail: { count: 0 }` so terminal jobs are pruned
+ *  and a future re-enqueue with the same jobId (`cc-${campaignId}-${userId}`,
+ *  per MYT-53 T13) does not silently no-op against a leftover completed
+ *  record. `attempts: 2 + exponential backoff` matches world-gen so the
+ *  per-stage retry surface the character-creation processor relies on
+ *  (terminal vs non-terminal classification — see isTerminalError) is
+ *  actually fired by BullMQ. */
+function buildCharacterCreationQueue(redisBatch: Redis): {
+  bullmqQueue: Queue
+  characterCreationQueue: CharacterCreationQueueLike
+} {
+  const bullmqQueue = new Queue(QUEUE_CAMPAIGN_SETUP, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 30000 },
+      removeOnComplete: { count: 0 },
+      removeOnFail: { count: 0 },
+    },
+  })
+  const characterCreationQueue: CharacterCreationQueueLike = {
+    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+  }
+  return { bullmqQueue, characterCreationQueue }
+}
+
+/** myth-epo4 T22 / MYT-53: build the world-gen Worker on a dedicated
+ *  BullMQ-tuned ioredis connection. Extracted to keep main() under the
+ *  100-line lint budget; mirrors buildCharacterCreationWorker below. */
+async function buildWorldGenWorker(
+  pool: Pool,
+  redisRealtime: Redis,
+  redisBatchUrl: string,
+  redisKeyPrefix: string,
+  logger: PinoLogger,
+  signal: AbortSignal,
+): Promise<Worker> {
+  const connection = createBullmqRedisClient(redisBatchUrl)
+  await waitFor({
+    label: 'Redis (worker bullmq)',
+    probe: () => connection.ping(),
+    signal,
+  })
+  return new Worker(
+    QUEUE_WORLD_GEN,
+    createWorldGenProcessor({ pool, redisRealtime, redisKeyPrefix, logger }),
+    { connection, concurrency: CONCURRENCY_WORLD_GEN },
+  )
+}
+
+/** myth-epo4 T22 / MYT-53: build the character-creation Worker on a
+ *  dedicated BullMQ-tuned ioredis connection. Extracted from main() so the
+ *  boot orchestrator stays under the 100-line lint budget (this mirrors
+ *  the rationale on buildWorldGenQueue). publishEvent is constructed here
+ *  rather than inlined into the Worker call site so the channel-name +
+ *  JSON-encode policy stays grep-friendly. */
+async function buildCharacterCreationWorker(
+  pool: Pool,
+  redisRealtime: Redis,
+  redisBatchUrl: string,
+  redisKeyPrefix: string,
+  signal: AbortSignal,
+): Promise<Worker> {
+  const connection = createBullmqRedisClient(redisBatchUrl)
+  await waitFor({
+    label: 'Redis (worker bullmq cc)',
+    probe: () => connection.ping(),
+    signal,
+  })
+  return new Worker(
+    QUEUE_CAMPAIGN_SETUP,
+    createCharacterCreationProcessor({
+      pool,
+      publishEvent: async (campaignId, event) => {
+        const channel = `${redisKeyPrefix}pipeline:campaign:${campaignId}`
+        await redisRealtime.publish(channel, JSON.stringify(event))
+      },
+    }),
+    { connection, concurrency: CONCURRENCY_CAMPAIGN_SETUP },
+  )
+}
+
 // Stub queue/worker for the boot-gate-disabled fallback path. The fallback
 // never connects to Redis, so we can't construct real BullMQ handles; the
 // app-deps + shutdown contracts both expect a non-undefined value, so
 // supply shape-conforming no-ops. None of the routes that USE the queue
 // are reachable on the fallback path (no DB, requireOnboarded 500s), so
 // `add` returning a rejected promise is operator-safe.
-function stubWorldGenQueue(): WorldGenQueueLike & WorldGenQueueShutdown {
+function stubWorldGenQueue(): WorldGenQueueLike & BullMqQueueShutdown {
   return {
     add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
     getJobCounts: () => Promise.resolve({}),
@@ -125,8 +221,22 @@ function stubWorldGenQueue(): WorldGenQueueLike & WorldGenQueueShutdown {
   }
 }
 
-function stubWorldGenWorker(): WorldGenWorkerLike {
+function stubBullMqWorker(): BullMqWorkerLike {
   return { close: () => Promise.resolve() }
+}
+
+// myth-epo4 T22: the character-creation surface is a single `add()` plus
+// the shutdown-time `close()`. Reject on enqueue so a route that somehow
+// reaches the queue gate (the plugin returns 503 first; this is defense
+// in depth) gets a clean failure mode rather than a silent hang.
+function stubCharacterCreationQueue(): CharacterCreationQueueLike & BullMqQueueShutdown {
+  return {
+    add: () =>
+      Promise.reject(
+        new Error('character-creation queue unavailable: BOOT_GATE_ENABLED is off'),
+      ),
+    close: () => Promise.resolve(),
+  }
 }
 
 async function fallbackStart(): Promise<void> {
@@ -149,6 +259,7 @@ async function fallbackStart(): Promise<void> {
     },
   } as unknown as Pool
   const stubQueue = stubWorldGenQueue()
+  const stubCharacterQueue = stubCharacterCreationQueue()
   const stubDeps: AppDeps = {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
@@ -156,6 +267,7 @@ async function fallbackStart(): Promise<void> {
     redisKeyPrefix: env.redisKeyPrefix,
     repo: createRepo(stubPool),
     worldGenQueue: stubQueue,
+    characterCreationQueue: stubCharacterQueue,
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
@@ -168,8 +280,10 @@ async function fallbackStart(): Promise<void> {
     redisBatch: stubDeps.redisBatch,
     subscriber: app.mythrunSubscriber,
     stopPeriodicLog: app.mythrunStopPeriodicLog,
-    worldGenWorker: stubWorldGenWorker(),
+    worldGenWorker: stubBullMqWorker(),
     worldGenQueue: stubQueue,
+    characterCreationWorker: stubBullMqWorker(),
+    characterCreationQueue: stubCharacterQueue,
   })
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, () => void handleShutdown(signal))
@@ -245,20 +359,14 @@ export async function main(): Promise<void> {
     const repo = createRepo(pgRef)
     const authOpts = buildAuthOpts(env)
 
-    // MYT-51 T12: world-gen BullMQ queue + worker.
-    //
-    // Queue connection uses redisBatch directly (non-blocking commands;
-    // fast-fail `maxRetriesPerRequest: 1` is fine). Worker requires
-    // `maxRetriesPerRequest: null` (BullMQ contract — BRPOPLPUSH must
-    // not have a retry ceiling); build a dedicated BullMQ-compatible
-    // connection from the same URL, mirroring worker.ts's pattern.
+    // MYT-51 T12 + myth-epo4 T22 / MYT-53: BullMQ queues for world-gen +
+    // character-creation. Queue connections share redisBatch (non-blocking
+    // commands, fast-fail). Workers (built below after buildApp so they
+    // can use app.log) each get their own BullMQ-tuned connection
+    // (`maxRetriesPerRequest: null`, mirroring worker.ts).
     const { bullmqQueue, worldGenQueue } = buildWorldGenQueue(rTBRef)
-    const worldGenWorkerRedis = createBullmqRedisClient(env.redisBatchUrl)
-    await waitFor({
-      label: 'Redis (worker bullmq)',
-      probe: () => worldGenWorkerRedis.ping(),
-      signal: abortController.signal,
-    })
+    const { bullmqQueue: bullmqCharacterCreationQueue, characterCreationQueue } =
+      buildCharacterCreationQueue(rTBRef)
 
     const app = await buildApp(
       {
@@ -268,22 +376,25 @@ export async function main(): Promise<void> {
         redisKeyPrefix: env.redisKeyPrefix,
         repo,
         worldGenQueue,
+        characterCreationQueue,
       },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
     )
-    const worldGenWorker: Worker = new Worker(
-      QUEUE_WORLD_GEN,
-      createWorldGenProcessor({
-        pool: pgRef,
-        redisRealtime: rTRRef,
-        redisKeyPrefix: env.redisKeyPrefix,
-        logger: app.log as PinoLogger,
-      }),
-      {
-        connection: worldGenWorkerRedis,
-        concurrency: CONCURRENCY_WORLD_GEN,
-      },
+    const worldGenWorker = await buildWorldGenWorker(
+      pgRef,
+      rTRRef,
+      env.redisBatchUrl,
+      env.redisKeyPrefix,
+      app.log as PinoLogger,
+      abortController.signal,
+    )
+    const characterCreationWorker = await buildCharacterCreationWorker(
+      pgRef,
+      rTRRef,
+      env.redisBatchUrl,
+      env.redisKeyPrefix,
+      abortController.signal,
     )
 
     await app.listen({ port: env.port, host: '0.0.0.0' })
@@ -299,6 +410,10 @@ export async function main(): Promise<void> {
       // adapter, which has no close()) — shutdown needs the underlying
       // queue's close() to release its Redis-side connection bookkeeping.
       worldGenQueue: bullmqQueue,
+      characterCreationWorker,
+      // Same rationale as worldGenQueue: shutdown needs the raw BullMQ
+      // Queue's close(), not the CharacterCreationQueueLike adapter.
+      characterCreationQueue: bullmqCharacterCreationQueue,
     })
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

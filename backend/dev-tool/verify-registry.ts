@@ -83,6 +83,23 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // sub-username, etc.), which the backend routes test suite already
   // covers in depth.
   { method: 'POST', path: '/api/users/register' },
+
+  // MYT-53 — per-player parallel character creation. The dev-tool panel
+  // surface for these nine routes is deferred to a follow-up bead (the
+  // routes ship before the inspector — same pattern as world-gen, where
+  // the world-snapshot panel followed several months after the routes).
+  // Backend integration tests in routes/__tests__/campaign-characters.test.ts
+  // exercise the full request/response shape; the verify harness can drive
+  // them ad-hoc via curl until a panel lands.
+  { method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/start-character-creation' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/archive' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/characters' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/characters' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/characters/:charId' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/hierarchy' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/random-tables' },
 ]
 
 export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {

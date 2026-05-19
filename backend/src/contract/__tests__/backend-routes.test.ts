@@ -78,9 +78,17 @@ function parsePrintedRoutes(app: FastifyInstance): PrintedRoute[] {
 
   for (const rawLine of lines) {
     // Match: optional indent of box-drawing/whitespace, then the path
-    // segment starting with '/', then ' (METHODS)' optionally.
-    // The path segment ends at the first ' (' that introduces the methods.
-    const match = /^([\s│├└─]*)(\/[^\s(]*)(?:\s+\(([^)]+)\))?\s*$/.exec(rawLine)
+    // segment, then ' (METHODS)' optionally. The path segment ends at the
+    // first ' (' that introduces the methods.
+    //
+    // Fastify's radix-trie collapses common prefixes, so a path segment is
+    // EITHER one that starts with '/' (a top-level or child route node)
+    // OR a suffix-only segment with no leading slash (a longer-prefix
+    // continuation; e.g. parent `/starting-situation` + child `s` =
+    // `/starting-situations`). Both cases concatenate cleanly because the
+    // parent's full path is parentPath + segment regardless of whether
+    // segment starts with '/'.
+    const match = /^([\s│├└─]*)([\/\w:.\-{}|]+)(?:\s+\(([^)]+)\))?\s*$/.exec(rawLine)
     if (!match) continue
     const indent = match[1] ?? ''
     let segment = match[2] ?? ''
