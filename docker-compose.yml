@@ -6,16 +6,21 @@ name: mythrun
 services:
   postgres:
     image: postgres:16-alpine
+    command: ["postgres", "-c", "max_connections=200"]
     ports:
       - '127.0.0.1:5432:5432'
     environment:
       POSTGRES_USER: mythrun
       POSTGRES_PASSWORD: mythrun_dev
-      POSTGRES_DB: mythrun
+      # POSTGRES_DB is the db created on first volume init. mythrun_test is
+      # created by ./scripts/postgres-init/01-create-test-db.sql mounted at
+      # /docker-entrypoint-initdb.d (myth-oehx).
+      POSTGRES_DB: mythrun_dev
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U mythrun -d mythrun -h 127.0.0.1']
+      test: ['CMD-SHELL', 'pg_isready -U mythrun -d mythrun_dev -h 127.0.0.1']
       interval: 2s
       timeout: 2s
       retries: 10
