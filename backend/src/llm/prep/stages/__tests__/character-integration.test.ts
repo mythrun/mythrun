@@ -1,4 +1,9 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- design §4.1 mandates streamObject; test must mock the deprecated SDK function. */
+// Stage 4 was originally written against streamObject per the parent spec,
+// but a real-LLM smoke surfaced that AI SDK's streamObject is pull-based —
+// `await stream.object` hangs indefinitely unless the caller iterates
+// partialObjectStream too. Stage 4's persister has no per-chunk consumer
+// (its SSE events fire post-COMMIT), so we switched to generateObject.
+// Mocked via the canonical `generateText`-pass-through pattern.
 // backend/src/llm/prep/stages/__tests__/character-integration.test.ts
 //
 // MYT-53 / myth-pytq T10: stage 4 of the character-creation worker. Opus
@@ -38,10 +43,10 @@ import { runCharacterIntegrationStage } from '../character-integration.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
-  return { ...actual, streamObject: vi.fn() }
+  return { ...actual, generateText: vi.fn() }
 })
 
-const mockStreamObject = vi.mocked(ai.streamObject)
+const mockGenerateText = vi.mocked(ai.generateText)
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -87,11 +92,16 @@ interface SeedResult {
   readonly factionId: string
 }
 
-function streamObjectMockReturn(payload: unknown): ReturnType<typeof ai.streamObject> {
+function generateTextMockReturn(payload: unknown): {
+  output: unknown
+  finishReason: string
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number }
+} {
   return {
-    object: Promise.resolve(payload),
-    usage: Promise.resolve({ inputTokens: 2000, outputTokens: 1000, totalTokens: 3000 }),
-  } as unknown as ReturnType<typeof ai.streamObject>
+    output: payload,
+    finishReason: 'stop',
+    usage: { inputTokens: 2000, outputTokens: 1000, totalTokens: 3000 },
+  }
 }
 
 const INTEGRATION = {
@@ -211,7 +221,7 @@ describe('runCharacterIntegrationStage', () => {
   it('creates a pc entity, links characters.entity_id, persists relationships and facts including the deferred location fact', async () => {
     const { userId, worldId, campaignId, characterId, factionId } = await seed()
 
-    mockStreamObject.mockReturnValueOnce(streamObjectMockReturn(INTEGRATION))
+    mockGenerateText.mockResolvedValueOnce(generateTextMockReturn(INTEGRATION) as never)
 
     const events: Record<string, unknown>[] = []
     const result = await runCharacterIntegrationStage(pool, {
@@ -299,7 +309,7 @@ describe('runCharacterIntegrationStage', () => {
     const { userId, worldId, campaignId, characterId, factionId } = await seed()
 
     // First run.
-    mockStreamObject.mockReturnValueOnce(streamObjectMockReturn(INTEGRATION))
+    mockGenerateText.mockResolvedValueOnce(generateTextMockReturn(INTEGRATION) as never)
     const first = await runCharacterIntegrationStage(pool, {
       campaignId,
       userId,
@@ -342,7 +352,7 @@ describe('runCharacterIntegrationStage', () => {
         },
       ],
     }
-    mockStreamObject.mockReturnValueOnce(streamObjectMockReturn(INTEGRATION_V2))
+    mockGenerateText.mockResolvedValueOnce(generateTextMockReturn(INTEGRATION_V2) as never)
     const second = await runCharacterIntegrationStage(pool, {
       campaignId,
       userId,

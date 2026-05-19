@@ -270,8 +270,15 @@ describe('runCharacterCreationJob', () => {
       finishReason: 'stop',
       usage: { inputTokens: 2000, outputTokens: 2000, totalTokens: 4000 },
     } as never)
-    // Stage 4: character_integration (Opus streamObject)
-    mockStreamObject.mockReturnValueOnce(streamObjectMockReturn(VALID_INTEGRATION))
+    // Stage 4: character_integration (Opus generateObject — switched from
+    // streamObject after smoke uncovered the SDK's stream-pull semantics
+    // require iterating partialObjectStream; stage 4 has no per-chunk
+    // consumer, so generateObject is the correct primitive).
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_INTEGRATION,
+      finishReason: 'stop',
+      usage: { inputTokens: 1800, outputTokens: 1200, totalTokens: 3000 },
+    } as never)
   }
 
   it('runs all four stages end-to-end and marks character_concepts.completed', async () => {

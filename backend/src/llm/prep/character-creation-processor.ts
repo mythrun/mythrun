@@ -91,20 +91,46 @@ export async function runCharacterCreationJob(
   //    stage costs for this campaign (across all players) and compares to
   //    the global cap. If over, mark the concept failed + emit stage-
   //    failed for cost_cap. Return cleanly (no BullMQ retry).
-  const capUsd = await readCharacterCreationCostCap(deps.pool)
-  const spent = await sumCharacterCreationStageCosts(deps.pool, campaignId)
-  if (spent > capUsd) {
+  //
+  //    Wrapped in try/catch because readCharacterCreationCostCap throws
+  //    CostCapParseError when the settings row is missing or malformed —
+  //    that's an operator-config failure, not a per-job retry condition.
+  //    Without this catch, the throw bubbles to BullMQ which retries via
+  //    backoff (attempts=2), then permanently fails the job with
+  //    removeOnFail dropping it — leaving character_concepts stuck in
+  //    'processing' with no visible signal. Smoke uncovered this:
+  //    resetData truncated the settings table, the precheck threw on
+  //    every retry attempt, the queue silently drained.
+  try {
+    const capUsd = await readCharacterCreationCostCap(deps.pool)
+    const spent = await sumCharacterCreationStageCosts(deps.pool, campaignId)
+    if (spent > capUsd) {
+      await conceptsRepo.markFailed(campaignId, userId, {
+        code: 'character_creation_cost_cap_exceeded',
+        spent,
+        capUsd,
+      })
+      await deps.publishEvent(campaignId, {
+        type: 'stage-failed',
+        stage: 'cost_cap',
+        userId,
+        willRetry: false,
+        reason: 'character_creation_cost_cap_exceeded',
+      })
+      return
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'unknown'
     await conceptsRepo.markFailed(campaignId, userId, {
-      code: 'character_creation_cost_cap_exceeded',
-      spent,
-      capUsd,
+      code: 'character_creation_cost_cap_precheck_failed',
+      message,
     })
     await deps.publishEvent(campaignId, {
       type: 'stage-failed',
       stage: 'cost_cap',
       userId,
       willRetry: false,
-      reason: 'character_creation_cost_cap_exceeded',
+      reason: `cost_cap_precheck_failed: ${message}`,
     })
     return
   }

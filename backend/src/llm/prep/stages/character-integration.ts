@@ -51,7 +51,7 @@ import type { Pool, PoolClient } from 'pg'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { streamObject } from '../../ai.js'
+import { generateObject } from '../../ai.js'
 import { OPUS } from '../../models.js'
 import {
   CharacterIntegrationOutputSchema,
@@ -124,14 +124,23 @@ export async function runCharacterIntegrationStage(
   //    excluded by the entity_type filter.
   const worldEntities = await listReferenceableEntities(pool, args.worldId)
 
-  // 3. Stream the integration tree via Opus + streamObject. The wrapper
-  //    (myth-t1qz) runs the repair chain on LlmStructuredOutputError.
+  // 3. Generate the integration tree via Opus + generateObject. We use
+  //    the non-streaming wrapper here even though the parent spec called
+  //    for streamObject: stage 4 emits its SSE events POST-COMMIT (in
+  //    publishPostCommitEvents, after persistIntegration's transaction
+  //    lands), not from streamObject's partialObjectStream chunks. The AI
+  //    SDK's streamObject is pull-based — `await stream.object` never
+  //    resolves unless the consumer concurrently iterates
+  //    `partialObjectStream` (or another stream). Since this handler has
+  //    no per-chunk consumer, streamObject silently hung indefinitely.
+  //    generateObject is eagerly-executed and a drop-in replacement for
+  //    our shape; smoke against real Anthropic confirms it produces the
+  //    same validated tree in ~24s (vs streamObject hanging forever).
   const prompt = renderPrompt(args, startLocation, worldEntities)
-  const stream = streamObject({
+  const result = await generateObject({
     model: OPUS,
     schema: CharacterIntegrationOutputSchema,
     prompt,
-    temperature: 0.5,
     maxRetries: 0,
     callSite: 'character-integration',
     schemaName: 'CharacterIntegrationOutputSchema',
@@ -139,11 +148,8 @@ export async function runCharacterIntegrationStage(
     providerOptions: { mythrun: { stage: 'character_integration' } },
   })
 
-  // 4. Wait for the validated tree. The wrapper rejects with the original
-  //    LlmStructuredOutputError if the repair chain exhausts; the worker
-  //    is responsible for ROLLBACK + BullMQ retry.
-  const validatedTree: CharacterIntegrationOutput = await stream.object
-  const usage = await stream.usage
+  const validatedTree: CharacterIntegrationOutput = result.output
+  const usage = result.usage
 
   // 5. Persist everything in a single transaction.
   const entityId = await persistIntegration(
