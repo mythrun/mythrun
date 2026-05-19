@@ -42,7 +42,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:a90a0ed6863f281b29246899cb660c1d81734c69d89bb375bf1322389d9bee10 -->
+<!-- source-hash: sha256:79f66c93c16c2d995ca1bc5e6991cabeeadf58ac2fea104da8770d6e92559e8c -->
 <!-- last-ticket: myth-exac -->
 
 <h1>World gen</h1>
@@ -669,10 +669,12 @@
 
 <p>
   A consolidation pass that appends terms surfaced during world-gen and character creation
-  is designed but deferred (bead <code>myth-1uw6</code>) — activates when MYT-52
-  (character-creation runtime) lands and provides a hook point. The data shape, append-only
-  semantics, and <code>source</code> tag on each entry are designed to support both that
-  consolidation pass and a future Scribe runtime write-back.
+  is designed but deferred (bead <code>myth-1uw6</code>). The per-player character-creation
+  pipeline landed in MYT-53 (see <a href="character-creation.html">Character creation</a>),
+  but the consolidation hook is not yet wired in — that's the deferred bead's scope. The
+  vocabulary registry's data shape, append-only semantics, and <code>source</code> tag on
+  each entry are designed to support both that consolidation pass and a future Scribe
+  runtime write-back.
 </p>
 
 <h3>Streaming stages and the partial-tree iterator</h3>
@@ -1242,8 +1244,11 @@
     <tr>
       <td><code>character_creation</code> | <code>post_creation</code></td>
       <td>
-        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. The downstream
-        ticket reference (MYT-53) is logged server-side, not in the response.
+        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53
+        landed the character-creation pipeline itself, but resume from those phases
+        remains unimplemented — re-trigger via owner-side
+        <code>POST /start-character-creation</code> instead. The downstream ticket
+        reference is logged server-side, not in the response.
       </td>
     </tr>
     <tr>
@@ -1499,9 +1504,13 @@
 
 <ul>
   <li>
-    <strong>Per-player character creation.</strong> The pipeline has a placeholder phase
-    (<code>character_creation</code>); resume returns
-    <code>422 phase_resume_not_yet_implemented</code> on it. Lands as MYT-53.
+    <strong>Resume for the <code>character_creation</code> phase.</strong> MYT-53 landed
+    the per-player character-creation pipeline on the <code>campaign-setup</code> queue
+    (see <a href="character-creation.html">Character creation</a>), but the
+    <code>POST /resume</code> endpoint here in world-gen still returns
+    <code>422 phase_resume_not_yet_implemented</code> when the campaign has advanced into
+    the <code>character_creation</code> phase — resume support for that phase is a
+    follow-up bead.
   </li>
   <li>
     <strong>Automatic refunds beyond the cost cap.</strong> Stage failures that aren't cost-cap

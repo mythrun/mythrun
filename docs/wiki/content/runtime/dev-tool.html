@@ -19,7 +19,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:8b02646db49207ce27783a188d483af9dd2cb9d31f4493b69e518d67c1b018e6 -->
+<!-- source-hash: sha256:82002544df18bee75261a11b6a2d61ea33569eff76db3327529842300539c8ed -->
 <!-- last-ticket: myth-exac -->
 
 <h1>Dev tool</h1>
@@ -75,8 +75,9 @@
   <code>src/components/</code> holds the per-panel UI. The reliability harness
   (<code>scripts/verify.ts</code>) + registry (<code>verify-registry.ts</code>) + contract
   (<code>AUTHORING.md</code>) live alongside under <code>backend/dev-tool/</code> and are governed
-  by <code>myth-e5mn</code>'s seven principles. Character-creation consumers will land alongside
-  their routes.
+  by <code>myth-e5mn</code>'s seven principles. The character-creation panel lands under
+  MYT-53 alongside its 9 routes; it binds to <code>mythrun.watchcampaign</code> and drives
+  the per-player roster + owner action buttons + member submission form.
 </p>
 
 <aside class="wiki-rationale">
