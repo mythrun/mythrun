@@ -11,6 +11,7 @@ import { mountInvitesPanel } from './components/invites-panel.js'
 import { mountSessionTicketPanel } from './components/session-ticket-panel.js'
 import { mountBillingPanel } from './components/billing-panel.js'
 import { mountWorldSnapshotPanel } from './components/world-snapshot-panel.js'
+import { mountCharacterCreationPanel } from './components/character-creation-panel.js'
 import { getCurrentDevSub, onIdentityChanged } from './identity.js'
 import { apiCall } from './api-client.js'
 import './styles.css'
@@ -73,6 +74,7 @@ mountStatusPanel(main)
 mountLiveEventsPanel(main)
 mountCampaignDetailsPanel(main)
 mountWorldSnapshotPanel(main)
+mountCharacterCreationPanel(main)
 mountCreditLedgerPanel(main)
 mountInvitesPanel(main)
 mountSessionTicketPanel(main)

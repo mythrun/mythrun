@@ -32,6 +32,7 @@ import { mountInvitesPanel } from './src/components/invites-panel.js'
 import { mountSessionTicketPanel } from './src/components/session-ticket-panel.js'
 import { mountBillingPanel } from './src/components/billing-panel.js'
 import { mountWorldSnapshotPanel } from './src/components/world-snapshot-panel.js'
+import { mountCharacterCreationPanel } from './src/components/character-creation-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
@@ -83,23 +84,6 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // sub-username, etc.), which the backend routes test suite already
   // covers in depth.
   { method: 'POST', path: '/api/users/register' },
-
-  // MYT-53 — per-player parallel character creation. The dev-tool panel
-  // surface for these nine routes is deferred to a follow-up bead (the
-  // routes ship before the inspector — same pattern as world-gen, where
-  // the world-snapshot panel followed several months after the routes).
-  // Backend integration tests in routes/__tests__/campaign-characters.test.ts
-  // exercise the full request/response shape; the verify harness can drive
-  // them ad-hoc via curl until a panel lands.
-  { method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' },
-  { method: 'POST', path: '/api/campaigns/:campaignId/start-character-creation' },
-  { method: 'POST', path: '/api/campaigns/:campaignId/archive' },
-  { method: 'POST', path: '/api/campaigns/:campaignId/characters' },
-  { method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' },
-  { method: 'GET', path: '/api/campaigns/:campaignId/characters' },
-  { method: 'GET', path: '/api/campaigns/:campaignId/characters/:charId' },
-  { method: 'GET', path: '/api/campaigns/:campaignId/hierarchy' },
-  { method: 'GET', path: '/api/campaigns/:campaignId/random-tables' },
 ]
 
 export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
@@ -170,6 +154,28 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     readySelector: '[data-state="idle"]',
     errorSelector: '[data-state="error"]',
     exercises: [route('GET', '/api/campaigns/:campaignId/world-snapshot')],
+  },
+  'character-creation': {
+    // MYT-53 T23. Idle until the user clicks Watch on my-campaigns; the
+    // mythrun.watchcampaign event hands us the campaignId and triggers the
+    // initial roster + starting-situations fetch. All other routes hang off
+    // click handlers (action-only sub-pattern within an event-driven mount),
+    // matching the world-snapshot panel's idle steady state.
+    pattern: 'event-driven',
+    mount: mountCharacterCreationPanel,
+    readySelector: '[data-state="idle"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [
+      route('POST', '/api/campaigns/:campaignId/starting-situation'),
+      route('POST', '/api/campaigns/:campaignId/start-character-creation'),
+      route('POST', '/api/campaigns/:campaignId/archive'),
+      route('POST', '/api/campaigns/:campaignId/characters'),
+      route('GET', '/api/campaigns/:campaignId/starting-situations'),
+      route('GET', '/api/campaigns/:campaignId/characters'),
+      route('GET', '/api/campaigns/:campaignId/characters/:charId'),
+      route('GET', '/api/campaigns/:campaignId/hierarchy'),
+      route('GET', '/api/campaigns/:campaignId/random-tables'),
+    ],
   },
   'credit-ledger': {
     pattern: 'action-only',

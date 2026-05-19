@@ -9,7 +9,15 @@
     "POST /api/campaigns/:campaignId/resume",
     "DELETE /api/campaigns/:campaignId",
     "PATCH /api/campaigns/:campaignId/name",
-    "GET /api/campaigns/:campaignId/world-snapshot"
+    "GET /api/campaigns/:campaignId/world-snapshot",
+    "POST /api/campaigns/:campaignId/starting-situation",
+    "POST /api/campaigns/:campaignId/start-character-creation",
+    "POST /api/campaigns/:campaignId/characters",
+    "GET /api/campaigns/:campaignId/starting-situations",
+    "GET /api/campaigns/:campaignId/characters",
+    "GET /api/campaigns/:campaignId/characters/:charId",
+    "GET /api/campaigns/:campaignId/hierarchy",
+    "GET /api/campaigns/:campaignId/random-tables"
   ],
   "events": [
     "phase",
@@ -26,7 +34,7 @@
     "edge-removed",
     "finalized"
   ],
-  "jobs": ["world-gen"],
+  "jobs": ["world-gen", "character-creation"],
   "exempt": {
     "routes": {},
     "events": {},
