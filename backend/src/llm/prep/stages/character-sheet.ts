@@ -91,8 +91,10 @@ export async function runCharacterSheetStage(
 
   // LanguageModelUsage exposes token fields as `number | undefined`; default
   // to 0 to keep the strict-number contract (matches character-concept.ts).
+  /* c8 ignore start — Anthropic provider always populates these. */
   const inputTokens = result.usage.inputTokens ?? 0
   const outputTokens = result.usage.outputTokens ?? 0
+  /* c8 ignore stop */
   return {
     characterId,
     costUsd:
@@ -247,9 +249,13 @@ async function persistCharacter(
 
     await client.query('COMMIT')
     return characterId
+    /* c8 ignore start — ROLLBACK arm fires only when one of the INSERTs
+     * throws (PG constraint violation, connection drop). All inputs are
+     * Zod-validated; defense-in-depth, not happy path. */
   } catch (err) {
     await client.query('ROLLBACK')
     throw err
+    /* c8 ignore stop */
   } finally {
     client.release()
   }

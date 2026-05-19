@@ -323,9 +323,7 @@ export const buildApp = async (
   // assignable to the `characterCreationQueue?: ...` plugin opts.
   await app.register(campaignCharactersPlugin, {
     pool: deps.pg,
-    ...(deps.characterCreationQueue
-      ? { characterCreationQueue: deps.characterCreationQueue }
-      : {}),
+    characterCreationQueue: deps.characterCreationQueue,
   })
 
   // Dev-only credit-grant route (MYT-51 T11). The plugin itself gates

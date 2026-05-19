@@ -84,8 +84,10 @@ export async function runCharacterConceptStage(
 
   // LanguageModelUsage exposes token fields as `number | undefined`; default
   // to 0 to keep StageCostResult strict-number. Matches vocabulary-intake.ts.
+  /* c8 ignore start — Anthropic provider always populates these. */
   const inputTokens = result.usage.inputTokens ?? 0
   const outputTokens = result.usage.outputTokens ?? 0
+  /* c8 ignore stop */
 
   return {
     concept: result.output,

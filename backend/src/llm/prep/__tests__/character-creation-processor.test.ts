@@ -33,6 +33,7 @@ import { uuidv7 } from '../../../repo/uuidv7.js'
 import { resetData } from '../../../repo/__tests__/_helpers/reset-data.js'
 import {
   runCharacterCreationJob,
+  createCharacterCreationProcessor,
   type CharacterCreationJobPayload,
 } from '../character-creation-processor.js'
 import { LlmStructuredOutputError } from '../../errors.js'
@@ -275,16 +276,18 @@ describe('runCharacterCreationJob', () => {
     setupHappyPathMocks()
 
     const events: Record<string, unknown>[] = []
-    await runCharacterCreationJob(
-      {
-        pool,
-        publishEvent: (cid, e) => {
-          events.push({ campaignId: cid, ...e })
-          return Promise.resolve()
-        },
+    // Drive through the factory wrapper rather than calling
+    // runCharacterCreationJob directly — exercises the closure body that
+    // BullMQ's Worker invokes in production (mirrors how the
+    // world-gen-processor tests drive createWorldGenProcessor).
+    const processor = createCharacterCreationProcessor({
+      pool,
+      publishEvent: (cid, e) => {
+        events.push({ campaignId: cid, ...e })
+        return Promise.resolve()
       },
-      makeJob(campaignId, userId),
-    )
+    })
+    await processor(makeJob(campaignId, userId) as unknown as Parameters<typeof processor>[0])
 
     // All four pipeline_runs rows in 'completed' state, keyed on
     // (campaign_id, user_id).
@@ -479,6 +482,59 @@ describe('runCharacterCreationJob', () => {
     expect(capFailed).toBeDefined()
   })
 
+  it('fails cleanly when the cost-cap settings row is missing (precheck wraps in try/catch)', async () => {
+    // Regression test for the resilience gap surfaced by the T25 smoke:
+    // if settings.character_creation_cost_cap_usd is missing or malformed,
+    // readCharacterCreationCostCap throws. The precheck is wrapped in
+    // try/catch so the throw doesn't escape the processor unhandled
+    // (which would leave character_concepts stuck in 'processing' as
+    // BullMQ retries the job and removeOnFail drops it). The catch marks
+    // the concept failed with a distinct precheck-failed code and emits
+    // a stage-failed event.
+    const { userId, campaignId } = await seed()
+
+    // Wipe the cost-cap row to force the precheck to throw.
+    await pool.query(`DELETE FROM settings WHERE key = 'character_creation_cost_cap_usd'`)
+
+    const events: Record<string, unknown>[] = []
+    await runCharacterCreationJob(
+      {
+        pool,
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      },
+      makeJob(campaignId, userId),
+    )
+
+    // Restore the row so other tests aren't poisoned.
+    await pool.query(
+      `INSERT INTO settings (key, value) VALUES ('character_creation_cost_cap_usd', '5.00')`,
+    )
+
+    const concept = await pool.query<{
+      status: string
+      error: { code?: string; message?: string } | null
+    }>(
+      `SELECT status, error FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('failed')
+    expect(concept.rows[0]?.error?.code).toBe('character_creation_cost_cap_precheck_failed')
+    expect(concept.rows[0]?.error?.message).toMatch(/character_creation_cost_cap_usd is missing/)
+
+    // No stages ran.
+    expect(mockGenerateText).not.toHaveBeenCalled()
+
+    // stage-failed event with the precheck-failed reason + willRetry: false.
+    const precheckFailed = events.find(
+      (e) => e.type === 'stage-failed' && typeof e.reason === 'string' && e.reason.startsWith('cost_cap_precheck_failed'),
+    )
+    expect(precheckFailed).toBeDefined()
+    expect(precheckFailed?.willRetry).toBe(false)
+  })
+
   it('idempotent re-entry: re-running picks up where it left off', async () => {
     const { userId, campaignId } = await seed()
     setupHappyPathMocks()
@@ -545,5 +601,121 @@ describe('runCharacterCreationJob', () => {
     // No LLM calls fired on re-entry.
     expect(mockGenerateText).not.toHaveBeenCalled()
     expect(mockStreamObject).not.toHaveBeenCalled()
+  })
+
+  it('handles a world with NULL optional fields (empty-string fallbacks on the world snapshot)', async () => {
+    // The worlds table allows NULL on tone/themes/era/geography_summary/
+    // political_summary/key_tensions. A degraded world (e.g., partial
+    // world-gen) might have these as NULL. The processor's empty-string
+    // fallbacks let stage 2/3 prompts still render.
+    const { userId, campaignId, worldId } = await seed()
+    await pool.query(
+      `UPDATE worlds
+          SET tone = NULL, themes = NULL, era = NULL,
+              geography_summary = NULL, political_summary = NULL,
+              key_tensions = NULL
+        WHERE id = $1`,
+      [worldId],
+    )
+    // Also null concept_text on the character_concepts row to exercise
+    // that fallback in buildConceptArgs.
+    await pool.query(
+      `UPDATE character_concepts SET concept_text = NULL WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    setupHappyPathMocks()
+    await runCharacterCreationJob(
+      { pool, publishEvent: () => Promise.resolve() },
+      makeJob(campaignId, userId),
+    )
+    // Just verify the job completed. The empty-string fallbacks rendered
+    // into the prompts as empty placeholders; the LLM mocks returned valid
+    // shapes so the persistence side completed.
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('completed')
+  })
+
+  it('throws on stage 3 re-entry without ctx.conceptOutput (mid-job worker crash recovery)', async () => {
+    // Setup: pre-insert pipeline_runs for stage 2 as 'completed'. On
+    // re-entry, atomicClaimStage skips stage 2; ctx.conceptOutput stays
+    // null; stage 3's re-entry guard throws + marks failed.
+    const { userId, campaignId } = await seed()
+    await pool.query(
+      `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, user_id, cost_usd, input_tokens, output_tokens)
+       VALUES ($1, $2, 'character_concept', 'completed', now(), now(), $3, 0.02, 100, 50)`,
+      [uuidv7(), campaignId, userId],
+    )
+    const events: Record<string, unknown>[] = []
+    // Non-terminal error → BullMQ retry path: markStageFailed + publish
+    // event + rethrow. We catch the throw, then verify the side effects.
+    await expect(
+      runCharacterCreationJob(
+        {
+          pool,
+          publishEvent: (cid, e) => {
+            events.push({ campaignId: cid, ...e })
+            return Promise.resolve()
+          },
+        },
+        makeJob(campaignId, userId),
+      ),
+    ).rejects.toThrow(/re-entry without ctx.conceptOutput/)
+    const sheetRow = await pool.query<{ status: string; error: string | null }>(
+      `SELECT status, error FROM pipeline_runs
+       WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_sheet'`,
+      [campaignId, userId],
+    )
+    expect(sheetRow.rows[0]?.status).toBe('failed')
+    expect(sheetRow.rows[0]?.error).toMatch(/re-entry without ctx.conceptOutput/)
+    // The non-terminal rethrow path emits a stage-failed event with
+    // willRetry:true (BullMQ would re-attempt).
+    const stageFailed = events.find(
+      (e) => e.type === 'stage-failed' && e.stage === 'character_sheet',
+    )
+    expect(stageFailed).toBeDefined()
+    expect(stageFailed?.willRetry).toBe(true)
+  })
+
+  it('throws on stage 4 re-entry without ctx.characterId or ctx.conceptOutput', async () => {
+    // Setup: pre-insert pipeline_runs for stages 1, 2, 3 as 'completed'.
+    // On re-entry, atomicClaimStage skips all 3; stage 4 is fresh-claimed.
+    // ctx.characterId and ctx.conceptOutput are both null → stage 4's
+    // re-entry guard throws + marks failed.
+    const { userId, campaignId } = await seed()
+    for (const stage of ['location_selection', 'character_concept', 'character_sheet']) {
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, user_id, cost_usd, input_tokens, output_tokens)
+         VALUES ($1, $2, $3, 'completed', now(), now(), $4, 0.02, 100, 50)`,
+        [uuidv7(), campaignId, stage, userId],
+      )
+    }
+    const events: Record<string, unknown>[] = []
+    await expect(
+      runCharacterCreationJob(
+        {
+          pool,
+          publishEvent: (cid, e) => {
+            events.push({ campaignId: cid, ...e })
+            return Promise.resolve()
+          },
+        },
+        makeJob(campaignId, userId),
+      ),
+    ).rejects.toThrow(/re-entry without in-process state/)
+    const intRow = await pool.query<{ status: string; error: string | null }>(
+      `SELECT status, error FROM pipeline_runs
+       WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_integration'`,
+      [campaignId, userId],
+    )
+    expect(intRow.rows[0]?.status).toBe('failed')
+    expect(intRow.rows[0]?.error).toMatch(/re-entry without in-process state/)
+    const stageFailed = events.find(
+      (e) => e.type === 'stage-failed' && e.stage === 'character_integration',
+    )
+    expect(stageFailed).toBeDefined()
+    expect(stageFailed?.willRetry).toBe(true)
   })
 })

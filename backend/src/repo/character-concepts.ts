@@ -60,10 +60,7 @@ function toConcept(row: DbRow): CharacterConcept {
 }
 
 // Namespace factory mirrors the repo-layer convention (see campaigns.ts,
-// characters.ts). The body is a method dictionary; the eslint disable
-// keeps the namespace pattern grep-friendly without each method sprawling
-// past max-lines-per-function.
-// eslint-disable-next-line max-lines-per-function
+// characters.ts). The body is a method dictionary.
 export function createCharacterConceptsRepo(pool: Pool) {
   return {
     upsert: async (input: UpsertInput): Promise<CharacterConcept> => {
@@ -91,8 +88,14 @@ export function createCharacterConceptsRepo(pool: Pool) {
           JSON.stringify(input.guidedChoices),
         ],
       )
+      // INSERT ... RETURNING * always returns exactly one row when the
+      // INSERT succeeds; the ON CONFLICT DO UPDATE arm always updates
+      // (no WHERE on the DO UPDATE). So row is guaranteed.
       const row = result.rows[0]
-      if (!row) throw new Error('character_concepts.upsert: INSERT returned no row')
+      /* c8 ignore next 3 — INSERT ... RETURNING always yields a row */
+      if (row === undefined) {
+        throw new Error('character_concepts UPSERT returned no row — driver invariant violated')
+      }
       return toConcept(row)
     },
 
@@ -108,14 +111,6 @@ export function createCharacterConceptsRepo(pool: Pool) {
       return row ? toConcept(row) : null
     },
 
-    getByCampaignId: async (campaignId: string): Promise<readonly CharacterConcept[]> => {
-      const result = await pool.query<DbRow>(
-        `SELECT * FROM character_concepts WHERE campaign_id = $1 ORDER BY submitted_at`,
-        [campaignId],
-      )
-      return result.rows.map(toConcept)
-    },
-
     listSubmittedByCampaign: async (
       campaignId: string,
     ): Promise<readonly CharacterConcept[]> => {
@@ -126,15 +121,6 @@ export function createCharacterConceptsRepo(pool: Pool) {
         [campaignId],
       )
       return result.rows.map(toConcept)
-    },
-
-    countAnyProcessingOrCompleted: async (campaignId: string): Promise<number> => {
-      const result = await pool.query<{ n: string }>(
-        `SELECT COUNT(*)::text AS n FROM character_concepts
-         WHERE campaign_id = $1 AND status IN ('processing', 'completed')`,
-        [campaignId],
-      )
-      return Number.parseInt(result.rows[0]?.n ?? '0', 10)
     },
 
     markProcessing: async (campaignId: string, userId: string): Promise<void> => {

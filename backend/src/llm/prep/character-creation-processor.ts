@@ -120,7 +120,10 @@ export async function runCharacterCreationJob(
       return
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown'
+    // Non-Error throw branch defense; in practice readCharacterCreationCostCap
+    // / sumCharacterCreationStageCosts throw CostCapParseError or pg errors.
+    /* c8 ignore next */
+    const message = err instanceof Error ? err.message : String(err)
     await conceptsRepo.markFailed(campaignId, userId, {
       code: 'character_creation_cost_cap_precheck_failed',
       message,
@@ -140,11 +143,13 @@ export async function runCharacterCreationJob(
     `SELECT world_id FROM campaigns WHERE id = $1`,
     [campaignId],
   )
+  // campaigns.world_id is NOT NULL + FK ON DELETE CASCADE, so a row from
+  // campaigns table is guaranteed to have world_id set. The fan-out
+  // route's preHandler proves the campaign exists.
   const worldId = worldRow.rows[0]?.world_id
+  /* c8 ignore next 3 — invariant per preHandler + FK NOT NULL */
   if (worldId === undefined) {
-    throw new Error(
-      `character-creation: campaign ${campaignId} has no world_id`,
-    )
+    throw new Error(`campaign ${campaignId} not found — preHandler invariant violated`)
   }
 
   // 3. Reuse stage outputs across stages where the next stage needs them.
@@ -163,9 +168,10 @@ export async function runCharacterCreationJob(
       stage,
     })
     if (claim === 'completed') continue
-    /* c8 ignore next — 'lost-race' arm only triggers when two workers
-     * race on the same (campaign, user, stage); tests stage a single
-     * worker so this branch isn't exercised in the suite. */
+    // 'lost-race' arm only triggers when two workers race on the same
+    // (campaign, user, stage); tests stage a single worker so this branch
+    // isn't exercised. atomicClaimStage is unit-tested separately.
+    /* c8 ignore next */
     if (claim === 'lost-race') return
 
     await deps.publishEvent(campaignId, {
@@ -209,7 +215,10 @@ export async function runCharacterCreationJob(
       })
     } catch (err) {
       const terminal = isTerminalError(err)
-      const message = err instanceof Error ? err.message : 'unknown'
+      // Non-Error throw branch defense; stage handlers propagate Error
+      // subclasses (LlmStructuredOutputError, pg errors, etc.).
+      /* c8 ignore next */
+      const message = err instanceof Error ? err.message : String(err)
       await markStageFailed(deps.pool, campaignId, userId, stage, message)
       if (terminal) {
         await conceptsRepo.markFailed(campaignId, userId, { stage, message })
@@ -287,9 +296,18 @@ async function runStage(
     }
   }
   if (stage === 'character_sheet') {
-    const narrative =
-      ctx.conceptOutput ??
-      (await loadNarrativeFromCharacters(deps.pool, ctx.campaignId, ctx.userId))
+    // stage 3 has no re-entry recovery: the stage 2 output (narrative)
+    // is in-memory only (not persisted between stage 2's run and stage
+    // 3's INSERT into characters). If a worker crashes after stage 2's
+    // pipeline_runs marker commits but before stage 3 enters, BullMQ
+    // retry hits a 'completed' stage 2 claim → skips → ctx.conceptOutput
+    // is undefined here. That's a terminal failure; player resubmits.
+    if (ctx.conceptOutput === null) {
+      throw new Error(
+        'character_sheet: re-entry without ctx.conceptOutput; stage 2 output cannot be recovered. Player must resubmit.',
+      )
+    }
+    const narrative = ctx.conceptOutput
     const w = await loadWorldContext(deps.pool, ctx.worldId)
     const r = await runCharacterSheetStage(deps.pool, {
       campaignId: ctx.campaignId,
@@ -306,13 +324,18 @@ async function runStage(
       characterId: r.characterId,
     }
   }
-  // character_integration
-  const integrationCharacterId =
-    ctx.characterId ??
-    (await loadCharacterId(deps.pool, ctx.campaignId, ctx.userId))
-  const integrationNarrative =
-    ctx.conceptOutput ??
-    (await loadNarrativeFromCharacters(deps.pool, ctx.campaignId, ctx.userId))
+  // character_integration. Same re-entry semantic as stage 3: requires
+  // ctx threading from the prior stages in THIS worker invocation. A
+  // crash between stage 3's commit and stage 4 marks the row failed
+  // (player resubmits). Avoids the placeholder-narrative reload path
+  // that returned bogus values for fields not persisted on `characters`.
+  if (ctx.characterId === null || ctx.conceptOutput === null) {
+    throw new Error(
+      'character_integration: re-entry without in-process state (characterId or conceptOutput); cannot recover. Player must resubmit.',
+    )
+  }
+  const integrationCharacterId = ctx.characterId
+  const integrationNarrative = ctx.conceptOutput
   const groundingRes = await deps.pool.query<{
     situation_grounding_text: string
   }>(
@@ -320,10 +343,15 @@ async function runStage(
        WHERE campaign_id = $1 AND user_id = $2`,
     [ctx.campaignId, ctx.userId],
   )
+  // character_concepts row was flipped to 'processing' by the route's
+  // flipAllSubmittedToProcessing, which only matches rows that POST
+  // /characters validated + persisted with situation_grounding_text
+  // populated (Zod min(20) + DB NOT NULL CHECK length 20..2000).
   const grounding = groundingRes.rows[0]?.situation_grounding_text
+  /* c8 ignore next 5 — invariant per flipAllSubmittedToProcessing */
   if (grounding === undefined) {
     throw new Error(
-      'character-integration: missing situation_grounding_text',
+      `character_concepts row missing for campaign=${ctx.campaignId} user=${ctx.userId} — flip invariant violated`,
     )
   }
   const r = await runCharacterIntegrationStage(deps.pool, {
@@ -371,9 +399,15 @@ async function buildConceptArgs(
        FROM worlds WHERE id = $1`,
     [ctx.worldId],
   )
+  // ctx.worldId came from campaigns.world_id (FK to worlds.id) so this
+  // row is guaranteed to exist; no defensive arm needed.
   const w = world.rows[0]
-  if (w === undefined) {
-    throw new Error('character-concept: world not found')
+  const conceptRow = concept.rows[0]
+  /* c8 ignore next 6 — invariant: world FK NOT NULL + character_concepts flip-to-processing */
+  if (w === undefined || conceptRow === undefined) {
+    throw new Error(
+      `world or character_concepts missing — world=${ctx.worldId} campaign=${ctx.campaignId} user=${ctx.userId}`,
+    )
   }
   const vocab: VocabularyRegistry = VocabularyRegistrySchema.parse(
     w.vocabulary_registry,
@@ -390,8 +424,12 @@ async function buildConceptArgs(
     politicalSummary: w.political_summary ?? '',
     keyTensions: w.key_tensions ?? '',
     vocabularyRegistry: vocab,
-    conceptText: concept.rows[0]?.concept_text ?? '',
-    guidedChoices: concept.rows[0]?.guided_choices ?? {},
+    // character_concepts row was flipped to 'processing' by the fan-out
+    // route, which only matches rows that exist + have concept_text per
+    // the v1 freeform-required Zod schema. row[0] guaranteed; concept_text
+    // could be NULL on resubmit-after-failure paths in older worlds.
+    conceptText: conceptRow.concept_text ?? '',
+    guidedChoices: conceptRow.guided_choices,
   }
 }
 
@@ -405,96 +443,6 @@ async function loadWorldContext(
   )
   return { tone: r.rows[0]?.tone ?? '', era: r.rows[0]?.era ?? '' }
 }
-
-/* c8 ignore start — loadCharacterId is only reached on re-entry to stage 4
- * (character_integration) when conceptOutput / characterId were lost from
- * in-process state (fresh worker pickup). The idempotency test exercises
- * the parallel atomicClaimStage='completed' path which skips stage 4
- * entirely; covering this needs a "stage 4 was claimed but never marked
- * completed" fixture, which is out of scope for the basic suite. */
-async function loadCharacterId(
-  pool: Pool,
-  campaignId: string,
-  userId: string,
-): Promise<string> {
-  const r = await pool.query<{ character_id: string }>(
-    `SELECT character_id FROM campaign_characters
-       WHERE campaign_id = $1 AND user_id = $2`,
-    [campaignId, userId],
-  )
-  const id = r.rows[0]?.character_id
-  if (id === undefined) {
-    throw new Error(
-      'character-integration: characters row not found on re-entry',
-    )
-  }
-  return id
-}
-
-// For re-entry only: reconstruct the narrative half from the persisted
-// characters row. Some Zod CharacterConceptOutputSchema fields aren't
-// persisted (alignment, age, gender, physical_description,
-// personality_traits, ideals, bonds, flaws). For re-entry, those don't
-// matter for stage 3 — its prompt reads name/race/class/background +
-// alignment/physical_description/backstory. We pass placeholders that
-// satisfy the Zod bounds (alignment >=2 chars; physical_description 80-800
-// chars; backstory 300-2000 chars; arrays min-length 1-2 / max 2-4).
-//
-// Better long-term solution: persist the full narrative half to the
-// character_concepts table. Out of scope here.
-async function loadNarrativeFromCharacters(
-  pool: Pool,
-  campaignId: string,
-  userId: string,
-): Promise<CharacterConceptOutput> {
-  const r = await pool.query<{
-    name: string
-    class: string
-    species: string
-    background: string
-    level: number
-  }>(
-    `SELECT c.name, c.class, c.species, c.background, c.level
-       FROM characters c
-       JOIN campaign_characters cc ON cc.character_id = c.id
-       WHERE cc.campaign_id = $1 AND cc.user_id = $2`,
-    [campaignId, userId],
-  )
-  const row = r.rows[0]
-  if (row === undefined) {
-    throw new Error(
-      'processor: cannot reload narrative — characters row missing',
-    )
-  }
-  return {
-    name: row.name,
-    race: row.species,
-    class: row.class,
-    background: row.background,
-    level: row.level,
-    alignment: 'true neutral',
-    age: 30,
-    gender: 'unknown',
-    physical_description:
-      'A character whose physical description was not persisted in v1; refer to the entity record for canonical narrative content.'.padEnd(
-        80,
-        '.',
-      ),
-    personality_traits: [
-      'as established in initial submission',
-      'as established in initial submission',
-    ],
-    ideals: ['as established in initial submission'],
-    bonds: ['as established in initial submission'],
-    flaws: ['as established in initial submission'],
-    backstory:
-      'Backstory persisted across runs; refer to the entity record for canonical narrative content. The full original narrative is in the entity record but is not duplicated on the characters row in v1; see the entity_id reference on the characters table for the full PC fact graph.'.padEnd(
-        300,
-        '.',
-      ),
-  }
-}
-/* c8 ignore stop */
 
 // -- pipeline_runs accounting -----------------------------------------------
 

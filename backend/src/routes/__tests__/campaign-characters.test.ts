@@ -172,12 +172,10 @@ async function buildTestApp(
   await app.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' })
   await app.register(bypassPlugin)
   await app.register(requireOnboarded, { pool })
-  // Spread the queue conditionally so `exactOptionalPropertyTypes` doesn't
-  // reject an explicit `characterCreationQueue: undefined`.
-  await app.register(
-    campaignCharactersPlugin,
-    queue ? { pool, characterCreationQueue: queue } : { pool },
-  )
+  await app.register(campaignCharactersPlugin, {
+    pool,
+    characterCreationQueue: queue,
+  })
   await app.ready()
   return app
 }
@@ -783,7 +781,7 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
       expect(res.json<{ code: string }>().code).toBe('world_not_complete')
     })
 
-    it('400 concept_or_guided_required when neither conceptText nor guidedChoices is present', async () => {
+    it('400 bad_body when conceptText is missing (Zod required-field violation)', async () => {
       const owner = await seedUser(pool, scope, 0)
       const seed = await seedCampaignWithSituation(owner)
       const res = await app.inject({
@@ -793,7 +791,7 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
         payload: { situationGroundingText: longGrounding },
       })
       expect(res.statusCode).toBe(400)
-      expect(res.json<{ code: string }>().code).toBe('concept_or_guided_required')
+      expect(res.json<{ code: string }>().code).toBe('bad_body')
     })
 
     it('400 bad_body when situationGroundingText is < 20 chars', async () => {
@@ -1298,6 +1296,28 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ tables: [] })
+    })
+
+    it('200 — table with no random_table_entries returns entries: []', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      // Seed a random_table with NO entries. Exercises the
+      // `entriesByTable.get(t.id) ?? []` fallback in the handler.
+      await pool.query(
+        `INSERT INTO random_tables (id, world_id, name, category)
+         VALUES ($1, $2, 'Empty Table', 'misc')`,
+        [uuidv7(), seed.worldId],
+      )
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/random-tables`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{ tables: { name: string; entries: unknown[] }[] }>()
+      expect(body.tables).toHaveLength(1)
+      expect(body.tables[0]?.name).toBe('Empty Table')
+      expect(body.tables[0]?.entries).toEqual([])
     })
 
     it('403 not_campaign_member — stranger', async () => {

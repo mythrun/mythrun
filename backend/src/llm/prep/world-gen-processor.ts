@@ -433,8 +433,8 @@ async function claimWorldStage(
    * either claims (rowCount > 0) or the row is no longer matched. */
   if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
   return 'lost-race'
-  /* c8 ignore stop */
 }
+/* c8 ignore stop */
 
 // myth-tuok T6: per-player claim path for character-creation (T11) and
 // future per-user pipeline stages. Keyed on campaign_id + user_id; mirrors

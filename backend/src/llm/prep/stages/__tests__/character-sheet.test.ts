@@ -281,6 +281,10 @@ describe('runCharacterSheetStage', () => {
       skills: [
         { name: 'Religion', proficient: true, expertise: true },
         { name: 'Insight', proficient: true, expertise: false },
+        // proficient:false + expertise:false maps to 'none' (the
+        // proficiency_level enum's third state). Exercises the
+        // fall-through return in proficiencyLevel().
+        { name: 'Acrobatics', proficient: false, expertise: false },
       ],
     }
     mockGenerateText.mockResolvedValueOnce({
@@ -324,12 +328,16 @@ describe('runCharacterSheetStage', () => {
          ORDER BY skill_name`,
       [first.characterId],
     )
-    expect(skills.rowCount).toBe(2)
+    expect(skills.rowCount).toBe(3)
     expect(skills.rows[0]).toMatchObject({
+      skill_name: 'Acrobatics',
+      proficiency_level: 'none',
+    })
+    expect(skills.rows[1]).toMatchObject({
       skill_name: 'Insight',
       proficiency_level: 'proficient',
     })
-    expect(skills.rows[1]).toMatchObject({
+    expect(skills.rows[2]).toMatchObject({
       skill_name: 'Religion',
       proficiency_level: 'expertise',
     })

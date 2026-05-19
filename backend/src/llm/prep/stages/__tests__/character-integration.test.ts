@@ -117,11 +117,25 @@ const INTEGRATION = {
       description:
         'Trained at the Bone Sept in youth, learned the old liturgies before the burning twenty years ago.',
     },
+    // Unresolved name — LLM hallucinated a faction that doesn't exist in
+    // the seeded world. Handler silently skips this entry (no FK violation
+    // surfaces to Postgres).
+    {
+      target_entity_name: 'Phantom Order That Never Existed',
+      relationship_type: 'hostile_to',
+      description:
+        'A relationship the LLM invented that does not match any seeded entity by name.',
+    },
   ],
   facts: [
     {
       content: 'Bran was apprenticed at the Bone Sept in his youth.',
       tags: ['backstory'],
+    },
+    // Empty tags array — handler defaults topic to 'backstory'.
+    {
+      content: 'A general motivation fact with no tags at all.',
+      tags: [],
     },
   ],
 }
@@ -344,11 +358,24 @@ describe('runCharacterIntegrationStage', () => {
           description:
             'Was raised at the Bone Sept and bears its faded sept-mark on the back of his left hand.',
         },
+        // Same shape as first-run INTEGRATION: one resolved + one unresolved,
+        // so re-run + first-run fact/rel counts match. The unresolved name
+        // is silently skipped, so both runs produce the same DB state.
+        {
+          target_entity_name: 'Phantom Order V2',
+          relationship_type: 'hostile_to',
+          description:
+            'A relationship the LLM invented that does not match any seeded entity by name.',
+        },
       ],
       facts: [
         {
           content: 'Bran carries a sept-mark from his apprentice years.',
           tags: ['backstory'],
+        },
+        {
+          content: 'A V2 motivation fact with no tags at all.',
+          tags: [],
         },
       ],
     }

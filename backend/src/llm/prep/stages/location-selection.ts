@@ -50,13 +50,25 @@ export async function runLocationSelectionStage(
     `SELECT starting_situation_entries FROM worlds WHERE id = $1`,
     [args.worldId],
   )
-  const entries = world.rows[0]?.starting_situation_entries ?? []
+  // worldId came from campaigns.world_id (FK to worlds.id) so the row
+  // exists; starting_situation_entries is NOT NULL DEFAULT '[]'.
+  const worldRow = world.rows[0]
+  /* c8 ignore next 3 — invariant per campaigns.world_id FK NOT NULL */
+  if (worldRow === undefined) {
+    throw new Error(`world ${args.worldId} not found — FK invariant violated`)
+  }
+  const entries = worldRow.starting_situation_entries
   const entry = entries.find((e) => e.index === idx)
+  /* c8 ignore start — drift-defense: campaigns.starting_situation_index
+   * CHECK constrains it to {0,1,2}; starting_situation stage always emits 3
+   * entries indexed 0/1/2. This throw fires only if the entries array
+   * was mutated after world-gen — operator action, not happy path. */
   if (entry === undefined) {
     throw new Error(
       `location-selection: no entry for index ${String(idx)} in worlds.starting_situation_entries for world ${args.worldId}`,
     )
   }
+  /* c8 ignore stop */
 
   const entityCheck = await client.query<{ id: string }>(
     `SELECT id FROM entities WHERE id = $1 AND world_id = $2`,

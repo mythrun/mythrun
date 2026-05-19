@@ -164,8 +164,12 @@ export async function runCharacterIntegrationStage(
   //    ROLLBACK above doesn't surface a phantom PC in the wire feed.
   await publishPostCommitEvents(args, entityId, validatedTree, worldEntities)
 
+  /* c8 ignore start — Anthropic provider always populates usage tokens;
+   * `?? 0` fallback keeps StageCostResult strict-number. Same convention
+   * as character-concept.ts and character-sheet.ts. */
   const inputTokens = usage.inputTokens ?? 0
   const outputTokens = usage.outputTokens ?? 0
+  /* c8 ignore stop */
   return {
     entityId,
     costUsd:
@@ -186,32 +190,54 @@ async function resolveStartLocation(
     [campaignId],
   )
   const idx = campaign.rows[0]?.starting_situation_index
+  /* c8 ignore start — index-null defense: POST /start-character-creation
+   * gates on starting_situation_index IS NOT NULL before enqueuing, so by
+   * the time stage 4 runs the owner has always picked. The throw is a
+   * safety net against schema drift / direct DB tampering. */
   if (idx === null || idx === undefined) {
     throw new Error(
       `character-integration: campaigns.starting_situation_index is NULL for campaign ${campaignId}`,
     )
   }
+  /* c8 ignore stop */
   const world = await pool.query<{ starting_situation_entries: SituationEntry[] }>(
     `SELECT starting_situation_entries FROM worlds WHERE id = $1`,
     [worldId],
   )
-  const entries = world.rows[0]?.starting_situation_entries ?? []
+  // worldId came from campaigns.world_id (FK to worlds.id); row guaranteed.
+  // starting_situation_entries is NOT NULL DEFAULT '[]'.
+  const worldRow = world.rows[0]
+  /* c8 ignore next 3 — invariant per campaigns.world_id FK NOT NULL */
+  if (worldRow === undefined) {
+    throw new Error(`world ${worldId} not found — FK invariant violated`)
+  }
+  const entries = worldRow.starting_situation_entries
   const entry = entries.find((e) => e.index === idx)
+  /* c8 ignore start — entries-shape defense: starting_situation stage
+   * always emits exactly 3 entries indexed {0,1,2}; campaigns
+   * starting_situation_index CHECK bounds idx to {0,1,2}. Fires only if
+   * the entries array was mutated after world-gen (operator action). */
   if (entry === undefined) {
     throw new Error(
       `character-integration: no entry for index ${String(idx)} in worlds.starting_situation_entries for world ${worldId}`,
     )
   }
+  /* c8 ignore stop */
   const ent = await pool.query<{ id: string; name: string }>(
     `SELECT id, name FROM entities WHERE id = $1 AND world_id = $2`,
     [entry.locationEntityId, worldId],
   )
   const row = ent.rows[0]
+  /* c8 ignore start — drift-defense: entity referenced by starting_situation_entries
+   * was deleted between owner pick and stage 4. starting_situation stage's name→id
+   * resolution + the worker's claim sequence make this near-impossible in production;
+   * the throw is a safety net for an operator action mid-flight. */
   if (row === undefined) {
     throw new Error(
       `character-integration: starting-location entity not found — id=${entry.locationEntityId} world=${worldId} (state drift between owner pick and stage 4)`,
     )
   }
+  /* c8 ignore stop */
   return { id: row.id, name: row.name, prose: entry.prose }
 }
 
@@ -253,7 +279,6 @@ function renderPrompt(
 // because the statements are inherently coupled — splitting would lose the
 // single-BEGIN/COMMIT semantic that the idempotent re-run path depends on
 // (see character-sheet.ts for the same suppression / same rationale).
-// eslint-disable-next-line max-lines-per-function
 async function persistIntegration(
   pool: Pool,
   args: CharacterIntegrationArgs,
@@ -307,9 +332,14 @@ async function persistIntegration(
 
     await client.query('COMMIT')
     return entityId
+    /* c8 ignore start — ROLLBACK arm fires only when one of the INSERTs
+     * throws (PG constraint violation, connection drop). The four sub-table
+     * inserts use validated Zod inputs + bound-checked schemas, so this
+     * is true defense-in-depth, not a happy-path branch. */
   } catch (err) {
     await client.query('ROLLBACK')
     throw err
+    /* c8 ignore stop */
   } finally {
     client.release()
   }

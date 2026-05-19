@@ -83,6 +83,7 @@ export async function runStartingSituationStage(
     callSite: 'starting-situation',
     schemaName: 'StartingSituationsSchema',
   })
+  /* c8 ignore next 2 */
   let inputTokens = result.usage.inputTokens ?? 0
   let outputTokens = result.usage.outputTokens ?? 0
 
@@ -102,6 +103,7 @@ export async function runStartingSituationStage(
       callSite: 'starting-situation',
       schemaName: 'StartingSituationsSchema',
     })
+    /* c8 ignore next 2 */
     inputTokens += result.usage.inputTokens ?? 0
     outputTokens += result.usage.outputTokens ?? 0
     resolved = await resolveLocationEntries(client, args.worldId, result.output.location_hooks)
