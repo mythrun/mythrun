@@ -75,9 +75,20 @@ Maintained as a table here. The verifier subagent updates this section on each r
 | GET /api/campaigns/mine | my-campaigns | fetch-on-mount |
 | GET /api/campaigns/:campaignId | campaign-details | event-driven |
 | DELETE /api/campaigns/:campaignId | campaign-details | event-driven |
+| PATCH /api/campaigns/:campaignId/name | campaign-details | event-driven |
 | POST /api/campaigns/:campaignId/resume | campaign-details | event-driven |
 | GET /api/campaigns/:campaignId/status | status | event-driven |
 | GET /api/campaigns/:campaignId/status/stream | status, live-events | event-driven |
+| GET /api/campaigns/:campaignId/world-snapshot | world-snapshot | event-driven |
+| POST /api/campaigns/:campaignId/starting-situation | character-creation | event-driven |
+| POST /api/campaigns/:campaignId/start-character-creation | character-creation | event-driven |
+| POST /api/campaigns/:campaignId/archive | character-creation | event-driven |
+| POST /api/campaigns/:campaignId/characters | character-creation | event-driven |
+| GET /api/campaigns/:campaignId/starting-situations | character-creation | event-driven |
+| GET /api/campaigns/:campaignId/characters | character-creation | event-driven |
+| GET /api/campaigns/:campaignId/characters/:charId | character-creation | event-driven |
+| GET /api/campaigns/:campaignId/hierarchy | character-creation | event-driven |
+| GET /api/campaigns/:campaignId/random-tables | character-creation | event-driven |
 | POST /api/sessions/:id/ws-ticket | session-ticket | action-only |
 | POST /api/campaigns/:campaignId/invites | invites | action-only |
 | GET /api/campaigns/:campaignId/invites | invites | action-only |
