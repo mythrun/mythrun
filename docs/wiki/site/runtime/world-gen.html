@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › World gen</div>
         <article>
@@ -36,7 +36,11 @@
   calls (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>),
   three streaming stages with live entity emission (<code>world_and_factions</code> Opus,
   <code>locations_and_npcs</code> Opus, <code>entity_relationships</code> Sonnet), and a final
-  non-streaming Sonnet <code>coherence_pass</code>. After stage 4 commits the pipeline fires a
+  non-streaming Sonnet <code>coherence_pass</code>. A non-streaming Sonnet
+  <code>vocabulary_intake</code> stage runs between <code>concept_intake</code> and
+  <code>world_and_factions</code> — it generates the world's distinctive lexicon (the
+  <a href="#vocabulary-registry">vocabulary registry</a>) and every downstream stage injects the
+  rendered registry into its system prompt. After stage 4 commits the pipeline fires a
   <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable through
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still running, and
   stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage handler returns a
@@ -986,10 +990,15 @@
 <p>
   The processor in <code>backend/src/llm/prep/world-gen-processor.ts</code> runs on the
   <a href="./worker.html">worker service</a> at concurrency 3. <code>WORLD_GEN_STAGES</code> is the
-  ordered tuple <code>concept_intake</code>, <code>world_and_factions</code>,
-  <code>locations_and_npcs</code>, <code>entity_relationships</code>,
-  <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>. Every
-  iteration enforces the same per-stage invariant:
+  ordered tuple <code>concept_intake</code>, <code>vocabulary_intake</code>,
+  <code>world_and_factions</code>, <code>locations_and_npcs</code>,
+  <code>entity_relationships</code>, <code>starting_situation</code>, <code>random_tables</code>,
+  <code>coherence_pass</code>. The list grew by one entry — <code>vocabulary_intake</code> is the
+  new stage 1.5 that generates the per-world <a href="#vocabulary-registry">vocabulary registry</a>
+  before any downstream prose-bearing stage runs. Counting prose continues to call the streaming
+  Opus + Sonnet block "the seven stages" because <code>vocabulary_intake</code> is a structured
+  pre-pass with no entity emission; section headings and the cost-cap discussion treat it as a
+  cheap setup call. Every iteration enforces the same per-stage invariant:
 </p>
 
 <ol>
@@ -1112,6 +1121,17 @@
       <td>none</td>
     </tr>
     <tr>
+      <td><code>vocabulary_intake</code></td>
+      <td>Sonnet</td>
+      <td>non-streaming</td>
+      <td>
+        <code>worlds.vocabulary_registry</code> jsonb (<code>{entries, adjacent_franchises}</code>);
+        downstream stages 2-7 render this column into a
+        <code>{{vocabularyRegistry}}</code> placeholder in their system prompts
+      </td>
+      <td>none</td>
+    </tr>
+    <tr>
       <td><code>world_and_factions</code></td>
       <td>Opus (streaming) + Haiku/Sonnet repair on Zod failure</td>
       <td>streaming</td>
@@ -1191,6 +1211,50 @@
     </tr>
   </tbody>
 </table>
+
+<h3 id="vocabulary-registry">Vocabulary registry</h3>
+
+<p>
+  Every world has a <strong>vocabulary registry</strong> — a per-world glossary of distinctive
+  terms generated at stage 1.5 (<code>vocabulary_intake</code>) and injected into the system
+  prompt of every downstream world-gen stage. The registry's primary purpose is to give each
+  world its own distinctive voice across whatever vocabulary domains its premise demands
+  (calendar terms, pantheon names, honorifics, in-world slang, named concepts). IP-drift
+  defense (avoiding verbatim use of franchise-iconic neologisms like
+  <em>Statute of Secrecy</em> or <em>Mystra</em>) falls out as a consequence: stage 1.5
+  identifies which fiction franchises the world is adjacent to and generates the world's own
+  term for each iconic neologism, recording the IP term in the entry's
+  <code>avoids</code> field.
+</p>
+
+<p>
+  The registry is stored as <code>worlds.vocabulary_registry jsonb</code> with shape
+  <code>{entries: [...], adjacent_franchises: [...]}</code> (migration 015,
+  <code>NOT NULL DEFAULT '{"entries": [], "adjacent_franchises": []}'</code> with a CHECK
+  constraint pinning the top-level shape). Each entry carries
+  <code>{term, definition, avoids?, usage_notes?, source, access_level}</code>. Downstream
+  stages 2-7 render the registry as deterministic prose via
+  <code>renderVocabularyRegistry()</code> and substitute it into a
+  <code>{{vocabularyRegistry}}</code> placeholder at the top of their prompt templates.
+  Anthropic prompt caching keeps the per-stage cost negligible since the registry is stable
+  across a single world's stages.
+</p>
+
+<p>
+  The <code>GET /api/campaigns/:campaignId/world-snapshot</code> endpoint exposes the
+  registry on the <code>WorldSummary</code> as <code>vocabularyRegistry</code>,
+  filtered by the same <code>access_level</code> tier list as entities and facts:
+  without dev bypass only <code>known</code>-tier entries surface;
+  <code>adjacent_franchises</code> is metadata (not player-secret content) and always surfaces.
+</p>
+
+<p>
+  A consolidation pass that appends terms surfaced during world-gen and character creation
+  is designed but deferred (bead <code>myth-1uw6</code>) — activates when MYT-52
+  (character-creation runtime) lands and provides a hook point. The data shape, append-only
+  semantics, and <code>source</code> tag on each entry are designed to support both that
+  consolidation pass and a future Scribe runtime write-back.
+</p>
 
 <h3 id="streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</h3>
 
@@ -1599,10 +1663,12 @@
   <code>follow_up_questions</code>, <code>geography_summary</code>, <code>world_overview</code>, and
   (notably) <code>dev_bypass_access_filter</code>. The snapshot view explicitly selects
   <code>id</code>, <code>name</code>, <code>concept</code>, <code>tone</code>, <code>themes</code>,
-  and <code>era</code> only. New columns added to the <code>worlds</code> table never reach the wire
-  automatically — adding a column requires authoring a deliberate addition to the projection. This
-  is the inverse of the usual repo-mapper default: most repos return the row shape; this one returns
-  an allowlist.
+  <code>era</code>, and <code>vocabulary_registry</code> — the registry is the one jsonb column
+  that does cross the wire, with its entries tier-filtered against the same access-level list as
+  entities and facts before they're attached to <code>WorldSummary.vocabularyRegistry</code>. New
+  columns added to the <code>worlds</code> table never reach the wire automatically — adding a
+  column requires authoring a deliberate addition to the projection. This is the inverse of the
+  usual repo-mapper default: most repos return the row shape; this one returns an allowlist.
 </aside>
 
 <h3 id="three-tier-access-classification">Three-tier access classification</h3>
@@ -2065,7 +2131,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

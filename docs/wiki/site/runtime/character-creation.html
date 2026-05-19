@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Character creation · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="character-creation">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html" class="active">Character creation</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Character creation</div>
+        <article>
+<h1>Character creation</h1>
+
+<p class="lead">
+  The per-player parallel character-creation surface. After world-gen completes and the wiki snapshot
+  is fetchable, the owner picks one of the three generated starting situations for the entire party,
+  members each submit a character (a concept text plus a situation-grounding text), and the owner
+  triggers fan-out. Fan-out enqueues one <code>character-creation</code> job per submitted player on
+  the <code>campaign-setup</code> BullMQ queue; each job walks four stages
+  (<code>location_selection</code> → <code>character_concept</code> → <code>character_sheet</code> →
+  <code>character_integration</code>) and ends with the PC as a real <code>entities</code> row of
+  type <code>'pc'</code>, joined to a populated <code>characters</code> row, with PC↔world
+  relationships and facts written into the world. Cross-PC weaving and the owner's
+  established-relationships prompt are MYT-54's scope; MYT-53 is per-player only.
+</p>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Character creation is phase 4 of the campaign lifecycle. Phase 2 (<a href="./world-gen.html">world
+  generation</a>) and phase 3 (wiki read via
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code>) ship today. Phase 5 (cross-PC
+  integration) is MYT-54; phase 1 (pre-world-gen lobby retrofit) is a separate bead. MYT-53 owns the
+  middle three steps — owner picks situation, members submit characters, owner triggers fan-out —
+  plus the four-stage per-player worker pipeline that turns those submissions into PCs in the world.
+</p>
+
+<pre><code>                    ┌──────────────────────────────────────────────────┐
+PHASE 2 (shipped):  │ POST /api/campaigns                              │
+World generation    │   fires world-gen worker on the world-gen queue  │
+                    │ SSE on /status/stream                            │
+                    │ World snapshot ready (myth-exac)                 │
+                    └──────────────────────────────────────────────────┘
+                                          ↓
+                    ┌──────────────────────────────────────────────────┐
+PHASE 3 (shipped):  │ GET /world-snapshot                              │
+Wiki read           │   Members read the world's wiki                  │
+                    └──────────────────────────────────────────────────┘
+                                          ↓
+                    ┌──────────────────────────────────────────────────┐
+PHASE 4 ★ MYT-53:   │ Step 1: Owner picks starting situation           │
+Per-player char     │   POST /api/campaigns/:id/starting-situation     │
+creation            │   campaigns.starting_situation_index ← {0,1,2}   │
+                    │                                                  │
+                    │ Step 2: Members submit characters                │
+                    │   POST /api/campaigns/:id/characters             │
+                    │   { conceptText, situationGroundingText }        │
+                    │   character_concepts(campaign_id, user_id)       │
+                    │   status='submitted'                             │
+                    │   (re-POST allowed while still 'submitted')      │
+                    │                                                  │
+                    │ Step 3: Owner triggers fan-out                   │
+                    │   POST /api/campaigns/:id/start-character-creation
+                    │   Gate: situation chosen + ≥1 'submitted' row    │
+                    │   Atomically flips matching rows → 'processing'  │
+                    │   Enqueues per-player jobs on campaign-setup     │
+                    │                                                  │
+                    │ campaign-setup BullMQ queue (concurrency 5)      │
+                    │   Each job: character-creation(campaignId,userId)│
+                    │                                                  │
+                    │   ├── 1. location_selection (no LLM)             │
+                    │   │     reads campaigns.starting_situation_index │
+                    │   │     defers fact-write to stage 4             │
+                    │   ├── 2. character_concept (Sonnet)              │
+                    │   │     generateObject; holds narrative payload  │
+                    │   │     in worker memory for stage 3             │
+                    │   ├── 3. character_sheet (Sonnet)                │
+                    │   │     generateObject; INSERT characters +      │
+                    │   │     campaign_characters join + bulk-INSERT   │
+                    │   │     character_skills / _features /           │
+                    │   │     _equipment / _spells                     │
+                    │   └── 4. character_integration ★ stream (Opus)   │
+                    │         streamObject; INSERT entities row        │
+                    │         (entity_type='pc'), links                │
+                    │         characters.entity_id, writes PC↔world    │
+                    │         relationships + facts including the      │
+                    │         deferred "starts at $location" fact.     │
+                    │         Streams entity-added + edge-added events │
+                    │                                                  │
+                    │ pipeline_runs.user_id distinguishes per-player   │
+                    │ rows; the status panel renders per-player        │
+                    │ progress unchanged from world-gen.               │
+                    └──────────────────────────────────────────────────┘
+                                          ↓
+PHASE 5 ▶ MYT-54    Owner-gated cross-PC integration + post-creation stages
+PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
+</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>Strict order, not permissive</strong> — players cannot submit characters until the owner
+  has chosen a starting situation. The strictness eliminates a class of edge cases ("what if a
+  player submitted before the owner picked?") and makes the frontend trivial: the
+  <code>POST /characters</code> route returns
+  <code>409 'starting_situation_not_chosen'</code> until <code>campaigns.starting_situation_index</code>
+  is set, and the lobby displays a "waiting on owner" state. The owner choosing one situation for
+  the entire party (not per-character) is the other half of the same simplification — different
+  characters cannot have different starting situations and still play together.
+</aside>
+
+<h2 id="the-two-prompt-model">The two-prompt model</h2>
+
+<p>
+  The character-submission body carries two load-bearing text fields, and the separation is what
+  gives players agency on both axes:
+</p>
+
+<ul>
+  <li>
+    <code>conceptText</code> (20–4000 chars): "Who is this character?" — identity, race, class,
+    background, personality, backstory. Stage 2 (<code>character_concept</code>) consumes it.
+  </li>
+  <li>
+    <code>situationGroundingText</code> (20–2000 chars, always required): "Why is this character at
+    this tavern?" — the player's framing of how their PC arrives at the owner-chosen opening. Stage
+    4 (<code>character_integration</code>) consumes it.
+  </li>
+</ul>
+
+<p>
+  Without the grounding prompt, stage 4 has only a generic "introduce this PC to the world"
+  instruction to work with; with it, stage 4 has the player's specific entry-point narrative to
+  weave through the PC's facts and PC↔world relationships. The frontend reframes the grounding
+  prompt for late joiners ("describe the situation the party is currently in and how your character
+  fits") but the backend column is the same.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Both fields required in v1; <code>guidedChoices</code> reserved for later</strong> — the
+  POST body schema accepts an optional <code>guidedChoices</code> object (defaulted to
+  <code>{}</code>), and the route asserts at least one of
+  <code>{ conceptText, guidedChoices }</code> is present (400
+  <code>concept_or_guided_required</code>). In v1 the guided path is never populated and
+  <code>conceptText</code> is effectively required; a future guided-character-creation bead lights
+  up the picker UI and the deterministic-assembly path in stages 2–3 without reshaping the endpoint.
+</aside>
+
+<h2 id="the-nine-routes">The nine routes</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method &amp; path</th>
+      <th>Auth</th>
+      <th>Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/starting-situation</code></td>
+      <td>Owner</td>
+      <td>
+        Sets <code>campaigns.starting_situation_index</code> to one of
+        <code>{0, 1, 2}</code>. Idempotent while all <code>character_concepts</code> rows are still
+        <code>'submitted'</code> or absent.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/start-character-creation</code></td>
+      <td>Owner</td>
+      <td>
+        Atomically flips every <code>'submitted'</code> row to <code>'processing'</code> and
+        enqueues one <code>character-creation</code> job per row on the
+        <code>campaign-setup</code> queue. Idempotent under double-click — a second call picks up
+        any new late-joiner rows.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/archive</code></td>
+      <td>Owner</td>
+      <td>
+        Soft-deletes the campaign by flipping <code>campaigns.status</code> to
+        <code>'archived'</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/characters</code></td>
+      <td>Member</td>
+      <td>
+        UPSERTs the caller's <code>character_concepts</code> row with
+        <code>{ conceptText, guidedChoices?, situationGroundingText }</code>. Allowed when the row
+        is absent, <code>'submitted'</code>, or <code>'failed'</code> (failed → submitted resets the
+        row). Returns <code>409 'concept_locked'</code> for <code>'processing'</code> /
+        <code>'completed'</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/starting-situations</code></td>
+      <td>Member</td>
+      <td>
+        Returns the three world-generated starting situations
+        (<code>worlds.starting_situation_entries</code>) plus the chosen index, if any.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/characters</code></td>
+      <td>Member</td>
+      <td>
+        Per-member roster: <code>userId</code>, display name, concept status
+        (<code>none | submitted | processing | completed | failed</code>), and
+        <code>characterId</code> once the row exists.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/characters/:charId</code></td>
+      <td>Member</td>
+      <td>
+        The portable character — narrative half + mechanics + the four sub-tables (skills, features,
+        equipment, spells).
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/hierarchy</code></td>
+      <td>Member</td>
+      <td>
+        Tier-filtered entity hierarchy for the campaign's world (known-only by default; dev bypass
+        widens). Mirrors the world-snapshot tier semantics.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/random-tables</code></td>
+      <td>Member</td>
+      <td>
+        The world-gen stage-6 output — the world's per-domain random tables, surfaced to members so
+        the dev tool and any future session-runtime UI can render them.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  All nine routes carry <code>config.pipelineRoute = true</code> and are registered in
+  <code>backend/src/contract/pipeline-routes.ts</code>, so the boot-time route-audit invariant keeps
+  the plugin, the contract, and the dev tool honest in lockstep. The
+  <code>character-creation</code> job kind is registered in
+  <code>backend/src/contract/pipeline-jobs.ts</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>character_concepts</code> is its own table, not a column on
+  <code>campaign_members</code></strong> — <code>campaign_members</code> is a join table; concept
+  input is conceptually separate from membership. One row per
+  <code>(campaign_id, user_id)</code> matches <code>campaign_members</code>'s grain exactly, and a
+  composite FK to <code>(campaign_members.campaign_id, campaign_members.user_id)</code> means
+  removing a member cascades the concept row out. The concept lifecycle (status, error JSON,
+  resubmit edits) stays self-contained rather than mixing with membership state.
+</aside>
+
+<h2 id="the-four-stages">The four stages</h2>
+
+<p>
+  The processor in <code>backend/src/llm/prep/character-creation-processor.ts</code> parallels
+  <code>world-gen-processor.ts</code>: the outer scope owns BEGIN / COMMIT / ROLLBACK and publishes
+  finalized events post-COMMIT; the stage handlers write to the passed client and accumulate events.
+  The atomic-claim helper from world-gen is parameterised on an optional <code>userId</code>, so
+  character-creation rows in <code>pipeline_runs</code> are keyed on
+  <code>(world_id, stage, user_id)</code> rather than <code>(world_id, stage, NULL)</code> — N
+  players run N concurrent rows per stage without colliding. Per-player failure does not abort other
+  parallel jobs.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Stage</th>
+      <th>Model</th>
+      <th>Latency</th>
+      <th>Cost (lower bound)</th>
+      <th>Persists</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>location_selection</code></td>
+      <td>none</td>
+      <td>~0.1s</td>
+      <td>$0</td>
+      <td>
+        Resolves <code>campaigns.starting_situation_index</code> →
+        <code>worlds.starting_situation_entries[index].locationEntityId</code>. Validates the
+        location entity still exists. <strong>Defers</strong> the actual fact write to stage 4 (the
+        PC entity doesn't exist until then); stage 4 re-derives the same id from the same source
+        records.
+      </td>
+    </tr>
+    <tr>
+      <td><code>character_concept</code></td>
+      <td>Sonnet <code>generateObject</code></td>
+      <td>~5–10s</td>
+      <td>~$0.02</td>
+      <td>
+        Narrative-half payload only (name, race, class, background, alignment, traits, ideals,
+        bonds, flaws, backstory). Held in worker memory; nothing is INSERTed yet because
+        <code>characters</code> has NOT NULL mechanicals that stage 3 generates.
+      </td>
+    </tr>
+    <tr>
+      <td><code>character_sheet</code></td>
+      <td>Sonnet <code>generateObject</code></td>
+      <td>~10–20s</td>
+      <td>~$0.04</td>
+      <td>
+        Ability scores, HP / max HP / AC / proficiency bonus, plus the four sub-tables
+        (<code>character_skills</code>, <code>character_features</code>,
+        <code>character_equipment</code>, <code>character_spells</code>). Single transaction:
+        INSERT into <code>characters</code> (narrative + mechanics together) + INSERT into
+        <code>campaign_characters</code> + bulk-INSERT into the four sub-tables.
+        <code>characters.entity_id</code> stays NULL until stage 4.
+      </td>
+    </tr>
+    <tr>
+      <td><code>character_integration</code> ★</td>
+      <td>Opus <code>streamObject</code></td>
+      <td>~15–30s</td>
+      <td>~$0.10</td>
+      <td>
+        INSERTs the PC <code>entities</code> row (<code>entity_type='pc'</code>,
+        <code>access_level='known'</code>), backfills <code>characters.entity_id</code>, writes
+        PC↔world relationship rows + PC↔world fact rows including the deferred
+        <em>"starts at $location"</em> fact (re-derived from
+        <code>campaigns.starting_situation_index</code> + <code>worlds.starting_situation_entries</code>).
+        Streams <code>entity-added</code> when the PC is created and <code>edge-added</code> for
+        each relationship.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  The table's per-stage costs are the lower-bound point estimate (2K input / 1–2K output per
+  Sonnet call, 2K input / 1K output for Opus). Realistic per-player cost is
+  <strong>$0.20–$0.50</strong> once the world snapshot input (8–15K tokens for a full world) and
+  the player's grounding text reach normal sizes. A cost-cap circuit breaker reads
+  <code>settings.character_creation_cost_cap_usd</code> (default <code>$5.00</code>) at the start
+  of each per-player job; over-cap aborts the player's stages with
+  <code>character_creation_cost_cap_exceeded</code>, leaving other parallel jobs untouched. The
+  $5 default covers ~10 players at the realistic upper bound, with headroom for the multiplayer
+  concurrency target of 5–8 per party.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Stages 2–3 are Sonnet, stage 4 is Opus</strong> — the parent pipeline spec sketched all
+  four stages as Opus. Stages 2–3 produce bounded structured output (a portable-character payload,
+  D&amp;D 5e SRD-compliant mechanical rows); Sonnet handles that reliably and is ~3× cheaper input,
+  5× cheaper output. Stage 4 is the load-bearing PC↔world integration: it receives the world
+  snapshot, the player's grounding text, and the chosen situation, and produces a coherent
+  narrative weave (relationships + facts tagged with the PC entity) while also streaming for SSE
+  consumption. The narrative-judgement and cross-reference work matches the Slow Thinker role;
+  Opus is the right tier here.
+</aside>
+
+<h2 id="lifecycle-and-late-joiners">Lifecycle and late joiners</h2>
+
+<p>
+  A member can submit a character as soon as two gates are satisfied:
+  <code>worlds.status = 'complete'</code> and
+  <code>campaigns.starting_situation_index IS NOT NULL</code>. Until both gates hold, POST
+  <code>/characters</code> returns <code>409</code> with the specific gate code
+  (<code>world_not_complete</code> or <code>starting_situation_not_chosen</code>). Once a row exists
+  in <code>'submitted'</code>, the player can re-POST to update the prose; the route refuses
+  updates while the row is <code>'processing'</code> or <code>'completed'</code> (409
+  <code>concept_locked</code>).
+</p>
+
+<p>
+  The owner can trigger <code>start-character-creation</code> any time and as often as they like.
+  Each call enqueues for whatever's currently in <code>'submitted'</code>; a double-click is safe
+  because the WHERE clause skips <code>'processing'</code> and <code>'completed'</code> rows. Late
+  joiners — members who accept invites after the initial fan-out — follow the same flow:
+</p>
+
+<ol>
+  <li>Late member accepts an invite. Their <code>campaign_members</code> row exists; no
+    <code>character_concepts</code> row yet.</li>
+  <li>Late member POSTs <code>/characters</code>. New row created,
+    <code>status='submitted'</code>.</li>
+  <li>Owner re-POSTs <code>/start-character-creation</code>. Atomic claim flips only the new row to
+    <code>'processing'</code>, enqueues that one job. Other members' <code>'completed'</code> rows
+    are untouched.</li>
+  <li>Late-joiner's character creation runs in parallel with any other in-flight jobs.</li>
+</ol>
+
+<p>
+  Failure handling is per-player and resubmittable. On terminal stage failure the processor sets
+  <code>character_concepts.status='failed'</code> and writes the error JSON; the player can re-POST
+  <code>/characters</code> to reset the row to <code>'submitted'</code> and the owner re-triggers
+  fan-out. The processor's re-run is idempotent at the stage boundary, not delete-and-recreate:
+  stage 3 detects an existing <code>characters</code> row for <code>(campaign_id, user_id)</code>
+  and UPDATEs rather than INSERTs (TRUNCATE-then-INSERT on the four sub-tables); stage 4 detects an
+  existing <code>characters.entity_id</code> and skips the entity creation (TRUNCATE-then-INSERT on
+  PC-tagged relationships / facts). The frontend reframes the second prompt for late joiners
+  ("describe the situation the party is currently in and how your character fits") but both forms
+  map to the same <code>situation_grounding_text</code> column.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Resubmit-after-failure is idempotent on stage outputs, not a clean slate</strong> — the
+  alternative (DELETE the partial PC + sub-table rows on failure) would force the player to
+  re-enter their prose just because stage 4 timed out once. Idempotent re-runs let a transient
+  Anthropic 503 self-heal without losing the player's input or the work stages 2–3 already
+  completed. The <code>UNIQUE(campaign_id, user_id)</code> on
+  <code>campaign_characters</code> + <code>UNIQUE(world_id, name)</code> on
+  <code>entities</code> would otherwise turn the re-run into a constraint violation. Players who
+  genuinely want a clean slate (different name, race, class) re-roll through an admin path — there
+  is no member-facing DELETE in v1.
+</aside>
+
+<h2 id="cross-pc-integration-is-myt-54-not-myt-53">Cross-PC integration is MYT-54, not MYT-53</h2>
+
+<p>
+  Stage 4 (<code>character_integration</code>) is <strong>per-player only</strong>. It writes
+  PC↔world relationships and PC↔world facts; it does not touch PC↔PC links. Players who want
+  explicit cross-character relationships ("we're siblings", "I owe him money") get that in MYT-54,
+  which layers on top of MYT-53's per-player output:
+</p>
+
+<ul>
+  <li>MYT-54 adds a post-fan-out barrier that waits for every per-player job to reach
+    <code>'completed'</code>.</li>
+  <li>MYT-54 adds an owner-only prompt at fan-out time: "any established relationships between
+    characters to give the LLM upfront?"</li>
+  <li>MYT-54's cross-PC integration stage reads that input and every per-player PC, then writes
+    cross-PC relationship edges and cross-references in facts.</li>
+</ul>
+
+<p>
+  MYT-53's data shapes are designed so MYT-54 can layer on without reshaping per-player output —
+  PC entities, relationships, and facts already exist as first-class rows that the cross-PC pass
+  can read and amend.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="exercise-the-routes-end-to-end">Exercise the routes end-to-end</h3>
+
+<p>
+  T23 lands <code>backend/dev-tool/src/components/character-creation-panel.ts</code>, which binds to
+  <code>mythrun.watchcampaign</code>, renders the per-member roster, and exposes the owner action
+  buttons ("Pick starting situation" and "Start character creation"). Until T23 ships, the routes
+  are exercised via curl + SSE inspection + direct <code>psql</code> on the
+  <code>character_concepts</code> and <code>characters</code> tables. The route-audit contract test
+  (<code>backend/src/contract/__tests__/pipeline-routes.test.ts</code>) verifies registration drift
+  as a side-effect of any backend type-check.
+</p>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  Upstream: <a href="./world-gen.html">world gen</a> populates
+  <code>worlds.starting_situation_entries</code> (extended in MYT-53) — stage
+  <code>starting_situation</code> now emits a structured three-entry array alongside the existing
+  prose blob, so <code>GET /starting-situations</code> can render the
+  <code>{ index, locationEntityId, prose }</code> shape members pick from. Downstream: the
+  <a href="./pipeline-status.html">pipeline status</a> surface carries per-player events on the
+  same campaign-scoped channel (<code>pipeline:campaign:{campaignId}</code>) — each event payload
+  carries <code>user_id</code> so subscribers can route per-player. The dev tool's
+  <a href="./dev-tool.html#the-live-events-panel">live-events panel</a> renders character-creation
+  lifecycle and entity / edge events the same way it renders world-gen events.
+</p>
+
+<h2 id="appendix-schema-additions">Appendix: schema additions</h2>
+
+<p>
+  Migration <code>016_character_concepts.sql</code> adds one new table, two new columns, and one
+  extended CHECK:
+</p>
+
+<ul>
+  <li>
+    <code>character_concepts</code> — one row per <code>(campaign_id, user_id)</code>. Carries
+    <code>concept_text</code>, <code>situation_grounding_text</code>, <code>guided_choices</code>
+    (always <code>{}</code> in v1), <code>status</code>
+    (<code>submitted | processing | completed | failed</code>), and an <code>error</code> JSONB.
+    Composite FK to <code>campaign_members(campaign_id, user_id) ON DELETE CASCADE</code>.
+  </li>
+  <li>
+    <code>campaigns.starting_situation_index SMALLINT</code> — CHECKed to NULL or
+    <code>{0, 1, 2}</code>.
+  </li>
+  <li>
+    <code>worlds.starting_situation_entries JSONB NOT NULL DEFAULT '[]'</code> — the structured
+    array of three <code>{ index, locationEntityId, prose }</code> entries the world-gen
+    <code>starting_situation</code> stage now also emits.
+  </li>
+  <li>
+    <code>entities.entity_type</code> CHECK extended to allow <code>'pc'</code> — PCs are
+    conceptually distinct from NPCs (one is owned by a real user, the other is purely
+    game-fiction), so reusing <code>'npc'</code> would force every "list NPCs" path to add a
+    PC-exclusion filter.
+  </li>
+</ul>
+
+<p>
+  The migration also seeds <code>settings('character_creation_cost_cap_usd', '5.00')</code>; the
+  worker reads it at the start of each per-player job via the
+  <code>sumCharacterCreationStageCosts(campaignId)</code> aggregation in
+  <code>cost-cap.ts</code>, filtered on
+  <code>WHERE campaign_id = $1 AND user_id IS NOT NULL AND status = 'completed'</code> so
+  character-creation costs and world-gen costs are budgeted separately.
+</p>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/migrations/016_character_concepts.sql</code>,
+  <code>backend/src/routes/campaign-characters.ts</code>,
+  <code>backend/src/llm/prep/character-creation-processor.ts</code>,
+  <code>backend/src/llm/prep/stages/</code> (location-selection, character-concept, character-sheet,
+  character-integration), <code>backend/src/llm/prompts/prep/character-{concept,sheet,integration}.txt</code>,
+  <code>backend/src/llm/schemas/character-{concept,sheet,integration}.ts</code>,
+  <code>backend/src/repo/character-concepts.ts</code>,
+  <code>backend/src/llm/prep/cost-cap.ts</code> (the
+  <code>sumCharacterCreationStageCosts</code> extension),
+  <code>backend/src/llm/prep/stages/starting-situation.ts</code> (extended to emit the structured
+  entries array). Contract wiring:
+  <code>backend/src/contract/pipeline-routes.ts</code>,
+  <code>backend/src/contract/pipeline-jobs.ts</code>,
+  <code>backend/src/contract/backend-routes.ts</code>. Design spec:
+  <code>docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-nine-routes">The nine routes</a></li><li style="padding-left:0"><a href="#the-four-stages">The four stages</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#cross-pc-integration-is-myt-54-not-myt-53">Cross-PC integration is MYT-54, not MYT-53</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>
