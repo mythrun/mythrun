@@ -21,7 +21,23 @@ interface QuerySpy {
 }
 
 function makeClient(): QuerySpy {
-  return { query: vi.fn().mockResolvedValue({ rows: [] }) }
+  // Default: the entities lookup returns rows matching the HOOKS fixture's
+  // location_name values so resolution succeeds. Tests that exercise the
+  // miss/retry path override via `query.mockImplementation` after construction.
+  return {
+    query: vi.fn().mockImplementation((sql: string) => {
+      if (/SELECT.*FROM entities.*entity_type = 'location'/i.test(sql)) {
+        return Promise.resolve({
+          rows: [
+            { id: 'loc-wharf', name: 'The Salt-Eaten Wharf' },
+            { id: 'loc-hill', name: 'Lantern Hill' },
+            { id: 'loc-causeway', name: 'The Drowned Causeway' },
+          ],
+        })
+      }
+      return Promise.resolve({ rows: [] })
+    }),
+  }
 }
 
 const HOOKS = {
@@ -72,11 +88,13 @@ describe('runStartingSituationStage', () => {
     const client = makeClient()
     const result = await runStartingSituationStage(client as never, baseArgs)
 
-    expect(client.query).toHaveBeenCalledTimes(1)
-    const [sql, params] = client.query.mock.calls[0] as [string, unknown[]]
-    expect(sql).toContain('UPDATE worlds SET starting_situations')
-    expect(params[0]).toBe('wld-1')
-    expect(JSON.parse(params[1] as string)).toEqual(HOOKS)
+    const proseUpdate = client.query.mock.calls.find((c: unknown[]) =>
+      /UPDATE worlds SET starting_situations\b/i.test(String(c[0])),
+    ) as [string, unknown[]] | undefined
+    expect(proseUpdate).toBeDefined()
+    if (proseUpdate === undefined) throw new Error('unreachable')
+    expect(proseUpdate[1][0]).toBe('wld-1')
+    expect(JSON.parse(proseUpdate[1][1] as string)).toEqual(HOOKS)
 
     // 1200/1M * 3 + 500/1M * 15 = 0.0036 + 0.0075 = 0.0111
     expect(result.costUsd).toBeCloseTo(0.0111, 4)
@@ -105,6 +123,79 @@ describe('runStartingSituationStage', () => {
     expect(prompt).toContain('(stage not implemented yet)')
     expect(prompt).not.toContain('{{name}}')
     expect(prompt).not.toContain('{{npcs_summary}}')
+  })
+
+  // myth-xg6p T3: structured-entries persistence + name→id resolution.
+  it('resolves location_name to locationEntityId via entities lookup and persists structured array', async () => {
+    const client = makeClient()
+    client.query.mockImplementation((sql: string) => {
+      if (/SELECT.*FROM entities.*entity_type = 'location'/i.test(sql)) {
+        return Promise.resolve({
+          rows: [
+            { id: 'loc-1', name: 'The Whispering Well' },
+            { id: 'loc-2', name: 'Ashen Market' },
+            { id: 'loc-3', name: 'Iron Sept' },
+          ],
+        })
+      }
+      return Promise.resolve({ rows: [] })
+    })
+
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        location_hooks: [
+          { location_name: 'The Whispering Well', why_interesting: 'short note about the well' },
+          { location_name: 'Ashen Market', why_interesting: 'a market story' },
+          { location_name: 'Iron Sept', why_interesting: 'a temple ruin' },
+        ],
+      },
+      finishReason: 'stop',
+      usage: { inputTokens: 1000, outputTokens: 600, totalTokens: 1600 },
+    } as never)
+
+    await runStartingSituationStage(client as never, baseArgs)
+
+    const updateCalls = client.query.mock.calls.filter((c: unknown[]) =>
+      /UPDATE worlds/i.test(String(c[0])),
+    )
+    const entriesUpdate = updateCalls.find((c: unknown[]) =>
+      /starting_situation_entries/i.test(String(c[0])),
+    ) as [string, unknown[]] | undefined
+    expect(entriesUpdate).toBeDefined()
+    if (entriesUpdate === undefined) throw new Error('unreachable')
+    const params = entriesUpdate[1]
+    const payload = JSON.parse(params[1] as string) as {
+      index: number
+      locationEntityId: string
+      prose: string
+    }[]
+    expect(payload.map((p) => p.locationEntityId)).toEqual(['loc-1', 'loc-2', 'loc-3'])
+  })
+
+  it('throws LlmStructuredOutputError after one retry when a location_name does not match', async () => {
+    const client = makeClient()
+    client.query.mockImplementation((sql: string) => {
+      if (/SELECT.*FROM entities.*entity_type = 'location'/i.test(sql)) {
+        return Promise.resolve({ rows: [{ id: 'loc-1', name: 'The Real Place' }] })
+      }
+      return Promise.resolve({ rows: [] })
+    })
+    vi.mocked(ai.generateText).mockResolvedValue({
+      output: {
+        location_hooks: [
+          { location_name: 'Not A Real Place', why_interesting: 'fictional' },
+          { location_name: 'Also Not Real', why_interesting: 'fictional' },
+          { location_name: 'Likewise', why_interesting: 'fictional' },
+        ],
+      },
+      finishReason: 'stop',
+      usage: { inputTokens: 1000, outputTokens: 600, totalTokens: 1600 },
+    } as never)
+
+    await expect(runStartingSituationStage(client as never, baseArgs)).rejects.toThrow(
+      /location_name.*not.*found|cannot resolve|cannot be resolved/i,
+    )
+    expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(2) // initial + one retry
   })
 
   // myth-pfke task 9d: vocabulary registry placeholder substitution.

@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { generateObject } from '../../ai.js'
+import { LlmStructuredOutputError } from '../../errors.js'
 import { z } from 'zod'
 import { SONNET } from '../../models.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
@@ -71,17 +72,9 @@ export async function runStartingSituationStage(
   client: PoolClient,
   args: StartingSituationArgs,
 ): Promise<StageCostResult> {
-  const prompt = PROMPT_TEMPLATE.replace('{{name}}', args.worldName)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
-    .replace('{{key_tensions}}', args.keyTensions)
-    .replace('{{locations_summary}}', args.locationsSummary)
-    .replace('{{npcs_summary}}', args.npcsSummary)
-    .replace('{{factions_summary}}', args.factionsSummary)
-    .replace('{{canonical_names}}', args.canonicalNames)
-    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
+  const prompt = renderPrompt(args)
 
-  const result = await generateObject({
+  let result = await generateObject({
     model: SONNET,
     schema: StartingSituationsSchema,
     prompt,
@@ -90,22 +83,101 @@ export async function runStartingSituationStage(
     callSite: 'starting-situation',
     schemaName: 'StartingSituationsSchema',
   })
+  let inputTokens = result.usage.inputTokens ?? 0
+  let outputTokens = result.usage.outputTokens ?? 0
+
+  let resolved = await resolveLocationEntries(client, args.worldId, result.output.location_hooks)
+  if (resolved === null) {
+    // myth-xg6p T3: one constrained-names retry before surfacing as a
+    // structural failure. The wrapper's repair pipeline only fires on
+    // schema-shape errors; a name-miss is application-level and handled here.
+    const validNames = await listLocationNames(client, args.worldId)
+    const retryPrompt = `${prompt}\n\nIMPORTANT: choose location_name values EXACTLY from this list of existing locations: ${validNames.join(', ')}.`
+    result = await generateObject({
+      model: SONNET,
+      schema: StartingSituationsSchema,
+      prompt: retryPrompt,
+      temperature: 0.7,
+      maxRetries: 3,
+      callSite: 'starting-situation',
+      schemaName: 'StartingSituationsSchema',
+    })
+    inputTokens += result.usage.inputTokens ?? 0
+    outputTokens += result.usage.outputTokens ?? 0
+    resolved = await resolveLocationEntries(client, args.worldId, result.output.location_hooks)
+    if (resolved === null) {
+      throw new LlmStructuredOutputError(
+        'starting-situation: location_name values cannot be resolved to entities after one retry',
+      )
+    }
+  }
 
   await client.query(`UPDATE worlds SET starting_situations = $2 WHERE id = $1`, [
     args.worldId,
     JSON.stringify(result.output),
   ])
 
-  /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always
-   * populates inputTokens/outputTokens on the final usage emission;
-   * the optional-chain narrowing is defense-in-depth. */
+  const entries = resolved.map((r, index) => ({
+    index,
+    locationEntityId: r.locationEntityId,
+    prose: r.prose,
+  }))
+  await client.query(`UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`, [
+    args.worldId,
+    JSON.stringify(entries),
+  ])
+
   return {
-    costUsd: computeCostUsd({
-      inputTokens: result.usage.inputTokens ?? 0,
-      outputTokens: result.usage.outputTokens ?? 0,
-    }),
-    inputTokens: result.usage.inputTokens ?? 0,
-    outputTokens: result.usage.outputTokens ?? 0,
+    costUsd: computeCostUsd({ inputTokens, outputTokens }),
+    inputTokens,
+    outputTokens,
   }
-  /* c8 ignore stop */
+}
+
+function renderPrompt(args: StartingSituationArgs): string {
+  return PROMPT_TEMPLATE.replace('{{name}}', args.worldName)
+    .replace('{{tone}}', args.tone)
+    .replace('{{themes}}', args.themes)
+    .replace('{{key_tensions}}', args.keyTensions)
+    .replace('{{locations_summary}}', args.locationsSummary)
+    .replace('{{npcs_summary}}', args.npcsSummary)
+    .replace('{{factions_summary}}', args.factionsSummary)
+    .replace('{{canonical_names}}', args.canonicalNames)
+    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
+}
+
+interface ResolvedEntry {
+  readonly locationEntityId: string
+  readonly prose: string
+}
+
+async function resolveLocationEntries(
+  client: PoolClient,
+  worldId: string,
+  hooks: readonly LocationHook[],
+): Promise<readonly ResolvedEntry[] | null> {
+  const r = await client.query<{ id: string; name: string }>(
+    `SELECT id, name FROM entities WHERE world_id = $1 AND entity_type = 'location'`,
+    [worldId],
+  )
+  const byLowerName = new Map<string, string>()
+  for (const row of r.rows) byLowerName.set(row.name.toLowerCase(), row.id)
+  const out: ResolvedEntry[] = []
+  for (const hook of hooks) {
+    const id = byLowerName.get(hook.location_name.toLowerCase())
+    if (id === undefined) return null
+    out.push({ locationEntityId: id, prose: hook.why_interesting })
+  }
+  return out
+}
+
+async function listLocationNames(
+  client: PoolClient,
+  worldId: string,
+): Promise<readonly string[]> {
+  const r = await client.query<{ name: string }>(
+    `SELECT name FROM entities WHERE world_id = $1 AND entity_type = 'location'`,
+    [worldId],
+  )
+  return r.rows.map((row) => row.name)
 }
