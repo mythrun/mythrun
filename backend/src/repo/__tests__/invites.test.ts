@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool, PoolClient } from 'pg'
-import { createPgPool } from '../../db/postgres.js'
 import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
@@ -15,7 +14,8 @@ import {
   InviteCreationError,
   InviteTimeoutError,
 } from '../invites-errors.js'
-import { resetData } from './_helpers/reset-data.js'
+import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
+import { createTestPool } from './_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -30,45 +30,74 @@ function silentLogger(): ReturnType<typeof pino> {
   return pino({ base: { component: 'migrate' } }, sink)
 }
 
-const baseUserInput = (suffix: string) => ({
-  cognitoSub: `sub-${suffix}`,
-  username: `user${suffix}`,
-  displayName: `User ${suffix}`,
+const baseUserInput = (scope: TestScope, idx: number) => ({
+  cognitoSub: scope.userSub(idx),
+  username: scope.username(idx),
+  displayName: scope.displayName(idx),
 })
 
 describe('invites repo (integration)', () => {
   let pool: Pool
+  let scope: TestScope
+  // myth-5jdo: monotonically advancing index — each setup() call within a
+  // single test reserves a unique user slot, so the multi-user tests
+  // (e.g. campaign-full with 7 users) don't collide on scope.userSub(0).
+  let userIdx = 0
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 1 })
+    pool = createTestPool(databaseUrl)
     await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
     await pool.query('DROP SCHEMA public CASCADE')
     await pool.query('CREATE SCHEMA public')
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('inv')
   })
 
   afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; the seeded dev users
+    // + system user + demo world remain intact for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
-    await resetData(pool)
+    // myth-5jdo: scoped cleanup replaces resetData.
+    await cleanupTestScope(pool, scope)
+    userIdx = 0
   })
 
-  async function setup(userSuffix = 'owner') {
+  async function setup() {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const invites = createInvitesRepo(pool)
 
-    const owner = await users.create(pool, baseUserInput(userSuffix))
-    const w = await worlds.create({ createdBy: owner.id, name: 'World', concept: 'concept' })
-    const c = await campaigns.create({ worldId: w.id, createdBy: owner.id, name: 'Campaign' })
+    const ownerSlot = userIdx
+    userIdx += 1
+    const owner = await users.create(pool, baseUserInput(scope, ownerSlot))
+    const w = await worlds.create({
+      createdBy: owner.id,
+      name: scope.worldName(ownerSlot),
+      concept: 'concept',
+    })
+    const c = await campaigns.create({
+      worldId: w.id,
+      createdBy: owner.id,
+      name: scope.campaignName(ownerSlot),
+    })
     await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
     return { users, worlds, campaigns, invites, owner, world: w, campaign: c }
+  }
+
+  async function makeExtraUser(): Promise<{ id: string; username: string; displayName: string }> {
+    const slot = userIdx
+    userIdx += 1
+    const users = createUsersRepo(pool)
+    const u = await users.create(pool, baseUserInput(scope, slot))
+    return { id: u.id, username: u.username, displayName: u.displayName }
   }
 
   describe('create', () => {
@@ -205,12 +234,12 @@ describe('invites repo (integration)', () => {
 
   describe('getCodePreview', () => {
     it('returns campaign name + owner identity', async () => {
-      const { invites, campaign, owner } = await setup('alicia')
+      const { invites, campaign, owner } = await setup()
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       const preview = await invites.getCodePreview(inv.inviteCode)
-      expect(preview?.campaignName).toBe('Campaign')
-      expect(preview?.ownerUsername).toBe('useralicia')
-      expect(preview?.ownerDisplayName).toBe('User alicia')
+      expect(preview?.campaignName).toBe(campaign.name)
+      expect(preview?.ownerUsername).toBe(owner.username)
+      expect(preview?.ownerDisplayName).toBe(owner.displayName)
       expect(preview?.valid).toBe(true)
     })
 
@@ -277,8 +306,8 @@ describe('invites repo (integration)', () => {
 
   describe('acceptInvite', () => {
     it('happy path: adds member, returns alreadyMember=false, increments uses', async () => {
-      const { invites, campaign, owner, users } = await setup()
-      const player = await users.create(pool, baseUserInput('player'))
+      const { invites, campaign, owner } = await setup()
+      const player = await makeExtraUser()
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
 
       const result = await invites.acceptInvite({ code: inv.inviteCode, userId: player.id })
@@ -289,8 +318,8 @@ describe('invites repo (integration)', () => {
     })
 
     it('already-member: returns alreadyMember=true, uses NOT incremented', async () => {
-      const { invites, campaigns, campaign, owner, users } = await setup()
-      const player = await users.create(pool, baseUserInput('player'))
+      const { invites, campaigns, campaign, owner } = await setup()
+      const player = await makeExtraUser()
       await campaigns.addMember({ campaignId: campaign.id, userId: player.id, role: 'player' })
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
 
@@ -302,8 +331,8 @@ describe('invites repo (integration)', () => {
     })
 
     it('membership trumps revoke: already-member of revoked invite returns alreadyMember=true', async () => {
-      const { invites, campaigns, campaign, owner, users } = await setup()
-      const player = await users.create(pool, baseUserInput('player'))
+      const { invites, campaigns, campaign, owner } = await setup()
+      const player = await makeExtraUser()
       await campaigns.addMember({ campaignId: campaign.id, userId: player.id, role: 'player' })
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       await invites.revoke(inv.inviteCode, campaign.id)
@@ -313,8 +342,8 @@ describe('invites repo (integration)', () => {
     })
 
     it('non-member + revoked → revoked: true', async () => {
-      const { invites, campaign, owner, users } = await setup()
-      const player = await users.create(pool, baseUserInput('player'))
+      const { invites, campaign, owner } = await setup()
+      const player = await makeExtraUser()
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       await invites.revoke(inv.inviteCode, campaign.id)
 
@@ -323,19 +352,19 @@ describe('invites repo (integration)', () => {
     })
 
     it('unknown code → notFound: true', async () => {
-      const { invites, users } = await setup()
-      const player = await users.create(pool, baseUserInput('player'))
+      const { invites } = await setup()
+      const player = await makeExtraUser()
       const result = await invites.acceptInvite({ code: 'NOTACODE0000', userId: player.id })
       expect(result).toEqual({ notFound: true })
     })
 
     it('campaign full (6 members) → campaignFull: true', async () => {
-      const { invites, campaigns, campaign, owner, users } = await setup()
+      const { invites, campaigns, campaign, owner } = await setup()
       for (let i = 0; i < 5; i++) {
-        const p = await users.create(pool, baseUserInput(`p${String(i)}`))
+        const p = await makeExtraUser()
         await campaigns.addMember({ campaignId: campaign.id, userId: p.id, role: 'player' })
       }
-      const newPlayer = await users.create(pool, baseUserInput('seventh'))
+      const newPlayer = await makeExtraUser()
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
       const result = await invites.acceptInvite({ code: inv.inviteCode, userId: newPlayer.id })
       expect(result).toEqual({ campaignFull: true, activeMembers: 6 })
@@ -616,18 +645,23 @@ const RACE_ITERATIONS = 50
 
 describe('invites repo — concurrency (separate pool)', () => {
   let pool: Pool
+  let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 4 })
+    // myth-5jdo: createTestPool hardcodes max:4 — perfect for race tests.
+    pool = createTestPool(databaseUrl)
+    scope = makeTestScope('invrace')
   })
 
   afterAll(async () => {
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
-    await resetData(pool)
+    // myth-5jdo: scoped cleanup replaces resetData.
+    await cleanupTestScope(pool, scope)
   })
 
   it('two parallel acceptInvite for same code by SAME user → exactly one membership row, one uses increment', async () => {
@@ -637,19 +671,31 @@ describe('invites repo — concurrency (separate pool)', () => {
     const invitesRepo = createInvitesRepo(pool)
 
     for (let i = 0; i < RACE_ITERATIONS; i++) {
-      await resetData(pool)
+      // myth-5jdo: cleanupTestScope is the per-iteration reset for race
+      // tests — it deletes only the scope's rows from the prior loop so
+      // we can re-create (owner_i, player_i) without colliding on the
+      // unique constraints (cognito_sub, username, invite_code).
+      await cleanupTestScope(pool, scope)
       const owner = await users.create(pool, {
-        cognitoSub: `sub-race-o-${String(i)}`,
-        username: `raceo${String(i)}`,
-        displayName: 'Owner',
+        cognitoSub: scope.userSub(2 * i),
+        username: scope.username(2 * i),
+        displayName: scope.displayName(2 * i),
       })
       const player = await users.create(pool, {
-        cognitoSub: `sub-race-p-${String(i)}`,
-        username: `racep${String(i)}`,
-        displayName: 'Player',
+        cognitoSub: scope.userSub(2 * i + 1),
+        username: scope.username(2 * i + 1),
+        displayName: scope.displayName(2 * i + 1),
       })
-      const w = await worldsRepo.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaignsRepo.create({ worldId: w.id, createdBy: owner.id, name: 'C' })
+      const w = await worldsRepo.create({
+        createdBy: owner.id,
+        name: scope.worldName(i),
+        concept: 'c',
+      })
+      const c = await campaignsRepo.create({
+        worldId: w.id,
+        createdBy: owner.id,
+        name: scope.campaignName(i),
+      })
       await campaignsRepo.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
       const inv = await invitesRepo.create({ campaignId: c.id, createdBy: owner.id })
 
@@ -682,17 +728,25 @@ describe('invites repo — concurrency (separate pool)', () => {
     const invitesRepo = createInvitesRepo(pool)
 
     const owner = await users.create(pool, {
-      cognitoSub: 'sub-lock-o',
-      username: 'locko',
-      displayName: 'O',
+      cognitoSub: scope.userSub(0),
+      username: scope.username(0),
+      displayName: scope.displayName(0),
     })
     const player = await users.create(pool, {
-      cognitoSub: 'sub-lock-p',
-      username: 'lockp',
-      displayName: 'P',
+      cognitoSub: scope.userSub(1),
+      username: scope.username(1),
+      displayName: scope.displayName(1),
     })
-    const w = await worldsRepo.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const c = await campaignsRepo.create({ worldId: w.id, createdBy: owner.id, name: 'C' })
+    const w = await worldsRepo.create({
+      createdBy: owner.id,
+      name: scope.worldName(0),
+      concept: 'c',
+    })
+    const c = await campaignsRepo.create({
+      worldId: w.id,
+      createdBy: owner.id,
+      name: scope.campaignName(0),
+    })
     await campaignsRepo.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
     const inv = await invitesRepo.create({ campaignId: c.id, createdBy: owner.id })
 

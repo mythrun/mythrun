@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+import { afterAll, beforeAll, describe, it, expect, vi } from 'vitest'
 import type { Pool, PoolClient } from 'pg'
 import {
   createUsersRepo,
@@ -7,23 +7,30 @@ import {
   type StripeCustomersClient,
 } from '../users.js'
 import type { ClientLike } from '../_types.js'
-import { resetData } from './_helpers/reset-data.js'
 import { ensureSchema, pool } from './_helpers/with-tx.js'
+import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 
 describe('users repo (integration)', () => {
+  let scope: TestScope
+  let baseInput: { cognitoSub: string; username: string; displayName: string }
+
   beforeAll(async () => {
     await ensureSchema()
+    // myth-5jdo: short label (<= 10 chars) — username helper truncates at 28
+    // chars total; long labels collide on multi-user tests.
+    scope = makeTestScope('users')
+    baseInput = {
+      cognitoSub: scope.userSub(0),
+      username: scope.username(0),
+      displayName: scope.displayName(0),
+    }
   })
 
-  beforeEach(async () => {
-    await resetData(pool)
+  afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; the seeded dev users
+    // + system user + demo world remain intact for the next test file.
+    await cleanupTestScope(pool, scope)
   })
-
-  const baseInput = {
-    cognitoSub: 'google_12345',
-    username: 'alice',
-    displayName: 'Alice',
-  }
 
   it('create defensively throws when INSERT returns no row (fake tx)', async () => {
     const repo = createUsersRepo(pool)
@@ -36,12 +43,13 @@ describe('users repo (integration)', () => {
   })
 
   it('create returns a fully-populated user row', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
     const u = await repo.create(pool, baseInput)
     expect(u.id).toMatch(/^[0-9a-f-]{36}$/)
-    expect(u.cognitoSub).toBe('google_12345')
-    expect(u.displayName).toBe('Alice')
-    expect(u.username).toBe('alice')
+    expect(u.cognitoSub).toBe(baseInput.cognitoSub)
+    expect(u.displayName).toBe(baseInput.displayName)
+    expect(u.username).toBe(baseInput.username)
     expect(u.stripeCustomerId).toBeNull()
     expect(u.freeTrialUsed).toBe(false)
     expect(u.suspendedAt).toBeNull()
@@ -50,6 +58,7 @@ describe('users repo (integration)', () => {
   })
 
   it('getById returns the user when present', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
     const created = await repo.create(pool, baseInput)
     const found = await repo.getById(created.id)
@@ -64,30 +73,35 @@ describe('users repo (integration)', () => {
   })
 
   it('getByCognitoSub returns the user when present', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
     await repo.create(pool, baseInput)
-    const u = await repo.getByCognitoSub('google_12345')
+    const u = await repo.getByCognitoSub(baseInput.cognitoSub)
     expect(u).not.toBeNull()
-    expect(u?.username).toBe('alice')
+    expect(u?.username).toBe(baseInput.username)
   })
 
   it('getByCognitoSub returns null for unknown sub', async () => {
     const repo = createUsersRepo(pool)
-    const u = await repo.getByCognitoSub('nope')
+    // Use a scope-prefixed sub that definitely doesn't exist (nothing inserted
+    // with index 99 in this test).
+    const u = await repo.getByCognitoSub(scope.userSub(99))
     expect(u).toBeNull()
   })
 
   it('update mutates supplied fields and bumps updatedAt', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
     const created = await repo.create(pool, baseInput)
     await new Promise((r) => setTimeout(r, 5))
     const updated = await repo.update(created.id, { displayName: 'Alicia' })
     expect(updated.displayName).toBe('Alicia')
-    expect(updated.username).toBe('alice')
+    expect(updated.username).toBe(baseInput.username)
     expect(updated.updatedAt.getTime()).toBeGreaterThan(created.updatedAt.getTime())
   })
 
   it('update with all-undefined patch is a no-op (except updatedAt)', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
     const created = await repo.create(pool, baseInput)
     await new Promise((r) => setTimeout(r, 5))
@@ -105,27 +119,35 @@ describe('users repo (integration)', () => {
   })
 
   it('getByUsername is case-insensitive', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
-    await repo.create(pool, { ...baseInput, username: 'Gandalf' })
-    expect(await repo.getByUsername('GANDALF')).not.toBeNull()
-    expect(await repo.getByUsername('gandalf')).not.toBeNull()
-    expect((await repo.getByUsername('gandalf'))?.username).toBe('Gandalf')
+    // Mixed-case variant: scope.username is lowercase alphanum, so uppercasing
+    // the first char produces a CHECK-valid mixed-case username that still
+    // matches the same row case-insensitively.
+    const mixed = baseInput.username.charAt(0).toUpperCase() + baseInput.username.slice(1)
+    await repo.create(pool, { ...baseInput, username: mixed })
+    expect(await repo.getByUsername(mixed.toUpperCase())).not.toBeNull()
+    expect(await repo.getByUsername(mixed.toLowerCase())).not.toBeNull()
+    expect((await repo.getByUsername(mixed.toLowerCase()))?.username).toBe(mixed)
   })
 
   it('getByUsername returns null for unknown username', async () => {
     const repo = createUsersRepo(pool)
-    expect(await repo.getByUsername('nobody')).toBeNull()
+    expect(await repo.getByUsername(scope.username(99))).toBeNull()
   })
 
   it('UNIQUE LOWER(username) rejects case-variant duplicates', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
-    await repo.create(pool, { ...baseInput, username: 'Admin' })
+    const mixed = baseInput.username.charAt(0).toUpperCase() + baseInput.username.slice(1)
+    await repo.create(pool, { ...baseInput, username: mixed })
     await expect(
-      repo.create(pool, { ...baseInput, cognitoSub: 'google_xyz', username: 'admin' }),
+      repo.create(pool, { ...baseInput, cognitoSub: scope.userSub(1), username: mixed.toLowerCase() }),
     ).rejects.toThrow(/users_username_lower_key|duplicate key/)
   })
 
   it('getByCognitoSubWithTimeout returns the user under normal load', async () => {
+    await cleanupTestScope(pool, scope)
     const repo = createUsersRepo(pool)
     const u = await repo.create(pool, baseInput)
     const found = await repo.getByCognitoSubWithTimeout(u.cognitoSub, 200)
@@ -134,7 +156,7 @@ describe('users repo (integration)', () => {
 
   it('getByCognitoSubWithTimeout returns null for unknown sub', async () => {
     const repo = createUsersRepo(pool)
-    const u = await repo.getByCognitoSubWithTimeout('nope', 200)
+    const u = await repo.getByCognitoSubWithTimeout(scope.userSub(99), 200)
     expect(u).toBeNull()
   })
 
@@ -209,6 +231,7 @@ describe('users repo (integration)', () => {
     }
 
     it('creates a Stripe customer and persists the cus_* on first call', async () => {
+      await cleanupTestScope(pool, scope)
       const repo = createUsersRepo(pool)
       const created = await repo.create(pool, baseInput)
       const { client, create } = makeStripeCustomersStub('cus_test_A')
@@ -226,6 +249,7 @@ describe('users repo (integration)', () => {
     })
 
     it('returns the existing stripe_customer_id without calling Stripe', async () => {
+      await cleanupTestScope(pool, scope)
       const repo = createUsersRepo(pool)
       const created = await repo.create(pool, baseInput)
       await pool.query('UPDATE users SET stripe_customer_id = $2 WHERE id = $1', [
@@ -245,6 +269,7 @@ describe('users repo (integration)', () => {
     })
 
     it('race-loser branch: returns concurrent racer value when written between phase 2 and phase 3', async () => {
+      await cleanupTestScope(pool, scope)
       const repo = createUsersRepo(pool)
       const created = await repo.create(pool, baseInput)
 
@@ -271,6 +296,7 @@ describe('users repo (integration)', () => {
     })
 
     it('uses customer_for_${userId} as the Stripe idempotency-key', async () => {
+      await cleanupTestScope(pool, scope)
       const repo = createUsersRepo(pool)
       const created = await repo.create(pool, baseInput)
       const { client, create } = makeStripeCustomersStub('cus_test_B')
@@ -294,6 +320,7 @@ describe('users repo (integration)', () => {
       // table). For phase-3 we wrap pool.connect so the client's query rejects on
       // SELECT FOR UPDATE and ROLLBACK succeeds — the function must rethrow the
       // original SELECT FOR UPDATE error.
+      await cleanupTestScope(pool, scope)
       const repo = createUsersRepo(pool)
       const created = await repo.create(pool, baseInput)
       const { client: stripe } = makeStripeCustomersStub('cus_test_D')
@@ -327,6 +354,7 @@ describe('users repo (integration)', () => {
     })
 
     it('phase-3 rollback failure is swallowed; original error still rethrown', async () => {
+      await cleanupTestScope(pool, scope)
       const repo = createUsersRepo(pool)
       const created = await repo.create(pool, baseInput)
       const { client: stripe } = makeStripeCustomersStub('cus_test_E')

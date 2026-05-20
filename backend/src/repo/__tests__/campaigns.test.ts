@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
-import { createPgPool } from '../../db/postgres.js'
 import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
-import { resetData } from './_helpers/reset-data.js'
+import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
+import { createTestPool } from './_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -26,12 +26,6 @@ function silentLogger(): ReturnType<typeof pino> {
     { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
     sink,
   )
-}
-
-const baseUserInput = {
-  cognitoSub: 'g_owner',
-  displayName: 'Owner',
-  username: 'owner',
 }
 
 async function addCampaignMember(
@@ -50,36 +44,47 @@ async function addCampaignMember(
 
 describe('campaigns repo (integration)', () => {
   let pool: Pool
+  let scope: TestScope
+  let baseUserInput: { cognitoSub: string; displayName: string; username: string }
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 1 })
+    pool = createTestPool(databaseUrl)
+    // myth-5jdo: globalSetup applies migrations idempotently; the DROP +
+    // re-create + runMigrations below remains as a no-op-ish belt + braces
+    // (Phase 5 lint removes it).
     await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
     await pool.query('DROP SCHEMA public CASCADE')
     await pool.query('CREATE SCHEMA public')
     await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
     await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('camp')
+    baseUserInput = {
+      cognitoSub: scope.userSub(0),
+      displayName: scope.displayName(0),
+      username: scope.username(0),
+    }
   })
 
   afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; the seeded dev users
+    // + system user + demo world remain intact for the next test file.
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
-  beforeEach(async () => {
-    await resetData(pool)
-  })
-
   it('create returns a populated campaign with default status=setup', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
     const c = await campaigns.create({
       worldId: world.id,
       createdBy: owner.id,
-      name: 'My Campaign',
+      name: scope.campaignName(0),
     })
     expect(c.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(c.worldId).toBe(world.id)
@@ -94,29 +99,37 @@ describe('campaigns repo (integration)', () => {
   })
 
   it('getById returns the campaign when present', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'X' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+    const c = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(0),
+    })
     const found = await campaigns.getById(c.id)
     expect(found?.id).toBe(c.id)
   })
 
   it('update with empty patch is a no-op (covers all-undefined ?? null branches)', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'B' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+    const cname = scope.campaignName(0)
+    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: cname })
     const updated = await campaigns.update(c.id, {})
-    expect(updated.name).toBe('B')
+    expect(updated.name).toBe(cname)
     expect(updated.status).toBe('setup')
   })
 
   it('listByUser returns campaigns where user is an accepted member', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
@@ -124,13 +137,21 @@ describe('campaigns repo (integration)', () => {
     const owner = await users.create(pool, baseUserInput)
     const player = await users.create(pool, {
       ...baseUserInput,
-      cognitoSub: 'g_p',
-      username: 'player',
+      cognitoSub: scope.userSub(1),
+      username: scope.username(1),
     })
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
 
-    const c1 = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'C1' })
-    const c2 = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'C2' })
+    const c1 = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(1),
+    })
+    const c2 = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(2),
+    })
 
     await addCampaignMember(pool, c1.id, player.id, 'player', true)
     await addCampaignMember(pool, c2.id, player.id, 'player', false)
@@ -140,14 +161,23 @@ describe('campaigns repo (integration)', () => {
   })
 
   it('listByUser returns DESC by createdAt', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const a = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'A' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+    const a = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(1),
+    })
     await new Promise((r) => setTimeout(r, 5))
-    const b = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'B' })
+    const b = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(2),
+    })
     await addCampaignMember(pool, a.id, owner.id, 'owner', true)
     await addCampaignMember(pool, b.id, owner.id, 'owner', true)
     const list = await campaigns.listByUser(owner.id)
@@ -155,32 +185,44 @@ describe('campaigns repo (integration)', () => {
   })
 
   it('update mutates supplied fields and bumps updatedAt', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'A' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+    const c = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(1),
+    })
     await new Promise((r) => setTimeout(r, 5))
-    const updated = await campaigns.update(c.id, { name: 'A renamed', status: 'active' })
-    expect(updated.name).toBe('A renamed')
+    const renamed = `${scope.campaignName(1)}-renamed`
+    const updated = await campaigns.update(c.id, { name: renamed, status: 'active' })
+    expect(updated.name).toBe(renamed)
     expect(updated.status).toBe('active')
     expect(updated.updatedAt.getTime()).toBeGreaterThan(c.updatedAt.getTime())
   })
 
   it('update accepts all defined patch fields (covers each COALESCE branch)', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'A' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+    const c = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(1),
+    })
+    const renamed = scope.campaignName(2)
     const updated = await campaigns.update(c.id, {
-      name: 'A2',
+      name: renamed,
       status: 'archived',
       language: 'en',
     })
-    expect(updated.name).toBe('A2')
+    expect(updated.name).toBe(renamed)
     expect(updated.status).toBe('archived')
     expect(updated.language).toBe('en')
   })
@@ -231,12 +273,17 @@ describe('campaigns repo (integration)', () => {
   })
 
   it('getOwner returns null when the campaign has no owner row', async () => {
+    await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const campaigns = createCampaignsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'NoOwner' })
+    const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+    const c = await campaigns.create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: scope.campaignName(1),
+    })
     // No addMember call → no owner row.
     const o = await campaigns.getOwner(c.id)
     expect(o).toBeNull()
@@ -244,12 +291,21 @@ describe('campaigns repo (integration)', () => {
 
   describe('member methods', () => {
     it('addMember inserts a new row with default invite_accepted=true', async () => {
+      await cleanupTestScope(pool, scope)
       const users = createUsersRepo(pool)
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
-      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M1' })
+      const world = await worlds.create({
+        createdBy: owner.id,
+        name: scope.worldName(0),
+        concept: 'c',
+      })
+      const c = await campaigns.create({
+        worldId: world.id,
+        createdBy: owner.id,
+        name: scope.campaignName(1),
+      })
       const m = await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
       expect(m.role).toBe('owner')
       expect(m.inviteAccepted).toBe(true)
@@ -258,12 +314,21 @@ describe('campaigns repo (integration)', () => {
     })
 
     it('addMember is idempotent: collision returns the existing row', async () => {
+      await cleanupTestScope(pool, scope)
       const users = createUsersRepo(pool)
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
-      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M2' })
+      const world = await worlds.create({
+        createdBy: owner.id,
+        name: scope.worldName(0),
+        concept: 'c',
+      })
+      const c = await campaigns.create({
+        worldId: world.id,
+        createdBy: owner.id,
+        name: scope.campaignName(2),
+      })
       const first = await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
       const second = await campaigns.addMember({
         campaignId: c.id,
@@ -274,40 +339,67 @@ describe('campaigns repo (integration)', () => {
     })
 
     it('getMembership returns the row for an existing member', async () => {
+      await cleanupTestScope(pool, scope)
       const users = createUsersRepo(pool)
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
-      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M3' })
+      const world = await worlds.create({
+        createdBy: owner.id,
+        name: scope.worldName(0),
+        concept: 'c',
+      })
+      const c = await campaigns.create({
+        worldId: world.id,
+        createdBy: owner.id,
+        name: scope.campaignName(3),
+      })
       await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
       const m = await campaigns.getMembership(c.id, owner.id)
       expect(m?.role).toBe('owner')
     })
 
     it('getMembership returns null for a non-member', async () => {
+      await cleanupTestScope(pool, scope)
       const users = createUsersRepo(pool)
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
-      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M4' })
+      const world = await worlds.create({
+        createdBy: owner.id,
+        name: scope.worldName(0),
+        concept: 'c',
+      })
+      const c = await campaigns.create({
+        worldId: world.id,
+        createdBy: owner.id,
+        name: scope.campaignName(4),
+      })
       const m = await campaigns.getMembership(c.id, '019dccef-0000-7000-8000-000000000000')
       expect(m).toBeNull()
     })
 
     it('getOwner returns the owner row', async () => {
+      await cleanupTestScope(pool, scope)
       const users = createUsersRepo(pool)
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
       const player = await users.create(pool, {
         ...baseUserInput,
-        cognitoSub: 'g_p',
-        username: 'player',
+        cognitoSub: scope.userSub(1),
+        username: scope.username(1),
       })
-      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M5' })
+      const world = await worlds.create({
+        createdBy: owner.id,
+        name: scope.worldName(0),
+        concept: 'c',
+      })
+      const c = await campaigns.create({
+        worldId: world.id,
+        createdBy: owner.id,
+        name: scope.campaignName(5),
+      })
       await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
       await campaigns.addMember({ campaignId: c.id, userId: player.id, role: 'player' })
       const o = await campaigns.getOwner(c.id)
@@ -316,40 +408,59 @@ describe('campaigns repo (integration)', () => {
     })
 
     it('listMembers returns members joined with username + displayName, ordered by joinedAt ASC', async () => {
+      await cleanupTestScope(pool, scope)
       const users = createUsersRepo(pool)
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
+      const playerDisplay = `Player ${scope.id}`
       const player = await users.create(pool, {
         ...baseUserInput,
-        cognitoSub: 'g_p',
-        username: 'player',
-        displayName: 'Player',
+        cognitoSub: scope.userSub(1),
+        username: scope.username(1),
+        displayName: playerDisplay,
       })
-      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M6' })
+      const world = await worlds.create({
+        createdBy: owner.id,
+        name: scope.worldName(0),
+        concept: 'c',
+      })
+      const c = await campaigns.create({
+        worldId: world.id,
+        createdBy: owner.id,
+        name: scope.campaignName(6),
+      })
       await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
       await new Promise((r) => setTimeout(r, 5))
       await campaigns.addMember({ campaignId: c.id, userId: player.id, role: 'player' })
       const list = await campaigns.listMembers(c.id)
       expect(list.map((m) => m.userId)).toEqual([owner.id, player.id])
-      expect(list[0]?.username).toBe('owner')
-      expect(list[1]?.displayName).toBe('Player')
+      expect(list[0]?.username).toBe(baseUserInput.username)
+      expect(list[1]?.displayName).toBe(playerDisplay)
       expect(list[1]?.characterId).toBeNull()
     })
 
     it('listMembers excludes suspended users', async () => {
+      await cleanupTestScope(pool, scope)
       const users = createUsersRepo(pool)
       const worlds = createWorldsRepo(pool)
       const campaigns = createCampaignsRepo(pool)
       const owner = await users.create(pool, baseUserInput)
       const player = await users.create(pool, {
         ...baseUserInput,
-        cognitoSub: 'g_p',
-        username: 'player',
+        cognitoSub: scope.userSub(1),
+        username: scope.username(1),
       })
-      const world = await worlds.create({ createdBy: owner.id, name: 'W', concept: 'c' })
-      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: 'M7' })
+      const world = await worlds.create({
+        createdBy: owner.id,
+        name: scope.worldName(0),
+        concept: 'c',
+      })
+      const c = await campaigns.create({
+        worldId: world.id,
+        createdBy: owner.id,
+        name: scope.campaignName(7),
+      })
       await campaigns.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
       await campaigns.addMember({ campaignId: c.id, userId: player.id, role: 'player' })
       await pool.query('UPDATE users SET suspended_at = now() WHERE id = $1', [player.id])

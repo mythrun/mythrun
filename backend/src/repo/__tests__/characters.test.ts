@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
-import { createPgPool } from '../../db/postgres.js'
 import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
@@ -15,7 +14,21 @@ import {
   CharacterAlreadyInCampaignError,
   UserAlreadyHasCharacterInCampaignError,
 } from '../characters-errors.js'
-import { resetData } from './_helpers/reset-data.js'
+import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
+import { createTestPool } from './_helpers/test-pool.js'
+
+// myth-5jdo: characters.user_id is RESTRICT-FK to users — must delete
+// characters owned by scope users BEFORE cleanupTestScope's user delete.
+// Per-test cleanup wrapper that removes the scope's characters first,
+// then delegates to the shared helper.
+async function cleanupCharactersScope(p: Pool, scope: TestScope): Promise<void> {
+  await p.query(
+    `DELETE FROM characters
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [`${scope.id}%`],
+  )
+  await cleanupTestScope(p, scope)
+}
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -53,30 +66,37 @@ const baseCharacterInput = {
 
 describe('repo.characters', () => {
   let pool: Pool
+  let scope: TestScope
   let userId: string
   let campaignId: string
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl)
+    pool = createTestPool(databaseUrl)
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('chars')
   })
 
   afterAll(async () => {
+    // myth-5jdo: cleanup only this scope's rows; the seeded dev users
+    // + system user + demo world remain intact for the next test file.
+    await cleanupCharactersScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
-    await resetData(pool)
+    // myth-5jdo: scoped cleanup replaces resetData. Removes only this
+    // scope's rows; system + dev users persist via globalSetup.
+    await cleanupCharactersScope(pool, scope)
 
     const users = createUsersRepo(pool)
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
       const user = await users.create(client, {
-        cognitoSub: 'g_player_a',
-        username: 'aila',
-        displayName: 'Aila',
+        cognitoSub: scope.userSub(0),
+        username: scope.username(0),
+        displayName: scope.displayName(0),
       })
       await client.query('COMMIT')
       userId = user.id
@@ -87,7 +107,7 @@ describe('repo.characters', () => {
     const worlds = createWorldsRepo(pool)
     const world = await worlds.create({
       createdBy: userId,
-      name: 'Test World',
+      name: scope.worldName(0),
       concept: 'A test world.',
     })
 
@@ -95,7 +115,7 @@ describe('repo.characters', () => {
     const campaign = await campaigns.create({
       worldId: world.id,
       createdBy: userId,
-      name: 'Test Campaign',
+      name: scope.campaignName(0),
     })
     campaignId = campaign.id
   })
@@ -243,9 +263,9 @@ describe('repo.characters', () => {
       try {
         await client.query('BEGIN')
         const userB = await users.create(client, {
-          cognitoSub: 'g_player_b',
-          username: 'borin',
-          displayName: 'Borin',
+          cognitoSub: scope.userSub(1),
+          username: scope.username(1),
+          displayName: scope.displayName(1),
         })
         userBId = userB.id
 
