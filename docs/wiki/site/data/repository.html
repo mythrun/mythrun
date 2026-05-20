@@ -1203,8 +1203,8 @@
   pipeline stage (or play-runtime path) wrote the row. World-gen callers pass
   <code>'stage:world_and_factions'</code> (stage 2), <code>'stage:locations_and_npcs'</code> (stage
   3), and <code>'stage:entity_consolidation'</code> (stage 4b's ghost entities); the future Scribe
-  runtime will write <code>'session:&lt;uuid&gt;'</code>. Migration 017 backfills every existing
-  row to <code>'stage:legacy'</code> via the column DEFAULT.
+  runtime will write <code>'session:&lt;uuid&gt;'</code>. Migration 017 backfills every existing row
+  to <code>'stage:legacy'</code> via the column DEFAULT.
   <code>listByWorld</code>
   is what stage 3's parent resolver calls in pass 2 to build the name → entityId map, and what stage
   4 calls at stage start to build the entity-inventory the prompt feeds into the LLM. The optional
@@ -1223,9 +1223,9 @@
   <code>createdIn</code> mandatory means every code path that inserts an entity declares which
   origin it represents at compile time. The alternative (an optional field defaulted by the repo)
   silently labels every new caller with whatever fallback string the repo chose, losing the audit
-  trail that lets stage 4b cascade-delete only its own ghosts on a stage-4 retry
-  (<code>DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'</code>).
-  A required field forces the caller to think about provenance once, and the test fixtures pay
+  trail that lets stage 4b cascade-delete only its own ghosts on a stage-4 retry (<code
+    >DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'</code
+  >). A required field forces the caller to think about provenance once, and the test fixtures pay
   <code>'stage:test'</code> as their tag.
 </aside>
 
@@ -1583,8 +1583,9 @@
     <tr>
       <td><code>src/repo/entities.ts</code></td>
       <td>
-        <code>entities.insert</code> (caller-supplied UUID + required <code>createdIn</code>
-        provenance tag), <code>findByWorldAndName</code>, <code>listByWorld</code>.
+        <code>entities.insert</code> (caller-supplied UUID + required
+        <code>createdIn</code> provenance tag), <code>findByWorldAndName</code>,
+        <code>listByWorld</code>.
       </td>
     </tr>
     <tr>

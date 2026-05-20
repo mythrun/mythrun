@@ -397,10 +397,11 @@
         this phase; the SSE client uses the signal to fire its initial
         <code>GET /world-snapshot</code>. <code>derivePhase</code> surfaces this state from the
         stage-4 commit, so the route handler's initial-frame snapshot reports it immediately. The
-        worker's published <code>phase</code> event for <code>world_snapshot_ready</code> fires
-        one stage later — after stage 4b commits — so reconnecting subscribers see the signal once
-        the phantom-reference reconciliation has fully landed (see
-        <a href="./world-gen.html#stage-4b-phantom-reference-reconciliation">world-gen / stage 4b</a>).
+        worker's published <code>phase</code> event for <code>world_snapshot_ready</code> fires one
+        stage later — after stage 4b commits — so reconnecting subscribers see the signal once the
+        phantom-reference reconciliation has fully landed (see
+        <a href="./world-gen.html#stage-4b-phantom-reference-reconciliation">world-gen / stage 4b</a
+        >).
       </td>
     </tr>
     <tr>
