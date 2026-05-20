@@ -22,9 +22,9 @@ This pattern (prose mentions entities that no stage instantiates) is a *feature*
 
 2. **First-class ghost entities.** Phantom references become real entities in the world — same depth as stage 2-3 entities (prose + facts + access_level + parent if applicable). No tier system. No "background" segregation.
 
-3. **Bounded recursion.** Ghost entities are guaranteed-leaves of the entity graph. Their prose may reference only existing entities, vocabulary registry terms, or other ghosts declared in the same batch. Enforced by a Haiku post-audit, not regex (per ZFC).
+3. **Bounded recursion by construction.** Stage 4b runs once per world-gen. No downstream stage extracts phantoms from prose. A ghost's prose may name-drop concepts that aren't entities — same as stage 2-3 prose already does (e.g., Bone Reach's facts mentioning "Ironjaw"). Those dangling prose references are flavor depth, not a failure mode. The recursion fear that an earlier draft of this spec tried to defend against (B introduces C, C introduces D, ...) requires a downstream pass that doesn't exist; we don't need to defend against it.
 
-4. **Best-effort failure handling.** If a specific ghost can't be created cleanly (audit keeps rejecting), drop just that ghost and the relationships referencing its placeholder; continue world-gen. World-gen completion is more important than 100% phantom resolution.
+4. **Best-effort failure handling.** If a specific ghost can't be created cleanly (structural Zod validation + repair chain both fail), drop just that ghost and the relationships referencing its placeholder; continue world-gen. World-gen completion is more important than 100% phantom resolution.
 
 5. **Coherent wire UX.** Edges with placeholder endpoints buffer client-side; when the corresponding entity arrives during the consolidation stage, the buffered edges resolve and render. From the user's POV: most of the graph populates live during stage 4, then a handful of new entities pop in with their edges already attached at the end.
 
@@ -32,6 +32,7 @@ This pattern (prose mentions entities that no stage instantiates) is a *feature*
 
 - A "background" entity tier or segregated stub layer. Rejected — every entity is first-class.
 - Suppressing phantom references upstream in stages 2-3. Phantom references are valid generative breadth; we reconcile rather than suppress.
+- A semantic audit pass on ghost prose (e.g., "verify no proper nouns reference entities outside the inventory"). An earlier draft proposed a Haiku audit for this; dropped because (a) the dangling references that would fail the audit are exactly the same as the phantom references we already accept upstream from stages 2-3, (b) the retry-or-drop policy was net-negative — dropping a ghost because its prose name-drops a new concept loses the ghost AND its incoming relationships, leaving a strictly-worse state than keeping the ghost with dangling references, and (c) the "allowed-names set" normalization (case, possessives, multi-word vocab terms, calendar/language proper nouns) is non-trivial and produces false-positives. Strong prompt + iterate on prompt if real-LLM runs surface a problem.
 - Replacing the existing repair chain in `ai.ts`. The chain stays as the end-of-stream safety net.
 - Changing the BullMQ job shape or world-gen orchestration. Same `world-gen` queue, same stage loop, same retry semantics.
 - Per-stage snapshot pushes. The wire feed during streaming is lightweight (names + types + endpoints); the full rich data lands in one snapshot at end-of-world-gen.
@@ -177,21 +178,6 @@ export const EntityConsolidationSchema = z.object({
 })
 ```
 
-Haiku audit schema (deterministic check against allowed-names set):
-
-```ts
-export const GhostProseAuditSchema = z.object({
-  proper_nouns: z
-    .array(
-      z.object({
-        text: z.string().min(1).max(200),
-        context_snippet: z.string().min(1).max(80),
-      }),
-    )
-    .max(40),
-})
-```
-
 ### 3. Streaming-extractor rework
 
 Three changes to `runStreamingStage` in `backend/src/llm/prep/streaming-extractor.ts`:
@@ -309,49 +295,38 @@ export async function runEntityConsolidationStage(
    ```
    Cascades to facts, prose_kernels, relationships referencing those entities. On retry, prior stage 4b output evaporates and we start fresh from the pending state.
 
-3. **Assemble context.** Read current entity inventory (for allowed-names set), vocabulary registry, world summary, pending declarations + pending relationships.
+3. **Assemble context.** Read current entity inventory, vocabulary registry, world summary, pending declarations + pending relationships.
 
-4. **Generate ghosts via `generateObject` (Sonnet).** Schema is `EntityConsolidationSchema`. Output count should match `declarations.length`. The wire UX is provided by the worker emitting `entity-added` events per-ghost as it persists them (step 7), not by the LLM call streaming — generateObject is cleaner here because the Haiku audit needs the full response anyway.
+4. **Generate ghosts via `generateObject` (Sonnet).** Schema is `EntityConsolidationSchema`. Output count should match `declarations.length`. The wire UX is provided by the worker emitting `entity-added` events per-ghost as it persists them (step 6), not by the LLM call streaming — generateObject is cleaner here because the output volume is small and the structural Zod validation + repair chain interact more cleanly with the non-streaming path.
 
-5. **Reconcile output vs declarations.** Extras (ghost output for placeholderIds not declared) → drop. Missing (declared placeholderIds with no ghost output) → mark as failed-ghost, drop their relationships in step 8.
+5. **Reconcile output vs declarations.** Extras (ghost output for placeholderIds not declared) → drop. Missing (declared placeholderIds with no ghost output) → mark as failed-ghost, drop their relationships in step 7.
 
-6. **Haiku audit per ghost.** For each surviving ghost, send `{prose, facts}` to Haiku with `GhostProseAuditSchema`. Then deterministic check: every extracted proper noun must be in the allowed-names set:
-
-   - Existing entity names (from inventory)
-   - Vocabulary registry terms (e.g., "Liftstone", "Sandlaw", "the Reckoning" — world-specific concepts)
-   - Other ghosts being declared in this batch
-   - This ghost's own name
-
-   If a proper noun isn't in any of those → audit fails for this ghost.
-
-   **Per-ghost retry policy:**
-   - On first audit failure: retry once with a constrained Sonnet prompt that includes the previous output + the specific banned terms (*"Previous output mentioned 'X', 'Y', 'Z' which are not allowed. Rewrite without them."*). Re-run audit.
-   - If second attempt also fails → drop this ghost. Log `event:llm.ghost_audit_failed` with the banned terms and the rejected prose.
-
-7. **Persist surviving ghosts** in declaration order:
+6. **Persist surviving ghosts** in declaration order:
    - INSERT entities row with `created_in = 'stage:entity_consolidation'`.
    - INSERT prose_kernels row.
    - INSERT facts rows.
    - If `entity_type === 'location'` and `parent_location_id` is set → INSERT entity_hierarchy row.
-   - Emit `entity-added { id, name, entity_type, placeholderId }` wire event.
+   - Emit `entity-added { synthKey, entityKind, name, placeholderId }` wire event.
 
-8. **Persist pending relationships** with placeholder endpoints resolved. For each pending relationship:
-   - Rewrite `from` / `to` placeholder IDs via the placeholder→UUID map built in step 7.
+7. **Persist pending relationships** with placeholder endpoints resolved. For each pending relationship:
+   - Rewrite `from` / `to` placeholder IDs via the placeholder→UUID map built in step 6.
    - If either endpoint maps to a dropped ghost → drop this relationship from the persisted set. Log a warning.
    - Otherwise INSERT into relationships. Emit `edge-added` wire event.
 
-9. **Clear state column:** `UPDATE worlds SET entity_consolidation_pending = '{}'::jsonb WHERE id = $1`.
+8. **Clear state column:** `UPDATE worlds SET entity_consolidation_pending = '{"declarations": [], "relationships": []}'::jsonb WHERE id = $1`.
 
-10. **Return** `StageDispatchResult` with summed cost (main Sonnet call + N Haiku audits + any retry Sonnet calls), summed tokens, `finalizedEvents` for the surviving ghosts and relationships per the tier-gated post-commit pattern.
+9. **Return** `StageDispatchResult` with the main Sonnet call's cost + token totals, `finalizedEvents` for the surviving ghosts and relationships per the tier-gated post-commit pattern.
+
+**No semantic audit.** Structural Zod validation on the LLM's output (length bounds, enum membership, required fields) runs via the SDK's normal generateObject path; if it fails, the existing Haiku→Sonnet repair chain in `ai.ts` fires; if repair exhausts, the stage handler drops the affected ghost (and its incoming relationships per step 7's drop rule). No proper-noun extraction, no allowed-names set check. Trust the prompt — see "Non-goals" for the full reasoning.
 
 **Prompt structure** (`backend/src/llm/prompts/prep/entity-consolidation.txt`):
 
-- World vocabulary registry block (so the model sees allowed concept-terms like "Liftstone").
+- World vocabulary registry block (so the model knows established concept-terms like "Liftstone").
 - World summary (name, tone, themes, key tensions).
 - Existing entity inventory: full UUID + name + type + brief description for each existing entity.
 - Phantom declarations: the placeholder IDs + names + types stage 4 declared.
 - Per-phantom relationship context: for each phantom, the list of relationships that referenced it (with quoted descriptions), so the LLM understands what role this entity plays in the world.
-- Hard constraint, explicit: *"Your prose and facts for these new entities may reference, by name, only the entities listed in the existing inventory above OR the other ghost entities being declared in this response OR vocabulary registry terms. Any other proper noun introduces a dangling reference that will fail validation and cause the entity to be dropped."*
+- Strong guidance (not a hard constraint): *"Where possible, ground your prose and facts in entities and concepts that already exist in this world — the entity inventory above, the vocabulary registry, the other ghost entities you're declaring in this response. Avoid introducing fresh proper nouns or concepts that don't have prior grounding in this world; the prose reads more coherent when it references things the player has already met. If you must mention something new in passing, keep it light and atmospheric rather than load-bearing."*
 - Generation guidance: same tone and depth as stage 3 entities; ground the prose in the relationships that referenced this entity; do not narrate; concrete and specific.
 
 ### 5. Stage 4 prompt + handler changes
@@ -434,7 +409,7 @@ on entityAdded(e):
     placeholderBuffer.delete(e.placeholderId)
 ```
 
-End-of-world-gen snapshot push reconciles any remaining buffered edges (in practice, only ones whose ghost failed audit — those edges silently disappear when the canonical snapshot replaces local state, since the dropped ghost + its relationships aren't in the persisted set).
+End-of-world-gen snapshot push reconciles any remaining buffered edges (in practice, only ones whose ghost failed structural validation + repair — those edges silently disappear when the canonical snapshot replaces local state, since the dropped ghost + its relationships aren't in the persisted set).
 
 ### 7. What doesn't change
 
@@ -458,11 +433,12 @@ All new and extended test files run as part of the standard `pnpm test` suite. M
   - LLM returns orphan placeholder reference (used in relationship, not declared) → dropped + warning logged.
   - LLM returns extras in declarations (placeholderId declared but never referenced) → declarations preserved, no issue.
 
-- **`entity-consolidation.test.ts` (new)** — handler unit tests with mocked Sonnet + mocked Haiku:
+- **`entity-consolidation.test.ts` (new)** — handler unit tests with mocked Sonnet:
   - Empty pending state → skip path: zero-cost stage row, no ghosts created.
-  - Happy path → ghosts persisted with `created_in='stage:entity_consolidation'`, pending relationships resolved + persisted, state column cleared, `entity-added` events emitted with `placeholderId`.
-  - Audit-fails-once-then-passes → retry path; second Sonnet call uses constrained prompt; final ghost persists.
-  - Audit-fails-twice → drop path; ghost not persisted; relationships referencing its placeholder dropped from persisted set; pino warning emitted.
+  - Happy path → ghosts persisted with `created_in='stage:entity_consolidation'`, pending relationships resolved + persisted, state column cleared back to populated-shape default, `entity-added` events emitted with `placeholderId`.
+  - LLM returns extras (ghost output for placeholderIds not declared) → extras dropped, declared ghosts persist normally.
+  - LLM returns missing (declared placeholderId with no ghost output) → that ghost's incoming pending relationships dropped, other ghosts persist.
+  - Structural Zod failure + repair fails → handler drops the affected ghost, persists the rest, logs warning. (Mock the repair chain returning a failure for one ghost specifically.)
   - Idempotency → second run after partial first run wipes prior `'stage:entity_consolidation'` entities + cascades, recreates.
 
 - **`streaming-extractor.test.ts` (existing, extended)** — per-entity drop tests with mocked partial-object-stream:
@@ -526,7 +502,7 @@ The beads (`myth-tt2g`, `myth-449j`, and the new entity_consolidation work) are 
 | Risk | Mitigation |
 |---|---|
 | Phantom-prone concept doesn't produce phantoms in a given smoke run. | Accept probabilistic nature; assertions handle the no-phantom path cleanly (stage 4b completes with zero ghosts). Run smoke 2-3 times in practice. |
-| Haiku audit produces false-positives (flags legitimate vocabulary registry terms as new references). | The allowed-names set includes vocabulary registry terms explicitly. If false-positives surface during testing, tighten the prompt's "what counts as a new reference" definition or expand the allowed set. |
+| Stage 4b LLM produces a tonally-jarring proper noun in ghost prose (e.g., a sci-fi name in a fantasy world). | Strong prompt + vocabulary registry + world context make this near-zero probability with Sonnet. If real-LLM runs surface it as a pattern, iterate on prompt. Worst case is a single off-tone reference in a ghost's prose — not a system failure. |
 | Ghost prose ends up sounding generic / encyclopedia-shaped despite the prompt asking for full depth. | The prompt explicitly directs same-depth-as-stage-3. Manual review during Layer 3 catches generic-sounding ghosts; if it's a systemic problem, the prompt iterates. Eval-shaped concern; not a smoke gate. |
 | Per-entity Zod validation timing (when is an item "complete"?) creates edge cases. | Use the same boundary detection the streaming-extractor already uses for emitting entity-added events: item N is complete when item N+1 starts (or stream ends). No new timing semantics introduced. |
 | Frontend placeholder buffer leaks if a ghost is silently dropped. | Buffer is per-world-gen-run, scoped to a single dev-tool session. End-of-world-gen snapshot replaces all local state; any dangling buffered edges get garbage-collected on the swap. |
@@ -537,6 +513,7 @@ The beads (`myth-tt2g`, `myth-449j`, and the new entity_consolidation work) are 
 - **Phantom detection for stages 2-3 prose** — could surface mid-generation rather than after stage 4 sees them. Earlier detection might let stage 2 instantiate the phantom directly rather than deferring to stage 4b. Not pursued now; current shape is good enough.
 - **Per-prompt eval harness for phantom-prone concepts.** Would let us measure "what % of world concepts produce phantoms, and how many per world." Useful for capacity planning + cost projections. Separate spec.
 - **Smarter idempotency** — match-by-name across retries instead of wipe-and-recreate. Avoided here because LLM output is non-deterministic and name-matching is fragile.
+- **Proper-noun-density telemetry on stage 4b ghost prose.** A passive observability signal — count distinct proper nouns per ghost, log if outliers appear (e.g., ghost prose mentions 8 unique never-seen-before names). Not a gate, just a signal. If real-world runs show worlds turning into name-soup, the metric tells us when to iterate on the prompt. Filed as a separate observability bead.
 
 ## Source — files touched
 
