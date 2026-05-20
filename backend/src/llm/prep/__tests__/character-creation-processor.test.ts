@@ -35,6 +35,8 @@ import {
   runCharacterCreationJob,
   createCharacterCreationProcessor,
   type CharacterCreationJobPayload,
+  type CharacterCreationDeps,
+  type CreateCharacterCreationProcessorDeps,
 } from '../character-creation-processor.js'
 import { LlmStructuredOutputError } from '../../errors.js'
 
@@ -148,6 +150,32 @@ function makeJob(
   }
 }
 
+interface MakeDepsOverrides {
+  readonly costCapUsd?: number
+  readonly publishEvent?: CharacterCreationDeps['publishEvent']
+}
+
+// Default cap matches migration 016's seeded $5.00. Tests exercising the
+// cap-exceeded path override via `costCapUsd: <tight value>`.
+function makeDeps(pool: Pool, overrides: MakeDepsOverrides = {}): CharacterCreationDeps {
+  return {
+    pool,
+    costCapUsd: overrides.costCapUsd ?? 5.0,
+    publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
+  }
+}
+
+function makeProcessorDeps(
+  pool: Pool,
+  overrides: MakeDepsOverrides = {},
+): CreateCharacterCreationProcessorDeps {
+  return {
+    pool,
+    costCapUsd: overrides.costCapUsd ?? 5.0,
+    publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
+  }
+}
+
 describe('runCharacterCreationJob', () => {
   let pool: Pool
 
@@ -168,12 +196,9 @@ describe('runCharacterCreationJob', () => {
   beforeEach(async () => {
     await resetData(pool)
     vi.clearAllMocks()
-    // Ensure the cost-cap row is present (migration 016 seeds 5.00; resetData
-    // truncates settings so we re-seed here for explicitness).
-    await pool.query(
-      `INSERT INTO settings (key, value) VALUES ('character_creation_cost_cap_usd', '5.00')
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-    )
+    // Cost-cap is injected via makeDeps()/makeProcessorDeps(); workers no
+    // longer read the settings table at job time. resetData reseeds the
+    // settings rows itself, so no extra reseed needed here.
   })
 
   async function seed(): Promise<SeedResult> {
@@ -280,13 +305,14 @@ describe('runCharacterCreationJob', () => {
     // runCharacterCreationJob directly — exercises the closure body that
     // BullMQ's Worker invokes in production (mirrors how the
     // world-gen-processor tests drive createWorldGenProcessor).
-    const processor = createCharacterCreationProcessor({
-      pool,
-      publishEvent: (cid, e) => {
-        events.push({ campaignId: cid, ...e })
-        return Promise.resolve()
-      },
-    })
+    const processor = createCharacterCreationProcessor(
+      makeProcessorDeps(pool, {
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      }),
+    )
     await processor(makeJob(campaignId, userId) as unknown as Parameters<typeof processor>[0])
 
     // All four pipeline_runs rows in 'completed' state, keyed on
@@ -371,13 +397,12 @@ describe('runCharacterCreationJob', () => {
     // Terminal errors must NOT rethrow (no BullMQ retry).
     await expect(
       runCharacterCreationJob(
-        {
-          pool,
+        makeDeps(pool, {
           publishEvent: (cid, e) => {
             events.push({ campaignId: cid, ...e })
             return Promise.resolve()
           },
-        },
+        }),
         makeJob(campaignId, userId),
       ),
     ).resolves.toBeUndefined()
@@ -427,13 +452,12 @@ describe('runCharacterCreationJob', () => {
 
     const events: Record<string, unknown>[] = []
     await runCharacterCreationJob(
-      {
-        pool,
+      makeDeps(pool, {
         publishEvent: (cid, e) => {
           events.push({ campaignId: cid, ...e })
           return Promise.resolve()
         },
-      },
+      }),
       makeJob(campaignId, userId),
     )
 
@@ -482,65 +506,12 @@ describe('runCharacterCreationJob', () => {
     expect(capFailed).toBeDefined()
   })
 
-  it('fails cleanly when the cost-cap settings row is missing (precheck wraps in try/catch)', async () => {
-    // Regression test for the resilience gap surfaced by the T25 smoke:
-    // if settings.character_creation_cost_cap_usd is missing or malformed,
-    // readCharacterCreationCostCap throws. The precheck is wrapped in
-    // try/catch so the throw doesn't escape the processor unhandled
-    // (which would leave character_concepts stuck in 'processing' as
-    // BullMQ retries the job and removeOnFail drops it). The catch marks
-    // the concept failed with a distinct precheck-failed code and emits
-    // a stage-failed event.
-    const { userId, campaignId } = await seed()
-
-    // Wipe the cost-cap row to force the precheck to throw.
-    await pool.query(`DELETE FROM settings WHERE key = 'character_creation_cost_cap_usd'`)
-
-    const events: Record<string, unknown>[] = []
-    await runCharacterCreationJob(
-      {
-        pool,
-        publishEvent: (cid, e) => {
-          events.push({ campaignId: cid, ...e })
-          return Promise.resolve()
-        },
-      },
-      makeJob(campaignId, userId),
-    )
-
-    // Restore the row so other tests aren't poisoned.
-    await pool.query(
-      `INSERT INTO settings (key, value) VALUES ('character_creation_cost_cap_usd', '5.00')`,
-    )
-
-    const concept = await pool.query<{
-      status: string
-      error: { code?: string; message?: string } | null
-    }>(
-      `SELECT status, error FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
-      [campaignId, userId],
-    )
-    expect(concept.rows[0]?.status).toBe('failed')
-    expect(concept.rows[0]?.error?.code).toBe('character_creation_cost_cap_precheck_failed')
-    expect(concept.rows[0]?.error?.message).toMatch(/character_creation_cost_cap_usd is missing/)
-
-    // No stages ran.
-    expect(mockGenerateText).not.toHaveBeenCalled()
-
-    // stage-failed event with the precheck-failed reason + willRetry: false.
-    const precheckFailed = events.find(
-      (e) => e.type === 'stage-failed' && typeof e.reason === 'string' && e.reason.startsWith('cost_cap_precheck_failed'),
-    )
-    expect(precheckFailed).toBeDefined()
-    expect(precheckFailed?.willRetry).toBe(false)
-  })
-
   it('idempotent re-entry: re-running picks up where it left off', async () => {
     const { userId, campaignId } = await seed()
     setupHappyPathMocks()
 
     await runCharacterCreationJob(
-      { pool, publishEvent: () => Promise.resolve() },
+      makeDeps(pool),
       makeJob(campaignId, userId),
     )
 
@@ -567,7 +538,7 @@ describe('runCharacterCreationJob', () => {
     mockStreamObject.mockClear()
 
     await runCharacterCreationJob(
-      { pool, publishEvent: () => Promise.resolve() },
+      makeDeps(pool),
       makeJob(campaignId, userId),
     )
 
@@ -625,7 +596,7 @@ describe('runCharacterCreationJob', () => {
     )
     setupHappyPathMocks()
     await runCharacterCreationJob(
-      { pool, publishEvent: () => Promise.resolve() },
+      makeDeps(pool),
       makeJob(campaignId, userId),
     )
     // Just verify the job completed. The empty-string fallbacks rendered
@@ -653,13 +624,12 @@ describe('runCharacterCreationJob', () => {
     // event + rethrow. We catch the throw, then verify the side effects.
     await expect(
       runCharacterCreationJob(
-        {
-          pool,
+        makeDeps(pool, {
           publishEvent: (cid, e) => {
             events.push({ campaignId: cid, ...e })
             return Promise.resolve()
           },
-        },
+        }),
         makeJob(campaignId, userId),
       ),
     ).rejects.toThrow(/re-entry without ctx.conceptOutput/)
@@ -695,13 +665,12 @@ describe('runCharacterCreationJob', () => {
     const events: Record<string, unknown>[] = []
     await expect(
       runCharacterCreationJob(
-        {
-          pool,
+        makeDeps(pool, {
           publishEvent: (cid, e) => {
             events.push({ campaignId: cid, ...e })
             return Promise.resolve()
           },
-        },
+        }),
         makeJob(campaignId, userId),
       ),
     ).rejects.toThrow(/re-entry without in-process state/)

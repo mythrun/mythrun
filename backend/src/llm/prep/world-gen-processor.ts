@@ -35,7 +35,7 @@ import type { Redis } from 'ioredis'
 import type pino from 'pino'
 import { z } from 'zod'
 import type { LlmCallDiagnostic } from '../ai.js'
-import { issueCostCapRefund, readCostCap, sumCompletedStageCosts } from './cost-cap.js'
+import { issueCostCapRefund, sumCompletedStageCosts } from './cost-cap.js'
 import { runConceptIntakeStage } from './stages/concept-intake.js'
 import { runVocabularyIntakeStage } from './stages/vocabulary-intake.js'
 import { runStartingSituationStage } from './stages/starting-situation.js'
@@ -90,6 +90,10 @@ export interface WorldGenDeps {
   readonly redisRealtime: Redis
   readonly redisKeyPrefix: string
   readonly logger: pino.Logger
+  /** Per-job world-gen cost cap (USD). Read once from settings at server
+   *  boot and injected here so workers stay stateless re. global config;
+   *  operators changing settings need a worker restart to take effect. */
+  readonly costCapUsd: number
 }
 
 interface CampaignContext {
@@ -175,29 +179,11 @@ export function createWorldGenProcessor(
 
     await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_gen' })
 
-    // Cost-cap precheck. Wrapped so a missing/malformed
-    // settings.world_gen_cost_cap_usd row (resetData truncation in dev,
-    // or a manual delete) marks the world failed with a clear code
-    // instead of throwing through to BullMQ, which would retry once
-    // and then evict the job (`removeOnFail: { count: 0 }`) — leaving
-    // worlds.status='generating' + pipeline_runs='pending' forever.
-    let capUsd: number
-    try {
-      capUsd = await readCostCap(deps.pool)
-    } catch (err) {
-      /* c8 ignore next */
-      const message = err instanceof Error ? err.message : String(err)
-      await deps.pool.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [ctx.world.id])
-      await publishEvent(deps, campaignId, {
-        type: 'phase',
-        phase: 'world_gen_failed',
-      })
-      deps.logger.error(
-        { campaignId, worldId: ctx.world.id, err: message },
-        'world-gen: cost-cap precheck failed; world marked failed without retry',
-      )
-      return
-    }
+    // Cost-cap is injected once at server boot (see server.ts); workers
+    // stay stateless re. the settings table. Operators changing the
+    // settings row need a worker restart to take effect — by design
+    // (predictable cap per process lifetime; no per-job DB read).
+    const capUsd = deps.costCapUsd
 
     for (const stage of WORLD_GEN_STAGES) {
       const claim = await atomicClaimStage(deps.pool, {

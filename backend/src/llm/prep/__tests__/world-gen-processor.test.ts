@@ -212,11 +212,19 @@ function makeJob(campaignId: string): Job<WorldGenJobPayload> {
   } as unknown as Job<WorldGenJobPayload>
 }
 
-function makeDeps(pool: Pool): {
+interface MakeDepsOverrides {
+  readonly costCapUsd?: number
+}
+
+function makeDeps(
+  pool: Pool,
+  overrides: MakeDepsOverrides = {},
+): {
   pool: Pool
   redisRealtime: InstanceType<typeof IoredisMock>
   redisKeyPrefix: string
   logger: ReturnType<typeof silentLogger>
+  costCapUsd: number
   publishSpy: ReturnType<typeof vi.fn>
 } {
   const redisRealtime = new IoredisMock()
@@ -230,6 +238,9 @@ function makeDeps(pool: Pool): {
     redisRealtime,
     redisKeyPrefix: 'test:wgp:',
     logger: silentLogger(),
+    // Matches migration 010's seeded default ($10.00). Tests exercising the
+    // cap-exceeded path override with a tight value (e.g. 0.0001).
+    costCapUsd: overrides.costCapUsd ?? 10.0,
     publishSpy,
   }
 }
@@ -422,12 +433,11 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // ------------------------------------------------------------------
   it('issues refund + marks world failed when the cost cap is exceeded', async () => {
     const { userId, worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
-    await pool.query(`UPDATE settings SET value = '0.0001' WHERE key = 'world_gen_cost_cap_usd'`)
     // Generator usage that produces a cost well above 0.0001: 1M input / 1M
-    // output @ Sonnet ($3 + $15 = $18) — comfortably above cap.
+    // output @ Sonnet ($3 + $15 = $18) — comfortably above the injected cap.
     pushConceptIntakeResponses({ inputTokens: 1_000_000, outputTokens: 1_000_000 })
 
-    const deps = makeDeps(pool)
+    const deps = makeDeps(pool, { costCapUsd: 0.0001 })
     const proc = createWorldGenProcessor(deps)
     await proc(makeJob(campaignId))
 
@@ -461,37 +471,6 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(others.rows).toHaveLength(0)
 
     // phase=world_gen_failed published.
-    const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
-    expect(phaseStrings.some((p) => p.includes('"world_gen_failed"'))).toBe(true)
-  })
-
-  // ------------------------------------------------------------------
-  // 4b. Cost-cap precheck failure — settings row missing → world failed
-  //     without BullMQ retry. Defends against resetData truncating the
-  //     settings table and a stale dev DB stranding worlds in 'generating'.
-  // ------------------------------------------------------------------
-  it('marks world failed (no retry) when cost-cap settings row is missing', async () => {
-    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
-    await pool.query(`DELETE FROM settings WHERE key = 'world_gen_cost_cap_usd'`)
-
-    const deps = makeDeps(pool)
-    const proc = createWorldGenProcessor(deps)
-    // Must resolve cleanly (not reject) so BullMQ does not retry.
-    await proc(makeJob(campaignId))
-
-    const w = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [
-      worldId,
-    ])
-    expect(w.rows[0]?.status).toBe('failed')
-
-    // No pipeline_runs rows created — failure happens before stage 1 claim.
-    const runs = await pool.query<{ stage: string }>(
-      `SELECT stage FROM pipeline_runs WHERE world_id = $1`,
-      [worldId],
-    )
-    expect(runs.rows).toHaveLength(0)
-
-    // phase=world_gen_failed published so the UI doesn't hang on 'world_gen'.
     const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
     expect(phaseStrings.some((p) => p.includes('"world_gen_failed"'))).toBe(true)
   })

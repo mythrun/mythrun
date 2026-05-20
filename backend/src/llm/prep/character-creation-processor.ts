@@ -27,10 +27,7 @@ import type { Job } from 'bullmq'
 import type { Pool } from 'pg'
 import { isTerminalError } from '../errors.js'
 import { atomicClaimStage } from './world-gen-processor.js'
-import {
-  readCharacterCreationCostCap,
-  sumCharacterCreationStageCosts,
-} from './cost-cap.js'
+import { sumCharacterCreationStageCosts } from './cost-cap.js'
 import { runLocationSelectionStage } from './stages/location-selection.js'
 import { runCharacterConceptStage } from './stages/character-concept.js'
 import { runCharacterSheetStage } from './stages/character-sheet.js'
@@ -66,6 +63,11 @@ export interface CharacterCreationDeps {
     campaignId: string,
     event: Record<string, unknown>,
   ) => Promise<void>
+  /** Per-job character-creation cost cap (USD). Read once from settings
+   *  at server boot and injected here so workers stay stateless re.
+   *  global config; operators changing settings need a worker restart
+   *  to take effect. */
+  readonly costCapUsd: number
 }
 
 export type CharacterCreationJobLike = Pick<
@@ -92,48 +94,24 @@ export async function runCharacterCreationJob(
   //    the global cap. If over, mark the concept failed + emit stage-
   //    failed for cost_cap. Return cleanly (no BullMQ retry).
   //
-  //    Wrapped in try/catch because readCharacterCreationCostCap throws
-  //    CostCapParseError when the settings row is missing or malformed —
-  //    that's an operator-config failure, not a per-job retry condition.
-  //    Without this catch, the throw bubbles to BullMQ which retries via
-  //    backoff (attempts=2), then permanently fails the job with
-  //    removeOnFail dropping it — leaving character_concepts stuck in
-  //    'processing' with no visible signal. Smoke uncovered this:
-  //    resetData truncated the settings table, the precheck threw on
-  //    every retry attempt, the queue silently drained.
-  try {
-    const capUsd = await readCharacterCreationCostCap(deps.pool)
-    const spent = await sumCharacterCreationStageCosts(deps.pool, campaignId)
-    if (spent > capUsd) {
-      await conceptsRepo.markFailed(campaignId, userId, {
-        code: 'character_creation_cost_cap_exceeded',
-        spent,
-        capUsd,
-      })
-      await deps.publishEvent(campaignId, {
-        type: 'stage-failed',
-        stage: 'cost_cap',
-        userId,
-        willRetry: false,
-        reason: 'character_creation_cost_cap_exceeded',
-      })
-      return
-    }
-  } catch (err) {
-    // Non-Error throw branch defense; in practice readCharacterCreationCostCap
-    // / sumCharacterCreationStageCosts throw CostCapParseError or pg errors.
-    /* c8 ignore next */
-    const message = err instanceof Error ? err.message : String(err)
+  //    capUsd is injected once at server boot (see server.ts); workers
+  //    stay stateless re. the settings table. Operators changing the
+  //    settings row need a worker restart to take effect — by design
+  //    (predictable cap per process lifetime; no per-job DB read).
+  const capUsd = deps.costCapUsd
+  const spent = await sumCharacterCreationStageCosts(deps.pool, campaignId)
+  if (spent > capUsd) {
     await conceptsRepo.markFailed(campaignId, userId, {
-      code: 'character_creation_cost_cap_precheck_failed',
-      message,
+      code: 'character_creation_cost_cap_exceeded',
+      spent,
+      capUsd,
     })
     await deps.publishEvent(campaignId, {
       type: 'stage-failed',
       stage: 'cost_cap',
       userId,
       willRetry: false,
-      reason: `cost_cap_precheck_failed: ${message}`,
+      reason: 'character_creation_cost_cap_exceeded',
     })
     return
   }
@@ -502,6 +480,8 @@ export interface CreateCharacterCreationProcessorDeps {
     campaignId: string,
     event: Record<string, unknown>,
   ) => Promise<void>
+  /** Per-job cost cap (USD), read once at boot — see CharacterCreationDeps. */
+  readonly costCapUsd: number
 }
 
 export function createCharacterCreationProcessor(

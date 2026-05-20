@@ -23,6 +23,7 @@ import { getStripeClient } from './billing/stripe-client.js'
 import { probeStripeContract } from './billing/probe.js'
 import { createWorldGenProcessor } from './llm/prep/world-gen-processor.js'
 import { createCharacterCreationProcessor } from './llm/prep/character-creation-processor.js'
+import { readCharacterCreationCostCap, readCostCap } from './llm/prep/cost-cap.js'
 import {
   CONCURRENCY_CAMPAIGN_SETUP,
   CONCURRENCY_WORLD_GEN,
@@ -43,6 +44,21 @@ function buildAuthOpts(env: Env): RegisterAuthOptions {
   if (env.cognitoIssuerUrl !== undefined) opts.issuerUrl = env.cognitoIssuerUrl
   if (env.cognitoHostedUiDomain !== undefined) opts.hostedUiDomain = env.cognitoHostedUiDomain
   return opts
+}
+
+/** Read both cost-cap settings rows at server boot. Workers stay stateless
+ *  re. the settings table; an operator-edited cap requires a worker restart.
+ *  Centralized here so main() doesn't blow its 100-line budget threading
+ *  two parallel reads. */
+async function readCostCapsAtBoot(pool: Pool): Promise<{
+  worldGenCostCapUsd: number
+  characterCreationCostCapUsd: number
+}> {
+  const [worldGenCostCapUsd, characterCreationCostCapUsd] = await Promise.all([
+    readCostCap(pool),
+    readCharacterCreationCostCap(pool),
+  ])
+  return { worldGenCostCapUsd, characterCreationCostCapUsd }
 }
 
 async function closePartials(
@@ -159,6 +175,7 @@ async function buildWorldGenWorker(
   redisBatchUrl: string,
   redisKeyPrefix: string,
   logger: PinoLogger,
+  costCapUsd: number,
   signal: AbortSignal,
 ): Promise<Worker> {
   const connection = createBullmqRedisClient(redisBatchUrl)
@@ -169,7 +186,7 @@ async function buildWorldGenWorker(
   })
   return new Worker(
     QUEUE_WORLD_GEN,
-    createWorldGenProcessor({ pool, redisRealtime, redisKeyPrefix, logger }),
+    createWorldGenProcessor({ pool, redisRealtime, redisKeyPrefix, logger, costCapUsd }),
     { connection, concurrency: CONCURRENCY_WORLD_GEN },
   )
 }
@@ -185,6 +202,7 @@ async function buildCharacterCreationWorker(
   redisRealtime: Redis,
   redisBatchUrl: string,
   redisKeyPrefix: string,
+  costCapUsd: number,
   signal: AbortSignal,
 ): Promise<Worker> {
   const connection = createBullmqRedisClient(redisBatchUrl)
@@ -197,6 +215,7 @@ async function buildCharacterCreationWorker(
     QUEUE_CAMPAIGN_SETUP,
     createCharacterCreationProcessor({
       pool,
+      costCapUsd,
       publishEvent: async (campaignId, event) => {
         const channel = `${redisKeyPrefix}pipeline:campaign:${campaignId}`
         await redisRealtime.publish(channel, JSON.stringify(event))
@@ -381,20 +400,14 @@ export async function main(): Promise<void> {
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
     )
+    const caps = await readCostCapsAtBoot(pgRef)
     const worldGenWorker = await buildWorldGenWorker(
-      pgRef,
-      rTRRef,
-      env.redisBatchUrl,
-      env.redisKeyPrefix,
-      app.log as PinoLogger,
-      abortController.signal,
+      pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
+      app.log as PinoLogger, caps.worldGenCostCapUsd, abortController.signal,
     )
     const characterCreationWorker = await buildCharacterCreationWorker(
-      pgRef,
-      rTRRef,
-      env.redisBatchUrl,
-      env.redisKeyPrefix,
-      abortController.signal,
+      pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
+      caps.characterCreationCostCapUsd, abortController.signal,
     )
 
     await app.listen({ port: env.port, host: '0.0.0.0' })
