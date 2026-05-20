@@ -42,6 +42,7 @@ const COVERAGE_EXCLUDES: readonly string[] = [
 export default defineConfig({
   test: {
     setupFiles: ['./src/__tests__/setup-env.ts'],
+    globalSetup: ['./src/__tests__/global-setup.ts'],
     fileParallelism: false,
     // The mythrun/eslint-rules RuleTester scripts (.test.cjs) are run directly
     // via `node`, not Vitest — they don't expose describe/it. The wiring smoke
