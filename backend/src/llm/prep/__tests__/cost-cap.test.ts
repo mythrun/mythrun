@@ -6,13 +6,13 @@ import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../db/migrate.js'
-import { createPgPool } from '../../../db/postgres.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import {
   cleanupTestScope,
   makeTestScope,
   type TestScope,
 } from '../../../repo/__tests__/_helpers/test-scope.js'
+import { createTestPool } from '../../../repo/__tests__/_helpers/test-pool.js'
 import {
   readCostCap,
   sumCompletedStageCosts,
@@ -44,7 +44,7 @@ describe('cost-cap', () => {
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 1 })
+    pool = createTestPool(databaseUrl)
     await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
     await pool.query('DROP SCHEMA public CASCADE')
     await pool.query('CREATE SCHEMA public')

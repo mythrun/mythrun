@@ -25,7 +25,6 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import { buildApp } from '../../app.js'
-import { createPgPool } from '../../db/postgres.js'
 import { createRedisClient } from '../../redis/client.js'
 import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
@@ -39,6 +38,7 @@ import {
   makeTestScope,
   type TestScope,
 } from '../../repo/__tests__/_helpers/test-scope.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -74,7 +74,7 @@ describe('campaigns status routes', () => {
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 2 })
+    pool = createTestPool(databaseUrl)
     // Sibling repo tests share the same DB; reset to a clean slate so
     // foreign-key chains line up with the fresh migration baseline.
     await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')

@@ -67,6 +67,20 @@ vi.mock('../boot/migrations-current.js', () => ({
     await mockProbeMigrationsCurrent(pool)
   },
 }))
+// myth-oehx P2: server.ts reads cost-caps from the settings table at
+// boot. The boot gate happy-path doesn't run real SQL — stub the reads
+// to return sensible defaults so main() doesn't blow on the generic
+// mockPgQuery shape (which returns {} without a rows array).
+vi.mock('../llm/prep/cost-cap.js', async () => {
+  const actual = await vi.importActual<typeof import('../llm/prep/cost-cap.js')>(
+    '../llm/prep/cost-cap.js',
+  )
+  return {
+    ...actual,
+    readCostCap: vi.fn().mockResolvedValue(10.0),
+    readCharacterCreationCostCap: vi.fn().mockResolvedValue(5.0),
+  }
+})
 
 vi.mock('../app.js', async () => {
   const actual = await vi.importActual<typeof import('../app.js')>('../app.js')

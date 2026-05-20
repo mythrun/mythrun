@@ -27,7 +27,6 @@ import pino from 'pino'
 import * as ai from 'ai'
 
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
-import { createPgPool } from '../../../db/postgres.js'
 import { runMigrations } from '../../../db/migrate.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import {
@@ -35,6 +34,7 @@ import {
   makeTestScope,
   type TestScope,
 } from '../../../repo/__tests__/_helpers/test-scope.js'
+import { createTestPool } from '../../../repo/__tests__/_helpers/test-pool.js'
 import {
   atomicClaimStage,
   createWorldGenProcessor,
@@ -251,7 +251,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 4 })
+    pool = createTestPool(databaseUrl)
     await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
     await pool.query('DROP SCHEMA public CASCADE')
     await pool.query('CREATE SCHEMA public')
@@ -944,7 +944,7 @@ describe('atomicClaimStage with userId', () => {
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 4 })
+    pool = createTestPool(databaseUrl)
     // Schema is already migrated by the main describe block's beforeAll
     // (single shared DB). Running migrations again is idempotent but
     // unnecessary; just acquire a pool and a fresh scope.

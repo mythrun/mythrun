@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import type { Pool, PoolClient } from 'pg'
-import { createPgPool } from '../../db/postgres.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
 import { createCreditsRepo, grantInTx } from '../credits.js'
@@ -8,6 +7,7 @@ import type { ClientLike } from '../_types.js'
 import { uuidv7 } from '../uuidv7.js'
 import { ensureSchema, pool } from './_helpers/with-tx.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
+import { createTestPool } from './_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 
@@ -1425,7 +1425,7 @@ describe('credits repo — concurrency (separate pool)', () => {
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 4 })
+    pool = createTestPool(databaseUrl)
     // Schema already prepared by the main suite's beforeAll. We only need a
     // fresh pool with concurrent-connection capacity.
     scope = makeTestScope('credits-concurrency')

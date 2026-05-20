@@ -24,7 +24,6 @@ import type { Pool } from 'pg'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
-import { createPgPool } from '../../db/postgres.js'
 import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
@@ -39,6 +38,7 @@ import {
   makeTestScope,
   type TestScope,
 } from '../../repo/__tests__/_helpers/test-scope.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -188,7 +188,7 @@ describe('campaignCharactersPlugin (MYT-53 T12/T13/T14)', () => {
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 4 })
+    pool = createTestPool(databaseUrl)
     await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
     await pool.query('DROP SCHEMA public CASCADE')
     await pool.query('CREATE SCHEMA public')
