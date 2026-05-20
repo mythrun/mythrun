@@ -6,13 +6,16 @@
 # is present whose contents match the SHA-256 of the current
 # `git ls-tree HEAD -r backend/dev-tool` output.
 #
-# The marker is written by the dev-tool-verifier subagent (see
-# `backend/dev-tool/AUTHORING.md`, step 5 of the playbook) only AFTER
-# the verifier has completed its coverage + per-panel audit + final
-# pre-handoff verification. So a fresh marker is the signal "the
-# verifier saw this exact tree state and approved it." Any subsequent
-# commit that mutates the dev-tool subtree invalidates the marker
-# because the tree hash drifts.
+# The marker is written by the dev-tool-verifier subagent itself —
+# never by the controller. The subagent writes it as the final step
+# of a clean dispatch (no edits applied) per the playbook in
+# `backend/dev-tool/AUTHORING.md`. If a dispatch DID apply edits, the
+# subagent leaves the marker unwritten; the controller commits the
+# edits and re-dispatches, and the second (now-clean) dispatch writes
+# the marker. So a fresh marker is the signal "the verifier saw this
+# exact committed tree state and approved it." Any subsequent commit
+# that mutates the dev-tool subtree invalidates the marker because
+# the tree hash drifts.
 #
 # This is the deterministic patch behind the AUTHORING.md rule: the
 # previous reminder was a passive PostToolUse system-reminder that I
@@ -89,13 +92,11 @@ fi
 short_hash="${current_hash:0:12}"
 reason="git push blocked: unpushed commits modify backend/dev-tool/** but the dev-tool-verifier subagent has not approved the current tree state.
 
-Required action: (1) dispatch the dev-tool-verifier subagent using the prompt at the end of backend/dev-tool/AUTHORING.md; (2) on success, write the marker:
+Required action: dispatch the dev-tool-verifier subagent using the prompt at the end of backend/dev-tool/AUTHORING.md. It writes the marker itself as the final step of a clean dispatch. If the dispatch applies any edits, the subagent leaves the marker unwritten — the controller commits the edits and re-dispatches; the second dispatch is clean and writes the marker. Then retry the push.
 
-    mkdir -p tmp && git ls-tree HEAD -r backend/dev-tool | sha256sum | awk '{print \$1}' > tmp/.dev-tool-verifier-ok
+The controller MUST NOT write the marker file manually under any circumstances. That defeats the entire gate.
 
 (current expected hash: ${short_hash}…)
-
-(3) retry the push.
 
 Why this fires: pushing dev-tool changes without the verifier audit risks shipping bugs that the JSDOM harness alone cannot catch (panel behavior, coverage drift, real-LLM smoke). The marker is invalidated automatically by any further commit to backend/dev-tool/**.
 

@@ -135,18 +135,16 @@ covered surface.
 
 `.claude/hooks/pre-push-dev-tool-verify.sh` blocks `git push` when the unpushed commits modify `backend/dev-tool/**` unless `tmp/.dev-tool-verifier-ok` contains the SHA-256 of the current `git ls-tree HEAD -r backend/dev-tool` output. The marker is the deterministic signal that the verifier subagent saw and approved this exact committed tree state. Any subsequent commit to `backend/dev-tool/**` shifts the hash and invalidates the marker.
 
-**Controller marker protocol** — after a verifier dispatch reports success, do all three steps below in order, then push:
+**Only the verifier subagent writes the marker.** The controller MUST NOT write the marker file manually under any circumstances. The whole point of the gate is that the marker proves a verifier actually ran — a controller-written marker is exactly the bypass the gate exists to prevent.
 
-1. `git add` + `git commit` the subagent's working-tree edits (panels, registry, coverage inventory). The subagent does NOT commit per its authority list above.
-2. Write the marker against the post-commit HEAD:
-   ```bash
-   mkdir -p tmp && git ls-tree HEAD -r backend/dev-tool | sha256sum | awk '{print $1}' > tmp/.dev-tool-verifier-ok
-   ```
-3. `git push`. The PreToolUse hook recomputes the hash and allows the push.
+**Protocol depending on whether the verifier made edits:**
 
-If the marker doesn't yet exist or is stale, the push is denied with the exact reason and a hash hint pointing at the current dev-tool tree. The fix is always: dispatch the verifier subagent (the prompt at the end of this file), then redo the controller protocol from step 1.
+- **Clean dispatch (no edits to working tree):** the subagent's final step is to write the marker against current `HEAD` (no commits needed; the tree is already what it was when dispatched). The controller then pushes; the hook allows.
+- **Dispatch with fixes (edits to working tree):** the subagent stops before writing the marker, leaves the edits in the working tree, and reports them in the playbook's final report. The controller stages + commits the fixes, then **re-dispatches the verifier** against the post-commit tree. The re-dispatch is a clean-dispatch (no further edits, since the issues were just fixed), so it writes the marker. The controller pushes.
 
-**The subagent does NOT write the marker itself.** The marker hashes HEAD, and HEAD doesn't include the subagent's edits until the controller commits them. A subagent-written marker would always be stale-by-one-commit and produce false denies.
+Two dispatches when fixes are needed is the cost of keeping marker-writing exclusively in the subagent's hands. It's worth it: a controller that can write the marker can also rationalize writing it without dispatching the verifier at all, which defeats the gate.
+
+If the marker is missing or stale, the push is denied with the exact reason and a hash hint pointing at the current dev-tool tree. The fix is always: dispatch the verifier subagent (the prompt at the end of this file).
 
 ---
 
@@ -233,7 +231,15 @@ You may NOT run:
 
 6. **Update the coverage inventory** in `AUTHORING.md` if new routes/panels landed.
 
-7. **Report back** in exactly this shape:
+7. **Write the marker — but only on a clean dispatch.** If you made ANY edits to files under `backend/dev-tool/**`, `backend/src/contract/backend-routes.ts`, or `AUTHORING.md` during this dispatch, do NOT write the marker. Skip to step 8 and report the edits to the controller. The controller will commit your edits and re-dispatch; the re-dispatch is a clean dispatch (because the edits are now in `HEAD`) and will write the marker.
+
+   On a clean dispatch (no edits made during this dispatch), write the marker as the FINAL step before reporting:
+   ```bash
+   mkdir -p tmp && git ls-tree HEAD -r backend/dev-tool | sha256sum | awk '{print $1}' > tmp/.dev-tool-verifier-ok
+   ```
+   This is the ONLY context in which writing this file is allowed. The controller is forbidden from writing it. If you're confused about whether this is a clean dispatch, run `git diff --stat` and `git status --short` — if either lists anything under your authority paths, it is NOT clean.
+
+8. **Report back** in exactly this shape:
 
 ```
 ## Panels checked
@@ -243,6 +249,9 @@ You may NOT run:
 - added panel: <name> for <route>
 - removed panel: <name> (route deleted upstream)
 - (nothing changed)
+
+## Marker written
+- yes (clean dispatch, no edits) | no (edits applied, controller commits + re-dispatches)
 
 ## E2E smoke result (REQUIRED — must report, never omit)
 - campaign id: <id>
@@ -267,4 +276,6 @@ You may NOT run:
 If the "E2E smoke result" section is missing or its verdict is FAIL, the controller WILL re-dispatch you. There is no way to ship dev-tool changes without a passing smoke. Do not waste a dispatch — run the smoke.
 
 Do NOT commit. Leave files in the working tree; the controller stages and commits everything.
+
+Do NOT instruct the controller to write the marker. The marker is yours to write (only on a clean dispatch) or to leave unwritten (so the controller can commit your edits + re-dispatch you). A subagent that ends a fix-dispatch by instructing the controller to write the marker is doing the wrong thing.
 ```
