@@ -88,6 +88,7 @@ export const TABLE_CLUSTERS: Readonly<Record<string, ClusterName>> = {
   campaign_invites: 'Campaigns & play',
   characters: 'Campaigns & play',
   campaign_characters: 'Campaigns & play',
+  character_concepts: 'Campaigns & play',
   character_skills: 'Campaigns & play',
   character_features: 'Campaigns & play',
   character_equipment: 'Campaigns & play',
