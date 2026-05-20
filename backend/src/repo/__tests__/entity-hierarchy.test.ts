@@ -43,8 +43,8 @@ describe('entityHierarchy repo', () => {
       `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
       [worldId, userId, scope.worldName(0)],
     )
-    await entities.insert(pool, { id: parentId, worldId, entityType: 'location', name: 'P', accessLevel: 'known' })
-    await entities.insert(pool, { id: childId, worldId, entityType: 'location', name: 'C', accessLevel: 'known' })
+    await entities.insert(pool, { id: parentId, worldId, entityType: 'location', name: 'P', accessLevel: 'known', createdIn: 'stage:test' })
+    await entities.insert(pool, { id: childId, worldId, entityType: 'location', name: 'C', accessLevel: 'known', createdIn: 'stage:test' })
   })
 
   it('insert writes a hierarchy row', async () => {
@@ -71,6 +71,7 @@ describe('entityHierarchy repo', () => {
       entityType: 'location',
       name: 'Other',
       accessLevel: 'known',
+      createdIn: 'stage:test',
     })
     await expect(
       entityHierarchy.insert(pool, { parentEntityId: otherParent, childEntityId: childId }),
@@ -110,10 +111,10 @@ describe('entityHierarchy repo', () => {
         [otherWorldId, otherUserId, scope.worldName(1)],
       )
       await entities.insert(pool, {
-        id: otherParentId, worldId: otherWorldId, entityType: 'location', name: 'OP', accessLevel: 'known',
+        id: otherParentId, worldId: otherWorldId, entityType: 'location', name: 'OP', accessLevel: 'known', createdIn: 'stage:test',
       })
       await entities.insert(pool, {
-        id: otherChildId, worldId: otherWorldId, entityType: 'location', name: 'OC', accessLevel: 'known',
+        id: otherChildId, worldId: otherWorldId, entityType: 'location', name: 'OC', accessLevel: 'known', createdIn: 'stage:test',
       })
       await entityHierarchy.insert(pool, {
         parentEntityId: otherParentId, childEntityId: otherChildId,

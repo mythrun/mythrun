@@ -42,7 +42,7 @@ describe('proseKernels repo', () => {
       [worldId, userId, scope.worldName(0)],
     )
     await entities.insert(pool, {
-      id: entityId, worldId, entityType: 'location', name: 'X', accessLevel: 'known',
+      id: entityId, worldId, entityType: 'location', name: 'X', accessLevel: 'known', createdIn: 'stage:test',
     })
   })
 
@@ -94,6 +94,7 @@ describe('proseKernels repo', () => {
         entityType: 'location',
         name: 'Y',
         accessLevel: 'known',
+        createdIn: 'stage:test',
       })
 
       await proseKernels.insert(pool, { entityId, content: 'first kernel' })

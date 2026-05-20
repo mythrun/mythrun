@@ -173,15 +173,15 @@ async function seedCampaignWithSnapshot(
   // Entities: two known + one secret.
   await entities.insert(pool, {
     id: known1, worldId, entityType: 'location',
-    name: `${scope.id}-k1-${String(index)}`, accessLevel: 'known',
+    name: `${scope.id}-k1-${String(index)}`, accessLevel: 'known', createdIn: 'stage:test',
   })
   await entities.insert(pool, {
     id: known2, worldId, entityType: 'faction',
-    name: `${scope.id}-k2-${String(index)}`, accessLevel: 'known',
+    name: `${scope.id}-k2-${String(index)}`, accessLevel: 'known', createdIn: 'stage:test',
   })
   await entities.insert(pool, {
     id: secret, worldId, entityType: 'npc',
-    name: `${scope.id}-sec-${String(index)}`, accessLevel: 'secret',
+    name: `${scope.id}-sec-${String(index)}`, accessLevel: 'secret', createdIn: 'stage:test',
   })
 
   // Facts: one known on known1, one secret on the secret entity.

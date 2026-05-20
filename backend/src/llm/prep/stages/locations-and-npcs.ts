@@ -139,6 +139,7 @@ async function persistLocations(
       entityType: 'location',
       name: loc.name,
       accessLevel: loc.access_level,
+      createdIn: 'stage:locations_and_npcs',
     })
     await proseKernels.insert(client, { entityId, content: loc.prose })
     await facts.insertMany(
@@ -175,6 +176,7 @@ async function persistNpcs(
       entityType: 'npc',
       name: npc.name,
       accessLevel: npc.access_level,
+      createdIn: 'stage:locations_and_npcs',
     })
     await proseKernels.insert(client, { entityId, content: npc.prose })
     await facts.insertMany(

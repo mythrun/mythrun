@@ -107,6 +107,7 @@ async function persistEntities(args: PersistEntityArgs): Promise<void> {
       // T08 made the Zod schema include `access_level`; T05 made the
       // entities.insert require accessLevel. Closing the loop here.
       accessLevel: item.access_level,
+      createdIn: 'stage:world_and_factions',
     })
     await proseKernels.insert(args.client, { entityId, content: item.prose })
     await facts.insertMany(

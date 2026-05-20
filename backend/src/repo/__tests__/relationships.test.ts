@@ -44,8 +44,8 @@ describe('relationships repo', () => {
       `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
       [worldId, userId, scope.worldName(0)],
     )
-    await entities.insert(pool, { id: entA, worldId, entityType: 'faction', name: 'A', accessLevel: 'known' })
-    await entities.insert(pool, { id: entB, worldId, entityType: 'location', name: 'B', accessLevel: 'known' })
+    await entities.insert(pool, { id: entA, worldId, entityType: 'faction', name: 'A', accessLevel: 'known', createdIn: 'stage:test' })
+    await entities.insert(pool, { id: entB, worldId, entityType: 'location', name: 'B', accessLevel: 'known', createdIn: 'stage:test' })
   })
 
   it('insertMany writes relationship rows', async () => {
@@ -172,7 +172,7 @@ describe('relationships repo', () => {
       // partially-in-set (entA→entC) and confirm it is excluded.
       const entC = uuidv7()
       await entities.insert(pool, {
-        id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known',
+        id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known', createdIn: 'stage:test',
       })
       await relationships.insertMany(pool, [
         { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },
@@ -189,7 +189,7 @@ describe('relationships repo', () => {
     it('returns every relationship when the id set is a full superset', async () => {
       const entC = uuidv7()
       await entities.insert(pool, {
-        id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known',
+        id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known', createdIn: 'stage:test',
       })
       await relationships.insertMany(pool, [
         { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },

@@ -93,15 +93,15 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
     }
     await entities.insert(pool, {
       id: known1, worldId, entityType: 'location',
-      name: `${scope.id}-k1`, accessLevel: 'known',
+      name: `${scope.id}-k1`, accessLevel: 'known', createdIn: 'stage:test',
     })
     await entities.insert(pool, {
       id: known2, worldId, entityType: 'faction',
-      name: `${scope.id}-k2`, accessLevel: 'known',
+      name: `${scope.id}-k2`, accessLevel: 'known', createdIn: 'stage:test',
     })
     await entities.insert(pool, {
       id: discoverable, worldId, entityType: 'npc',
-      name: `${scope.id}-d`, accessLevel: 'discoverable',
+      name: `${scope.id}-d`, accessLevel: 'discoverable', createdIn: 'stage:test',
     })
     await facts.insertMany(pool, [
       { entityId: known1, topic: 'a', accessLevel: 'known', content: 'k1-public' },

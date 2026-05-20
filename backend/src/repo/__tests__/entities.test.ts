@@ -50,6 +50,7 @@ describe('entities repo', () => {
       entityType: 'location',
       name: 'Eredil',
       accessLevel: 'known',
+      createdIn: 'stage:test',
     })
 
     const row = await pool.query<{ entity_type: string; name: string }>(
@@ -72,6 +73,7 @@ describe('entities repo', () => {
       entityType: 'faction',
       name: 'House Eyrin',
       accessLevel: 'known',
+      createdIn: 'stage:test',
     })
     const found = await entities.findByWorldAndName(pool, worldId, 'House Eyrin')
     expect(found?.id).toBe(id)
@@ -84,6 +86,7 @@ describe('entities repo', () => {
       entityType: 'location',
       name: 'A',
       accessLevel: 'known',
+      createdIn: 'stage:test',
     })
     await entities.insert(pool, {
       id: uuidv7(),
@@ -91,6 +94,7 @@ describe('entities repo', () => {
       entityType: 'faction',
       name: 'B',
       accessLevel: 'known',
+      createdIn: 'stage:test',
     })
     const rows = await entities.listByWorld(pool, worldId)
     expect(rows).toHaveLength(2)
@@ -106,6 +110,7 @@ describe('entities repo', () => {
       entityType: 'location',
       name: `${scope.id}-loc`,
       accessLevel: 'discoverable',
+      createdIn: 'stage:test',
     })
     const { rows } = await pool.query<{ access_level: string }>(
       `SELECT access_level FROM entities WHERE id = $1`,
@@ -122,6 +127,7 @@ describe('entities repo', () => {
         entityType: 'location',
         name: `${scope.id}-${tier}`,
         accessLevel: tier,
+        createdIn: 'stage:test',
       })
     }
     const known = await entities.listByWorld(pool, worldId, { accessLevels: ['known'] })
@@ -132,5 +138,22 @@ describe('entities repo', () => {
       accessLevels: ['known', 'discoverable', 'secret'],
     })
     expect(all).toHaveLength(3)
+  })
+
+  it('writes created_in when provided', async () => {
+    const id = uuidv7()
+    await entities.insert(pool, {
+      id,
+      worldId,
+      entityType: 'faction',
+      name: 'Test Faction',
+      accessLevel: 'known',
+      createdIn: 'stage:test',
+    })
+    const row = await pool.query<{ created_in: string }>(
+      `SELECT created_in FROM entities WHERE id = $1`,
+      [id],
+    )
+    expect(row.rows[0]?.created_in).toBe('stage:test')
   })
 })

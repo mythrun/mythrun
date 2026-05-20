@@ -41,7 +41,7 @@ describe('facts repo', () => {
       `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
       [worldId, userId, scope.worldName(0)],
     )
-    await entities.insert(pool, { id: entityId, worldId, entityType: 'location', name: 'X', accessLevel: 'known' })
+    await entities.insert(pool, { id: entityId, worldId, entityType: 'location', name: 'X', accessLevel: 'known', createdIn: 'stage:test' })
   })
 
   it('insertMany stamps narrative_status=undelivered and source=prep on every row', async () => {
@@ -98,7 +98,7 @@ describe('facts repo', () => {
       if (worldId === undefined) throw new Error('expected entity to have a world')
 
       const entityId2 = uuidv7()
-      await entities.insert(pool, { id: entityId2, worldId, entityType: 'location', name: 'Y', accessLevel: 'known' })
+      await entities.insert(pool, { id: entityId2, worldId, entityType: 'location', name: 'Y', accessLevel: 'known', createdIn: 'stage:test' })
 
       await facts.insertMany(pool, [
         { entityId, topic: 'a', accessLevel: 'known', content: 'k1' },

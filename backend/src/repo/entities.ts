@@ -28,6 +28,10 @@ export interface InsertEntityInput {
   // passes it straight through.
   readonly accessLevel: AccessLevel
   readonly statBlockId?: string | null
+  /** Provenance marker. Format: 'stage:<stage_name>' for world-gen-
+   *  created entities; 'session:<uuid>' for Scribe-created entities
+   *  during play. */
+  readonly createdIn: string
 }
 
 export interface Entity {
@@ -58,8 +62,8 @@ function toEntity(row: EntityRow): Entity {
 
 async function insert(client: ClientLike, input: InsertEntityInput): Promise<void> {
   await client.query(
-    `INSERT INTO entities (id, world_id, entity_type, name, access_level, stat_block_id)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+    `INSERT INTO entities (id, world_id, entity_type, name, access_level, stat_block_id, created_in)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
       input.id,
       input.worldId,
@@ -67,6 +71,7 @@ async function insert(client: ClientLike, input: InsertEntityInput): Promise<voi
       input.name,
       input.accessLevel,
       input.statBlockId ?? null,
+      input.createdIn,
     ],
   )
 }
