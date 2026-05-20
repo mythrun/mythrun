@@ -76,6 +76,7 @@ When in doubt, ask. The default lean is "build it right." If you're tempted to s
 - All DB access through the repository layer
 - UUIDv7 for all primary keys (time-ordered, good B-tree locality)
 - Conventional Commits
+- **Test conventions:** read `backend/src/__tests__/CONVENTIONS.md` before authoring new tests. Single isolation pattern (scoped fixtures), single pool factory (`createTestPool`), schema bootstrap is `globalSetup`'s job not `beforeAll`'s.
 
 ## Agent Instructions
 
