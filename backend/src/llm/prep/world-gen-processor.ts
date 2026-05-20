@@ -43,6 +43,7 @@ import { runRandomTablesStage } from './stages/random-tables.js'
 import { runWorldAndFactionsStage } from './stages/world-and-factions.js'
 import { runLocationsAndNpcsStage } from './stages/locations-and-npcs.js'
 import { runEntityRelationshipsStage } from './stages/entity-relationships.js'
+import { runEntityConsolidationStage } from './stages/entity-consolidation.js'
 import { runCoherencePassStage } from './stages/coherence-pass.js'
 import { StageNotImplementedError } from './stages/stage-not-implemented.js'
 import { isTerminalError } from '../errors.js'
@@ -74,6 +75,7 @@ export const WORLD_GEN_STAGES = [
   'world_and_factions',
   'locations_and_npcs',
   'entity_relationships',
+  'entity_consolidation',
   'starting_situation',
   'random_tables',
   'coherence_pass',
@@ -194,17 +196,20 @@ export function createWorldGenProcessor(
       if (claim !== 'claimed') {
         // myth-exac T18: on idempotent re-entry, re-publish
         // phase=world_snapshot_ready as soon as we walk past a completed
-        // stage-4 row. SSE subscribers that reconnected mid-job catch up
+        // stage-4b row. SSE subscribers that reconnected mid-job catch up
         // on the snapshot-availability signal without needing the
-        // initial-frame snapshot of pipeline_runs.
-        if (stage === 'entity_relationships' && claim === 'completed') {
+        // initial-frame snapshot of pipeline_runs. Stage 4b
+        // (entity_consolidation) is the new last entity-creating stage —
+        // it resolves stage-4's phantom declarations into real rows, so
+        // the snapshot is only safely fetchable after it commits.
+        if (stage === 'entity_consolidation' && claim === 'completed') {
           await publishEvent(deps, campaignId, {
             type: 'phase',
             phase: 'world_snapshot_ready',
           })
         }
         /* c8 ignore next — `continue` arm with claim==='lost-race' or
-         * claim==='completed' on non-entity_relationships stages. Tested
+         * claim==='completed' on non-entity_consolidation stages. Tested
          * via the idempotency suite. */
         continue
       }
@@ -230,14 +235,16 @@ export function createWorldGenProcessor(
           costUsd: result.costUsd,
         })
 
-        // myth-exac T18: stage 4 (entity_relationships) is the boundary
-        // where the world snapshot becomes fetchable — all entities +
-        // hierarchy + relationships have committed. Publish the phase
+        // myth-exac T18 + phantom-reconciliation P4.5: stage 4b
+        // (entity_consolidation) is the boundary where the world snapshot
+        // becomes fetchable — all real entities + hierarchy + relationships
+        // have committed AND any phantom references from stage 4 have been
+        // resolved into real rows (or dropped). Publish the phase
         // immediately so subscribers can render the snapshot view ahead of
         // worlds.status flipping to 'complete' (which only happens after
         // stages 5-7 finish). On idempotent re-entry the equivalent emit
         // fires from the `claim !== 'claimed'` branch above.
-        if (stage === 'entity_relationships') {
+        if (stage === 'entity_consolidation') {
           await publishEvent(deps, campaignId, {
             type: 'phase',
             phase: 'world_snapshot_ready',
@@ -654,6 +661,18 @@ async function dispatchStage(
       job,
       redisRealtime: deps.redisRealtime,
       keyPrefix: deps.redisKeyPrefix,
+      bypassAccessFilter: ctx.world.devBypassAccessFilter,
+    })
+  }
+  if (stage === 'entity_consolidation') {
+    return runEntityConsolidationStage(client, {
+      campaignId,
+      worldId: ctx.world.id,
+      worldName: ctx.world.name,
+      tone: ctx.world.tone ?? '',
+      themes: ctx.world.themes ?? '',
+      keyTensions: ctx.world.keyTensions ?? '',
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
       bypassAccessFilter: ctx.world.devBypassAccessFilter,
     })
   }

@@ -1,0 +1,50 @@
+{# Stage 4b (entity_consolidation). Inputs: world summary +
+   vocabulary registry + existing entity inventory + phantom
+   declarations from stage 4 + per-phantom relationship context.
+   Outputs: full prose + facts for each declared phantom. #}
+
+You are formalizing a small group of entities that were referenced during stage 4 of world generation but didn't exist yet as full entities. For each one, write the entity into existence with the same depth as the other entities of this world: a few paragraphs of prose, several structured facts, an access level, and (for locations) a parent location.
+
+## World Vocabulary
+
+{{vocabularyRegistry}}
+
+## World Summary
+
+- **Name:** {{worldName}}
+- **Tone:** {{tone}}
+- **Themes:** {{themes}}
+- **Key tensions:** {{keyTensions}}
+
+## Existing Entity Inventory
+
+Every entity below is part of the established world. Reference these by name in your prose when relevant — they are the load-bearing characters, places, and factions the players already know about.
+
+{{entityInventory}}
+
+## Phantoms to Resolve
+
+The entities below were declared during stage 4 but don't yet have prose or facts. Write each one into existence. Each entry below is followed by the relationships that referenced this phantom — use those relationships as the structural anchor for what this entity is and does.
+
+{{phantomBlock}}
+
+## Your Task
+
+For each phantom above, produce a `ghost_entities` entry with:
+
+- `placeholder_id` — copy verbatim from the declaration above.
+- `name` — copy verbatim from the declaration.
+- `entity_type` — copy verbatim from the declaration.
+- `access_level` — pick `known`, `discoverable`, or `secret`. Default to `known` unless the relationships suggest the entity is rumored or hidden.
+- `parent_location_id` — UUID of the parent location from the existing inventory if this is a location with a clear parent, else `null`. Factions and NPCs always set this to `null`.
+- `prose` — 40-2400 characters. Write in the same register as the existing world. Ground it in the relationships above: if relationships say this entity "rivals X" or "operates in Y," write prose that explains how and why.
+- `facts` — 2-12 structured facts. Each fact is `{topic, content, access_level}`. Facts should be concrete and grounded.
+
+## Guidance
+
+- Where possible, ground your prose and facts in entities and concepts that already exist in this world — the entity inventory above, the vocabulary registry, the other phantoms you're declaring in this response. The prose reads more coherent when it references things the players have already met.
+- If you must mention something new in passing, keep it light and atmospheric rather than load-bearing.
+- Each entity gets a tight, story-shaped paragraph — no info-dumps, no bullet lists in prose.
+- Do not narrate. The facts should read like structured notes, not story snippets.
+
+Respond with ONLY the JSON object, no markdown fences or commentary.
