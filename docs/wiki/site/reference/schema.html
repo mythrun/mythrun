@@ -1625,6 +1625,97 @@ END)</code></li>
     <li><code>CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))</code></li>
   </ul>
 </details>
+<details class="schema-table" data-table-name="character_concepts" id="schema-table-character_concepts">
+  <summary>
+    <span class="schema-table-name">character_concepts</span>
+    <span class="schema-table-meta">10 columns · 1 index · 3 CHECKs · 48 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="campaign_id">
+        <td><code>campaign_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>campaign_members(user_id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="user_id">
+        <td><code>user_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="concept_text">
+        <td><code>concept_text</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="situation_grounding_text">
+        <td><code>situation_grounding_text</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="guided_choices">
+        <td><code>guided_choices</code></td>
+        <td><code>jsonb</code></td>
+        <td>NO</td>
+        <td><code>'{}'::jsonb</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="status">
+        <td><code>status</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'submitted'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="error">
+        <td><code>error</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="submitted_at">
+        <td><code>submitted_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_character_concepts_campaign_status</code> — (campaign_id, status)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK (((concept_text IS NULL) OR ((length(concept_text) &gt;= 20) AND (length(concept_text) &lt;= 4000))))</code></li>
+    <li><code>CHECK (((length(situation_grounding_text) &gt;= 20) AND (length(situation_grounding_text) &lt;= 2000)))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text])))</code></li>
+  </ul>
+</details>
 <details class="schema-table" data-table-name="character_equipment" id="schema-table-character_equipment">
   <summary>
     <span class="schema-table-name">character_equipment</span>
@@ -3015,98 +3106,6 @@ END)</code></li>
     </tbody>
   </table>
 </details>
-<h2 class="schema-cluster" id="other">Other</h2>
-<details class="schema-table" data-table-name="character_concepts" id="schema-table-character_concepts">
-  <summary>
-    <span class="schema-table-name">character_concepts</span>
-    <span class="schema-table-meta">10 columns · 1 index · 3 CHECKs · 6 FKs</span>
-  </summary>
-  <table class="schema-columns">
-    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
-    <tbody>
-      <tr data-column-name="id">
-        <td><code>id</code></td>
-        <td><code>uuid</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="campaign_id">
-        <td><code>campaign_id</code></td>
-        <td><code>uuid</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td><code>campaign_members(campaign_id)</code> ON DELETE CASCADE</td>
-      </tr>
-      <tr data-column-name="user_id">
-        <td><code>user_id</code></td>
-        <td><code>uuid</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td><code>campaign_members(user_id)</code> ON DELETE CASCADE</td>
-      </tr>
-      <tr data-column-name="concept_text">
-        <td><code>concept_text</code></td>
-        <td><code>text</code></td>
-        <td>YES</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="situation_grounding_text">
-        <td><code>situation_grounding_text</code></td>
-        <td><code>text</code></td>
-        <td>NO</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="guided_choices">
-        <td><code>guided_choices</code></td>
-        <td><code>jsonb</code></td>
-        <td>NO</td>
-        <td><code>'{}'::jsonb</code></td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="status">
-        <td><code>status</code></td>
-        <td><code>text</code></td>
-        <td>NO</td>
-        <td><code>'submitted'::text</code></td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="error">
-        <td><code>error</code></td>
-        <td><code>jsonb</code></td>
-        <td>YES</td>
-        <td>—</td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="submitted_at">
-        <td><code>submitted_at</code></td>
-        <td><code>timestamptz</code></td>
-        <td>NO</td>
-        <td><code>now()</code></td>
-        <td>—</td>
-      </tr>
-      <tr data-column-name="updated_at">
-        <td><code>updated_at</code></td>
-        <td><code>timestamptz</code></td>
-        <td>NO</td>
-        <td><code>now()</code></td>
-        <td>—</td>
-      </tr>
-    </tbody>
-  </table>
-  <h4>Indexes</h4>
-  <ul class="schema-list">
-    <li><code>idx_character_concepts_campaign_status</code> — (campaign_id, status)</li>
-  </ul>
-  <h4>CHECK constraints</h4>
-  <ul class="schema-list">
-    <li><code>CHECK (((concept_text IS NULL) OR ((length(concept_text) &gt;= 20) AND (length(concept_text) &lt;= 4000))))</code></li>
-    <li><code>CHECK (((length(situation_grounding_text) &gt;= 20) AND (length(situation_grounding_text) &lt;= 2000)))</code></li>
-    <li><code>CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text])))</code></li>
-  </ul>
-</details>
 </div>
 
 <h2 id="integration-points">Integration points</h2>
@@ -3121,7 +3120,7 @@ END)</code></li>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#other">Other</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
