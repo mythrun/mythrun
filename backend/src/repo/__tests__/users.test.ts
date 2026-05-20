@@ -7,15 +7,15 @@ import {
   type StripeCustomersClient,
 } from '../users.js'
 import type { ClientLike } from '../_types.js'
-import { ensureSchema, pool } from './_helpers/with-tx.js'
+import { createTestPool } from './_helpers/test-pool.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 
 describe('users repo (integration)', () => {
+  const pool = createTestPool(process.env.DATABASE_URL ?? '')
   let scope: TestScope
   let baseInput: { cognitoSub: string; username: string; displayName: string }
 
-  beforeAll(async () => {
-    await ensureSchema()
+  beforeAll(() => {
     // myth-5jdo: short label (<= 10 chars) — username helper truncates at 28
     // chars total; long labels collide on multi-user tests.
     scope = makeTestScope('users')
@@ -30,6 +30,7 @@ describe('users repo (integration)', () => {
     // myth-5jdo: cleanup only this scope's rows; the seeded dev users
     // + system user + demo world remain intact for the next test file.
     await cleanupTestScope(pool, scope)
+    await pool.end()
   })
 
   it('create defensively throws when INSERT returns no row (fake tx)', async () => {

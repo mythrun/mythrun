@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
-import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { createUsersRepo } from '../users.js'
@@ -13,20 +9,6 @@ import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test
 import { createTestPool } from './_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
-
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: () => {
-      // discard log output
-    },
-  }
-  return pino(
-    { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
-    sink,
-  )
-}
 
 async function addCampaignMember(
   pool: Pool,
@@ -50,15 +32,6 @@ describe('campaigns repo (integration)', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
-    // myth-5jdo: globalSetup applies migrations idempotently; the DROP +
-    // re-create + runMigrations below remains as a no-op-ish belt + braces
-    // (Phase 5 lint removes it).
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
     scope = makeTestScope('camp')
     baseUserInput = {
       cognitoSub: scope.userSub(0),

@@ -16,14 +16,10 @@
 //     scope.userSub(testIdx + 1) for any "other" seeded user.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
 import IoredisMock from 'ioredis-mock'
 import type { InjectOptions, LightMyRequestResponse } from 'fastify'
 import { createPgPool } from '../db/postgres.js'
-import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
 import {
   cleanupTestScope,
@@ -38,18 +34,7 @@ import { makeStubEnv } from './helpers/stub-env.js'
 import { noopWorldGenQueue } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../migrations')
 const FRONTEND_BASE_URL = 'http://localhost:5173'
-
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: (): void => {
-      // discard log output
-    },
-  }
-  return pino({ base: { component: 'migrate' } }, sink)
-}
 
 async function seedCallerUser(repo: Repo, pool: Pool, scope: TestScope, idx: number): Promise<string> {
   void pool
@@ -156,12 +141,6 @@ describe('invite routes (integration)', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createPgPool(databaseUrl, { max: 2 })
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
 
     vi.stubEnv('NODE_ENV', 'development')
     vi.stubEnv('COGNITO_USER_POOL_ID', '')

@@ -7,6 +7,7 @@ import { createPgPool } from '../postgres.js'
 import { runMigrations } from '../migrate.js'
 import { guardTestDatabase } from './guard-db.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
+import { seedTestDatabase } from '../../__tests__/_helpers/seed-test-database.js'
 
 // myth-exac T01: demo-world UUID seeded by migration 008. Used by the
 // migration-014 describe block to insert a sample entity + fact under a
@@ -606,8 +607,13 @@ function makeSilentLogger(): ReturnType<typeof pino> {
   )
 }
 
+// This file's schema-parity tests intentionally drop + re-run the real
+// migrations to pin the cumulative schema contract. The DROP SCHEMA below
+// is the test's subject, not obsolete per-file setup — exempt it from the
+// test-only lint ban that exists to catch the per-file-beforeAll pattern.
 async function resetSchema(pool: Pool): Promise<void> {
   await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
+  // eslint-disable-next-line no-restricted-syntax
   await pool.query('DROP SCHEMA public CASCADE')
   await pool.query('CREATE SCHEMA public')
   await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
@@ -767,6 +773,11 @@ describe('migration 014 — access tier rework', () => {
   })
 
   afterAll(async () => {
+    // Restore globalSetup's seed rows (system user + demo world + dev
+    // users + settings) so subsequent test files see the same baseline
+    // they assume. Schema is already in the fully-migrated state from
+    // this describe's beforeAll; only the seed needs replaying.
+    await seedTestDatabase(pool)
     await pool.end()
   })
 

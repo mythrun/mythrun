@@ -16,7 +16,7 @@ import pino, { type DestinationStream } from 'pino'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { runMigrations } from '../db/migrate.js'
-import { seedTestDatabase } from '../repo/__tests__/_helpers/reset-data.js'
+import { seedTestDatabase } from './_helpers/seed-test-database.js'
 
 const here = fileURLToPath(import.meta.url)
 const REAL_MIGRATIONS_DIR = resolve(here, '../../../migrations')

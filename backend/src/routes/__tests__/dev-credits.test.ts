@@ -14,10 +14,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import Fastify, { type FastifyInstance } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
 import type { Pool } from 'pg'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
-import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { bypassPlugin } from '../../auth/bypass-plugin.js'
@@ -30,17 +26,6 @@ import {
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
-
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: (): void => {
-      // discard log output
-    },
-  }
-  return pino({ base: { component: 'migrate' } }, sink)
-}
 
 // Builds a minimal Fastify app: rate-limit (in-memory; sufficient for
 // per-process route tests) + bypassPlugin + devCreditsRoutes. Mirrors
@@ -73,14 +58,6 @@ describe('POST /api/dev/credits/grant (MYT-51 T11)', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
-    // Sibling repo tests share the same DB; reset to a clean slate so
-    // foreign-key chains line up with the fresh migration baseline.
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
     scope = makeTestScope('dev-credits')
   })
 

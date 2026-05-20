@@ -23,9 +23,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
 
 vi.mock('../llm/profanity.js', () => ({
   classifyProfanity: vi.fn().mockResolvedValue({ profane: false }),
@@ -34,7 +31,6 @@ vi.mock('../llm/profanity.js', () => ({
 import { buildApp } from '../app.js'
 import { createPgPool } from '../db/postgres.js'
 import { createRedisClient } from '../redis/client.js'
-import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
 import { createRepo } from '../repo/index.js'
 import type { AppDeps } from '../app-deps.js'
@@ -42,21 +38,7 @@ import { makeStubEnv } from './helpers/stub-env.js'
 import { noopWorldGenQueue } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../migrations')
 const FRONTEND_BASE_URL = 'http://localhost:5173'
-
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: (): void => {
-      // discard log output
-    },
-  }
-  return pino(
-    { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
-    sink,
-  )
-}
 
 describe('rate-limit per-sub key derivation (POST /api/users/register)', () => {
   let pool: Pool
@@ -66,12 +48,6 @@ describe('rate-limit per-sub key derivation (POST /api/users/register)', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createPgPool(databaseUrl, { max: 2 })
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
 
     const redisUrl = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
     redis = createRedisClient(redisUrl)
@@ -100,6 +76,14 @@ describe('rate-limit per-sub key derivation (POST /api/users/register)', () => {
   })
 
   afterAll(async () => {
+    // The register POSTs above insert a user row with cognito_sub
+    // 'bypass:dev-1' (plus a trial credit_ledger row). Without per-file
+    // DROP SCHEMA, that row persists across test files and trips
+    // assertions elsewhere (e.g. campaigns-list's "default bypass user
+    // is NOT onboarded → 403"). Wipe by sub.
+    await pool.query(`DELETE FROM credit_ledger WHERE user_id IN
+      (SELECT id FROM users WHERE cognito_sub = 'bypass:dev-1')`)
+    await pool.query(`DELETE FROM users WHERE cognito_sub = 'bypass:dev-1'`)
     await app.close()
     await redis.quit()
     await pool.end()

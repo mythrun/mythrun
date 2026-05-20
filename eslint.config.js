@@ -124,5 +124,53 @@ export default tseslint.config(
       'no-restricted-imports': 'off',
     },
   },
+  {
+    // myth-oehx Phase 5: test-isolation invariants.
+    //
+    // - with-tx and reset-data are deleted; importing them is a stale ref.
+    // - DROP SCHEMA SQL in test files races against parallel workers
+    //   sharing one mythrun_test DB. globalSetup runs migrations once per
+    //   worker process; per-file beforeAll blocks are obsolete.
+    //
+    // The bans here override the broad no-restricted-imports disable
+    // above by re-enabling the rule with targeted patterns.
+    files: ['**/__tests__/**/*.ts', '**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/_helpers/with-tx', '**/_helpers/with-tx.js'],
+              message:
+                'with-tx was deleted in myth-oehx. Use scoped fixtures (cleanupTestScope) instead. See backend/src/__tests__/CONVENTIONS.md.',
+            },
+            {
+              group: ['**/_helpers/reset-data', '**/_helpers/reset-data.js'],
+              message:
+                'reset-data was deleted in myth-oehx. Schema bootstrap is in globalSetup; data isolation via scoped fixtures. See backend/src/__tests__/CONVENTIONS.md.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ExportDefaultDeclaration',
+          message: 'Default exports are forbidden. Use named exports only.',
+        },
+        {
+          selector: "Literal[value=/DROP\\s+SCHEMA/i]",
+          message:
+            'DROP SCHEMA in tests is forbidden — globalSetup handles schema bootstrap. See backend/src/__tests__/CONVENTIONS.md.',
+        },
+        {
+          selector: "TemplateElement[value.raw=/DROP\\s+SCHEMA/i]",
+          message:
+            'DROP SCHEMA in tests is forbidden — globalSetup handles schema bootstrap.',
+        },
+      ],
+    },
+  },
   eslintConfigPrettier,
 )

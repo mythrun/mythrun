@@ -4,10 +4,6 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Pool, PoolClient } from 'pg'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
-import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { insertCreditGrant } from '../credit-grants.js'
@@ -15,17 +11,6 @@ import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test
 import { createTestPool } from './_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
-
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: (): void => {
-      // discard
-    },
-  }
-  return pino({ base: { component: 'migrate' } }, sink)
-}
 
 describe('insertCreditGrant', () => {
   let pool: Pool
@@ -35,12 +20,6 @@ describe('insertCreditGrant', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
     scope = makeTestScope('credit-grants')
   })
 

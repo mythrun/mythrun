@@ -21,13 +21,9 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
 import { buildApp } from '../app.js'
 import { createPgPool } from '../db/postgres.js'
 import { createRedisClient } from '../redis/client.js'
-import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
 import { createRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
@@ -36,8 +32,6 @@ import { makeStubEnv } from './helpers/stub-env.js'
 import { noopWorldGenQueue } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../migrations')
 const FRONTEND_BASE_URL = 'http://localhost:5173'
 
 // Unique per-test-run prefix so re-runs / parallel CI lanes don't observe
@@ -46,18 +40,6 @@ const FRONTEND_BASE_URL = 'http://localhost:5173'
 // pattern. Channel format: `${prefix}pipeline:campaign:${campaignId}` —
 // see `backend/src/sse/pipeline-subscriber.ts`.
 const REDIS_KEY_PREFIX = `test:xprc-${String(Date.now())}:`
-
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: (): void => {
-      // discard log output
-    },
-  }
-  return pino(
-    { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
-    sink,
-  )
-}
 
 describe('pipeline status cross-process', () => {
   let pool: Pool
@@ -70,15 +52,6 @@ describe('pipeline status cross-process', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createPgPool(databaseUrl, { max: 2 })
-    // Sibling repo tests share the same DB; reset to a clean slate so the
-    // FK chain (users → worlds → campaigns → campaign_members) lines up
-    // with the fresh migration baseline. Mirrors campaigns-status.test.ts.
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
 
     // Three distinct ioredis connections pointed at the same Redis URL.
     // Each buildApp instance holds its own connection — mirrors prod where

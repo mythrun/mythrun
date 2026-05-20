@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
@@ -8,11 +9,24 @@ import { createPgPool } from '../postgres.js'
 import { runMigrations } from '../migrate.js'
 import { LOCK_KEY } from '../lock-key.js'
 import { guardTestDatabase } from './guard-db.js'
+import { seedTestDatabase } from '../../__tests__/_helpers/seed-test-database.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
+const here = fileURLToPath(import.meta.url)
+const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
 
+function silentLogger(): ReturnType<typeof pino> {
+  const sink: DestinationStream = { write: (): void => undefined }
+  return pino({ base: { component: 'migrate' } }, sink)
+}
+
+// This file tests runMigrations directly against fixture migration dirs;
+// each test needs a clean schema. The DROP SCHEMA below is the test's
+// subject, not obsolete per-file setup — exempt it from the test-only
+// lint ban that exists to catch the per-file-beforeAll pattern.
 async function resetSchema(pool: Pool): Promise<void> {
   await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
+  // eslint-disable-next-line no-restricted-syntax
   await pool.query('DROP SCHEMA public CASCADE')
   await pool.query('CREATE SCHEMA public')
   await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
@@ -53,6 +67,15 @@ describe('runMigrations (integration)', () => {
   })
 
   afterAll(async () => {
+    // Restore the real app schema so subsequent test files (which now
+    // rely on globalSetup's one-time migration) see the full table set.
+    // The per-test fixtures leave the schema in a stub state; without
+    // this restoration any test file that runs after migrate.test.ts
+    // and references `credit_ledger`, `users`, etc. via cleanupTestScope
+    // fails with `relation does not exist`.
+    await resetSchema(pool)
+    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    await seedTestDatabase(pool)
     await pool.end()
   })
 

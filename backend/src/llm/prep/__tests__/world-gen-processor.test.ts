@@ -21,13 +21,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { Job } from 'bullmq'
 import type { Pool } from 'pg'
 import IoredisMock from 'ioredis-mock'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
 import pino from 'pino'
 import * as ai from 'ai'
 
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
-import { runMigrations } from '../../../db/migrate.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import {
   cleanupTestScope,
@@ -77,8 +74,6 @@ vi.mock('../stages/entity-relationships.js', async (importOriginal) => {
 })
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../../../migrations')
 
 function silentLogger(): pino.Logger {
   return pino({ level: 'silent' })
@@ -252,12 +247,6 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
     scope = makeTestScope('world-gen-proc')
   })
 

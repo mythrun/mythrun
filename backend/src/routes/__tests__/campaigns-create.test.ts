@@ -19,10 +19,6 @@ import rateLimit from '@fastify/rate-limit'
 import type { Pool } from 'pg'
 import IoredisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
-import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { bypassPlugin } from '../../auth/bypass-plugin.js'
@@ -80,18 +76,7 @@ const STUB_USAGE: LanguageModelUsage = {
 // --- Test harness ---------------------------------------------------------
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
 const REDIS_KEY_PREFIX = `test:campaigns-create-${String(Date.now())}:`
-
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: (): void => {
-      // discard log output
-    },
-  }
-  return pino({ base: { component: 'migrate' } }, sink)
-}
 
 // Minimal stand-ins for the SSE machinery — campaignsRoutes accepts
 // these in its Opts but the create route doesn't touch them. Keep them
@@ -268,12 +253,6 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
     scope = makeTestScope('campaigns-create')
   })
 
