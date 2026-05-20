@@ -7,11 +7,16 @@
 // row + unique stripe_subscription_id / invoice_id so the persisted writes
 // from one test don't collide with another.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, afterAll, beforeEach } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
-import { pool, ensureSchema } from '../../repo/__tests__/_helpers/with-tx.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import { dispatchEvent } from '../webhook.js'
@@ -25,16 +30,23 @@ import { LOOKUP_KEYS, type LookupKey } from '../lookup-keys.js'
 
 // ─── shared test helpers ────────────────────────────────────────────────────
 
+// Short label to fit makeTestScope.username()'s 28-char cap.
+const pool = createTestPool(process.env.DATABASE_URL ?? '')
+const scope = makeTestScope('invpaid')
+
 let userCounter = 0
-async function createInvoiceTestUser(p: Pool): Promise<{ id: string; cus: string }> {
+async function createInvoiceTestUser(
+  p: Pool,
+  s: TestScope,
+): Promise<{ id: string; cus: string }> {
   const id = uuidv7()
-  userCounter += 1
   const n = userCounter
-  const cus = `cus_test_invoice_${String(n)}_${id.slice(0, 8)}`
+  userCounter += 1
+  const cus = `cus_${s.id}_${String(n)}`
   await p.query(
     `INSERT INTO users (id, cognito_sub, username, display_name, stripe_customer_id)
      VALUES ($1, $2, $3, $4, $5)`,
-    [id, `invoice_sub_${String(n)}`, `invoiceuser${String(n)}`, `Invoice ${String(n)}`, cus],
+    [id, s.userSub(n), s.username(n), s.displayName(n), cus],
   )
   return { id, cus }
 }
@@ -155,9 +167,12 @@ interface InvoiceFixture {
   readonly lines: { readonly data: readonly InvoiceLineFixture[] }
 }
 
+let eventCounter = 0
 function makeInvoiceEvent(invoice: InvoiceFixture, eventCreated?: number): Stripe.Event {
+  const idx = eventCounter
+  eventCounter += 1
   return {
-    id: `evt_test_${uuidv7()}`,
+    id: `evt_${scope.id}_${String(idx)}`,
     object: 'event',
     api_version: STRIPE_API_VERSION,
     type: 'invoice.paid',
@@ -284,11 +299,22 @@ function buildSkuCacheForInvoiceTests(): SkuCache {
 
 // ─── lifecycle ──────────────────────────────────────────────────────────────
 
-beforeAll(async () => {
-  await ensureSchema()
-})
-
 afterAll(async () => {
+  // credit_ledger has RESTRICT-FK to purchases and billing_history. Delete
+  // it first, then purchases (no CASCADE on users), then cleanupTestScope.
+  await pool.query(`DELETE FROM stripe_events WHERE event_id LIKE $1`, [`evt_${scope.id}_%`])
+  const userScope = `${scope.id}%`
+  await pool.query(
+    `DELETE FROM credit_ledger
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await pool.query(
+    `DELETE FROM purchases
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await cleanupTestScope(pool, scope)
   await pool.end()
 })
 
@@ -395,7 +421,7 @@ const PERIOD_END_SEC = Math.floor(new Date('2026-06-01T00:00:00Z').getTime() / 1
 
 describe('billing.webhook invoice.paid', () => {
   it('subscription_cycle happy path: appends billing_history with PI, grants tier credits with source_billing_history_id linked + expires_at = period_end; replay dedupes', async () => {
-    const { id: userId, cus } = await createInvoiceTestUser(pool)
+    const { id: userId, cus } = await createInvoiceTestUser(pool, scope)
     const sub_id = `sub_cyc_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_cyc_${uuidv7().slice(0, 12)}`
     const pi = `pi_cyc_${uuidv7().slice(0, 12)}`
@@ -471,7 +497,7 @@ describe('billing.webhook invoice.paid', () => {
   })
 
   it('subscription_create: upserts user_subscriptions FIRST when no row exists, THEN appends billing_history, THEN grants credits', async () => {
-    const { id: userId, cus } = await createInvoiceTestUser(pool)
+    const { id: userId, cus } = await createInvoiceTestUser(pool, scope)
     const sub_id = `sub_crt_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_crt_${uuidv7().slice(0, 12)}`
     const pi = `pi_crt_${uuidv7().slice(0, 12)}`
@@ -536,7 +562,7 @@ describe('billing.webhook invoice.paid', () => {
   })
 
   it('subscription_update: appends billing_history-only with do_update_coalesce; NO credits, NO user_subscriptions upsert; lookup_key derived from positive-amount line', async () => {
-    const { id: userId, cus } = await createInvoiceTestUser(pool)
+    const { id: userId, cus } = await createInvoiceTestUser(pool, scope)
     const sub_id = `sub_upd_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_upd_${uuidv7().slice(0, 12)}`
     const pi = `pi_upd_${uuidv7().slice(0, 12)}`
@@ -637,7 +663,7 @@ describe('billing.webhook invoice.paid', () => {
   })
 
   it('billing_reason="manual": billing_history-only audit row, no credits, no validation', async () => {
-    const { id: userId, cus } = await createInvoiceTestUser(pool)
+    const { id: userId, cus } = await createInvoiceTestUser(pool, scope)
     const sub_id = `sub_man_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_man_${uuidv7().slice(0, 12)}`
     const pi = `pi_man_${uuidv7().slice(0, 12)}`
@@ -693,7 +719,7 @@ describe('billing.webhook invoice.paid', () => {
   })
 
   it('zero-amount invoice: billing_history audit row with amount_cents=0, no credits, no validation', async () => {
-    const { id: userId, cus } = await createInvoiceTestUser(pool)
+    const { id: userId, cus } = await createInvoiceTestUser(pool, scope)
     const sub_id = `sub_zer_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_zer_${uuidv7().slice(0, 12)}`
 
@@ -799,7 +825,7 @@ describe('billing.webhook invoice.paid', () => {
   })
 
   it('non-subscription invoice (parent === null): prefetch returns subscription=null; INFO log; no writes', async () => {
-    const { id: userId, cus } = await createInvoiceTestUser(pool)
+    const { id: userId, cus } = await createInvoiceTestUser(pool, scope)
     const invoice_id = `in_nonsub_${uuidv7().slice(0, 12)}`
     const pi = `pi_nonsub_${uuidv7().slice(0, 12)}`
 
@@ -842,7 +868,7 @@ describe('billing.webhook invoice.paid', () => {
   })
 
   it('multi-item subscription: returns validation_failed, commits stripe_events, no writes', async () => {
-    const { id: userId, cus } = await createInvoiceTestUser(pool)
+    const { id: userId, cus } = await createInvoiceTestUser(pool, scope)
     const sub_id = `sub_multi_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_multi_${uuidv7().slice(0, 12)}`
     const pi = `pi_multi_${uuidv7().slice(0, 12)}`

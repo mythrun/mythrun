@@ -8,11 +8,16 @@
 // via unique event_ids per test (uuidv7-prefixed) so the committed
 // `stripe_events` rows from one test do not collide with another's.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, afterAll, beforeEach } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
-import { pool, ensureSchema } from '../../repo/__tests__/_helpers/with-tx.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import {
@@ -31,6 +36,10 @@ import {
 } from '../sku-cache.js'
 import { LOOKUP_KEYS, type LookupKey } from '../lookup-keys.js'
 
+// Short label to fit makeTestScope.username()'s 28-char cap.
+const pool = createTestPool(process.env.DATABASE_URL ?? '')
+const scope = makeTestScope('webhook')
+
 /**
  * Insert a users row directly via the shared pool. Returns the new id and
  * the stripe_customer_id we wrote, so the caller can build a
@@ -41,24 +50,38 @@ import { LOOKUP_KEYS, type LookupKey } from '../lookup-keys.js'
  * run sequentially against a non-truncated `users` table.
  */
 let userCounter = 0
-async function createWebhookTestUser(p: Pool): Promise<{ id: string; cus: string }> {
+async function createWebhookTestUser(
+  p: Pool,
+  s: TestScope,
+): Promise<{ id: string; cus: string }> {
   const id = uuidv7()
-  userCounter += 1
   const n = userCounter
-  const cus = `cus_test_webhook_${String(n)}_${id.slice(0, 8)}`
+  userCounter += 1
+  const cus = `cus_${s.id}_${String(n)}`
   await p.query(
     `INSERT INTO users (id, cognito_sub, username, display_name, stripe_customer_id)
      VALUES ($1, $2, $3, $4, $5)`,
-    [id, `webhook_sub_${String(n)}`, `webhookuser${String(n)}`, `Webhook ${String(n)}`, cus],
+    [id, s.userSub(n), s.username(n), s.displayName(n), cus],
   )
   return { id, cus }
 }
 
-beforeAll(async () => {
-  await ensureSchema()
-})
-
 afterAll(async () => {
+  // credit_ledger has RESTRICT-FK to purchases and billing_history. Delete
+  // it first, then purchases (no CASCADE on users), then cleanupTestScope.
+  await pool.query(`DELETE FROM stripe_events WHERE event_id LIKE $1`, [`evt_${scope.id}_%`])
+  const userScope = `${scope.id}%`
+  await pool.query(
+    `DELETE FROM credit_ledger
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await pool.query(
+    `DELETE FROM purchases
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await cleanupTestScope(pool, scope)
   await pool.end()
 })
 
@@ -96,12 +119,19 @@ function makeLogger(): { log: FastifyBaseLogger; entries: LogEntry[] } {
   return { log, entries }
 }
 
+let eventCounter = 0
+function nextEventId(): string {
+  const idx = eventCounter
+  eventCounter += 1
+  return `evt_${scope.id}_${String(idx)}`
+}
+
 function makeEvent(overrides: Partial<Stripe.Event> = {}): Stripe.Event {
   // The dispatcher only reads .id, .type, .api_version. We construct a
   // minimally-shaped object and cast through unknown rather than build a
   // full Stripe.Event fixture.
   const base = {
-    id: `evt_test_${uuidv7()}`,
+    id: nextEventId(),
     object: 'event',
     api_version: STRIPE_API_VERSION,
     type: 'checkout.session.completed',
@@ -394,7 +424,7 @@ function makeStripeWithFixtures(opts: {
 
 function makeCheckoutEvent(session: SessionFixture, eventCreated?: number): Stripe.Event {
   return {
-    id: `evt_test_${uuidv7()}`,
+    id: nextEventId(),
     object: 'event',
     api_version: STRIPE_API_VERSION,
     type: 'checkout.session.completed',
@@ -455,7 +485,7 @@ function placeholderSubscription(sub_id: string): SubscriptionFixture {
 
 describe('billing.webhook checkout.session.completed (subscription mode)', () => {
   it('happy path: upserts user_subscriptions, writes ZERO billing_history, ZERO credit_ledger', async () => {
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const sub_id = `sub_test_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_test_${uuidv7().slice(0, 12)}`,
@@ -599,7 +629,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
   })
 
   it("customer-id mismatch: pages 'billing.checkout_customer_mismatch', commits stripe_events, writes nothing", async () => {
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     // Wrong customer id on the event.
     const sub_id = `sub_mism_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
@@ -656,7 +686,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     // but a future API regression / Stripe outage could return a session
     // sans line_items. The handler treats the missing field as lineCount=0
     // → multi-line guard fires.
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const sub_id = `sub_noli_${uuidv7().slice(0, 12)}`
     // Cast to skip the required line_items field — production Stripe types
     // allow undefined; the test fixture type tightens for happy-path usage.
@@ -777,7 +807,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     // Branch for the trailing `log.info('billing.checkout_unhandled_mode')`
     // path at webhook.ts:404-408. Stripe `setup` mode sessions don't
     // generate revenue events; the handler logs and exits clean.
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     // Cast: setup is a real Stripe.Checkout.Session mode, but our test
     // fixture type only lists 'subscription' | 'payment' because those
     // are the only ones the handler does real work for.
@@ -812,7 +842,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     // not a non-empty string. The handler's `if (!subscription)` guard
     // at webhook.ts:445-449 then throws, which bubbles out of the
     // dispatcher's try block → ROLLBACK → stripe_events row gone.
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const session: SessionFixture = {
       id: `cs_nosub_${uuidv7().slice(0, 12)}`,
       mode: 'subscription',
@@ -853,7 +883,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     // handleCheckoutCompletedSubscription (webhook.ts:450-460). Reaching
     // this branch requires a single line_item AND a subscription with
     // multi-item data.
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const sub_id = `sub_multiitem_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_multiitem_${uuidv7().slice(0, 12)}`,
@@ -923,7 +953,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     // Hits webhook.ts:467-478 — single line_item, single subscription item,
     // but the price has no lookup_key. Operator-error guard: tier resolution
     // must NOT silently fall back to anything.
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const sub_id = `sub_nolk_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_nolk_${uuidv7().slice(0, 12)}`,
@@ -988,7 +1018,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
   it('subscription with empty-string lookup_key: returns validation_failed (length-zero branch)', async () => {
     // Exercises the second half of the typeof-or-length-zero condition at
     // webhook.ts:468 — lookup_key is a string but empty.
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const sub_id = `sub_emptylk_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_emptylk_${uuidv7().slice(0, 12)}`,
@@ -1044,7 +1074,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
   })
 
   it('multi-line subscription session: returns validation_failed, commits stripe_events, writes nothing', async () => {
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const sub_id = `sub_multi_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_multi_${uuidv7().slice(0, 12)}`,
@@ -1245,7 +1275,7 @@ describe('billing.webhook checkout.session.completed (payment mode)', () => {
     // structurally enforces the same rule on our side. The fixture below
     // matches what real Stripe sends: one line per distinct lookup_key,
     // quantity multiplies the per-row grant.
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const pi = `pi_test_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_pay_${uuidv7().slice(0, 12)}`,
@@ -1381,7 +1411,7 @@ describe('billing.webhook checkout.session.completed (payment mode)', () => {
   })
 
   it('amount validation mismatch: returns validation_failed, commits stripe_events, writes nothing else', async () => {
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const pi = `pi_amtfail_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_amtfail_${uuidv7().slice(0, 12)}`,
@@ -1439,7 +1469,7 @@ describe('billing.webhook checkout.session.completed (payment mode)', () => {
   })
 
   it('unknown price ID: returns validation_failed, commits stripe_events, writes nothing else', async () => {
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const pi = `pi_unkprice_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_unkprice_${uuidv7().slice(0, 12)}`,
@@ -1484,7 +1514,7 @@ describe('billing.webhook checkout.session.completed (payment mode)', () => {
   })
 
   it("payment_status non-'paid': returns validation_failed, pages 'billing.payment_status_unexpected', writes nothing else", async () => {
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const pi = `pi_unpaid_${uuidv7().slice(0, 12)}`
     const session: SessionFixture = {
       id: `cs_unpaid_${uuidv7().slice(0, 12)}`,
@@ -1533,7 +1563,7 @@ describe('billing.webhook checkout.session.completed (payment mode)', () => {
     // a null here would be a Stripe-side anomaly. The handler logs and
     // returns the validation_failed sentinel rather than crashing the tx
     // (which would force-redeliver an event Stripe can't fix).
-    const { id: userId, cus } = await createWebhookTestUser(pool)
+    const { id: userId, cus } = await createWebhookTestUser(pool, scope)
     const session: SessionFixture = {
       id: `cs_nopi_${uuidv7().slice(0, 12)}`,
       mode: 'payment',

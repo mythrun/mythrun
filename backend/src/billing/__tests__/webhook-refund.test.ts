@@ -5,11 +5,16 @@
 // the dispatcher (not the handler directly) so the BEGIN + 3× SET LOCAL
 // timeouts AND the `stripe_events` row write are exercised end-to-end.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
-import { pool, ensureSchema } from '../../repo/__tests__/_helpers/with-tx.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import { dispatchEvent } from '../webhook.js'
@@ -19,16 +24,23 @@ import { grantInTx } from '../../repo/credits.js'
 
 // ─── shared test helpers ────────────────────────────────────────────────────
 
+// Short label to fit makeTestScope.username()'s 28-char cap.
+const pool = createTestPool(process.env.DATABASE_URL ?? '')
+const scope = makeTestScope('refund')
+
 let userCounter = 0
-async function createRefundTestUser(p: Pool): Promise<{ id: string; cus: string }> {
+async function createRefundTestUser(
+  p: Pool,
+  s: TestScope,
+): Promise<{ id: string; cus: string }> {
   const id = uuidv7()
-  userCounter += 1
   const n = userCounter
-  const cus = `cus_test_refund_${String(n)}_${id.slice(0, 8)}`
+  userCounter += 1
+  const cus = `cus_${s.id}_${String(n)}`
   await p.query(
     `INSERT INTO users (id, cognito_sub, username, display_name, stripe_customer_id)
      VALUES ($1, $2, $3, $4, $5)`,
-    [id, `refund_sub_${String(n)}`, `refunduser${String(n)}`, `Refund ${String(n)}`, cus],
+    [id, s.userSub(n), s.username(n), s.displayName(n), cus],
   )
   return { id, cus }
 }
@@ -104,12 +116,15 @@ function makeStripeWithCharge(opts: { charge?: ChargeFixture }): {
   return { stripe: stub as unknown as Stripe, calls }
 }
 
+let eventCounter = 0
 function makeRefundEvent(
   type: 'refund.created' | 'refund.updated',
   refund: RefundFixture,
 ): Stripe.Event {
+  const idx = eventCounter
+  eventCounter += 1
   return {
-    id: `evt_test_${uuidv7()}`,
+    id: `evt_${scope.id}_${String(idx)}`,
     object: 'event',
     api_version: STRIPE_API_VERSION,
     type,
@@ -208,11 +223,24 @@ async function fetchPurchasesForUser(
 
 // ─── lifecycle ──────────────────────────────────────────────────────────────
 
-beforeAll(async () => {
-  await ensureSchema()
-})
-
 afterAll(async () => {
+  // credit_ledger has RESTRICT-FK to purchases (source_purchase_id) and
+  // billing_history (source_billing_history_id). Delete it first, then
+  // purchases (no CASCADE on users), then run cleanupTestScope which
+  // CASCADE-deletes users → billing_history, user_subscriptions.
+  await pool.query(`DELETE FROM stripe_events WHERE event_id LIKE $1`, [`evt_${scope.id}_%`])
+  const userScope = `${scope.id}%`
+  await pool.query(
+    `DELETE FROM credit_ledger
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await pool.query(
+    `DELETE FROM purchases
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await cleanupTestScope(pool, scope)
   await pool.end()
 })
 
@@ -367,7 +395,7 @@ async function seedSubscriptionInvoiceWithGrants(
 
 describe('billing.webhook refund', () => {
   it('status gate: refund.status="pending" → INFO log billing.refund_pending, no clawback, no charge prefetch consumed', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const refund: RefundFixture = {
       id: `re_test_${uuidv7().replace(/-/g, '')}`,
       object: 'refund',
@@ -402,7 +430,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('status gate: refund.status="failed" → INFO log billing.refund_terminal_non_success, no clawback', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const refund: RefundFixture = {
       id: `re_test_${uuidv7().replace(/-/g, '')}`,
       object: 'refund',
@@ -434,7 +462,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('partial-refund hard-refuse: charge.amount_refunded !== amount_captured → ERROR billing.partial_refund_unsupported, no clawback', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const pi = `pi_test_${uuidv7().replace(/-/g, '')}`
     // Seed a purchase + grants so we can assert that NO clawback lands.
     await seedAlaCartePurchaseWithGrants(pool, userId, pi, [
@@ -482,7 +510,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('à-la-carte full refund happy path: clawback rows + purchases.status=refunded + refund billing_history row', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const pi = `pi_test_${uuidv7().replace(/-/g, '')}`
     // 3 purchases lines → 6 grants total (each line grants 1 session + 1 world).
     // Distinct lookup_keys per row are required by purchases'
@@ -567,7 +595,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('subscription full refund happy path: clawback rows + billing_history.status=refunded + refund row', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const pi = `pi_test_${uuidv7().replace(/-/g, '')}`
     const invoiceId = `in_test_${uuidv7().replace(/-/g, '')}`
     const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
@@ -634,7 +662,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('refund.payment_intent === null: INFO log billing.refund_unknown_origin, no clawback, no DB writes beyond stripe_events', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const refund: RefundFixture = {
       id: `re_test_${uuidv7().replace(/-/g, '')}`,
       object: 'refund',
@@ -663,7 +691,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('already-refunded à-la-carte: all purchases.status=refunded → INFO billing.refund_already_applied, no second clawback', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const pi = `pi_test_${uuidv7().replace(/-/g, '')}`
     // Seed purchase + grants, then run a refund through the dispatcher to flip
     // status='refunded' the first time.
@@ -713,7 +741,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('transient miss: PI set but neither purchases nor billing_history row exists → WARN + THROW (rolls back stripe_events)', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const pi = `pi_test_${uuidv7().replace(/-/g, '')}`
     // No seeded purchase, no seeded billing_history row for this PI.
     const refund: RefundFixture = {
@@ -748,7 +776,7 @@ describe('billing.webhook refund', () => {
   })
 
   it('recordClawback ON CONFLICT idempotency: simulated re-delivered refund (different event_id, same re_*) skips already-clawed rows', async () => {
-    const { id: userId } = await createRefundTestUser(pool)
+    const { id: userId } = await createRefundTestUser(pool, scope)
     const pi = `pi_test_${uuidv7().replace(/-/g, '')}`
     await seedAlaCartePurchaseWithGrants(pool, userId, pi, [
       { lookupKey: 'sku_world', sessionAmount: 1, worldAmount: 1 },

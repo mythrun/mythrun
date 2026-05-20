@@ -14,27 +14,40 @@
 // advanced yet, and the `pending_update_applied` handler (Task 22) is
 // the canonical place that lands the upgrade.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
-import { pool, ensureSchema } from '../../repo/__tests__/_helpers/with-tx.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import { dispatchEvent } from '../webhook.js'
 
 // ─── shared test helpers ────────────────────────────────────────────────────
 
+// Label kept short: makeTestScope.username() truncates to 28 chars; longer
+// labels collapse multi-user tests into identical usernames.
+const pool = createTestPool(process.env.DATABASE_URL ?? '')
+const scope = makeTestScope('subupsert')
+
 let userCounter = 0
-async function createSubscriptionTestUser(p: Pool): Promise<{ id: string; cus: string }> {
+async function createSubscriptionTestUser(
+  p: Pool,
+  s: TestScope,
+): Promise<{ id: string; cus: string }> {
   const id = uuidv7()
-  userCounter += 1
   const n = userCounter
-  const cus = `cus_test_subupsert_${String(n)}_${id.slice(0, 8)}`
+  userCounter += 1
+  const cus = `cus_${s.id}_${String(n)}`
   await p.query(
     `INSERT INTO users (id, cognito_sub, username, display_name, stripe_customer_id)
      VALUES ($1, $2, $3, $4, $5)`,
-    [id, `subupsert_sub_${String(n)}`, `subupsertuser${String(n)}`, `SubUpsert ${String(n)}`, cus],
+    [id, s.userSub(n), s.username(n), s.displayName(n), cus],
   )
   return { id, cus }
 }
@@ -156,13 +169,16 @@ function buildSubscriptionFixture(opts: BuildSubscriptionOpts): SubscriptionFixt
   }
 }
 
+let eventCounter = 0
 function makeSubscriptionEvent(
   subscription: SubscriptionFixture,
   type: 'customer.subscription.created' | 'customer.subscription.updated',
   eventCreated?: number,
 ): Stripe.Event {
+  const idx = eventCounter
+  eventCounter += 1
   return {
-    id: `evt_test_${uuidv7()}`,
+    id: `evt_${scope.id}_${String(idx)}`,
     object: 'event',
     api_version: STRIPE_API_VERSION,
     type,
@@ -217,11 +233,22 @@ async function countStripeEventRow(p: Pool, event_id: string): Promise<number> {
 
 // ─── lifecycle ──────────────────────────────────────────────────────────────
 
-beforeAll(async () => {
-  await ensureSchema()
-})
-
 afterAll(async () => {
+  // credit_ledger has RESTRICT-FK to purchases and billing_history. Delete
+  // it first, then purchases (no CASCADE on users), then cleanupTestScope.
+  await pool.query(`DELETE FROM stripe_events WHERE event_id LIKE $1`, [`evt_${scope.id}_%`])
+  const userScope = `${scope.id}%`
+  await pool.query(
+    `DELETE FROM credit_ledger
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await pool.query(
+    `DELETE FROM purchases
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await cleanupTestScope(pool, scope)
   await pool.end()
 })
 
@@ -229,7 +256,7 @@ afterAll(async () => {
 
 describe('billing.webhook customer.subscription.created/updated (handleSubscriptionUpsert)', () => {
   it("fresh '.created' event with pending_update=null: upserts user_subscriptions with tier + period dates + cancel_at_period_end", async () => {
-    const { id: userId, cus } = await createSubscriptionTestUser(pool)
+    const { id: userId, cus } = await createSubscriptionTestUser(pool, scope)
     const sub_id = `sub_create_${uuidv7().slice(0, 12)}`
     const subscription = buildSubscriptionFixture({
       sub_id,
@@ -267,7 +294,7 @@ describe('billing.webhook customer.subscription.created/updated (handleSubscript
   })
 
   it("'.updated' event with pending_update populated: logs INFO, writes nothing (round-7 pending-update gate)", async () => {
-    const { id: userId, cus } = await createSubscriptionTestUser(pool)
+    const { id: userId, cus } = await createSubscriptionTestUser(pool, scope)
     const sub_id = `sub_pend_${uuidv7().slice(0, 12)}`
     const expiresAt = Math.floor(new Date('2026-05-07T00:00:00Z').getTime() / 1000)
     const latestInvoiceId = `in_pend_${uuidv7().slice(0, 12)}`
@@ -312,7 +339,7 @@ describe('billing.webhook customer.subscription.created/updated (handleSubscript
   })
 
   it("stale '.updated' event (lower event.created than existing row): row unchanged via repo's strict-> filter", async () => {
-    const { id: userId, cus } = await createSubscriptionTestUser(pool)
+    const { id: userId, cus } = await createSubscriptionTestUser(pool, scope)
     const sub_id = `sub_stale_${uuidv7().slice(0, 12)}`
 
     // First: a `.created` event at T2 lands the canonical row.
@@ -395,7 +422,7 @@ describe('billing.webhook customer.subscription.created/updated (handleSubscript
   })
 
   it("multi-item subscription returns 'validation_failed' + paging 'billing.subscription_multi_item'", async () => {
-    const { id: userId, cus } = await createSubscriptionTestUser(pool)
+    const { id: userId, cus } = await createSubscriptionTestUser(pool, scope)
     const sub_id = `sub_multi_${uuidv7().slice(0, 12)}`
     const subscription = buildSubscriptionFixture({
       sub_id,

@@ -10,11 +10,16 @@
 // transaction; tests use the shared test pool directly with fresh users +
 // unique stripe ids so concurrent tests don't collide.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, afterAll, beforeEach } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
-import { pool, ensureSchema } from '../../repo/__tests__/_helpers/with-tx.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import { dispatchEvent } from '../webhook.js'
@@ -28,16 +33,23 @@ import { LOOKUP_KEYS, type LookupKey } from '../lookup-keys.js'
 
 // ─── shared helpers ─────────────────────────────────────────────────────────
 
+// Short label to fit makeTestScope.username()'s 28-char cap.
+const pool = createTestPool(process.env.DATABASE_URL ?? '')
+const scope = makeTestScope('pua')
+
 let userCounter = 0
-async function createPendingUpdateUser(p: Pool): Promise<{ id: string; cus: string }> {
+async function createPendingUpdateUser(
+  p: Pool,
+  s: TestScope,
+): Promise<{ id: string; cus: string }> {
   const id = uuidv7()
-  userCounter += 1
   const n = userCounter
-  const cus = `cus_test_pua_${String(n)}_${id.slice(0, 8)}`
+  userCounter += 1
+  const cus = `cus_${s.id}_${String(n)}`
   await p.query(
     `INSERT INTO users (id, cognito_sub, username, display_name, stripe_customer_id)
      VALUES ($1, $2, $3, $4, $5)`,
-    [id, `pua_sub_${String(n)}`, `puauser${String(n)}`, `Pua ${String(n)}`, cus],
+    [id, s.userSub(n), s.username(n), s.displayName(n), cus],
   )
   return { id, cus }
 }
@@ -144,9 +156,12 @@ function makeStripeWithInvoice(opts: { invoice?: PuaInvoiceFixture }): {
   return { stripe: stub as unknown as Stripe, calls }
 }
 
+let eventCounter = 0
 function makePuaEvent(subscription: PuaSubscriptionFixture, eventCreated?: number): Stripe.Event {
+  const idx = eventCounter
+  eventCounter += 1
   return {
-    id: `evt_test_${uuidv7()}`,
+    id: `evt_${scope.id}_${String(idx)}`,
     object: 'event',
     api_version: STRIPE_API_VERSION,
     type: 'customer.subscription.pending_update_applied',
@@ -274,11 +289,22 @@ function buildSkuCacheForPuaTests(): SkuCache {
 
 // ─── lifecycle ──────────────────────────────────────────────────────────────
 
-beforeAll(async () => {
-  await ensureSchema()
-})
-
 afterAll(async () => {
+  // credit_ledger has RESTRICT-FK to purchases and billing_history. Delete
+  // it first, then purchases (no CASCADE on users), then cleanupTestScope.
+  await pool.query(`DELETE FROM stripe_events WHERE event_id LIKE $1`, [`evt_${scope.id}_%`])
+  const userScope = `${scope.id}%`
+  await pool.query(
+    `DELETE FROM credit_ledger
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await pool.query(
+    `DELETE FROM purchases
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await cleanupTestScope(pool, scope)
   await pool.end()
 })
 
@@ -362,7 +388,7 @@ function buildInvoice(opts: BuildInvoiceOpts): PuaInvoiceFixture {
 
 describe('billing.webhook customer.subscription.pending_update_applied', () => {
   it('happy path Wayfarer→Mythwright: upserts user_subscriptions to NEW tier, appends ONE billing_history row, grants DELTA credits with source_billing_history_id linked + expires_at = period_end + 1mo', async () => {
-    const { id: userId, cus } = await createPendingUpdateUser(pool)
+    const { id: userId, cus } = await createPendingUpdateUser(pool, scope)
     const sub_id = `sub_pua_ok_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_pua_ok_${uuidv7().slice(0, 12)}`
     const pi = `pi_pua_ok_${uuidv7().slice(0, 12)}`
@@ -509,7 +535,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
   })
 
   it('latest_invoice missing on subscription: pages billing.upgrade_invoice_missing, commits, no writes', async () => {
-    const { id: userId, cus } = await createPendingUpdateUser(pool)
+    const { id: userId, cus } = await createPendingUpdateUser(pool, scope)
     const sub_id = `sub_pua_noinv_${uuidv7().slice(0, 12)}`
 
     const subscription = buildSubscriptionFixture({
@@ -544,7 +570,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
   })
 
   it('multiple positive lines: returns validation_failed, pages billing.upgrade_unexpected_line_shape, no writes', async () => {
-    const { id: userId, cus } = await createPendingUpdateUser(pool)
+    const { id: userId, cus } = await createPendingUpdateUser(pool, scope)
     const sub_id = `sub_pua_multi_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_pua_multi_${uuidv7().slice(0, 12)}`
 
@@ -606,7 +632,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
   })
 
   it('unknown price ID in line: returns validation_failed, pages billing.upgrade_unknown_price_id, no writes', async () => {
-    const { id: userId, cus } = await createPendingUpdateUser(pool)
+    const { id: userId, cus } = await createPendingUpdateUser(pool, scope)
     const sub_id = `sub_pua_unkn_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_pua_unkn_${uuidv7().slice(0, 12)}`
     const stalePriceId = 'price_stripe_old_archived_xyz' // not in SKU cache
@@ -660,7 +686,7 @@ describe('billing.webhook customer.subscription.pending_update_applied', () => {
   })
 
   it('subtotal vs delta mismatch: returns validation_failed, pages billing.amount_validation_failed, no writes', async () => {
-    const { id: userId, cus } = await createPendingUpdateUser(pool)
+    const { id: userId, cus } = await createPendingUpdateUser(pool, scope)
     const sub_id = `sub_pua_amt_${uuidv7().slice(0, 12)}`
     const invoice_id = `in_pua_amt_${uuidv7().slice(0, 12)}`
 

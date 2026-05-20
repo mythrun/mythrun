@@ -15,27 +15,41 @@
 //   4. credit_ledger rows are untouched (user pays for the period; credits
 //      remain consumable through current_period_end per §3.3 + §10).
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
-import { pool, ensureSchema } from '../../repo/__tests__/_helpers/with-tx.js'
+import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../repo/__tests__/_helpers/test-scope.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import { dispatchEvent } from '../webhook.js'
 
 // ─── shared test helpers ────────────────────────────────────────────────────
 
+const pool = createTestPool(process.env.DATABASE_URL ?? '')
+// Label kept short: makeTestScope's username() slices to 28 chars,
+// which truncates long labels and would collide multi-user tests.
+const scope = makeTestScope('subdel')
+
 let userCounter = 0
-async function createDeletedTestUser(p: Pool): Promise<{ id: string; cus: string }> {
+async function createDeletedTestUser(
+  p: Pool,
+  s: TestScope,
+): Promise<{ id: string; cus: string }> {
   const id = uuidv7()
-  userCounter += 1
   const n = userCounter
-  const cus = `cus_test_subdel_${String(n)}_${id.slice(0, 8)}`
+  userCounter += 1
+  const sub = s.userSub(n)
+  const cus = `cus_${s.id}_${String(n)}`
   await p.query(
     `INSERT INTO users (id, cognito_sub, username, display_name, stripe_customer_id)
      VALUES ($1, $2, $3, $4, $5)`,
-    [id, `subdel_sub_${String(n)}`, `subdeluser${String(n)}`, `SubDel ${String(n)}`, cus],
+    [id, sub, s.username(n), s.displayName(n), cus],
   )
   return { id, cus }
 }
@@ -117,12 +131,15 @@ function buildDeletedSubscriptionFixture(
   }
 }
 
+let eventCounter = 0
 function makeDeletedSubscriptionEvent(
   subscription: SubscriptionDeletedFixture,
   eventCreated?: number,
 ): Stripe.Event {
+  const idx = eventCounter
+  eventCounter += 1
   return {
-    id: `evt_test_${uuidv7()}`,
+    id: `evt_${scope.id}_${String(idx)}`,
     object: 'event',
     api_version: STRIPE_API_VERSION,
     type: 'customer.subscription.deleted',
@@ -226,11 +243,24 @@ async function countStripeEventRow(p: Pool, event_id: string): Promise<number> {
 
 // ─── lifecycle ──────────────────────────────────────────────────────────────
 
-beforeAll(async () => {
-  await ensureSchema()
-})
-
 afterAll(async () => {
+  // credit_ledger has RESTRICT-FK to purchases.source_purchase_id and
+  // billing_history.source_billing_history_id. Delete it first, then
+  // purchases (no CASCADE on users), then cleanupTestScope which CASCADE-
+  // deletes users → billing_history, user_subscriptions.
+  await pool.query(`DELETE FROM stripe_events WHERE event_id LIKE $1`, [`evt_${scope.id}_%`])
+  const userScope = `${scope.id}%`
+  await pool.query(
+    `DELETE FROM credit_ledger
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await pool.query(
+    `DELETE FROM purchases
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [userScope],
+  )
+  await cleanupTestScope(pool, scope)
   await pool.end()
 })
 
@@ -238,7 +268,7 @@ afterAll(async () => {
 
 describe('billing.webhook customer.subscription.deleted (handleSubscriptionDeleted)', () => {
   it('user-initiated cancel-at-period-end: status set to canceled, cancel_at_period_end=true PRESERVED', async () => {
-    const { id: userId, cus } = await createDeletedTestUser(pool)
+    const { id: userId, cus } = await createDeletedTestUser(pool, scope)
     const sub_id = `sub_delcape_${uuidv7().slice(0, 10)}`
 
     // Seed an active user_subscriptions row to update.
@@ -276,7 +306,7 @@ describe('billing.webhook customer.subscription.deleted (handleSubscriptionDelet
   })
 
   it('Stripe-initiated dunning cancel: status set to canceled, cancel_at_period_end=false PRESERVED', async () => {
-    const { id: userId, cus } = await createDeletedTestUser(pool)
+    const { id: userId, cus } = await createDeletedTestUser(pool, scope)
     const sub_id = `sub_deldun_${uuidv7().slice(0, 10)}`
 
     await seedUserSubscription(pool, {
@@ -315,7 +345,7 @@ describe('billing.webhook customer.subscription.deleted (handleSubscriptionDelet
   })
 
   it('existing credit_ledger rows untouched after .deleted arrives', async () => {
-    const { id: userId, cus } = await createDeletedTestUser(pool)
+    const { id: userId, cus } = await createDeletedTestUser(pool, scope)
     const sub_id = `sub_delcl_${uuidv7().slice(0, 10)}`
 
     await seedUserSubscription(pool, {
@@ -355,7 +385,7 @@ describe('billing.webhook customer.subscription.deleted (handleSubscriptionDelet
     // User EXISTS (resolves fine via stripe_customer_id) but there is NO
     // matching user_subscriptions row for this stripe_subscription_id.
     // Covers: Stripe-side test event, deletion-before-creation race.
-    const { cus } = await createDeletedTestUser(pool)
+    const { cus } = await createDeletedTestUser(pool, scope)
     const sub_id = `sub_delunk_${uuidv7().slice(0, 10)}`
     // No seedUserSubscription call — the subscription row does NOT exist.
     const subscription = buildDeletedSubscriptionFixture({
