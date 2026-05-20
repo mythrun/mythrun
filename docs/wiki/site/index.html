@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Home · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-section="" data-page="index">
+    <header class="wiki-header">
+      <a href="index.html" class="wiki-lockup">
+        <img src="assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="infra/index.html">Infra</a><a href="runtime/index.html">Runtime</a><a href="data/index.html">Data</a><a href="auth-billing/index.html">Auth & Billing</a><a href="world-campaign/index.html">World & Campaign</a><a href="combat/index.html">Combat</a><a href="frontend/index.html">Frontend</a><a href="reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"></div>
+        <article><h1>Mythrun Wiki</h1>
+
+<p class="lead">
+  An agent-maintained, as-built view of the whole Mythrun system — both the application code and the
+  AWS infrastructure. Diagrammed, cross-linked, and updated alongside every Linear issue that ships.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="762pt" height="145pt"
+ viewBox="14.00 14.00 748.00 130.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 126.4)">
+<title>wiki_map</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-112 729.59,-112 729.59,4 -4,4"/>
+<!-- root -->
+<g id="node1" class="node">
+<title>root</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="355.29,-108 277.4,-108 277.4,-72 355.29,-72 355.29,-108"/>
+<text xml:space="preserve" text-anchor="middle" x="316.34" y="-86.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Mythrun</text>
+</g>
+<!-- infra -->
+<g id="node2" class="node">
+<title>infra</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="64.69,-36 0,-36 0,0 64.69,0 64.69,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="32.34" y="-14.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Infra</text>
+</g>
+<!-- root&#45;&gt;infra -->
+<g id="edge1" class="edge">
+<title>root&#45;&gt;infra</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="2" d="M277.07,-82.66C230.45,-74.65 150.36,-59.35 74.5,-36.12"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="2" points="75.58,-33.89 68.16,-34.15 74.12,-38.57 75.58,-33.89"/>
+</g>
+<!-- runtime -->
+<g id="node3" class="node">
+<title>runtime</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="160.29,-36 82.4,-36 82.4,0 160.29,0 160.29,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="121.34" y="-14.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Runtime</text>
+</g>
+<!-- root&#45;&gt;runtime -->
+<g id="edge2" class="edge">
+<title>root&#45;&gt;runtime</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M276.88,-74.83C245.69,-63.64 202.05,-47.97 168.93,-36.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="169.87,-33.82 162.45,-33.76 168.22,-38.43 169.87,-33.82"/>
+</g>
+<!-- data -->
+<g id="node4" class="node">
+<title>data</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="236.38,-36 178.3,-36 178.3,0 236.38,0 236.38,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="207.34" y="-14.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Data</text>
+</g>
+<!-- root&#45;&gt;data -->
+<g id="edge3" class="edge">
+<title>root&#45;&gt;data</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M288.84,-71.34C274.64,-62.22 257.17,-51 242.05,-41.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="243.58,-39.36 236.37,-37.64 240.93,-43.48 243.58,-39.36"/>
+</g>
+<!-- authbill -->
+<g id="node5" class="node">
+<title>authbill</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="378.39,-36 254.3,-36 254.3,0 378.39,0 378.39,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="316.34" y="-14.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Auth &amp; Billing</text>
+</g>
+<!-- root&#45;&gt;authbill -->
+<g id="edge4" class="edge">
+<title>root&#45;&gt;authbill</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M316.34,-71.34C316.34,-63.4 316.34,-53.87 316.34,-45.14"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="318.79,-45.23 316.34,-38.23 313.89,-45.23 318.79,-45.23"/>
+</g>
+<!-- world -->
+<g id="node6" class="node">
+<title>world</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="533.99,-36 396.69,-36 396.69,0 533.99,0 533.99,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="465.34" y="-14.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">World &amp; Campaign</text>
+</g>
+<!-- root&#45;&gt;world -->
+<g id="edge5" class="edge">
+<title>root&#45;&gt;world</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M353.94,-71.34C373.97,-61.93 398.76,-50.28 419.86,-40.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="420.82,-42.62 426.11,-37.43 418.73,-38.19 420.82,-42.62"/>
+</g>
+<!-- combat -->
+<g id="node7" class="node">
+<title>combat</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="622.99,-36 551.7,-36 551.7,0 622.99,0 622.99,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="587.34" y="-14.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Combat</text>
+</g>
+<!-- root&#45;&gt;combat -->
+<g id="edge6" class="edge">
+<title>root&#45;&gt;combat</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M355.75,-81.54C399.68,-72.83 472.88,-57.19 542.9,-35.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="543.27,-38.42 549.25,-34.03 541.84,-33.74 543.27,-38.42"/>
+</g>
+<!-- frontend -->
+<g id="node8" class="node">
+<title>frontend</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="725.59,-36 641.1,-36 641.1,0 725.59,0 725.59,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="683.34" y="-14.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Frontend</text>
+</g>
+<!-- root&#45;&gt;frontend -->
+<g id="edge7" class="edge">
+<title>root&#45;&gt;frontend</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M355.66,-84.4C414.24,-77.12 527.9,-61.32 631.92,-35.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="632.38,-38.35 638.59,-34.29 631.21,-33.59 632.38,-38.35"/>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="sections">Sections</h2>
+
+<p>
+  The wiki is organized into seven sections. <strong>Infra</strong> comes first because AWS
+  resources are inherently harder to hold in your head than code; visualizing them cleanly is the
+  highest-leverage payoff.
+</p>
+
+<ul>
+  <li>
+    <a href="infra/index.html">Infra</a> — AWS topology, Terraform modules, environments,
+    networking, compute, data plane, DNS, secrets, CI/CD, observability.
+  </li>
+  <li>
+    <a href="runtime/index.html">Runtime</a> — the backend server, session loop, Fast Thinker, Slow
+    Thinker, Scribe, DM Trigger, prompts, Anthropic integration.
+  </li>
+  <li><a href="data/index.html">Data</a> — schemas, repositories, Postgres, Redis, BullMQ.</li>
+  <li>
+    <a href="auth-billing/index.html">Auth &amp; Billing</a> — Cognito, JWT, invites, Stripe,
+    credits.
+  </li>
+  <li>
+    <a href="world-campaign/index.html">World &amp; Campaign</a> — prep engine, world store,
+    campaign pipeline.
+  </li>
+  <li><a href="combat/index.html">Combat</a> — rules engine, voxel maps, map rendering.</li>
+  <li>
+    <a href="frontend/index.html">Frontend</a> — components, Three.js layer, design system adapters.
+  </li>
+</ul>
+
+<h2 id="how-this-is-maintained">How this is maintained</h2>
+
+<p>
+  Every section page declares which source files (code paths, Terraform directories) it documents.
+  On each build, the wiki computes a hash of those sources and compares it to the hash captured at
+  the page's last update. Mismatches render a visible drift banner on the page and fail
+  <code>pnpm wiki:check</code> in CI, so pages can't silently go stale.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#sections">Sections</a></li><li style="padding-left:0"><a href="#how-this-is-maintained">How this is maintained</a></li></ul>
+      </aside>
+    </div>
+    <script src="helper.js"></script>
+  </body>
+</html>

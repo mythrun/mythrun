@@ -1,0 +1,2165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World gen · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="world-gen">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › World gen</div>
+        <article>
+<h1>World gen</h1>
+
+<p class="lead">
+  The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a
+  concept (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a
+  3-axis Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked
+  transaction, and enqueues a BullMQ job. The worker walks seven stages — three non-streaming Sonnet
+  calls (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>),
+  three streaming stages with live entity emission (<code>world_and_factions</code> Opus,
+  <code>locations_and_npcs</code> Opus, <code>entity_relationships</code> Sonnet), and a final
+  non-streaming Sonnet <code>coherence_pass</code>. A non-streaming Sonnet
+  <code>vocabulary_intake</code> stage runs between <code>concept_intake</code> and
+  <code>world_and_factions</code> — it generates the world's distinctive lexicon (the
+  <a href="#vocabulary-registry">vocabulary registry</a>) and every downstream stage injects the
+  rendered registry into its system prompt. After stage 4 commits the pipeline fires a
+  <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable through
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still running, and
+  stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage handler returns a
+  unified <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the
+  outer scope owns BEGIN/COMMIT and publishes the finalized events only after COMMIT. A cost-cap
+  circuit breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage;
+  over-cap refunds the credit and marks the world failed — except at stage 7, where cap-fire marks
+  the world COMPLETE (coherence is best-effort polish).
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="3927pt" height="1405pt"
+ viewBox="14.00 14.00 3913.00 1390.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1386.4)">
+<title>world_gen</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1372 3894.57,-1372 3894.57,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_api</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-143 8,-290 2123.95,-290 2123.95,-143 8,-143"/>
+<text xml:space="preserve" text-anchor="middle" x="1065.98" y="-276.1" font-family="Courier,monospace" font-size="11.00">API process</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_redis</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="2311.98,-451 2311.98,-615 2541.69,-615 2541.69,-451 2311.98,-451"/>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-601.1" font-family="Courier,monospace" font-size="11.00">Redis</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_worker</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="446.14,-652 446.14,-995 3545.85,-995 3545.85,-652 446.14,-652"/>
+<text xml:space="preserve" text-anchor="middle" x="1995.99" y="-981.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker service &#160;(BullMQ Worker, concurrency 3)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_pg</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="3685.87,-694 3685.87,-1102 3882.57,-1102 3882.57,-694 3685.87,-694"/>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-1088.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+</g>
+<!-- client -->
+<g id="node1" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1686.41,-346.44 1535.92,-346.44 1535.92,-289.56 1686.41,-289.56 1686.41,-346.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-327.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">HTTP client</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-314.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev tool today;</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-301.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> SPA after launch)</text>
+</g>
+<!-- post -->
+<g id="node2" class="node">
+<title>post</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="330.13,-267.04 8,-267.04 8,-196.96 330.13,-196.96 330.13,-267.04"/>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-248.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-235.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/campaigns</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-222.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Zod body parse</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-208.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(kind: &#39;new&#39;, mode: &#39;freeform&#39; | &#39;guided&#39;)</text>
+</g>
+<!-- client&#45;&gt;post -->
+<g id="edge1" class="edge">
+<title>client&#45;&gt;post</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1535.44,-320.42C1446.7,-323.09 1294.19,-327 1163.23,-327 546.79,-327 546.79,-327 546.79,-327 449.66,-327 342.6,-296.94 267.51,-270.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="268.57,-268.41 261.15,-268.39 266.93,-273.03 268.57,-268.41"/>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-330" font-family="Courier,monospace" font-size="10.00">POST campaign</text>
+</g>
+<!-- pre -->
+<g id="node3" class="node">
+<title>pre</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="649.45,-268.64 446.14,-268.64 446.14,-185.36 649.45,-185.36 649.45,-268.64"/>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-250.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cheap pre&#45;checks</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-236.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;concurrent&#45;gen guard</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-223.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;rejection&#45;storm cooldown</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-210.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;credit balance peek</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-197.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;queue&#45;depth admission</text>
+</g>
+<!-- post&#45;&gt;pre -->
+<g id="edge2" class="edge">
+<title>post&#45;&gt;pre</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M330.65,-229.87C366.38,-229.39 403.48,-228.9 436.64,-228.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="436.65,-230.91 443.62,-228.37 436.58,-226.01 436.65,-230.91"/>
+<text xml:space="preserve" text-anchor="middle" x="388.13" y="-232.5" font-family="Courier,monospace" font-size="10.00">parsed body</text>
+</g>
+<!-- synth -->
+<g id="node4" class="node">
+<title>synth</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="969.96,-199.44 760.06,-199.44 760.06,-142.56 969.96,-142.56 969.96,-199.44"/>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-180.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">synthesize&#45;concept.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-167.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">guided only — Sonnet</text>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-154.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ concept + intentSummary</text>
+</g>
+<!-- pre&#45;&gt;synth -->
+<g id="edge3" class="edge">
+<title>pre&#45;&gt;synth</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M649.83,-209.05C682.12,-203.31 718.06,-196.93 751.14,-191.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="751.23,-193.52 757.69,-189.89 750.37,-188.7 751.23,-193.52"/>
+<text xml:space="preserve" text-anchor="middle" x="701.45" y="-207.02" font-family="Courier,monospace" font-size="10.00">if guided</text>
+</g>
+<!-- gate -->
+<g id="node5" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1267.18,-254.64 1057.27,-254.64 1057.27,-171.36 1267.18,-171.36 1267.18,-254.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-236.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">input&#45;gate.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-222.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet, 3 axes</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-209.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;srd_compat | clone_intent</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-196.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;| inappropriate</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-183.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">aggregate&#45;confidence rule</text>
+</g>
+<!-- pre&#45;&gt;gate -->
+<g id="edge5" class="edge">
+<title>pre&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M649.99,-224.76C675.59,-224.19 703.03,-223.58 728.45,-223 836.98,-220.54 960.81,-217.67 1048.13,-215.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1047.97,-218.09 1054.91,-215.48 1047.86,-213.2 1047.97,-218.09"/>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-225.43" font-family="Courier,monospace" font-size="10.00">if freeform</text>
+</g>
+<!-- synth&#45;&gt;gate -->
+<g id="edge4" class="edge">
+<title>synth&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M970.51,-185.87C995.69,-189.45 1022.71,-193.29 1048.26,-196.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1047.79,-199.34 1055.07,-197.9 1048.49,-194.49 1047.79,-199.34"/>
+</g>
+<!-- gate&#45;&gt;client -->
+<g id="edge7" class="edge">
+<title>gate&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1267.77,-233.95C1329.18,-246.67 1408.19,-263.73 1477.91,-281 1493.77,-284.93 1510.63,-289.41 1526.8,-293.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1526.03,-296.19 1533.43,-295.7 1527.34,-291.47 1526.03,-296.19"/>
+<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-296" font-family="Courier,monospace" font-size="10.00">422 concept_rejected</text>
+<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-284" font-family="Courier,monospace" font-size="10.00">or content_filtered</text>
+</g>
+<!-- tx -->
+<g id="node6" class="node">
+<title>tx</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1719.42,-252.84 1502.91,-252.84 1502.91,-143.16 1719.42,-143.16 1719.42,-252.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-234.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locked tx (Postgres)</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-221.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;advisory lock on user</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-207.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;debit credit_ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-194.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT worlds (generating)</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-181.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaigns (setup)</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-168.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaign_members</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-155.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;seed pipeline_runs row</text>
+</g>
+<!-- gate&#45;&gt;tx -->
+<g id="edge6" class="edge">
+<title>gate&#45;&gt;tx</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1267.73,-209.49C1335.53,-207.22 1423.95,-204.25 1493.96,-201.9"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1493.68,-204.36 1500.59,-201.68 1493.51,-199.46 1493.68,-204.36"/>
+<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-210.28" font-family="Courier,monospace" font-size="10.00">verdict=allow</text>
+</g>
+<!-- enq -->
+<g id="node7" class="node">
+<title>enq</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2123.95,-269.24 1907.44,-269.24 1907.44,-172.76 2123.95,-172.76 2123.95,-269.24"/>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-250.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldGenQueue.add</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-237.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;name: &#39;world&#45;gen&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-224.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;jobId: campaignId</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-211.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;attempts: 2</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-197.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;exponential backoff 30s</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-184.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;removeOn{Complete,Fail}: 0</text>
+</g>
+<!-- tx&#45;&gt;enq -->
+<g id="edge11" class="edge">
+<title>tx&#45;&gt;enq</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1720.04,-204.16C1775.08,-207.31 1842.1,-211.14 1898.31,-214.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1897.94,-216.78 1905.06,-214.74 1898.22,-211.89 1897.94,-216.78"/>
+</g>
+<!-- pipeline_runs -->
+<g id="node20" class="node">
+<title>pipeline_runs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3882.57,-922.44 3685.87,-922.44 3685.87,-865.56 3882.57,-865.56 3882.57,-922.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-903.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline_runs</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-890.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;stage row</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-877.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;status, cost_usd, error</text>
+</g>
+<!-- tx&#45;&gt;pipeline_runs -->
+<g id="edge10" class="edge">
+<title>tx&#45;&gt;pipeline_runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1654.76,-142.49C1678.39,-115.33 1709.93,-84.39 1744.42,-65 1852.12,-4.46 1891.15,0 2014.7,0 2014.7,0 2014.7,0 3435.3,0 3548.44,0 3600.63,-22.23 3660.87,-118 3704.25,-186.98 3640.22,-783.49 3685.87,-851 3687.73,-853.76 3689.82,-856.35 3692.1,-858.78"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3690.4,-860.55 3697.18,-863.57 3693.77,-856.98 3690.4,-860.55"/>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-3" font-family="Courier,monospace" font-size="10.00">seed pending</text>
+</g>
+<!-- worlds -->
+<g id="node21" class="node">
+<title>worlds</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3872.67,-1008.44 3695.77,-1008.44 3695.77,-951.56 3872.67,-951.56 3872.67,-1008.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-989.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-976.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status: generating →</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-963.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;complete | failed</text>
+</g>
+<!-- tx&#45;&gt;worlds -->
+<g id="edge9" class="edge">
+<title>tx&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1719.83,-180.32C1775.65,-171.94 1845.03,-162.75 1907.44,-158 2370.78,-122.75 2488.14,-140 2952.82,-140 2952.82,-140 2952.82,-140 3435.3,-140 3705.68,-140 3595.65,-442.6 3660.87,-705 3673.37,-755.32 3655.27,-895.13 3685.87,-937 3688.01,-939.94 3690.4,-942.68 3692.99,-945.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3691.13,-946.86 3698,-949.66 3694.38,-943.19 3691.13,-946.86"/>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-142.86" font-family="Courier,monospace" font-size="10.00">INSERT generating</text>
+</g>
+<!-- ledger -->
+<g id="node23" class="node">
+<title>ledger</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3875.97,-750.44 3692.47,-750.44 3692.47,-693.56 3875.97,-693.56 3875.97,-750.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-731.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credit_ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-718.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">debit + cost_cap_refund</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-705.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ admin (dev)</text>
+</g>
+<!-- tx&#45;&gt;ledger -->
+<g id="edge8" class="edge">
+<title>tx&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1679.76,-142.59C1699.55,-128.92 1721.94,-115.7 1744.42,-107 1857.49,-63.23 1893.45,-70 2014.7,-70 2014.7,-70 2014.7,-70 3435.3,-70 3537.79,-70 3588.74,-45.17 3660.87,-118 3741.29,-199.21 3772.69,-565.57 3780.88,-684.55"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3778.42,-684.38 3781.33,-691.2 3783.31,-684.05 3778.42,-684.38"/>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-73" font-family="Courier,monospace" font-size="10.00">debit</text>
+</g>
+<!-- enq&#45;&gt;client -->
+<g id="edge13" class="edge">
+<title>enq&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1906.93,-246.97C1840.54,-262.97 1756.7,-283.17 1695.43,-297.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1694.93,-295.54 1688.7,-299.56 1696.08,-300.3 1694.93,-295.54"/>
+<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-286.86" font-family="Courier,monospace" font-size="10.00">201 { campaignId }</text>
+</g>
+<!-- queue -->
+<g id="node8" class="node">
+<title>queue</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2482.28,-507.44 2371.38,-507.44 2371.38,-450.56 2482.28,-450.56 2482.28,-507.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-488.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullMQ queue</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-475.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-462.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisBatch)</text>
+</g>
+<!-- enq&#45;&gt;queue -->
+<g id="edge12" class="edge">
+<title>enq&#45;&gt;queue</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2094.13,-269.83C2175.55,-321.17 2301.47,-400.58 2372.45,-445.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2370.8,-447.19 2378.02,-448.85 2373.41,-443.05 2370.8,-447.19"/>
+</g>
+<!-- proc -->
+<g id="node10" class="node">
+<title>proc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="649.45,-867.84 446.14,-867.84 446.14,-758.16 649.45,-758.16 649.45,-867.84"/>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-849.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen&#45;processor.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-836.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">readCostCap once per job</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-822.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">atomic claim per stage</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-809.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">stuck&#45;stage reset (&gt;5min)</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-796.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runStage owns BEGIN/COMMIT</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-783.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">publishes finalizedEvents</text>
+<text xml:space="preserve" text-anchor="middle" x="547.79" y="-770.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;only after COMMIT</text>
+</g>
+<!-- queue&#45;&gt;proc -->
+<g id="edge14" class="edge">
+<title>queue&#45;&gt;proc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2370.85,-476.26C2217.44,-468.85 1771.62,-449 1400.9,-449 864.01,-449 864.01,-449 864.01,-449 706.77,-449 610.42,-645.52 570.37,-749.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="568.19,-748.6 568,-756.02 572.77,-750.34 568.19,-748.6"/>
+<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-452" font-family="Courier,monospace" font-size="10.00">job { campaignId }</text>
+</g>
+<!-- channel -->
+<g id="node9" class="node">
+<title>channel</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2541.69,-593.44 2311.98,-593.44 2311.98,-536.56 2541.69,-536.56 2541.69,-593.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-574.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-561.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline:campaign:{campaignId}</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-548.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisRealtime)</text>
+</g>
+<!-- proc&#45;&gt;channel -->
+<g id="edge45" class="edge">
+<title>proc&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M550.06,-757.59C555.15,-672.99 577.86,-512.47 674.45,-427 738.73,-370.11 778.17,-390 864.01,-390 864.01,-390 864.01,-390 1400.9,-389 1435.13,-389 1443.77,-386.61 1477.91,-389 1842.25,-414.54 1930.48,-453.59 2286.98,-533 2292.2,-534.16 2297.54,-535.36 2302.93,-536.58"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2302.3,-538.95 2309.67,-538.1 2303.38,-534.17 2302.3,-538.95"/>
+<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-405" font-family="Courier,monospace" font-size="10.00">phase / stage&#45;* /</text>
+<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-393" font-family="Courier,monospace" font-size="10.00">cost&#45;update / stage&#45;failed</text>
+</g>
+<!-- s1 -->
+<g id="node11" class="node">
+<title>s1</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="976.57,-973.64 753.45,-973.64 753.45,-890.36 976.57,-890.36 976.57,-973.64"/>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-955.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 1</text>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-941.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concept_intake</text>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-928.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-915.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">paint&#45;job validator</text>
+<text xml:space="preserve" text-anchor="middle" x="865.01" y="-902.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.tone/themes/era…</text>
+</g>
+<!-- proc&#45;&gt;s1 -->
+<g id="edge16" class="edge">
+<title>proc&#45;&gt;s1</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M649.83,-851.14C680.13,-862.58 713.64,-875.23 744.98,-887.06"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="743.79,-889.23 751.2,-889.41 745.52,-884.65 743.79,-889.23"/>
+</g>
+<!-- settings -->
+<g id="node22" class="node">
+<title>settings</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3872.67,-1080.84 3695.77,-1080.84 3695.77,-1037.16 3872.67,-1037.16 3872.67,-1080.84"/>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-1062.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">settings</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-1049.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_gen_cost_cap_usd</text>
+</g>
+<!-- proc&#45;&gt;settings -->
+<g id="edge15" class="edge">
+<title>proc&#45;&gt;settings</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M554.67,-868.56C572.68,-1006.95 640.28,-1356 864.01,-1356 864.01,-1356 864.01,-1356 3435.3,-1356 3598.84,-1356 3724.4,-1163.82 3767.26,-1088.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3769.19,-1090.21 3770.49,-1082.91 3764.93,-1087.8 3769.19,-1090.21"/>
+<text xml:space="preserve" text-anchor="middle" x="2217.96" y="-1359" font-family="Courier,monospace" font-size="10.00">readCostCap</text>
+</g>
+<!-- s2 -->
+<g id="node12" class="node">
+<title>s2</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1296.88,-920.24 1027.57,-920.24 1027.57,-823.76 1296.88,-823.76 1296.88,-920.24"/>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-901.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 2</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-888.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_and_factions</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-875.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Opus streaming</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-862.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">regions + factions</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-848.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ entities + prose_kernels + facts</text>
+<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-835.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.world_overview</text>
+</g>
+<!-- s1&#45;&gt;s2 -->
+<g id="edge17" class="edge">
+<title>s1&#45;&gt;s2</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M977.2,-909.4C990.67,-906.66 1004.56,-903.84 1018.41,-901.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1018.86,-903.43 1025.24,-899.64 1017.89,-898.63 1018.86,-903.43"/>
+</g>
+<!-- capchk -->
+<g id="node18" class="node">
+<title>capchk</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3545.85,-914.64 3322.74,-914.64 3322.74,-831.36 3545.85,-831.36 3545.85,-914.64"/>
+<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-896.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cost&#45;cap.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-882.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sumCompletedStageCosts</text>
+<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-869.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&gt; cap? &#160;→ refund + fail</text>
+<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-856.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(EXCEPT stage 7:</text>
+<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-843.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;capExhausted → complete)</text>
+</g>
+<!-- s1&#45;&gt;capchk -->
+<g id="edge26" class="edge">
+<title>s1&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M977.19,-948.67C1032.39,-955.57 1100.18,-962 1161.23,-962 1161.23,-962 1161.23,-962 2016.7,-962 2147.6,-962 3064.43,-962.58 3194.73,-950 3241.07,-945.52 3253.17,-944.46 3297.74,-931 3305.27,-928.73 3316.99,-924.2 3330.46,-918.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3331.38,-920.91 3336.9,-915.95 3329.5,-916.39 3331.38,-920.91"/>
+<text xml:space="preserve" text-anchor="middle" x="2217.96" y="-964.98" font-family="Courier,monospace" font-size="10.00">after each stage</text>
+</g>
+<!-- s1&#45;&gt;pipeline_runs -->
+<g id="edge43" class="edge">
+<title>s1&#45;&gt;pipeline_runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M874.58,-974.32C889.55,-1037.84 926.33,-1157.85 1001.57,-1228 1057.01,-1279.69 1085.42,-1288 1161.23,-1288 1161.23,-1288 1161.23,-1288 3435.3,-1288 3583.31,-1288 3591.48,-1173.74 3660.87,-1043 3683.55,-1000.24 3654.93,-974.23 3685.87,-937 3688.46,-933.88 3691.33,-930.97 3694.4,-928.28"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.61,-930.44 3699.55,-924.15 3692.55,-926.61 3695.61,-930.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1303" font-family="Courier,monospace" font-size="10.00">completed +</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1291" font-family="Courier,monospace" font-size="10.00"> cost_usd</text>
+</g>
+<!-- s1&#45;&gt;worlds -->
+<g id="edge35" class="edge">
+<title>s1&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M886.64,-974.21C927.52,-1051.07 1026.62,-1206 1161.23,-1206 1161.23,-1206 1161.23,-1206 3435.3,-1206 3558.98,-1206 3562.42,-1117.88 3660.87,-1043 3672.19,-1034.39 3673.7,-1030.38 3685.87,-1023 3691.53,-1019.56 3697.52,-1016.25 3703.63,-1013.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3704.64,-1015.31 3709.79,-1009.97 3702.44,-1010.94 3704.64,-1015.31"/>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1221" font-family="Courier,monospace" font-size="10.00">UPDATE</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1209" font-family="Courier,monospace" font-size="10.00">tone/themes/era…</text>
+</g>
+<!-- s2&#45;&gt;channel -->
+<g id="edge46" class="edge">
+<title>s2&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1237.97,-823.05C1345.16,-755.61 1551,-636.2 1744.42,-581 1933.48,-527.05 2164.16,-536.39 2302.79,-549.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2302.37,-552.01 2309.57,-550.25 2302.84,-547.13 2302.37,-552.01"/>
+<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-608" font-family="Courier,monospace" font-size="10.00">entity&#45;added / &#45;updated</text>
+<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-596" font-family="Courier,monospace" font-size="10.00">(mid&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-584" font-family="Courier,monospace" font-size="10.00">finalized (post&#45;COMMIT)</text>
+</g>
+<!-- s3 -->
+<g id="node13" class="node">
+<title>s3</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1719.42,-854.24 1502.91,-854.24 1502.91,-757.76 1719.42,-757.76 1719.42,-854.24"/>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-835.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 3</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-822.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locations_and_npcs</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-809.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Opus streaming</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-796.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">3&#45;pass parent resolver</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-782.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ entities + prose + facts</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-769.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ entity_hierarchy</text>
+</g>
+<!-- s2&#45;&gt;s3 -->
+<g id="edge18" class="edge">
+<title>s2&#45;&gt;s3</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1297.62,-852.15C1360.11,-842.93 1433.71,-832.06 1493.78,-823.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1493.8,-825.66 1500.37,-822.21 1493.09,-820.81 1493.8,-825.66"/>
+</g>
+<!-- s2&#45;&gt;capchk -->
+<g id="edge27" class="edge">
+<title>s2&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1297.39,-879.7C1305.68,-880.15 1313.89,-880.59 1321.88,-881 1466.05,-888.48 2475.34,-942 2619.7,-942 2619.7,-942 2619.7,-942 3107.28,-942 3176.76,-942 3252.81,-926.81 3313.97,-910.69"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3314.23,-913.15 3320.36,-908.98 3312.96,-908.42 3314.23,-913.15"/>
+</g>
+<!-- repair -->
+<g id="node19" class="node">
+<title>repair</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2531.79,-912.04 2321.88,-912.04 2321.88,-841.96 2531.79,-841.96 2531.79,-912.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-893.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">structured&#45;output&#45;repair.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-880.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Haiku → Sonnet</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-867.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">preserves array length</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-853.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">on Zod failure</text>
+</g>
+<!-- s2&#45;&gt;repair -->
+<g id="edge23" class="edge">
+<title>s2&#45;&gt;repair</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1297.45,-872.53C1547.42,-873.52 2080,-875.63 2312.88,-876.55"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2312.55,-879 2319.56,-876.58 2312.56,-874.1 2312.55,-879"/>
+<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-877.85" font-family="Courier,monospace" font-size="10.00">on Zod fail</text>
+</g>
+<!-- entities_t -->
+<g id="node24" class="node">
+<title>entities_t</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3879.27,-836.44 3689.17,-836.44 3689.17,-779.56 3879.27,-779.56 3879.27,-836.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-817.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entities + prose_kernels</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-804.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ facts + relationships</text>
+<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-791.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ entity_hierarchy</text>
+</g>
+<!-- s2&#45;&gt;entities_t -->
+<g id="edge36" class="edge">
+<title>s2&#45;&gt;entities_t</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1196.63,-823.41C1226.24,-782.76 1272.37,-724.99 1321.88,-684 1393.02,-625.11 1416.17,-613.69 1502.91,-582 1895.06,-438.74 2008.34,-407 2425.83,-407 2425.83,-407 2425.83,-407 3435.3,-407 3565.24,-407 3597.11,-479.77 3660.87,-593 3698.76,-660.31 3639.14,-703.49 3685.87,-765 3688.13,-767.98 3690.64,-770.76 3693.35,-773.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3691.72,-775.17 3698.63,-777.87 3694.91,-771.45 3691.72,-775.17"/>
+<text xml:space="preserve" text-anchor="middle" x="2620.7" y="-410" font-family="Courier,monospace" font-size="10.00">regions + factions</text>
+</g>
+<!-- s3&#45;&gt;channel -->
+<g id="edge47" class="edge">
+<title>s3&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1653.79,-757.17C1677.94,-731.56 1710.27,-701.54 1744.42,-682 1919.98,-581.53 2159.68,-562.64 2303,-561.45"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2302.65,-563.91 2309.63,-561.42 2302.62,-559.01 2302.65,-563.91"/>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-653.16" font-family="Courier,monospace" font-size="10.00">entity&#45;added / &#45;updated</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-641.16" font-family="Courier,monospace" font-size="10.00">finalized</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-629.16" font-family="Courier,monospace" font-size="10.00">entity&#45;updated</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-617.16" font-family="Courier,monospace" font-size="10.00"> &#160;{parent_location: null}</text>
+</g>
+<!-- s4 -->
+<g id="node14" class="node">
+<title>s4</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2104.15,-829.84 1927.25,-829.84 1927.25,-720.16 2104.15,-720.16 2104.15,-829.84"/>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-811.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 4</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-798.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entity_relationships</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-784.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet streaming</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-771.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">deleteByWorld on retry</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-758.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UUID pre&#45;filter for</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-745.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hallucinated refs</text>
+<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-732.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ relationships</text>
+</g>
+<!-- s3&#45;&gt;s4 -->
+<g id="edge19" class="edge">
+<title>s3&#45;&gt;s4</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1720.04,-797.69C1781.63,-792.95 1858.22,-787.05 1917.88,-782.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1917.95,-784.91 1924.74,-781.93 1917.57,-780.02 1917.95,-784.91"/>
+</g>
+<!-- s3&#45;&gt;capchk -->
+<g id="edge28" class="edge">
+<title>s3&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1720.16,-760.6C1775.18,-739.76 1843.75,-717.22 1907.44,-706 2338.15,-630.12 2464.99,-659.11 2889.81,-763 2936.25,-774.36 2947.42,-779.01 2992.82,-794 3004.04,-797.7 3006.32,-800.32 3017.82,-803 3094.88,-820.97 3116.46,-811.37 3194.73,-823 3240.78,-829.84 3252.15,-832.59 3297.74,-842 3302.94,-843.07 3308.24,-844.19 3313.6,-845.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3312.91,-847.7 3320.27,-846.78 3313.94,-842.91 3312.91,-847.7"/>
+</g>
+<!-- s3&#45;&gt;repair -->
+<g id="edge24" class="edge">
+<title>s3&#45;&gt;repair</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1719.97,-821.57C1775.82,-829.2 1845.19,-838.02 1907.44,-844 2046.71,-857.38 2207.56,-866.66 2312.69,-871.9"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2312.49,-874.34 2319.6,-872.24 2312.73,-869.45 2312.49,-874.34"/>
+</g>
+<!-- s3&#45;&gt;entities_t -->
+<g id="edge37" class="edge">
+<title>s3&#45;&gt;entities_t</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1674.99,-854.78C1696.1,-869.22 1720.41,-883.86 1744.42,-894 1913.84,-965.53 1967.51,-951.01 2148.95,-981 2654.91,-1064.62 2789.72,-1159 3297.74,-1089 3463.81,-1066.12 3547.91,-1110.86 3660.87,-987 3702.28,-941.59 3647.78,-899.23 3685.87,-851 3688.18,-848.06 3690.74,-845.32 3693.5,-842.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.05,-844.66 3698.84,-838.29 3691.9,-840.9 3695.05,-844.66"/>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-1125.77" font-family="Courier,monospace" font-size="10.00">locations + NPCs</text>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-1113.77" font-family="Courier,monospace" font-size="10.00">+ parents</text>
+</g>
+<!-- s4&#45;&gt;channel -->
+<g id="edge48" class="edge">
+<title>s4&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2077.32,-719.6C2093.41,-703.44 2110.13,-685.21 2123.95,-667 2137.55,-649.09 2130.78,-636.26 2148.95,-623 2152.33,-620.54 2230.54,-604.26 2302.97,-589.58"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2303.16,-592.04 2309.54,-588.25 2302.19,-587.24 2303.16,-592.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2217.96" y="-626" font-family="Courier,monospace" font-size="10.00">edge&#45;added (mid&#45;stream)</text>
+</g>
+<!-- s5 -->
+<g id="node15" class="node">
+<title>s5</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2538.39,-782.04 2315.28,-782.04 2315.28,-711.96 2538.39,-711.96 2538.39,-782.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-763.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 5</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-750.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">starting_situation</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-737.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-723.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.starting_situation</text>
+</g>
+<!-- s4&#45;&gt;s5 -->
+<g id="edge20" class="edge">
+<title>s4&#45;&gt;s5</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2104.72,-768.98C2163.49,-764.95 2241.53,-759.61 2305.96,-755.2"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2305.92,-757.66 2312.74,-754.74 2305.59,-752.77 2305.92,-757.66"/>
+</g>
+<!-- s4&#45;&gt;capchk -->
+<g id="edge29" class="edge">
+<title>s4&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2104.86,-782.22C2243.4,-793.79 2500.59,-816.28 2541.69,-827 2615.84,-846.35 2624.69,-880.34 2699.7,-896 2782.41,-913.27 2805.34,-897.79 2889.81,-896 3035.78,-892.91 3203.65,-885.17 3313.74,-879.51"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3313.55,-881.98 3320.41,-879.17 3313.29,-877.08 3313.55,-881.98"/>
+</g>
+<!-- s4&#45;&gt;repair -->
+<g id="edge25" class="edge">
+<title>s4&#45;&gt;repair</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2104.8,-806.68C2119.45,-811.46 2134.56,-816.09 2148.95,-820 2202.23,-834.49 2262.14,-847.25 2312.58,-857"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2312.11,-859.41 2319.45,-858.32 2313.04,-854.6 2312.11,-859.41"/>
+</g>
+<!-- s4&#45;&gt;entities_t -->
+<g id="edge38" class="edge">
+<title>s4&#45;&gt;entities_t</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2104.88,-748.43C2304.18,-689.3 2785.02,-552 2952.82,-552 2952.82,-552 2952.82,-552 3435.3,-552 3556.43,-552 3584.24,-611.17 3660.87,-705 3679.14,-727.38 3665.65,-744.36 3685.87,-765 3689.1,-768.3 3692.63,-771.37 3696.36,-774.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3694.68,-776.02 3701.81,-778.05 3697.5,-772.02 3694.68,-776.02"/>
+<text xml:space="preserve" text-anchor="middle" x="2953.82" y="-556.34" font-family="Courier,monospace" font-size="10.00">relationships</text>
+</g>
+<!-- s6 -->
+<g id="node16" class="node">
+<title>s6</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2889.81,-881.04 2699.7,-881.04 2699.7,-810.96 2889.81,-810.96 2889.81,-881.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-862.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 6</text>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-849.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">random_tables</text>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-836.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-822.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.random_tables</text>
+</g>
+<!-- s5&#45;&gt;s6 -->
+<g id="edge21" class="edge">
+<title>s5&#45;&gt;s6</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2539.11,-781.17C2548.42,-783.87 2557.71,-786.52 2566.69,-789 2607.1,-800.18 2651.82,-811.6 2690.8,-821.26"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2689.89,-823.56 2697.27,-822.86 2691.06,-818.8 2689.89,-823.56"/>
+</g>
+<!-- s5&#45;&gt;capchk -->
+<g id="edge30" class="edge">
+<title>s5&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2538.97,-754.88C2632.88,-762.48 2770.73,-775.81 2889.81,-796 2947.42,-805.77 2960.24,-816.03 3017.82,-826 3025.15,-827.27 3193.48,-846.19 3313.6,-859.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3313.12,-862.04 3320.35,-860.39 3313.67,-857.17 3313.12,-862.04"/>
+</g>
+<!-- s5&#45;&gt;worlds -->
+<g id="edge39" class="edge">
+<title>s5&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2539.03,-743.67C2581.59,-743.63 2630.51,-745.06 2674.7,-750 2771.86,-760.87 2797,-765.26 2889.81,-796 3090.66,-862.52 3116.01,-948.97 3322.74,-994 3446.08,-1020.87 3592.35,-1009.29 3686.41,-996.45"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3686.67,-998.89 3693.26,-995.5 3685.99,-994.04 3686.67,-998.89"/>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-954.77" font-family="Courier,monospace" font-size="10.00">starting_situation</text>
+</g>
+<!-- s7 -->
+<g id="node17" class="node">
+<title>s7</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3194.73,-788.04 3017.82,-788.04 3017.82,-651.96 3194.73,-651.96 3194.73,-788.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-769.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 7</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-756.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">coherence_pass</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-743.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-729.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">patch types:</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-716.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;fix_fact / fix_prose</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-703.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;fix_relationship</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-690.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;rename_entity</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-677.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;delete_relationship</text>
+<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-663.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">unknown UUIDs: skip</text>
+</g>
+<!-- s6&#45;&gt;s7 -->
+<g id="edge22" class="edge">
+<title>s6&#45;&gt;s7</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2883.63,-810.23C2922.83,-794.27 2969.13,-775.42 3009.25,-759.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3009.95,-761.45 3015.51,-756.54 3008.1,-756.91 3009.95,-761.45"/>
+</g>
+<!-- s6&#45;&gt;capchk -->
+<g id="edge31" class="edge">
+<title>s6&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2890.3,-850.91C2929.72,-852.9 2975.98,-855.16 3017.82,-857 3117.42,-861.38 3230.48,-865.7 3313.49,-868.74"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3313.29,-871.18 3320.37,-868.99 3313.46,-866.28 3313.29,-871.18"/>
+</g>
+<!-- s6&#45;&gt;worlds -->
+<g id="edge40" class="edge">
+<title>s6&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2820.53,-881.55C2857.1,-930.55 2930.68,-1016.68 3017.82,-1051 3097.61,-1082.42 3616.46,-1070.95 3660.87,-1051 3676.08,-1044.16 3672.37,-1032.81 3685.87,-1023 3690.53,-1019.6 3695.51,-1016.4 3700.66,-1013.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3701.8,-1015.55 3706.71,-1009.99 3699.4,-1011.28 3701.8,-1015.55"/>
+<text xml:space="preserve" text-anchor="middle" x="3258.73" y="-1073.48" font-family="Courier,monospace" font-size="10.00">random_tables</text>
+</g>
+<!-- s7&#45;&gt;channel -->
+<g id="edge49" class="edge">
+<title>s7&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3017.08,-686.76C2978.42,-673.07 2932.28,-657.9 2889.81,-647 2776.38,-617.9 2644.66,-595.62 2550.96,-581.68"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2551.38,-579.27 2544.09,-580.67 2550.66,-584.11 2551.38,-579.27"/>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-674" font-family="Courier,monospace" font-size="10.00">entity&#45;updated /</text>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-662" font-family="Courier,monospace" font-size="10.00">edge&#45;removed / edge&#45;added</text>
+<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-650" font-family="Courier,monospace" font-size="10.00">(post&#45;COMMIT)</text>
+</g>
+<!-- s7&#45;&gt;capchk -->
+<g id="edge32" class="edge">
+<title>s7&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3191.16,-788.69C3200.44,-794.19 3210.04,-799.11 3219.73,-803 3252.17,-816.02 3264.07,-803.61 3297.74,-813 3311.62,-816.87 3325.92,-821.92 3339.79,-827.45"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3338.8,-829.7 3346.21,-830.07 3340.65,-825.16 3338.8,-829.7"/>
+</g>
+<!-- s7&#45;&gt;pipeline_runs -->
+<g id="edge44" class="edge">
+<title>s7&#45;&gt;pipeline_runs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3195.24,-739.47C3203.5,-741.09 3211.76,-742.63 3219.73,-744 3414.61,-777.55 3499.33,-687.93 3660.87,-802 3680.84,-816.1 3668.1,-834.2 3685.87,-851 3689.31,-854.25 3693.03,-857.29 3696.95,-860.11"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.52,-862.1 3702.7,-863.96 3698.24,-858.03 3695.52,-862.1"/>
+</g>
+<!-- s7&#45;&gt;worlds -->
+<g id="edge42" class="edge">
+<title>s7&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3195.31,-697.87C3317.04,-673.07 3535.83,-650.3 3660.87,-768 3716.15,-820.04 3639.86,-876.59 3685.87,-937 3688.13,-939.98 3690.65,-942.75 3693.36,-945.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3691.74,-947.17 3698.65,-949.86 3694.92,-943.44 3691.74,-947.17"/>
+<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-703.4" font-family="Courier,monospace" font-size="10.00">status=complete</text>
+</g>
+<!-- s7&#45;&gt;entities_t -->
+<g id="edge41" class="edge">
+<title>s7&#45;&gt;entities_t</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3157.28,-788.61C3196.48,-836.69 3255.52,-897.74 3322.74,-929 3391.06,-960.77 3601.64,-1000.57 3660.87,-954 3697.9,-924.88 3655.64,-887.14 3685.87,-851 3688.47,-847.89 3691.34,-844.99 3694.42,-842.3"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.64,-844.46 3699.59,-838.18 3692.59,-840.63 3695.64,-844.46"/>
+<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-977.89" font-family="Courier,monospace" font-size="10.00">patches (best&#45;effort)</text>
+</g>
+<!-- capchk&#45;&gt;worlds -->
+<g id="edge34" class="edge">
+<title>capchk&#45;&gt;worlds</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3546.34,-907.15C3591.55,-921.05 3643.32,-936.97 3686.9,-950.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3686.08,-952.69 3693.49,-952.4 3687.52,-948 3686.08,-952.69"/>
+<text xml:space="preserve" text-anchor="middle" x="3615.86" y="-945.34" font-family="Courier,monospace" font-size="10.00">status=failed</text>
+</g>
+<!-- capchk&#45;&gt;ledger -->
+<g id="edge33" class="edge">
+<title>capchk&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3532.67,-830.74C3588.32,-806.59 3657.02,-776.77 3708.4,-754.47"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3709.06,-756.85 3714.51,-751.82 3707.11,-752.36 3709.06,-756.85"/>
+<text xml:space="preserve" text-anchor="middle" x="3615.86" y="-826.02" font-family="Courier,monospace" font-size="10.00">cost_cap_refund</text>
+<text xml:space="preserve" text-anchor="middle" x="3615.86" y="-814.02" font-family="Courier,monospace" font-size="10.00">+1 credit</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Seven routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
+  the <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
+  registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
+  flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
+  world row, and the member list for a campaign the caller is a member of.
+  <code>GET /api/campaigns/mine</code> lists every campaign the caller created or joined.
+  <code>POST /api/campaigns/:campaignId/resume</code> is the recovery surface: a polymorphic switch
+  over the nine phases <code>derivePhase</code> reports (see
+  <a href="./pipeline-status.html">pipeline status</a>) that re-enqueues, 409s, or 422s depending on
+  where the pipeline got stuck. <code>DELETE /api/campaigns/:campaignId</code> is the hard-delete
+  cleanup path — owner-only, refuses while generating, cascades through the FK chain to remove the
+  world + every dependent row. <code>PATCH /api/campaigns/:campaignId/name</code> is the rename path
+  for owners: <code>concept_intake</code> auto-names the campaign from the LLM-synthesized world
+  name, and this is how the owner overrides that default.
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the owner-only known-tier view of
+  the persisted world, fetchable once the new <code>world_snapshot_ready</code> phase has fired
+  (after stage 4 commits).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Campaign-id is the user-facing handle, not world-id</strong> — a campaign owns at most one
+  world, but the user always interacts with the campaign (its name, its membership, its session
+  history). World-id is an internal join key. The route surface, the status SSE channel
+  (<code>pipeline:campaign:{campaignId}</code>), and the BullMQ <code>jobId</code> all key on
+  <code>campaignId</code>; the 201 response from the create flow returns only
+  <code>campaignId</code>. The create transaction seeds a <code>pipeline_runs</code> row keyed on
+  <code>world_id</code> + <code>stage = 'concept_intake'</code> with
+  <code>status = 'pending'</code> so a Redis blip between COMMIT and <code>queue.add</code> presents
+  as <code>world_gen_failed</code> via the existing <code>derivePhase</code> rules instead of
+  <code>not_started</code>, which the resume route's <code>world_gen_failed</code> arm can recover
+  from cleanly.
+</aside>
+
+<p>
+  The body shape is discriminated from day one. The outer discriminator is <code>kind</code> with
+  one functional arm (<code>'new'</code>) and a future arm reserved for joining an existing world
+  (not stubbed at launch — an unknown <code>kind</code> produces a standard 400 from Zod, not 501).
+  Inside <code>kind: 'new'</code>, an inner discriminator on <code>source.mode</code> selects either
+  <code>'freeform'</code> (a 20–4000-character free-text concept) or <code>'guided'</code> (exactly
+  three <code>{ title, whyILikeIt }</code> picks the user assembled in a chooser UI). The
+  synthesizer fires only in the guided arm; both arms then converge on the input gate. The body
+  carries no campaign name — <code>concept_intake</code> auto-names the world (and propagates that
+  name to the campaign), and the owner overrides later via
+  <code>PATCH /api/campaigns/:campaignId/name</code>.
+</p>
+
+<h2 id="the-seven-routes">The seven routes</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method &amp; path</th>
+      <th>Auth</th>
+      <th>Rate limit</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>POST /api/campaigns</code></td>
+      <td>
+        Standard onboarded chain (auth + <code>requireDbUser</code>; no membership pre-handler — the
+        user is creating the campaign)
+      </td>
+      <td>
+        <strong>5 / min per USER</strong> (tighter than the queue or cost gates would tolerate; the
+        floor that blocks adversarial Sonnet-burn loops trying to slip past the rejection-storm
+        cooldown)
+      </td>
+      <td>
+        <code>201 { campaignId }</code> on success; <code>400 invalid_body</code> on Zod failure;
+        <code>403 insufficient_credits</code>; <code>409 concurrent_generation_in_progress</code>;
+        <code>422 concept_rejected</code>; <code>422 content_filtered</code> (Anthropic's
+        content-policy filter rejected the prompt — terminal, no <code>Retry-After</code> because
+        retrying with the same payload hits the same filter);
+        <code>429 rejection_storm_cooldown</code>; <code>503 queue_full</code> (with
+        <code>Retry-After: 60</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId</code></td>
+      <td><code>requireCampaignMember</code></td>
+      <td>
+        <strong>60 / min per IP</strong> (matches the status-fetch ceiling so a UI fanning out both
+        calls on a tick doesn't trip its own limit on either axis)
+      </td>
+      <td>
+        <code>200 { campaign, world, members }</code>; <code>404 campaign_not_found</code> or
+        <code>world_not_found</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/mine</code></td>
+      <td>
+        Onboarded chain; result filtered by <code>created_by</code> or
+        <code>campaign_members.invite_accepted = true</code>
+      </td>
+      <td><strong>30 / min per IP</strong></td>
+      <td><code>200 { campaigns }</code>. Owned + joined collapse into a single ordered list.</td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/resume</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td>
+        <strong>5 / min per USER</strong> (much tighter than the GETs because resume is
+        state-changing and triggers a queue add)
+      </td>
+      <td>
+        <code>202 { campaignId, action }</code> when the world-gen job is re-enqueued;
+        <code>409</code>
+        with a typed code on every phase that has no resume action (in-progress, already-complete,
+        terminal-failure, stuck-on-not-implemented-stage, world-gen-capped, content-filtered);
+        <code>422 phase_resume_not_yet_implemented</code> for <code>character_creation</code> /
+        <code>post_creation</code> phases.
+      </td>
+    </tr>
+    <tr>
+      <td><code>DELETE /api/campaigns/:campaignId</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>10 / min per USER</strong></td>
+      <td>
+        <code>204 No Content</code> on success. The world row is the cascade root — deleting it
+        removes the campaign + pipeline_runs + campaign_members + entities + prose_kernels + facts +
+        relationships + entity_hierarchy + random_tables in one statement via the FK chain's
+        <code>ON DELETE CASCADE</code>. Refuses with <code>409 world_gen_in_progress</code> +
+        <code>Retry-After: 30</code> while the world is still <code>status='generating'</code> —
+        deleting mid-generation would orphan the worker's in-flight LLM cost and produce noisy
+        BullMQ retry failures. Resume the campaign to terminal failure (or wait for it to complete)
+        before deleting.
+      </td>
+    </tr>
+    <tr>
+      <td><code>PATCH /api/campaigns/:campaignId/name</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>10 / min per USER</strong></td>
+      <td>
+        <code>200 { campaignId, name }</code> on success. Body is
+        <code>{ name: string }</code> trimmed, 1–200 chars. Affects <code>campaigns.name</code> only
+        — <code>worlds.name</code> stays as the synthesized identity. <code>400</code> on Zod
+        failure; <code>404</code> if the campaign isn't owned by the caller.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/world-snapshot</code></td>
+      <td><code>requireCampaignMember(repo, 'owner')</code> — owner only</td>
+      <td><strong>30 / min per IP</strong></td>
+      <td>
+        <code
+          >200 { world, entities, facts, relationships, proseKernels, entityHierarchy, statBlocks
+          }</code
+        >
+        on success — the known-tier slice through the <code>worldSnapshotView</code> projection.
+        <code>409 snapshot_not_ready</code> when stage 4 (<code>entity_relationships</code>) hasn't
+        yet committed; <code>404</code> if the campaign or its world is gone underneath. Dev-mode
+        bypass widens the tier filter to all three tiers — see the bypass section below.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Per-user rate-limit on POST + resume, per-IP on the GETs</strong> — the writes are tied to
+  cost (an LLM call, a queue add) and the abuse shape is per-identity. The reads are cheap and a
+  shared NAT (corporate VPN, lab network) might legitimately have several active users; per-IP
+  ceilings are enough there.
+</aside>
+
+<h2 id="the-pre-credit-validation-pipeline">The pre-credit validation pipeline</h2>
+
+<p>
+  Five pre-checks fire BEFORE the create transaction, in cheap-to-expensive order. Concurrent-gen
+  guard (one Postgres query) rejects with 409 if the caller already has a world in
+  <code>status = 'generating'</code>. Rejection-storm cooldown (one Redis <code>GET</code>) rejects
+  with 429 if the user has been rejected by the input gate more than three times in the past hour.
+  Credit balance peek (one Postgres SUM, no lock) rejects with 403 if the
+  <code>world_gen</code> balance is &lt; 1. Queue-depth admission (one BullMQ
+  <code>getJobCounts</code>) rejects with 503 if waiting + active + delayed exceeds 20.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Cheap checks first, LLM calls last</strong> — every gate that can run without an LLM call
+  runs first, so an adversarial caller burning rejection-storm credits or hammering the queue can't
+  drive Sonnet cost. The synthesizer (guided mode only — one Sonnet call) and the input gate (one
+  Sonnet call, always) run after every cheap rejection path has had a chance to short-circuit.
+</aside>
+
+<p>
+  Then the synthesizer fires if the body is guided-mode. It's one <code>generateText</code> call
+  with <code>temperature: 0.9</code> against the prompt template at
+  <code>backend/src/llm/prompts/prep/synthesize-concept.txt</code>, structured-output against the
+  <code>SynthesizerOutput</code> schema:
+  <code>{ concept: string, intentSummary: { aesthetics[], themes[], sourcesInternal[] } }</code>.
+  The <code>concept</code> field is what the input gate (and later stages) see as the user's
+  freeform-equivalent input; <code>intentSummary</code> is the structured trace of what aesthetic /
+  thematic moves the synthesizer made. <code>sourcesInternal</code> is the synthesizer's list of
+  works it drew from — opaque downstream, never echoed to the user, never appended to
+  <code>concept_intake</code>'s prompt; the input gate DOES receive it so clone-intent judgement
+  isn't bypassed via prompt injection in the user's picks.
+</p>
+
+<p>
+  The input gate is a single Sonnet call against three axes — <code>srd_compat</code> (does this fit
+  D&amp;D 5e SRD-compatible mechanics?), <code>clone_intent</code> (is this a recognizable
+  intellectual-property clone?), <code>inappropriate</code> (does this trip the content-safety
+  policy?). Each axis returns a boolean and (where the model is calibrated to it) a confidence score
+  on [0, 1]. The verdict is computed in TypeScript from the structured output, not prose-matched:
+</p>
+
+<ul>
+  <li>
+    <strong>Primary threshold (0.85)</strong> — any axis flag with confidence above this rejects on
+    that axis alone.
+  </li>
+  <li>
+    <strong>Aggregate rule (≥ 0.7 on both srd_compat AND clone_intent)</strong> — two near-miss
+    signals together reject as <code>srd_incompat</code>. Catches the "borderline-on-each-axis but
+    obviously off-spec when read together" case the per-axis check would otherwise pass.
+  </li>
+  <li>
+    <code>inappropriate</code> is treated as a binary flag with no confidence threshold — when set,
+    rejection is unconditional.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Verdict logic in code, not in the prompt</strong> — having the model emit per-axis signals
+  and computing the rejection rule in TypeScript means the rule is testable, auditable, and
+  changeable without re-tuning a prompt. The model's job is to score; the policy lives in code.
+</aside>
+
+<p>
+  On rejection, the route increments the rejection-storm counter, logs the model's reasoning
+  server-side (never returned in the HTTP response — leaking it would let an adversary iterate
+  against the gate's reasoning), and returns 422 with
+  <code>{ code: 'concept_rejected', reason, rejectionMessage }</code>. Guided-mode rejections
+  additionally include <code>synthesizedConcept</code> in the response so the user can see exactly
+  what the synthesizer produced before the gate rejected it.
+</p>
+
+<h3 id="the-paint-job-validator">The paint-job validator</h3>
+
+<p>
+  Stage 1 (<code>concept_intake</code>) wraps its generator call in
+  <code>validateAndGenerateConcept</code> — a judge-and-retry loop in
+  <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one Sonnet call
+  generates a structured <code>WorldConcept</code>; a SECOND Sonnet call (distinct prompt, fresh
+  context, <code>temperature: 0.1</code>) judges whether the draft mirrors a recognizable
+  copyrighted work; on flag (confidence &gt; 0.85), the loop discards the draft entirely and retries
+  with a fresh-direction amendment built from the judge's structured
+  <code>{ mirroredWork, specificDriftAxes }</code> output, plus a temperature bump to 1.0.
+  <strong>Max 3 attempts total</strong> (1 original + 2 retries). On exhaustion the loop throws
+  <code>PaintJobLoopExhaustedError</code>, which the worker treats as a stage failure.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Distinct judge prompt, not a self-check</strong> — the SDK's structured-output retry
+  policy is set to <code>maxRetries: 1</code> on the inner generator call so the SDK's policy and
+  the validator's outer loop don't multiply into 12 worst-case Sonnet calls. The validator is the
+  sole retry authority. The judge is a fresh Sonnet call (separate prompt template, separate
+  context) because asking the same model to grade its own output produces measurably worse
+  calibration than asking a fresh instance.
+</aside>
+
+<h2 id="the-credit-gate-transaction">The credit gate transaction</h2>
+
+<p>
+  Once the input gate allows the concept, the route opens a Postgres connection and runs the create
+  transaction. The shape (in order, all inside <code>BEGIN ... COMMIT</code>):
+</p>
+
+<ol>
+  <li>
+    <code>SET LOCAL lock_timeout = '5s'</code> + <code>SET LOCAL statement_timeout = '10s'</code>.
+    Bounds the tx's wall time so a hung lock can't pin a pool connection.
+  </li>
+  <li>
+    <code>pg_advisory_xact_lock(hashtextextended(userId::text, 0))</code>. Serializes per-user
+    create attempts so concurrent calls can't double-spend a credit.
+    <code>hashtextextended</code> sidesteps pg's lack of a direct uuid→bigint cast.
+  </li>
+  <li>
+    Re-read the <code>world_gen</code> balance under lock. If &lt; 1, ROLLBACK + 403 — the peek at
+    step 2d above was an optimization, not a guarantee.
+  </li>
+  <li>
+    <code>INSERT worlds</code> (<code>status = 'generating'</code>, <code>name = 'Untitled'</code>),
+    <code>INSERT campaigns</code> (<code>status = 'setup'</code>, <code>name = 'Untitled'</code>),
+    <code>INSERT campaign_members</code> (<code>role = 'owner', invite_accepted = true</code>). The
+    create body never carries a name; stage 1 (<code>concept_intake</code>) backfills both
+    <code>worlds.name</code> and <code>campaigns.name</code> from the LLM-synthesized world name
+    once it lands (<code
+      >UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'</code
+    >, which keeps an in-flight user rename from being clobbered). Users override later via
+    <code>PATCH /api/campaigns/:campaignId/name</code>.
+  </li>
+  <li>
+    <code>INSERT credit_ledger</code> — a -1 debit. <code>source_type = 'debit'</code>,
+    <code>source_id = worldId</code> (satisfies migration 004's
+    <code>credit_ledger_debit_has_source_chk</code>), both FK columns NULL.
+  </li>
+  <li>
+    Seed
+    <code>pipeline_runs (stage = 'concept_intake', status = 'pending', started_at = NULL)</code>.
+    The seed row is what makes the Redis-blip recovery path work — see the resume table below.
+  </li>
+  <li>COMMIT.</li>
+</ol>
+
+<p>
+  After commit, the route resets the rejection-storm counter (a user who proves they can produce a
+  passing concept gets a clean slate), calls
+  <code>worldGenQueue.add('world-gen', { campaignId }, { jobId: campaignId })</code>, and returns
+  <code>201 { campaignId }</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>BullMQ job options are the load-bearing operational contract</strong> — the world-gen
+  queue is constructed with <code>attempts: 2</code> +
+  <code>backoff: { type: 'exponential', delay: 30000 }</code> +
+  <code>removeOnComplete: { count: 0 }</code> + <code>removeOnFail: { count: 0 }</code> in
+  <code>server.ts</code>'s <code>buildWorldGenQueue</code>. The two retries are what makes every
+  "BullMQ retries the stage" recovery path in the §7.2 error matrix real rather than fictional —
+  without <code>attempts: 2</code>, transient Anthropic 503s or persistence-COMMIT failures would
+  surface as terminal stage failures instead of self-healing. The
+  <code>removeOn*: { count: 0 }</code> pair prunes terminal jobs so the resume flow's
+  <code>queue.add</code> with <code>{ jobId: campaignId }</code> doesn't silently no-op on a
+  previously-completed run.
+</aside>
+
+<h2 id="the-seven-stages">The seven stages</h2>
+
+<p>
+  The processor in <code>backend/src/llm/prep/world-gen-processor.ts</code> runs on the
+  <a href="./worker.html">worker service</a> at concurrency 3. <code>WORLD_GEN_STAGES</code> is the
+  ordered tuple <code>concept_intake</code>, <code>vocabulary_intake</code>,
+  <code>world_and_factions</code>, <code>locations_and_npcs</code>,
+  <code>entity_relationships</code>, <code>starting_situation</code>, <code>random_tables</code>,
+  <code>coherence_pass</code>. The list grew by one entry — <code>vocabulary_intake</code> is the
+  new stage 1.5 that generates the per-world
+  <a href="#vocabulary-registry">vocabulary registry</a> before any downstream prose-bearing stage
+  runs. Counting prose continues to call the streaming Opus + Sonnet block "the seven stages"
+  because <code>vocabulary_intake</code> is a structured pre-pass with no entity emission; section
+  headings and the cost-cap discussion treat it as a cheap setup call. Every iteration enforces the
+  same per-stage invariant:
+</p>
+
+<ol>
+  <li>
+    <strong>Atomic claim.</strong> An
+    <code
+      >INSERT … ON CONFLICT (...) DO UPDATE … WHERE pipeline_runs.status IN ('pending', 'failed')
+      RETURNING id</code
+    >
+    either creates the row or flips a pending/failed row to <code>running</code>. If
+    <code>RETURNING</code> is empty, another worker won the race OR the row is already
+    <code>completed</code> — skip the stage in either case. The unique index keys on
+    <code>(COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel))</code>; world-gen
+    rows have <code>user_id = NULL</code>.
+  </li>
+  <li>
+    <strong>Stuck-stage reset.</strong> If the conflict branch found a <code>running</code> row, the
+    processor tries an UPDATE-with-WHERE on
+    <code>(status = 'running' AND started_at &lt; now() - INTERVAL '5 minutes')</code>. Zero rows
+    affected means another worker raced and won the reset; this worker bails.
+  </li>
+  <li>
+    <strong>runStage wraps the handler in BEGIN/COMMIT.</strong> The outer scope acquires a
+    <code>PoolClient</code>, runs <code>BEGIN</code>, dispatches to the per-stage handler, and on
+    success COMMITs and publishes every event in the handler's returned
+    <code>finalizedEvents</code> array. On handler throw it runs <code>ROLLBACK</code> and publishes
+    <code>stage-reset</code> — the signal that any mid-flight <code>entity-added</code> /
+    <code>entity-updated</code> events for this stage are invalidated.
+  </li>
+  <li>
+    <strong>Cost-cap check.</strong> After the COMMIT, <code>sumCompletedStageCosts</code> reads
+    every completed <code>pipeline_runs</code> row for this world; if &gt; cap,
+    <code>issueCostCapRefund</code> fires (refund row + worlds.status='failed') and the loop exits.
+    Stage 7 is the documented exception: if the handler returns <code>capExhausted: true</code>, the
+    world is marked <em>complete</em> instead — coherence is best-effort polish, not a correctness
+    gate.
+  </li>
+  <li>
+    <strong>On stage failure.</strong> Write a sanitized error JSON to
+    <code>pipeline_runs.error</code> (strict allowlist — only
+    <code>{ code, message }</code> survive; raw provider error chains with embedded API keys or
+    response bodies are dropped) and publish <code>stage-failed</code>.
+    <code>StageNotImplementedError</code> is treated as an expected stop (publish
+    <code>phase = world_gen_failed</code> and return; no BullMQ retry); every other thrown error
+    rethrows so BullMQ's retry policy fires.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Cap injected at boot, not read per stage</strong> — the world-gen processor receives
+  <code>costCapUsd</code> as a <code>WorldGenDeps</code> field; <code>server.ts</code>'s
+  <code>readCostCapsAtBoot</code> helper queries <code>settings.world_gen_cost_cap_usd</code> once
+  on process startup and threads the value into the worker. Earlier shipped behavior read the cap on
+  every stage entry to pick up live config changes, but that put the <code>settings</code> table on
+  the per-job critical path: a missing or malformed row turned into a BullMQ retry-then-evict cycle
+  that left <code>worlds.status</code> stuck at <code>generating</code>. The boot-time read makes
+  the failure mode operator-visible at startup (the process crashes instead of silently leaking
+  jobs) and removes the per-stage DB round-trip. The trade-off: an operator editing
+  <code>settings.world_gen_cost_cap_usd</code> needs a worker restart for the change to take effect.
+  <em>Coherence-pass</em> (stage 6) still reads the cap directly from its own
+  <code>PoolClient</code> because it runs under the stage's outer transaction; the per-stage
+  decision there is whether the world is already at-or-over-cap and should skip the polish pass, not
+  whether to fire the circuit breaker.
+</aside>
+
+<h3 id="the-unified-stage-handler-contract">The unified stage-handler contract</h3>
+
+<p>
+  Every wave-4 handler — <code>world_and_factions</code>, <code>locations_and_npcs</code>,
+  <code>entity_relationships</code>, <code>coherence_pass</code> — takes
+  <code>(client: PoolClient, args)</code> and returns
+  <code
+    >StageDispatchResult { costUsd, inputTokens, outputTokens, finalizedEvents, capExhausted }</code
+  >. The contract is what lets <code>runStage</code> own the transaction lifecycle from outside the
+  handler: handlers don't BEGIN, they don't COMMIT, they don't ROLLBACK, and they don't publish
+  post-COMMIT events. They write to the passed client and accumulate finalized events;
+  <code>runStage</code> publishes those events only after its COMMIT has landed, so a ROLLBACK on a
+  partially-streamed stage can't leave the client with a <code>finalized</code> event pointing at an
+  <code>entity_id</code> that doesn't exist.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Mid-stream entity events fire from the streaming extractor, not from the handler's return
+    value</strong
+  >
+  — <code>entity-added</code> / <code>entity-updated</code> / <code>edge-added</code> are emitted by
+  <code>streaming-extractor.ts</code> as the partial-tree iteration crosses the "entity is
+  emittable" boundary, BEFORE the handler reaches its INSERT phase. Those are speculative — they
+  tell the client "we see a region named Karadon taking shape." If the repair chain exhausts or the
+  persistence COMMIT fails, the outer <code>stage-reset</code> event invalidates them.
+  <code>finalized</code> events are different: they fire only after the persist COMMIT, so they
+  carry the real <code>entityId</code> and the client can trust them. The wire-format split is
+  deliberate.
+</aside>
+
+<p>
+  Legacy stages — <code>concept_intake</code>, <code>starting_situation</code>,
+  <code>random_tables</code> — were authored before the unified contract under a simpler
+  <code>StageCost</code> return type. <code>wrapLegacyStage</code> in the processor lifts each to
+  the new shape by setting <code>finalizedEvents: []</code> and <code>capExhausted: false</code>. No
+  call-site changes; the contract is uniform downstream.
+</p>
+
+<h3 id="stage-taxonomy">Stage taxonomy</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Stage</th>
+      <th>Model</th>
+      <th>Mode</th>
+      <th>Persists</th>
+      <th>Mid-stream events</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>concept_intake</code></td>
+      <td>Sonnet (paint-job validator: generator + judge)</td>
+      <td>non-streaming</td>
+      <td>
+        <code
+          >worlds.name / tone / themes / era / key_tensions / geography_summary /
+          political_summary</code
+        >; also propagates <code>worlds.name</code> to <code>campaigns.name</code> for rows still
+        holding the create-time <code>'Untitled'</code> placeholder (myth-4lhr)
+      </td>
+      <td>none</td>
+    </tr>
+    <tr>
+      <td><code>vocabulary_intake</code></td>
+      <td>Sonnet</td>
+      <td>non-streaming</td>
+      <td>
+        <code>worlds.vocabulary_registry</code> jsonb (<code>{entries, adjacent_franchises}</code>);
+        downstream stages 2-7 render this column into a
+        <code>{{vocabularyRegistry}}</code> placeholder in their system prompts
+      </td>
+      <td>none</td>
+    </tr>
+    <tr>
+      <td><code>world_and_factions</code></td>
+      <td>Opus (streaming) + Haiku/Sonnet repair on Zod failure</td>
+      <td>streaming</td>
+      <td>
+        regions + factions as <code>entities</code> (type <code>location</code> /
+        <code>faction</code>) + <code>prose_kernels</code> + <code>facts</code>;
+        <code>worlds.world_overview</code>
+      </td>
+      <td>
+        <code>entity-added</code>, <code>entity-updated</code> as each region/faction's
+        <code>name</code> closes plus one other field; <code>finalized</code> per persisted entity
+        post-COMMIT
+      </td>
+    </tr>
+    <tr>
+      <td><code>locations_and_npcs</code></td>
+      <td>Opus (streaming) + Haiku/Sonnet repair</td>
+      <td>streaming</td>
+      <td>
+        locations + NPCs as <code>entities</code> + <code>prose_kernels</code> + <code>facts</code>;
+        <code>entity_hierarchy</code> rows for resolved parent locations
+      </td>
+      <td>
+        <code>entity-added</code>, <code>entity-updated</code> mid-stream; post-COMMIT
+        <code>finalized</code> per persisted entity plus
+        <code>entity-updated { patch: { parent_location: null } }</code> for any location whose
+        parent name couldn't be resolved
+      </td>
+    </tr>
+    <tr>
+      <td><code>entity_relationships</code></td>
+      <td>Sonnet (streaming) + Haiku/Sonnet repair</td>
+      <td>streaming</td>
+      <td>
+        <code>relationships</code> rows + (occasional) <code>entity_hierarchy</code> stragglers
+        stage 3 missed
+      </td>
+      <td>
+        <code>edge-added</code> per relationship as <code>from</code>, <code>to</code>, and
+        <code>relationship</code> close together; no <code>finalized</code> for edges (edges have no
+        client-visible synth-to-real-id mapping)
+      </td>
+    </tr>
+    <tr>
+      <td><code>starting_situation</code></td>
+      <td>Sonnet</td>
+      <td>non-streaming</td>
+      <td>
+        <code>worlds.starting_situations</code> (prose blob) +
+        <code>worlds.starting_situation_entries</code> (the three structured
+        <code>{ index, locationEntityId, prose }</code> rows MYT-53's character-creation flow picks
+        one from)
+      </td>
+      <td>none</td>
+    </tr>
+    <tr>
+      <td><code>random_tables</code></td>
+      <td>Sonnet</td>
+      <td>non-streaming</td>
+      <td><code>worlds.random_tables</code></td>
+      <td>none</td>
+    </tr>
+    <tr>
+      <td><code>coherence_pass</code></td>
+      <td>Sonnet</td>
+      <td>non-streaming</td>
+      <td>
+        patch-driven: <code>fix_fact</code> updates <code>facts.content</code>,
+        <code>fix_prose</code> updates <code>prose_kernels</code>, <code>fix_relationship</code> is
+        a DELETE + INSERT on <code>relationships</code>, <code>rename_entity</code> updates
+        <code>entities.name</code>, <code>delete_relationship</code> DELETEs.
+        <strong>No new entities, ever</strong> — coherence never creates rows it didn't see.
+      </td>
+      <td>
+        post-COMMIT: <code>entity-updated</code> per <code>fix_prose</code> /
+        <code>rename_entity</code>; <code>edge-removed</code> + <code>edge-added</code> for
+        <code>fix_relationship</code>; <code>edge-removed</code> for
+        <code>delete_relationship</code>. Plus the optional cap-fire
+        <code>{ type: 'phase', phase: 'complete' }</code> when stage 7 sees
+        <code>capExhausted</code> on entry.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="vocabulary-registry">Vocabulary registry</h3>
+
+<p>
+  Every world has a <strong>vocabulary registry</strong> — a per-world glossary of distinctive terms
+  generated at stage 1.5 (<code>vocabulary_intake</code>) and injected into the system prompt of
+  every downstream world-gen stage. The registry's primary purpose is to give each world its own
+  distinctive voice across whatever vocabulary domains its premise demands (calendar terms, pantheon
+  names, honorifics, in-world slang, named concepts). IP-drift defense (avoiding verbatim use of
+  franchise-iconic neologisms like <em>Statute of Secrecy</em> or <em>Mystra</em>) falls out as a
+  consequence: stage 1.5 identifies which fiction franchises the world is adjacent to and generates
+  the world's own term for each iconic neologism, recording the IP term in the entry's
+  <code>avoids</code> field.
+</p>
+
+<p>
+  The registry is stored as <code>worlds.vocabulary_registry jsonb</code> with shape
+  <code>{entries: [...], adjacent_franchises: [...]}</code> (migration 015,
+  <code>NOT NULL DEFAULT '{"entries": [], "adjacent_franchises": []}'</code> with a CHECK constraint
+  pinning the top-level shape). Each entry carries
+  <code>{term, definition, avoids?, usage_notes?, source, access_level}</code>. Downstream stages
+  2-7 render the registry as deterministic prose via <code>renderVocabularyRegistry()</code> and
+  substitute it into a <code>{{vocabularyRegistry}}</code> placeholder at the top of their prompt
+  templates. Anthropic prompt caching keeps the per-stage cost negligible since the registry is
+  stable across a single world's stages.
+</p>
+
+<p>
+  The <code>GET /api/campaigns/:campaignId/world-snapshot</code> endpoint exposes the registry on
+  the <code>WorldSummary</code> as <code>vocabularyRegistry</code>, filtered by the same
+  <code>access_level</code> tier list as entities and facts: without dev bypass only
+  <code>known</code>-tier entries surface; <code>adjacent_franchises</code> is metadata (not
+  player-secret content) and always surfaces.
+</p>
+
+<p>
+  A consolidation pass that appends terms surfaced during world-gen and character creation is
+  designed but deferred (bead <code>myth-1uw6</code>). The per-player character-creation pipeline
+  landed in MYT-53 (see <a href="character-creation.html">Character creation</a>), but the
+  consolidation hook is not yet wired in — that's the deferred bead's scope. The vocabulary
+  registry's data shape, append-only semantics, and <code>source</code> tag on each entry are
+  designed to support both that consolidation pass and a future Scribe runtime write-back.
+</p>
+
+<h3 id="streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</h3>
+
+<p>
+  Stages 2, 3, and 4 all share <code>runStreamingStage</code> in
+  <code>streaming-extractor.ts</code>. The LLM emits a JSON tree via Vercel SDK's
+  <code>streamObject</code>; the SDK exposes a <code>partialObjectStream</code> async iterable that
+  yields successive partial tree snapshots as more tokens arrive. The extractor walks each snapshot,
+  looks at the configured arrays (<code>regions</code> + <code>factions</code> for stage 2,
+  <code>locations</code> + <code>npcs</code> for stage 3, <code>relationships</code> for stage 4),
+  and emits exactly one identity-only event per array entry once the LLM has finished writing it:
+</p>
+
+<ul>
+  <li>
+    For entity entries (stages 2 + 3), the extractor fires
+    <code>entity-added { synthKey, kind, name }</code> the first time the array length advances past
+    that entry's index — i.e. when the LLM has moved on to the next sibling, which is when the
+    closed entry is in hand. The last entry of each array closes in a post-loop pass after the
+    <code>for await</code> exits.
+  </li>
+  <li>
+    For edge entries (stage 4), the extractor fires
+    <code>edge-added { synthKey, from, to, relationship }</code> on the same closed-entry boundary.
+  </li>
+  <li>
+    Mid-stream <code>entity-updated</code> events do NOT fire from the extractor. Field-level deltas
+    during streaming are NOT on the wire — the client receives an identity-only signal that "an
+    entity with this name and kind is now persisted-bound," nothing more. Prose, facts, and
+    statblocks for the entity arrive through the post-stage-4 snapshot fetch, not through deltas.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong
+    >Identity-only mid-stream + a known-tier snapshot at stage 4, not field-level deltas</strong
+  >
+  — the previous wire format streamed every partial field of every entity as successive
+  <code>entity-updated</code> patches. That meant the client saw plot-bearing prose before the
+  access-tier classification of the entity was even known (the LLM emits
+  <code>access_level</code> as one of the last fields it writes), creating a window where
+  discoverable / secret material could leak through the stream. Narrowing mid-stream to identity
+  only and persisting the body through a tier-filtered snapshot at the stage-4 boundary closes that
+  window: the client never sees a field it isn't entitled to, even transiently, because tier-aware
+  fields don't flow on the wire at all.
+</aside>
+
+<p>
+  Every emitted event carries a <code>synthKey</code> of the form
+  <code>${stage}/${arrayPath}/${index}</code> — e.g. <code>world_and_factions/regions/2</code>. The
+  synthKey is stable for the duration of the stream and is what the post-COMMIT
+  <code>finalized</code> event uses to bind the speculative key to the real <code>entityId</code>:
+  <code>{ type: 'finalized', synthKey, entityId }</code>. The client's inventory reducer (in the
+  <a href="./dev-tool.html">dev tool</a>'s live-events panel) carries forward the
+  <code>entityId</code> on finalize and lets the dev tool show the real UUID alongside the entity's
+  name once persistence lands.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Closed-entry gate, not "name plus one other field"</strong> — the earlier emit gate fired
+  <code>entity-added</code> the moment <code>name</code> and one neighbouring field had been
+  written, then streamed every subsequent field as an <code>entity-updated</code>. After myth-exac
+  the wire format no longer carries entity bodies at all, so the previous trigger would race the
+  access-tier classification (the LLM writes <code>access_level</code> late in the entry) and leak
+  identity for entities that will be filtered out at persistence time. The current gate waits until
+  the LLM has finished the entire entry — detected by the array advancing past that index, or by the
+  post-loop pass for the last entry of each array — at which point <code>access_level</code> is in
+  hand and the tier-filter decision can be made before any byte hits the channel.
+</aside>
+
+<h3 id="stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</h3>
+
+<p>
+  Stage 3 (<code>locations_and_npcs</code>) is the one streaming stage with a non-trivial
+  persistence shape, because location entries have an optional
+  <code>parent_location: string | null</code> field naming their parent — and the LLM names parents
+  by string, not by ID. The handler runs three passes against the caller's transaction:
+</p>
+
+<ol>
+  <li>
+    <strong>Pass 1 — insert everything.</strong> Walk locations, then NPCs; INSERT each entity, its
+    prose kernel, and its facts. Collect (synthKey, entityId) pairs into a
+    <code>finalized</code> list, and for every location whose <code>parent_location</code> is
+    non-null, collect an unresolved-ref <code>{ synthKey, childEntityId, parentName }</code>.
+  </li>
+  <li>
+    <strong>Pass 2 — build a name → entityId map.</strong> Query <code>entities.listByWorld</code>,
+    filter to <code>entity_type = 'location'</code>, and pick the OLDER entry on name collision
+    (lowest UUIDv7, which is the earlier insert because UUIDv7 is time-ordered). This is the "stage
+    2 wins on collision" rule from §D8 — if stage 3 names a city the same as a stage-2 region, the
+    region is the parent candidate.
+  </li>
+  <li>
+    <strong>Pass 3 — resolve or null out.</strong> For each unresolved ref, look up the parent name.
+    Resolvable → INSERT <code>entity_hierarchy { parent, child }</code>. Unresolvable → collect the
+    synthKey for a post-COMMIT
+    <code>entity-updated { synthKey, patch: { parent_location: null } }</code> event in
+    <code>finalizedEvents</code>. The client sees the parent get cleared only AFTER the row actually
+    lands; if the transaction ROLLBACKs, the patch event never publishes and the client's inventory
+    falls back to whatever <code>stage-reset</code> tells it.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Resolve by name in code, not by ID in the prompt</strong> — passing entity UUIDs into the
+  LLM context would let the LLM emit them in the <code>parent_location</code> field. The failure
+  mode is a hallucinated UUID — the LLM invents a plausible-looking ID that doesn't exist in
+  <code>entities</code>, the INSERT fails with an FK violation, the transaction ROLLBACKs. Names are
+  LLM-native: the LLM has seen them in the stage-2 + stage-3 context windows and won't hallucinate
+  them in the same way. The cost is the resolver pass and the "parent we can't find" edge case; the
+  benefit is durability against LLM ID hallucination.
+</aside>
+
+<h3 id="stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</h3>
+
+<p>
+  <code>entity_relationships</code> is the one stage that DOES feed entity UUIDs into the prompt —
+  relationships are inherently between identified entities and naming them by string here would
+  create ambiguity stage 3's resolver doesn't have to deal with. The handler loads
+  <code>entities.listByWorld</code> at stage start and renders the inventory as
+  <code>- ${uuid} [${kind}] ${name}</code> lines in the prompt. The LLM is instructed to use real
+  UUIDs only.
+</p>
+
+<p>
+  The LLM does hallucinate occasionally — emitting a UUID that's plausible-shaped but doesn't exist
+  in the world. The handler defends with a pre-INSERT filter: build a
+  <code>Set&lt;entityId&gt;</code> from the loaded inventory, drop every relationship row whose
+  <code>from</code> or <code>to</code> isn't in the set (WARN-logged but not thrown — it's a known
+  LLM failure mode, dropping doesn't corrupt the world). The same filter applies to any
+  hierarchy-straggler rows stage 4 emits as a fallback for stage 3's misses.
+</p>
+
+<p>
+  Stage 4 also handles retry idempotency: the very first DB action is
+  <code>relationships.deleteByWorld(client, worldId)</code>. If a previous attempt partial-wrote
+  relationships and the stage retried, the next run starts from a clean slate. Stage 3's
+  <code>entity_hierarchy</code> rows are not deleted on retry — the schema's
+  <code>UNIQUE(child_entity_id)</code> means a re-INSERT of the same child would conflict, so stage
+  4's straggler path pre-filters against the existing hierarchy table and skips already-parented
+  children (the "stage 3 wins" collision rule).
+</p>
+
+<h3 id="the-structured-output-repair-chain">The structured-output repair chain</h3>
+
+<p>
+  Every streaming stage validates its final tree with the stage's Zod schema; if validation fails,
+  <code>repairStructuredOutput</code> in <code>structured-output-repair.ts</code> tries to repair
+  it. The chain is fixed: Haiku first, Sonnet if Haiku fails. Each repair call sends the broken tree
+  plus a serialized list of the Zod errors to the model with the prompt template at
+  <code>backend/src/llm/prompts/prep/repair.txt</code>, structured against the same schema. If
+  Sonnet also fails, the stage throws and the outer scope ROLLBACKs + publishes
+  <code>stage-reset</code>; BullMQ's <code>attempts: 2</code> picks up one more try.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The repair prompt enforces array length and ordering</strong> — the repair model is given
+  the broken tree and told to fix shape violations WITHOUT adding or dropping entries from any
+  array. Mythrun has no truth about how many regions a world "should" have; the streaming Opus call
+  is the source of truth on cardinality, and the repair pass is purely about coercing field-level
+  shape to match the schema. A repair that helpfully added a missing region would be invisibly
+  synthesizing world content under Haiku — a quality-degrading silent failure.
+</aside>
+
+<p>
+  Repair costs flow back to the caller through the stage's <code>StageDispatchResult.costUsd</code>:
+  the handler sums (a) the streaming model's reported usage, (b) the Haiku repair call's usage if
+  invoked, and (c) the Sonnet repair call's usage if Haiku failed. The cost lands in
+  <code>pipeline_runs.cost_usd</code> with the same row the stage's success commits, so the cost-cap
+  check sees the total.
+</p>
+
+<h3 id="coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</h3>
+
+<p>
+  Stage 7 (<code>coherence_pass</code>) is non-streaming Sonnet plus a mechanical apply path. The
+  Sonnet call reads a compact dump of the world (entities, prose, facts, relationships) and returns
+  a list of discriminated-union patches:
+</p>
+
+<ul>
+  <li>
+    <code>fix_fact { fact_id, new_content }</code> — UPDATE one <code>facts.content</code> by id.
+  </li>
+  <li>
+    <code>fix_prose { entity_id, new_content }</code> — UPDATE one entity's
+    <code>prose_kernels.content</code>; emits <code>entity-updated</code>.
+  </li>
+  <li>
+    <code>fix_relationship { relationship_id, new_type, new_description }</code> — DELETE the
+    existing row, INSERT a replacement with the new fields. Emits <code>edge-removed</code> +
+    <code>edge-added</code>.
+  </li>
+  <li>
+    <code>rename_entity { entity_id, new_name }</code> — UPDATE <code>entities.name</code>; emits
+    <code>entity-updated { patch: { name } }</code>.
+  </li>
+  <li>
+    <code>delete_relationship { relationship_id }</code> — DELETE one row; emits
+    <code>edge-removed</code>.
+  </li>
+</ul>
+
+<p>
+  There is no <code>drop_entity</code> patch type. Coherence never deletes entities — that would
+  invalidate any prose, fact, or relationship the client has already seen referencing that entity.
+  If coherence references a UUID that doesn't exist (an LLM hallucination), the patch is WARN-logged
+  and skipped silently; other patches in the same batch still apply. The world isn't broken, the LLM
+  was just imprecise.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Cap-fire at stage 7 marks the world complete, not failed</strong> — stages 1–6 produce
+  load-bearing content. If the cap fires before stage 6 finishes, the world is missing things the
+  player will notice and the right answer is refund + restart. Stage 7 is best-effort polish: the
+  world functions without it. So <code>coherence-pass.ts</code> checks
+  <code>sumCompletedStageCosts &gt; cap</code> on entry; if true, it returns
+  <code>{ capExhausted: true, finalizedEvents: [{ type: 'phase', phase: 'complete' }] }</code> with
+  zero cost. The processor's <code>runStage</code> loop sees the flag, flips
+  <code>worlds.status = 'complete'</code> in lieu of the cap-fire refund, and returns. The trade-off
+  is consistent with the §D5 design intent: the user got a usable world, the cap held, no credit
+  refund was owed.
+</aside>
+
+<h3 id="the-cost-cap-circuit-breaker">The cost-cap circuit breaker</h3>
+
+<p>
+  <code>backend/src/llm/prep/cost-cap.ts</code> owns three functions:
+  <code>readCostCap(pool)</code> fails loudly on a missing or unparseable
+  <code>settings.world_gen_cost_cap_usd</code> row (a misconfigured cap is an operator-fix, never
+  silently degraded to "no cap"). The world-gen worker no longer calls this on the per-job path —
+  <code>server.ts</code> calls it once at boot via <code>readCostCapsAtBoot</code> and threads the
+  number into <code>WorldGenDeps.costCapUsd</code>; only the coherence-pass stage still reads at
+  call time, under its outer transaction. <code>sumCompletedStageCosts(pool, worldId)</code> sums
+  <code>cost_usd</code> from <code>pipeline_runs</code> where <code>status = 'completed'</code> and
+  <code>user_id IS NULL</code> — running / failed rows don't count toward the cap.
+  <code>issueCostCapRefund(pool, { userId, worldId })</code> runs a transaction that flips
+  <code>worlds.status = 'failed'</code> and inserts a <code>credit_ledger</code> row with
+  <code>source_type = 'cost_cap_refund'</code>, <code>amount = +1</code>, both FK columns NULL.
+</p>
+
+<p>
+  Migration 011 added <code>'cost_cap_refund'</code> to the <code>credit_ledger</code> source-type
+  whitelist and the table-level FK-shape CASE. The polarity check from migration 004 —
+  <code>(source_type = 'debit') = (amount &lt; 0)</code> — passes naturally because a refund is
+  positive and not a debit. The resume route's <code>world_gen_failed</code> arm sniffs the latest
+  failed <code>pipeline_runs.error</code> for the string
+  <code>world_gen_cost_cap_exceeded</code> and 409s with
+  <code>code: 'world_gen_capped'</code> instead of re-enqueueing (a re-run would just burn cap
+  again).
+</p>
+
+<h2 id="pipeline-events-on-the-wire">Pipeline events on the wire</h2>
+
+<p>
+  The processor and its stage handlers publish to
+  <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code>, the channel format the
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. Thirteen event arms are
+  declared in <code>PIPELINE_SSE_EVENTS</code> — six lifecycle arms plus seven entity / edge arms.
+  Every arm is now rendered by the dev tool's live-events panel; the contract has zero exempt
+  entries.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>When it fires</th>
+      <th>Producer</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>phase</code></td>
+      <td>
+        Entry to <code>world_gen</code>; on stage-4 commit (<code>world_snapshot_ready</code> —
+        snapshot endpoint becomes fetchable, stages 5–7 continue); on terminal
+        <code>world_ready</code> / <code>world_gen_failed</code> / <code>complete</code>.
+      </td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-started</code></td>
+      <td>After atomic claim, before the handler runs.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-completed</code></td>
+      <td>After COMMIT, with stage cost and duration.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-failed</code></td>
+      <td>After ROLLBACK, with the sanitized error code and <code>willRetry</code>.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>stage-reset</code></td>
+      <td>After ROLLBACK on a streaming stage that already emitted mid-stream events.</td>
+      <td>Processor (runStage)</td>
+    </tr>
+    <tr>
+      <td><code>cost-update</code></td>
+      <td>After every stage's COMMIT, with cumulative USD.</td>
+      <td>Processor</td>
+    </tr>
+    <tr>
+      <td><code>entity-added</code></td>
+      <td>
+        Stage 2/3 entity entries close in the stream (post-myth-exac: identity-only payload —
+        <code>{ synthKey, kind, name }</code>). Only fires for entries whose
+        <code>access_level === 'known'</code>, unless the world's
+        <code>dev_bypass_access_filter</code> flag is set.
+      </td>
+      <td>Streaming extractor (stages 2/3)</td>
+    </tr>
+    <tr>
+      <td><code>entity-updated</code></td>
+      <td>
+        Stage 3's post-COMMIT parent-cleared patches and stage 7's <code>fix_prose</code> /
+        <code>rename_entity</code> patches. No longer fires mid-stream — the streaming extractor
+        ships an identity-only <code>entity-added</code> once per entry and nothing else for that
+        synthKey until coherence.
+      </td>
+      <td>Stages 3 + 7 (post-COMMIT)</td>
+    </tr>
+    <tr>
+      <td><code>entity-removed</code></td>
+      <td>
+        Currently never fires from world-gen. Reserved for future repair-chain drops; the contract
+        carries the arm so consumers don't have to special-case future cases.
+      </td>
+      <td>(reserved)</td>
+    </tr>
+    <tr>
+      <td><code>edge-added</code></td>
+      <td>
+        Stage 4 as each relationship entry closes (identity-only —
+        <code>{ synthKey, from, to, relationship }</code>); stage 7 post-COMMIT for
+        <code>fix_relationship</code> replacements. Edges only emit when both endpoints are
+        known-tier entities in the world's tier map (or bypass is on).
+      </td>
+      <td>Streaming extractor (stage 4); stage 7</td>
+    </tr>
+    <tr>
+      <td><code>edge-removed</code></td>
+      <td>
+        Stage 7 post-COMMIT for <code>fix_relationship</code> (paired with edge-added) and
+        <code>delete_relationship</code>.
+      </td>
+      <td>Stage 7</td>
+    </tr>
+    <tr>
+      <td><code>finalized</code></td>
+      <td>
+        After persist COMMIT on each entity stage; binds <code>synthKey</code> →
+        <code>entityId</code>.
+      </td>
+      <td>Stages 2 + 3 (post-COMMIT, via the runStage finalizedEvents pipe)</td>
+    </tr>
+    <tr>
+      <td><code>job-failed</code></td>
+      <td>Reserved for BullMQ-level terminal failures. Currently no producer in world-gen.</td>
+      <td>(reserved)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</h2>
+
+<p>
+  The pipeline ends with three non-streaming stages (5–7) that, in the old shape, finished before
+  any consumer could read the world. Two facts changed with myth-exac: stage 7
+  (<code>coherence_pass</code>) edits prose and renames entities, so the persisted state isn't fully
+  settled until it finishes; and the dev tool's wiki-style inspector wants the persisted world the
+  moment it's coherent — well before stages 5/6/7 add their finishing touches. Both pull in the same
+  direction: the pipeline now emits a <code>world_snapshot_ready</code> phase the moment stage 4
+  (<code>entity_relationships</code>) commits.
+</p>
+
+<p>
+  <code>derivePhase</code> in <code>backend/src/sse/derive-phase.ts</code> returns
+  <code>world_snapshot_ready</code> when the world is still <code>generating</code> but a stage-4
+  <code>completed</code> row exists; the worker publishes the phase event directly from
+  <code>world-gen-processor.ts</code> immediately after stage 4 commits (and on idempotent re-entry
+  past a completed stage-4 row, so a reconnecting subscriber catches up). Stages 5 + 6 + 7 then
+  continue under this phase. When stage 7 commits and <code>worlds.status</code> flips to
+  <code>complete</code>, the phase advances to <code>world_ready</code>; if the cost cap fires the
+  world ends at <code>complete</code> (stage 7's cap-fire exception) or <code>failed</code> (any
+  earlier stage).
+</p>
+
+<p>
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is owner-only,
+  rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the pre-readiness
+  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes.
+  The response is a <code>WorldSnapshot</code>: a <code>WorldSummary</code> projection of the worlds
+  row, the entities, their prose kernels and facts, the relationships among them, the entity
+  hierarchy rows for resolved parents, and stat blocks for entities that have them. Seven read
+  queries — most run in parallel — make up the composition; <code>world-snapshot-view.ts</code>
+  owns it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>An explicit <code>WorldSummary</code> projection, not <code>SELECT *</code></strong> — the
+  <code>worlds</code> table holds plot-bearing columns the Fast Thinker must never see:
+  <code>key_tensions</code>, <code>political_summary</code>, <code>starting_situations</code>,
+  <code>follow_up_questions</code>, <code>geography_summary</code>, <code>world_overview</code>, and
+  (notably) <code>dev_bypass_access_filter</code>. The snapshot view explicitly selects
+  <code>id</code>, <code>name</code>, <code>concept</code>, <code>tone</code>, <code>themes</code>,
+  <code>era</code>, and <code>vocabulary_registry</code> — the registry is the one jsonb column that
+  does cross the wire, with its entries tier-filtered against the same access-level list as entities
+  and facts before they're attached to <code>WorldSummary.vocabularyRegistry</code>. New columns
+  added to the <code>worlds</code> table never reach the wire automatically — adding a column
+  requires authoring a deliberate addition to the projection. This is the inverse of the usual
+  repo-mapper default: most repos return the row shape; this one returns an allowlist.
+</aside>
+
+<h3 id="three-tier-access-classification">Three-tier access classification</h3>
+
+<p>
+  Facts and entities carry an <code>access_level</code> column with three values:
+  <code>known</code>, <code>discoverable</code>, <code>secret</code>. The classification is grounded
+  in D&amp;D-mechanic semantics — <code>known</code> is no-roll player knowledge (the things anyone
+  in this city would casually know), <code>discoverable</code> is roll-required information (the
+  kind of thing an Investigation or Insight check would surface), <code>secret</code> is
+  actively-hidden plot material the player must earn through play. Migration 014 renamed
+  <code>facts.access_level</code> from the old <code>(public, private, secret)</code> vocabulary,
+  added the same column to <code>entities</code> with <code>NOT NULL DEFAULT 'known'</code>, and
+  added a covering index <code>(world_id, access_level)</code> for the snapshot endpoint's primary
+  filter.
+</p>
+
+<p>
+  The snapshot endpoint filters every read by tier. Without bypass, only
+  <code>access_level = 'known'</code> rows surface — known-tier entities, known-tier facts of those
+  entities, relationships where both endpoints are known-tier, prose kernels for known entities
+  only, hierarchy rows whose parent and child are both known, stat blocks referenced by known
+  entities only. The streaming extractor applies the same filter to the wire format: it consults the
+  entry's <code>access_level</code> at the closed-entry gate and only fires
+  <code>entity-added</code> for known-tier entities. Stage 4's edge emit checks both endpoints
+  against the world's <code>endpointTierMap</code> and skips edges that cross into the hidden tiers.
+  Stage 7's coherence patches do the same — a <code>fix_prose</code> patch targeting a
+  discoverable-tier entity persists silently in the database but does not fire an
+  <code>entity-updated</code> on the wire.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Prose-tier consistency at the prompt level</strong> — tier filtering on the wire isn't
+  enough on its own. If the LLM writes
+  <code
+    >"The Saltwind Coast is famous for its fish markets; the smugglers' tunnels under the market
+    square…"</code
+  >
+  into a <em>known</em>-tier region's prose, the smuggler detail leaks the second the region's
+  <code>entity-added</code> ships, because the entity is known-tier and its prose travels with it
+  through the snapshot endpoint. The generation prompts for stages 2, 3, and 7 carry a prose-tier
+  consistency constraint: the prose and fact content of a tier-T entity may only reveal information
+  that is itself tier-T or lower (less hidden). Discoverable facts about a known entity belong on a
+  <em>discoverable</em>-tier fact, not woven into the entity's <em>known</em>-tier prose. Each tier
+  is a separate "what-can-be-said-here" boundary. Filtering content on the wire enforces the shape;
+  the prompt constraint enforces the meaning.
+</aside>
+
+<h3 id="post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</h3>
+
+<p>
+  After the snapshot is fetched, the SSE stream stays open and stage 7's coherence pass emits its
+  patches as deltas on the same channel. The client applies each delta in place against its local
+  copy of the snapshot — <code>entity-updated</code> patches replace top-level keys (RFC 7396
+  merge-patch semantics) on the named entity, <code>edge-added</code> appends a new relationship,
+  <code>edge-removed</code> drops one. The delta channel reuses the same event arms the streaming
+  extractor uses; the discriminator is the phase the client is in, not the event shape. Coherence
+  doesn't delete entities — there's no <code>entity-removed</code> on the post-snapshot path today.
+</p>
+
+<p>
+  Reconnect recovery is fetch-and-replace, not replay. <code>EventSource</code> auto-reconnects on
+  transport failure; on re-open, if the phase is at or past <code>world_snapshot_ready</code>, the
+  client re-fetches the snapshot and discards its local copy. Any in-flight coherence deltas that
+  arrive between the snapshot fetch and steady state re-apply harmlessly — the fresh snapshot
+  already reflects them. The pattern avoids the need for an event cursor / replay log; the
+  authoritative snapshot is cheap enough to refetch outright.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Replace, not merge, on reconnect</strong> — a missed <code>edge-removed</code> during a
+  disconnect would otherwise leave a stale edge in the client's local state forever. The
+  fetch-and-replace pattern evicts whatever the client thought was true and resyncs to the
+  authoritative server state. Idempotent, no out-of-order risk, and the only cost is a few extra
+  read queries on the rare reconnect — well worth not having to ship a per-client cursor.
+</aside>
+
+<h3 id="dev-mode-access-filter-bypass">Dev-mode access-filter bypass</h3>
+
+<p>
+  <code>worlds.dev_bypass_access_filter</code> is a per-world boolean that opts a single world out
+  of the tier filter. When set, the streaming extractor publishes <code>entity-added</code> /
+  <code>edge-added</code> for entries of any tier, stage 7's coherence pass emits deltas for any
+  tier it patches, and the snapshot endpoint widens its tier filter to
+  <code>['known', 'discoverable', 'secret']</code>. The wire-shape stays narrow — identity-only
+  events, allowlist-projection snapshot — but the set of <em>which</em> events fire and which rows
+  the snapshot includes grows.
+</p>
+
+<p>
+  The flag is set at world-creation time. The dev tool's campaign-create panel surfaces an opt-in
+  checkbox; when checked, the POST body carries <code>devBypassAccessFilter: true</code>, and the
+  create route writes <code>true</code> into the new world's column. Production users can't reach
+  this code path: the route gates the body field on <code>AUTH_MODE === 'bypass'</code> plus
+  <code>NODE_ENV</code> being <code>development</code> or <code>test</code>, and the
+  six-layer-defense bypass plugin (see
+  <a href="../auth-billing/jwt-middleware.html">JWT middleware</a>) refuses to load anywhere else.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Defense-in-depth at the snapshot endpoint, not just at create</strong> — the world's flag
+  is necessary but not sufficient. The snapshot handler additionally checks that the
+  <em>requesting</em> user is in bypass-auth mode (the bypass plugin attaches a
+  <code>scopes: ['bypass']</code> hint). A dev-tool-created world's secrets must not leak to a
+  prod-auth requester, even if the world's column says yes. Both axes — world flag and user scope —
+  have to align for the wider tier set to surface.
+</aside>
+
+<p>
+  <code>POST /api/campaigns/:campaignId/resume</code> dispatches off <code>derivePhase</code>'s nine
+  phases via an exhaustive switch with an <code>assertNever</code> default. Most arms 409 with a
+  typed code; two have real recovery logic.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Phase</th>
+      <th>Resume action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>world_gen</code></td>
+      <td><code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>.</td>
+    </tr>
+    <tr>
+      <td><code>world_snapshot_ready</code></td>
+      <td>
+        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>. Stage 4 has committed
+        (the snapshot is fetchable) but stages 5–7 are still running; from the resume-policy
+        perspective the job is still in flight.
+      </td>
+    </tr>
+    <tr>
+      <td><code>world_gen_failed</code></td>
+      <td>
+        Read the latest failed <code>pipeline_runs.error</code>. If it contains
+        <code>stage_not_implemented</code> → <code>409 phase_not_yet_implementable</code> with the
+        stuck stage name. If it contains <code>world_gen_cost_cap_exceeded</code> →
+        <code>409 world_gen_capped</code>. If it contains <code>content_filtered</code> (Anthropic
+        rejected the prompt) → <code>409 content_filtered</code> — retrying would hit the same
+        filter on the same source concept. Otherwise treat as a transient infra failure and
+        re-enqueue the world-gen job (jobId-dedupe via BullMQ).
+        <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>world_ready</code></td>
+      <td><code>409 nothing_to_resume</code>.</td>
+    </tr>
+    <tr>
+      <td><code>character_creation</code> | <code>post_creation</code></td>
+      <td>
+        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53 landed the
+        character-creation pipeline itself, but resume from those phases remains unimplemented —
+        re-trigger via owner-side <code>POST /start-character-creation</code> instead. The
+        downstream ticket reference is logged server-side, not in the response.
+      </td>
+    </tr>
+    <tr>
+      <td><code>complete</code></td>
+      <td><code>409 already_complete</code>.</td>
+    </tr>
+    <tr>
+      <td><code>failed</code></td>
+      <td><code>409 terminal_failure</code> (post-worldgen failure; not retried at launch).</td>
+    </tr>
+    <tr>
+      <td><code>not_started</code></td>
+      <td>
+        Redis-blip orphan recovery. If a job with <code>jobId = campaignId</code> is still alive on
+        the queue (not completed AND not failed) → <code>409 world_gen_in_progress</code>. Otherwise
+        enqueue.
+        <code>202 { campaignId, action: 'world-gen-enqueued-after-orphan-recovery' }</code>. Rare in
+        practice because the create transaction seeds the <code>pipeline_runs</code> row, so the
+        typical Redis-blip orphan presents as <code>world_gen_failed</code>, not
+        <code>not_started</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="the-dev-tool-surface">The dev tool surface</h2>
+
+<p>
+  Five panels in the <a href="./dev-tool.html">dev tool</a> drive and observe the world-gen
+  pipeline. The campaign-create form (freeform / guided sub-forms) posts to
+  <code>POST /api/campaigns</code> and exposes a "Bypass access tiers" opt-in checkbox that flips
+  the world's <code>dev_bypass_access_filter</code> column at create time. The campaign-details
+  panel loads a campaign by id and exposes a Resume button. The live-events panel attaches to the
+  SSE stream and renders every event arm — see the
+  <a href="./dev-tool.html#the-live-events-panel">live-events inspector</a> section. The new
+  <a href="./dev-tool.html#the-world-snapshot-panel">world-snapshot panel</a> attaches to the same
+  SSE stream, waits for <code>world_snapshot_ready</code>, fetches the snapshot endpoint, and
+  renders it as a tree-of-entities-by-kind + per-entity detail card; stage 7's coherence deltas
+  apply in place so the user watches the world settle without a refetch. The credit-ledger panel
+  maintains an in-session log of grants and force-grants via the dev-only
+  <code>POST /api/dev/credits/grant</code>.
+</p>
+
+<p>
+  Both dev-only routes — <code>POST /api/dev/credits/grant</code> and the read-side
+  <code>GET /api/dev/credits/me</code> (balance + the last 20 ledger entries) — register only when
+  <code>AUTH_MODE === 'bypass'</code> and live behind the same six-layer bypass-plugin defense as
+  the rest of the dev surface. Both routes resolve identity from <code>request.user.sub</code> — the
+  bypass plugin sets that from the <code>x-mythrun-dev-sub</code> header (the dev-tool's identity
+  dropdown), so a grant lands on the currently-active <code>dev-user-N</code> identity, not a pinned
+  sub.
+</p>
+
+<p>
+  The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in
+  <code>PIPELINE_ROUTES</code>, <code>PIPELINE_SSE_EVENTS</code>, and
+  <code>PIPELINE_JOBS</code> must either be driven by a panel or carry a typed exempt reason. With
+  MYT-52 landed, the exempt list is empty — the live-events panel renders all thirteen event arms.
+  Adding a new pipeline route or job is a four-file change in a single PR — contract, handler,
+  dev-tool panel, coverage entry — and <code>pnpm dev-tool:check</code> red-CI's the merge
+  otherwise.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</h3>
+<ol>
+  <li>
+    Get the campaign's phase from the snapshot endpoint:
+    <code>GET /api/campaigns/:campaignId/status</code>. <code>world_gen_failed</code> is the most
+    common stuck state; <code>world_gen</code> for &gt; 5 minutes usually means a wedged worker.
+  </li>
+  <li>
+    Query <code>pipeline_runs</code> for the world:
+    <code
+      >SELECT stage, status, started_at, completed_at, error FROM pipeline_runs WHERE world_id = $1
+      ORDER BY started_at DESC</code
+    >. The latest <code>failed</code> row's <code>error</code> column is JSON — read the
+    <code>code</code> field.
+  </li>
+  <li>
+    Map <code>error.code</code> to action: <code>stage_not_implemented</code> → expected (resume
+    will 409 phase_not_yet_implementable); <code>world_gen_cost_cap_exceeded</code> → the cap fired
+    (refund row exists in <code>credit_ledger</code>; resume will 409 world_gen_capped); any code
+    matching <code>content_filtered</code> → Anthropic content-policy filter rejected this prompt
+    (resume will 409 content_filtered — the user must adjust the source concept); any other code →
+    transient infra blip, resume re-enqueues. BullMQ's <code>attempts: 2</code> means most transient
+    errors self-heal before the user sees <code>world_gen_failed</code>.
+  </li>
+  <li>
+    For a <code>world_gen</code>-stuck-running case, the worker's atomic-claim path will
+    self-recover after 5 minutes (the stuck-stage reset UPDATE flips a
+    <code>started_at &lt; now() - INTERVAL '5 minutes'</code> running row back to claimable). If it
+    doesn't, the worker pod's CloudWatch logs name the cause.
+  </li>
+</ol>
+
+<h3 id="watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</h3>
+<ol>
+  <li>
+    Set the cap low against the local Postgres:
+    <code>UPDATE settings SET value = '0.001' WHERE key = 'world_gen_cost_cap_usd';</code>. The
+    worker reads cost-caps at boot only, so restart <code>pnpm dev:worker</code> for the new value
+    to take effect.
+  </li>
+  <li>
+    Create a campaign via the dev tool. Stage 1 (<code>concept_intake</code>) runs to completion
+    (the cap check fires AFTER stage commit, not before LLM call), then the cap check sees
+    cumulative cost &gt; 0.001 USD.
+  </li>
+  <li>
+    Confirm the breaker fired: the worlds row's <code>status</code> column is <code>'failed'</code>;
+    a row exists in <code>credit_ledger</code> with <code>source_type = 'cost_cap_refund'</code>,
+    <code>amount = 1</code>, <code>user_id</code> matching the campaign owner. The pipeline_runs
+    row's <code>error</code> JSON contains <code>code: 'world_gen_cost_cap_exceeded'</code>.
+  </li>
+  <li>
+    Try to resume from the dev tool: the resume route returns
+    <code>409 { code: 'world_gen_capped' }</code> — there's no point re-running, the cap will fire
+    on the next stage too. Reset the cap to a sensible value before trying again.
+  </li>
+</ol>
+
+<h3 id="watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</h3>
+<ol>
+  <li>
+    Run a full world-gen to completion against the standard cap. Note the cumulative cost from the
+    final <code>cost-update</code> event in the live-events panel.
+  </li>
+  <li>
+    Lower the cap to a value below that cumulative figure but above the sum of stages 1–6:
+    <code>UPDATE settings SET value = '&lt;value&gt;' WHERE key = 'world_gen_cost_cap_usd';</code>,
+    then restart <code>pnpm dev:worker</code> so the new cap is picked up at boot. The
+    coherence-pass stage still reads the cap from its own client at call time, so the lowered value
+    will fire stage 7's at-or-over-cap branch on the next campaign.
+  </li>
+  <li>
+    Create a fresh campaign. Stages 1–6 run; stage 7 reads <code>sumCompletedStageCosts</code> on
+    entry, sees the value already over cap, and returns <code>{ capExhausted: true }</code> with a
+    single <code>{ type: 'phase', phase: 'complete' }</code> in <code>finalizedEvents</code>.
+  </li>
+  <li>
+    Confirm <code>worlds.status = 'complete'</code> (NOT failed); no refund row in
+    <code>credit_ledger</code>; <code>pipeline_runs</code> for stage 7 shows <code>completed</code>
+    with zero cost. The user got a polished-minus-coherence world; the cap held without the
+    refund-and-restart cycle.
+  </li>
+</ol>
+
+<h3 id="force-a-paint-job-rejection">Force a paint-job rejection</h3>
+<ol>
+  <li>
+    Submit a freeform concept that's a recognizable clone — "A school of magic on a hidden castle
+    where young wizards learn spells" is the canonical test input. The synthesizer is bypassed in
+    freeform mode; the input gate's <code>clone_intent</code> axis will likely flag it first and
+    return <code>422 concept_rejected</code> before the paint-job validator gets a chance.
+  </li>
+  <li>
+    To exercise the paint-job validator specifically, submit a concept that's BORDERLINE on
+    clone-intent (the input gate's primary threshold is 0.85; aim for the 0.5–0.8 range). The gate
+    lets it through; stage 1 generates a draft; the judge fires; on flag, the loop discards and
+    retries with a fresh-direction amendment.
+  </li>
+  <li>
+    The dev tool's live-events panel will show <code>concept_intake</code> running for ~30–60
+    seconds longer than usual when the validator retries (up to 3 attempts × 2 Sonnet calls per
+    attempt). On exhaustion, the stage fails with
+    <code>code: 'concept_intake_paint_job_loop_exhausted'</code> and the phase flips to
+    <code>world_gen_failed</code>.
+  </li>
+  <li>
+    Resume re-enqueues (the loop-exhausted error isn't in the terminal-class list); a fresh attempt
+    rolls a fresh judge call and may succeed. If it doesn't, the user is asked to refine the
+    concept.
+  </li>
+</ol>
+
+<h3 id="trigger-the-repair-chain">Trigger the repair chain on a streaming stage</h3>
+<ol>
+  <li>
+    Streaming stages emit JSON via <code>streamObject</code>. The deterministic way to force a Zod
+    failure is to corrupt the schema in code (don't ship): in
+    <code>backend/src/llm/schemas/world-and-factions.ts</code>, tighten a field — e.g. require a
+    <code>z.string().regex(/^[A-Z]/)</code> name. Most LLM-generated regions will fail. Run a
+    world-gen and watch the live-events panel.
+  </li>
+  <li>
+    On stage 2's stream completion, the handler's <code>validateOrRepair</code> calls Haiku with the
+    broken tree + Zod errors. The Haiku call surfaces in CloudWatch logs as
+    <code>event: 'llm.call'</code> with <code>stage: 'world_and_factions'</code> and model =
+    <code>claude-haiku-4-5-20251001</code>.
+  </li>
+  <li>
+    Cost flows back through <code>StageDispatchResult.costUsd</code>; the
+    <code>pipeline_runs.cost_usd</code> for stage 2 carries the Opus stream cost PLUS the Haiku
+    repair cost. The <code>cost-update</code> event after stage 2 reflects the total.
+  </li>
+  <li>
+    If Haiku also fails the schema, Sonnet fires next; if Sonnet fails, the handler throws and
+    <code>runStage</code> ROLLBACKs + publishes <code>stage-reset</code>. BullMQ's
+    <code>attempts: 2</code> means the stage gets one more shot before terminal failure.
+  </li>
+  <li>
+    Revert the schema change. The intended production path is "repair fires occasionally on real LLM
+    output quirks"; the deliberate-schema-break is a forcing function for debugging the chain.
+  </li>
+</ol>
+
+<h3 id="recover-a-redis-blip-orphan">Recover a Redis-blip orphan</h3>
+<ol>
+  <li>
+    Find the orphaned campaign via
+    <code>GET /api/campaigns/:campaignId/status</code> — phase will be
+    <code>world_gen_failed</code> (the create transaction seeds a pending
+    <code>pipeline_runs</code> row, which presents as failed when no worker ever claims it) or, very
+    rarely, <code>not_started</code> if the seed row is missing.
+  </li>
+  <li>
+    Inspect the latest failed pipeline_runs row's <code>error</code> column. If it's NULL or the
+    code isn't in the terminal-class list (<code>stage_not_implemented</code>,
+    <code>world_gen_cost_cap_exceeded</code>, <code>content_filtered</code>), the resume route will
+    re-enqueue cleanly.
+  </li>
+  <li>
+    From the dev tool's campaign details panel (or via direct
+    <code>POST /api/campaigns/:campaignId/resume</code>), click Resume. The response is
+    <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code> on the
+    <code>world_gen_failed</code> path or
+    <code>... 'world-gen-enqueued-after-orphan-recovery' }</code> on the rarer
+    <code>not_started</code> path.
+  </li>
+  <li>
+    Confirm the worker picked up the job: the <code>pipeline:campaign:{campaignId}</code> Redis
+    channel emits <code>phase = world_gen</code> and <code>stage-started</code> events almost
+    immediately. If the resume returns a non-recoverable code (409 world_gen_capped, 409
+    content_filtered, 409 phase_not_yet_implementable), the failure isn't a Redis blip — see the
+    <a href="#diagnose-a-stuck-world-gen">diagnose-a-stuck-world-gen</a> runbook.
+  </li>
+</ol>
+
+<h2 id="integration-with-the-status-surface">Integration with the status surface</h2>
+
+<p>
+  The processor and its handlers publish JSON event payloads on
+  <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> — the channel format the
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. All thirteen arms in
+  <code>PIPELINE_SSE_EVENTS</code> are now in use: the six lifecycle arms from MYT-50 plus the seven
+  entity / edge arms wired by MYT-52 (<code>stage-reset</code>, <code>entity-added</code>,
+  <code>entity-updated</code>, <code>entity-removed</code>, <code>edge-added</code>,
+  <code>edge-removed</code>, <code>finalized</code>). The SSE bridge is type-blind — every JSON
+  payload published on a campaign channel is forwarded to attached sinks unchanged. The
+  <a href="./dev-tool.html#the-live-events-panel">dev tool's live-events panel</a> renders every
+  arm.
+</p>
+
+<h2 id="out-of-scope">Out of scope</h2>
+
+<ul>
+  <li>
+    <strong>Resume for the <code>character_creation</code> phase.</strong> MYT-53 landed the
+    per-player character-creation pipeline on the <code>campaign-setup</code> queue (see
+    <a href="character-creation.html">Character creation</a>), but the
+    <code>POST /resume</code> endpoint here in world-gen still returns
+    <code>422 phase_resume_not_yet_implemented</code> when the campaign has advanced into the
+    <code>character_creation</code> phase — resume support for that phase is a follow-up bead.
+  </li>
+  <li>
+    <strong>Automatic refunds beyond the cost cap.</strong> Stage failures that aren't cost-cap
+    fires don't refund — the user can resume and the worker re-runs failed stages within the cap.
+    Manual refunds for genuine infrastructure failures are an operator action, not an automated
+    path; a proper user-facing refund surface is a post-launch hardening item.
+  </li>
+  <li>
+    <strong>The future <code>kind: 'existing'</code> body arm</strong> (joining an existing world)
+    is reserved in the discriminated body shape but not stubbed at launch. An unknown
+    <code>kind</code> produces a Zod 400, not a 501.
+  </li>
+  <li>
+    <strong>Repair-chain entity drops.</strong> The contract reserves
+    <code>entity-removed { reason: 'repair_dropped' }</code> but no current code path produces it —
+    the repair prompt is constrained to preserve array length. The arm is in the contract so future
+    repair-policy changes don't have to expand the wire format piecemeal.
+  </li>
+</ul>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/routes/dev-credits.ts</code>,
+  <code>backend/src/llm/prep/</code> (processor, streaming-extractor, structured-output-repair, all
+  seven stage handlers under <code>stages/</code>),
+  <code>backend/src/auth/rejection-storm.ts</code>, <code>backend/src/repo/credit-grants.ts</code>,
+  <code>backend/src/repo/pipeline-runs.ts</code>,
+  <code>backend/src/repo/world-snapshot-view.ts</code>,
+  <code>backend/src/sse/derive-phase.ts</code>, <code>backend/src/server.ts</code> (the
+  <code>buildWorldGenQueue</code> options), <code>backend/src/contract/pipeline-routes.ts</code>,
+  <code>backend/src/contract/pipeline-jobs.ts</code>,
+  <code>backend/src/contract/pipeline-errors.ts</code>,
+  <code>backend/src/contract/pipeline-events.ts</code>,
+  <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>,
+  <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>,
+  <code>backend/migrations/012_credit_ledger_admin_source.sql</code>,
+  <code>backend/migrations/014_access_tier_rework.sql</code>. Design specs:
+  <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>,
+  <code>docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md</code>,
+  <code>docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md</code>;
+  parent spec: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>
