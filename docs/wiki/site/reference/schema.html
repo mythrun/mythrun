@@ -3019,7 +3019,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="character_concepts" id="schema-table-character_concepts">
   <summary>
     <span class="schema-table-name">character_concepts</span>
-    <span class="schema-table-meta">10 columns · 1 index · 3 CHECKs · 48 FKs</span>
+    <span class="schema-table-meta">10 columns · 1 index · 3 CHECKs · 6 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -3036,14 +3036,14 @@ END)</code></li>
         <td><code>uuid</code></td>
         <td>NO</td>
         <td>—</td>
-        <td><code>campaign_members(user_id)</code> ON DELETE CASCADE</td>
+        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
       </tr>
       <tr data-column-name="user_id">
         <td><code>user_id</code></td>
         <td><code>uuid</code></td>
         <td>NO</td>
         <td>—</td>
-        <td><code>campaign_members(user_id)</code> ON DELETE CASCADE</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
       </tr>
       <tr data-column-name="concept_text">
         <td><code>concept_text</code></td>

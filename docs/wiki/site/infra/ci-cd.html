@@ -662,8 +662,8 @@
   <code>.husky/pre-push</code>, a six-stage gate that mirrors what CI is going to re-assert on the
   push it just accepted. The hook runs in cheapest-first order — a one-second grep, a ~3 s
   typecheck, a ~10 s lint, the ~3 min coverage suite, a ~2 s wiki source-hash diff, and (when the
-  diff touches the dev-tool surface) a ~30 s JSDOM verifier run. Any non-zero step refuses the
-  push and prints the diagnostic the operator needs.
+  diff touches the dev-tool surface) a ~30 s JSDOM verifier run. Any non-zero step refuses the push
+  and prints the diagnostic the operator needs.
 </p>
 
 <aside class="wiki-rationale">
@@ -702,15 +702,17 @@
   </li>
   <li>
     <strong>Wiki source-hash freshness.</strong> Sources <code>backend/.env.development</code> so
-    <code>DATABASE_URL</code> is set for the schema fragment build, then runs <code>pnpm wiki:check</code>
+    <code>DATABASE_URL</code> is set for the schema fragment build, then runs
+    <code>pnpm wiki:check</code>
     — a hash diff of every page's declared sources against the live tree. ~2 s. Mirrors the Wiki CI
-    workflow. Added 2026-05-14 after three consecutive red CI runs from wave-3/wave-4 source additions
-    that the earlier four-gate hook didn't catch.
+    workflow. Added 2026-05-14 after three consecutive red CI runs from wave-3/wave-4 source
+    additions that the earlier four-gate hook didn't catch.
   </li>
   <li>
     <strong>Dev-tool verifier.</strong> Conditional — only runs when the diff touches
-    <code>backend/dev-tool/**</code> or <code>backend/src/contract/{backend-routes,pipeline-routes}.ts</code>.
-    Invokes <code>pnpm dev-tool:verify</code>, which boots a JSDOM environment per panel, identity-
+    <code>backend/dev-tool/**</code> or
+    <code>backend/src/contract/{backend-routes,pipeline-routes}.ts</code>. Invokes
+    <code>pnpm dev-tool:verify</code>, which boots a JSDOM environment per panel, identity-
     bootstraps a dev sub, mounts each panel against the live backend, and asserts the panel reaches
     its declared <code>data-state</code> ready / error / idle / loaded marker. Catches the bug class
     that vitest unit tests miss (real-backend contract drift) — see the

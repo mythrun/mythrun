@@ -674,11 +674,33 @@
   <code>redis-realtime</code> (Redis 7.2 on <code>127.0.0.1:6379</code>), and
   <code>redis-batch</code> (Redis 7.2 on <code>127.0.0.1:6380</code>). Each has a healthcheck, 10 MB
   × 3-file log rotation, and binds only to the loopback interface. Postgres has a named
-  <code>pgdata</code> volume; the Redis services run with <code>--save "" --appendonly no</code> so
-  they're pure in-memory and <code>docker compose down</code> resets them cleanly.
-  <code>pnpm db:up</code> wraps <code>docker compose up -d --wait</code>;
-  <code>pnpm db:reset</code> wipes the Postgres volume.
+  <code>pgdata</code> volume and starts with <code>max_connections=200</code>; the Redis services
+  run with <code>--save "" --appendonly no</code> so they're pure in-memory and
+  <code>docker compose down</code> resets them cleanly. <code>pnpm db:up</code> wraps
+  <code>docker compose up -d --wait</code>; <code>pnpm db:reset</code> wipes the Postgres volume.
 </p>
+
+<p>
+  The postgres container hosts two databases. <code>mythrun_dev</code> is what
+  <code>pnpm dev</code>'s server connects to via <code>DATABASE_URL</code>; the test suite connects
+  to <code>mythrun_test</code> via <code>DATABASE_URL_TEST</code>. The split is created by
+  <code>scripts/postgres-init/01-create-test-db.sql</code>, mounted into the container's
+  <code>/docker-entrypoint-initdb.d</code> directory and executed once on volume init.
+  <a href="../infra/ci-cd.html">CI</a>'s service-container Postgres uses the same name layout.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Separate test DB, not transactional rollback</strong> — earlier the suite truncated and
+  re-seeded a shared <code>mythrun</code> database between tests, which made
+  <code>pnpm test</code> silently wipe the dev server's state any time both were running. The fix
+  could have been per-test <code>BEGIN/ROLLBACK</code> transactions, but a separate database costs
+  one line of SQL on first volume mount and gives stronger isolation: a test can do anything to its
+  schema, including DDL, without touching the dev DB. The pattern matches the standard Node/Postgres
+  shape and lets per-worktree test DBs (<code>mythrun_test_&lt;wt&gt;</code>) compose cleanly on top
+  of it. See <code>backend/src/__tests__/CONVENTIONS.md</code> for the in-process isolation pattern
+  (scoped fixtures via <code>makeTestScope</code> + <code>cleanupTestScope</code>) that sits on top
+  of the separate-DB foundation.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Two Redis containers locally, even though prod is one</strong> — the production
@@ -833,7 +855,9 @@
     For a Postgres failure, verify <code>pnpm db:up</code> succeeded and that
     <code>DATABASE_URL</code> in <code>.env.development</code> matches the compose credentials
     (defaults: user <code>mythrun</code>, password <code>mythrun_dev</code>, db
-    <code>mythrun</code>).
+    <code>mythrun_dev</code>). Tests use a separate <code>mythrun_test</code> database via
+    <code>DATABASE_URL_TEST</code>; the postgres init script
+    (<code>scripts/postgres-init/01-create-test-db.sql</code>) creates it on first volume mount.
   </li>
   <li>
     For a Redis failure, note that <code>redis-cli ping</code> inside the container does not
@@ -855,8 +879,13 @@
   </li>
   <li>
     Each command fans out across every workspace via <code>pnpm -r</code>; a failure in any
-    workspace fails the root command. Tests mock the probe functions, not the clients themselves, so
-    the suite does not require <code>pnpm db:up</code>.
+    workspace fails the root command. The backend test suite runs against the real
+    <code>mythrun_test</code> Postgres (created by the postgres init script under
+    <code>pnpm db:up</code>) and against the real Redis containers — boot the data plane first.
+    Vitest runs in two slices: <code>test:serial</code> for the two migration tests that need a
+    pristine schema (run with <code>maxForks=1</code>), then <code>test:parallel</code> for
+    everything else under <code>pool: 'forks'</code>, <code>maxForks: 6</code>. Wall-clock is ~35 s
+    on a clean checkout.
   </li>
 </ol>
 
@@ -1261,8 +1290,11 @@
       <td><code>postgres:16-alpine</code></td>
       <td><code>127.0.0.1:5432</code></td>
       <td>
-        User/password/db all <code>mythrun</code>/<code>mythrun_dev</code>/<code>mythrun</code>.
-        Named <code>pgdata</code> volume.
+        User/password are <code>mythrun</code>/<code>mythrun_dev</code>; the volume-init script
+        creates two databases — <code>mythrun_dev</code> (dev server) and
+        <code>mythrun_test</code> (test suite + worktrees as <code>mythrun_test_&lt;wt&gt;</code>).
+        Postgres starts with <code>max_connections=200</code> so concurrent worktree test runs don't
+        exhaust the budget. Named <code>pgdata</code> volume.
       </td>
     </tr>
     <tr>

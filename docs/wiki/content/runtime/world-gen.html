@@ -42,7 +42,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:f51672af5224ff0f3bc9e785b8b005bb457b9eaad13a4591ee57f0cb82bca55a -->
+<!-- source-hash: sha256:fc14fd55690a553ebd56510b1ef6aee936d0d5a32a941d28f6585b8db70c91bb -->
 <!-- last-ticket: myth-exac -->
 
 <h1>World gen</h1>
@@ -468,11 +468,20 @@
 </ol>
 
 <aside class="wiki-rationale">
-  <strong>Read the cost cap once per stage, not once per job</strong> — a long-running world-gen job
-  that started under an old cap and crossed a config-change boundary mid-run should observe the new
-  cap on its next stage. The read is a single Postgres query against the
-  <code>settings</code> table; the cost of ~7 reads per run is negligible against the LLM-call cost
-  inside each stage.
+  <strong>Cap injected at boot, not read per stage</strong> — the world-gen processor receives
+  <code>costCapUsd</code> as a <code>WorldGenDeps</code> field; <code>server.ts</code>'s
+  <code>readCostCapsAtBoot</code> helper queries <code>settings.world_gen_cost_cap_usd</code> once
+  on process startup and threads the value into the worker. Earlier shipped behavior read the cap on
+  every stage entry to pick up live config changes, but that put the <code>settings</code> table on
+  the per-job critical path: a missing or malformed row turned into a BullMQ retry-then-evict cycle
+  that left <code>worlds.status</code> stuck at <code>generating</code>. The boot-time read makes
+  the failure mode operator-visible at startup (the process crashes instead of silently leaking
+  jobs) and removes the per-stage DB round-trip. The trade-off: an operator editing
+  <code>settings.world_gen_cost_cap_usd</code> needs a worker restart for the change to take effect.
+  <em>Coherence-pass</em> (stage 6) still reads the cap directly from its own
+  <code>PoolClient</code> because it runs under the stage's outer transaction; the per-stage
+  decision there is whether the world is already at-or-over-cap and should skip the polish pass, not
+  whether to fire the circuit breaker.
 </aside>
 
 <h3>The unified stage-handler contract</h3>
@@ -910,7 +919,10 @@
   <code>backend/src/llm/prep/cost-cap.ts</code> owns three functions:
   <code>readCostCap(pool)</code> fails loudly on a missing or unparseable
   <code>settings.world_gen_cost_cap_usd</code> row (a misconfigured cap is an operator-fix, never
-  silently degraded to "no cap"). <code>sumCompletedStageCosts(pool, worldId)</code> sums
+  silently degraded to "no cap"). The world-gen worker no longer calls this on the per-job path —
+  <code>server.ts</code> calls it once at boot via <code>readCostCapsAtBoot</code> and threads the
+  number into <code>WorldGenDeps.costCapUsd</code>; only the coherence-pass stage still reads at
+  call time, under its outer transaction. <code>sumCompletedStageCosts(pool, worldId)</code> sums
   <code>cost_usd</code> from <code>pipeline_runs</code> where <code>status = 'completed'</code> and
   <code>user_id IS NULL</code> — running / failed rows don't count toward the cap.
   <code>issueCostCapRefund(pool, { userId, worldId })</code> runs a transaction that flips
@@ -1353,7 +1365,8 @@
   <li>
     Set the cap low against the local Postgres:
     <code>UPDATE settings SET value = '0.001' WHERE key = 'world_gen_cost_cap_usd';</code>. The
-    worker re-reads the cap at the start of every stage, so no restart is needed.
+    worker reads cost-caps at boot only, so restart <code>pnpm dev:worker</code> for the new value
+    to take effect.
   </li>
   <li>
     Create a campaign via the dev tool. Stage 1 (<code>concept_intake</code>) runs to completion
@@ -1381,7 +1394,10 @@
   </li>
   <li>
     Lower the cap to a value below that cumulative figure but above the sum of stages 1–6:
-    <code>UPDATE settings SET value = '&lt;value&gt;' WHERE key = 'world_gen_cost_cap_usd';</code>.
+    <code>UPDATE settings SET value = '&lt;value&gt;' WHERE key = 'world_gen_cost_cap_usd';</code>,
+    then restart <code>pnpm dev:worker</code> so the new cap is picked up at boot. The
+    coherence-pass stage still reads the cap from its own client at call time, so the lowered value
+    will fire stage 7's at-or-over-cap branch on the next campaign.
   </li>
   <li>
     Create a fresh campaign. Stages 1–6 run; stage 7 reads <code>sumCompletedStageCosts</code> on

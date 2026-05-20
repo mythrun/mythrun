@@ -364,12 +364,16 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   The table's per-stage costs are the lower-bound point estimate (2K input / 1–2K output per Sonnet
   call, 2K input / 1K output for Opus). Realistic per-player cost is
   <strong>$0.20–$0.50</strong> once the world snapshot input (8–15K tokens for a full world) and the
-  player's grounding text reach normal sizes. A cost-cap circuit breaker reads
-  <code>settings.character_creation_cost_cap_usd</code> (default <code>$5.00</code>) at the start of
-  each per-player job; over-cap aborts the player's stages with
+  player's grounding text reach normal sizes. A cost-cap circuit breaker receives
+  <code>settings.character_creation_cost_cap_usd</code> (default <code>$5.00</code>) as injected
+  <code>CharacterCreationDeps.costCapUsd</code> — read once by <code>server.ts</code> at process
+  boot via <code>readCostCapsAtBoot</code> and held for the worker's lifetime. Each per-player job
+  compares cumulative cost against the injected cap; over-cap aborts the player's stages with
   <code>character_creation_cost_cap_exceeded</code>, leaving other parallel jobs untouched. The $5
   default covers ~10 players at the realistic upper bound, with headroom for the multiplayer
-  concurrency target of 5–8 per party.
+  concurrency target of 5–8 per party. An operator-edited cap requires a worker restart to take
+  effect — by design, since the cap is global policy and worker process lifetime is the natural
+  enforcement window.
 </p>
 
 <aside class="wiki-rationale">
@@ -554,12 +558,14 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </ul>
 
 <p>
-  The migration also seeds <code>settings('character_creation_cost_cap_usd', '5.00')</code>; the
-  worker reads it at the start of each per-player job via the
-  <code>sumCharacterCreationStageCosts(campaignId)</code> aggregation in <code>cost-cap.ts</code>,
-  filtered on
-  <code>WHERE campaign_id = $1 AND user_id IS NOT NULL AND status = 'completed'</code> so
-  character-creation costs and world-gen costs are budgeted separately.
+  The migration also seeds <code>settings('character_creation_cost_cap_usd', '5.00')</code>;
+  <code>server.ts</code>'s <code>readCostCapsAtBoot</code> helper reads it once on startup and
+  injects the value as <code>CharacterCreationDeps.costCapUsd</code>. The
+  <code>sumCharacterCreationStageCosts(campaignId)</code> aggregation in <code>cost-cap.ts</code>
+  still runs per-job — filtered on
+  <code>WHERE campaign_id = $1 AND user_id IS NOT NULL AND status = 'completed'</code> — so
+  character-creation costs and world-gen costs are budgeted separately. Only the cap value moved to
+  boot-time read; the cumulative-cost lookup is per-job by necessity.
 </p>
 
 <h2 id="source">Source</h2>

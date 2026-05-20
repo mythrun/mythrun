@@ -1,6 +1,6 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:b2fd6386ec3f5346b3d219f8efdab69b1b9239a481a3fa40555238dae12b8c0d -->
+<!-- source-hash: sha256:bdc435c4eeb5c8eebfbed634562fde40e419d7078584597c662f6ddad243e41b -->
 <!-- last-ticket: MYT-52 -->
 
 <h1>Repository layer</h1>
@@ -1080,10 +1080,23 @@
       </td>
     </tr>
     <tr>
-      <td><code>src/repo/__tests__/_helpers/reset-data.ts</code></td>
+      <td><code>src/repo/__tests__/_helpers/test-pool.ts</code></td>
       <td>
-        TRUNCATE helper used by every <code>beforeEach</code>. Lists every application table in
-        dependency order; future namespaces extend it.
+        <code>createTestPool(url)</code> factory used by every repo test. Uniformly sized (<code
+          >max: 4</code
+        >) so concurrent Vitest forks stay inside the postgres
+        <code>max_connections=200</code> budget.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/__tests__/_helpers/test-scope.ts</code></td>
+      <td>
+        <code>makeTestScope</code> + <code>cleanupTestScope</code> — branded-identifier fixtures
+        (<code>ScopedSub</code>, <code>ScopedUsername</code>, <code>ScopedWorldName</code>,
+        <code>ScopedCampaignName</code>) that scope a test's INSERTs to a per-scope prefix and clean
+        them up in <code>afterAll</code>. Replaces the old TRUNCATE-and-reseed pattern; the deleted
+        <code>with-tx</code> + <code>reset-data</code> helpers are now ESLint-blocked. Convention:
+        <code>backend/src/__tests__/CONVENTIONS.md</code>.
       </td>
     </tr>
   </tbody>
