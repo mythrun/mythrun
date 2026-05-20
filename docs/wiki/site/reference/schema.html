@@ -572,7 +572,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="entities" id="schema-table-entities">
   <summary>
     <span class="schema-table-name">entities</span>
-    <span class="schema-table-meta">10 columns · 3 indexes · 2 CHECKs · 16 FKs</span>
+    <span class="schema-table-meta">11 columns · 3 indexes · 2 CHECKs · 16 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -645,6 +645,13 @@ END)</code></li>
         <td><code>text</code></td>
         <td>NO</td>
         <td><code>'known'::text</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_in">
+        <td><code>created_in</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'stage:legacy'::text</code></td>
         <td>—</td>
       </tr>
     </tbody>
@@ -1160,7 +1167,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="worlds" id="schema-table-worlds">
   <summary>
     <span class="schema-table-name">worlds</span>
-    <span class="schema-table-meta">25 columns · 1 index · 4 CHECKs · 16 FKs</span>
+    <span class="schema-table-meta">26 columns · 1 index · 5 CHECKs · 16 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1340,6 +1347,13 @@ END)</code></li>
         <td><code>'[]'::jsonb</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="entity_consolidation_pending">
+        <td><code>entity_consolidation_pending</code></td>
+        <td><code>jsonb</code></td>
+        <td>NO</td>
+        <td><code>'{&quot;declarations&quot;: [], &quot;relationships&quot;: []}'::jsonb</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
@@ -1348,6 +1362,7 @@ END)</code></li>
   </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
+    <li><code>CHECK (((jsonb_typeof(entity_consolidation_pending) = 'object'::text) AND (jsonb_typeof((entity_consolidation_pending -&gt; 'declarations'::text)) = 'array'::text) AND (jsonb_typeof((entity_consolidation_pending -&gt; 'relationships'::text)) = 'array'::text)))</code></li>
     <li><code>CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))</code></li>
     <li><code>CHECK ((jsonb_typeof(starting_situation_entries) = 'array'::text))</code></li>
     <li><code>CHECK ((status = ANY (ARRAY['generating'::text, 'complete'::text, 'failed'::text])))</code></li>
@@ -1645,7 +1660,7 @@ END)</code></li>
         <td><code>uuid</code></td>
         <td>NO</td>
         <td>—</td>
-        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+        <td><code>campaign_members(campaign_id)</code> ON DELETE CASCADE</td>
       </tr>
       <tr data-column-name="user_id">
         <td><code>user_id</code></td>

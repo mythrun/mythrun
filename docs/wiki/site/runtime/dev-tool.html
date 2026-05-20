@@ -356,11 +356,56 @@
 </p>
 
 <p>
-  Edges aren't rendered as rows; the inventory tracks a simple
-  <code>edgeCount</code> that <code>edge-added</code> increments and
-  <code>edge-removed</code> decrements, surfaced as <code>N entities • M edges</code> in the summary
-  line. Visualizing the graph itself is out of scope; the count is what's useful at the wire-debug
-  level.
+  Edges aren't rendered as rows; the inventory tracks an <code>edgeCount</code> surfaced as
+  <code>N entities • M edges</code> in the summary line. <code>edgeCount</code> delegates to the
+  placeholder-buffer reducer described below — only fully-reconciled edges count. Visualizing the
+  graph itself is out of scope; the count is what's useful at the wire-debug level.
+</p>
+
+<h3 id="the-placeholder-edge-buffer">The placeholder edge buffer</h3>
+
+<p>
+  Stage 4 (<a href="./world-gen.html#stage-4b-phantom-reference-reconciliation">entity_relationships</a>)
+  emits <code>edge-added</code> events whose <code>from</code> or <code>to</code> may carry a
+  placeholder string of the form <code>new-NNN</code> in place of a real UUID — the LLM declared a
+  phantom entity inline and the relationship references it. Stage 4b
+  (<code>entity_consolidation</code>) later emits an <code>entity-added</code> for each ghost
+  carrying the same string in a new optional <code>placeholderId</code> field; that's the
+  reconciliation key.
+</p>
+
+<p>
+  <code>derivePlaceholderBuffer</code> is the pure reducer that holds the two states. It replays the
+  chronological event log into two maps: <code>placeholderId → synthKey</code> (populated by
+  ghost-tier <code>entity-added</code> events) and <code>synthKey → edge payload</code> (populated
+  by every <code>edge-added</code>, dropped by <code>edge-removed</code>). At the end of the replay
+  it walks the edges in insertion order. An edge whose endpoints are both real UUIDs (or both
+  resolved placeholders) joins the <code>rendered</code> list. An edge with one or more unresolved
+  placeholder endpoints stays in the buffer and contributes to <code>bufferedCount</code>. The
+  inventory summary's edge count is <code>rendered.length</code>; the buffered tier is invisible
+  in the count but still inspectable through the raw event log (each buffered edge's
+  <code>edge-added</code> entry is in the chronological log like any other event).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Buffer client-side, not server-side</strong> — the alternative is for stage 4b to
+  back-fill the deferred edges on the wire as <code>edge-removed</code> + <code>edge-added</code>
+  pairs once the ghosts persist. That would double the event count and force the server to remember
+  every placeholder-tagged edge it emitted, which is a stateful contract the channel doesn't
+  otherwise have. Buffering on the client is one reducer (Phase 5.3 of myth-tt2g, named
+  <code>derivePlaceholderBuffer</code>) that re-runs over the log on every render — cheap, pure,
+  reversible. The contract grows by one optional field (<code>placeholderId</code>) and one new
+  endpoint flavor (the <code>new-NNN</code> string), neither of which breaks existing consumers
+  that ignore them.
+</aside>
+
+<p>
+  Reconciliation order doesn't matter: the edge can arrive before or after the ghost, since the
+  reducer runs the full replay each time. <code>stage-reset</code> on
+  <code>entity_relationships</code> drops every edge under that stage's synthKey prefix from both
+  the rendered set and the buffer — the same invariant <code>deriveInventory</code> uses to evict
+  the stage's mid-flight entities. The reducer is exported and unit-tested independently of the
+  panel; the panel just consumes <code>{ rendered, bufferedCount }</code>.
 </p>
 
 <h3 id="the-2000-event-cap">The 2000-event cap</h3>
@@ -839,7 +884,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#bring-up">Bring-up</a></li><li style="padding-left:0"><a href="#the-identity-switcher">The identity switcher</a></li><li style="padding-left:0"><a href="#the-live-events-panel">The live-events panel</a></li><li style="padding-left:12px"><a href="#the-current-entity-inventory">The current-entity inventory</a></li><li style="padding-left:12px"><a href="#the-2000-event-cap">The 2000-event cap</a></li><li style="padding-left:12px"><a href="#wiring-to-the-sse-stream">Wiring to the SSE stream</a></li><li style="padding-left:0"><a href="#the-world-snapshot-panel">The world-snapshot panel</a></li><li style="padding-left:0"><a href="#the-campaign-create-panel-s-access-tier-bypass">The campaign-create panel's access-tier bypass</a></li><li style="padding-left:0"><a href="#the-ship-gate">The ship gate</a></li><li style="padding-left:0"><a href="#the-exempt-list">The exempt list</a></li><li style="padding-left:0"><a href="#hard-rules">Hard rules</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-dev-tool-locally">Run the dev tool locally</a></li><li style="padding-left:12px"><a href="#add-a-pipeline-route-the-shape-the-gate-enforces">Add a pipeline route (the shape the gate enforces)</a></li><li style="padding-left:12px"><a href="#exempt-a-contract-entry">Exempt a contract entry (rare)</a></li><li style="padding-left:12px"><a href="#diagnose-a-failing-dev-tool-check">Diagnose a failing dev-tool:check</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#workspace-files">Workspace files</a></li><li style="padding-left:12px"><a href="#ship-gate-files">Ship gate files</a></li><li style="padding-left:12px"><a href="#bring-up-surface">Bring-up surface</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#bring-up">Bring-up</a></li><li style="padding-left:0"><a href="#the-identity-switcher">The identity switcher</a></li><li style="padding-left:0"><a href="#the-live-events-panel">The live-events panel</a></li><li style="padding-left:12px"><a href="#the-current-entity-inventory">The current-entity inventory</a></li><li style="padding-left:12px"><a href="#the-placeholder-edge-buffer">The placeholder edge buffer</a></li><li style="padding-left:12px"><a href="#the-2000-event-cap">The 2000-event cap</a></li><li style="padding-left:12px"><a href="#wiring-to-the-sse-stream">Wiring to the SSE stream</a></li><li style="padding-left:0"><a href="#the-world-snapshot-panel">The world-snapshot panel</a></li><li style="padding-left:0"><a href="#the-campaign-create-panel-s-access-tier-bypass">The campaign-create panel's access-tier bypass</a></li><li style="padding-left:0"><a href="#the-ship-gate">The ship gate</a></li><li style="padding-left:0"><a href="#the-exempt-list">The exempt list</a></li><li style="padding-left:0"><a href="#hard-rules">Hard rules</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-dev-tool-locally">Run the dev tool locally</a></li><li style="padding-left:12px"><a href="#add-a-pipeline-route-the-shape-the-gate-enforces">Add a pipeline route (the shape the gate enforces)</a></li><li style="padding-left:12px"><a href="#exempt-a-contract-entry">Exempt a contract entry (rare)</a></li><li style="padding-left:12px"><a href="#diagnose-a-failing-dev-tool-check">Diagnose a failing dev-tool:check</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#workspace-files">Workspace files</a></li><li style="padding-left:12px"><a href="#ship-gate-files">Ship gate files</a></li><li style="padding-left:12px"><a href="#bring-up-surface">Bring-up surface</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

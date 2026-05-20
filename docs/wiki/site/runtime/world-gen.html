@@ -32,618 +32,669 @@
   The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a
   concept (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a
   3-axis Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked
-  transaction, and enqueues a BullMQ job. The worker walks seven stages — three non-streaming Sonnet
-  calls (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>),
-  three streaming stages with live entity emission (<code>world_and_factions</code> Opus,
-  <code>locations_and_npcs</code> Opus, <code>entity_relationships</code> Sonnet), and a final
-  non-streaming Sonnet <code>coherence_pass</code>. A non-streaming Sonnet
-  <code>vocabulary_intake</code> stage runs between <code>concept_intake</code> and
-  <code>world_and_factions</code> — it generates the world's distinctive lexicon (the
+  transaction, and enqueues a BullMQ job. The worker walks eight prose-bearing stages plus a
+  vocabulary pre-pass: three non-streaming Sonnet calls
+  (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>), three
+  streaming stages with live entity emission (<code>world_and_factions</code> Opus,
+  <code>locations_and_npcs</code> Opus, <code>entity_relationships</code> Sonnet), a
+  <code>entity_consolidation</code> stage (Sonnet) that materializes any phantom entities stage 4
+  declared as placeholders, and a final non-streaming Sonnet <code>coherence_pass</code>. A
+  non-streaming Sonnet <code>vocabulary_intake</code> stage runs between <code>concept_intake</code>
+  and <code>world_and_factions</code> — it generates the world's distinctive lexicon (the
   <a href="#vocabulary-registry">vocabulary registry</a>) and every downstream stage injects the
-  rendered registry into its system prompt. After stage 4 commits the pipeline fires a
-  <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable through
-  <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still running, and
-  stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage handler returns a
-  unified <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the
-  outer scope owns BEGIN/COMMIT and publishes the finalized events only after COMMIT. A cost-cap
-  circuit breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage;
-  over-cap refunds the credit and marks the world failed — except at stage 7, where cap-fire marks
-  the world COMPLETE (coherence is best-effort polish).
+  rendered registry into its system prompt. After <code>entity_consolidation</code> commits the
+  worker fires a <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable
+  through <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still
+  running, and stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage
+  handler returns a unified
+  <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the outer
+  scope owns BEGIN/COMMIT and publishes the finalized events only after COMMIT. A cost-cap circuit
+  breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; over-cap
+  refunds the credit and marks the world failed — except at stage 7, where cap-fire marks the world
+  COMPLETE (coherence is best-effort polish).
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="3927pt" height="1405pt"
- viewBox="14.00 14.00 3913.00 1390.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1386.4)">
+<svg width="3977pt" height="1568pt"
+ viewBox="14.00 14.00 3962.00 1553.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1549.11)">
 <title>world_gen</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1372 3894.57,-1372 3894.57,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1534.71 3943.78,-1534.71 3943.78,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_api</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-143 8,-290 2123.95,-290 2123.95,-143 8,-143"/>
-<text xml:space="preserve" text-anchor="middle" x="1065.98" y="-276.1" font-family="Courier,monospace" font-size="11.00">API process</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-136.71 8,-283.71 2113.15,-283.71 2113.15,-136.71 8,-136.71"/>
+<text xml:space="preserve" text-anchor="middle" x="1060.58" y="-269.81" font-family="Courier,monospace" font-size="11.00">API process</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_redis</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="2311.98,-451 2311.98,-615 2541.69,-615 2541.69,-451 2311.98,-451"/>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-601.1" font-family="Courier,monospace" font-size="11.00">Redis</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="2319.18,-568.71 2319.18,-732.71 2548.89,-732.71 2548.89,-568.71 2319.18,-568.71"/>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-718.81" font-family="Courier,monospace" font-size="11.00">Redis</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_worker</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="446.14,-652 446.14,-995 3545.85,-995 3545.85,-652 446.14,-652"/>
-<text xml:space="preserve" text-anchor="middle" x="1995.99" y="-981.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker service &#160;(BullMQ Worker, concurrency 3)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="67.41,-873.71 67.41,-1278.71 3595.06,-1278.71 3595.06,-873.71 67.41,-873.71"/>
+<text xml:space="preserve" text-anchor="middle" x="1831.23" y="-1264.81" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker service &#160;(BullMQ Worker, concurrency 3)</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_pg</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="3685.87,-694 3685.87,-1102 3882.57,-1102 3882.57,-694 3685.87,-694"/>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-1088.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="3735.07,-751.71 3735.07,-1160.71 3931.78,-1160.71 3931.78,-751.71 3735.07,-751.71"/>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-1146.81" font-family="Courier,monospace" font-size="11.00">Postgres</text>
 </g>
 <!-- client -->
 <g id="node1" class="node">
 <title>client</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1686.41,-346.44 1535.92,-346.44 1535.92,-289.56 1686.41,-289.56 1686.41,-346.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-327.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">HTTP client</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-314.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev tool today;</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-301.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> SPA after launch)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1663.61,-340.15 1513.11,-340.15 1513.11,-283.27 1663.61,-283.27 1663.61,-340.15"/>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-321.61" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">HTTP client</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-308.41" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev tool today;</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-295.21" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> SPA after launch)</text>
 </g>
 <!-- post -->
 <g id="node2" class="node">
 <title>post</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="330.13,-267.04 8,-267.04 8,-196.96 330.13,-196.96 330.13,-267.04"/>
-<text xml:space="preserve" text-anchor="middle" x="169.06" y="-248.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="169.06" y="-235.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/campaigns</text>
-<text xml:space="preserve" text-anchor="middle" x="169.06" y="-222.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Zod body parse</text>
-<text xml:space="preserve" text-anchor="middle" x="169.06" y="-208.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(kind: &#39;new&#39;, mode: &#39;freeform&#39; | &#39;guided&#39;)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="330.13,-260.75 8,-260.75 8,-190.67 330.13,-190.67 330.13,-260.75"/>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-242.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-229.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/campaigns</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-215.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Zod body parse</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-202.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(kind: &#39;new&#39;, mode: &#39;freeform&#39; | &#39;guided&#39;)</text>
 </g>
 <!-- client&#45;&gt;post -->
 <g id="edge1" class="edge">
 <title>client&#45;&gt;post</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1535.44,-320.42C1446.7,-323.09 1294.19,-327 1163.23,-327 546.79,-327 546.79,-327 546.79,-327 449.66,-327 342.6,-296.94 267.51,-270.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="268.57,-268.41 261.15,-268.39 266.93,-273.03 268.57,-268.41"/>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-330" font-family="Courier,monospace" font-size="10.00">POST campaign</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1512.58,-314.49C1435.1,-317.14 1310.51,-320.71 1202.83,-320.71 556.69,-320.71 556.69,-320.71 556.69,-320.71 457.16,-320.71 347.27,-290.65 270.16,-264.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="271,-262.04 263.58,-262.08 269.4,-266.68 271,-262.04"/>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-323.71" font-family="Courier,monospace" font-size="10.00">POST campaign</text>
 </g>
 <!-- pre -->
 <g id="node3" class="node">
 <title>pre</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="649.45,-268.64 446.14,-268.64 446.14,-185.36 649.45,-185.36 649.45,-268.64"/>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-250.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cheap pre&#45;checks</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-236.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;concurrent&#45;gen guard</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-223.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;rejection&#45;storm cooldown</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-210.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;credit balance peek</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-197.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;queue&#45;depth admission</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="659.35,-262.35 456.04,-262.35 456.04,-179.07 659.35,-179.07 659.35,-262.35"/>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-243.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cheap pre&#45;checks</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-230.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;concurrent&#45;gen guard</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-217.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;rejection&#45;storm cooldown</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-204.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;credit balance peek</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-191.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;queue&#45;depth admission</text>
 </g>
 <!-- post&#45;&gt;pre -->
 <g id="edge2" class="edge">
 <title>post&#45;&gt;pre</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M330.65,-229.87C366.38,-229.39 403.48,-228.9 436.64,-228.46"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="436.65,-230.91 443.62,-228.37 436.58,-226.01 436.65,-230.91"/>
-<text xml:space="preserve" text-anchor="middle" x="388.13" y="-232.5" font-family="Courier,monospace" font-size="10.00">parsed body</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M330.67,-223.63C369.76,-223.13 410.68,-222.6 446.8,-222.13"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="446.61,-224.58 453.57,-222.04 446.54,-219.68 446.61,-224.58"/>
+<text xml:space="preserve" text-anchor="middle" x="388.13" y="-226.21" font-family="Courier,monospace" font-size="10.00">parsed body</text>
 </g>
 <!-- synth -->
 <g id="node4" class="node">
 <title>synth</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="969.96,-199.44 760.06,-199.44 760.06,-142.56 969.96,-142.56 969.96,-199.44"/>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-180.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">synthesize&#45;concept.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-167.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">guided only — Sonnet</text>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-154.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ concept + intentSummary</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1012.87,-193.15 802.96,-193.15 802.96,-136.27 1012.87,-136.27 1012.87,-193.15"/>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-174.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">synthesize&#45;concept.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-161.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">guided only — Sonnet</text>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-148.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ concept + intentSummary</text>
 </g>
 <!-- pre&#45;&gt;synth -->
 <g id="edge3" class="edge">
 <title>pre&#45;&gt;synth</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M649.83,-209.05C682.12,-203.31 718.06,-196.93 751.14,-191.05"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="751.23,-193.52 757.69,-189.89 750.37,-188.7 751.23,-193.52"/>
-<text xml:space="preserve" text-anchor="middle" x="701.45" y="-207.02" font-family="Courier,monospace" font-size="10.00">if guided</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M659.88,-204.44C701.86,-197.68 750.75,-189.82 793.9,-182.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="794.14,-185.33 800.66,-181.8 793.36,-180.49 794.14,-185.33"/>
+<text xml:space="preserve" text-anchor="middle" x="721.25" y="-200.72" font-family="Courier,monospace" font-size="10.00">if guided</text>
 </g>
 <!-- gate -->
 <g id="node5" class="node">
 <title>gate</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1267.18,-254.64 1057.27,-254.64 1057.27,-171.36 1267.18,-171.36 1267.18,-254.64"/>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-236.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">input&#45;gate.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-222.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet, 3 axes</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-209.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;srd_compat | clone_intent</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-196.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;| inappropriate</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-183.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">aggregate&#45;confidence rule</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1306.79,-248.35 1096.88,-248.35 1096.88,-165.07 1306.79,-165.07 1306.79,-248.35"/>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-229.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">input&#45;gate.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-216.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet, 3 axes</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-203.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;srd_compat | clone_intent</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-190.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;| inappropriate</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-177.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">aggregate&#45;confidence rule</text>
 </g>
 <!-- pre&#45;&gt;gate -->
 <g id="edge5" class="edge">
 <title>pre&#45;&gt;gate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M649.99,-224.76C675.59,-224.19 703.03,-223.58 728.45,-223 836.98,-220.54 960.81,-217.67 1048.13,-215.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1047.97,-218.09 1054.91,-215.48 1047.86,-213.2 1047.97,-218.09"/>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-225.43" font-family="Courier,monospace" font-size="10.00">if freeform</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M660.02,-218.59C688.56,-217.99 719.63,-217.33 748.26,-216.71 863.96,-214.21 996.29,-211.28 1087.84,-209.24"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1087.81,-211.69 1094.76,-209.08 1087.71,-206.79 1087.81,-211.69"/>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-219.16" font-family="Courier,monospace" font-size="10.00">if freeform</text>
 </g>
 <!-- synth&#45;&gt;gate -->
 <g id="edge4" class="edge">
 <title>synth&#45;&gt;gate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M970.51,-185.87C995.69,-189.45 1022.71,-193.29 1048.26,-196.93"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1047.79,-199.34 1055.07,-197.9 1048.49,-194.49 1047.79,-199.34"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1013.48,-179.75C1037.63,-183.23 1063.42,-186.94 1087.91,-190.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1087.43,-192.87 1094.71,-191.44 1088.13,-188.02 1087.43,-192.87"/>
 </g>
 <!-- gate&#45;&gt;client -->
 <g id="edge7" class="edge">
 <title>gate&#45;&gt;client</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1267.77,-233.95C1329.18,-246.67 1408.19,-263.73 1477.91,-281 1493.77,-284.93 1510.63,-289.41 1526.8,-293.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1526.03,-296.19 1533.43,-295.7 1527.34,-291.47 1526.03,-296.19"/>
-<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-296" font-family="Courier,monospace" font-size="10.00">422 concept_rejected</text>
-<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-284" font-family="Courier,monospace" font-size="10.00">or content_filtered</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1307.53,-234.69C1352.92,-246.88 1406.66,-261.4 1455.11,-274.71 1470.96,-279.06 1487.88,-283.76 1504.13,-288.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1503.41,-290.63 1510.81,-290.16 1504.72,-285.92 1503.41,-290.63"/>
+<text xml:space="preserve" text-anchor="middle" x="1395.1" y="-289.71" font-family="Courier,monospace" font-size="10.00">422 concept_rejected</text>
+<text xml:space="preserve" text-anchor="middle" x="1395.1" y="-277.71" font-family="Courier,monospace" font-size="10.00">or content_filtered</text>
 </g>
 <!-- tx -->
 <g id="node6" class="node">
 <title>tx</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1719.42,-252.84 1502.91,-252.84 1502.91,-143.16 1719.42,-143.16 1719.42,-252.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-234.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locked tx (Postgres)</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-221.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;advisory lock on user</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-207.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;debit credit_ledger</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-194.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT worlds (generating)</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-181.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaigns (setup)</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-168.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaign_members</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-155.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;seed pipeline_runs row</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1696.62,-246.55 1480.11,-246.55 1480.11,-136.87 1696.62,-136.87 1696.62,-246.55"/>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-228.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locked tx (Postgres)</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-214.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;advisory lock on user</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-201.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;debit credit_ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-188.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT worlds (generating)</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-175.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaigns (setup)</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-162.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;INSERT campaign_members</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-148.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;seed pipeline_runs row</text>
 </g>
 <!-- gate&#45;&gt;tx -->
 <g id="edge6" class="edge">
 <title>gate&#45;&gt;tx</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1267.73,-209.49C1335.53,-207.22 1423.95,-204.25 1493.96,-201.9"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1493.68,-204.36 1500.59,-201.68 1493.51,-199.46 1493.68,-204.36"/>
-<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-210.28" font-family="Courier,monospace" font-size="10.00">verdict=allow</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1307.4,-202.63C1357.96,-200.66 1418.82,-198.28 1470.86,-196.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1470.75,-198.71 1477.65,-195.99 1470.56,-193.81 1470.75,-198.71"/>
+<text xml:space="preserve" text-anchor="middle" x="1395.1" y="-204.43" font-family="Courier,monospace" font-size="10.00">verdict=allow</text>
 </g>
 <!-- enq -->
 <g id="node7" class="node">
 <title>enq</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2123.95,-269.24 1907.44,-269.24 1907.44,-172.76 2123.95,-172.76 2123.95,-269.24"/>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-250.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldGenQueue.add</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-237.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;name: &#39;world&#45;gen&#39;</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-224.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;jobId: campaignId</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-211.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;attempts: 2</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-197.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;exponential backoff 30s</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-184.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;removeOn{Complete,Fail}: 0</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2113.15,-262.95 1896.64,-262.95 1896.64,-166.47 2113.15,-166.47 2113.15,-262.95"/>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-244.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldGenQueue.add</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-231.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;name: &#39;world&#45;gen&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-218.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;jobId: campaignId</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-204.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;attempts: 2</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-191.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;exponential backoff 30s</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-178.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;removeOn{Complete,Fail}: 0</text>
 </g>
 <!-- tx&#45;&gt;enq -->
 <g id="edge11" class="edge">
 <title>tx&#45;&gt;enq</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1720.04,-204.16C1775.08,-207.31 1842.1,-211.14 1898.31,-214.35"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1897.94,-216.78 1905.06,-214.74 1898.22,-211.89 1897.94,-216.78"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1697.19,-197.69C1755.61,-200.93 1827.84,-204.94 1887.53,-208.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1887.31,-210.69 1894.43,-208.63 1887.58,-205.8 1887.31,-210.69"/>
 </g>
 <!-- pipeline_runs -->
-<g id="node20" class="node">
+<g id="node21" class="node">
 <title>pipeline_runs</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3882.57,-922.44 3685.87,-922.44 3685.87,-865.56 3882.57,-865.56 3882.57,-922.44"/>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-903.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline_runs</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-890.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;stage row</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-877.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;status, cost_usd, error</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3931.78,-967.15 3735.07,-967.15 3735.07,-910.27 3931.78,-910.27 3931.78,-967.15"/>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-948.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline_runs</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-935.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;stage row</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-922.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;status, cost_usd, error</text>
 </g>
 <!-- tx&#45;&gt;pipeline_runs -->
 <g id="edge10" class="edge">
 <title>tx&#45;&gt;pipeline_runs</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1654.76,-142.49C1678.39,-115.33 1709.93,-84.39 1744.42,-65 1852.12,-4.46 1891.15,0 2014.7,0 2014.7,0 2014.7,0 3435.3,0 3548.44,0 3600.63,-22.23 3660.87,-118 3704.25,-186.98 3640.22,-783.49 3685.87,-851 3687.73,-853.76 3689.82,-856.35 3692.1,-858.78"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3690.4,-860.55 3697.18,-863.57 3693.77,-856.98 3690.4,-860.55"/>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-3" font-family="Courier,monospace" font-size="10.00">seed pending</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1653.52,-136.17C1673.94,-121.76 1697.53,-108.19 1721.62,-100.71 1887.79,-49.06 1939.14,-99.81 2113.15,-100.71 2468.42,-102.55 3464.89,80.4 3710.07,-176.71 3765.24,-234.56 3690.28,-829.5 3735.07,-895.71 3736.94,-898.47 3739.03,-901.06 3741.31,-903.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3739.61,-905.26 3746.39,-908.27 3742.98,-901.69 3739.61,-905.26"/>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-61.81" font-family="Courier,monospace" font-size="10.00">seed pending</text>
 </g>
 <!-- worlds -->
-<g id="node21" class="node">
+<g id="node22" class="node">
 <title>worlds</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3872.67,-1008.44 3695.77,-1008.44 3695.77,-951.56 3872.67,-951.56 3872.67,-1008.44"/>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-989.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-976.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status: generating →</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-963.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;complete | failed</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3921.88,-1053.15 3744.98,-1053.15 3744.98,-996.27 3921.88,-996.27 3921.88,-1053.15"/>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-1034.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-1021.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status: generating →</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-1008.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;complete | failed</text>
 </g>
 <!-- tx&#45;&gt;worlds -->
 <g id="edge9" class="edge">
 <title>tx&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1719.83,-180.32C1775.65,-171.94 1845.03,-162.75 1907.44,-158 2370.78,-122.75 2488.14,-140 2952.82,-140 2952.82,-140 2952.82,-140 3435.3,-140 3705.68,-140 3595.65,-442.6 3660.87,-705 3673.37,-755.32 3655.27,-895.13 3685.87,-937 3688.01,-939.94 3690.4,-942.68 3692.99,-945.23"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3691.13,-946.86 3698,-949.66 3694.38,-943.19 3691.13,-946.86"/>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-142.86" font-family="Courier,monospace" font-size="10.00">INSERT generating</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1697.1,-174.21C1755.9,-165.54 1830.07,-156.02 1896.64,-151.71 2408.64,-118.52 2558.54,-124.02 3042.03,-295.71 3310.26,-390.96 3383.05,-428.78 3595.06,-618.71 3658.95,-675.95 3678.33,-694.01 3710.07,-773.71 3744.52,-860.21 3679.67,-906.87 3735.07,-981.71 3737.24,-984.63 3739.64,-987.36 3742.24,-989.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3740.4,-991.54 3747.27,-994.32 3743.63,-987.86 3740.4,-991.54"/>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-243.86" font-family="Courier,monospace" font-size="10.00">INSERT generating</text>
 </g>
 <!-- ledger -->
-<g id="node23" class="node">
+<g id="node24" class="node">
 <title>ledger</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3875.97,-750.44 3692.47,-750.44 3692.47,-693.56 3875.97,-693.56 3875.97,-750.44"/>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-731.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credit_ledger</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-718.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">debit + cost_cap_refund</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-705.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ admin (dev)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3925.18,-881.15 3741.67,-881.15 3741.67,-824.27 3925.18,-824.27 3925.18,-881.15"/>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-862.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credit_ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-849.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">debit + cost_cap_refund</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-836.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ admin (dev)</text>
 </g>
 <!-- tx&#45;&gt;ledger -->
 <g id="edge8" class="edge">
 <title>tx&#45;&gt;ledger</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1679.76,-142.59C1699.55,-128.92 1721.94,-115.7 1744.42,-107 1857.49,-63.23 1893.45,-70 2014.7,-70 2014.7,-70 2014.7,-70 3435.3,-70 3537.79,-70 3588.74,-45.17 3660.87,-118 3741.29,-199.21 3772.69,-565.57 3780.88,-684.55"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3778.42,-684.38 3781.33,-691.2 3783.31,-684.05 3778.42,-684.38"/>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-73" font-family="Courier,monospace" font-size="10.00">debit</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1623.39,-136.13C1646.75,-103.05 1680.86,-63.41 1721.62,-41.71 1833.3,17.76 1877.37,-4.71 2003.9,-4.71 2003.9,-4.71 2003.9,-4.71 3484.5,-4.71 3600.44,-4.71 3655.37,-33.49 3710.07,-135.71 3745.43,-201.78 3693.01,-747.69 3735.07,-809.71 3737.12,-812.72 3739.42,-815.52 3741.93,-818.13"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3740.01,-819.69 3746.82,-822.63 3743.33,-816.09 3740.01,-819.69"/>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-7.71" font-family="Courier,monospace" font-size="10.00">debit</text>
 </g>
 <!-- enq&#45;&gt;client -->
 <g id="edge13" class="edge">
 <title>enq&#45;&gt;client</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1906.93,-246.97C1840.54,-262.97 1756.7,-283.17 1695.43,-297.94"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1694.93,-295.54 1688.7,-299.56 1696.08,-300.3 1694.93,-295.54"/>
-<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-286.86" font-family="Courier,monospace" font-size="10.00">201 { campaignId }</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1895.99,-239.96C1826.2,-256.29 1736.71,-277.23 1672.45,-292.27"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1671.98,-289.86 1665.72,-293.84 1673.09,-294.63 1671.98,-289.86"/>
+<text xml:space="preserve" text-anchor="middle" x="1796.63" y="-283.33" font-family="Courier,monospace" font-size="10.00">201 { campaignId }</text>
 </g>
 <!-- queue -->
 <g id="node8" class="node">
 <title>queue</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2482.28,-507.44 2371.38,-507.44 2371.38,-450.56 2482.28,-450.56 2482.28,-507.44"/>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-488.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullMQ queue</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-475.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-462.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisBatch)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2489.48,-625.15 2378.59,-625.15 2378.59,-568.27 2489.48,-568.27 2489.48,-625.15"/>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-606.61" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullMQ queue</text>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-593.41" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen</text>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-580.21" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisBatch)</text>
 </g>
 <!-- enq&#45;&gt;queue -->
 <g id="edge12" class="edge">
 <title>enq&#45;&gt;queue</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2094.13,-269.83C2175.55,-321.17 2301.47,-400.58 2372.45,-445.33"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2370.8,-447.19 2378.02,-448.85 2373.41,-443.05 2370.8,-447.19"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2059.17,-263.63C2076.6,-279.97 2095.9,-298.41 2113.15,-315.71 2207.74,-410.56 2212.94,-454.1 2319.18,-535.71 2334.89,-547.78 2353.33,-558.79 2370.73,-568.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2369.16,-569.97 2376.5,-571.04 2371.43,-565.63 2369.16,-569.97"/>
 </g>
 <!-- proc -->
 <g id="node10" class="node">
 <title>proc</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="649.45,-867.84 446.14,-867.84 446.14,-758.16 649.45,-758.16 649.45,-867.84"/>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-849.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen&#45;processor.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-836.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">readCostCap once per job</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-822.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">atomic claim per stage</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-809.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">stuck&#45;stage reset (&gt;5min)</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-796.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runStage owns BEGIN/COMMIT</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-783.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">publishes finalizedEvents</text>
-<text xml:space="preserve" text-anchor="middle" x="547.79" y="-770.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;only after COMMIT</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="270.72,-983.55 67.41,-983.55 67.41,-873.87 270.72,-873.87 270.72,-983.55"/>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-965.01" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;gen&#45;processor.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-951.81" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">readCostCap once per job</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-938.61" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">atomic claim per stage</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-925.41" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">stuck&#45;stage reset (&gt;5min)</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-912.21" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">runStage owns BEGIN/COMMIT</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-899.01" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">publishes finalizedEvents</text>
+<text xml:space="preserve" text-anchor="middle" x="169.06" y="-885.81" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;only after COMMIT</text>
 </g>
 <!-- queue&#45;&gt;proc -->
 <g id="edge14" class="edge">
 <title>queue&#45;&gt;proc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2370.85,-476.26C2217.44,-468.85 1771.62,-449 1400.9,-449 864.01,-449 864.01,-449 864.01,-449 706.77,-449 610.42,-645.52 570.37,-749.76"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="568.19,-748.6 568,-756.02 572.77,-750.34 568.19,-748.6"/>
-<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-452" font-family="Courier,monospace" font-size="10.00">job { campaignId }</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2377.89,-575.46C2268.82,-535.4 2017.06,-452.71 1797.63,-452.71 556.69,-452.71 556.69,-452.71 556.69,-452.71 346.78,-452.71 230.86,-735.07 188.68,-864.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="186.37,-864.03 186.56,-871.44 191.03,-865.53 186.37,-864.03"/>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-455.71" font-family="Courier,monospace" font-size="10.00">job { campaignId }</text>
 </g>
 <!-- channel -->
 <g id="node9" class="node">
 <title>channel</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2541.69,-593.44 2311.98,-593.44 2311.98,-536.56 2541.69,-536.56 2541.69,-593.44"/>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-574.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-561.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline:campaign:{campaignId}</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-548.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisRealtime)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2548.89,-711.15 2319.18,-711.15 2319.18,-654.27 2548.89,-654.27 2548.89,-711.15"/>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-692.61" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-679.41" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline:campaign:{campaignId}</text>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-666.21" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(redisRealtime)</text>
 </g>
 <!-- proc&#45;&gt;channel -->
-<g id="edge45" class="edge">
+<g id="edge48" class="edge">
 <title>proc&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M550.06,-757.59C555.15,-672.99 577.86,-512.47 674.45,-427 738.73,-370.11 778.17,-390 864.01,-390 864.01,-390 864.01,-390 1400.9,-389 1435.13,-389 1443.77,-386.61 1477.91,-389 1842.25,-414.54 1930.48,-453.59 2286.98,-533 2292.2,-534.16 2297.54,-535.36 2302.93,-536.58"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2302.3,-538.95 2309.67,-538.1 2303.38,-534.17 2302.3,-538.95"/>
-<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-405" font-family="Courier,monospace" font-size="10.00">phase / stage&#45;* /</text>
-<text xml:space="preserve" text-anchor="middle" x="1399.9" y="-393" font-family="Courier,monospace" font-size="10.00">cost&#45;update / stage&#45;failed</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M191.83,-873.53C239.68,-762.52 365.19,-522.71 556.69,-522.71 556.69,-522.71 556.69,-522.71 1396.1,-522.71 1798.39,-522.71 1902.09,-545.65 2294.18,-635.71 2311.81,-639.76 2330.37,-645.19 2347.97,-650.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2346.84,-653.12 2354.25,-652.99 2348.38,-648.47 2346.84,-653.12"/>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-537.71" font-family="Courier,monospace" font-size="10.00">phase / stage&#45;* /</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-525.71" font-family="Courier,monospace" font-size="10.00">cost&#45;update / stage&#45;failed</text>
 </g>
 <!-- s1 -->
 <g id="node11" class="node">
 <title>s1</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="976.57,-973.64 753.45,-973.64 753.45,-890.36 976.57,-890.36 976.57,-973.64"/>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-955.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 1</text>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-941.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concept_intake</text>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-928.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-915.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">paint&#45;job validator</text>
-<text xml:space="preserve" text-anchor="middle" x="865.01" y="-902.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.tone/themes/era…</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="669.25,-1257.35 446.14,-1257.35 446.14,-1174.07 669.25,-1174.07 669.25,-1257.35"/>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-1238.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 1</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-1225.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concept_intake</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-1212.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-1199.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">paint&#45;job validator</text>
+<text xml:space="preserve" text-anchor="middle" x="557.69" y="-1186.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.tone/themes/era…</text>
 </g>
 <!-- proc&#45;&gt;s1 -->
 <g id="edge16" class="edge">
 <title>proc&#45;&gt;s1</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M649.83,-851.14C680.13,-862.58 713.64,-875.23 744.98,-887.06"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="743.79,-889.23 751.2,-889.41 745.52,-884.65 743.79,-889.23"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M244.61,-984.04C316.63,-1037.51 424.57,-1117.63 492.77,-1168.26"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="491.12,-1170.08 498.2,-1172.29 494.04,-1166.15 491.12,-1170.08"/>
 </g>
 <!-- settings -->
-<g id="node22" class="node">
+<g id="node23" class="node">
 <title>settings</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3872.67,-1080.84 3695.77,-1080.84 3695.77,-1037.16 3872.67,-1037.16 3872.67,-1080.84"/>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-1062.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">settings</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-1049.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_gen_cost_cap_usd</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3921.88,-795.55 3744.98,-795.55 3744.98,-751.87 3921.88,-751.87 3921.88,-795.55"/>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-777.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">settings</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-763.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_gen_cost_cap_usd</text>
 </g>
 <!-- proc&#45;&gt;settings -->
 <g id="edge15" class="edge">
 <title>proc&#45;&gt;settings</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M554.67,-868.56C572.68,-1006.95 640.28,-1356 864.01,-1356 864.01,-1356 864.01,-1356 3435.3,-1356 3598.84,-1356 3724.4,-1163.82 3767.26,-1088.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3769.19,-1090.21 3770.49,-1082.91 3764.93,-1087.8 3769.19,-1090.21"/>
-<text xml:space="preserve" text-anchor="middle" x="2217.96" y="-1359" font-family="Courier,monospace" font-size="10.00">readCostCap</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M181.24,-873.3C212.91,-733.9 316.98,-379.71 556.69,-379.71 556.69,-379.71 556.69,-379.71 1068.58,-379.71 2037.4,-379.71 2278.94,-433.65 3243.93,-519.71 3400.53,-533.67 3451.98,-497.53 3595.06,-562.71 3688.56,-605.3 3771.7,-697.68 3810.03,-744.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3807.92,-746.08 3814.22,-750 3811.74,-743.01 3807.92,-746.08"/>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-416.77" font-family="Courier,monospace" font-size="10.00">readCostCap</text>
 </g>
 <!-- s2 -->
 <g id="node12" class="node">
 <title>s2</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1296.88,-920.24 1027.57,-920.24 1027.57,-823.76 1296.88,-823.76 1296.88,-920.24"/>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-901.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 2</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-888.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_and_factions</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-875.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Opus streaming</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-862.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">regions + factions</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-848.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ entities + prose_kernels + facts</text>
-<text xml:space="preserve" text-anchor="middle" x="1162.23" y="-835.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.world_overview</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1042.58,-974.95 773.26,-974.95 773.26,-878.47 1042.58,-878.47 1042.58,-974.95"/>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-956.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 2</text>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-943.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world_and_factions</text>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-930.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Opus streaming</text>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-916.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">regions + factions</text>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-903.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ entities + prose_kernels + facts</text>
+<text xml:space="preserve" text-anchor="middle" x="907.92" y="-890.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.world_overview</text>
 </g>
 <!-- s1&#45;&gt;s2 -->
 <g id="edge17" class="edge">
 <title>s1&#45;&gt;s2</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M977.2,-909.4C990.67,-906.66 1004.56,-903.84 1018.41,-901.03"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1018.86,-903.43 1025.24,-899.64 1017.89,-898.63 1018.86,-903.43"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M609.7,-1173.38C671.1,-1122.42 774.32,-1036.76 841.52,-980.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="842.68,-983.2 846.51,-976.84 839.56,-979.43 842.68,-983.2"/>
 </g>
 <!-- capchk -->
-<g id="node18" class="node">
+<g id="node19" class="node">
 <title>capchk</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3545.85,-914.64 3322.74,-914.64 3322.74,-831.36 3545.85,-831.36 3545.85,-914.64"/>
-<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-896.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cost&#45;cap.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-882.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sumCompletedStageCosts</text>
-<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-869.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&gt; cap? &#160;→ refund + fail</text>
-<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-856.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(EXCEPT stage 7:</text>
-<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-843.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;capExhausted → complete)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3595.06,-1034.35 3371.95,-1034.35 3371.95,-951.07 3595.06,-951.07 3595.06,-1034.35"/>
+<text xml:space="preserve" text-anchor="middle" x="3483.5" y="-1015.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cost&#45;cap.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="3483.5" y="-1002.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sumCompletedStageCosts</text>
+<text xml:space="preserve" text-anchor="middle" x="3483.5" y="-989.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&gt; cap? &#160;→ refund + fail</text>
+<text xml:space="preserve" text-anchor="middle" x="3483.5" y="-976.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(EXCEPT stage 7:</text>
+<text xml:space="preserve" text-anchor="middle" x="3483.5" y="-963.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;capExhausted → complete)</text>
 </g>
 <!-- s1&#45;&gt;capchk -->
-<g id="edge26" class="edge">
+<g id="edge27" class="edge">
 <title>s1&#45;&gt;capchk</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M977.19,-948.67C1032.39,-955.57 1100.18,-962 1161.23,-962 1161.23,-962 1161.23,-962 2016.7,-962 2147.6,-962 3064.43,-962.58 3194.73,-950 3241.07,-945.52 3253.17,-944.46 3297.74,-931 3305.27,-928.73 3316.99,-924.2 3330.46,-918.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3331.38,-920.91 3336.9,-915.95 3329.5,-916.39 3331.38,-920.91"/>
-<text xml:space="preserve" text-anchor="middle" x="2217.96" y="-964.98" font-family="Courier,monospace" font-size="10.00">after each stage</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M669.83,-1230.18C738.11,-1237.85 827.43,-1245.71 906.92,-1245.71 906.92,-1245.71 906.92,-1245.71 1797.63,-1245.71 2119.25,-1245.71 2946.32,-1313.65 3243.93,-1191.71 3257.36,-1186.21 3255.95,-1177.19 3268.93,-1170.71 3300.78,-1154.82 3321.85,-1177.93 3346.95,-1152.71 3382.61,-1116.86 3339.85,-1080.79 3371.95,-1041.71 3372.2,-1041.4 3372.45,-1041.1 3372.7,-1040.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3374.13,-1042.87 3377.12,-1036.08 3370.55,-1039.52 3374.13,-1042.87"/>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1257" font-family="Courier,monospace" font-size="10.00">after each stage</text>
 </g>
 <!-- s1&#45;&gt;pipeline_runs -->
-<g id="edge43" class="edge">
+<g id="edge46" class="edge">
 <title>s1&#45;&gt;pipeline_runs</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M874.58,-974.32C889.55,-1037.84 926.33,-1157.85 1001.57,-1228 1057.01,-1279.69 1085.42,-1288 1161.23,-1288 1161.23,-1288 1161.23,-1288 3435.3,-1288 3583.31,-1288 3591.48,-1173.74 3660.87,-1043 3683.55,-1000.24 3654.93,-974.23 3685.87,-937 3688.46,-933.88 3691.33,-930.97 3694.4,-928.28"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.61,-930.44 3699.55,-924.15 3692.55,-926.61 3695.61,-930.44"/>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1303" font-family="Courier,monospace" font-size="10.00">completed +</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1291" font-family="Courier,monospace" font-size="10.00"> cost_usd</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M582.8,-1258.02C632.28,-1338.73 753.68,-1506.71 906.92,-1506.71 906.92,-1506.71 906.92,-1506.71 2977.02,-1506.71 3290.53,-1506.71 3379.77,-1394.6 3595.06,-1166.71 3612.76,-1147.97 3714.86,-997.7 3735.07,-981.71 3739.3,-978.36 3743.84,-975.22 3748.55,-972.27"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3749.74,-974.41 3754.52,-968.74 3747.24,-970.2 3749.74,-974.41"/>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-1521.71" font-family="Courier,monospace" font-size="10.00">completed +</text>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-1509.71" font-family="Courier,monospace" font-size="10.00"> cost_usd</text>
 </g>
 <!-- s1&#45;&gt;worlds -->
-<g id="edge35" class="edge">
+<g id="edge37" class="edge">
 <title>s1&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M886.64,-974.21C927.52,-1051.07 1026.62,-1206 1161.23,-1206 1161.23,-1206 1161.23,-1206 3435.3,-1206 3558.98,-1206 3562.42,-1117.88 3660.87,-1043 3672.19,-1034.39 3673.7,-1030.38 3685.87,-1023 3691.53,-1019.56 3697.52,-1016.25 3703.63,-1013.08"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3704.64,-1015.31 3709.79,-1009.97 3702.44,-1010.94 3704.64,-1015.31"/>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1221" font-family="Courier,monospace" font-size="10.00">UPDATE</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-1209" font-family="Courier,monospace" font-size="10.00">tone/themes/era…</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M592.03,-1257.99C648.87,-1324.91 771.62,-1447.71 906.92,-1447.71 906.92,-1447.71 906.92,-1447.71 2977.02,-1447.71 3278.76,-1447.71 3332.1,-1314.71 3595.06,-1166.71 3647.01,-1137.47 3664.8,-1136.48 3710.07,-1097.71 3723.26,-1086.42 3721.21,-1078.16 3735.07,-1067.71 3739.58,-1064.31 3744.41,-1061.11 3749.4,-1058.1"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3750.39,-1060.36 3755.25,-1054.75 3747.96,-1056.11 3750.39,-1060.36"/>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-1462.71" font-family="Courier,monospace" font-size="10.00">UPDATE</text>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-1450.71" font-family="Courier,monospace" font-size="10.00">tone/themes/era…</text>
 </g>
 <!-- s2&#45;&gt;channel -->
-<g id="edge46" class="edge">
+<g id="edge49" class="edge">
 <title>s2&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1237.97,-823.05C1345.16,-755.61 1551,-636.2 1744.42,-581 1933.48,-527.05 2164.16,-536.39 2302.79,-549.59"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2302.37,-552.01 2309.57,-550.25 2302.84,-547.13 2302.37,-552.01"/>
-<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-608" font-family="Courier,monospace" font-size="10.00">entity&#45;added / &#45;updated</text>
-<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-596" font-family="Courier,monospace" font-size="10.00">(mid&#45;stream)</text>
-<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-584" font-family="Courier,monospace" font-size="10.00">finalized (post&#45;COMMIT)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M990.47,-877.79C1098.19,-816.15 1295.84,-713.13 1480.11,-670.71 1832.74,-589.53 1933.76,-625.52 2294.18,-657.71 2299.38,-658.17 2304.68,-658.73 2310.02,-659.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2309.4,-661.76 2316.65,-660.21 2310.01,-656.9 2309.4,-661.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-697.71" font-family="Courier,monospace" font-size="10.00">entity&#45;added / &#45;updated</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-685.71" font-family="Courier,monospace" font-size="10.00">(mid&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-673.71" font-family="Courier,monospace" font-size="10.00">finalized (post&#45;COMMIT)</text>
 </g>
 <!-- s3 -->
 <g id="node13" class="node">
 <title>s3</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1719.42,-854.24 1502.91,-854.24 1502.91,-757.76 1719.42,-757.76 1719.42,-854.24"/>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-835.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 3</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-822.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locations_and_npcs</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-809.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Opus streaming</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-796.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">3&#45;pass parent resolver</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-782.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ entities + prose + facts</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.16" y="-769.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ entity_hierarchy</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1310.09,-1016.95 1093.58,-1016.95 1093.58,-920.47 1310.09,-920.47 1310.09,-1016.95"/>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-998.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 3</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-985.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locations_and_npcs</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-972.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Opus streaming</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-958.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">3&#45;pass parent resolver</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-945.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ entities + prose + facts</text>
+<text xml:space="preserve" text-anchor="middle" x="1201.83" y="-932.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ entity_hierarchy</text>
 </g>
 <!-- s2&#45;&gt;s3 -->
 <g id="edge18" class="edge">
 <title>s2&#45;&gt;s3</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1297.62,-852.15C1360.11,-842.93 1433.71,-832.06 1493.78,-823.19"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1493.8,-825.66 1500.37,-822.21 1493.09,-820.81 1493.8,-825.66"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1042.91,-945.99C1056.81,-947.99 1070.86,-950.01 1084.55,-951.98"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1083.94,-954.37 1091.22,-952.94 1084.64,-949.51 1083.94,-954.37"/>
 </g>
 <!-- s2&#45;&gt;capchk -->
-<g id="edge27" class="edge">
+<g id="edge28" class="edge">
 <title>s2&#45;&gt;capchk</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1297.39,-879.7C1305.68,-880.15 1313.89,-880.59 1321.88,-881 1466.05,-888.48 2475.34,-942 2619.7,-942 2619.7,-942 2619.7,-942 3107.28,-942 3176.76,-942 3252.81,-926.81 3313.97,-910.69"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3314.23,-913.15 3320.36,-908.98 3312.96,-908.42 3314.23,-913.15"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1043.19,-892.6C1092.43,-882.8 1148.84,-874.71 1200.83,-874.71 1200.83,-874.71 1200.83,-874.71 3156.48,-874.71 3242.89,-874.71 3266.23,-882.88 3346.95,-913.71 3369.16,-922.19 3391.98,-934.07 3412.42,-946.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3411,-948.06 3418.27,-949.53 3413.51,-943.85 3411,-948.06"/>
 </g>
 <!-- repair -->
-<g id="node19" class="node">
+<g id="node20" class="node">
 <title>repair</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2531.79,-912.04 2321.88,-912.04 2321.88,-841.96 2531.79,-841.96 2531.79,-912.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-893.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">structured&#45;output&#45;repair.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-880.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Haiku → Sonnet</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-867.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">preserves array length</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-853.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">on Zod failure</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2109.85,-1187.75 1899.94,-1187.75 1899.94,-1117.67 2109.85,-1117.67 2109.85,-1187.75"/>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1169.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">structured&#45;output&#45;repair.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1156.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Haiku → Sonnet</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1142.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">preserves array length</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1129.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">on Zod failure</text>
 </g>
 <!-- s2&#45;&gt;repair -->
-<g id="edge23" class="edge">
+<g id="edge24" class="edge">
 <title>s2&#45;&gt;repair</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1297.45,-872.53C1547.42,-873.52 2080,-875.63 2312.88,-876.55"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2312.55,-879 2319.56,-876.58 2312.56,-874.1 2312.55,-879"/>
-<text xml:space="preserve" text-anchor="middle" x="1813.43" y="-877.85" font-family="Courier,monospace" font-size="10.00">on Zod fail</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M981.63,-975.58C1014.57,-995.71 1054.77,-1017.57 1093.58,-1031.71 1367.58,-1131.52 1714.76,-1150.47 1890.67,-1153.16"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1890.58,-1155.61 1897.61,-1153.26 1890.65,-1150.71 1890.58,-1155.61"/>
+<text xml:space="preserve" text-anchor="middle" x="1395.1" y="-1121.75" font-family="Courier,monospace" font-size="10.00">on Zod fail</text>
 </g>
 <!-- entities_t -->
-<g id="node24" class="node">
+<g id="node25" class="node">
 <title>entities_t</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3879.27,-836.44 3689.17,-836.44 3689.17,-779.56 3879.27,-779.56 3879.27,-836.44"/>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-817.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entities + prose_kernels</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-804.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ facts + relationships</text>
-<text xml:space="preserve" text-anchor="middle" x="3784.22" y="-791.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ entity_hierarchy</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3928.48,-1139.15 3738.37,-1139.15 3738.37,-1082.27 3928.48,-1082.27 3928.48,-1139.15"/>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-1120.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entities + prose_kernels</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-1107.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ facts + relationships</text>
+<text xml:space="preserve" text-anchor="middle" x="3833.43" y="-1094.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ entity_hierarchy</text>
 </g>
 <!-- s2&#45;&gt;entities_t -->
-<g id="edge36" class="edge">
+<g id="edge38" class="edge">
 <title>s2&#45;&gt;entities_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1196.63,-823.41C1226.24,-782.76 1272.37,-724.99 1321.88,-684 1393.02,-625.11 1416.17,-613.69 1502.91,-582 1895.06,-438.74 2008.34,-407 2425.83,-407 2425.83,-407 2425.83,-407 3435.3,-407 3565.24,-407 3597.11,-479.77 3660.87,-593 3698.76,-660.31 3639.14,-703.49 3685.87,-765 3688.13,-767.98 3690.64,-770.76 3693.35,-773.34"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3691.72,-775.17 3698.63,-777.87 3694.91,-771.45 3691.72,-775.17"/>
-<text xml:space="preserve" text-anchor="middle" x="2620.7" y="-410" font-family="Courier,monospace" font-size="10.00">regions + factions</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M938.68,-878.09C970.87,-829.73 1026.65,-757.08 1093.58,-716.71 1372.31,-548.56 2224.51,-522.37 2548.89,-549.71 3019.63,-589.38 3279.02,-386.57 3595.06,-737.71 3635.67,-782.82 3585.9,-959.53 3620.06,-1009.71 3645.53,-1047.12 3688.76,-1071.07 3729.6,-1086.2"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3728.61,-1088.45 3736.02,-1088.5 3730.26,-1083.84 3728.61,-1088.45"/>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-552.71" font-family="Courier,monospace" font-size="10.00">regions + factions</text>
 </g>
 <!-- s3&#45;&gt;channel -->
-<g id="edge47" class="edge">
+<g id="edge50" class="edge">
 <title>s3&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1653.79,-757.17C1677.94,-731.56 1710.27,-701.54 1744.42,-682 1919.98,-581.53 2159.68,-562.64 2303,-561.45"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2302.65,-563.91 2309.63,-561.42 2302.62,-559.01 2302.65,-563.91"/>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-653.16" font-family="Courier,monospace" font-size="10.00">entity&#45;added / &#45;updated</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-641.16" font-family="Courier,monospace" font-size="10.00">finalized</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-629.16" font-family="Courier,monospace" font-size="10.00">entity&#45;updated</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-617.16" font-family="Courier,monospace" font-size="10.00"> &#160;{parent_location: null}</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1273.48,-919.88C1369.72,-856.53 1549.76,-748.98 1721.62,-705.71 1922.97,-655.01 2166.49,-660.95 2310.07,-671.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2309.56,-673.45 2316.72,-671.5 2309.92,-668.56 2309.56,-673.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1796.63" y="-744.71" font-family="Courier,monospace" font-size="10.00">entity&#45;added / &#45;updated</text>
+<text xml:space="preserve" text-anchor="middle" x="1796.63" y="-732.71" font-family="Courier,monospace" font-size="10.00">finalized</text>
+<text xml:space="preserve" text-anchor="middle" x="1796.63" y="-720.71" font-family="Courier,monospace" font-size="10.00">entity&#45;updated</text>
+<text xml:space="preserve" text-anchor="middle" x="1796.63" y="-708.71" font-family="Courier,monospace" font-size="10.00"> &#160;{parent_location: null}</text>
 </g>
 <!-- s4 -->
 <g id="node14" class="node">
 <title>s4</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2104.15,-829.84 1927.25,-829.84 1927.25,-720.16 2104.15,-720.16 2104.15,-829.84"/>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-811.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 4</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-798.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entity_relationships</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-784.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet streaming</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-771.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">deleteByWorld on retry</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-758.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UUID pre&#45;filter for</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-745.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hallucinated refs</text>
-<text xml:space="preserve" text-anchor="middle" x="2015.7" y="-732.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ relationships</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1676.81,-1058.15 1499.91,-1058.15 1499.91,-935.27 1676.81,-935.27 1676.81,-1058.15"/>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-1039.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 4</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-1026.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entity_relationships</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-1013.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet streaming</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-1000.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">deleteByWorld on retry</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-986.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UUID pre&#45;filter +</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-973.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">placeholder partition</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-960.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ relationships</text>
+<text xml:space="preserve" text-anchor="middle" x="1588.36" y="-947.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ pending phantoms</text>
 </g>
 <!-- s3&#45;&gt;s4 -->
 <g id="edge19" class="edge">
 <title>s3&#45;&gt;s4</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1720.04,-797.69C1781.63,-792.95 1858.22,-787.05 1917.88,-782.46"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1917.95,-784.91 1924.74,-781.93 1917.57,-780.02 1917.95,-784.91"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1310.71,-976.56C1367.23,-980.68 1435.88,-985.68 1490.65,-989.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1490.35,-992.1 1497.51,-990.17 1490.71,-987.21 1490.35,-992.1"/>
 </g>
 <!-- s3&#45;&gt;capchk -->
-<g id="edge28" class="edge">
+<g id="edge29" class="edge">
 <title>s3&#45;&gt;capchk</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1720.16,-760.6C1775.18,-739.76 1843.75,-717.22 1907.44,-706 2338.15,-630.12 2464.99,-659.11 2889.81,-763 2936.25,-774.36 2947.42,-779.01 2992.82,-794 3004.04,-797.7 3006.32,-800.32 3017.82,-803 3094.88,-820.97 3116.46,-811.37 3194.73,-823 3240.78,-829.84 3252.15,-832.59 3297.74,-842 3302.94,-843.07 3308.24,-844.19 3313.6,-845.34"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3312.91,-847.7 3320.27,-846.78 3313.94,-842.91 3312.91,-847.7"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1310.62,-941.44C1387.29,-924.42 1492.99,-905.71 1587.36,-905.71 1587.36,-905.71 1587.36,-905.71 3156.48,-905.71 3229.51,-905.71 3308.71,-926.34 3370.77,-947.5"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3369.89,-949.79 3377.31,-949.76 3371.49,-945.16 3369.89,-949.79"/>
 </g>
 <!-- s3&#45;&gt;repair -->
-<g id="edge24" class="edge">
+<g id="edge25" class="edge">
 <title>s3&#45;&gt;repair</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1719.97,-821.57C1775.82,-829.2 1845.19,-838.02 1907.44,-844 2046.71,-857.38 2207.56,-866.66 2312.69,-871.9"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2312.49,-874.34 2319.6,-872.24 2312.73,-869.45 2312.49,-874.34"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1310.78,-1015.15C1361.4,-1035.38 1423.02,-1057.82 1480.11,-1072.71 1619.2,-1109 1783.66,-1130.79 1890.68,-1142.27"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1890.22,-1144.68 1897.44,-1142.98 1890.74,-1139.81 1890.22,-1144.68"/>
 </g>
 <!-- s3&#45;&gt;entities_t -->
-<g id="edge37" class="edge">
+<g id="edge39" class="edge">
 <title>s3&#45;&gt;entities_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1674.99,-854.78C1696.1,-869.22 1720.41,-883.86 1744.42,-894 1913.84,-965.53 1967.51,-951.01 2148.95,-981 2654.91,-1064.62 2789.72,-1159 3297.74,-1089 3463.81,-1066.12 3547.91,-1110.86 3660.87,-987 3702.28,-941.59 3647.78,-899.23 3685.87,-851 3688.18,-848.06 3690.74,-845.32 3693.5,-842.76"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.05,-844.66 3698.84,-838.29 3691.9,-840.9 3695.05,-844.66"/>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-1125.77" font-family="Courier,monospace" font-size="10.00">locations + NPCs</text>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-1113.77" font-family="Courier,monospace" font-size="10.00">+ parents</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1220.45,-1017.3C1264,-1127.85 1387.91,-1388.71 1587.36,-1388.71 1587.36,-1388.71 1587.36,-1388.71 2977.02,-1388.71 3253.77,-1388.71 3335.21,-1407.95 3595.06,-1312.71 3685.56,-1279.54 3765.04,-1194.73 3805.02,-1146.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3806.72,-1147.99 3809.25,-1141.02 3802.92,-1144.9 3806.72,-1147.99"/>
+<text xml:space="preserve" text-anchor="middle" x="2621.9" y="-1403.71" font-family="Courier,monospace" font-size="10.00">locations + NPCs</text>
+<text xml:space="preserve" text-anchor="middle" x="2621.9" y="-1391.71" font-family="Courier,monospace" font-size="10.00">+ parents</text>
 </g>
 <!-- s4&#45;&gt;channel -->
-<g id="edge48" class="edge">
+<g id="edge51" class="edge">
 <title>s4&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2077.32,-719.6C2093.41,-703.44 2110.13,-685.21 2123.95,-667 2137.55,-649.09 2130.78,-636.26 2148.95,-623 2152.33,-620.54 2230.54,-604.26 2302.97,-589.58"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2303.16,-592.04 2309.54,-588.25 2302.19,-587.24 2303.16,-592.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2217.96" y="-626" font-family="Courier,monospace" font-size="10.00">edge&#45;added (mid&#45;stream)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1616.56,-934.83C1638.62,-892.16 1673.89,-837.9 1721.62,-807.71 1830.68,-738.72 2167.29,-734.24 2294.18,-710.71 2299.41,-709.74 2304.76,-708.73 2310.15,-707.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2310.47,-710.13 2316.88,-706.41 2309.55,-705.32 2310.47,-710.13"/>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-770.97" font-family="Courier,monospace" font-size="10.00">edge&#45;added (mid&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-758.97" font-family="Courier,monospace" font-size="10.00">+ placeholder endpoints</text>
 </g>
-<!-- s5 -->
+<!-- s4b -->
 <g id="node15" class="node">
-<title>s5</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2538.39,-782.04 2315.28,-782.04 2315.28,-711.96 2538.39,-711.96 2538.39,-782.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-763.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 5</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-750.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">starting_situation</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-737.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
-<text xml:space="preserve" text-anchor="middle" x="2426.83" y="-723.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.starting_situation</text>
+<title>s4b</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2106.55,-1058.15 1903.24,-1058.15 1903.24,-935.27 2106.55,-935.27 2106.55,-1058.15"/>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1039.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 4b</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1026.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entity_consolidation</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1013.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet generateObject</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-1000.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">skip path on empty pending</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-986.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">else: ghosts + facts +</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-973.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;resolved relationships</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-960.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12">created_in=&#39;stage:</text>
+<text xml:space="preserve" text-anchor="middle" x="2004.9" y="-947.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;entity_consolidation&#39;</text>
 </g>
-<!-- s4&#45;&gt;s5 -->
+<!-- s4&#45;&gt;s4b -->
 <g id="edge20" class="edge">
-<title>s4&#45;&gt;s5</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2104.72,-768.98C2163.49,-764.95 2241.53,-759.61 2305.96,-755.2"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2305.92,-757.66 2312.74,-754.74 2305.59,-752.77 2305.92,-757.66"/>
+<title>s4&#45;&gt;s4b</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1677.53,-996.71C1740.79,-996.71 1826.46,-996.71 1894.15,-996.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1893.92,-999.16 1900.92,-996.71 1893.92,-994.26 1893.92,-999.16"/>
 </g>
 <!-- s4&#45;&gt;capchk -->
-<g id="edge29" class="edge">
+<g id="edge30" class="edge">
 <title>s4&#45;&gt;capchk</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2104.86,-782.22C2243.4,-793.79 2500.59,-816.28 2541.69,-827 2615.84,-846.35 2624.69,-880.34 2699.7,-896 2782.41,-913.27 2805.34,-897.79 2889.81,-896 3035.78,-892.91 3203.65,-885.17 3313.74,-879.51"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3313.55,-881.98 3320.41,-879.17 3313.29,-877.08 3313.55,-881.98"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1677.23,-1021.04C1738.39,-1037.34 1822.03,-1058.35 1896.64,-1072.71 1992.04,-1091.06 2021.54,-1070.4 2113.15,-1102.71 2125.37,-1107.02 2126.2,-1112.7 2138.15,-1117.71 2365.03,-1212.89 3003.51,-1224.96 3243.93,-1172.71 3256.23,-1170.04 3338.69,-1135.2 3346.95,-1125.71 3372.51,-1096.32 3346.22,-1070.96 3371.95,-1041.71 3372.21,-1041.41 3372.47,-1041.12 3372.73,-1040.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3374.11,-1042.92 3377.29,-1036.23 3370.63,-1039.47 3374.11,-1042.92"/>
 </g>
 <!-- s4&#45;&gt;repair -->
-<g id="edge25" class="edge">
+<g id="edge26" class="edge">
 <title>s4&#45;&gt;repair</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2104.8,-806.68C2119.45,-811.46 2134.56,-816.09 2148.95,-820 2202.23,-834.49 2262.14,-847.25 2312.58,-857"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2312.11,-859.41 2319.45,-858.32 2313.04,-854.6 2312.11,-859.41"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1658.93,-1058.69C1678.04,-1072.53 1699.6,-1085.51 1721.62,-1093.71 1784.31,-1117.04 1806.23,-1091.72 1871.64,-1105.71 1882.46,-1108.02 1893.61,-1110.99 1904.62,-1114.32"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1903.87,-1116.65 1911.28,-1116.39 1905.32,-1111.97 1903.87,-1116.65"/>
 </g>
 <!-- s4&#45;&gt;entities_t -->
-<g id="edge38" class="edge">
+<g id="edge40" class="edge">
 <title>s4&#45;&gt;entities_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2104.88,-748.43C2304.18,-689.3 2785.02,-552 2952.82,-552 2952.82,-552 2952.82,-552 3435.3,-552 3556.43,-552 3584.24,-611.17 3660.87,-705 3679.14,-727.38 3665.65,-744.36 3685.87,-765 3689.1,-768.3 3692.63,-771.37 3696.36,-774.21"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3694.68,-776.02 3701.81,-778.05 3697.5,-772.02 3694.68,-776.02"/>
-<text xml:space="preserve" text-anchor="middle" x="2953.82" y="-556.34" font-family="Courier,monospace" font-size="10.00">relationships</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1677.14,-956.37C1783.83,-909.1 1970.41,-831.99 2138.15,-790.71 2316.77,-746.75 2370.16,-783.23 2548.89,-739.71 2616.12,-723.34 2626.79,-697.9 2694.9,-685.71 2778.07,-670.82 2800.53,-684.06 2885.01,-685.71 3044.62,-688.82 3092.21,-650.04 3243.93,-699.71 3422.87,-758.28 3492.84,-778.59 3595.06,-936.71 3630.56,-991.63 3573.01,-1036.28 3620.06,-1081.71 3648.62,-1109.28 3690.25,-1118.91 3729.11,-1120.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3728.98,-1123.21 3736.05,-1120.99 3729.14,-1118.31 3728.98,-1123.21"/>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-724.71" font-family="Courier,monospace" font-size="10.00">relationships +</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-712.71" font-family="Courier,monospace" font-size="10.00">pending phantoms</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-700.71" font-family="Courier,monospace" font-size="10.00">(worlds.entity_</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-688.71" font-family="Courier,monospace" font-size="10.00"> consolidation_pending)</text>
+</g>
+<!-- s4b&#45;&gt;channel -->
+<g id="edge52" class="edge">
+<title>s4b&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2090.28,-934.67C2179.02,-869.44 2315.4,-769.18 2386.42,-716.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2387.85,-718.96 2392.04,-712.84 2384.95,-715.02 2387.85,-718.96"/>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-934.14" font-family="Courier,monospace" font-size="10.00">entity&#45;added (ghosts,</text>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-922.14" font-family="Courier,monospace" font-size="10.00"> &#160;carries placeholderId) +</text>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-910.14" font-family="Courier,monospace" font-size="10.00">edge&#45;added (resolved)</text>
+<text xml:space="preserve" text-anchor="middle" x="2216.16" y="-898.14" font-family="Courier,monospace" font-size="10.00">(post&#45;COMMIT)</text>
+</g>
+<!-- s5 -->
+<g id="node16" class="node">
+<title>s5</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2545.59,-1018.75 2322.48,-1018.75 2322.48,-948.67 2545.59,-948.67 2545.59,-1018.75"/>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-1000.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 5</text>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-987.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">starting_situation</text>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-973.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="2434.03" y="-960.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.starting_situation</text>
+</g>
+<!-- s4b&#45;&gt;s5 -->
+<g id="edge21" class="edge">
+<title>s4b&#45;&gt;s5</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2107.12,-993.63C2168.98,-991.74 2248.41,-989.33 2313.38,-987.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2313.3,-989.8 2320.22,-987.14 2313.15,-984.91 2313.3,-989.8"/>
+</g>
+<!-- s4b&#45;&gt;capchk -->
+<g id="edge31" class="edge">
+<title>s4b&#45;&gt;capchk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2103.52,-1058.89C2187.48,-1106.37 2313.6,-1163.71 2433.03,-1163.71 2433.03,-1163.71 2433.03,-1163.71 2977.02,-1163.71 3144.6,-1163.71 3224.01,-1204.6 3346.95,-1090.71 3364.88,-1074.09 3354.19,-1058.52 3371.95,-1041.71 3372.4,-1041.28 3372.87,-1040.85 3373.33,-1040.42"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3374.49,-1042.65 3378.24,-1036.25 3371.32,-1038.92 3374.49,-1042.65"/>
+</g>
+<!-- s4b&#45;&gt;entities_t -->
+<g id="edge41" class="edge">
+<title>s4b&#45;&gt;entities_t</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2070.47,-1058.59C2091.58,-1078.05 2115.44,-1099.26 2138.15,-1117.71 2263.44,-1219.47 2271.62,-1329.71 2433.03,-1329.71 2433.03,-1329.71 2433.03,-1329.71 3308.94,-1329.71 3498.19,-1329.71 3698.18,-1206.39 3786.23,-1144.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3787.6,-1146.87 3791.91,-1140.84 3784.77,-1142.86 3787.6,-1146.87"/>
+<text xml:space="preserve" text-anchor="middle" x="2976.02" y="-1344.71" font-family="Courier,monospace" font-size="10.00">ghost entities +</text>
+<text xml:space="preserve" text-anchor="middle" x="2976.02" y="-1332.71" font-family="Courier,monospace" font-size="10.00">resolved relationships</text>
 </g>
 <!-- s6 -->
-<g id="node16" class="node">
+<g id="node17" class="node">
 <title>s6</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2889.81,-881.04 2699.7,-881.04 2699.7,-810.96 2889.81,-810.96 2889.81,-881.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-862.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 6</text>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-849.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">random_tables</text>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-836.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-822.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.random_tables</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2885.01,-1101.75 2694.9,-1101.75 2694.9,-1031.67 2885.01,-1031.67 2885.01,-1101.75"/>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-1083.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 6</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-1070.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">random_tables</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-1056.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-1043.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ worlds.random_tables</text>
 </g>
 <!-- s5&#45;&gt;s6 -->
-<g id="edge21" class="edge">
+<g id="edge22" class="edge">
 <title>s5&#45;&gt;s6</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2539.11,-781.17C2548.42,-783.87 2557.71,-786.52 2566.69,-789 2607.1,-800.18 2651.82,-811.6 2690.8,-821.26"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2689.89,-823.56 2697.27,-822.86 2691.06,-818.8 2689.89,-823.56"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2546.05,-1009.74C2590.8,-1020.24 2642.12,-1032.27 2686.03,-1042.57"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2685.28,-1044.91 2692.65,-1044.12 2686.4,-1040.14 2685.28,-1044.91"/>
 </g>
 <!-- s5&#45;&gt;capchk -->
-<g id="edge30" class="edge">
+<g id="edge32" class="edge">
 <title>s5&#45;&gt;capchk</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2538.97,-754.88C2632.88,-762.48 2770.73,-775.81 2889.81,-796 2947.42,-805.77 2960.24,-816.03 3017.82,-826 3025.15,-827.27 3193.48,-846.19 3313.6,-859.63"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3313.12,-862.04 3320.35,-860.39 3313.67,-857.17 3313.12,-862.04"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2546.12,-970.58C2702.21,-954.12 2995.2,-930.49 3243.93,-951.71 3282.86,-955.03 3324.98,-961.34 3362.84,-968.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3362.24,-970.42 3369.56,-969.25 3363.1,-965.6 3362.24,-970.42"/>
 </g>
 <!-- s5&#45;&gt;worlds -->
-<g id="edge39" class="edge">
+<g id="edge42" class="edge">
 <title>s5&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2539.03,-743.67C2581.59,-743.63 2630.51,-745.06 2674.7,-750 2771.86,-760.87 2797,-765.26 2889.81,-796 3090.66,-862.52 3116.01,-948.97 3322.74,-994 3446.08,-1020.87 3592.35,-1009.29 3686.41,-996.45"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3686.67,-998.89 3693.26,-995.5 3685.99,-994.04 3686.67,-998.89"/>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-954.77" font-family="Courier,monospace" font-size="10.00">starting_situation</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2476.78,-948.07C2525.89,-907.89 2611.37,-843.29 2694.9,-805.71 2811.93,-753.06 2846.7,-735.71 2975.02,-735.71 2975.02,-735.71 2975.02,-735.71 3484.5,-735.71 3607.16,-735.71 3638.97,-794.76 3710.07,-894.71 3733.39,-927.49 3708.63,-951.39 3735.07,-981.71 3737.81,-984.85 3740.83,-987.77 3744.05,-990.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3742.43,-992.34 3749.47,-994.67 3745.42,-988.46 3742.43,-992.34"/>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-738.71" font-family="Courier,monospace" font-size="10.00">starting_situation</text>
 </g>
 <!-- s7 -->
-<g id="node17" class="node">
+<g id="node18" class="node">
 <title>s7</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3194.73,-788.04 3017.82,-788.04 3017.82,-651.96 3194.73,-651.96 3194.73,-788.04"/>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-769.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 7</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-756.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">coherence_pass</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-743.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-729.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">patch types:</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-716.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;fix_fact / fix_prose</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-703.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;fix_relationship</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-690.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;rename_entity</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-677.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;delete_relationship</text>
-<text xml:space="preserve" text-anchor="middle" x="3106.28" y="-663.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">unknown UUIDs: skip</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3243.93,-1102.75 3067.03,-1102.75 3067.03,-966.67 3243.93,-966.67 3243.93,-1102.75"/>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-1084.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage 7</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-1071.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12">coherence_pass</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-1057.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Sonnet (non&#45;stream)</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-1044.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">patch types:</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-1031.41" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;fix_fact / fix_prose</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-1018.21" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;fix_relationship</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-1005.01" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;rename_entity</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-991.81" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;delete_relationship</text>
+<text xml:space="preserve" text-anchor="middle" x="3155.48" y="-978.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">unknown UUIDs: skip</text>
 </g>
 <!-- s6&#45;&gt;s7 -->
-<g id="edge22" class="edge">
+<g id="edge23" class="edge">
 <title>s6&#45;&gt;s7</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2883.63,-810.23C2922.83,-794.27 2969.13,-775.42 3009.25,-759.09"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3009.95,-761.45 3015.51,-756.54 3008.1,-756.91 3009.95,-761.45"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2885.52,-1058.38C2938.43,-1053.73 3004.26,-1047.93 3057.54,-1043.24"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3057.76,-1045.68 3064.51,-1042.63 3057.33,-1040.8 3057.76,-1045.68"/>
 </g>
 <!-- s6&#45;&gt;capchk -->
-<g id="edge31" class="edge">
+<g id="edge33" class="edge">
 <title>s6&#45;&gt;capchk</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2890.3,-850.91C2929.72,-852.9 2975.98,-855.16 3017.82,-857 3117.42,-861.38 3230.48,-865.7 3313.49,-868.74"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3313.29,-871.18 3320.37,-868.99 3313.46,-866.28 3313.29,-871.18"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2885.39,-1097.71C2978.15,-1123.45 3122.97,-1150.91 3243.93,-1117.71 3307.74,-1100.19 3313.15,-1072.06 3371.95,-1041.71 3373.69,-1040.81 3375.45,-1039.91 3377.23,-1039.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3378.32,-1041.21 3383.5,-1035.9 3376.14,-1036.82 3378.32,-1041.21"/>
 </g>
 <!-- s6&#45;&gt;worlds -->
-<g id="edge40" class="edge">
+<g id="edge43" class="edge">
 <title>s6&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2820.53,-881.55C2857.1,-930.55 2930.68,-1016.68 3017.82,-1051 3097.61,-1082.42 3616.46,-1070.95 3660.87,-1051 3676.08,-1044.16 3672.37,-1032.81 3685.87,-1023 3690.53,-1019.6 3695.51,-1016.4 3700.66,-1013.38"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3701.8,-1015.55 3706.71,-1009.99 3699.4,-1011.28 3701.8,-1015.55"/>
-<text xml:space="preserve" text-anchor="middle" x="3258.73" y="-1073.48" font-family="Courier,monospace" font-size="10.00">random_tables</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2852.49,-1102.41C2870.48,-1111.24 2890.54,-1119.63 2910.01,-1124.71 2977.65,-1142.36 2997.16,-1131.71 3067.03,-1133.71 3354.3,-1141.93 3430.52,-1132.37 3710.07,-1065.71 3721.21,-1063.05 3732.77,-1059.82 3744.15,-1056.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3744.7,-1058.75 3750.66,-1054.33 3743.25,-1054.07 3744.7,-1058.75"/>
+<text xml:space="preserve" text-anchor="middle" x="3307.94" y="-1138.5" font-family="Courier,monospace" font-size="10.00">random_tables</text>
 </g>
 <!-- s7&#45;&gt;channel -->
-<g id="edge49" class="edge">
+<g id="edge53" class="edge">
 <title>s7&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3017.08,-686.76C2978.42,-673.07 2932.28,-657.9 2889.81,-647 2776.38,-617.9 2644.66,-595.62 2550.96,-581.68"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2551.38,-579.27 2544.09,-580.67 2550.66,-584.11 2551.38,-579.27"/>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-674" font-family="Courier,monospace" font-size="10.00">entity&#45;updated /</text>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-662" font-family="Courier,monospace" font-size="10.00">edge&#45;removed / edge&#45;added</text>
-<text xml:space="preserve" text-anchor="middle" x="2794.76" y="-650" font-family="Courier,monospace" font-size="10.00">(post&#45;COMMIT)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3066.32,-991.57C2920.59,-920.27 2632.63,-779.39 2502.13,-715.54"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2503.52,-713.49 2496.15,-712.61 2501.36,-717.89 2503.52,-713.49"/>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-926.44" font-family="Courier,monospace" font-size="10.00">entity&#45;updated /</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-914.44" font-family="Courier,monospace" font-size="10.00">edge&#45;removed / edge&#45;added</text>
+<text xml:space="preserve" text-anchor="middle" x="2789.96" y="-902.44" font-family="Courier,monospace" font-size="10.00">(post&#45;COMMIT)</text>
 </g>
 <!-- s7&#45;&gt;capchk -->
-<g id="edge32" class="edge">
+<g id="edge34" class="edge">
 <title>s7&#45;&gt;capchk</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3191.16,-788.69C3200.44,-794.19 3210.04,-799.11 3219.73,-803 3252.17,-816.02 3264.07,-803.61 3297.74,-813 3311.62,-816.87 3325.92,-821.92 3339.79,-827.45"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3338.8,-829.7 3346.21,-830.07 3340.65,-825.16 3338.8,-829.7"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3244.28,-1023.4C3280.81,-1018.69 3323.81,-1013.15 3363.14,-1008.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3363.04,-1010.57 3369.67,-1007.24 3362.42,-1005.71 3363.04,-1010.57"/>
 </g>
 <!-- s7&#45;&gt;pipeline_runs -->
-<g id="edge44" class="edge">
+<g id="edge47" class="edge">
 <title>s7&#45;&gt;pipeline_runs</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3195.24,-739.47C3203.5,-741.09 3211.76,-742.63 3219.73,-744 3414.61,-777.55 3499.33,-687.93 3660.87,-802 3680.84,-816.1 3668.1,-834.2 3685.87,-851 3689.31,-854.25 3693.03,-857.29 3696.95,-860.11"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.52,-862.1 3702.7,-863.96 3698.24,-858.03 3695.52,-862.1"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3244.62,-988.36C3282.87,-969.9 3328.73,-949.95 3371.95,-936.71 3478.88,-903.95 3508.61,-904.07 3620.06,-894.71 3659.92,-891.36 3670.66,-887.84 3710.07,-894.71 3725.27,-897.36 3741.08,-901.73 3756.08,-906.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3755.19,-909 3762.6,-908.95 3756.78,-904.36 3755.19,-909"/>
 </g>
 <!-- s7&#45;&gt;worlds -->
-<g id="edge42" class="edge">
+<g id="edge45" class="edge">
 <title>s7&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3195.31,-697.87C3317.04,-673.07 3535.83,-650.3 3660.87,-768 3716.15,-820.04 3639.86,-876.59 3685.87,-937 3688.13,-939.98 3690.65,-942.75 3693.36,-945.34"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3691.74,-947.17 3698.65,-949.86 3694.92,-943.44 3691.74,-947.17"/>
-<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-703.4" font-family="Courier,monospace" font-size="10.00">status=complete</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3244.48,-1041.72C3283.5,-1044.5 3329.99,-1047.35 3371.95,-1048.71 3471.06,-1051.92 3496.02,-1053.7 3595.06,-1048.71 3641.4,-1046.37 3692.64,-1041.48 3735.62,-1036.72"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3735.89,-1039.16 3742.58,-1035.95 3735.35,-1034.29 3735.89,-1039.16"/>
+<text xml:space="preserve" text-anchor="middle" x="3483.5" y="-1054.82" font-family="Courier,monospace" font-size="10.00">status=complete</text>
 </g>
 <!-- s7&#45;&gt;entities_t -->
-<g id="edge41" class="edge">
+<g id="edge44" class="edge">
 <title>s7&#45;&gt;entities_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3157.28,-788.61C3196.48,-836.69 3255.52,-897.74 3322.74,-929 3391.06,-960.77 3601.64,-1000.57 3660.87,-954 3697.9,-924.88 3655.64,-887.14 3685.87,-851 3688.47,-847.89 3691.34,-844.99 3694.42,-842.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3695.64,-844.46 3699.59,-838.18 3692.59,-840.63 3695.64,-844.46"/>
-<text xml:space="preserve" text-anchor="middle" x="3434.3" y="-977.89" font-family="Courier,monospace" font-size="10.00">patches (best&#45;effort)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3244.5,-1064.21C3336.81,-1093.42 3486.72,-1135.98 3620.06,-1151.71 3659.79,-1156.39 3670.59,-1158.15 3710.07,-1151.71 3723.17,-1149.57 3736.75,-1146.23 3749.89,-1142.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3750.29,-1144.8 3756.27,-1140.41 3748.86,-1140.11 3750.29,-1144.8"/>
+<text xml:space="preserve" text-anchor="middle" x="3483.5" y="-1151" font-family="Courier,monospace" font-size="10.00">patches (best&#45;effort)</text>
 </g>
 <!-- capchk&#45;&gt;worlds -->
-<g id="edge34" class="edge">
+<g id="edge36" class="edge">
 <title>capchk&#45;&gt;worlds</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3546.34,-907.15C3591.55,-921.05 3643.32,-936.97 3686.9,-950.38"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3686.08,-952.69 3693.49,-952.4 3687.52,-948 3686.08,-952.69"/>
-<text xml:space="preserve" text-anchor="middle" x="3615.86" y="-945.34" font-family="Courier,monospace" font-size="10.00">status=failed</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3595.62,-985.38C3632.22,-984.65 3673.02,-985.65 3710.07,-990.71 3718.6,-991.87 3727.37,-993.47 3736.11,-995.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3735.33,-997.68 3742.7,-996.82 3736.41,-992.9 3735.33,-997.68"/>
+<text xml:space="preserve" text-anchor="middle" x="3665.07" y="-993.71" font-family="Courier,monospace" font-size="10.00">status=failed</text>
 </g>
 <!-- capchk&#45;&gt;ledger -->
-<g id="edge33" class="edge">
+<g id="edge35" class="edge">
 <title>capchk&#45;&gt;ledger</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3532.67,-830.74C3588.32,-806.59 3657.02,-776.77 3708.4,-754.47"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3709.06,-756.85 3714.51,-751.82 3707.11,-752.36 3709.06,-756.85"/>
-<text xml:space="preserve" text-anchor="middle" x="3615.86" y="-826.02" font-family="Courier,monospace" font-size="10.00">cost_cap_refund</text>
-<text xml:space="preserve" text-anchor="middle" x="3615.86" y="-814.02" font-family="Courier,monospace" font-size="10.00">+1 credit</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M3589.84,-950.32C3641.94,-929.36 3703.82,-904.46 3752.04,-885.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3752.7,-887.43 3758.28,-882.54 3750.87,-882.88 3752.7,-887.43"/>
+<text xml:space="preserve" text-anchor="middle" x="3665.07" y="-950.25" font-family="Courier,monospace" font-size="10.00">cost_cap_refund</text>
+<text xml:space="preserve" text-anchor="middle" x="3665.07" y="-938.25" font-family="Courier,monospace" font-size="10.00">+1 credit</text>
 </g>
 </g>
 </svg>
@@ -671,8 +722,13 @@
   for owners: <code>concept_intake</code> auto-names the campaign from the LLM-synthesized world
   name, and this is how the owner overrides that default.
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the owner-only known-tier view of
-  the persisted world, fetchable once the new <code>world_snapshot_ready</code> phase has fired
-  (after stage 4 commits).
+  the persisted world, fetchable once stage 4 (<code>entity_relationships</code>) commits — the
+  endpoint's pre-readiness gate keys on that stage's <code>completed</code> row, and the SSE phase
+  derivation surfaces <code>world_snapshot_ready</code> from the same condition. The worker's
+  publish of the <code>world_snapshot_ready</code> phase event itself fires one stage later, after
+  <code>entity_consolidation</code> commits, so a reconnecting subscriber sees the signal once the
+  phantom-reference reconciliation has fully landed; in either case the snapshot is safe to fetch
+  from stage 4 onward.
 </p>
 
 <aside class="wiki-rationale">
@@ -992,13 +1048,18 @@
   <a href="./worker.html">worker service</a> at concurrency 3. <code>WORLD_GEN_STAGES</code> is the
   ordered tuple <code>concept_intake</code>, <code>vocabulary_intake</code>,
   <code>world_and_factions</code>, <code>locations_and_npcs</code>,
-  <code>entity_relationships</code>, <code>starting_situation</code>, <code>random_tables</code>,
-  <code>coherence_pass</code>. The list grew by one entry — <code>vocabulary_intake</code> is the
-  new stage 1.5 that generates the per-world
+  <code>entity_relationships</code>, <code>entity_consolidation</code>,
+  <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>. The list
+  carries two pre-passes plus one resolution stage on top of the original seven prose-bearing
+  passes: <code>vocabulary_intake</code> is stage 1.5 — it generates the per-world
   <a href="#vocabulary-registry">vocabulary registry</a> before any downstream prose-bearing stage
-  runs. Counting prose continues to call the streaming Opus + Sonnet block "the seven stages"
-  because <code>vocabulary_intake</code> is a structured pre-pass with no entity emission; section
-  headings and the cost-cap discussion treat it as a cheap setup call. Every iteration enforces the
+  runs — and <code>entity_consolidation</code> is stage 4b, sitting between
+  <code>entity_relationships</code> and <code>starting_situation</code>. Stage 4b materializes any
+  phantom entities stage 4 declared as placeholders (see
+  <a href="#stage-4b-phantom-reference-reconciliation">phantom-reference reconciliation</a>); it
+  short-circuits to a zero-cost skip when stage 4 didn't declare any. Section headings and the
+  cost-cap discussion treat <code>vocabulary_intake</code> and <code>entity_consolidation</code> as
+  structured setup / resolution calls rather than core prose stages. Every iteration enforces the
   same per-stage invariant:
 </p>
 
@@ -1177,12 +1238,32 @@
       <td>streaming</td>
       <td>
         <code>relationships</code> rows + (occasional) <code>entity_hierarchy</code> stragglers
-        stage 3 missed
+        stage 3 missed; placeholder-endpoint rows and their declarations land in
+        <code>worlds.entity_consolidation_pending</code> for stage 4b
       </td>
       <td>
         <code>edge-added</code> per relationship as <code>from</code>, <code>to</code>, and
-        <code>relationship</code> close together; no <code>finalized</code> for edges (edges have no
-        client-visible synth-to-real-id mapping)
+        <code>relationship</code> close together (endpoints may be placeholder strings of the form
+        <code>new-NNN</code> when stage 4 deferred a phantom for stage 4b); no
+        <code>finalized</code> for edges (edges have no client-visible synth-to-real-id mapping)
+      </td>
+    </tr>
+    <tr>
+      <td><code>entity_consolidation</code></td>
+      <td>Sonnet (non-streaming, generateObject)</td>
+      <td>non-streaming</td>
+      <td>
+        ghost <code>entities</code> with <code>created_in='stage:entity_consolidation'</code> +
+        their <code>prose_kernels</code>, <code>facts</code>, and (locations only)
+        <code>entity_hierarchy</code> rows; resolved placeholder relationships persist to
+        <code>relationships</code>; the
+        <code>worlds.entity_consolidation_pending</code> column clears back to its empty default.
+        Skip-path with zero cost when stage 4 declared no phantoms.
+      </td>
+      <td>
+        post-COMMIT: <code>entity-added</code> per ghost carrying <code>placeholderId</code> so
+        client buffers reconcile, plus <code>edge-added</code> per resolved relationship (endpoints
+        are real UUIDs by the time these publish)
       </td>
     </tr>
     <tr>
@@ -1410,8 +1491,119 @@
   <code>entity_hierarchy</code> rows are not deleted on retry — the schema's
   <code>UNIQUE(child_entity_id)</code> means a re-INSERT of the same child would conflict, so stage
   4's straggler path pre-filters against the existing hierarchy table and skips already-parented
-  children (the "stage 3 wins" collision rule).
+  children (the "stage 3 wins" collision rule). The same wipe extends to any prior stage-4b ghosts:
+  a retry of stage 4 cascade-deletes rows where
+  <code>created_in = 'stage:entity_consolidation'</code>, so a fresh declaration set never pairs
+  with an orphan ghost.
 </p>
+
+<h3 id="per-item-drop-on-fail-validation">Per-item drop-on-fail validation</h3>
+
+<p>
+  The streaming extractor doesn't trust the LLM to produce a clean array. A single malformed entry
+  in the middle of an 80-item <code>relationships</code> stream — a UUID with a typo, a fact whose
+  <code>content</code> trips the min-length bound — would otherwise either propagate downstream and
+  crash the INSERT or fail the end-of-stream Zod sweep and force the whole stage into the repair
+  chain. Both outcomes are wasteful: most entries in the stream are fine. The extractor's
+  <code>ArrayConfig</code> takes an optional per-item <code>sub_schema</code>; when set, every
+  closed entry is validated against it before the entity / edge event publishes. Failures are
+  <code>pino.warn</code>-logged with the partial JSON and the Zod issues, dropped from the wire
+  feed, and removed from the survivor set the handler reads at end-of-stream. The end-of-stream Zod
+  sweep + repair chain still fire as the catastrophic-failure safety net for shape violations the
+  per-item gate doesn't catch.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One bad row no longer poisons the whole stream</strong> — the previous shape (end-of-stream
+  Zod only) meant a single LLM typo on row 47 of 60 either crashed the INSERT pass or triggered a
+  full-tree repair. The per-item gate is cheap (one safeParse per closed entry) and surgical: rows 1
+  through 46 stream and persist exactly as if row 47 had never existed. Stages 2, 3, and 4 each
+  export named per-item schemas (<code>regionItemSchema</code>, <code>factionItemSchema</code>,
+  <code>locationItemSchema</code>, <code>npcItemSchema</code>, <code>relationshipItemSchema</code>,
+  <code>hierarchyStragglerItemSchema</code>) that the handler passes into the array config.
+</aside>
+
+<h3 id="stage-4b-phantom-reference-reconciliation">
+  Stage 4b: phantom-reference reconciliation
+</h3>
+
+<p>
+  Stage 4's schema accepts two endpoint flavors. Real-UUID endpoints render to the
+  <code>relationships</code> table immediately. <strong>Placeholder endpoints</strong> — strings
+  matching the pattern <code>new-NNN</code>, e.g. <code>new-001</code> — name a phantom entity the
+  LLM intends to exist but hasn't yet placed in the inventory. Phantom entities arrive declared in
+  a sibling <code>new_entity_declarations</code> array on the same stage-4 tree:
+  <code>{ placeholder_id, name, entity_type }</code> per phantom. The stage 4 handler partitions the
+  LLM tree into three buckets — real-endpoint rows (persist now), placeholder-endpoint rows
+  paired with valid declarations (deferred), and dropped rows (orphan placeholders without a
+  matching declaration, or hallucinated UUIDs on the real-endpoint side; both WARN-logged, never
+  thrown). The deferred rows + their declarations land in <code>worlds.entity_consolidation_pending</code>
+  — a JSONB column added in migration 017, shape
+  <code>{ declarations: [...], relationships: [...] }</code>, pinned by a CHECK constraint.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two endpoint flavors instead of forcing fully-resolved UUIDs</strong> — pinning stage 4
+  to only emit relationships among already-existing entities meant the LLM frequently invented a
+  plausible name for a phantom ("the smugglers' guild") and either skipped the relationship
+  entirely or hallucinated a UUID. Both outcomes lose narrative signal: a rich tension the LLM saw
+  in the world doesn't make it into <code>relationships</code>. The placeholder mechanism lets the
+  LLM declare the missing entity inline and connect it; stage 4b then writes the entity into
+  existence with the same prose-and-facts depth as stage-2/3 entities, and the deferred relationship
+  resolves to a real UUID once the ghost lands.
+</aside>
+
+<p>
+  Stage 4b (<code>entity_consolidation</code>) is non-streaming Sonnet under the same
+  <code>StageDispatchResult</code> contract as every other handler. On entry it reads
+  <code>entity_consolidation_pending</code>. If <code>declarations</code> is empty (most worlds
+  finish stage 4 with no phantoms), the stage returns
+  <code>{ costUsd: 0, finalizedEvents: [], capExhausted: false }</code> immediately — a zero-cost
+  skip. When phantoms ARE present, the handler:
+</p>
+
+<ol>
+  <li>
+    Idempotency-wipes prior stage-4b ghosts (<code
+      >DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'</code
+    >). CASCADE FKs clear their facts / prose / hierarchy / relationships rows.
+  </li>
+  <li>
+    Loads the real entity inventory + assembles a per-phantom prompt block. Each phantom is rendered
+    with its incoming relationships from the pending state, so the LLM has structural anchors for
+    what this entity is and does.
+  </li>
+  <li>
+    Calls Sonnet <code>generateObject</code> against <code>EntityConsolidationSchema</code> —
+    <code>ghost_entities[]</code> with the same prose (40–2400 chars), facts (2–12), and access-level
+    depth as stage 2/3 entities.
+  </li>
+  <li>
+    Reconciles vs declarations: ghosts whose <code>placeholder_id</code> wasn't declared are dropped
+    (logged, not failed). Surviving ghosts persist with
+    <code>created_in='stage:entity_consolidation'</code>, their facts, prose, and a hierarchy row
+    for any location ghost with a declared parent. The handler builds a placeholder-id → real-UUID
+    map.
+  </li>
+  <li>
+    Resolves the deferred placeholder relationships using the map and persists them via
+    <code>relationships.insertMany</code>. Both endpoints are real UUIDs by the time the rows land.
+  </li>
+  <li>
+    Clears <code>worlds.entity_consolidation_pending</code> back to the empty default. Publishes
+    one post-COMMIT <code>entity-added</code> per ghost (carrying the <code>placeholderId</code>
+    field) and one <code>edge-added</code> per resolved relationship.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>No semantic audit on ghost prose</strong> — the spec considered a Haiku post-pass that
+  would audit ghost prose for prose-only references to additional missing entities. Dropped:
+  downstream stages (starting situation, random tables, coherence) don't recurse on prose-only
+  references, so a ghost mentioning a tavern the players never visit doesn't poison anything. The
+  audit would have cost Haiku tokens to detect a class of errors that has no downstream blast
+  radius.
+</aside>
 
 <h3 id="the-structured-output-repair-chain">The structured-output repair chain</h3>
 
@@ -1582,9 +1774,12 @@
         Stage 2/3 entity entries close in the stream (post-myth-exac: identity-only payload —
         <code>{ synthKey, kind, name }</code>). Only fires for entries whose
         <code>access_level === 'known'</code>, unless the world's
-        <code>dev_bypass_access_filter</code> flag is set.
+        <code>dev_bypass_access_filter</code> flag is set. Stage 4b adds a post-COMMIT emit per
+        ghost entity carrying an optional <code>placeholderId</code> field — the same
+        <code>new-NNN</code> string stage 4 used in its edge endpoints — so a client's buffered
+        placeholder edges can resolve.
       </td>
-      <td>Streaming extractor (stages 2/3)</td>
+      <td>Streaming extractor (stages 2/3); stage 4b (post-COMMIT)</td>
     </tr>
     <tr>
       <td><code>entity-updated</code></td>
@@ -1608,11 +1803,14 @@
       <td><code>edge-added</code></td>
       <td>
         Stage 4 as each relationship entry closes (identity-only —
-        <code>{ synthKey, from, to, relationship }</code>); stage 7 post-COMMIT for
+        <code>{ synthKey, from, to, relationship }</code>; <code>from</code> and <code>to</code>
+        may be <code>new-NNN</code> placeholder strings when stage 4 deferred a phantom for stage
+        4b). Stage 4b publishes one edge-added per resolved placeholder relationship — with
+        endpoints already mapped to real UUIDs. Stage 7 post-COMMIT for
         <code>fix_relationship</code> replacements. Edges only emit when both endpoints are
         known-tier entities in the world's tier map (or bypass is on).
       </td>
-      <td>Streaming extractor (stage 4); stage 7</td>
+      <td>Streaming extractor (stage 4); stage 4b; stage 7</td>
     </tr>
     <tr>
       <td><code>edge-removed</code></td>
@@ -1646,17 +1844,23 @@
   (<code>coherence_pass</code>) edits prose and renames entities, so the persisted state isn't fully
   settled until it finishes; and the dev tool's wiki-style inspector wants the persisted world the
   moment it's coherent — well before stages 5/6/7 add their finishing touches. Both pull in the same
-  direction: the pipeline now emits a <code>world_snapshot_ready</code> phase the moment stage 4
-  (<code>entity_relationships</code>) commits.
+  direction: the snapshot endpoint is fetchable the moment stage 4
+  (<code>entity_relationships</code>) commits, and the SSE stream surfaces the
+  <code>world_snapshot_ready</code> phase from that condition.
 </p>
 
 <p>
   <code>derivePhase</code> in <code>backend/src/sse/derive-phase.ts</code> returns
   <code>world_snapshot_ready</code> when the world is still <code>generating</code> but a stage-4
-  <code>completed</code> row exists; the worker publishes the phase event directly from
-  <code>world-gen-processor.ts</code> immediately after stage 4 commits (and on idempotent re-entry
-  past a completed stage-4 row, so a reconnecting subscriber catches up). Stages 5 + 6 + 7 then
-  continue under this phase. When stage 7 commits and <code>worlds.status</code> flips to
+  <code>completed</code> row exists; the route handler's initial-frame SSE snapshot uses this
+  function, so a connecting subscriber sees the right phase even mid-flight. The worker's published
+  <code>phase</code> event for <code>world_snapshot_ready</code> fires one stage later, after
+  <code>entity_consolidation</code> (stage 4b) commits — that's the boundary where any deferred
+  phantom relationships have been resolved into real rows, so the snapshot is the fully-coherent
+  entity graph rather than a stage-4 view that's still carrying placeholder-endpoint edges in
+  worlds.entity_consolidation_pending. The worker also re-publishes the phase event on idempotent
+  re-entry past a completed stage-4b row, so a reconnecting subscriber catches up. Stages 5 + 6 + 7
+  then continue under this phase. When stage 7 commits and <code>worlds.status</code> flips to
   <code>complete</code>, the phase advances to <code>world_ready</code>; if the cost cap fires the
   world ends at <code>complete</code> (stage 7's cap-fire exception) or <code>failed</code> (any
   earlier stage).
@@ -1665,7 +1869,10 @@
 <p>
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is owner-only,
   rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the pre-readiness
-  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes.
+  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes —
+  stage 4 commit is the gate, not stage 4b, because the entity / relationship tables are coherent
+  at that point even when phantom reconciliation hasn't run yet (the snapshot read simply doesn't
+  surface phantom rows that don't exist).
   The response is a <code>WorldSnapshot</code>: a <code>WorldSummary</code> projection of the worlds
   row, the entities, their prose kernels and facts, the relationships among them, the entity
   hierarchy rows for resolved parents, and stat blocks for entities that have them. Seven read
@@ -1816,7 +2023,8 @@
       <td><code>world_snapshot_ready</code></td>
       <td>
         <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>. Stage 4 has committed
-        (the snapshot is fetchable) but stages 5–7 are still running; from the resume-policy
+        (the snapshot is fetchable) but later stages — including stage 4b
+        <code>entity_consolidation</code> and stages 5–7 — are still running; from the resume-policy
         perspective the job is still in flight.
       </td>
     </tr>
@@ -2146,7 +2354,8 @@
   <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>,
   <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>,
   <code>backend/migrations/012_credit_ledger_admin_source.sql</code>,
-  <code>backend/migrations/014_access_tier_rework.sql</code>. Design specs:
+  <code>backend/migrations/014_access_tier_rework.sql</code>,
+  <code>backend/migrations/017_entity_consolidation.sql</code>. Design specs:
   <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>,
   <code>docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md</code>,
   <code>docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md</code>;
@@ -2157,7 +2366,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#per-item-drop-on-fail-validation">Per-item drop-on-fail validation</a></li><li style="padding-left:12px"><a href="#stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -56,7 +56,8 @@ digraph world_gen {
     s1     [label="stage 1\nconcept_intake\nSonnet (non-stream)\npaint-job validator\n→ worlds.tone/themes/era…"];
     s2     [label="stage 2\nworld_and_factions\nOpus streaming\nregions + factions\n→ entities + prose_kernels + facts\n→ worlds.world_overview"];
     s3     [label="stage 3\nlocations_and_npcs\nOpus streaming\n3-pass parent resolver\n→ entities + prose + facts\n+ entity_hierarchy"];
-    s4     [label="stage 4\nentity_relationships\nSonnet streaming\ndeleteByWorld on retry\nUUID pre-filter for\nhallucinated refs\n→ relationships"];
+    s4     [label="stage 4\nentity_relationships\nSonnet streaming\ndeleteByWorld on retry\nUUID pre-filter +\nplaceholder partition\n→ relationships\n+ pending phantoms"];
+    s4b    [label="stage 4b\nentity_consolidation\nSonnet generateObject\nskip path on empty pending\nelse: ghosts + facts +\n  resolved relationships\ncreated_in='stage:\n  entity_consolidation'"];
     s5     [label="stage 5\nstarting_situation\nSonnet (non-stream)\n→ worlds.starting_situation"];
     s6     [label="stage 6\nrandom_tables\nSonnet (non-stream)\n→ worlds.random_tables"];
     s7     [label="stage 7\ncoherence_pass\nSonnet (non-stream)\npatch types:\n  fix_fact / fix_prose\n  fix_relationship\n  rename_entity\n  delete_relationship\nunknown UUIDs: skip"];
@@ -98,7 +99,8 @@ digraph world_gen {
   s1     -> s2;
   s2     -> s3;
   s3     -> s4;
-  s4     -> s5;
+  s4     -> s4b;
+  s4b    -> s5;
   s5     -> s6;
   s6     -> s7;
 
@@ -112,6 +114,7 @@ digraph world_gen {
   s2     -> capchk [style=dotted];
   s3     -> capchk [style=dotted];
   s4     -> capchk [style=dotted];
+  s4b    -> capchk [style=dotted];
   s5     -> capchk [style=dotted];
   s6     -> capchk [style=dotted];
   s7     -> capchk [style=dotted];
@@ -122,7 +125,8 @@ digraph world_gen {
   s1     -> worlds [label="UPDATE\ntone/themes/era…", style=dotted];
   s2     -> entities_t [label="regions + factions", style=dotted];
   s3     -> entities_t [label="locations + NPCs\n+ parents", style=dotted];
-  s4     -> entities_t [label="relationships", style=dotted];
+  s4     -> entities_t [label="relationships +\npending phantoms\n(worlds.entity_\n consolidation_pending)", style=dotted];
+  s4b    -> entities_t [label="ghost entities +\nresolved relationships", style=dotted];
   s5     -> worlds [label="starting_situation", style=dotted];
   s6     -> worlds [label="random_tables", style=dotted];
   s7     -> entities_t [label="patches (best-effort)", style=dotted];
@@ -141,6 +145,7 @@ digraph world_gen {
   proc   -> channel [label="phase / stage-* /\ncost-update / stage-failed", style=dashed];
   s2     -> channel [label="entity-added / -updated\n(mid-stream)\nfinalized (post-COMMIT)", style=dashed];
   s3     -> channel [label="entity-added / -updated\nfinalized\nentity-updated\n  {parent_location: null}", style=dashed];
-  s4     -> channel [label="edge-added (mid-stream)", style=dashed];
+  s4     -> channel [label="edge-added (mid-stream)\n+ placeholder endpoints", style=dashed];
+  s4b    -> channel [label="entity-added (ghosts,\n  carries placeholderId) +\nedge-added (resolved)\n(post-COMMIT)", style=dashed];
   s7     -> channel [label="entity-updated /\nedge-removed / edge-added\n(post-COMMIT)", style=dashed];
 }

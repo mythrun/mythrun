@@ -392,9 +392,15 @@
       <td><code>world_snapshot_ready</code></td>
       <td>
         <code>worlds.status = 'generating'</code> AND stage 4 (<code>entity_relationships</code>)
-        has a <code>completed</code> latest attempt. Stages 5–7 may still be running. The myth-exac
-        snapshot endpoint becomes fetchable in this phase; the SSE client uses the signal to fire
-        its initial <code>GET /world-snapshot</code>.
+        has a <code>completed</code> latest attempt. Stage 4b (<code>entity_consolidation</code>)
+        and stages 5–7 may still be running. The myth-exac snapshot endpoint becomes fetchable in
+        this phase; the SSE client uses the signal to fire its initial
+        <code>GET /world-snapshot</code>. <code>derivePhase</code> surfaces this state from the
+        stage-4 commit, so the route handler's initial-frame snapshot reports it immediately. The
+        worker's published <code>phase</code> event for <code>world_snapshot_ready</code> fires
+        one stage later — after stage 4b commits — so reconnecting subscribers see the signal once
+        the phantom-reference reconciliation has fully landed (see
+        <a href="./world-gen.html#stage-4b-phantom-reference-reconciliation">world-gen / stage 4b</a>).
       </td>
     </tr>
     <tr>

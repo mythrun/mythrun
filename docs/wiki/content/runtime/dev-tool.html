@@ -19,8 +19,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:155ee778efa53deb0cba3146615c62ed2a53b264b74c5dc8cbb5688f216d0dbe -->
-<!-- last-ticket: myth-exac -->
+<!-- source-hash: sha256:89e78b06448800092a25a2887b89afb02c71e1e92ee8fa4cf5d5e5e0e4bd1113 -->
+<!-- last-ticket: myth-tt2g -->
 
 <h1>Dev tool</h1>
 
@@ -188,11 +188,57 @@
 </p>
 
 <p>
-  Edges aren't rendered as rows; the inventory tracks a simple
-  <code>edgeCount</code> that <code>edge-added</code> increments and
-  <code>edge-removed</code> decrements, surfaced as <code>N entities • M edges</code> in the summary
-  line. Visualizing the graph itself is out of scope; the count is what's useful at the wire-debug
-  level.
+  Edges aren't rendered as rows; the inventory tracks an <code>edgeCount</code> surfaced as
+  <code>N entities • M edges</code> in the summary line. <code>edgeCount</code> delegates to the
+  placeholder-buffer reducer described below — only fully-reconciled edges count. Visualizing the
+  graph itself is out of scope; the count is what's useful at the wire-debug level.
+</p>
+
+<h3>The placeholder edge buffer</h3>
+
+<p>
+  Stage 4 (<a href="./world-gen.html#stage-4b-phantom-reference-reconciliation"
+    >entity_relationships</a
+  >) emits <code>edge-added</code> events whose <code>from</code> or <code>to</code> may carry a
+  placeholder string of the form <code>new-NNN</code> in place of a real UUID — the LLM declared a
+  phantom entity inline and the relationship references it. Stage 4b
+  (<code>entity_consolidation</code>) later emits an <code>entity-added</code> for each ghost
+  carrying the same string in a new optional <code>placeholderId</code> field; that's the
+  reconciliation key.
+</p>
+
+<p>
+  <code>derivePlaceholderBuffer</code> is the pure reducer that holds the two states. It replays the
+  chronological event log into two maps: <code>placeholderId → synthKey</code> (populated by
+  ghost-tier <code>entity-added</code> events) and <code>synthKey → edge payload</code> (populated
+  by every <code>edge-added</code>, dropped by <code>edge-removed</code>). At the end of the replay
+  it walks the edges in insertion order. An edge whose endpoints are both real UUIDs (or both
+  resolved placeholders) joins the <code>rendered</code> list. An edge with one or more unresolved
+  placeholder endpoints stays in the buffer and contributes to <code>bufferedCount</code>. The
+  inventory summary's edge count is <code>rendered.length</code>; the buffered tier is invisible in
+  the count but still inspectable through the raw event log (each buffered edge's
+  <code>edge-added</code> entry is in the chronological log like any other event).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Buffer client-side, not server-side</strong> — the alternative is for stage 4b to
+  back-fill the deferred edges on the wire as <code>edge-removed</code> + <code>edge-added</code>
+  pairs once the ghosts persist. That would double the event count and force the server to remember
+  every placeholder-tagged edge it emitted, which is a stateful contract the channel doesn't
+  otherwise have. Buffering on the client is one reducer (Phase 5.3 of myth-tt2g, named
+  <code>derivePlaceholderBuffer</code>) that re-runs over the log on every render — cheap, pure,
+  reversible. The contract grows by one optional field (<code>placeholderId</code>) and one new
+  endpoint flavor (the <code>new-NNN</code> string), neither of which breaks existing consumers that
+  ignore them.
+</aside>
+
+<p>
+  Reconciliation order doesn't matter: the edge can arrive before or after the ghost, since the
+  reducer runs the full replay each time. <code>stage-reset</code> on
+  <code>entity_relationships</code> drops every edge under that stage's synthKey prefix from both
+  the rendered set and the buffer — the same invariant <code>deriveInventory</code> uses to evict
+  the stage's mid-flight entities. The reducer is exported and unit-tested independently of the
+  panel; the panel just consumes <code>{ rendered, bufferedCount }</code>.
 </p>
 
 <h3>The 2000-event cap</h3>

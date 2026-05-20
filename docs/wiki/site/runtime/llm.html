@@ -34,9 +34,12 @@
   middleware that handles both <code>generateText</code> and <code>streamObject</code> /
   <code>streamText</code> call shapes, a typed error taxonomy (eight classes including the terminal
   <code>LlmContentFilteredError</code>), and a file-based prompt loader. Consumers include the
-  onboarding profanity classifier, the world-gen input gate, the paint-job validator, the seven
-  world-gen stage handlers, and the structured-output repair chain. Everything heavier (provider
-  mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
+  onboarding profanity classifier, the world-gen input gate, the paint-job validator, the eight
+  world-gen stage handlers (concept_intake, vocabulary_intake, world_and_factions,
+  locations_and_npcs, entity_relationships, entity_consolidation, starting_situation, random_tables,
+  coherence_pass), and the structured-output repair chain plus its companion per-item drop-on-fail
+  gate on the streaming stages. Everything heavier (provider mechanics, retries, structured-output
+  validation) is delegated to Vercel AI SDK v6.
 </p>
 
 <figure class="wiki-diagram">

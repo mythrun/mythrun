@@ -1198,7 +1198,14 @@
   <code>listByWorld(client, worldId, opts?)</code>. The <code>insert</code> caller supplies the
   <code>id</code> (UUIDv7-generated app-side per the
   <a href="./repository.html#uuidv7-in-its-own-seam">uuidv7 seam</a>) so the stage's finalized-event
-  payload can reference the row before the INSERT lands. <code>listByWorld</code>
+  payload can reference the row before the INSERT lands. <code>InsertEntityInput</code> also
+  requires <code>createdIn: string</code> — a provenance tag the caller stamps to mark which
+  pipeline stage (or play-runtime path) wrote the row. World-gen callers pass
+  <code>'stage:world_and_factions'</code> (stage 2), <code>'stage:locations_and_npcs'</code> (stage
+  3), and <code>'stage:entity_consolidation'</code> (stage 4b's ghost entities); the future Scribe
+  runtime will write <code>'session:&lt;uuid&gt;'</code>. Migration 017 backfills every existing
+  row to <code>'stage:legacy'</code> via the column DEFAULT.
+  <code>listByWorld</code>
   is what stage 3's parent resolver calls in pass 2 to build the name → entityId map, and what stage
   4 calls at stage start to build the entity-inventory the prompt feeds into the LLM. The optional
   <code>opts.accessLevels</code> argument (added under myth-exac) constrains results to the named
@@ -1210,6 +1217,17 @@
   <code>entities.access_level</code> defaults to <code>'known'</code> at insert time and is
   CHECK-constrained to the same three-tier vocabulary as <code>facts.access_level</code>.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Provenance as a required field, not an optional one</strong> — making
+  <code>createdIn</code> mandatory means every code path that inserts an entity declares which
+  origin it represents at compile time. The alternative (an optional field defaulted by the repo)
+  silently labels every new caller with whatever fallback string the repo chose, losing the audit
+  trail that lets stage 4b cascade-delete only its own ghosts on a stage-4 retry
+  (<code>DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'</code>).
+  A required field forces the caller to think about provenance once, and the test fixtures pay
+  <code>'stage:test'</code> as their tag.
+</aside>
 
 <p>
   <strong><code>proseKernels</code></strong> exposes <code>insert</code>,
@@ -1565,8 +1583,8 @@
     <tr>
       <td><code>src/repo/entities.ts</code></td>
       <td>
-        <code>entities.insert</code> (caller-supplied UUID), <code>findByWorldAndName</code>,
-        <code>listByWorld</code>.
+        <code>entities.insert</code> (caller-supplied UUID + required <code>createdIn</code>
+        provenance tag), <code>findByWorldAndName</code>, <code>listByWorld</code>.
       </td>
     </tr>
     <tr>

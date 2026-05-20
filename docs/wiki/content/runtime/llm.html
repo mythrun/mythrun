@@ -2,8 +2,8 @@
 <!-- source: backend/src/config/env.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:d3d3501e51314e5ab527bcca8b347220f48633a3936c403d39fe355dbfbb95d7 -->
-<!-- last-ticket: MYT-52 -->
+<!-- source-hash: sha256:f444f209319a35236736e25cb5a7f2da583e9d214f02aee776f31071fd14f72c -->
+<!-- last-ticket: myth-tt2g -->
 
 <h1>LLM client</h1>
 
@@ -13,9 +13,12 @@
   middleware that handles both <code>generateText</code> and <code>streamObject</code> /
   <code>streamText</code> call shapes, a typed error taxonomy (eight classes including the terminal
   <code>LlmContentFilteredError</code>), and a file-based prompt loader. Consumers include the
-  onboarding profanity classifier, the world-gen input gate, the paint-job validator, the seven
-  world-gen stage handlers, and the structured-output repair chain. Everything heavier (provider
-  mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
+  onboarding profanity classifier, the world-gen input gate, the paint-job validator, the eight
+  world-gen stage handlers (concept_intake, vocabulary_intake, world_and_factions,
+  locations_and_npcs, entity_relationships, entity_consolidation, starting_situation, random_tables,
+  coherence_pass), and the structured-output repair chain plus its companion per-item drop-on-fail
+  gate on the streaming stages. Everything heavier (provider mechanics, retries, structured-output
+  validation) is delegated to Vercel AI SDK v6.
 </p>
 
 <!-- @diagram: runtime/llm -->

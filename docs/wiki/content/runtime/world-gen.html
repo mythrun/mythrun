@@ -17,6 +17,7 @@
 <!-- source: backend/src/llm/prep/stages/world-and-factions.ts -->
 <!-- source: backend/src/llm/prep/stages/locations-and-npcs.ts -->
 <!-- source: backend/src/llm/prep/stages/entity-relationships.ts -->
+<!-- source: backend/src/llm/prep/stages/entity-consolidation.ts -->
 <!-- source: backend/src/llm/prep/stages/starting-situation.ts -->
 <!-- source: backend/src/llm/prep/stages/random-tables.ts -->
 <!-- source: backend/src/llm/prep/stages/coherence-pass.ts -->
@@ -33,6 +34,11 @@
 <!-- source: backend/migrations/012_credit_ledger_admin_source.sql -->
 <!-- source: backend/migrations/014_access_tier_rework.sql -->
 <!-- source: backend/migrations/015_vocabulary_registry.sql -->
+<!-- source: backend/migrations/017_entity_consolidation.sql -->
+<!-- source: backend/src/llm/schemas/entity-relationships.ts -->
+<!-- source: backend/src/llm/schemas/entity-consolidation.ts -->
+<!-- source: backend/src/llm/prompts/prep/entity-consolidation.txt -->
+<!-- source: backend/src/llm/prompts/prep/entity-relationships.txt -->
 <!-- source: backend/dev-tool/src/components/campaign-create-panel.ts -->
 <!-- source: backend/dev-tool/src/components/campaign-details-panel.ts -->
 <!-- source: backend/dev-tool/src/components/credit-ledger-panel.ts -->
@@ -42,8 +48,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:fc14fd55690a553ebd56510b1ef6aee936d0d5a32a941d28f6585b8db70c91bb -->
-<!-- last-ticket: myth-exac -->
+<!-- source-hash: sha256:ca222c2b5e691a11618cde0282f20fc2003560aadd61795e56f1c289e7495944 -->
+<!-- last-ticket: myth-tt2g -->
 
 <h1>World gen</h1>
 
@@ -51,15 +57,17 @@
   The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a
   concept (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a
   3-axis Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked
-  transaction, and enqueues a BullMQ job. The worker walks seven stages — three non-streaming Sonnet
-  calls (<code>concept_intake</code>, <code>starting_situation</code>, <code>random_tables</code>),
-  three streaming stages with live entity emission (<code>world_and_factions</code> Opus,
-  <code>locations_and_npcs</code> Opus, <code>entity_relationships</code> Sonnet), and a final
-  non-streaming Sonnet <code>coherence_pass</code>. A non-streaming Sonnet
-  <code>vocabulary_intake</code> stage runs between <code>concept_intake</code> and
-  <code>world_and_factions</code> — it generates the world's distinctive lexicon (the
-  <a href="#vocabulary-registry">vocabulary registry</a>) and every downstream stage injects the
-  rendered registry into its system prompt. After stage 4 commits the pipeline fires a
+  transaction, and enqueues a BullMQ job. The worker walks eight prose-bearing stages plus a
+  vocabulary pre-pass: three non-streaming Sonnet calls (<code>concept_intake</code>,
+  <code>starting_situation</code>, <code>random_tables</code>), three streaming stages with live
+  entity emission (<code>world_and_factions</code> Opus, <code>locations_and_npcs</code> Opus,
+  <code>entity_relationships</code> Sonnet), a <code>entity_consolidation</code> stage (Sonnet) that
+  materializes any phantom entities stage 4 declared as placeholders, and a final non-streaming
+  Sonnet <code>coherence_pass</code>. A non-streaming Sonnet <code>vocabulary_intake</code> stage
+  runs between <code>concept_intake</code> and <code>world_and_factions</code> — it generates the
+  world's distinctive lexicon (the <a href="#vocabulary-registry">vocabulary registry</a>) and every
+  downstream stage injects the rendered registry into its system prompt. After
+  <code>entity_consolidation</code> commits the worker fires a
   <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable through
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still running, and
   stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage handler returns a
@@ -90,8 +98,13 @@
   for owners: <code>concept_intake</code> auto-names the campaign from the LLM-synthesized world
   name, and this is how the owner overrides that default.
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the owner-only known-tier view of
-  the persisted world, fetchable once the new <code>world_snapshot_ready</code> phase has fired
-  (after stage 4 commits).
+  the persisted world, fetchable once stage 4 (<code>entity_relationships</code>) commits — the
+  endpoint's pre-readiness gate keys on that stage's <code>completed</code> row, and the SSE phase
+  derivation surfaces <code>world_snapshot_ready</code> from the same condition. The worker's
+  publish of the <code>world_snapshot_ready</code> phase event itself fires one stage later, after
+  <code>entity_consolidation</code> commits, so a reconnecting subscriber sees the signal once the
+  phantom-reference reconciliation has fully landed; in either case the snapshot is safe to fetch
+  from stage 4 onward.
 </p>
 
 <aside class="wiki-rationale">
@@ -411,13 +424,18 @@
   <a href="./worker.html">worker service</a> at concurrency 3. <code>WORLD_GEN_STAGES</code> is the
   ordered tuple <code>concept_intake</code>, <code>vocabulary_intake</code>,
   <code>world_and_factions</code>, <code>locations_and_npcs</code>,
-  <code>entity_relationships</code>, <code>starting_situation</code>, <code>random_tables</code>,
-  <code>coherence_pass</code>. The list grew by one entry — <code>vocabulary_intake</code> is the
-  new stage 1.5 that generates the per-world
+  <code>entity_relationships</code>, <code>entity_consolidation</code>,
+  <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>. The list
+  carries two pre-passes plus one resolution stage on top of the original seven prose-bearing
+  passes: <code>vocabulary_intake</code> is stage 1.5 — it generates the per-world
   <a href="#vocabulary-registry">vocabulary registry</a> before any downstream prose-bearing stage
-  runs. Counting prose continues to call the streaming Opus + Sonnet block "the seven stages"
-  because <code>vocabulary_intake</code> is a structured pre-pass with no entity emission; section
-  headings and the cost-cap discussion treat it as a cheap setup call. Every iteration enforces the
+  runs — and <code>entity_consolidation</code> is stage 4b, sitting between
+  <code>entity_relationships</code> and <code>starting_situation</code>. Stage 4b materializes any
+  phantom entities stage 4 declared as placeholders (see
+  <a href="#stage-4b-phantom-reference-reconciliation">phantom-reference reconciliation</a>); it
+  short-circuits to a zero-cost skip when stage 4 didn't declare any. Section headings and the
+  cost-cap discussion treat <code>vocabulary_intake</code> and <code>entity_consolidation</code> as
+  structured setup / resolution calls rather than core prose stages. Every iteration enforces the
   same per-stage invariant:
 </p>
 
@@ -596,12 +614,32 @@
       <td>streaming</td>
       <td>
         <code>relationships</code> rows + (occasional) <code>entity_hierarchy</code> stragglers
-        stage 3 missed
+        stage 3 missed; placeholder-endpoint rows and their declarations land in
+        <code>worlds.entity_consolidation_pending</code> for stage 4b
       </td>
       <td>
         <code>edge-added</code> per relationship as <code>from</code>, <code>to</code>, and
-        <code>relationship</code> close together; no <code>finalized</code> for edges (edges have no
-        client-visible synth-to-real-id mapping)
+        <code>relationship</code> close together (endpoints may be placeholder strings of the form
+        <code>new-NNN</code> when stage 4 deferred a phantom for stage 4b); no
+        <code>finalized</code> for edges (edges have no client-visible synth-to-real-id mapping)
+      </td>
+    </tr>
+    <tr>
+      <td><code>entity_consolidation</code></td>
+      <td>Sonnet (non-streaming, generateObject)</td>
+      <td>non-streaming</td>
+      <td>
+        ghost <code>entities</code> with <code>created_in='stage:entity_consolidation'</code> +
+        their <code>prose_kernels</code>, <code>facts</code>, and (locations only)
+        <code>entity_hierarchy</code> rows; resolved placeholder relationships persist to
+        <code>relationships</code>; the <code>worlds.entity_consolidation_pending</code> column
+        clears back to its empty default. Skip-path with zero cost when stage 4 declared no
+        phantoms.
+      </td>
+      <td>
+        post-COMMIT: <code>entity-added</code> per ghost carrying <code>placeholderId</code> so
+        client buffers reconcile, plus <code>edge-added</code> per resolved relationship (endpoints
+        are real UUIDs by the time these publish)
       </td>
     </tr>
     <tr>
@@ -829,8 +867,118 @@
   <code>entity_hierarchy</code> rows are not deleted on retry — the schema's
   <code>UNIQUE(child_entity_id)</code> means a re-INSERT of the same child would conflict, so stage
   4's straggler path pre-filters against the existing hierarchy table and skips already-parented
-  children (the "stage 3 wins" collision rule).
+  children (the "stage 3 wins" collision rule). The same wipe extends to any prior stage-4b ghosts:
+  a retry of stage 4 cascade-deletes rows where
+  <code>created_in = 'stage:entity_consolidation'</code>, so a fresh declaration set never pairs
+  with an orphan ghost.
 </p>
+
+<h3>Per-item drop-on-fail validation</h3>
+
+<p>
+  The streaming extractor doesn't trust the LLM to produce a clean array. A single malformed entry
+  in the middle of an 80-item <code>relationships</code> stream — a UUID with a typo, a fact whose
+  <code>content</code> trips the min-length bound — would otherwise either propagate downstream and
+  crash the INSERT or fail the end-of-stream Zod sweep and force the whole stage into the repair
+  chain. Both outcomes are wasteful: most entries in the stream are fine. The extractor's
+  <code>ArrayConfig</code> takes an optional per-item <code>sub_schema</code>; when set, every
+  closed entry is validated against it before the entity / edge event publishes. Failures are
+  <code>pino.warn</code>-logged with the partial JSON and the Zod issues, dropped from the wire
+  feed, and removed from the survivor set the handler reads at end-of-stream. The end-of-stream Zod
+  sweep + repair chain still fire as the catastrophic-failure safety net for shape violations the
+  per-item gate doesn't catch.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One bad row no longer poisons the whole stream</strong> — the previous shape
+  (end-of-stream Zod only) meant a single LLM typo on row 47 of 60 either crashed the INSERT pass or
+  triggered a full-tree repair. The per-item gate is cheap (one safeParse per closed entry) and
+  surgical: rows 1 through 46 stream and persist exactly as if row 47 had never existed. Stages 2,
+  3, and 4 each export named per-item schemas (<code>regionItemSchema</code>,
+  <code>factionItemSchema</code>, <code>locationItemSchema</code>, <code>npcItemSchema</code>,
+  <code>relationshipItemSchema</code>, <code>hierarchyStragglerItemSchema</code>) that the handler
+  passes into the array config.
+</aside>
+
+<h3 id="stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</h3>
+
+<p>
+  Stage 4's schema accepts two endpoint flavors. Real-UUID endpoints render to the
+  <code>relationships</code> table immediately. <strong>Placeholder endpoints</strong> — strings
+  matching the pattern <code>new-NNN</code>, e.g. <code>new-001</code> — name a phantom entity the
+  LLM intends to exist but hasn't yet placed in the inventory. Phantom entities arrive declared in a
+  sibling <code>new_entity_declarations</code> array on the same stage-4 tree:
+  <code>{ placeholder_id, name, entity_type }</code> per phantom. The stage 4 handler partitions the
+  LLM tree into three buckets — real-endpoint rows (persist now), placeholder-endpoint rows paired
+  with valid declarations (deferred), and dropped rows (orphan placeholders without a matching
+  declaration, or hallucinated UUIDs on the real-endpoint side; both WARN-logged, never thrown). The
+  deferred rows + their declarations land in <code>worlds.entity_consolidation_pending</code>
+  — a JSONB column added in migration 017, shape
+  <code>{ declarations: [...], relationships: [...] }</code>, pinned by a CHECK constraint.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two endpoint flavors instead of forcing fully-resolved UUIDs</strong> — pinning stage 4 to
+  only emit relationships among already-existing entities meant the LLM frequently invented a
+  plausible name for a phantom ("the smugglers' guild") and either skipped the relationship entirely
+  or hallucinated a UUID. Both outcomes lose narrative signal: a rich tension the LLM saw in the
+  world doesn't make it into <code>relationships</code>. The placeholder mechanism lets the LLM
+  declare the missing entity inline and connect it; stage 4b then writes the entity into existence
+  with the same prose-and-facts depth as stage-2/3 entities, and the deferred relationship resolves
+  to a real UUID once the ghost lands.
+</aside>
+
+<p>
+  Stage 4b (<code>entity_consolidation</code>) is non-streaming Sonnet under the same
+  <code>StageDispatchResult</code> contract as every other handler. On entry it reads
+  <code>entity_consolidation_pending</code>. If <code>declarations</code> is empty (most worlds
+  finish stage 4 with no phantoms), the stage returns
+  <code>{ costUsd: 0, finalizedEvents: [], capExhausted: false }</code> immediately — a zero-cost
+  skip. When phantoms ARE present, the handler:
+</p>
+
+<ol>
+  <li>
+    Idempotency-wipes prior stage-4b ghosts (<code
+      >DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'</code
+    >). CASCADE FKs clear their facts / prose / hierarchy / relationships rows.
+  </li>
+  <li>
+    Loads the real entity inventory + assembles a per-phantom prompt block. Each phantom is rendered
+    with its incoming relationships from the pending state, so the LLM has structural anchors for
+    what this entity is and does.
+  </li>
+  <li>
+    Calls Sonnet <code>generateObject</code> against <code>EntityConsolidationSchema</code> —
+    <code>ghost_entities[]</code> with the same prose (40–2400 chars), facts (2–12), and
+    access-level depth as stage 2/3 entities.
+  </li>
+  <li>
+    Reconciles vs declarations: ghosts whose <code>placeholder_id</code> wasn't declared are dropped
+    (logged, not failed). Surviving ghosts persist with
+    <code>created_in='stage:entity_consolidation'</code>, their facts, prose, and a hierarchy row
+    for any location ghost with a declared parent. The handler builds a placeholder-id → real-UUID
+    map.
+  </li>
+  <li>
+    Resolves the deferred placeholder relationships using the map and persists them via
+    <code>relationships.insertMany</code>. Both endpoints are real UUIDs by the time the rows land.
+  </li>
+  <li>
+    Clears <code>worlds.entity_consolidation_pending</code> back to the empty default. Publishes one
+    post-COMMIT <code>entity-added</code> per ghost (carrying the <code>placeholderId</code> field)
+    and one <code>edge-added</code> per resolved relationship.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>No semantic audit on ghost prose</strong> — the spec considered a Haiku post-pass that
+  would audit ghost prose for prose-only references to additional missing entities. Dropped:
+  downstream stages (starting situation, random tables, coherence) don't recurse on prose-only
+  references, so a ghost mentioning a tavern the players never visit doesn't poison anything. The
+  audit would have cost Haiku tokens to detect a class of errors that has no downstream blast
+  radius.
+</aside>
 
 <h3>The structured-output repair chain</h3>
 
@@ -1001,9 +1149,12 @@
         Stage 2/3 entity entries close in the stream (post-myth-exac: identity-only payload —
         <code>{ synthKey, kind, name }</code>). Only fires for entries whose
         <code>access_level === 'known'</code>, unless the world's
-        <code>dev_bypass_access_filter</code> flag is set.
+        <code>dev_bypass_access_filter</code> flag is set. Stage 4b adds a post-COMMIT emit per
+        ghost entity carrying an optional <code>placeholderId</code> field — the same
+        <code>new-NNN</code> string stage 4 used in its edge endpoints — so a client's buffered
+        placeholder edges can resolve.
       </td>
-      <td>Streaming extractor (stages 2/3)</td>
+      <td>Streaming extractor (stages 2/3); stage 4b (post-COMMIT)</td>
     </tr>
     <tr>
       <td><code>entity-updated</code></td>
@@ -1027,11 +1178,14 @@
       <td><code>edge-added</code></td>
       <td>
         Stage 4 as each relationship entry closes (identity-only —
-        <code>{ synthKey, from, to, relationship }</code>); stage 7 post-COMMIT for
+        <code>{ synthKey, from, to, relationship }</code>; <code>from</code> and <code>to</code> may
+        be <code>new-NNN</code> placeholder strings when stage 4 deferred a phantom for stage 4b).
+        Stage 4b publishes one edge-added per resolved placeholder relationship — with endpoints
+        already mapped to real UUIDs. Stage 7 post-COMMIT for
         <code>fix_relationship</code> replacements. Edges only emit when both endpoints are
         known-tier entities in the world's tier map (or bypass is on).
       </td>
-      <td>Streaming extractor (stage 4); stage 7</td>
+      <td>Streaming extractor (stage 4); stage 4b; stage 7</td>
     </tr>
     <tr>
       <td><code>edge-removed</code></td>
@@ -1065,17 +1219,23 @@
   (<code>coherence_pass</code>) edits prose and renames entities, so the persisted state isn't fully
   settled until it finishes; and the dev tool's wiki-style inspector wants the persisted world the
   moment it's coherent — well before stages 5/6/7 add their finishing touches. Both pull in the same
-  direction: the pipeline now emits a <code>world_snapshot_ready</code> phase the moment stage 4
-  (<code>entity_relationships</code>) commits.
+  direction: the snapshot endpoint is fetchable the moment stage 4
+  (<code>entity_relationships</code>) commits, and the SSE stream surfaces the
+  <code>world_snapshot_ready</code> phase from that condition.
 </p>
 
 <p>
   <code>derivePhase</code> in <code>backend/src/sse/derive-phase.ts</code> returns
   <code>world_snapshot_ready</code> when the world is still <code>generating</code> but a stage-4
-  <code>completed</code> row exists; the worker publishes the phase event directly from
-  <code>world-gen-processor.ts</code> immediately after stage 4 commits (and on idempotent re-entry
-  past a completed stage-4 row, so a reconnecting subscriber catches up). Stages 5 + 6 + 7 then
-  continue under this phase. When stage 7 commits and <code>worlds.status</code> flips to
+  <code>completed</code> row exists; the route handler's initial-frame SSE snapshot uses this
+  function, so a connecting subscriber sees the right phase even mid-flight. The worker's published
+  <code>phase</code> event for <code>world_snapshot_ready</code> fires one stage later, after
+  <code>entity_consolidation</code> (stage 4b) commits — that's the boundary where any deferred
+  phantom relationships have been resolved into real rows, so the snapshot is the fully-coherent
+  entity graph rather than a stage-4 view that's still carrying placeholder-endpoint edges in
+  worlds.entity_consolidation_pending. The worker also re-publishes the phase event on idempotent
+  re-entry past a completed stage-4b row, so a reconnecting subscriber catches up. Stages 5 + 6 + 7
+  then continue under this phase. When stage 7 commits and <code>worlds.status</code> flips to
   <code>complete</code>, the phase advances to <code>world_ready</code>; if the cost cap fires the
   world ends at <code>complete</code> (stage 7's cap-fire exception) or <code>failed</code> (any
   earlier stage).
@@ -1084,11 +1244,14 @@
 <p>
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is owner-only,
   rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the pre-readiness
-  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes.
-  The response is a <code>WorldSnapshot</code>: a <code>WorldSummary</code> projection of the worlds
-  row, the entities, their prose kernels and facts, the relationships among them, the entity
-  hierarchy rows for resolved parents, and stat blocks for entities that have them. Seven read
-  queries — most run in parallel — make up the composition; <code>world-snapshot-view.ts</code>
+  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes —
+  stage 4 commit is the gate, not stage 4b, because the entity / relationship tables are coherent at
+  that point even when phantom reconciliation hasn't run yet (the snapshot read simply doesn't
+  surface phantom rows that don't exist). The response is a <code>WorldSnapshot</code>: a
+  <code>WorldSummary</code> projection of the worlds row, the entities, their prose kernels and
+  facts, the relationships among them, the entity hierarchy rows for resolved parents, and stat
+  blocks for entities that have them. Seven read queries — most run in parallel — make up the
+  composition; <code>world-snapshot-view.ts</code>
   owns it.
 </p>
 
@@ -1235,7 +1398,8 @@
       <td><code>world_snapshot_ready</code></td>
       <td>
         <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>. Stage 4 has committed
-        (the snapshot is fetchable) but stages 5–7 are still running; from the resume-policy
+        (the snapshot is fetchable) but later stages — including stage 4b
+        <code>entity_consolidation</code> and stages 5–7 — are still running; from the resume-policy
         perspective the job is still in flight.
       </td>
     </tr>
@@ -1565,7 +1729,8 @@
   <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>,
   <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>,
   <code>backend/migrations/012_credit_ledger_admin_source.sql</code>,
-  <code>backend/migrations/014_access_tier_rework.sql</code>. Design specs:
+  <code>backend/migrations/014_access_tier_rework.sql</code>,
+  <code>backend/migrations/017_entity_consolidation.sql</code>. Design specs:
   <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>,
   <code>docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md</code>,
   <code>docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md</code>;
