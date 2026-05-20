@@ -43,7 +43,14 @@ export default defineConfig({
   test: {
     setupFiles: ['./src/__tests__/setup-env.ts'],
     globalSetup: ['./src/__tests__/global-setup.ts'],
-    fileParallelism: false,
+    // myth-oehx P5.6: parallel test execution. forks (Vitest v2 default) over
+    // threads — `pg` is pure JS so threads would work, but forks gives full
+    // process isolation which is safer for the global module state in setup-
+    // env.ts and globalSetup. maxForks: 6 keeps peak Postgres connections
+    // under ~34 (each fork's pool is max=4 via createTestPool); postgres
+    // max_connections is bumped to 200 in docker-compose.yml.
+    pool: 'forks',
+    poolOptions: { forks: { maxForks: 6 } },
     // The mythrun/eslint-rules RuleTester scripts (.test.cjs) are run directly
     // via `node`, not Vitest — they don't expose describe/it. The wiring smoke
     // test (.test.mjs) IS a Vitest test and stays included.
