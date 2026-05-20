@@ -5,7 +5,6 @@ import { createUsersRepo } from '../users.js'
 import { createCreditsRepo, grantInTx } from '../credits.js'
 import type { ClientLike } from '../_types.js'
 import { uuidv7 } from '../uuidv7.js'
-import { ensureSchema, pool } from './_helpers/with-tx.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
 
@@ -22,7 +21,7 @@ const databaseUrl = process.env.DATABASE_URL ?? ''
 // then re-invoking cleanupTestScope. In practice the simpler flow is to
 // delete purchases right before cleanupTestScope; the helper's own
 // credit_ledger delete is idempotent and the purchases delete is too.
-async function cleanupCreditsScope(p: typeof pool, scope: TestScope): Promise<void> {
+async function cleanupCreditsScope(p: Pool, scope: TestScope): Promise<void> {
   // credit_ledger first (RESTRICTs to both users and purchases via its FKs).
   await p.query(
     `DELETE FROM credit_ledger
@@ -40,11 +39,13 @@ async function cleanupCreditsScope(p: typeof pool, scope: TestScope): Promise<vo
 }
 
 describe('credits repo (integration)', () => {
+  let pool: Pool
   let scope: TestScope
   let baseUserInput: { cognitoSub: string; displayName: string; username: string }
 
   beforeAll(async () => {
-    await ensureSchema()
+    await guardTestDatabase(databaseUrl)
+    pool = createTestPool(databaseUrl)
     scope = makeTestScope('credits')
     baseUserInput = {
       cognitoSub: scope.userSub(0),
@@ -57,6 +58,7 @@ describe('credits repo (integration)', () => {
     // myth-5jdo: cleanup only this scope's rows; the seeded dev users
     // + system user + demo world remain intact for the next test file.
     await cleanupCreditsScope(pool, scope)
+    await pool.end()
   })
 
   beforeEach(async () => {
@@ -1403,15 +1405,29 @@ describe('credits repo (integration)', () => {
         [u.id, uuidv7()],
       )
 
-      const result = await pool.query<{ 'QUERY PLAN': unknown[] }>(
-        `EXPLAIN (FORMAT JSON)
-         SELECT * FROM credit_ledger
-          WHERE user_id = $1 AND credit_type = $2
-            AND source_type = 'debit' AND source_id = $3`,
-        [u.id, 'session', uuidv7()],
-      )
-      const plan = JSON.stringify(result.rows[0])
-      expect(plan).toMatch(/uniq_credit_ledger_debit_idempotency/)
+      // myth-oehx wave 4e: on a near-empty credit_ledger (scoped cleanup
+      // wipes between tests), the planner prefers Seq Scan since cost is
+      // trivially low — making the test's "index is used" assertion flaky.
+      // Force the planner off seq scan inside a tx (SET LOCAL only takes
+      // effect in an explicit tx). This still proves the partial unique
+      // index COULD be used (the assertion's intent).
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query('SET LOCAL enable_seqscan = off')
+        const result = await client.query<{ 'QUERY PLAN': unknown[] }>(
+          `EXPLAIN (FORMAT JSON)
+           SELECT * FROM credit_ledger
+            WHERE user_id = $1 AND credit_type = $2
+              AND source_type = 'debit' AND source_id = $3`,
+          [u.id, 'session', uuidv7()],
+        )
+        await client.query('ROLLBACK')
+        const plan = JSON.stringify(result.rows[0])
+        expect(plan).toMatch(/uniq_credit_ledger_debit_idempotency/)
+      } finally {
+        client.release()
+      }
     })
   })
 })

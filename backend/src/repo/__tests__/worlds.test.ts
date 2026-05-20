@@ -1,69 +1,60 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
-import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
-import { createPgPool } from '../../db/postgres.js'
-import { runMigrations } from '../../db/migrate.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
-import { resetData } from './_helpers/reset-data.js'
+import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
+import { createTestPool } from './_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const here = fileURLToPath(import.meta.url)
-const REAL_MIGRATIONS_DIR = resolve(here, '../../../../migrations')
 
-function silentLogger(): ReturnType<typeof pino> {
-  const sink: DestinationStream = {
-    write: () => {
-      // discard log output
-    },
-  }
-  return pino(
-    { base: { component: 'migrate' }, serializers: { err: pino.stdSerializers.err } },
-    sink,
-  )
-}
-
-const baseUserInput = {
-  cognitoSub: 'google_99',
-  email: 'owner@example.com',
-  displayName: 'Owner',
-  username: 'owner',
-  authProvider: 'google' as const,
-}
+// myth-oehx wave 4e: resetData removed. The seeded demo world
+// (019700e0-0000-7000-8000-000000000002, owned by the system user
+// "system:mythrun") is NOT touched by cleanupTestScope — its cognito_sub
+// doesn't match our scope prefix. The getDemo tests that mutate
+// worlds.is_demo on the seeded row already wrap the mutation in a
+// try/finally that restores the flag.
 
 describe('worlds repo (integration)', () => {
   let pool: Pool
+  let scope: TestScope
+  let baseUserInput: { cognitoSub: string; displayName: string; username: string }
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 1 })
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-    await pool.query('DROP SCHEMA public CASCADE')
-    await pool.query('CREATE SCHEMA public')
-    await pool.query('GRANT ALL ON SCHEMA public TO PUBLIC')
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER')
-    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    pool = createTestPool(databaseUrl)
+    scope = makeTestScope('worlds')
+    baseUserInput = {
+      cognitoSub: scope.userSub(0),
+      displayName: scope.displayName(0),
+      username: scope.username(0),
+    }
   })
 
   afterAll(async () => {
+    await cleanupTestScope(pool, scope)
     await pool.end()
   })
 
   beforeEach(async () => {
-    await resetData(pool)
+    // myth-oehx wave 4e: scoped cleanup replaces resetData. The seeded
+    // demo world + system user persist across tests; only our scope's
+    // rows are removed between iterations.
+    await cleanupTestScope(pool, scope)
   })
 
   it('create returns a populated world with default status=generating', async () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const w = await worlds.create({ createdBy: owner.id, name: 'Realm', concept: 'A grim world.' })
+    const w = await worlds.create({
+      createdBy: owner.id,
+      name: scope.worldName(0),
+      concept: 'A grim world.',
+    })
     expect(w.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(w.createdBy).toBe(owner.id)
-    expect(w.name).toBe('Realm')
+    expect(w.name).toBe(scope.worldName(0))
     expect(w.status).toBe('generating')
     expect(w.forkCount).toBe(0)
     expect(w.isPublic).toBe(false)
@@ -80,7 +71,7 @@ describe('worlds repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
     const found = await worlds.getById(w.id)
     expect(found?.id).toBe(w.id)
   })
@@ -89,9 +80,9 @@ describe('worlds repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
     const updated = await worlds.update(w.id, {})
-    expect(updated.name).toBe('A')
+    expect(updated.name).toBe(scope.worldName(0))
     expect(updated.concept).toBe('c')
   })
 
@@ -113,9 +104,17 @@ describe('worlds repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const a = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'first' })
+    const a = await worlds.create({
+      createdBy: owner.id,
+      name: scope.worldName(0),
+      concept: 'first',
+    })
     await new Promise((r) => setTimeout(r, 5))
-    const b = await worlds.create({ createdBy: owner.id, name: 'B', concept: 'second' })
+    const b = await worlds.create({
+      createdBy: owner.id,
+      name: scope.worldName(1),
+      concept: 'second',
+    })
     const list = await worlds.listByUser(owner.id)
     expect(list.map((w) => w.id)).toEqual([b.id, a.id])
   })
@@ -131,10 +130,10 @@ describe('worlds repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
     await new Promise((r) => setTimeout(r, 5))
-    const updated = await worlds.update(w.id, { name: 'A renamed', isPublic: true })
-    expect(updated.name).toBe('A renamed')
+    const updated = await worlds.update(w.id, { name: scope.worldName(1), isPublic: true })
+    expect(updated.name).toBe(scope.worldName(1))
     expect(updated.isPublic).toBe(true)
     expect(updated.concept).toBe('c')
     expect(updated.updatedAt.getTime()).toBeGreaterThan(w.updatedAt.getTime())
@@ -144,9 +143,9 @@ describe('worlds repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
     const updated = await worlds.update(w.id, {
-      name: 'renamed',
+      name: scope.worldName(1),
       concept: 'new concept',
       tone: 'grim',
       themes: 'isolation',
@@ -161,7 +160,7 @@ describe('worlds repo (integration)', () => {
       moderationStatus: 'approved',
       language: 'en',
     })
-    expect(updated.name).toBe('renamed')
+    expect(updated.name).toBe(scope.worldName(1))
     expect(updated.tone).toBe('grim')
     expect(updated.era).toBe('twilight')
     expect(updated.isPublic).toBe(true)
@@ -193,7 +192,7 @@ describe('worlds repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
     expect(w.status).toBe('generating')
     const completed = await worlds.updateStatus(w.id, 'complete')
     expect(completed.status).toBe('complete')
@@ -203,7 +202,7 @@ describe('worlds repo (integration)', () => {
     const users = createUsersRepo(pool)
     const worlds = createWorldsRepo(pool)
     const owner = await users.create(pool, baseUserInput)
-    const w = await worlds.create({ createdBy: owner.id, name: 'A', concept: 'c' })
+    const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
     expect(w.forkCount).toBe(0)
     const bumped = await worlds.incrementForkCount(w.id)
     expect(bumped.forkCount).toBe(1)
@@ -223,7 +222,11 @@ describe('worlds repo (integration)', () => {
 
     it('returns null when no demo world exists', async () => {
       const worlds = createWorldsRepo(pool)
-      // Temporarily flip the demo flag off; resetData restores it next run.
+      // myth-oehx wave 4e: temporarily flip the demo flag off. The seeded
+      // row is shared state across all worlds tests in this file — the
+      // try/finally restore is required so subsequent tests still see
+      // is_demo=true. cleanupTestScope does NOT touch this row (its
+      // cognito_sub is 'system:mythrun', not our scope prefix).
       await pool.query(
         `UPDATE worlds SET is_demo = false WHERE id = '019700e0-0000-7000-8000-000000000002'`,
       )
