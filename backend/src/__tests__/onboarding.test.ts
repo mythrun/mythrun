@@ -1,3 +1,18 @@
+// Onboarding-route integration tests. Real Postgres + bypass auth.
+//
+// Phase-4 wave-4d (myth-oehx): migrated from resetData() to scoped
+// fixtures. Each test sends a unique sub via the `x-mythrun-dev-sub`
+// header (the bypass-plugin override) so the per-sub rate-limit on
+// /api/users/register can't collapse onto one bucket and so the
+// scope-cleanup can target only this file's rows.
+//
+// Tests register literal usernames (`alice`, `bob`, etc.) via the
+// route; those literals live as `users.username` values and would
+// collide between tests under shared-DB if we didn't switch to
+// scope-derived usernames. The scope-prefixed `scope.username(n)`
+// values are short (<= 28 chars) alphanumeric → satisfy the route's
+// username regex without further escaping.
+
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
@@ -13,7 +28,11 @@ vi.mock('../llm/profanity.js', () => ({
 import { createPgPool } from '../db/postgres.js'
 import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
-import { resetData } from '../repo/__tests__/_helpers/reset-data.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type ScopedSub,
+} from '../repo/__tests__/_helpers/test-scope.js'
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo } from '../repo/index.js'
@@ -39,13 +58,14 @@ function silentLogger(): ReturnType<typeof pino> {
 describe('onboarding routes (integration)', () => {
   let pool: Pool
   let app: Awaited<ReturnType<typeof buildApp>>
+  const scope = makeTestScope('onbd')
   // Each test gets a unique remoteAddress so the in-memory rate-limit
   // store (keyed by request.ip) doesn't bleed between tests. Per-route
   // caps are 5/min and 10/min, so multiple tests on the default
   // 127.0.0.1 bucket would 429 each other after a few calls.
   let testIpCounter = 0
   let currentTestIp = ''
-  let currentTestSub = ''
+  let currentTestSub: ScopedSub = scope.userSub(0)
 
   function inject(opts: InjectOptions): Promise<LightMyRequestResponse> {
     // x-mythrun-dev-sub overrides the bypass plugin's fixed sub per test.
@@ -93,20 +113,26 @@ describe('onboarding routes (integration)', () => {
 
   afterAll(async () => {
     await app.close()
+    // credit_ledger has RESTRICT-FK to users; cleanupTestScope already
+    // deletes it before users. No purchases / billing_history are
+    // created in this file (register grants a trial-credit row whose
+    // source_purchase_id / source_billing_history_id are NULL), so no
+    // additional satellite cleanup is required.
+    await cleanupTestScope(pool, scope)
     await pool.end()
     vi.unstubAllEnvs()
   })
 
-  beforeEach(async () => {
+  beforeEach(() => {
     testIpCounter += 1
     // Spread across /16 to avoid colliding with rate-limit's /24 bucketing
     // even if more than 256 tests ever run in this file.
     currentTestIp = `10.0.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
-    // Per-test unique sub via x-mythrun-dev-sub. MYT-45's per-sub
-    // rate-limit keying on /api/users/register otherwise collapses
-    // every test onto bypass:dev-1.
-    currentTestSub = `bypass:dev-${String(testIpCounter)}`
-    await resetData(pool)
+    // Per-test unique sub via x-mythrun-dev-sub. Each test reserves
+    // testIpCounter * 4 and the three following indices so tests that
+    // seed multiple subs (e.g. username-collision) don't collide
+    // across tests.
+    currentTestSub = scope.userSub(testIpCounter * 4)
     // Default: clean. Tests that exercise the rejection path override
     // with mockResolvedValueOnce / mockResolvedValue below.
     classifyProfanityMock.mockReset()
@@ -115,16 +141,18 @@ describe('onboarding routes (integration)', () => {
 
   describe('POST /api/users/register', () => {
     it('happy path — 201 with user + Location header', async () => {
+      const username = scope.username(testIpCounter * 4)
+      const displayName = scope.displayName(testIpCounter * 4)
       const res = await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Alice' },
+        payload: { username, displayName },
       })
       expect(res.statusCode).toBe(201)
       expect(res.headers.location).toBe('/api/users/me')
       const body = res.json<{ user: { username: string; displayName: string }; created: boolean }>()
-      expect(body.user.username).toBe('alice')
-      expect(body.user.displayName).toBe('Alice')
+      expect(body.user.username).toBe(username)
+      expect(body.user.displayName).toBe(displayName)
       expect(body.created).toBe(true)
     })
 
@@ -161,16 +189,18 @@ describe('onboarding routes (integration)', () => {
     })
 
     it('idempotent replay (same sub+username) → 200 created:false', async () => {
+      const username = scope.username(testIpCounter * 4)
+      const displayName = scope.displayName(testIpCounter * 4)
       const first = await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Alice' },
+        payload: { username, displayName },
       })
       expect(first.statusCode).toBe(201)
       const second = await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Alice' },
+        payload: { username, displayName },
       })
       expect(second.statusCode).toBe(200)
       expect(second.headers['content-location']).toBe('/api/users/me')
@@ -179,24 +209,25 @@ describe('onboarding routes (integration)', () => {
     })
 
     it('username already taken (different sub) → 409 username_taken with suggestion', async () => {
-      // Register `alice` under sub A.
+      // Register under sub A.
       const subA = currentTestSub
+      const username = scope.username(testIpCounter * 4)
       const resA = await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Alice' },
+        payload: { username, displayName: scope.displayName(testIpCounter * 4) },
       })
       expect(resA.statusCode).toBe(201)
 
-      // Switch to a different sub and try to register `alice` again.
-      // The DB's UNIQUE(LOWER(username)) constraint trips → 23505 →
+      // Switch to a different sub and try to register the same username
+      // again. The DB's UNIQUE(LOWER(username)) constraint trips → 23505 →
       // handleRegisterUniqueViolation classifies as users_username_lower_key
       // → 409 username_taken with a fresh suggestion.
-      currentTestSub = `${subA}-other`
+      currentTestSub = scope.userSub(testIpCounter * 4 + 1)
       const resB = await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Bob' },
+        payload: { username, displayName: scope.displayName(testIpCounter * 4 + 1) },
       })
       expect(resB.statusCode).toBe(409)
       const body = resB.json<{ code: string; suggestion: string }>()
@@ -208,32 +239,35 @@ describe('onboarding routes (integration)', () => {
     })
 
     it('already onboarded under different name → 409 already_onboarded', async () => {
+      const firstUsername = scope.username(testIpCounter * 4)
+      const secondUsername = scope.username(testIpCounter * 4 + 1)
       await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Alice' },
+        payload: { username: firstUsername, displayName: scope.displayName(testIpCounter * 4) },
       })
       const res = await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'bob', displayName: 'Bob' },
+        payload: { username: secondUsername, displayName: scope.displayName(testIpCounter * 4 + 1) },
       })
       expect(res.statusCode).toBe(409)
       const body = res.json<{ code: string; currentUsername: string; requestedUsername: string }>()
       expect(body.code).toBe('already_onboarded')
-      expect(body.currentUsername).toBe('alice')
-      expect(body.requestedUsername).toBe('bob')
+      expect(body.currentUsername).toBe(firstUsername)
+      expect(body.requestedUsername).toBe(secondUsername)
     })
 
     it('display_name offensive → 400 display_name_invalid', async () => {
-      // First call (username 'alice') is clean; second call (displayName) is offensive.
+      // First call (username clean) → second classifyProfanity call
+      // (displayName) is offensive.
       classifyProfanityMock.mockReset()
       classifyProfanityMock.mockResolvedValueOnce({ profane: false })
       classifyProfanityMock.mockResolvedValueOnce({ profane: true, reason: 'offensive' })
       const res = await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'shitstorm' },
+        payload: { username: scope.username(testIpCounter * 4), displayName: 'shitstorm' },
       })
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ code: 'display_name_invalid', reason: 'offensive' })
@@ -242,7 +276,10 @@ describe('onboarding routes (integration)', () => {
 
   describe('GET /api/users/check-username', () => {
     it('valid + available → {available:true}', async () => {
-      const res = await inject({ method: 'GET', url: '/api/users/check-username?username=newname' })
+      const res = await inject({
+        method: 'GET',
+        url: `/api/users/check-username?username=${scope.username(testIpCounter * 4)}`,
+      })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: true })
     })
@@ -261,12 +298,16 @@ describe('onboarding routes (integration)', () => {
     })
 
     it('taken → {available:false, reason:taken}', async () => {
+      const taken = scope.username(testIpCounter * 4)
       await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Alice' },
+        payload: { username: taken, displayName: scope.displayName(testIpCounter * 4) },
       })
-      const res = await inject({ method: 'GET', url: '/api/users/check-username?username=Alice' })
+      const res = await inject({
+        method: 'GET',
+        url: `/api/users/check-username?username=${taken}`,
+      })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ available: false, reason: 'taken' })
     })
@@ -280,15 +321,16 @@ describe('onboarding routes (integration)', () => {
     })
 
     it('after register → 200 with user', async () => {
+      const username = scope.username(testIpCounter * 4)
       await inject({
         method: 'POST',
         url: '/api/users/register',
-        payload: { username: 'alice', displayName: 'Alice' },
+        payload: { username, displayName: scope.displayName(testIpCounter * 4) },
       })
       const res = await inject({ method: 'GET', url: '/api/users/me' })
       expect(res.statusCode).toBe(200)
       const body = res.json<{ user: { username: string } }>()
-      expect(body.user.username).toBe('alice')
+      expect(body.user.username).toBe(username)
     })
   })
 })

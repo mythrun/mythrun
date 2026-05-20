@@ -1,10 +1,19 @@
 // MYT-38 invite-flow integration tests. Real Postgres + bypass auth.
 //
-// The bypass user (sub='bypass:dev-1') is the SAME caller across every
-// inject() in this file. To test "non-member"/"non-owner" cases we set up
-// scenarios where the bypass user is NOT the campaign's owner / member.
-// "Other" users are seeded via the repo so their cognito_sub never collides
-// with the bypass identity.
+// Phase-4 wave-4d (myth-oehx): migrated from resetData() + the fixed
+// `BYPASS_SUB = 'bypass:dev-1'` caller convention to scoped fixtures.
+// Each test asserts as a per-test sub injected via the
+// `x-mythrun-dev-sub` header; "other" users are seeded under the same
+// scope under different `scope.userSub(n)` indices.
+//
+// Why per-test subs:
+//   - cleanupTestScope can only delete rows whose cognito_sub LIKEs the
+//     scope's id prefix. The previous hardcoded 'bypass:dev-1' default
+//     wouldn't match, so its row would survive between tests and break
+//     the "owner is X" assertions on subsequent tests.
+//   - Per-test isolation is now scope-based, not blanket-DELETE-based.
+//     Each test uses a unique scope.userSub(testIdx) for the caller and
+//     scope.userSub(testIdx + 1) for any "other" seeded user.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { fileURLToPath } from 'node:url'
@@ -16,7 +25,12 @@ import type { InjectOptions, LightMyRequestResponse } from 'fastify'
 import { createPgPool } from '../db/postgres.js'
 import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
-import { resetData } from '../repo/__tests__/_helpers/reset-data.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type ScopedSub,
+  type TestScope,
+} from '../repo/__tests__/_helpers/test-scope.js'
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo, type Repo } from '../repo/index.js'
@@ -27,7 +41,6 @@ const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
 const REAL_MIGRATIONS_DIR = resolve(here, '../../../migrations')
 const FRONTEND_BASE_URL = 'http://localhost:5173'
-const BYPASS_SUB = 'bypass:dev-1'
 
 function silentLogger(): ReturnType<typeof pino> {
   const sink: DestinationStream = {
@@ -38,11 +51,12 @@ function silentLogger(): ReturnType<typeof pino> {
   return pino({ base: { component: 'migrate' } }, sink)
 }
 
-async function seedBypassUser(repo: Repo, pool: Pool): Promise<string> {
+async function seedCallerUser(repo: Repo, pool: Pool, scope: TestScope, idx: number): Promise<string> {
+  void pool
   const u = await repo.users.create(pool, {
-    cognitoSub: BYPASS_SUB,
-    username: 'bypass',
-    displayName: 'Bypass',
+    cognitoSub: scope.userSub(idx),
+    username: scope.username(idx),
+    displayName: scope.displayName(idx),
   })
   return u.id
 }
@@ -51,73 +65,92 @@ interface SeededOther {
   readonly userId: string
   readonly worldId: string
   readonly campaignId: string
+  readonly username: string
 }
 
 async function seedOtherOwnedCampaign(
   repo: Repo,
   pool: Pool,
-  suffix: string,
+  scope: TestScope,
+  idx: number,
 ): Promise<SeededOther> {
   const owner = await repo.users.create(pool, {
-    cognitoSub: `other-sub-${suffix}`,
-    username: `other${suffix}`,
-    displayName: `Other ${suffix}`,
+    cognitoSub: scope.userSub(idx),
+    username: scope.username(idx),
+    displayName: scope.displayName(idx),
   })
   const world = await repo.worlds.create({
     createdBy: owner.id,
-    name: 'World',
+    name: scope.worldName(idx),
     concept: 'concept',
   })
   const campaign = await repo.campaigns.create({
     worldId: world.id,
     createdBy: owner.id,
-    name: 'Campaign',
+    name: scope.campaignName(idx),
   })
   await repo.campaigns.addMember({
     campaignId: campaign.id,
     userId: owner.id,
     role: 'owner',
   })
-  return { userId: owner.id, worldId: world.id, campaignId: campaign.id }
+  return {
+    userId: owner.id,
+    worldId: world.id,
+    campaignId: campaign.id,
+    username: scope.username(idx),
+  }
 }
 
-async function seedBypassOwnedCampaign(
+async function seedCallerOwnedCampaign(
   repo: Repo,
   pool: Pool,
-): Promise<{
-  readonly bypassUserId: string
-  readonly campaignId: string
-}> {
-  const bypassUserId = await seedBypassUser(repo, pool)
+  scope: TestScope,
+  callerIdx: number,
+): Promise<{ readonly callerUserId: string; readonly campaignId: string }> {
+  const callerUserId = await seedCallerUser(repo, pool, scope, callerIdx)
   const world = await repo.worlds.create({
-    createdBy: bypassUserId,
-    name: 'World',
+    createdBy: callerUserId,
+    name: scope.worldName(callerIdx),
     concept: 'concept',
   })
   const campaign = await repo.campaigns.create({
     worldId: world.id,
-    createdBy: bypassUserId,
-    name: 'Campaign',
+    createdBy: callerUserId,
+    name: scope.campaignName(callerIdx),
   })
   await repo.campaigns.addMember({
     campaignId: campaign.id,
-    userId: bypassUserId,
+    userId: callerUserId,
     role: 'owner',
   })
-  return { bypassUserId, campaignId: campaign.id }
+  return { callerUserId, campaignId: campaign.id }
 }
 
 describe('invite routes (integration)', () => {
   let pool: Pool
   let repo: Repo
   let app: Awaited<ReturnType<typeof buildApp>>
+  // Label kept short ('inv'): scope.username(n) must fit the route's
+  // ^[a-zA-Z0-9](?:[a-zA-Z0-9_]{1,18}[a-zA-Z0-9])?$ regex (max 20 chars).
+  // id = `tst-${label}-${rand8}`, then `${id-stripped}u${n}` is the
+  // username. label='inv' → 11-char id-stripped + 'u' + 2-digit index =
+  // up to 14 chars; comfortable headroom for 2 * testIpCounter indices.
+  const scope = makeTestScope('inv')
   // Each test gets a unique remoteAddress so the in-memory rate-limit
   // store (keyed by request.ip) doesn't bleed between tests.
   let testIpCounter = 0
   let currentTestIp = ''
+  // Per-test caller sub. Tests bump `callerIdx` so each test asserts
+  // against an isolated (sub, user-row) pair the scope owns.
+  let currentCallerSub: ScopedSub = scope.userSub(0)
 
   function inject(opts: InjectOptions): Promise<LightMyRequestResponse> {
-    return app.inject({ ...opts, remoteAddress: currentTestIp })
+    return app.inject({
+      ...opts,
+      remoteAddress: currentTestIp,
+      headers: { ...(opts.headers ?? {}), 'x-mythrun-dev-sub': currentCallerSub },
+    })
   }
 
   beforeAll(async () => {
@@ -158,19 +191,23 @@ describe('invite routes (integration)', () => {
 
   afterAll(async () => {
     await app.close()
+    await cleanupTestScope(pool, scope)
     await pool.end()
     vi.unstubAllEnvs()
   })
 
-  beforeEach(async () => {
+  beforeEach(() => {
     testIpCounter += 1
     currentTestIp = `10.0.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
-    await resetData(pool)
+    // Each test reserves a fresh caller index. Allocates `callerIdx`
+    // (= 2*testIpCounter) for the caller and `callerIdx + 1` for any
+    // "other" seeded user — guaranteeing no two tests collide on a sub.
+    currentCallerSub = scope.userSub(2 * testIpCounter)
   })
 
   describe('POST /api/campaigns/:id/invites', () => {
     it('owner creates invite → 201 with code, url, Location header', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
+      const { campaignId } = await seedCallerOwnedCampaign(repo, pool, scope, 2 * testIpCounter)
       const res = await inject({
         method: 'POST',
         url: `/api/campaigns/${campaignId}/invites`,
@@ -184,8 +221,8 @@ describe('invite routes (integration)', () => {
     })
 
     it('non-owner (non-member) → 403 not_campaign_owner', async () => {
-      await seedBypassUser(repo, pool)
-      const other = await seedOtherOwnedCampaign(repo, pool, 'a')
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
+      const other = await seedOtherOwnedCampaign(repo, pool, scope, 2 * testIpCounter + 1)
       const res = await inject({
         method: 'POST',
         url: `/api/campaigns/${other.campaignId}/invites`,
@@ -195,7 +232,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown campaign → 404 campaign_not_found', async () => {
-      await seedBypassUser(repo, pool)
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
       const res = await inject({
         method: 'POST',
         url: '/api/campaigns/00000000-0000-7000-8000-000000000000/invites',
@@ -207,7 +244,7 @@ describe('invite routes (integration)', () => {
 
   describe('GET /api/campaigns/:id/invites', () => {
     it('owner lists invites → 200 with array including primary', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
+      const { campaignId } = await seedCallerOwnedCampaign(repo, pool, scope, 2 * testIpCounter)
       // create 2 invites
       const c1 = await inject({ method: 'POST', url: `/api/campaigns/${campaignId}/invites` })
       const c2 = await inject({ method: 'POST', url: `/api/campaigns/${campaignId}/invites` })
@@ -227,8 +264,8 @@ describe('invite routes (integration)', () => {
     })
 
     it('non-owner → 403 not_campaign_owner', async () => {
-      await seedBypassUser(repo, pool)
-      const other = await seedOtherOwnedCampaign(repo, pool, 'b')
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
+      const other = await seedOtherOwnedCampaign(repo, pool, scope, 2 * testIpCounter + 1)
       const res = await inject({ method: 'GET', url: `/api/campaigns/${other.campaignId}/invites` })
       expect(res.statusCode).toBe(403)
       expect(res.json()).toEqual({ code: 'not_campaign_owner' })
@@ -237,7 +274,7 @@ describe('invite routes (integration)', () => {
 
   describe('DELETE /api/campaigns/:id/invites/:inviteCode', () => {
     it('owner revokes invite → 204', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
+      const { campaignId } = await seedCallerOwnedCampaign(repo, pool, scope, 2 * testIpCounter)
       const created = await inject({ method: 'POST', url: `/api/campaigns/${campaignId}/invites` })
       const code = created.json<{ inviteCode: string }>().inviteCode
 
@@ -249,7 +286,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown invite code → 404 invite_not_found', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
+      const { campaignId } = await seedCallerOwnedCampaign(repo, pool, scope, 2 * testIpCounter)
       const res = await inject({
         method: 'DELETE',
         url: `/api/campaigns/${campaignId}/invites/NOTAREALCODE`,
@@ -261,7 +298,14 @@ describe('invite routes (integration)', () => {
 
   describe('GET /api/invites/:inviteCode/preview', () => {
     it('valid invite → 200 valid:true with campaign + owner identity', async () => {
-      const other = await seedOtherOwnedCampaign(repo, pool, 'pv1')
+      // Preview is jwt-no-db / public-ish — caller doesn't need to be
+      // onboarded. We still seed the caller because the bypass plugin
+      // attaches a sub regardless; not seeding would 403 any other route
+      // hit in the same describe block. Preview itself only reads the
+      // invite + the campaign owner's identity, both of which come from
+      // the "other" user.
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
+      const other = await seedOtherOwnedCampaign(repo, pool, scope, 2 * testIpCounter + 1)
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -272,13 +316,14 @@ describe('invite routes (integration)', () => {
       })
       expect(res.statusCode).toBe(200)
       const body = res.json<{ campaignName: string; ownerUsername: string; valid: boolean }>()
-      expect(body.campaignName).toBe('Campaign')
-      expect(body.ownerUsername).toBe('otherpv1')
+      expect(body.campaignName).toBe(scope.campaignName(2 * testIpCounter + 1))
+      expect(body.ownerUsername).toBe(other.username)
       expect(body.valid).toBe(true)
     })
 
     it('revoked invite → 200 valid:false', async () => {
-      const other = await seedOtherOwnedCampaign(repo, pool, 'pv2')
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
+      const other = await seedOtherOwnedCampaign(repo, pool, scope, 2 * testIpCounter + 1)
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -295,6 +340,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown code → 404 invite_not_found', async () => {
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
       const res = await inject({
         method: 'GET',
         url: '/api/invites/NOTAREALCODE/preview',
@@ -306,8 +352,8 @@ describe('invite routes (integration)', () => {
 
   describe('POST /api/invites/:inviteCode/accept', () => {
     it('accept new invite → 201 alreadyMember:false + Location header', async () => {
-      await seedBypassUser(repo, pool)
-      const other = await seedOtherOwnedCampaign(repo, pool, 'ac1')
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
+      const other = await seedOtherOwnedCampaign(repo, pool, scope, 2 * testIpCounter + 1)
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -325,12 +371,16 @@ describe('invite routes (integration)', () => {
     })
 
     it('already member → 200 alreadyMember:true (no Location)', async () => {
-      const { bypassUserId, campaignId } = await seedBypassOwnedCampaign(repo, pool)
-      // bypass user is already the owner of this campaign — count as member.
-      void bypassUserId
+      const { callerUserId, campaignId } = await seedCallerOwnedCampaign(
+        repo,
+        pool,
+        scope,
+        2 * testIpCounter,
+      )
+      // caller user is already the owner of this campaign — count as member.
       const inv = await repo.invites.create({
         campaignId,
-        createdBy: bypassUserId,
+        createdBy: callerUserId,
       })
 
       const res = await inject({
@@ -344,8 +394,8 @@ describe('invite routes (integration)', () => {
     })
 
     it('revoked invite, non-member → 410 invite_revoked', async () => {
-      await seedBypassUser(repo, pool)
-      const other = await seedOtherOwnedCampaign(repo, pool, 'ac3')
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
+      const other = await seedOtherOwnedCampaign(repo, pool, scope, 2 * testIpCounter + 1)
       const inv = await repo.invites.create({
         campaignId: other.campaignId,
         createdBy: other.userId,
@@ -361,10 +411,15 @@ describe('invite routes (integration)', () => {
     })
 
     it('membership trumps revoke: already-member of revoked invite → 200 alreadyMember:true', async () => {
-      const { bypassUserId, campaignId } = await seedBypassOwnedCampaign(repo, pool)
+      const { callerUserId, campaignId } = await seedCallerOwnedCampaign(
+        repo,
+        pool,
+        scope,
+        2 * testIpCounter,
+      )
       const inv = await repo.invites.create({
         campaignId,
-        createdBy: bypassUserId,
+        createdBy: callerUserId,
       })
       await repo.invites.revoke(inv.inviteCode, campaignId)
 
@@ -378,7 +433,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown code → 404 invite_not_found', async () => {
-      await seedBypassUser(repo, pool)
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
       const res = await inject({
         method: 'POST',
         url: '/api/invites/NOTAREALCODE/accept',
@@ -390,7 +445,7 @@ describe('invite routes (integration)', () => {
 
   describe('GET /api/campaigns/:id/members', () => {
     it('member lists members → 200 with members array', async () => {
-      const { campaignId } = await seedBypassOwnedCampaign(repo, pool)
+      const { campaignId } = await seedCallerOwnedCampaign(repo, pool, scope, 2 * testIpCounter)
       const res = await inject({
         method: 'GET',
         url: `/api/campaigns/${campaignId}/members`,
@@ -400,13 +455,13 @@ describe('invite routes (integration)', () => {
         members: { userId: string; role: string; username: string }[]
       }>()
       expect(body.members.length).toBe(1)
-      expect(body.members[0]?.username).toBe('bypass')
+      expect(body.members[0]?.username).toBe(scope.username(2 * testIpCounter))
       expect(body.members[0]?.role).toBe('owner')
     })
 
     it('non-member → 403 not_campaign_member', async () => {
-      await seedBypassUser(repo, pool)
-      const other = await seedOtherOwnedCampaign(repo, pool, 'm1')
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
+      const other = await seedOtherOwnedCampaign(repo, pool, scope, 2 * testIpCounter + 1)
       const res = await inject({
         method: 'GET',
         url: `/api/campaigns/${other.campaignId}/members`,
@@ -416,7 +471,7 @@ describe('invite routes (integration)', () => {
     })
 
     it('unknown campaign → 404 campaign_not_found', async () => {
-      await seedBypassUser(repo, pool)
+      await seedCallerUser(repo, pool, scope, 2 * testIpCounter)
       const res = await inject({
         method: 'GET',
         url: '/api/campaigns/00000000-0000-7000-8000-000000000000/members',

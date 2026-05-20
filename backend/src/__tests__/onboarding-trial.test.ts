@@ -14,6 +14,14 @@
 // repo and replaces it with a stub that throws AFTER it would have
 // succeeded. The route handler's try/catch must ROLLBACK the users
 // INSERT in response, leaving the DB unchanged.
+//
+// Phase-4 wave-4d (myth-oehx): migrated from resetData() to scoped
+// fixtures. Each test sends a unique sub via the `x-mythrun-dev-sub`
+// header so credit_ledger / users rows from sibling tests don't pile up
+// on the shared `bypass:dev-1` default sub. The atomicity test still
+// asserts "no users row" — it queries by the scope-prefixed username,
+// not by the literal `alice`, to avoid colliding with any other test
+// file that may also have inserted an `alice`.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { fileURLToPath } from 'node:url'
@@ -30,7 +38,11 @@ vi.mock('../llm/profanity.js', () => ({
 import { createPgPool } from '../db/postgres.js'
 import { runMigrations } from '../db/migrate.js'
 import { guardTestDatabase } from '../db/__tests__/guard-db.js'
-import { resetData } from '../repo/__tests__/_helpers/reset-data.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type ScopedSub,
+} from '../repo/__tests__/_helpers/test-scope.js'
 import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo } from '../repo/index.js'
@@ -57,11 +69,22 @@ function silentLogger(): ReturnType<typeof pino> {
 describe('onboarding trial-credit (integration)', () => {
   let pool: Pool
   let app: Awaited<ReturnType<typeof buildApp>>
+  // Label kept short ('trial'): scope.username(n) is computed as
+  // `${id-with-dashes-stripped}u${n}` and must fit the route's
+  // ^[a-zA-Z0-9](?:[a-zA-Z0-9_]{1,18}[a-zA-Z0-9])?$ regex (max 20 chars).
+  // The id is `tst-${label}-${rand8}` = 4 + len(label) + 8 = 12+len(label),
+  // so label budget is 6 chars (12 + 6 + 'u' + 1-digit-index = 20).
+  const scope = makeTestScope('trial')
   let testIpCounter = 0
   let currentTestIp = ''
+  let currentTestSub: ScopedSub = scope.userSub(0)
 
   function inject(opts: InjectOptions): Promise<LightMyRequestResponse> {
-    return app.inject({ ...opts, remoteAddress: currentTestIp })
+    return app.inject({
+      ...opts,
+      remoteAddress: currentTestIp,
+      headers: { ...(opts.headers ?? {}), 'x-mythrun-dev-sub': currentTestSub },
+    })
   }
 
   beforeAll(async () => {
@@ -98,15 +121,21 @@ describe('onboarding trial-credit (integration)', () => {
 
   afterAll(async () => {
     await app.close()
+    // credit_ledger is RESTRICT-FK to users; cleanupTestScope handles
+    // that ordering. The trial-credit row has source_purchase_id NULL +
+    // source_billing_history_id NULL (the atomicity test stubs out the
+    // grant call before any purchase / billing-history row would be
+    // created), so no satellite-FK cleanup is required here.
+    await cleanupTestScope(pool, scope)
     await pool.end()
     vi.unstubAllEnvs()
     vi.restoreAllMocks()
   })
 
-  beforeEach(async () => {
+  beforeEach(() => {
     testIpCounter += 1
     currentTestIp = `10.1.${String(Math.floor(testIpCounter / 256))}.${String(testIpCounter % 256)}`
-    await resetData(pool)
+    currentTestSub = scope.userSub(testIpCounter * 2)
     vi.restoreAllMocks()
     // Re-establish the classifyProfanity mock default after restoreAllMocks
     // wipes it. All trial-credit tests register with clean usernames/displays.
@@ -114,10 +143,11 @@ describe('onboarding trial-credit (integration)', () => {
   })
 
   it('grants exactly one trial credit row on successful register', async () => {
+    const username = scope.username(testIpCounter * 2)
     const res = await inject({
       method: 'POST',
       url: '/api/users/register',
-      payload: { username: 'alice', displayName: 'Alice' },
+      payload: { username, displayName: scope.displayName(testIpCounter * 2) },
     })
     expect(res.statusCode).toBe(201)
     const body = res.json<{ user: { id: string; freeTrialUsed: boolean } }>()
@@ -152,10 +182,11 @@ describe('onboarding trial-credit (integration)', () => {
   })
 
   it('sets free_trial_used=true on the users row', async () => {
+    const username = scope.username(testIpCounter * 2)
     const res = await inject({
       method: 'POST',
       url: '/api/users/register',
-      payload: { username: 'alice', displayName: 'Alice' },
+      payload: { username, displayName: scope.displayName(testIpCounter * 2) },
     })
     expect(res.statusCode).toBe(201)
     const body = res.json<{ user: { id: string } }>()
@@ -169,10 +200,12 @@ describe('onboarding trial-credit (integration)', () => {
   })
 
   it('idempotent replay does NOT add a second trial credit row', async () => {
+    const username = scope.username(testIpCounter * 2)
+    const displayName = scope.displayName(testIpCounter * 2)
     const first = await inject({
       method: 'POST',
       url: '/api/users/register',
-      payload: { username: 'alice', displayName: 'Alice' },
+      payload: { username, displayName },
     })
     expect(first.statusCode).toBe(201)
     const firstBody = first.json<{ user: { id: string } }>()
@@ -180,7 +213,7 @@ describe('onboarding trial-credit (integration)', () => {
     const replay = await inject({
       method: 'POST',
       url: '/api/users/register',
-      payload: { username: 'alice', displayName: 'Alice' },
+      payload: { username, displayName },
     })
     expect(replay.statusCode).toBe(200)
 
@@ -200,19 +233,34 @@ describe('onboarding trial-credit (integration)', () => {
       throw new Error('simulated grant failure')
     })
 
+    const username = scope.username(testIpCounter * 2)
     const res = await inject({
       method: 'POST',
       url: '/api/users/register',
-      payload: { username: 'alice', displayName: 'Alice' },
+      payload: { username, displayName: scope.displayName(testIpCounter * 2) },
     })
     // 500 — the simulated error is not a 23505, so the handler re-throws
     // and Fastify's default error handler returns 500.
     expect(res.statusCode).toBe(500)
     expect(grantSpy).toHaveBeenCalledOnce()
 
-    const users = await pool.query<{ id: string }>("SELECT id FROM users WHERE username = 'alice'")
+    // Query by scope-prefixed username to avoid false-positive matches
+    // against any sibling test file that registers a literal `alice`.
+    const users = await pool.query<{ id: string }>(
+      'SELECT id FROM users WHERE username = $1',
+      [username],
+    )
     expect(users.rowCount).toBe(0)
-    const ledger = await pool.query<{ id: string }>('SELECT id FROM credit_ledger')
+    // And likewise scope the credit_ledger probe to only this scope's
+    // users — there's no users row joined to this test's sub anyway,
+    // but a global SELECT id FROM credit_ledger would conflate this
+    // test's "no rollback orphan" assertion with any other scope's
+    // trial-credit row.
+    const ledger = await pool.query<{ id: string }>(
+      `SELECT id FROM credit_ledger
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub = $1)`,
+      [currentTestSub],
+    )
     expect(ledger.rowCount).toBe(0)
   })
 })
