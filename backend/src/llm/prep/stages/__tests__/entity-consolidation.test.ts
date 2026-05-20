@@ -85,6 +85,7 @@ import { entities } from '../../../../repo/entities.js'
 import { relationships } from '../../../../repo/relationships.js'
 import { facts } from '../../../../repo/facts.js'
 import { proseKernels } from '../../../../repo/prose-kernels.js'
+import { entityHierarchy } from '../../../../repo/entity-hierarchy.js'
 import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
 
 const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
@@ -456,5 +457,142 @@ describe('runEntityConsolidationStage', () => {
     expect(entities.insert).toHaveBeenCalledTimes(1)
     const insertCall = vi.mocked(entities.insert).mock.calls[0]?.[1] as { readonly name: string }
     expect(insertCall.name).toBe('The Ironjaw')
+  })
+
+  // Covers the missingIds WARN arm: LLM omits a ghost for a declared
+  // placeholder. The handler must persist what the LLM did emit and WARN
+  // about the unfulfilled declaration without throwing. Also covers the
+  // `source === undefined || target === undefined → continue` branch on the
+  // resolve-pending-relationships loop: the pending relationship that
+  // references the omitted placeholder is dropped silently.
+  it('WARNs when LLM omits ghost_entities for some declared placeholders', async () => {
+    const FACTION_E1 = '01923456-789a-7bcd-8ef0-000000000001'
+    const PENDING_STATE = {
+      declarations: [
+        { placeholderId: 'new-001', name: 'The Ironjaw', entityType: 'faction' as const },
+        { placeholderId: 'new-002', name: 'The Forgotten', entityType: 'faction' as const },
+      ],
+      relationships: [
+        // Endpoint references the placeholder the LLM forgot — must drop.
+        {
+          from: FACTION_E1,
+          to: 'new-002',
+          relationship: 'opposed_to',
+          description: 'references the omitted placeholder',
+        },
+      ],
+    }
+    const client: QuerySpy = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('SELECT entity_consolidation_pending')) {
+          return Promise.resolve({
+            rows: [{ entity_consolidation_pending: PENDING_STATE }],
+          })
+        }
+        return Promise.resolve({ rows: [] })
+      }),
+    }
+    vi.mocked(entities.listByWorld).mockResolvedValue([])
+
+    // LLM only emits one of the two declared placeholders.
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        ghost_entities: [
+          {
+            placeholder_id: 'new-001',
+            name: 'The Ironjaw',
+            entity_type: 'faction',
+            access_level: 'known',
+            parent_location_id: null,
+            prose:
+              'The Ironjaw is one of the four hunting bands of the Bone Reach, contesting territory with neighboring factions.',
+            facts: [
+              { topic: 'territory', content: 'Ranges the eastern canyons.', access_level: 'known' },
+              { topic: 'rivalry', content: 'Hunted by the Long Vigil.', access_level: 'known' },
+            ],
+          },
+        ],
+      },
+      finishReason: 'stop',
+      usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
+    } as never)
+
+    await runEntityConsolidationStage(client as never, baseArgs)
+
+    // Only the LLM-emitted ghost persists; the missing one is silently
+    // skipped (WARN logged but no throw, no insert for new-002).
+    expect(entities.insert).toHaveBeenCalledTimes(1)
+    const insertCall = vi.mocked(entities.insert).mock.calls[0]?.[1] as { readonly name: string }
+    expect(insertCall.name).toBe('The Ironjaw')
+  })
+
+  // Covers the location-ghost entity_hierarchy.insert branch: a ghost with
+  // entity_type='location' and a non-null parent_location_id must link via
+  // entityHierarchy.insert.
+  it('links a location ghost with a parent_location_id into entity_hierarchy', async () => {
+    const PARENT_LOCATION_ID = '01923456-789a-7bcd-8ef0-000000000abc'
+    const PENDING_STATE = {
+      declarations: [
+        { placeholderId: 'new-001', name: 'Hidden Cove', entityType: 'location' as const },
+      ],
+      relationships: [],
+    }
+    const client: QuerySpy = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('SELECT entity_consolidation_pending')) {
+          return Promise.resolve({
+            rows: [{ entity_consolidation_pending: PENDING_STATE }],
+          })
+        }
+        return Promise.resolve({ rows: [] })
+      }),
+    }
+    vi.mocked(entities.listByWorld).mockResolvedValue([
+      {
+        id: PARENT_LOCATION_ID,
+        worldId: 'wld-1',
+        entityType: 'location',
+        name: 'The Iron Coast',
+        accessLevel: 'known',
+      },
+    ])
+
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        ghost_entities: [
+          {
+            placeholder_id: 'new-001',
+            name: 'Hidden Cove',
+            entity_type: 'location',
+            access_level: 'known',
+            parent_location_id: PARENT_LOCATION_ID,
+            prose:
+              'A sheltered cove on the lee side of the Iron Coast, only reachable at low tide through a slot in the cliffs.',
+            facts: [
+              { topic: 'access', content: 'Reachable only at low tide.', access_level: 'known' },
+              { topic: 'fauna', content: 'Black-shell crabs nest here.', access_level: 'known' },
+            ],
+          },
+        ],
+      },
+      finishReason: 'stop',
+      usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
+    } as never)
+
+    await runEntityConsolidationStage(client as never, baseArgs)
+
+    // Ghost was inserted as a location; the parent_location link fired.
+    expect(entities.insert).toHaveBeenCalledTimes(1)
+    const insertCall = vi.mocked(entities.insert).mock.calls[0]?.[1] as {
+      readonly id: string
+      readonly entityType: string
+    }
+    expect(insertCall.entityType).toBe('location')
+
+    expect(entityHierarchy.insert).toHaveBeenCalledTimes(1)
+    expect(entityHierarchy.insert).toHaveBeenCalledWith(expect.anything(), {
+      parentEntityId: PARENT_LOCATION_ID,
+      childEntityId: insertCall.id,
+    })
   })
 })

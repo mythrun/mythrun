@@ -759,17 +759,19 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(snapshotReadyEmits).toHaveLength(1)
   })
 
-  it('re-publishes phase=world_snapshot_ready on retry re-entry when stage 4 is already completed', async () => {
+  it('re-publishes phase=world_snapshot_ready on retry re-entry when stage 4b is already completed', async () => {
     const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
-    // Pre-stage 1, 1.5, 2, 3, 4 all as completed. The loop will walk past
-    // each via the `claim !== 'claimed'` branch; stage 4's idempotent skip
-    // must emit world_snapshot_ready for reconnecting SSE subscribers.
+    // Pre-stage 1, 1.5, 2, 3, 4, 4b all as completed. The loop walks past
+    // each via the `claim !== 'claimed'` branch; the entity_consolidation
+    // idempotent skip must emit world_snapshot_ready for reconnecting SSE
+    // subscribers.
     for (const stage of [
       'concept_intake',
       'vocabulary_intake',
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',
+      'entity_consolidation',
     ] as const) {
       await pool.query(
         `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,

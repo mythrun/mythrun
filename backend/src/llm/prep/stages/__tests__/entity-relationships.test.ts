@@ -761,6 +761,150 @@ describe('runEntityRelationshipsStage', () => {
     })
   })
 
+  it('drops hallucinated-UUID→placeholder relationships (unknown from, placeholder to)', async () => {
+    // myth-pfke P3.3: covers the from-side hallucination arm of
+    // partitionWithPlaceholders — the `to` is a declared placeholder, the
+    // `from` is a UUID NOT in the inventory. Must drop, not throw.
+    const tree = {
+      relationships: [
+        // Pad with 4 valid real→real rows so the schema's min(5) holds.
+        { from: E1, to: E2, relationship: 'controls', description: 'a' },
+        { from: E2, to: E3, relationship: 'leads', description: 'b' },
+        { from: E3, to: E4, relationship: 'protects', description: 'c' },
+        { from: E4, to: E1, relationship: 'located_in', description: 'd' },
+        // The drop target: hallucinated UUID from, placeholder to.
+        { from: GHOST, to: 'new-001', relationship: 'pursues', description: 'ghost→phantom' },
+      ],
+      hierarchy_stragglers: [],
+      new_entity_declarations: [
+        { placeholder_id: 'new-001', name: 'The Ironjaw', entity_type: 'faction' as const },
+      ],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(tree),
+      object: Promise.resolve(tree),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const client = makeClient()
+    await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+      readonly sourceEntityId: string
+      readonly targetEntityId: string
+    }[]
+    expect(insertedRows).toHaveLength(4)
+    // The placeholder side dropped too — no placeholder rel survived.
+    const pendingUpdate = client.query.mock.calls.find((call) => {
+      const sql = call[0] as string
+      return sql.includes('UPDATE worlds') && sql.includes('entity_consolidation_pending')
+    })
+    const params = pendingUpdate?.[1] as readonly unknown[]
+    const pendingJson = JSON.parse(params[0] as string) as { relationships: unknown[] }
+    expect(pendingJson.relationships).toHaveLength(0)
+  })
+
+  it('drops placeholder→hallucinated-UUID relationships (placeholder from, unknown to)', async () => {
+    // myth-pfke P3.3: covers the to-side hallucination arm of
+    // partitionWithPlaceholders — the `from` is a declared placeholder, the
+    // `to` is a UUID NOT in the inventory. Must drop, not throw.
+    const tree = {
+      relationships: [
+        // Pad with 4 valid real→real rows so the schema's min(5) holds.
+        { from: E1, to: E2, relationship: 'controls', description: 'a' },
+        { from: E2, to: E3, relationship: 'leads', description: 'b' },
+        { from: E3, to: E4, relationship: 'protects', description: 'c' },
+        { from: E4, to: E1, relationship: 'located_in', description: 'd' },
+        // The drop target: placeholder from, hallucinated UUID to.
+        { from: 'new-001', to: GHOST, relationship: 'pursues', description: 'phantom→ghost' },
+      ],
+      hierarchy_stragglers: [],
+      new_entity_declarations: [
+        { placeholder_id: 'new-001', name: 'The Ironjaw', entity_type: 'faction' as const },
+      ],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(tree),
+      object: Promise.resolve(tree),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const client = makeClient()
+    await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    // The 4 real→real rows persist; the placeholder→GHOST row is dropped.
+    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+      readonly sourceEntityId: string
+      readonly targetEntityId: string
+    }[]
+    expect(insertedRows).toHaveLength(4)
+    for (const row of insertedRows) {
+      expect(row.sourceEntityId).not.toBe(GHOST)
+      expect(row.targetEntityId).not.toBe(GHOST)
+    }
+  })
+
+  it('drops placeholder-endpoint relationships with no matching declaration (orphan placeholder WARN)', async () => {
+    // Covers the droppedOrphanPlaceholderCount WARN log arm (lines 346-355).
+    // The LLM emits a relationship referencing `new-999` but provides no
+    // matching entry in `new_entity_declarations`. The row must drop without
+    // throwing and the WARN must fire (we observe state-effects: the
+    // placeholder row never reaches the pending-state UPDATE).
+    const tree = {
+      relationships: [
+        { from: E1, to: E2, relationship: 'controls', description: 'a' },
+        { from: E2, to: E3, relationship: 'leads', description: 'b' },
+        { from: E3, to: E4, relationship: 'protects', description: 'c' },
+        { from: E4, to: E1, relationship: 'located_in', description: 'd' },
+        // Orphan placeholder — no declaration for new-999.
+        { from: E1, to: 'new-999', relationship: 'opposed_to', description: 'phantom orphan' },
+      ],
+      hierarchy_stragglers: [],
+      new_entity_declarations: [],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(tree),
+      object: Promise.resolve(tree),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const client = makeClient()
+    await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    // The 4 real rows persist; the orphan-placeholder row drops — the
+    // pending-state UPDATE still fires (always written) but its payload
+    // contains zero declarations + zero placeholder rows.
+    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly unknown[]
+    expect(insertedRows).toHaveLength(4)
+    const pendingUpdate = client.query.mock.calls.find((call) => {
+      const sql = call[0] as string
+      return sql.includes('UPDATE worlds') && sql.includes('entity_consolidation_pending')
+    })
+    expect(pendingUpdate).toBeDefined()
+    const params = pendingUpdate?.[1] as readonly unknown[]
+    const pendingJson = JSON.parse(params[0] as string) as {
+      declarations: unknown[]
+      relationships: unknown[]
+    }
+    expect(pendingJson.declarations).toHaveLength(0)
+    expect(pendingJson.relationships).toHaveLength(0)
+  })
+
   it('cascade-clears prior stage_consolidation ghosts on stage-4 retry', async () => {
     // myth-tt2g: a stage-4 retry must clear prior stage-4b ghost entities
     // (created_in='stage:entity_consolidation') so the new stage-4 attempt
