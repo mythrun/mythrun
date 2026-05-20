@@ -220,6 +220,10 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'worlds',
+    check_clause: `CHECK (((jsonb_typeof(entity_consolidation_pending) = 'object'::text) AND (jsonb_typeof((entity_consolidation_pending -> 'declarations'::text)) = 'array'::text) AND (jsonb_typeof((entity_consolidation_pending -> 'relationships'::text)) = 'array'::text)))`,
+  },
+  {
+    table_name: 'worlds',
     check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))`,
   },
   {
@@ -660,6 +664,7 @@ describe('schema-parity (integration)', () => {
       '014_access_tier_rework.sql',
       '015_vocabulary_registry.sql',
       '016_character_concepts.sql',
+      '017_entity_consolidation.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
