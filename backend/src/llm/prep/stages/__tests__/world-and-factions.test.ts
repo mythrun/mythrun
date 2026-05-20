@@ -391,8 +391,12 @@ describe('runWorldAndFactionsStage', () => {
     await withTxn(pool, (client) =>
       runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
+    // Scope to entities in THIS test's world — parallel siblings may
+    // have their own relationship rows in flight (myth-oehx).
     const c = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM relationships`,
+      `SELECT count(*)::text AS count FROM relationships
+        WHERE source_entity_id IN (SELECT id FROM entities WHERE world_id = $1)`,
+      [worldId],
     )
     expect(c.rows[0]?.count).toBe('0')
   })

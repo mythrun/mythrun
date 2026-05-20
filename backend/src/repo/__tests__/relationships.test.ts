@@ -98,7 +98,10 @@ describe('relationships repo', () => {
     await relationships.insertMany(pool, [
       { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old' },
     ])
-    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    const row = await pool.query<{ id: string }>(
+      `SELECT id FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
     expect(row.rows[0]).toBeDefined()
     const id = row.rows[0]?.id ?? ''
     await relationships.updateById(pool, id, { relationshipType: 'rules', description: 'new' })
@@ -114,7 +117,10 @@ describe('relationships repo', () => {
     await relationships.insertMany(pool, [
       { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old' },
     ])
-    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    const row = await pool.query<{ id: string }>(
+      `SELECT id FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
     expect(row.rows[0]).toBeDefined()
     const id = row.rows[0]?.id ?? ''
     const affected = await relationships.updateById(pool, id, { description: 'new' })
@@ -131,7 +137,10 @@ describe('relationships repo', () => {
     await relationships.insertMany(pool, [
       { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'unchanged' },
     ])
-    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    const row = await pool.query<{ id: string }>(
+      `SELECT id FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
     const id = row.rows[0]?.id ?? ''
     const affected = await relationships.updateById(pool, id, {})
     expect(affected).toBe(0)
@@ -141,10 +150,16 @@ describe('relationships repo', () => {
     await relationships.insertMany(pool, [
       { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'x' },
     ])
-    const row = await pool.query<{ id: string }>(`SELECT id FROM relationships`)
+    const row = await pool.query<{ id: string }>(
+      `SELECT id FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
     expect(row.rows[0]).toBeDefined()
     await relationships.deleteById(pool, row.rows[0]?.id ?? '')
-    const count = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM relationships`)
+    const count = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
     expect(count.rows[0]?.count).toBe('0')
   })
 
