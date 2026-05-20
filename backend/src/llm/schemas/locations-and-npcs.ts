@@ -25,7 +25,7 @@ export const factSchema = z.object({
   access_level: ACCESS_LEVEL,
 })
 
-export const locationSchema = z.object({
+export const locationItemSchema = z.object({
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
   prose: z.string().min(40).max(2400),
@@ -33,7 +33,7 @@ export const locationSchema = z.object({
   parent_location: z.string().nullable(),
 })
 
-export const npcSchema = z.object({
+export const npcItemSchema = z.object({
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
   prose: z.string().min(40).max(2400),
@@ -42,10 +42,13 @@ export const npcSchema = z.object({
 })
 
 export const LocationsAndNpcsSchema = z.object({
-  locations: z.array(locationSchema).min(5).max(20),
-  npcs: z.array(npcSchema).min(5).max(20),
+  locations: z.array(locationItemSchema).min(5).max(20),
+  npcs: z.array(npcItemSchema).min(5).max(20),
 })
 
 export type LocationsAndNpcsTree = z.infer<typeof LocationsAndNpcsSchema>
-export type LocationEntry = z.infer<typeof locationSchema>
-export type NpcEntry = z.infer<typeof npcSchema>
+export type LocationItem = z.infer<typeof locationItemSchema>
+export type NpcItem = z.infer<typeof npcItemSchema>
+// Back-compat aliases for stages/locations-and-npcs.ts consumers.
+export type LocationEntry = LocationItem
+export type NpcEntry = NpcItem

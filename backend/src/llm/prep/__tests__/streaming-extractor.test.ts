@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { z } from 'zod'
 import { runStreamingStage } from '../streaming-extractor.js'
 
 interface FakeRedis {
@@ -193,6 +194,110 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
     })
     const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     expect(events.filter((e) => e.type === 'entity-added').map((e) => e.name)).toEqual(['R1'])
+  })
+
+  it('drops items that fail sub_schema validation; survivors still emit', async () => {
+    const redis = makeRedis()
+    const warn = vi.fn()
+    const itemSchema = z.object({
+      name: z.string().min(5),
+      access_level: z.enum(['known', 'discoverable', 'secret']),
+      prose: z.string(),
+    })
+    // Three partial chunks. Middle chunk adds 'X' (fails min(5)). Final
+    // chunk closes 'X' (now at index 1) and starts 'Thornwood'. Post-loop
+    // pass closes 'Thornwood'. Expected emits: Aelmoor + Thornwood only.
+    const stream = partials([
+      { entities: [{ name: 'Aelmoor', access_level: 'known', prose: 'p' }] },
+      {
+        entities: [
+          { name: 'Aelmoor', access_level: 'known', prose: 'p' },
+          { name: 'X', access_level: 'known', prose: 'p' },
+        ],
+      },
+      {
+        entities: [
+          { name: 'Aelmoor', access_level: 'known', prose: 'p' },
+          { name: 'X', access_level: 'known', prose: 'p' },
+          { name: 'Thornwood', access_level: 'known', prose: 'p' },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
+      stage: 'world_and_factions',
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis,
+      keyPrefix: 'test:',
+      arrays: [
+        { path: 'entities', kind: 'location', role: 'entity', sub_schema: itemSchema },
+      ],
+      bypassAccessFilter: true,
+      endpointTierMap: new Map(),
+      logger: { warn },
+    })
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
+    const names = events.filter((e) => e.type === 'entity-added').map((e) => e.name)
+    expect(names).toEqual(['Aelmoor', 'Thornwood'])
+    // The 'X' drop should have produced a structured warn log.
+    const dropCalls = warn.mock.calls.filter((args) => {
+      const first = args[0] as unknown
+      return (
+        typeof first === 'object' &&
+        first !== null &&
+        (first as Record<string, unknown>).event === 'llm.stream_item_dropped'
+      )
+    })
+    expect(dropCalls).toHaveLength(1)
+  })
+
+  it('trailing entry failing sub_schema is dropped by post-loop pass', async () => {
+    const redis = makeRedis()
+    const warn = vi.fn()
+    const itemSchema = z.object({
+      name: z.string().min(5),
+      access_level: z.enum(['known', 'discoverable', 'secret']),
+      prose: z.string(),
+    })
+    // Two-chunk stream. Final chunk has 'Aelmoor' closed (index 0) and
+    // 'X' as the trailing entry (index 1, fails min(5)). 'X' has no
+    // successor, so it can only be caught by the post-loop pass —
+    // which must run sub_schema validation through maybeEmit and drop
+    // the failing entry from the wire feed.
+    const stream = partials([
+      { entities: [{ name: 'Aelmoor', access_level: 'known', prose: 'p' }] },
+      {
+        entities: [
+          { name: 'Aelmoor', access_level: 'known', prose: 'p' },
+          { name: 'X', access_level: 'known', prose: 'p' },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
+      stage: 'world_and_factions',
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis,
+      keyPrefix: 'test:',
+      arrays: [
+        { path: 'entities', kind: 'location', role: 'entity', sub_schema: itemSchema },
+      ],
+      bypassAccessFilter: true,
+      endpointTierMap: new Map(),
+      logger: { warn },
+    })
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
+    const names = events.filter((e) => e.type === 'entity-added').map((e) => e.name)
+    expect(names).toEqual(['Aelmoor'])
+    const dropCalls = warn.mock.calls.filter((args) => {
+      const first = args[0] as unknown
+      return (
+        typeof first === 'object' &&
+        first !== null &&
+        (first as Record<string, unknown>).event === 'llm.stream_item_dropped'
+      )
+    })
+    expect(dropCalls).toHaveLength(1)
   })
 
   it('last entry of array emits via post-loop pass on stream-end', async () => {

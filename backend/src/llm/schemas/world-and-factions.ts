@@ -28,7 +28,7 @@ export const factSchema = z.object({
   access_level: ACCESS_LEVEL,
 })
 
-const regionSchema = z.object({
+export const regionItemSchema = z.object({
   // FIELD ORDER MATTERS: name first, access_level second.
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
@@ -36,7 +36,7 @@ const regionSchema = z.object({
   facts: z.array(factSchema).min(2).max(12),
 })
 
-const factionSchema = z.object({
+export const factionItemSchema = z.object({
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
   prose: z.string().min(40).max(2400),
@@ -45,8 +45,10 @@ const factionSchema = z.object({
 
 export const WorldAndFactionsSchema = z.object({
   world_overview: z.string().min(60).max(2400),
-  regions: z.array(regionSchema).min(3).max(8),
-  factions: z.array(factionSchema).min(3).max(8),
+  regions: z.array(regionItemSchema).min(3).max(8),
+  factions: z.array(factionItemSchema).min(3).max(8),
 })
 
 export type WorldAndFactionsTree = z.infer<typeof WorldAndFactionsSchema>
+export type RegionItem = z.infer<typeof regionItemSchema>
+export type FactionItem = z.infer<typeof factionItemSchema>

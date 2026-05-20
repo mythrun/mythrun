@@ -20,6 +20,7 @@
 
 import type { Job } from 'bullmq'
 import type { Redis } from 'ioredis'
+import type { ZodType } from 'zod'
 import type { AccessLevel } from '../../repo/facts.js'
 
 export type WorldGenStage =
@@ -36,6 +37,11 @@ export interface ArrayConfig {
   readonly path: string
   readonly kind: string
   readonly role: 'entity' | 'edge'
+  /** Per-item Zod schema. When set, each completed item is validated
+   *  against this schema before its wire event is emitted. Failed items
+   *  are dropped from the wire feed (logged via pino.warn) and removed
+   *  from the survivor set the handler reads at end-of-stream. */
+  readonly sub_schema?: ZodType
 }
 
 export interface StreamingExtractorConfig {
@@ -47,7 +53,9 @@ export interface StreamingExtractorConfig {
   readonly arrays: readonly ArrayConfig[]
   readonly bypassAccessFilter: boolean
   readonly endpointTierMap: ReadonlyMap<string, AccessLevel>
-  readonly logger?: { warn: (msg: string) => void }
+  readonly logger?: {
+    warn: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
+  }
 }
 
 export interface StreamingExtractorResult<T> {
@@ -83,7 +91,9 @@ function hasSubstantiveContent(entry: Record<string, unknown>): boolean {
 function shouldEmitEntity(
   entry: Record<string, unknown>,
   bypass: boolean,
-  logger: { warn: (msg: string) => void } | undefined,
+  logger:
+    | { warn: (objOrMsg: Record<string, unknown> | string, msg?: string) => void }
+    | undefined,
   synthKey: string,
 ): boolean {
   /* c8 ignore start — defensive: the closed-entry gate only invokes
@@ -179,6 +189,29 @@ async function maybeEmit(
     )
   }
   /* c8 ignore stop */
+  // myth-exac P2.4: per-entity sub_schema gate. When the array config
+  // declares a `sub_schema`, validate the closed entry against it before
+  // emitting. Failed items are dropped from the wire feed and marked in
+  // `emitted` so the post-loop trailing-entry pass doesn't retry them.
+  if (arrayCfg.sub_schema !== undefined) {
+    const parsed = arrayCfg.sub_schema.safeParse(entry)
+    if (!parsed.success) {
+      config.logger?.warn(
+        {
+          event: 'llm.stream_item_dropped',
+          stage: config.stage,
+          path: arrayCfg.path,
+          synthKey,
+          partial_json: entry,
+          zod_errors: parsed.error.issues,
+          campaignId: config.campaignId,
+        },
+        'streaming-extractor: dropped item failing sub_schema validation',
+      )
+      emitted.add(synthKey)
+      return
+    }
+  }
   if (arrayCfg.role === 'entity') {
     if (shouldEmitEntity(entry, config.bypassAccessFilter, config.logger, synthKey)) {
       await publishEntityAdded(config, synthKey, arrayCfg, entry)

@@ -37,6 +37,7 @@ import { SONNET } from '../../models.js'
 import { logger } from '../../logger.js'
 import {
   EntityRelationshipsSchema,
+  relationshipItemSchema,
   type EntityRelationshipsOutput,
 } from '../../schemas/entity-relationships.js'
 import { runStreamingStage } from '../streaming-extractor.js'
@@ -227,7 +228,9 @@ export async function runEntityRelationshipsStage(
     job: args.job,
     redisRealtime: args.redisRealtime,
     keyPrefix: args.keyPrefix,
-    arrays: [{ path: 'relationships', kind: 'edge', role: 'edge' }],
+    arrays: [
+      { path: 'relationships', kind: 'edge', role: 'edge', sub_schema: relationshipItemSchema },
+    ],
     bypassAccessFilter: args.bypassAccessFilter,
     endpointTierMap,
   })

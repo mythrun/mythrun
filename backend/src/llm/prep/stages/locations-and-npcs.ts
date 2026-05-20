@@ -66,6 +66,8 @@ import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
 import { runStreamingStage } from '../streaming-extractor.js'
 import {
   LocationsAndNpcsSchema,
+  locationItemSchema,
+  npcItemSchema,
   type LocationsAndNpcsTree,
   type LocationEntry,
   type NpcEntry,
@@ -337,8 +339,8 @@ export async function runLocationsAndNpcsStage(
     redisRealtime: args.redisRealtime,
     keyPrefix: args.keyPrefix,
     arrays: [
-      { path: 'locations', kind: 'location', role: 'entity' },
-      { path: 'npcs', kind: 'npc', role: 'entity' },
+      { path: 'locations', kind: 'location', role: 'entity', sub_schema: locationItemSchema },
+      { path: 'npcs', kind: 'npc', role: 'entity', sub_schema: npcItemSchema },
     ],
     bypassAccessFilter: args.bypassAccessFilter,
     // Stage 3 has no edges — endpointTierMap is unused by the extractor

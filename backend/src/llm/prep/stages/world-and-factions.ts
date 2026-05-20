@@ -47,6 +47,8 @@ import { facts } from '../../../repo/facts.js'
 import { runStreamingStage } from '../streaming-extractor.js'
 import {
   WorldAndFactionsSchema,
+  regionItemSchema,
+  factionItemSchema,
   type WorldAndFactionsTree,
 } from '../../schemas/world-and-factions.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
@@ -206,8 +208,8 @@ export async function runWorldAndFactionsStage(
     redisRealtime: args.redisRealtime,
     keyPrefix: args.keyPrefix,
     arrays: [
-      { path: 'regions', kind: 'location', role: 'entity' },
-      { path: 'factions', kind: 'faction', role: 'entity' },
+      { path: 'regions', kind: 'location', role: 'entity', sub_schema: regionItemSchema },
+      { path: 'factions', kind: 'faction', role: 'entity', sub_schema: factionItemSchema },
     ],
     // myth-exac T13: stage 2 has no edge endpoints — entities are emitted
     // standalone, so the endpoint-tier map is empty. The bypass flag is
