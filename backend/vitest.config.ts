@@ -39,22 +39,56 @@ const COVERAGE_EXCLUDES: readonly string[] = [
   // covered by lookup-keys.test.ts which dereferences it.
 ]
 
+// myth-oehx P5.6: parallel test execution split into two projects so test
+// AND test:coverage both get the benefit in one vitest invocation.
+//
+//   - 'serial' runs the two schema-mutating migration tests (DROP SCHEMA)
+//     in a SINGLE fork. Under parallel forks they'd race with sibling
+//     forks reading the same `mythrun_test` DB.
+//   - 'parallel' runs everything else with maxForks: 6. Per-fork pool
+//     max=4 via createTestPool → peak ~24 concurrent connections, well
+//     under the 200 max_connections ceiling in docker-compose.yml.
+//
+// Projects share globalSetup, setupFiles, env, and coverage config. The
+// pool/poolOptions are project-local.
+const SERIAL_FILES = [
+  'src/db/__tests__/migrate.test.ts',
+  'src/db/__tests__/migrate-schema.test.ts',
+]
+
 export default defineConfig({
   test: {
     setupFiles: ['./src/__tests__/setup-env.ts'],
     globalSetup: ['./src/__tests__/global-setup.ts'],
-    // myth-oehx P5.6: parallel test execution. forks (Vitest v2 default) over
-    // threads — `pg` is pure JS so threads would work, but forks gives full
-    // process isolation which is safer for the global module state in setup-
-    // env.ts and globalSetup. maxForks: 6 keeps peak Postgres connections
-    // under ~34 (each fork's pool is max=4 via createTestPool); postgres
-    // max_connections is bumped to 200 in docker-compose.yml.
-    pool: 'forks',
-    poolOptions: { forks: { maxForks: 6 } },
     // The mythrun/eslint-rules RuleTester scripts (.test.cjs) are run directly
     // via `node`, not Vitest — they don't expose describe/it. The wiring smoke
     // test (.test.mjs) IS a Vitest test and stays included.
     exclude: ['**/node_modules/**', '**/dist/**', '**/eslint-rules/**/*.test.cjs'],
+    // Project-level pool options are limited to `isolate` and `singleFork`;
+    // `maxForks` is configured at the root level (see below). singleFork:
+    // true makes the serial project run all its tests in one fork process.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'serial',
+          include: SERIAL_FILES,
+          pool: 'forks',
+          poolOptions: { forks: { singleFork: true } },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'parallel',
+          exclude: SERIAL_FILES,
+          pool: 'forks',
+        },
+      },
+    ],
+    // Root-level pool config — the 'parallel' project inherits this.
+    pool: 'forks',
+    poolOptions: { forks: { maxForks: 6 } },
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],

@@ -61,7 +61,13 @@ describe('relationships repo', () => {
 
   it('insertMany with empty array is a no-op', async () => {
     await relationships.insertMany(pool, [])
-    const count = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM relationships`)
+    // Scope to entities created in this test's beforeEach. Unscoped
+    // SELECT count(*) collides with parallel-running tests in other
+    // worlds (myth-oehx parallel-execution discipline).
+    const count = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
     expect(count.rows[0]?.count).toBe('0')
   })
 
@@ -79,7 +85,12 @@ describe('relationships repo', () => {
       { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'X' },
     ])
     await relationships.deleteByWorld(pool, worldId)
-    const count = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM relationships`)
+    // Scope to the test's source entities — parallel siblings may have
+    // their own relationships in flight.
+    const count = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
     expect(count.rows[0]?.count).toBe('0')
   })
 
