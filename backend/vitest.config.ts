@@ -54,6 +54,11 @@ const COVERAGE_EXCLUDES: readonly string[] = [
 const SERIAL_FILES = [
   'src/db/__tests__/migrate.test.ts',
   'src/db/__tests__/migrate-schema.test.ts',
+  // invites.test.ts does `ALTER TABLE campaign_invites DROP CONSTRAINT`
+  // mid-test to simulate a dangling FK. ALTER takes ACCESS EXCLUSIVE
+  // lock; under parallel forks it deadlocks with sibling readers of
+  // campaign_invites. Serializing is cheaper than refactoring the test.
+  'src/routes/__tests__/invites.test.ts',
 ]
 
 export default defineConfig({
