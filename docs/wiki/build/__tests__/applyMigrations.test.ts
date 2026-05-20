@@ -23,6 +23,11 @@ describe.skipIf(databaseUrl === undefined)('applyMigrations (integration)', () =
 
   beforeEach(async () => {
     client = await pool.connect()
+    // Drops an isolated, test-owned schema — not the shared public/default
+    // schema the lint rule guards against. The bootstrap convention in
+    // backend/src/__tests__/CONVENTIONS.md targets shared-state DROPs, not
+    // dedicated test-schema lifecycles like this one.
+    // eslint-disable-next-line no-restricted-syntax
     await client.query('DROP SCHEMA IF EXISTS wiki_test CASCADE')
     await client.query('CREATE SCHEMA wiki_test')
     await client.query('SET search_path TO wiki_test, public')
