@@ -26,11 +26,11 @@ Each entity below is identified by its **UUID** — you MUST reference entities 
 
 ## Your Task
 
-Produce a JSON object with two arrays:
+Produce a JSON object with three arrays:
 
 1. **`relationships`** — between 5 and 80 entries. Each entry has:
-   - **`from`** — the source entity's UUID, copied verbatim from the inventory above.
-   - **`to`** — the target entity's UUID, copied verbatim from the inventory above.
+   - **`from`** — the source entity's UUID from the inventory above, OR a placeholder ID for an entity declared in `new_entity_declarations` below.
+   - **`to`** — the target entity's UUID from the inventory above, OR a placeholder ID for an entity declared in `new_entity_declarations` below.
    - **`relationship`** — exactly one of the closed set below. If a connection doesn't fit any of these labels cleanly, map it to the closest fit or skip it; do NOT invent new labels.
    - **`description`** — 10–600 characters of free text describing the relationship. Concrete, specific, grounded in the prose above.
 
@@ -39,30 +39,42 @@ Produce a JSON object with two arrays:
 
 2. **`hierarchy_stragglers`** — up to 20 entries (may be empty). Each entry has `parent_entity_id` and `child_entity_id` (both UUIDs from the inventory). Use this ONLY for parent-child location containment that stage 3 missed — for example, a settlement that should be inside a region but wasn't linked. Do NOT use this for ordinary relationships; those go in `relationships`.
 
-## Declaring missing entities
+3. **`new_entity_declarations`** — up to 15 entries (may be empty). Use this when the prose above names a faction, location, or NPC that is structurally important but does NOT appear in the inventory. See the next section for the mechanism.
 
-Sometimes the prose above references an entity that doesn't appear in the inventory — a faction the regions name-drop but that wasn't generated as a structured entity. If you need to express a relationship with such an entity, you may declare it as a phantom and the system will create the real entity in a subsequent step.
+## Declaring missing entities (phantom references)
+
+Read the prose carefully. When it names a faction, location, or NPC that is NOT in the inventory above — call this a "phantom reference" — you MUST declare it here rather than skip the relationship. The system will create the real entity in a subsequent step.
+
+Examples of phantom references you should declare:
+- A region's prose names a rival hunting band that has no entity row.
+- A faction's prose names an institution it answers to that has no entity row.
+- A location's prose names a parent realm or a sister settlement that has no entity row.
 
 To declare a phantom:
-1. Use a placeholder ID of the form `new-001`, `new-002`, etc. in the relationship's `from` or `to` field instead of a UUID.
-2. Add a matching entry to the `new_entity_declarations` array with the placeholder ID, the entity's intended name, and its type (`faction`, `location`, or `npc`).
+1. Add an entry to `new_entity_declarations` with a placeholder ID of the form `new-001`, `new-002`, etc., the entity's intended name (as named in the prose), and its type (`faction`, `location`, or `npc`).
+2. Use that placeholder ID in `relationships` for any relationship that points at the phantom.
 
-Example:
+Worked example. If the inventory contains The Long Vigil (UUID `aaaa-...`) and the prose says The Long Vigil contests territory with the Ironjaw — but no Ironjaw entity exists in the inventory — the correct output is:
+
 {
   "relationships": [
     {
-      "from": "<real-uuid-of-The-Long-Vigil>",
+      "from": "aaaa-...",
       "to": "new-001",
       "relationship": "rival_of",
       "description": "The Long Vigil and the Ironjaw contest territory in the Bone Reach."
     }
   ],
+  "hierarchy_stragglers": [],
   "new_entity_declarations": [
     { "placeholder_id": "new-001", "name": "The Ironjaw", "entity_type": "faction" }
   ]
 }
 
-Do this only when an entity is clearly named in the prose and structurally needed for a relationship. Don't invent new entities to bulk up the world.
+Rules:
+- Declare a phantom ONLY when the entity is named explicitly in prose AND is needed as a relationship endpoint. Don't invent entities to pad the world.
+- Every placeholder ID used in `relationships.from` or `relationships.to` MUST have a matching `new_entity_declarations` entry. Orphan placeholders are silently dropped.
+- Pick the simplest placeholder IDs in order: `new-001`, `new-002`, etc. Don't skip numbers.
 
 ## Guidance
 
