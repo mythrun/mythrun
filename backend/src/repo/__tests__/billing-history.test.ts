@@ -2,12 +2,15 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { withTx, pool, ensureSchema } from './_helpers/with-tx.js'
 import { resetData } from './_helpers/reset-data.js'
 import { createTestUser } from './_helpers/create-test-user.js'
+import { makeTestScope } from './_helpers/test-scope.js'
 import {
   billingHistory,
   type NewBillingHistoryRow,
   type BillingHistoryKind,
 } from '../billing-history.js'
 import { uuidv7 } from '../uuidv7.js'
+
+const scope = makeTestScope('billing-history')
 
 beforeAll(async () => {
   await ensureSchema()
@@ -51,7 +54,7 @@ function makeRow(
 describe('repo.billingHistory', () => {
   it('append default semantics: plain INSERT; second insert with same (kind, source_id_stripe) raises 23505', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const sourceId = 'pi_dup_default'
       await billingHistory.append(
         tx,
@@ -76,7 +79,7 @@ describe('repo.billingHistory', () => {
 
   it('append with do_nothing returns the existing row id on conflict (no error)', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const sourceId = 'pi_dup_do_nothing'
       const first = await billingHistory.append(
         tx,
@@ -104,7 +107,7 @@ describe('repo.billingHistory', () => {
 
   it('append with do_update_coalesce: COALESCE merges nullable fields (first non-null wins)', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const sourceId = 'in_coalesce_test'
       // First call: expires_at NULL, lookup_key='tier_basic', stripe_payment_intent_id=NULL.
       const first = await billingHistory.append(
@@ -154,7 +157,7 @@ describe('repo.billingHistory', () => {
 
   it('findBySourceStripeId returns null when no row matches; row when match', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const noMatch = await billingHistory.findBySourceStripeId(tx, 'pi_does_not_exist')
       expect(noMatch).toBeNull()
 
@@ -172,7 +175,7 @@ describe('repo.billingHistory', () => {
 
   it("findInvoiceByPaymentIntent returns null when no kind='invoice' row has the PI; id when match", async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       // No invoice rows yet: not found.
       const empty = await billingHistory.findInvoiceByPaymentIntent(tx, 'pi_unknown')
       expect(empty).toBeNull()
@@ -202,7 +205,7 @@ describe('repo.billingHistory', () => {
 
   it('listByUser cursor-pagination: 51 rows → page 1 returns 50 + nextCursor; page 2 returns 1 + null', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       // Insert 51 rows for the user with strictly distinct occurred_at values
       // so the (occurred_at, id) tie-break is unambiguous and the test's
       // expectations are deterministic.
@@ -261,7 +264,7 @@ describe('repo.billingHistory', () => {
 
   it('listByUser cursor tie-break: rows with identical occurred_at sort by id DESC, paginate cleanly', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       // Insert 3 rows with IDENTICAL occurred_at — the lexicographic
       // (occurred_at, id) row-comparison must fall through to id DESC
       // for deterministic pagination. uuidv7() is monotonically time-
@@ -318,7 +321,7 @@ describe('repo.billingHistory', () => {
 
   it("prefix-by-kind CHECK: append with kind='purchase' and source_id_stripe='in_xxx' raises 23514", async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       let caught: unknown
       try {
         await billingHistory.append(
@@ -340,7 +343,7 @@ describe('repo.billingHistory', () => {
 
   it('markRefunded is idempotent: rowcount=1 first call, rowcount=0 second call', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const inserted = await billingHistory.append(
         tx,
         makeRow({ user_id: user.id, kind: 'purchase', source_id_stripe: 'pi_to_refund' }),

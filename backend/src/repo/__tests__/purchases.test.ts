@@ -2,9 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { withTx, pool, ensureSchema } from './_helpers/with-tx.js'
 import { resetData } from './_helpers/reset-data.js'
 import { createTestUser } from './_helpers/create-test-user.js'
+import { makeTestScope } from './_helpers/test-scope.js'
 import { purchases } from '../purchases.js'
 import type { ClientLike } from '../_types.js'
 import { uuidv7 } from '../uuidv7.js'
+
+const scope = makeTestScope('purchases')
 
 beforeAll(async () => {
   await ensureSchema()
@@ -21,7 +24,7 @@ beforeEach(async () => {
 describe('repo.purchases', () => {
   it('insertMany writes one row per (PI, lookup_key); composite UNIQUE blocks duplicates', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       await purchases.insertMany(tx, [
         {
           id: uuidv7(),
@@ -63,7 +66,7 @@ describe('repo.purchases', () => {
 
   it('getByPaymentIntent returns rows ORDER BY id ASC for deterministic concurrent-handler iteration', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const ids = [uuidv7(), uuidv7(), uuidv7()]
       const lookupKeys: string[] = ['sku_session', 'sku_world', 'sku_session_pack_3']
       await purchases.insertMany(
@@ -108,7 +111,7 @@ describe('repo.purchases', () => {
 
   it('markRefunded is idempotent — second call sees status=refunded already, returns rowcount 0 cleanly', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const id = uuidv7()
       await purchases.insertMany(tx, [
         {

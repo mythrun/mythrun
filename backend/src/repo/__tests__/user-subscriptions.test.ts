@@ -2,8 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { withTx, pool, ensureSchema } from './_helpers/with-tx.js'
 import { resetData } from './_helpers/reset-data.js'
 import { createTestUser } from './_helpers/create-test-user.js'
+import { makeTestScope } from './_helpers/test-scope.js'
 import { userSubscriptions, type UpsertFromStripeRow } from '../user-subscriptions.js'
 import { uuidv7 } from '../uuidv7.js'
+
+const scope = makeTestScope('user-subscriptions')
 
 beforeAll(async () => {
   await ensureSchema()
@@ -42,7 +45,7 @@ function makeRow(
 describe('repo.userSubscriptions', () => {
   it('upsertFromStripe writes a fresh row with all fields', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const row = makeRow({
         user_id: user.id,
         stripe_subscription_id: 'sub_fresh',
@@ -72,7 +75,7 @@ describe('repo.userSubscriptions', () => {
 
   it('upsertFromStripe rejects a stale event (T1 after T2 leaves T2 row in place)', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const t2 = new Date('2026-05-05T12:00:02Z')
       const t1 = new Date('2026-05-05T12:00:01Z')
       // Insert T2 first (the "fresh" row).
@@ -103,7 +106,7 @@ describe('repo.userSubscriptions', () => {
 
   it('upsertFromStripe applies a newer event (T3 after T2 updates the row)', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const t2 = new Date('2026-05-05T12:00:02Z')
       const t3 = new Date('2026-05-05T12:00:03Z')
       await userSubscriptions.upsertFromStripe(
@@ -131,7 +134,7 @@ describe('repo.userSubscriptions', () => {
 
   it('upsertFromStripe rejects same-second arrivals (strict > not >=)', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       const t = new Date('2026-05-05T12:00:00Z')
       await userSubscriptions.upsertFromStripe(
         tx,
@@ -158,7 +161,7 @@ describe('repo.userSubscriptions', () => {
 
   it('markCanceled preserves cancel_at_period_end=true (user-clicked path)', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       await userSubscriptions.upsertFromStripe(
         tx,
         makeRow({
@@ -187,7 +190,7 @@ describe('repo.userSubscriptions', () => {
 
   it('markCanceled preserves cancel_at_period_end=false (Stripe-initiated dunning path)', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       await userSubscriptions.upsertFromStripe(
         tx,
         makeRow({
@@ -213,7 +216,7 @@ describe('repo.userSubscriptions', () => {
 
   it('markCanceled writes cancellation_details JSONB', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       await userSubscriptions.upsertFromStripe(
         tx,
         makeRow({
@@ -242,7 +245,7 @@ describe('repo.userSubscriptions', () => {
 
   it('markCanceled converts Unix-seconds cancel_at to TIMESTAMPTZ', async () => {
     await withTx(async (tx) => {
-      const user = await createTestUser(tx)
+      const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
       await userSubscriptions.upsertFromStripe(
         tx,
         makeRow({
@@ -270,7 +273,7 @@ describe('repo.userSubscriptions', () => {
     const activeStatuses = ['active', 'trialing', 'past_due', 'unpaid', 'incomplete'] as const
     for (const status of activeStatuses) {
       await withTx(async (tx) => {
-        const user = await createTestUser(tx)
+        const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
         await userSubscriptions.upsertFromStripe(
           tx,
           makeRow({
@@ -290,7 +293,7 @@ describe('repo.userSubscriptions', () => {
     const inactiveStatuses = ['canceled', 'incomplete_expired', 'paused'] as const
     for (const status of inactiveStatuses) {
       await withTx(async (tx) => {
-        const user = await createTestUser(tx)
+        const user = await createTestUser(tx, scope, { sub: scope.userSub(0) })
         await userSubscriptions.upsertFromStripe(
           tx,
           makeRow({

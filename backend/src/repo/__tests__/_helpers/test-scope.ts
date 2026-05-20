@@ -37,22 +37,36 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 
+// Branded types: identifier-shaped strings that can only be produced via
+// `makeTestScope`. Fixture builders accept these branded types instead of
+// raw strings, so passing an unscoped value fails to compile.
+//
+// Limitation: the brand widens to `string` when the value is passed to
+// pg.Pool.query (typed as unknown[]). Tests that build INSERT/UPDATE SQL
+// directly are still on the honor system; the ESLint rule (Phase 5) is
+// the primary defense at that surface.
+declare const SCOPED_BRAND: unique symbol
+export type ScopedSub = string & { readonly [SCOPED_BRAND]: 'sub' }
+export type ScopedUsername = string & { readonly [SCOPED_BRAND]: 'username' }
+export type ScopedWorldName = string & { readonly [SCOPED_BRAND]: 'world-name' }
+export type ScopedCampaignName = string & { readonly [SCOPED_BRAND]: 'campaign-name' }
+
 export interface TestScope {
   /** Human label (matches the describe-block name in most cases). */
   readonly label: string
   /** Unique prefix used as the cognito_sub root, world/campaign name root, etc. */
   readonly id: string
   /** Returns `${id}-user-${n}` for the nth user in this scope. */
-  readonly userSub: (n: number) => string
+  readonly userSub: (n: number) => ScopedSub
   /** Returns a username unique to this scope + index. Must satisfy the
    *  username CHECK (lowercase alphanum, length cap). */
-  readonly username: (n: number) => string
+  readonly username: (n: number) => ScopedUsername
   /** Returns a display name for the nth user. */
   readonly displayName: (n: number) => string
   /** Returns `${id}-world-${n}`. */
-  readonly worldName: (n: number) => string
+  readonly worldName: (n: number) => ScopedWorldName
   /** Returns `${id}-campaign-${n}`. */
-  readonly campaignName: (n: number) => string
+  readonly campaignName: (n: number) => ScopedCampaignName
 }
 
 export function makeTestScope(label: string): TestScope {
@@ -66,14 +80,15 @@ export function makeTestScope(label: string): TestScope {
   return {
     label,
     id,
-    userSub: (n) => `${id}-user-${String(n)}`,
+    userSub: (n) => `${id}-user-${String(n)}` as ScopedSub,
     // Usernames have a length cap of ~30 chars per migration 005's regex.
     // Strip dashes from id (which has 2 already) so the username's joined
     // form fits in budget.
-    username: (n) => `${id.replace(/-/g, '')}u${String(n)}`.slice(0, 28),
+    username: (n) =>
+      `${id.replace(/-/g, '')}u${String(n)}`.slice(0, 28) as ScopedUsername,
     displayName: (n) => `Test User ${String(n)} (${id})`,
-    worldName: (n) => `${id}-world-${String(n)}`,
-    campaignName: (n) => `${id}-campaign-${String(n)}`,
+    worldName: (n) => `${id}-world-${String(n)}` as ScopedWorldName,
+    campaignName: (n) => `${id}-campaign-${String(n)}` as ScopedCampaignName,
   }
 }
 
