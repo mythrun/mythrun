@@ -148,9 +148,15 @@ interface TreeStraggler {
   readonly parent_entity_id: string
   readonly child_entity_id: string
 }
+interface TreeDeclaration {
+  readonly placeholder_id: string
+  readonly name: string
+  readonly entity_type: 'faction' | 'location' | 'npc'
+}
 interface RelationshipsTree {
   readonly relationships: readonly TreeRelationship[]
   readonly hierarchy_stragglers: readonly TreeStraggler[]
+  readonly new_entity_declarations: readonly TreeDeclaration[]
 }
 
 function makeValidTree(): RelationshipsTree {
@@ -163,6 +169,7 @@ function makeValidTree(): RelationshipsTree {
       { from: E5, to: E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
     ],
     hierarchy_stragglers: [],
+    new_entity_declarations: [],
   }
 }
 
@@ -271,6 +278,7 @@ describe('runEntityRelationshipsStage', () => {
         { from: E5, to: E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
       ],
       hierarchy_stragglers: [],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(tree),
@@ -312,6 +320,7 @@ describe('runEntityRelationshipsStage', () => {
         // Drop: parent UUID not in inventory
         { parent_entity_id: GHOST, child_entity_id: E6 },
       ],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(tree),
@@ -341,6 +350,7 @@ describe('runEntityRelationshipsStage', () => {
     const invalidTree = {
       relationships: makeValidTree().relationships.slice(0, 3),
       hierarchy_stragglers: [],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(invalidTree),
@@ -373,6 +383,7 @@ describe('runEntityRelationshipsStage', () => {
     const invalidTree = {
       relationships: makeValidTree().relationships.slice(0, 3),
       hierarchy_stragglers: [],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(invalidTree),
@@ -385,6 +396,7 @@ describe('runEntityRelationshipsStage', () => {
       output: {
         relationships: makeValidTree().relationships.slice(0, 4),
         hierarchy_stragglers: [],
+        new_entity_declarations: [],
       },
       finishReason: 'stop',
       usage: { inputTokens: 1000, outputTokens: 800, totalTokens: 1800 },
@@ -419,6 +431,7 @@ describe('runEntityRelationshipsStage', () => {
     const invalidTree = {
       relationships: makeValidTree().relationships.slice(0, 3),
       hierarchy_stragglers: [],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(invalidTree),
@@ -496,6 +509,7 @@ describe('runEntityRelationshipsStage', () => {
         { parent_entity_id: GHOST, child_entity_id: E1 },
         { parent_entity_id: E1, child_entity_id: GHOST },
       ],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(tree),
@@ -564,6 +578,7 @@ describe('runEntityRelationshipsStage', () => {
         { from: E3, to: E2, relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
       ],
       hierarchy_stragglers: [],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(padded),
@@ -649,6 +664,7 @@ describe('runEntityRelationshipsStage', () => {
         { from: E3, to: E2, relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
       ],
       hierarchy_stragglers: [],
+      new_entity_declarations: [],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(tree),
@@ -669,5 +685,133 @@ describe('runEntityRelationshipsStage', () => {
     expect(insertedRows).toHaveLength(5)
     const finalized = result.finalizedEvents.filter((e) => e.type === 'finalized')
     expect(finalized).toHaveLength(5)
+  })
+
+  // myth-pfke P3.3: phantom-reference reconciliation. Stage 4 now accepts
+  // placeholder endpoints (`new-NNN`) + a `new_entity_declarations` array.
+  // The handler partitions: real→real relationships persist into the
+  // `relationships` table; placeholder-touching relationships + declarations
+  // are written to `worlds.entity_consolidation_pending` for stage 4b.
+  it('routes placeholder-endpoint relationships to pending state column', async () => {
+    const tree = {
+      relationships: [
+        // Real → real (persists into relationships table)
+        { from: E1, to: E2, relationship: 'rival_of', description: 'Iron Coast rivals the brotherhood' },
+        // Real → placeholder (routed to pending state)
+        { from: E2, to: 'new-001', relationship: 'opposed_to', description: 'Brotherhood opposes phantom faction' },
+      ],
+      hierarchy_stragglers: [],
+      new_entity_declarations: [
+        { placeholder_id: 'new-001', name: 'The Ironjaw', entity_type: 'faction' as const },
+      ],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(tree),
+      object: Promise.resolve(tree),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const client = makeClient()
+    await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    // Real-endpoint relationship persists; placeholder one does NOT.
+    expect(relationships.insertMany).toHaveBeenCalledTimes(1)
+    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+      readonly sourceEntityId: string
+      readonly targetEntityId: string
+      readonly relationshipType: string
+    }[]
+    expect(insertedRows).toHaveLength(1)
+    expect(insertedRows[0]).toEqual({
+      sourceEntityId: E1,
+      targetEntityId: E2,
+      relationshipType: 'rival_of',
+      description: 'Iron Coast rivals the brotherhood',
+    })
+
+    // Pending state column UPDATE on worlds — find the call.
+    const pendingUpdate = client.query.mock.calls.find((call) => {
+      const sql = call[0] as string
+      return sql.includes('UPDATE worlds') && sql.includes('entity_consolidation_pending')
+    })
+    expect(pendingUpdate).toBeDefined()
+    const params = pendingUpdate?.[1] as readonly unknown[]
+    const pendingJson = JSON.parse(params[0] as string) as {
+      declarations: { placeholderId: string; name: string; entityType: string }[]
+      relationships: { from: string; to: string; relationship: string; description: string }[]
+    }
+    expect(params[1]).toBe('wld-1')
+    expect(pendingJson.declarations).toHaveLength(1)
+    expect(pendingJson.declarations[0]).toEqual({
+      placeholderId: 'new-001',
+      name: 'The Ironjaw',
+      entityType: 'faction',
+    })
+    expect(pendingJson.relationships).toHaveLength(1)
+    expect(pendingJson.relationships[0]).toEqual({
+      from: E2,
+      to: 'new-001',
+      relationship: 'opposed_to',
+      description: 'Brotherhood opposes phantom faction',
+    })
+  })
+
+  it('cascade-clears prior stage_consolidation ghosts on stage-4 retry', async () => {
+    // myth-tt2g: a stage-4 retry must clear prior stage-4b ghost entities
+    // (created_in='stage:entity_consolidation') so the new stage-4 attempt
+    // doesn't leave orphan ghosts mismatched with its new declaration set.
+    // Stage 4 + 4b are a single retry unit (design §D9 + P3.4).
+    const tree = {
+      relationships: [
+        { from: E1, to: E2, relationship: 'rival_of', description: 'Fresh rel' },
+      ],
+      hierarchy_stragglers: [],
+      new_entity_declarations: [],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(tree),
+      object: Promise.resolve(tree),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const client = makeClient()
+    await runEntityRelationshipsStage(client as never, {
+      ...baseArgs,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    // The handler must issue a DELETE against entities scoped to the world
+    // AND created_in='stage:entity_consolidation'. CASCADE on relationships
+    // takes care of the orphaned rows pointing at those ghosts.
+    const ghostWipe = client.query.mock.calls.find((call) => {
+      const sql = call[0] as string
+      return (
+        sql.includes('DELETE FROM entities') &&
+        sql.includes('world_id') &&
+        sql.includes("'stage:entity_consolidation'")
+      )
+    })
+    expect(ghostWipe).toBeDefined()
+    expect(ghostWipe?.[1]).toEqual(['wld-1'])
+
+    // And it must run AFTER the existing relationships.deleteByWorld — the
+    // two together form the stage's idempotency wipe.
+    const deleteByWorldOrder = vi.mocked(relationships.deleteByWorld).mock.invocationCallOrder[0]
+    const ghostWipeCallIndex = client.query.mock.calls.findIndex((call) => {
+      const sql = call[0] as string
+      return (
+        sql.includes('DELETE FROM entities') &&
+        sql.includes("'stage:entity_consolidation'")
+      )
+    })
+    const ghostWipeOrder = client.query.mock.invocationCallOrder[ghostWipeCallIndex]
+    expect(deleteByWorldOrder).toBeLessThan(ghostWipeOrder ?? Number.MAX_SAFE_INTEGER)
   })
 })

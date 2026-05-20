@@ -39,6 +39,31 @@ Produce a JSON object with two arrays:
 
 2. **`hierarchy_stragglers`** — up to 20 entries (may be empty). Each entry has `parent_entity_id` and `child_entity_id` (both UUIDs from the inventory). Use this ONLY for parent-child location containment that stage 3 missed — for example, a settlement that should be inside a region but wasn't linked. Do NOT use this for ordinary relationships; those go in `relationships`.
 
+## Declaring missing entities
+
+Sometimes the prose above references an entity that doesn't appear in the inventory — a faction the regions name-drop but that wasn't generated as a structured entity. If you need to express a relationship with such an entity, you may declare it as a phantom and the system will create the real entity in a subsequent step.
+
+To declare a phantom:
+1. Use a placeholder ID of the form `new-001`, `new-002`, etc. in the relationship's `from` or `to` field instead of a UUID.
+2. Add a matching entry to the `new_entity_declarations` array with the placeholder ID, the entity's intended name, and its type (`faction`, `location`, or `npc`).
+
+Example:
+{
+  "relationships": [
+    {
+      "from": "<real-uuid-of-The-Long-Vigil>",
+      "to": "new-001",
+      "relationship": "rival_of",
+      "description": "The Long Vigil and the Ironjaw contest territory in the Bone Reach."
+    }
+  ],
+  "new_entity_declarations": [
+    { "placeholder_id": "new-001", "name": "The Ironjaw", "entity_type": "faction" }
+  ]
+}
+
+Do this only when an entity is clearly named in the prose and structurally needed for a relationship. Don't invent new entities to bulk up the world.
+
 ## Guidance
 
 - Read the prose carefully. Many relationships are implicit (rivalries, vassalages, employment, family ties, geographic containment). Extract the implicit ones along with the explicit ones.

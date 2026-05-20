@@ -43,21 +43,34 @@ export const RELATIONSHIP_TYPES = [
 
 export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number]
 
+const PLACEHOLDER_ID_PATTERN = /^new-\d{3}$/
+
+export const placeholderIdSchema = z.string().regex(PLACEHOLDER_ID_PATTERN)
+
+export const endpointSchema = z.union([z.uuid(), placeholderIdSchema])
+
+export const declarationItemSchema = z.object({
+  placeholder_id: placeholderIdSchema,
+  name: z.string().min(1).max(200),
+  entity_type: z.enum(['faction', 'location', 'npc']),
+})
+
 export const relationshipItemSchema = z.object({
-  from: z.uuid(),
-  to: z.uuid(),
+  from: endpointSchema,
+  to: endpointSchema,
   relationship: z.enum(RELATIONSHIP_TYPES),
   description: z.string().min(10).max(600),
 })
 
 export const hierarchyStragglerItemSchema = z.object({
-  parent_entity_id: z.uuid(),
-  child_entity_id: z.uuid(),
+  parent_entity_id: endpointSchema,
+  child_entity_id: endpointSchema,
 })
 
 export const EntityRelationshipsSchema = z.object({
   relationships: z.array(relationshipItemSchema).min(5).max(80),
   hierarchy_stragglers: z.array(hierarchyStragglerItemSchema).max(20),
+  new_entity_declarations: z.array(declarationItemSchema).max(15),
 })
 
 export type EntityRelationshipsOutput = z.infer<typeof EntityRelationshipsSchema>
@@ -65,3 +78,4 @@ export type RelationshipEntry = EntityRelationshipsOutput['relationships'][numbe
 export type HierarchyStraggler = EntityRelationshipsOutput['hierarchy_stragglers'][number]
 export type RelationshipItem = z.infer<typeof relationshipItemSchema>
 export type HierarchyStragglerItem = z.infer<typeof hierarchyStragglerItemSchema>
+export type DeclarationItem = z.infer<typeof declarationItemSchema>

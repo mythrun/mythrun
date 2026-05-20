@@ -116,23 +116,82 @@ interface AcceptedRow {
   readonly sourceIndex: number
 }
 
-interface PartitionedRows {
-  readonly accepted: AcceptedRow[]
-  readonly droppedCount: number
+// myth-pfke P3.3: phantom-reference reconciliation. Stage 4's schema (P3.1)
+// now accepts placeholder endpoints (`new-NNN`) plus a `new_entity_declarations`
+// list. The partitioner splits the LLM tree into three buckets:
+//   1. realRelationships — both endpoints are inventory UUIDs → INSERT now.
+//   2. placeholderRelationships — at least one endpoint is a placeholder
+//      with a matching declaration → write to `worlds.entity_consolidation_pending`
+//      for stage 4b to materialize.
+//   3. dropped — orphan placeholders (no matching declaration) or
+//      hallucinated UUIDs on the real side. WARN-logged, never thrown.
+interface PlaceholderRelationshipRow {
+  readonly from: string
+  readonly to: string
+  readonly relationship: string
+  readonly description: string
 }
 
-function partitionRelationships(
+interface ValidDeclaration {
+  readonly placeholderId: string
+  readonly name: string
+  readonly entityType: 'faction' | 'location' | 'npc'
+}
+
+interface PartitionedWithPlaceholders {
+  readonly realRelationships: AcceptedRow[]
+  readonly placeholderRelationships: PlaceholderRelationshipRow[]
+  readonly validDeclarations: ValidDeclaration[]
+  readonly droppedHallucinatedCount: number
+  readonly droppedOrphanPlaceholderCount: number
+}
+
+function partitionWithPlaceholders(
   tree: EntityRelationshipsOutput,
   entityIds: ReadonlySet<string>,
-): PartitionedRows {
-  const accepted: AcceptedRow[] = []
-  let droppedCount = 0
+): PartitionedWithPlaceholders {
+  const declarationMap = new Map(
+    tree.new_entity_declarations.map((d) => [d.placeholder_id, d]),
+  )
+  const realRelationships: AcceptedRow[] = []
+  const placeholderRelationships: PlaceholderRelationshipRow[] = []
+  let droppedHallucinatedCount = 0
+  let droppedOrphanPlaceholderCount = 0
+
   for (const [i, r] of tree.relationships.entries()) {
-    if (!entityIds.has(r.from) || !entityIds.has(r.to)) {
-      droppedCount += 1
+    const fromIsPlaceholder = r.from.startsWith('new-')
+    const toIsPlaceholder = r.to.startsWith('new-')
+    if (fromIsPlaceholder || toIsPlaceholder) {
+      // Orphan check: every placeholder endpoint must have a matching declaration.
+      const fromOrphan = fromIsPlaceholder && !declarationMap.has(r.from)
+      const toOrphan = toIsPlaceholder && !declarationMap.has(r.to)
+      if (fromOrphan || toOrphan) {
+        droppedOrphanPlaceholderCount += 1
+        continue
+      }
+      // If one side is a UUID, it must exist in the inventory.
+      if (!fromIsPlaceholder && !entityIds.has(r.from)) {
+        droppedHallucinatedCount += 1
+        continue
+      }
+      if (!toIsPlaceholder && !entityIds.has(r.to)) {
+        droppedHallucinatedCount += 1
+        continue
+      }
+      placeholderRelationships.push({
+        from: r.from,
+        to: r.to,
+        relationship: r.relationship,
+        description: r.description,
+      })
       continue
     }
-    accepted.push({
+    // Both endpoints are UUIDs — preserve existing hallucination check.
+    if (!entityIds.has(r.from) || !entityIds.has(r.to)) {
+      droppedHallucinatedCount += 1
+      continue
+    }
+    realRelationships.push({
       sourceEntityId: r.from,
       targetEntityId: r.to,
       relationshipType: r.relationship,
@@ -140,7 +199,20 @@ function partitionRelationships(
       sourceIndex: i,
     })
   }
-  return { accepted, droppedCount }
+
+  const validDeclarations: ValidDeclaration[] = tree.new_entity_declarations.map((d) => ({
+    placeholderId: d.placeholder_id,
+    name: d.name,
+    entityType: d.entity_type,
+  }))
+
+  return {
+    realRelationships,
+    placeholderRelationships,
+    validDeclarations,
+    droppedHallucinatedCount,
+    droppedOrphanPlaceholderCount,
+  }
 }
 
 async function persistStragglers(
@@ -206,6 +278,15 @@ export async function runEntityRelationshipsStage(
   // 2. Idempotency wipe — clear any prior stage-4 output before re-writing.
   await relationships.deleteByWorld(client, args.worldId)
 
+  // myth-tt2g: stage 4 retry must also cascade-clear prior stage-4b
+  // ghosts. Otherwise a stage-4 retry leaves orphan ghosts whose
+  // declarations the new stage-4 attempt may not match. Stage 4 + 4b
+  // are a single retry unit from the durability standpoint.
+  await client.query(
+    `DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'`,
+    [args.worldId],
+  )
+
   // 3. Stream the relationships via Sonnet + streamObject. The wrapper
   // (myth-t1qz) drives the Haiku→Sonnet repair chain inside
   // `await stream.object` on LlmStructuredOutputError.
@@ -244,20 +325,35 @@ export async function runEntityRelationshipsStage(
   // recreates the stage.
   const validatedTree: EntityRelationshipsOutput = await stream.object
 
-  // 5. Pre-filter hallucinated UUIDs (design §D9 — never let an FK violation
-  // reach Postgres).
-  const { accepted, droppedCount } = partitionRelationships(validatedTree, entityIds)
-  if (droppedCount > 0) {
+  // 5. Pre-filter hallucinated UUIDs + route placeholder-touching rows
+  // (myth-pfke P3.3). Design §D9: never let an FK violation reach Postgres.
+  // Real→real rows persist into `relationships`; placeholder-touching rows
+  // (with matching declarations) are buffered into
+  // `worlds.entity_consolidation_pending` for stage 4b to materialize.
+  const partitioned = partitionWithPlaceholders(validatedTree, entityIds)
+  if (partitioned.droppedHallucinatedCount > 0) {
     logger.warn(
       {
         stage: 'entity_relationships',
         worldId: args.worldId,
-        dropped: droppedCount,
+        dropped: partitioned.droppedHallucinatedCount,
         reason: 'unknown_entity_uuid',
       },
       'entity_relationships: dropped LLM-emitted rows referencing unknown entity UUIDs',
     )
   }
+  if (partitioned.droppedOrphanPlaceholderCount > 0) {
+    logger.warn(
+      {
+        stage: 'entity_relationships',
+        worldId: args.worldId,
+        dropped: partitioned.droppedOrphanPlaceholderCount,
+        reason: 'orphan_placeholder',
+      },
+      'entity_relationships: dropped LLM-emitted rows referencing placeholders not in new_entity_declarations',
+    )
+  }
+  const accepted = partitioned.realRelationships
 
   // 6. Persist relationships + hierarchy stragglers (caller pre-filters
   // stragglers against existing entity_hierarchy rows; stage 3 wins).
@@ -273,6 +369,20 @@ export async function runEntityRelationshipsStage(
     })),
   )
   await persistStragglers(client, validatedTree, args.worldId, entityIds)
+
+  // 6b. Persist phantom declarations + placeholder relationships to the
+  // pending-state column for stage 4b to consume (myth-pfke P3.3). Always
+  // write — stage 4b reads a known shape regardless of declaration count.
+  await client.query(
+    `UPDATE worlds SET entity_consolidation_pending = $1::jsonb WHERE id = $2`,
+    [
+      JSON.stringify({
+        declarations: partitioned.validDeclarations,
+        relationships: partitioned.placeholderRelationships,
+      }),
+      args.worldId,
+    ],
+  )
 
   // myth-exac T15: tier-gate `finalized` events for relationships. The DB
   // insert above is unaffected — every accepted (non-hallucinated) row
