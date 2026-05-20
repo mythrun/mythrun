@@ -674,6 +674,8 @@ async function dispatchStage(
       keyTensions: ctx.world.keyTensions ?? '',
       vocabularyRegistry: ctx.world.vocabularyRegistry,
       bypassAccessFilter: ctx.world.devBypassAccessFilter,
+      redisRealtime: deps.redisRealtime,
+      keyPrefix: deps.redisKeyPrefix,
     })
   }
   if (stage === 'starting_situation') {

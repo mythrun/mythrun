@@ -41,12 +41,29 @@ export type LiveEvent =
   | { type: 'cost-update'; cumulativeUsd: number }
   | { type: 'job-failed'; jobType: string; errorCode: string }
   | { type: 'stage-reset'; stage: string }
-  | { type: 'entity-added'; synthKey: string; entityKind: string; data: Record<string, unknown> }
+  | {
+      type: 'entity-added'
+      synthKey: string
+      entityKind: string
+      data: Record<string, unknown>
+      /** Stage 4b ghost reconciliation key. Present on entity-added events
+       *  emitted by entity_consolidation for ghost entities materialised
+       *  from a stage-4 placeholder reference. When set, the live-events
+       *  panel drains its placeholder-edge buffer for any edge whose
+       *  `from` or `to` equals this id, patching the endpoint to the
+       *  new entity's synthKey. Absent for stage 2-3 entities. */
+      placeholderId?: string
+    }
   | { type: 'entity-updated'; synthKey: string; patch: Record<string, unknown> }
   | { type: 'entity-removed'; synthKey: string; reason: string }
   | {
       type: 'edge-added'
       synthKey: string
+      /** `from` / `to` are real UUIDs once both endpoints are persisted,
+       *  but Stage 4 may emit a placeholder string (`new-NNN`) on either
+       *  end when the relationship references a phantom entity that
+       *  hasn't materialised yet. derivePlaceholderBuffer buffers any
+       *  such edge until the matching ghost entity-added event arrives. */
       from: string
       to: string
       relationship: string
@@ -176,10 +193,15 @@ function applyMergePatch(
 }
 
 /** Derive current-entity inventory from the chronological event log.
- *  Pure function: clearing/repacking the input array clears the output. */
+ *  Pure function: clearing/repacking the input array clears the output.
+ *
+ *  edgeCount semantics: counts only edges that derivePlaceholderBuffer
+ *  considers RENDERED. Edges whose endpoints are unresolved placeholder
+ *  strings (`new-NNN`) are buffered, not counted. This keeps the
+ *  "N entities • M edges" summary honest while a stage-4 / stage-4b
+ *  ghost reconciliation is in flight. */
 export function deriveInventory(entries: readonly LogEntry[]): Inventory {
   const byKey = new Map<string, InventoryRow>()
-  let edgeCount = 0
   entries.forEach((entry, index) => {
     if (entry.kind !== 'event') return
     const e = entry.event
@@ -226,14 +248,132 @@ export function deriveInventory(entries: readonly LogEntry[]): Inventory {
         displayId: e.entityId,
         lastEventIndex: index,
       })
-    } else if (e.type === 'edge-added') {
-      edgeCount += 1
-    } else if (e.type === 'edge-removed') {
-      edgeCount -= 1
     }
+    // edge-added / edge-removed edgeCount is delegated to
+    // derivePlaceholderBuffer; we compute the rendered set there and
+    // count it below so the summary stays consistent with what the
+    // user sees in the log.
   })
   const rows = [...byKey.values()].sort((a, b) => b.lastEventIndex - a.lastEventIndex)
+  const edgeCount = derivePlaceholderBuffer(entries).rendered.length
   return { rows, edgeCount }
+}
+
+// ---- Placeholder edge buffer (Phase 5.3) ----
+
+/** Edge endpoint placeholder marker: stage-4 (entity_relationships) may
+ *  emit edge-added with `from` / `to` set to `new-NNN` when the
+ *  relationship references a phantom entity. Stage 4b
+ *  (entity_consolidation) later emits entity-added carrying the same
+ *  string in `placeholderId`. */
+export function isPlaceholderId(id: string): boolean {
+  return id.startsWith('new-')
+}
+
+export interface RenderedEdge {
+  /** Stable identity for the edge — its synthKey. Used so edge-removed
+   *  can drop the entry by id regardless of which endpoint was buffered. */
+  readonly synthKey: string
+  /** Reconciled source endpoint. If the wire payload carried a placeholder
+   *  string here, it has been patched to the resolved entity's synthKey. */
+  readonly from: string
+  /** Reconciled target endpoint. See `from`. */
+  readonly to: string
+  readonly relationship: string
+}
+
+export interface PlaceholderBuffer {
+  /** Edges whose endpoints are fully resolved — what the renderer shows. */
+  readonly rendered: readonly RenderedEdge[]
+  /** Edges still waiting on one or more placeholder endpoints to materialise. */
+  readonly bufferedCount: number
+}
+
+/** Replay the chronological event log to produce the current set of
+ *  rendered edges + the count of edges still buffered awaiting placeholder
+ *  reconciliation. Pure function: same input → same output.
+ *
+ *  Placeholder resolution rules:
+ *  - An edge-added event with no placeholder endpoint renders immediately.
+ *  - An edge-added event with one or more `new-NNN` endpoints is buffered.
+ *  - An entity-added event with a `placeholderId` (Stage 4b ghost) maps
+ *    that id to the new entity's synthKey for all subsequent lookups.
+ *  - An edge is "rendered" once every placeholder endpoint it carries has
+ *    a resolved synthKey in the map (the buffer scan happens at the end,
+ *    so order between the edge and the ghost doesn't matter — both
+ *    arrival orders yield the same result).
+ *  - edge-removed by synthKey drops the edge from either the buffer or
+ *    the rendered list (repair-dropped or coherence-deleted both flow
+ *    through the same delete path).
+ *  - stage-reset of `entity_relationships` (the stage that owns these
+ *    edges) is forwarded but unhandled here — the reset event also
+ *    clears the stage's entities via deriveInventory, and synthKey
+ *    prefix matching on `entity_relationships/` drops any orphan
+ *    edges from the buffer + rendered set. */
+export function derivePlaceholderBuffer(entries: readonly LogEntry[]): PlaceholderBuffer {
+  // placeholderId → resolved entity synthKey. Populated by entity-added
+  // events carrying a placeholderId field.
+  const resolutions = new Map<string, string>()
+  // synthKey → edge payload. The lookup-by-synthKey is what edge-removed
+  // walks; a Map keeps it O(1). Insertion order is iteration order, so
+  // rendered output stays chronological.
+  const edges = new Map<
+    string,
+    { from: string; to: string; relationship: string }
+  >()
+
+  for (const entry of entries) {
+    if (entry.kind !== 'event') continue
+    const e = entry.event
+    if (e.type === 'entity-added' && e.placeholderId !== undefined) {
+      resolutions.set(e.placeholderId, e.synthKey)
+      continue
+    }
+    if (e.type === 'edge-added') {
+      edges.set(e.synthKey, { from: e.from, to: e.to, relationship: e.relationship })
+      continue
+    }
+    if (e.type === 'edge-removed') {
+      edges.delete(e.synthKey)
+      continue
+    }
+    if (e.type === 'stage-reset') {
+      // Mirror deriveInventory's stage-reset semantics for orphan edges:
+      // drop any edge whose synthKey is under the reset stage's prefix.
+      const prefix = `${e.stage}/`
+      for (const key of [...edges.keys()]) {
+        if (key.startsWith(prefix)) edges.delete(key)
+      }
+    }
+  }
+
+  // Reconcile: walk edges in insertion order, classify as rendered or
+  // buffered based on whether every placeholder endpoint has a resolution.
+  const rendered: RenderedEdge[] = []
+  let bufferedCount = 0
+  for (const [synthKey, edge] of edges) {
+    const resolvedFrom = resolveEndpoint(edge.from, resolutions)
+    const resolvedTo = resolveEndpoint(edge.to, resolutions)
+    if (resolvedFrom === null || resolvedTo === null) {
+      bufferedCount += 1
+      continue
+    }
+    rendered.push({
+      synthKey,
+      from: resolvedFrom,
+      to: resolvedTo,
+      relationship: edge.relationship,
+    })
+  }
+  return { rendered, bufferedCount }
+}
+
+/** Resolve an edge endpoint: real ids pass through; placeholder ids look
+ *  up the resolutions map. Returns null when a placeholder hasn't been
+ *  resolved yet — caller treats null as "buffer this edge." */
+function resolveEndpoint(endpoint: string, resolutions: Map<string, string>): string | null {
+  if (!isPlaceholderId(endpoint)) return endpoint
+  return resolutions.get(endpoint) ?? null
 }
 
 // ---- Event cap ----

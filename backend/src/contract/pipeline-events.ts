@@ -125,12 +125,24 @@ export type PipelineEvent =
   // entities disappear silently" invariant by making the disappearance
   // explicit.
   | { type: 'stage-reset'; stage: string }
-  | { type: 'entity-added'; synthKey: string; entityKind: string; name: string }
+  | {
+      type: 'entity-added'
+      synthKey: string
+      entityKind: string
+      name: string
+      /** Stage 4b ghost entity reconciliation key. The frontend's buffered
+       *  placeholder edges resolve via this field. Absent for stages 2-3
+       *  entities (they have no placeholder antecedent). */
+      placeholderId?: string
+    }
   | { type: 'entity-updated'; synthKey: string; patch: Record<string, unknown> }
   | { type: 'entity-removed'; synthKey: string; reason: 'repair_dropped' | 'coherence_removed' }
   | {
       type: 'edge-added'
       synthKey: string
+      /** Real UUID or placeholder ID `new-NNN`. Edges with placeholder
+       *  endpoints buffer client-side until the matching entity-added
+       *  arrives carrying the same placeholderId. */
       from: string
       to: string
       relationship: string

@@ -23,6 +23,7 @@
 //   7. Clear worlds.entity_consolidation_pending to empty arrays.
 
 import type { PoolClient } from 'pg'
+import type { Redis } from 'ioredis'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -70,6 +71,12 @@ export interface EntityConsolidationArgs {
   readonly keyTensions: string
   readonly vocabularyRegistry: VocabularyRegistry
   readonly bypassAccessFilter: boolean
+  // myth-pfke P5.2: per-ghost `entity-added` (with `placeholderId`) and
+  // per-resolved-relationship `edge-added` events publish to Redis Pub/Sub
+  // for the dev-tool / FE stream consumers. Channel pattern mirrors
+  // streaming-extractor.ts: `${keyPrefix}pipeline:campaign:${campaignId}`.
+  readonly redisRealtime: Pick<Redis, 'publish'>
+  readonly keyPrefix: string
 }
 
 // Mirrors the JSON shape stage 4 writes into `worlds.entity_consolidation_pending`.
@@ -214,8 +221,9 @@ export async function runEntityConsolidationStage(
   // 7. Persist surviving ghosts. UUIDv7 per ghost gives time-ordered IDs;
   // we cache the placeholder→UUID mapping so step 8 can resolve pending
   // relationships.
+  const channel = `${args.keyPrefix}pipeline:campaign:${args.campaignId}`
   const placeholderToUuid = new Map<string, string>()
-  for (const ghost of surviving) {
+  for (const [i, ghost] of surviving.entries()) {
     const ghostId = uuidv7()
     placeholderToUuid.set(ghost.placeholder_id, ghostId)
     await entities.insert(client, {
@@ -242,6 +250,20 @@ export async function runEntityConsolidationStage(
         childEntityId: ghostId,
       })
     }
+    // myth-pfke P5.2: per-ghost `entity-added` event carrying the
+    // `placeholderId` so any client-buffered placeholder-endpoint edges
+    // (emitted earlier by stage 4 via streaming-extractor) can now
+    // resolve against the real ghost UUID.
+    await args.redisRealtime.publish(
+      channel,
+      JSON.stringify({
+        type: 'entity-added',
+        synthKey: `entity_consolidation/ghosts/${String(i)}`,
+        entityKind: ghost.entity_type,
+        name: ghost.name,
+        placeholderId: ghost.placeholder_id,
+      }),
+    )
   }
 
   // 8. Resolve pending placeholder-touching relationships using the
@@ -271,6 +293,23 @@ export async function runEntityConsolidationStage(
   }
   if (resolvedRels.length > 0) {
     await relationships.insertMany(client, resolvedRels)
+    // myth-pfke P5.2: per-resolved-relationship `edge-added` event.
+    // Endpoints are REAL UUIDs at this point (resolved via
+    // placeholderToUuid above); the FE buffered-edges UX only needs to
+    // handle placeholder-endpoint edges from stage 4 (entity_relationships),
+    // not these.
+    for (const [i, rel] of resolvedRels.entries()) {
+      await args.redisRealtime.publish(
+        channel,
+        JSON.stringify({
+          type: 'edge-added',
+          synthKey: `entity_consolidation/relationships/${String(i)}`,
+          from: rel.sourceEntityId,
+          to: rel.targetEntityId,
+          relationship: rel.relationshipType,
+        }),
+      )
+    }
   }
 
   // 9. Clear the pending-state column. Stage 4b is the only consumer of

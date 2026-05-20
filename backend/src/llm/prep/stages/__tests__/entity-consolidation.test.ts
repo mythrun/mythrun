@@ -105,16 +105,28 @@ function makeClientWithEmptyPending(): QuerySpy {
   }
 }
 
-const baseArgs = {
-  campaignId: 'cmp-1',
-  worldId: 'wld-1',
-  worldName: 'Aelmoor',
-  tone: 'misted, melancholy',
-  themes: 'guardianship, secrets',
-  keyTensions: 'spirits chafe in lanterns',
-  vocabularyRegistry: EMPTY_REGISTRY,
-  bypassAccessFilter: false,
+// P5.2: a per-test Redis publish stub. Each `it` rebinds the spy via the
+// `makeArgs` helper so assertions are isolated per case.
+function makeRedisStub(): { publish: ReturnType<typeof vi.fn> } {
+  return { publish: vi.fn().mockResolvedValue(1) }
 }
+
+function makeArgs(redis: { publish: ReturnType<typeof vi.fn> }) {
+  return {
+    campaignId: 'cmp-1',
+    worldId: 'wld-1',
+    worldName: 'Aelmoor',
+    tone: 'misted, melancholy',
+    themes: 'guardianship, secrets',
+    keyTensions: 'spirits chafe in lanterns',
+    vocabularyRegistry: EMPTY_REGISTRY,
+    bypassAccessFilter: false,
+    redisRealtime: redis as never,
+    keyPrefix: 'mythrun:',
+  }
+}
+
+const baseArgs = makeArgs(makeRedisStub())
 
 describe('runEntityConsolidationStage', () => {
   beforeEach(() => {
@@ -168,6 +180,8 @@ describe('runEntityConsolidationStage', () => {
   // Mirrors the plan's happy-path test but uses the mock-client pattern
   // (matching this file's P4.3 setup), not real Postgres.
   it('happy path: pending declarations → ghosts persist, relationships resolve, state clears', async () => {
+    const redis = makeRedisStub()
+    const args = makeArgs(redis)
     const FACTION_E1 = '01923456-789a-7bcd-8ef0-000000000001'
     const PENDING_STATE = {
       declarations: [
@@ -239,7 +253,7 @@ describe('runEntityConsolidationStage', () => {
       usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
     } as never)
 
-    const result = await runEntityConsolidationStage(client as never, baseArgs)
+    const result = await runEntityConsolidationStage(client as never, args)
 
     // Ghost persisted with the correct created_in marker + name.
     expect(entities.insert).toHaveBeenCalledTimes(1)
@@ -326,6 +340,54 @@ describe('runEntityConsolidationStage', () => {
     expect(result.outputTokens).toBe(800)
     expect(result.capExhausted).toBe(false)
     expect(result.finalizedEvents).toEqual([])
+
+    // P5.2: per-ghost `entity-added` + per-resolved-relationship `edge-added`
+    // events publish to `${keyPrefix}pipeline:campaign:${campaignId}`.
+    // Exactly one ghost + one resolved relationship → 2 publishes total.
+    expect(redis.publish).toHaveBeenCalledTimes(2)
+    const CHANNEL = 'mythrun:pipeline:campaign:cmp-1'
+    const entityAddedCall = redis.publish.mock.calls.find((c) => {
+      const payload = JSON.parse(c[1] as string) as { type: string }
+      return payload.type === 'entity-added'
+    })
+    expect(entityAddedCall?.[0]).toBe(CHANNEL)
+    const entityAddedPayload = JSON.parse(entityAddedCall?.[1] as string) as {
+      type: string
+      synthKey: string
+      entityKind: string
+      name: string
+      placeholderId: string
+    }
+    expect(entityAddedPayload).toEqual({
+      type: 'entity-added',
+      synthKey: 'entity_consolidation/ghosts/0',
+      entityKind: 'faction',
+      name: 'The Ironjaw',
+      placeholderId: 'new-001',
+    })
+
+    const edgeAddedCall = redis.publish.mock.calls.find((c) => {
+      const payload = JSON.parse(c[1] as string) as { type: string }
+      return payload.type === 'edge-added'
+    })
+    expect(edgeAddedCall?.[0]).toBe(CHANNEL)
+    const edgeAddedPayload = JSON.parse(edgeAddedCall?.[1] as string) as {
+      type: string
+      synthKey: string
+      from: string
+      to: string
+      relationship: string
+    }
+    // Both endpoints are RESOLVED UUIDs (no placeholder strings on the wire).
+    expect(edgeAddedPayload).toEqual({
+      type: 'edge-added',
+      synthKey: 'entity_consolidation/relationships/0',
+      from: FACTION_E1,
+      to: insertCall.id,
+      relationship: 'rival_of',
+    })
+    expect(edgeAddedPayload.from.startsWith('new-')).toBe(false)
+    expect(edgeAddedPayload.to.startsWith('new-')).toBe(false)
   })
 
   // Reconciliation arm: LLM emits a ghost whose placeholder_id is NOT in

@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   applyCap,
   compactLine,
+  derivePlaceholderBuffer,
   deriveInventory,
   EVICT_BATCH,
   KNOWN_EVENT_TYPES,
@@ -265,6 +266,200 @@ describe('per-event-arm rendering', () => {
     ])
     expect(inv.rows[0]?.displayId).toBe('01923b4c-d4f1-7000-8000-000000000000')
     expect(inv.rows[0]?.synthKey).toBe('wf/regions/0') // internal key unchanged
+  })
+})
+
+// ---- Phase 5.3 placeholder-edge buffering + reconciliation ----
+//
+// Stage 4 (entity_relationships) may emit edge-added events whose endpoints
+// are placeholder strings (`new-NNN`) — they reference an entity that the
+// LLM hinted at but that doesn't exist yet. Stage 4b (entity_consolidation)
+// later emits entity-added events for those ghosts carrying a
+// `placeholderId` field. The panel buffers placeholder-endpoint edges
+// client-side and reconciles them when the matching entity arrives.
+
+describe('derivePlaceholderBuffer (Phase 5.3 reconciliation)', () => {
+  it('buffers placeholder-endpoint edges; resolves them on entity-added with matching placeholderId', () => {
+    const edgeEvent: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'entity_relationships/relationships/0',
+      from: 'real-uuid-1',
+      to: 'new-001',
+      relationship: 'rival_of',
+    }
+
+    // Before reconciliation: edge is buffered, not rendered.
+    const beforeBuf = derivePlaceholderBuffer([{ kind: 'event', event: edgeEvent }])
+    expect(beforeBuf.rendered).toHaveLength(0)
+    expect(beforeBuf.bufferedCount).toBe(1)
+
+    const ghostEvent: LiveEvent = {
+      type: 'entity-added',
+      synthKey: 'entity_consolidation/ghosts/0',
+      entityKind: 'faction',
+      data: { name: 'The Ironjaw' },
+      placeholderId: 'new-001',
+    }
+
+    // After matching entity-added: edge is rendered with the resolved endpoint.
+    const afterBuf = derivePlaceholderBuffer([
+      { kind: 'event', event: edgeEvent },
+      { kind: 'event', event: ghostEvent },
+    ])
+    expect(afterBuf.rendered).toHaveLength(1)
+    expect(afterBuf.rendered[0]?.from).toBe('real-uuid-1')
+    // `to` is patched away from the placeholder; the resolved value is the
+    // ghost's synthKey (the dev-tool's stable entity identity, since UUIDs
+    // arrive later via `finalized`).
+    expect(afterBuf.rendered[0]?.to).not.toMatch(/^new-/)
+    expect(afterBuf.rendered[0]?.to).toBe('entity_consolidation/ghosts/0')
+    expect(afterBuf.bufferedCount).toBe(0)
+  })
+
+  it('edges with no placeholder endpoint render immediately', () => {
+    const edge: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'er/edges/0',
+      from: 'uuid-a',
+      to: 'uuid-b',
+      relationship: 'allied_with',
+    }
+    const buf = derivePlaceholderBuffer([{ kind: 'event', event: edge }])
+    expect(buf.rendered).toHaveLength(1)
+    expect(buf.rendered[0]?.from).toBe('uuid-a')
+    expect(buf.rendered[0]?.to).toBe('uuid-b')
+    expect(buf.bufferedCount).toBe(0)
+  })
+
+  it('edges with BOTH endpoints as placeholders stay buffered until both ghosts arrive', () => {
+    const edge: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'er/edges/9',
+      from: 'new-001',
+      to: 'new-002',
+      relationship: 'allied_with',
+    }
+    const ghostA: LiveEvent = {
+      type: 'entity-added',
+      synthKey: 'ec/ghosts/0',
+      entityKind: 'faction',
+      data: { name: 'A' },
+      placeholderId: 'new-001',
+    }
+    const ghostB: LiveEvent = {
+      type: 'entity-added',
+      synthKey: 'ec/ghosts/1',
+      entityKind: 'faction',
+      data: { name: 'B' },
+      placeholderId: 'new-002',
+    }
+
+    // Edge + one ghost → still buffered (other endpoint unresolved).
+    const partial = derivePlaceholderBuffer([
+      { kind: 'event', event: edge },
+      { kind: 'event', event: ghostA },
+    ])
+    expect(partial.rendered).toHaveLength(0)
+    expect(partial.bufferedCount).toBe(1)
+
+    // Both ghosts arrived → rendered with both endpoints patched.
+    const full = derivePlaceholderBuffer([
+      { kind: 'event', event: edge },
+      { kind: 'event', event: ghostA },
+      { kind: 'event', event: ghostB },
+    ])
+    expect(full.rendered).toHaveLength(1)
+    expect(full.rendered[0]?.from).toBe('ec/ghosts/0')
+    expect(full.rendered[0]?.to).toBe('ec/ghosts/1')
+    expect(full.bufferedCount).toBe(0)
+  })
+
+  it('entity-added without placeholderId does not drain the buffer', () => {
+    const edge: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'er/edges/0',
+      from: 'uuid-a',
+      to: 'new-001',
+      relationship: 'r',
+    }
+    const unrelated: LiveEvent = {
+      type: 'entity-added',
+      synthKey: 'wf/regions/0',
+      entityKind: 'location',
+      data: { name: 'Eredil' },
+      // No placeholderId — a normal stage-2 entity, not a ghost.
+    }
+    const buf = derivePlaceholderBuffer([
+      { kind: 'event', event: edge },
+      { kind: 'event', event: unrelated },
+    ])
+    expect(buf.rendered).toHaveLength(0)
+    expect(buf.bufferedCount).toBe(1)
+  })
+
+  it('edge-removed drops the rendered edge by synthKey', () => {
+    const edge: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'er/edges/0',
+      from: 'a',
+      to: 'b',
+      relationship: 'r',
+    }
+    const removed: LiveEvent = {
+      type: 'edge-removed',
+      synthKey: 'er/edges/0',
+      reason: 'coherence_deleted',
+    }
+    const buf = derivePlaceholderBuffer([
+      { kind: 'event', event: edge },
+      { kind: 'event', event: removed },
+    ])
+    expect(buf.rendered).toHaveLength(0)
+    expect(buf.bufferedCount).toBe(0)
+  })
+
+  it('edge-removed of a still-buffered edge clears the buffer entry', () => {
+    const edge: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'er/edges/0',
+      from: 'a',
+      to: 'new-001',
+      relationship: 'r',
+    }
+    const removed: LiveEvent = {
+      type: 'edge-removed',
+      synthKey: 'er/edges/0',
+      reason: 'repair_dropped',
+    }
+    const buf = derivePlaceholderBuffer([
+      { kind: 'event', event: edge },
+      { kind: 'event', event: removed },
+    ])
+    expect(buf.rendered).toHaveLength(0)
+    expect(buf.bufferedCount).toBe(0)
+  })
+
+  it('inventory edgeCount counts only rendered (non-buffered) edges', () => {
+    const placeholderEdge: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'er/edges/0',
+      from: 'a',
+      to: 'new-001',
+      relationship: 'r',
+    }
+    const realEdge: LiveEvent = {
+      type: 'edge-added',
+      synthKey: 'er/edges/1',
+      from: 'a',
+      to: 'b',
+      relationship: 'r',
+    }
+    const inv = deriveInventory([
+      { kind: 'event', event: placeholderEdge },
+      { kind: 'event', event: realEdge },
+    ])
+    // Only the real-endpoint edge counts — the placeholder-edge is buffered.
+    expect(inv.edgeCount).toBe(1)
   })
 })
 
