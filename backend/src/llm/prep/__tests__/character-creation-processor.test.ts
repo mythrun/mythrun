@@ -28,9 +28,13 @@ import type { Pool } from 'pg'
 import * as ai from 'ai'
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../db/migrate.js'
-import { createPgPool } from '../../../db/postgres.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
-import { resetData } from '../../../repo/__tests__/_helpers/reset-data.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../../repo/__tests__/_helpers/test-scope.js'
+import { createTestPool } from '../../../repo/__tests__/_helpers/test-pool.js'
 import {
   runCharacterCreationJob,
   createCharacterCreationProcessor,
@@ -176,29 +180,45 @@ function makeProcessorDeps(
   }
 }
 
+// myth-5jdo: characters.user_id is RESTRICT-FK to users — must delete
+// scope-user characters BEFORE cleanupTestScope's user delete. The
+// character-creation processor inserts characters rows via stage 3.
+async function cleanupCharactersFor(p: Pool, scope: TestScope): Promise<void> {
+  await p.query(
+    `DELETE FROM characters
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [`${scope.id}%`],
+  )
+  await cleanupTestScope(p, scope)
+}
+
 describe('runCharacterCreationJob', () => {
   let pool: Pool
+  let scope: TestScope
+  let userCounter: number
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 4 })
+    pool = createTestPool(databaseUrl)
     await runMigrations({
       pool,
       migrationsDir: REAL_MIGRATIONS_DIR,
       logger: silentLogger(),
     })
+    scope = makeTestScope('charcc')
+    userCounter = 0
   })
 
   afterAll(async () => {
+    // myth-5jdo: characters delete must precede scope user delete.
+    await cleanupCharactersFor(pool, scope)
     await pool.end()
   })
 
-  beforeEach(async () => {
-    await resetData(pool)
+  beforeEach(() => {
     vi.clearAllMocks()
     // Cost-cap is injected via makeDeps()/makeProcessorDeps(); workers no
-    // longer read the settings table at job time. resetData reseeds the
-    // settings rows itself, so no extra reseed needed here.
+    // longer read the settings table at job time.
   })
 
   async function seed(): Promise<SeedResult> {
@@ -207,22 +227,23 @@ describe('runCharacterCreationJob', () => {
     const campaignId = uuidv7()
     const locationId = uuidv7()
     const factionId = uuidv7()
-    const suffix = userId.slice(0, 8)
+    const n = userCounter++
 
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username)
        VALUES ($1, $2, $3, $4)`,
-      [userId, `g_cc_proc_${suffix}`, 'CC Proc User', `ccproc_${suffix}`],
+      [userId, scope.userSub(n), scope.displayName(n), scope.username(n)],
     )
     await pool.query(
       `INSERT INTO worlds (id, created_by, name, concept, status, tone, themes, era,
                            geography_summary, political_summary, key_tensions,
                            starting_situation_entries)
-       VALUES ($1, $2, 'CC Proc World', 'A test concept', 'complete', 'somber', 'guardianship',
-               'iron age', 'highlands', 'three rival houses', 'spirits chafe', $3::jsonb)`,
+       VALUES ($1, $2, $3, 'A test concept', 'complete', 'somber', 'guardianship',
+               'iron age', 'highlands', 'three rival houses', 'spirits chafe', $4::jsonb)`,
       [
         worldId,
         userId,
+        scope.worldName(n),
         JSON.stringify([
           {
             index: 0,
@@ -234,8 +255,8 @@ describe('runCharacterCreationJob', () => {
     )
     await pool.query(
       `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index)
-       VALUES ($1, $2, $3, 'CC Proc Campaign', 0)`,
-      [campaignId, worldId, userId],
+       VALUES ($1, $2, $3, $4, 0)`,
+      [campaignId, worldId, userId, scope.campaignName(n)],
     )
     await pool.query(
       `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -436,11 +457,11 @@ describe('runCharacterCreationJob', () => {
     // Pre-insert pipeline_runs rows summing to MORE than the cap of $5.00.
     // Two completed rows at $3.00 each = $6.00 > $5.00 cap.
     const otherUserId = uuidv7()
-    const suffix = otherUserId.slice(0, 8)
+    const otherN = userCounter++
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username)
        VALUES ($1, $2, $3, $4)`,
-      [otherUserId, `g_cc_other_${suffix}`, 'CC Other', `ccother_${suffix}`],
+      [otherUserId, scope.userSub(otherN), scope.displayName(otherN), scope.username(otherN)],
     )
     await pool.query(
       `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at,

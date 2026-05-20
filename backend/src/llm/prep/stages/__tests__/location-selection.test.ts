@@ -7,16 +7,20 @@
 // Writes nothing — stage 4 re-derives the same id when emitting the
 // deferred "starts at $location" fact (spec §Stages, §Risks #3).
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../../db/migrate.js'
-import { createPgPool } from '../../../../db/postgres.js'
 import { uuidv7 } from '../../../../repo/uuidv7.js'
-import { resetData } from '../../../../repo/__tests__/_helpers/reset-data.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../../../repo/__tests__/_helpers/test-scope.js'
+import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
 import { runLocationSelectionStage } from '../location-selection.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -59,35 +63,37 @@ interface SeedResult {
 
 describe('runLocationSelectionStage', () => {
   let pool: Pool
+  let scope: TestScope
+  let userCounter: number
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 1 })
+    pool = createTestPool(databaseUrl)
     await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: silentLogger() })
+    scope = makeTestScope('locsel')
+    userCounter = 0
   })
 
   afterAll(async () => {
+    // myth-5jdo: scoped cleanup before pool teardown.
+    await cleanupTestScope(pool, scope)
     await pool.end()
-  })
-
-  beforeEach(async () => {
-    await resetData(pool)
   })
 
   async function seed(args: SeedArgs): Promise<SeedResult> {
     const userId = uuidv7()
     const worldId = uuidv7()
     const campaignId = uuidv7()
-    const suffix = userId.slice(0, 8)
+    const n = userCounter++
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username)
        VALUES ($1, $2, $3, $4)`,
-      [userId, `g_loc_sel_${suffix}`, 'Loc Sel User', `locsel_${suffix}`],
+      [userId, scope.userSub(n), scope.displayName(n), scope.username(n)],
     )
     await pool.query(
       `INSERT INTO worlds (id, created_by, name, concept, status, starting_situation_entries)
-       VALUES ($1, $2, 'Loc Sel World', 'C', 'complete', $3::jsonb)`,
-      [worldId, userId, JSON.stringify(args.entries)],
+       VALUES ($1, $2, $3, 'C', 'complete', $4::jsonb)`,
+      [worldId, userId, scope.worldName(n), JSON.stringify(args.entries)],
     )
     for (const entity of args.entities) {
       await pool.query(
@@ -98,8 +104,8 @@ describe('runLocationSelectionStage', () => {
     }
     await pool.query(
       `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index)
-       VALUES ($1, $2, $3, 'Loc Sel Campaign', $4)`,
-      [campaignId, worldId, userId, args.startingSituationIndex],
+       VALUES ($1, $2, $3, $4, $5)`,
+      [campaignId, worldId, userId, scope.campaignName(n), args.startingSituationIndex],
     )
     return { userId, worldId, campaignId }
   }

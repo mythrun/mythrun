@@ -36,9 +36,13 @@ import type { Pool } from 'pg'
 import * as ai from 'ai'
 import { guardTestDatabase } from '../../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../../db/migrate.js'
-import { createPgPool } from '../../../../db/postgres.js'
 import { uuidv7 } from '../../../../repo/uuidv7.js'
-import { resetData } from '../../../../repo/__tests__/_helpers/reset-data.js'
+import {
+  cleanupTestScope,
+  makeTestScope,
+  type TestScope,
+} from '../../../../repo/__tests__/_helpers/test-scope.js'
+import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
 import { runCharacterIntegrationStage } from '../character-integration.js'
 
 vi.mock('ai', async () => {
@@ -140,25 +144,41 @@ const INTEGRATION = {
   ],
 }
 
+// myth-5jdo: characters.user_id is RESTRICT-FK to users — must delete
+// scope-user characters BEFORE cleanupTestScope's user delete.
+async function cleanupCharactersFor(p: Pool, scope: TestScope): Promise<void> {
+  await p.query(
+    `DELETE FROM characters
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [`${scope.id}%`],
+  )
+  await cleanupTestScope(p, scope)
+}
+
 describe('runCharacterIntegrationStage', () => {
   let pool: Pool
+  let scope: TestScope
+  let userCounter: number
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
-    pool = createPgPool(databaseUrl, { max: 2 })
+    pool = createTestPool(databaseUrl)
     await runMigrations({
       pool,
       migrationsDir: REAL_MIGRATIONS_DIR,
       logger: silentLogger(),
     })
+    scope = makeTestScope('charint')
+    userCounter = 0
   })
 
   afterAll(async () => {
+    // myth-5jdo: characters delete must precede scope user delete.
+    await cleanupCharactersFor(pool, scope)
     await pool.end()
   })
 
-  beforeEach(async () => {
-    await resetData(pool)
+  beforeEach(() => {
     vi.clearAllMocks()
   })
 
@@ -169,19 +189,20 @@ describe('runCharacterIntegrationStage', () => {
     const characterId = uuidv7()
     const locationId = uuidv7()
     const factionId = uuidv7()
-    const suffix = userId.slice(0, 8)
+    const n = userCounter++
 
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username)
        VALUES ($1, $2, $3, $4)`,
-      [userId, `g_char_integ_${suffix}`, 'Char Integ User', `charinteg_${suffix}`],
+      [userId, scope.userSub(n), scope.displayName(n), scope.username(n)],
     )
     await pool.query(
       `INSERT INTO worlds (id, created_by, name, concept, status, starting_situation_entries)
-       VALUES ($1, $2, 'Char Integ World', 'C', 'complete', $3::jsonb)`,
+       VALUES ($1, $2, $3, 'C', 'complete', $4::jsonb)`,
       [
         worldId,
         userId,
+        scope.worldName(n),
         JSON.stringify([
           {
             index: 0,
@@ -193,8 +214,8 @@ describe('runCharacterIntegrationStage', () => {
     )
     await pool.query(
       `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index)
-       VALUES ($1, $2, $3, 'Char Integ Campaign', 0)`,
-      [campaignId, worldId, userId],
+       VALUES ($1, $2, $3, $4, 0)`,
+      [campaignId, worldId, userId, scope.campaignName(n)],
     )
     await pool.query(
       `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
