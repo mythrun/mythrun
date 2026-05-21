@@ -27,9 +27,9 @@ The dev tool is NOT shipped to end users. It's a developer tool — local-only b
 6. **Verifiability is shipped with the panel.** Every new panel ships its `verify-registry.ts` entry in the same commit; a panel without a registry entry fails the forward-coverage invariant test.
 
 7. **Panel-pattern declaration is mandatory.** Each registry entry declares its interaction pattern. Three patterns:
-   - `fetch-on-mount`: panel fires a fetch from `mount()`. Sets `data-state="loading"` → `"loaded"` or `"error"`. Examples: `my-campaigns`, `health`.
-   - `event-driven`: panel binds to a window event (`mythrun.watchcampaign`, `mythrun.opendetails`); fetches only when the event fires. Sets `data-state="idle"` on mount. Examples: `status`, `live-events`, `campaign-details`.
-   - `action-only`: panel renders an action surface (form + button) with no read fetch. Sets `data-state="ready"` on mount. Examples: `credit-ledger`, `campaign-create`.
+   - `fetch-on-mount`: panel fires a fetch from `mount()`. Sets `data-state="loading"` → `"loaded"`, `"ready"`, or `"error"`. Examples: `my-campaigns`, `health-live`, `world-snapshot`.
+   - `event-driven`: panel binds to a shell event (active-campaign change, identity switch); fetches only when the event fires. Sets `data-state="idle"` on mount. Examples: `campaign-details`.
+   - `action-only`: panel renders an action surface (form + button) with no read fetch. Sets `data-state="ready"` on mount. Examples: `campaign-create`, `dev-credits-grant`, `status`.
 
 ---
 
@@ -64,48 +64,54 @@ The harness does not click buttons or simulate user actions for action-only pane
 
 Maintained as a table here. The verifier subagent updates this section on each run.
 
+As of the myth-mbdc reorg, every (endpoint × method) gets its own
+single-purpose panel — no composite multi-route panels. The shell mounts
+exactly one panel into mainPane based on the sidebar leaf the user picks;
+panel modules self-register via `registerPanelMount(method, path, fn)`
+on import.
+
 | Backend route | Panel | Pattern |
 |---|---|---|
-| GET /health | health | fetch-on-mount |
-| GET /health/ready | health | fetch-on-mount |
+| GET /health | health-live | fetch-on-mount |
+| GET /health/ready | health-ready | fetch-on-mount |
 | POST /api/users/register | (exempt — exercised by harness bootstrap + main.ts self-bootstrap) | — |
-| GET /api/users/check-username | users | fetch-on-mount |
-| GET /api/users/me | users | fetch-on-mount |
+| GET /api/users/check-username | (exempt — probe-helper embedded in register flow; backend tests exercise it) | — |
+| GET /api/users/me | users | action-only |
 | POST /api/campaigns | campaign-create | action-only |
 | GET /api/campaigns/mine | my-campaigns | fetch-on-mount |
 | GET /api/campaigns/:campaignId | campaign-details | event-driven |
-| DELETE /api/campaigns/:campaignId | campaign-details | event-driven |
-| PATCH /api/campaigns/:campaignId/name | campaign-details | event-driven |
-| POST /api/campaigns/:campaignId/resume | campaign-details | event-driven |
-| GET /api/campaigns/:campaignId/status | status | event-driven |
-| GET /api/campaigns/:campaignId/status/stream | status, live-events | event-driven |
-| GET /api/campaigns/:campaignId/world-snapshot | world-snapshot | event-driven |
-| POST /api/campaigns/:campaignId/starting-situation | character-creation | event-driven |
-| POST /api/campaigns/:campaignId/start-character-creation | character-creation | event-driven |
-| POST /api/campaigns/:campaignId/archive | character-creation | event-driven |
-| POST /api/campaigns/:campaignId/characters | character-creation | event-driven |
-| GET /api/campaigns/:campaignId/starting-situations | character-creation | event-driven |
-| GET /api/campaigns/:campaignId/characters | character-creation | event-driven |
-| GET /api/campaigns/:campaignId/characters/:charId | character-creation | event-driven |
-| GET /api/campaigns/:campaignId/hierarchy | character-creation | event-driven |
-| GET /api/campaigns/:campaignId/random-tables | character-creation | event-driven |
-| POST /api/sessions/:id/ws-ticket | session-ticket | action-only |
+| DELETE /api/campaigns/:campaignId | campaign-delete | action-only |
+| PATCH /api/campaigns/:campaignId/name | campaign-rename | action-only |
+| POST /api/campaigns/:campaignId/resume | campaign-resume | action-only |
+| POST /api/campaigns/:campaignId/archive | campaign-archive | action-only |
+| GET /api/campaigns/:campaignId/status | status | action-only |
+| GET /api/campaigns/:campaignId/status/stream | status, live-events | action-only |
+| GET /api/campaigns/:campaignId/world-snapshot | world-snapshot | fetch-on-mount |
+| GET /api/campaigns/:campaignId/hierarchy | hierarchy | fetch-on-mount |
+| GET /api/campaigns/:campaignId/random-tables | random-tables | fetch-on-mount |
+| POST /api/campaigns/:campaignId/start-character-creation | start-character-creation | action-only |
+| POST /api/campaigns/:campaignId/characters | submit-character-concept | action-only |
+| GET /api/campaigns/:campaignId/characters | characters-roster | action-only |
+| GET /api/campaigns/:campaignId/characters/:charId | character-view | action-only |
+| GET /api/campaigns/:campaignId/starting-situations | starting-situations | action-only |
+| POST /api/campaigns/:campaignId/starting-situation | situation-pick | action-only |
+| GET /api/campaigns/:campaignId/members | members | action-only |
 | POST /api/campaigns/:campaignId/invites | invites | action-only |
-| GET /api/campaigns/:campaignId/invites | invites | action-only |
-| DELETE /api/campaigns/:campaignId/invites/:inviteCode | invites | action-only |
-| GET /api/invites/:inviteCode/preview | invites | action-only |
-| POST /api/invites/:inviteCode/accept | invites | action-only |
-| GET /api/campaigns/:campaignId/members | invites | action-only |
-| POST /api/dev/credits/grant | credit-ledger | action-only |
-| GET /api/dev/credits/me | credit-ledger | action-only |
+| GET /api/campaigns/:campaignId/invites | invites-list | action-only |
+| DELETE /api/campaigns/:campaignId/invites/:inviteCode | invite-revoke | action-only |
+| GET /api/invites/:inviteCode/preview | invite-preview | action-only |
+| POST /api/invites/:inviteCode/accept | invite-accept | action-only |
+| POST /api/sessions/:id/ws-ticket | session-ticket | action-only |
+| GET /api/billing/skus | skus | action-only |
+| GET /api/billing/subscription | subscription | action-only |
+| GET /api/billing/balance | balance | action-only |
+| GET /api/billing/history | history | action-only |
+| POST /api/billing/checkout | checkout | action-only |
+| POST /api/billing/portal | portal | action-only |
+| POST /api/billing/upgrade-tier | upgrade-tier | action-only |
+| POST /api/dev/credits/grant | dev-credits-grant | action-only |
+| GET /api/dev/credits/me | dev-credits-me | action-only |
 | POST /webhooks/stripe | (exempt — Stripe-signed consumer, no human UI possible) | — |
-| GET /api/billing/skus | billing | action-only |
-| GET /api/billing/balance | billing | action-only |
-| GET /api/billing/subscription | billing | action-only |
-| GET /api/billing/history | billing | action-only |
-| POST /api/billing/checkout | billing | action-only |
-| POST /api/billing/portal | billing | action-only |
-| POST /api/billing/upgrade-tier | billing | action-only |
 
 Routes that intentionally have no UI panel live in `EXEMPT_ROUTES` in
 `verify-registry.ts`. Adding to that list requires justification — the
