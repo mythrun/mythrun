@@ -54,7 +54,7 @@ export function mountDrawer(parent: HTMLElement, deps: DrawerDeps): DrawerHandle
   list.style.lineHeight = '1.4'
   root.appendChild(list)
 
-  const paused = localStorage.getItem(STORAGE_PAUSED) === 'true'
+  let paused = localStorage.getItem(STORAGE_PAUSED) === 'true'
 
   function render(): void {
     list.replaceChildren()
@@ -90,6 +90,48 @@ export function mountDrawer(parent: HTMLElement, deps: DrawerDeps): DrawerHandle
   })
 
   render()
+
+  const controls = document.createElement('div')
+  controls.style.display = 'flex'
+  controls.style.gap = '4px'
+
+  const pauseBtn = document.createElement('button')
+  pauseBtn.className = 'secondary'
+  pauseBtn.setAttribute('data-action', 'pause')
+  pauseBtn.textContent = paused ? '▶' : '⏸'
+  pauseBtn.title = paused ? 'resume' : 'pause'
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused
+    localStorage.setItem(STORAGE_PAUSED, String(paused))
+    pauseBtn.textContent = paused ? '▶' : '⏸'
+    pauseBtn.title = paused ? 'resume' : 'pause'
+    if (!paused) render()
+  })
+  controls.appendChild(pauseBtn)
+
+  const clearBtn = document.createElement('button')
+  clearBtn.className = 'secondary'
+  clearBtn.setAttribute('data-action', 'clear')
+  clearBtn.textContent = '↻'
+  clearBtn.title = 'clear buffer'
+  clearBtn.addEventListener('click', () => {
+    deps.buffer.clear()
+    render()
+  })
+  controls.appendChild(clearBtn)
+
+  const exportBtn = document.createElement('button')
+  exportBtn.className = 'secondary'
+  exportBtn.setAttribute('data-action', 'export')
+  exportBtn.textContent = '▸'
+  exportBtn.title = 'export to clipboard'
+  exportBtn.addEventListener('click', () => {
+    const json = deps.buffer.items().map((e) => JSON.stringify(e)).join('\n')
+    void navigator.clipboard.writeText(json)
+  })
+  controls.appendChild(exportBtn)
+
+  header.appendChild(controls)
 
   // Apply persisted open/collapsed state
   if (localStorage.getItem(STORAGE_OPEN) === 'false') {

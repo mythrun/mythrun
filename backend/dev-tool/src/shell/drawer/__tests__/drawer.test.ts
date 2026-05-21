@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { JSDOM } from 'jsdom'
 import { mountDrawer } from '../drawer.js'
+import type { DrawerEvent } from '../subscriptions.js'
 
 class MapStorage implements Storage {
   private readonly map = new Map<string, string>()
@@ -63,5 +64,43 @@ describe('drawer.mountDrawer', () => {
     })
     handle.unmount()
     expect(parent.querySelector('[data-region="drawer"]')).toBeNull()
+  })
+
+  it('clear button empties the buffer and re-renders', () => {
+    const parent = withDom()
+    let buffer: DrawerEvent[] = [
+      { campaignId: 'c', type: 'phase', data: {}, receivedAt: 0 },
+    ]
+    const handle = mountDrawer(parent, {
+      subscriptions: { subscribe: () => {}, unsubscribe: () => {}, list: () => [], closeAll: () => {} },
+      bus: { publish: () => {}, subscribe: () => () => {} },
+      buffer: {
+        push: (e) => { buffer.push(e) },
+        items: () => buffer,
+        size: () => buffer.length,
+        clear: () => { buffer = [] },
+      },
+    })
+    const clearBtn = handle.root.querySelector('button[data-action="clear"]') as HTMLButtonElement
+    expect(clearBtn).not.toBeNull()
+    clearBtn.click()
+    expect(buffer).toEqual([])
+    handle.unmount()
+  })
+
+  it('pause button toggles paused state and persists to localStorage', () => {
+    const parent = withDom()
+    const handle = mountDrawer(parent, {
+      subscriptions: { subscribe: () => {}, unsubscribe: () => {}, list: () => [], closeAll: () => {} },
+      bus: { publish: () => {}, subscribe: () => () => {} },
+      buffer: { push: () => {}, items: () => [], size: () => 0, clear: () => {} },
+    })
+    const pauseBtn = handle.root.querySelector('button[data-action="pause"]') as HTMLButtonElement
+    expect(pauseBtn).not.toBeNull()
+    pauseBtn.click()
+    expect(localStorage.getItem('devtool.drawer.paused')).toBe('true')
+    pauseBtn.click()
+    expect(localStorage.getItem('devtool.drawer.paused')).toBe('false')
+    handle.unmount()
   })
 })
