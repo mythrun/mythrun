@@ -39,8 +39,8 @@ beforeAll(() => {
   g.document = dom.window.document
   g.window = dom.window as unknown as Window
   g.localStorage = dom.window.localStorage
-  g.HTMLElement = dom.window.HTMLElement as unknown as typeof HTMLElement
-  g.CustomEvent = dom.window.CustomEvent as unknown as typeof CustomEvent
+  g.HTMLElement = dom.window.HTMLElement
+  g.CustomEvent = dom.window.CustomEvent
 })
 
 afterAll(() => {
@@ -100,7 +100,9 @@ describe('mountSituationPickPanel', () => {
     const parent = makeParent()
     const handle = mountSituationPickPanel(parent)
     const btns = handle.root.querySelectorAll('button')
-    btns[1]!.click()
+    const pickBtn = btns[1]
+    if (pickBtn === undefined) throw new Error('expected pick button')
+    pickBtn.click()
     await new Promise((r) => setTimeout(r, 0))
     expect(handle.root.getAttribute('data-state')).toBe('ready')
   })
@@ -116,7 +118,9 @@ describe('mountSituationPickPanel', () => {
     const parent = makeParent()
     const handle = mountSituationPickPanel(parent)
     const btns = handle.root.querySelectorAll('button')
-    btns[2]!.click()
+    const pickBtn = btns[2]
+    if (pickBtn === undefined) throw new Error('expected pick button')
+    pickBtn.click()
     await new Promise((r) => setTimeout(r, 0))
     expect(handle.root.getAttribute('data-state')).toBe('error')
   })

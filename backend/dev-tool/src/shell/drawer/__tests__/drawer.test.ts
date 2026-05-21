@@ -42,12 +42,28 @@ describe('drawer.mountDrawer', () => {
     // Each test calls withDom() to install a fresh document + storage.
   })
 
+  const noop = (): void => undefined
+  const noopUnsubscribe = (): (() => void) => noop
+  const emptySubscriptions = {
+    subscribe: noop,
+    unsubscribe: noop,
+    list: (): string[] => [],
+    closeAll: noop,
+  }
+  const emptyBus = { publish: noop, subscribe: noopUnsubscribe }
+  const emptyBuffer = {
+    push: noop,
+    items: (): DrawerEvent[] => [],
+    size: (): number => 0,
+    clear: noop,
+  }
+
   it('mounts with data-state=ready (idle pattern) and event count 0', () => {
     const parent = withDom()
     const handle = mountDrawer(parent, {
-      subscriptions: { subscribe: () => {}, unsubscribe: () => {}, list: () => [], closeAll: () => {} },
-      bus: { publish: () => {}, subscribe: () => () => {} },
-      buffer: { push: () => {}, items: () => [], size: () => 0, clear: () => {} },
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: emptyBuffer,
     })
     expect(handle.root.getAttribute('data-state')).toBe('ready')
     expect(handle.root.getAttribute('data-region')).toBe('drawer')
@@ -58,9 +74,9 @@ describe('drawer.mountDrawer', () => {
   it('unmount removes the drawer from DOM', () => {
     const parent = withDom()
     const handle = mountDrawer(parent, {
-      subscriptions: { subscribe: () => {}, unsubscribe: () => {}, list: () => [], closeAll: () => {} },
-      bus: { publish: () => {}, subscribe: () => () => {} },
-      buffer: { push: () => {}, items: () => [], size: () => 0, clear: () => {} },
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: emptyBuffer,
     })
     handle.unmount()
     expect(parent.querySelector('[data-region="drawer"]')).toBeNull()
@@ -72,8 +88,8 @@ describe('drawer.mountDrawer', () => {
       { campaignId: 'c', type: 'phase', data: {}, receivedAt: 0 },
     ]
     const handle = mountDrawer(parent, {
-      subscriptions: { subscribe: () => {}, unsubscribe: () => {}, list: () => [], closeAll: () => {} },
-      bus: { publish: () => {}, subscribe: () => () => {} },
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
       buffer: {
         push: (e) => { buffer.push(e) },
         items: () => buffer,
@@ -81,8 +97,9 @@ describe('drawer.mountDrawer', () => {
         clear: () => { buffer = [] },
       },
     })
-    const clearBtn = handle.root.querySelector('button[data-action="clear"]') as HTMLButtonElement
+    const clearBtn = handle.root.querySelector<HTMLElement>('button[data-action="clear"]')
     expect(clearBtn).not.toBeNull()
+    if (clearBtn === null) throw new Error('clearBtn missing')
     clearBtn.click()
     expect(buffer).toEqual([])
     handle.unmount()
@@ -91,12 +108,13 @@ describe('drawer.mountDrawer', () => {
   it('pause button toggles paused state and persists to localStorage', () => {
     const parent = withDom()
     const handle = mountDrawer(parent, {
-      subscriptions: { subscribe: () => {}, unsubscribe: () => {}, list: () => [], closeAll: () => {} },
-      bus: { publish: () => {}, subscribe: () => () => {} },
-      buffer: { push: () => {}, items: () => [], size: () => 0, clear: () => {} },
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: emptyBuffer,
     })
-    const pauseBtn = handle.root.querySelector('button[data-action="pause"]') as HTMLButtonElement
+    const pauseBtn = handle.root.querySelector<HTMLElement>('button[data-action="pause"]')
     expect(pauseBtn).not.toBeNull()
+    if (pauseBtn === null) throw new Error('pauseBtn missing')
     pauseBtn.click()
     expect(localStorage.getItem('devtool.drawer.paused')).toBe('true')
     pauseBtn.click()

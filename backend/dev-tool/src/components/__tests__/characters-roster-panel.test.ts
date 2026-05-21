@@ -43,8 +43,8 @@ beforeAll(() => {
   g.document = dom.window.document
   g.window = dom.window as unknown as Window
   g.localStorage = dom.window.localStorage
-  g.HTMLElement = dom.window.HTMLElement as unknown as typeof HTMLElement
-  g.CustomEvent = dom.window.CustomEvent as unknown as typeof CustomEvent
+  g.HTMLElement = dom.window.HTMLElement
+  g.CustomEvent = dom.window.CustomEvent
 })
 
 afterAll(() => {
@@ -111,7 +111,9 @@ describe('mountCharactersRosterPanel', () => {
     const allButtons = handle.root.querySelectorAll('button')
     // refresh + one "view" button = 2.
     expect(allButtons.length).toBe(2)
-    allButtons[1]!.click()
+    const viewBtn = allButtons[1]
+    if (viewBtn === undefined) throw new Error('expected view button')
+    viewBtn.click()
     expect(getActiveCharacterId()).toBe('char-1')
   })
 

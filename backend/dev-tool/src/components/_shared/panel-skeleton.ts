@@ -17,7 +17,7 @@ export interface SplitViewHandles {
   readonly root: HTMLElement
   readonly actionEl: HTMLElement
   readonly feedbackEl: HTMLElement
-  setState(state: PanelState): void
+  readonly setState: (state: PanelState) => void
 }
 
 export function buildSplitView(opts: SplitViewOpts): SplitViewHandles {

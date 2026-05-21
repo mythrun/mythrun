@@ -37,8 +37,8 @@ beforeAll(() => {
   g.document = dom.window.document
   g.window = dom.window as unknown as Window
   g.localStorage = dom.window.localStorage
-  g.HTMLElement = dom.window.HTMLElement as unknown as typeof HTMLElement
-  g.CustomEvent = dom.window.CustomEvent as unknown as typeof CustomEvent
+  g.HTMLElement = dom.window.HTMLElement
+  g.CustomEvent = dom.window.CustomEvent
 })
 
 afterAll(() => {

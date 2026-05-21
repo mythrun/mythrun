@@ -39,8 +39,8 @@ beforeAll(() => {
   g.document = dom.window.document
   g.window = dom.window as unknown as Window
   g.localStorage = dom.window.localStorage
-  g.HTMLElement = dom.window.HTMLElement as unknown as typeof HTMLElement
-  g.CustomEvent = dom.window.CustomEvent as unknown as typeof CustomEvent
+  g.HTMLElement = dom.window.HTMLElement
+  g.CustomEvent = dom.window.CustomEvent
 })
 
 afterAll(() => {
@@ -93,9 +93,11 @@ describe('mountSubmitCharacterConceptPanel', () => {
     const parent = makeParent()
     const handle = mountSubmitCharacterConceptPanel(parent)
     const textareas = handle.root.querySelectorAll('textarea')
-    if (textareas.length < 2) throw new Error('expected two textareas')
-    textareas[0]!.value = 'a memorable character concept long enough to satisfy the validator'
-    textareas[1]!.value = 'arriving at the tavern with one coin and a borrowed cloak'
+    const concept = textareas[0]
+    const arrival = textareas[1]
+    if (concept === undefined || arrival === undefined) throw new Error('expected two textareas')
+    concept.value = 'a memorable character concept long enough to satisfy the validator'
+    arrival.value = 'arriving at the tavern with one coin and a borrowed cloak'
     const submitBtn = handle.root.querySelector('button')
     if (submitBtn === null) throw new Error('expected button')
     submitBtn.click()

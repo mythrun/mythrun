@@ -40,7 +40,8 @@ describe('mountSidebar', () => {
     const parent = withDom()
     const onSelect = vi.fn()
     const handle = mountSidebar(parent, { onSelect, getActiveCampaignId: () => '019e-aaa' })
-    const firstLeaf = handle.root.querySelector('[data-leaf]') as HTMLElement
+    const firstLeaf = handle.root.querySelector<HTMLElement>('[data-leaf]')
+    if (firstLeaf === null) throw new Error('firstLeaf missing')
     firstLeaf.click()
     expect(onSelect).toHaveBeenCalledTimes(1)
     handle.unmount()

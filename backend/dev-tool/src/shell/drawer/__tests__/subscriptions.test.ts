@@ -57,7 +57,8 @@ describe('drawer subscriptions', () => {
     const onEvent = vi.fn()
     const mgr = createSubscriptionManager({ onEvent, urlFor: (id) => `/x/${id}` })
     mgr.subscribe('cA')
-    const fake = opened[0]!
+    const fake = opened[0]
+    if (fake === undefined) throw new Error('expected one EventSource to be opened')
     fake.onmessage?.(new MessageEvent('message', { data: '{"type":"phase","data":{"phase":"world_gen"}}' }))
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ campaignId: 'cA', type: 'phase' }))
   })

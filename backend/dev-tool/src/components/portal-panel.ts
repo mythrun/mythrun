@@ -15,7 +15,7 @@ import { appendJsonDisclosure } from './_shared/json-disclosure.js'
 
 function readCode(body: unknown): string {
   if (typeof body === 'object' && body !== null && 'code' in body) {
-    const c = (body as { code: unknown }).code
+    const c = (body).code
     if (typeof c === 'string') return c
   }
   return 'unknown'
@@ -23,7 +23,7 @@ function readCode(body: unknown): string {
 
 function readPortalUrl(body: unknown): string | null {
   if (typeof body === 'object' && body !== null && 'portalUrl' in body) {
-    const u = (body as { portalUrl: unknown }).portalUrl
+    const u = (body).portalUrl
     if (typeof u === 'string') return u
   }
   return null

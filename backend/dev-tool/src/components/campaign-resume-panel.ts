@@ -20,7 +20,7 @@ import { createProgressStrip } from './_shared/progress-strip.js'
 
 function readCode(body: unknown): string {
   if (typeof body === 'object' && body !== null && 'code' in body) {
-    const c = (body as { code: unknown }).code
+    const c = (body).code
     if (typeof c === 'string') return c
   }
   return 'unknown'

@@ -24,7 +24,7 @@ interface PreviewResponse {
 
 function readCode(body: unknown): string {
   if (typeof body === 'object' && body !== null && 'code' in body) {
-    const c = (body as { code: unknown }).code
+    const c = (body).code
     if (typeof c === 'string') return c
   }
   return 'unknown'
@@ -40,7 +40,7 @@ function renderPreview(parent: HTMLElement, data: PreviewResponse): void {
   dl.style.columnGap = '12px'
   dl.style.rowGap = '2px'
 
-  const rows: ReadonlyArray<readonly [string, string]> = [
+  const rows: readonly (readonly [string, string])[] = [
     ['campaign', data.campaignName],
     ['owner', `${data.ownerDisplayName} (@${data.ownerUsername})`],
     ['valid', String(data.valid)],

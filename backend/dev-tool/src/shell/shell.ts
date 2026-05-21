@@ -40,26 +40,26 @@ export function mountShell(): ShellHandle {
 
   // Layout: main becomes a column with banner on top of a horizontal
   // row containing sidebar | mainPane | drawer.
-  ;(main as HTMLElement).style.display = 'flex'
-  ;(main as HTMLElement).style.padding = '0'
-  ;(main as HTMLElement).style.margin = '0'
-  ;(main as HTMLElement).style.maxWidth = 'unset'
-  ;(main as HTMLElement).style.height = 'calc(100vh - 80px)'
-  ;(main as HTMLElement).style.flexDirection = 'column'
+  ;(main).style.display = 'flex'
+  ;(main).style.padding = '0'
+  ;(main).style.margin = '0'
+  ;(main).style.maxWidth = 'unset'
+  ;(main).style.height = 'calc(100vh - 80px)'
+  ;(main).style.flexDirection = 'column'
 
   const bannerContainer = document.createElement('div')
-  ;(main as HTMLElement).appendChild(bannerContainer)
+  ;(main).appendChild(bannerContainer)
 
   const flexRow = document.createElement('div')
   flexRow.style.display = 'flex'
   flexRow.style.flex = '1'
   flexRow.style.minHeight = '0'
-  ;(main as HTMLElement).appendChild(flexRow)
+  ;(main).appendChild(flexRow)
 
   const bus = createEventBus<DrawerEvent>()
   const buffer = createRingBuffer<DrawerEvent>(500)
   const subscriptions = createSubscriptionManager({
-    onEvent: (e) => bus.publish(e),
+    onEvent: (e) => { bus.publish(e); },
     urlFor: (id) => `/api/campaigns/${id}/status/stream`,
   })
 

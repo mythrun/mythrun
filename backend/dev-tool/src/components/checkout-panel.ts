@@ -16,7 +16,7 @@ import { appendJsonDisclosure } from './_shared/json-disclosure.js'
 
 function readCode(body: unknown): string {
   if (typeof body === 'object' && body !== null && 'code' in body) {
-    const c = (body as { code: unknown }).code
+    const c = (body).code
     if (typeof c === 'string') return c
   }
   return 'unknown'
@@ -24,7 +24,7 @@ function readCode(body: unknown): string {
 
 function readSessionUrl(body: unknown): string | null {
   if (typeof body === 'object' && body !== null && 'sessionUrl' in body) {
-    const u = (body as { sessionUrl: unknown }).sessionUrl
+    const u = (body).sessionUrl
     if (typeof u === 'string') return u
   }
   return null

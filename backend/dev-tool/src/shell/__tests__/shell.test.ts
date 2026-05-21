@@ -54,16 +54,20 @@ describe('mountShell', () => {
     ensureDom()
     const aRoot = document.createElement('div')
     const bRoot = document.createElement('div')
-    const aHandle: PanelHandle = { root: aRoot, unmount: vi.fn() }
-    const bHandle: PanelHandle = { root: bRoot, unmount: vi.fn() }
+    const aUnmount = vi.fn()
+    const bUnmount = vi.fn()
+    const aHandle: PanelHandle = { root: aRoot, unmount: aUnmount }
+    const bHandle: PanelHandle = { root: bRoot, unmount: bUnmount }
     registerPanelMount('GET', '/api/users/me', (parent) => { parent.appendChild(aRoot); return aHandle })
     registerPanelMount('GET', '/health', (parent) => { parent.appendChild(bRoot); return bHandle })
     mountShell()
-    const leafMe = document.querySelector('[data-leaf="GET /api/users/me"]') as HTMLElement
-    const leafHealth = document.querySelector('[data-leaf="GET /health"]') as HTMLElement
+    const leafMe = document.querySelector<HTMLElement>('[data-leaf="GET /api/users/me"]')
+    const leafHealth = document.querySelector<HTMLElement>('[data-leaf="GET /health"]')
+    if (leafMe === null) throw new Error('leafMe missing')
+    if (leafHealth === null) throw new Error('leafHealth missing')
     leafMe.click()
-    expect(aHandle.unmount).not.toHaveBeenCalled()
+    expect(aUnmount).not.toHaveBeenCalled()
     leafHealth.click()
-    expect(aHandle.unmount).toHaveBeenCalledTimes(1)
+    expect(aUnmount).toHaveBeenCalledTimes(1)
   })
 })

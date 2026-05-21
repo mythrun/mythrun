@@ -31,7 +31,7 @@ describe('drawer event-bus', () => {
     bus.subscribe(() => { throw new Error('boom') })
     const ok = vi.fn()
     bus.subscribe(ok)
-    expect(() => bus.publish({ campaignId: 'c', type: 't', data: {} })).not.toThrow()
+    expect(() => { bus.publish({ campaignId: 'c', type: 't', data: {} }); }).not.toThrow()
     expect(ok).toHaveBeenCalled()
   })
 })

@@ -34,7 +34,7 @@ interface MeResponse {
 
 function readCode(body: unknown): string {
   if (typeof body === 'object' && body !== null && 'code' in body) {
-    const c = (body as { code: unknown }).code
+    const c = (body).code
     if (typeof c === 'string') return c
   }
   return 'unknown'
@@ -50,7 +50,7 @@ function renderUser(parent: HTMLElement, row: UserRow): void {
   dl.style.columnGap = '12px'
   dl.style.rowGap = '2px'
 
-  const rows: ReadonlyArray<readonly [string, string]> = [
+  const rows: readonly (readonly [string, string])[] = [
     ['id', row.id],
     ['cognitoSub', row.cognitoSub],
     ['username', row.username],
