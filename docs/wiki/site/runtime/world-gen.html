@@ -1402,7 +1402,7 @@
   synthKey is stable for the duration of the stream and is what the post-COMMIT
   <code>finalized</code> event uses to bind the speculative key to the real <code>entityId</code>:
   <code>{ type: 'finalized', synthKey, entityId }</code>. The client's inventory reducer (in the
-  <a href="./dev-tool.html">dev tool</a>'s live-events panel) carries forward the
+  <a href="./dev-tool.html">dev tool</a>'s wire-log drawer) carries forward the
   <code>entityId</code> on finalize and lets the dev tool show the real UUID alongside the entity's
   name once persistence lands.
 </p>
@@ -2151,19 +2151,16 @@
 <h2 id="the-dev-tool-surface">The dev tool surface</h2>
 
 <p>
-  Five panels in the <a href="./dev-tool.html">dev tool</a> drive and observe the world-gen
-  pipeline. The campaign-create form (freeform / guided sub-forms) posts to
-  <code>POST /api/campaigns</code> and exposes a "Bypass access tiers" opt-in checkbox that flips
-  the world's <code>dev_bypass_access_filter</code> column at create time. The campaign-details
-  panel loads a campaign by id and exposes a Resume button. The live-events panel attaches to the
-  SSE stream and renders every event arm — see the
-  <a href="./dev-tool.html#the-live-events-panel">live-events inspector</a> section. The new
-  <a href="./dev-tool.html#the-world-snapshot-panel">world-snapshot panel</a> attaches to the same
-  SSE stream, waits for <code>world_snapshot_ready</code>, fetches the snapshot endpoint, and
+  Several <a href="./dev-tool.html">dev tool</a> panels drive and observe the world-gen pipeline,
+  one per endpoint × action. The CAMPAIGNS / Create panel posts to <code>POST /api/campaigns</code>
+  and exposes a "Bypass access tiers" opt-in checkbox that flips the world's
+  <code>dev_bypass_access_filter</code> column at create time. CAMPAIGNS / Details + Resume act on
+  an existing campaign. The shell's persistent wire-log drawer owns the SSE subscription for the
+  active campaign and surfaces every event arm; the WORLD / Status panel renders the phase + stages
+  snapshot. WORLD / Snapshot fetches <code>GET /world-snapshot</code> once stage 4 has committed and
   renders it as a tree-of-entities-by-kind + per-entity detail card; stage 7's coherence deltas
-  apply in place so the user watches the world settle without a refetch. The credit-ledger panel
-  maintains an in-session log of grants and force-grants via the dev-only
-  <code>POST /api/dev/credits/grant</code>.
+  apply in place so the user watches the world settle without a refetch. BILLING / Grant credits
+  drives the dev-only <code>POST /api/dev/credits/grant</code>.
 </p>
 
 <p>
@@ -2180,7 +2177,7 @@
   The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in
   <code>PIPELINE_ROUTES</code>, <code>PIPELINE_SSE_EVENTS</code>, and
   <code>PIPELINE_JOBS</code> must either be driven by a panel or carry a typed exempt reason. With
-  MYT-52 landed, the exempt list is empty — the live-events panel renders all thirteen event arms.
+  MYT-52 landed, the exempt list is empty — the wire-log drawer renders all thirteen event arms.
   Adding a new pipeline route or job is a four-file change in a single PR — contract, handler,
   dev-tool panel, coverage entry — and <code>pnpm dev-tool:check</code> red-CI's the merge
   otherwise.
@@ -2374,8 +2371,7 @@
   <code>entity-updated</code>, <code>entity-removed</code>, <code>edge-added</code>,
   <code>edge-removed</code>, <code>finalized</code>). The SSE bridge is type-blind — every JSON
   payload published on a campaign channel is forwarded to attached sinks unchanged. The
-  <a href="./dev-tool.html#the-live-events-panel">dev tool's live-events panel</a> renders every
-  arm.
+  <a href="./dev-tool.html">dev tool's wire-log drawer</a> renders every arm.
 </p>
 
 <h2 id="out-of-scope">Out of scope</h2>

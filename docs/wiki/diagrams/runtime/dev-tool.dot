@@ -1,9 +1,9 @@
 digraph dev_tool {
-  // The dev tool. A throwaway, local-only engineering UI that runs against
-  // the local backend through a Vite proxy. Browser ←→ Vite (5273) ←→
-  // backend (3000). A ship gate (pnpm dev-tool:check) compares three
-  // contract files at backend/src/contract/ against backend/dev-tool/
-  // coverage.json and errors when a contract entry is uncovered.
+  // The dev tool shell. A throwaway, local-only engineering UI: one panel
+  // per backend route × method. A shell-owned active-campaign store + a
+  // persistent right-side wire-log drawer (sole EventSource owner) feed
+  // every panel. The ship gate (pnpm dev-tool:check) plus a registry
+  // invariant test keep coverage honest.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -11,39 +11,81 @@ digraph dev_tool {
 
   browser [label="browser\n127.0.0.1:5273", color="ember", fontcolor="ember"];
 
-  subgraph cluster_devtool {
-    label="backend/dev-tool/  (@mythrun/dev-tool)";
+  subgraph cluster_shell {
+    label="src/shell/  (composition root)";
     style="dashed";
     color="ember";
     fontcolor="ember";
 
-    vite      [label="vite.config.ts\nproxy /api/* + /health/*\ntarget = PORT from\nbackend/.env.development"];
-    identity  [label="src/identity.ts\nDEV_SUBS (5 entries)\nlocalStorage: mythrun.devtool.devSub"];
-    api       [label="src/api-client.ts\napiCall(path, init)\nrelative paths only\nsets x-mythrun-dev-sub"];
-    main      [label="src/main.ts + components/\ntextContent only\nno bare fetch"];
+    sidebar      [label="sidebar.ts\nendpoint × method leaves\nCAMPAIGNS / WORLD /\nCHARACTERS / USERS /\nBILLING / SYSTEM"];
+    banner       [label="banner.ts\nactive-campaign\nanchor"];
+    mainPane     [label="mainPane\nlazy-mounts one\nPanelHandle at a time\n(unmount on switch)"];
+    drawer       [label="drawer/drawer.ts\nwire-log + pause /\nclear / export"];
+    activeCamp   [label="active-campaign.ts\nshell-owned store\nget/set + subscribe"];
+    identityBr   [label="identity-bridge.ts\nsingle listener for\nmythrun.identitychanged"];
+    routeReg     [label="route-registry.ts\nROUTE_PANELS\n+ EXEMPT_ROUTES"];
+  }
+
+  subgraph cluster_drawer_internals {
+    label="drawer internals";
+    style="dotted";
+
+    subs   [label="subscriptions.ts\nsole EventSource owner\none ES per active id"];
+    bus    [label="event-bus.ts\nin-process pub/sub"];
+    buffer [label="buffer.ts\n500-event FIFO ring"];
+  }
+
+  subgraph cluster_panels {
+    label="src/components/  (one panel per route × method)";
+    style="dashed";
+
+    panels [label="42 panels\nself-register via\nregisterPanelMount(\n  method, path, mountFn)\nPanelHandle = { root, unmount }"];
+    shared [label="components/_shared/\npanel-skeleton.ts\nerror-block.ts\njson-disclosure.ts\nprogress-strip.ts"];
   }
 
   subgraph cluster_gate {
-    label="ship gate  (pnpm dev-tool:check)";
+    label="ship gate + registry invariants";
     style="dotted";
 
-    contracts [label="backend/src/contract/\npipeline-routes.ts\npipeline-events.ts\npipeline-jobs.ts"];
+    contracts [label="backend/src/contract/\nbackend-routes.ts\npipeline-routes.ts\npipeline-events.ts\npipeline-jobs.ts"];
     coverage  [label="backend/dev-tool/\ncoverage.json\n{ routes, events, jobs,\n  exempt: { reasons ≥ 20 } }"];
-    check     [label="backend/scripts/\ndev-tool-check.ts\ninvokes checkCoverage(...)\nexit 1 on uncovered entry"];
-    ci        [label=".github/workflows/\ndev-tool-check.yml\nPR + push to main"];
+    check     [label="dev-tool-check.ts\n+ verify-registry.test.ts\n(forward / reverse /\nroute-exhaustion)"];
+    ci        [label=".github/workflows/\ndev-tool-check.yml"];
   }
 
-  backend [label="local backend\nlocalhost:3000 (PORT)\nGET /health/ready", color="ember", fontcolor="ember"];
+  vite    [label="vite.config.ts\nproxy /api/* + /health/*"];
+  api     [label="src/api-client.ts\napiCall + sse-client\nstamps x-mythrun-dev-sub"];
+  backend [label="local backend\nlocalhost:3000 (PORT)", color="ember", fontcolor="ember"];
 
-  // Browser path through the proxy
-  browser -> main         [label="page load"];
-  main    -> api          [label="apiCall('/health/ready')"];
-  api     -> identity     [label="getCurrentDevSub()", style=dashed];
-  api     -> vite         [label="fetch(relative)\nx-mythrun-dev-sub: dev-user-N"];
-  vite    -> backend      [label="proxied http://localhost:PORT/..."];
+  // Browser → shell mount
+  browser -> sidebar [label="page load → mountShell"];
+  sidebar -> mainPane [label="leaf click →\nselectPanel(mountFn)"];
+  routeReg -> sidebar [label="ROUTE_PANELS\n× section labels"];
+  panels -> mainPane [label="mountFn → PanelHandle", style=dashed];
+  shared -> panels [style=dotted, label="reused split-view\n+ error / JSON / progress"];
+
+  // Active-campaign fan-out
+  activeCamp -> banner [label="onActiveCampaignChanged"];
+  activeCamp -> sidebar [label="dims requiresCampaign\nleaves when null"];
+  activeCamp -> subs [label="auto-subscribe on set"];
+
+  // Identity bridge
+  identityBr -> activeCamp [label="clear on switch"];
+  identityBr -> drawer [label="re-subscribe", style=dashed];
+
+  // Drawer internals
+  subs -> bus [label="onmessage → publish"];
+  bus -> buffer [label="push"];
+  bus -> drawer [label="render rows"];
+
+  // HTTP path
+  panels -> api [label="apiCall(...)", style=dashed];
+  api -> vite [label="x-mythrun-dev-sub: dev-user-N"];
+  vite -> backend [label="proxied"];
+  subs -> vite [label="EventSource\n/api/campaigns/:id/\nstatus/stream"];
 
   // Ship gate path
-  contracts -> check      [label="read at boot"];
-  coverage  -> check      [label="read at boot"];
-  check     -> ci         [label="pnpm dev-tool:check", style=dashed];
+  contracts -> check [label="read at boot"];
+  coverage -> check [label="read at boot"];
+  check -> ci [label="pnpm dev-tool:check", style=dashed];
 }

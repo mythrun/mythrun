@@ -3,11 +3,17 @@
 <!-- source: backend/dev-tool/src/api-client.ts -->
 <!-- source: backend/dev-tool/src/identity.ts -->
 <!-- source: backend/dev-tool/src/main.ts -->
-<!-- source: backend/dev-tool/src/components/live-events-panel.ts -->
-<!-- source: backend/dev-tool/src/components/world-snapshot-panel.ts -->
-<!-- source: backend/dev-tool/src/components/world-snapshot-render.ts -->
-<!-- source: backend/dev-tool/src/components/world-snapshot-types.ts -->
-<!-- source: backend/dev-tool/src/components/campaign-create-panel.ts -->
+<!-- source: backend/dev-tool/src/shell/shell.ts -->
+<!-- source: backend/dev-tool/src/shell/sidebar.ts -->
+<!-- source: backend/dev-tool/src/shell/banner.ts -->
+<!-- source: backend/dev-tool/src/shell/active-campaign.ts -->
+<!-- source: backend/dev-tool/src/shell/identity-bridge.ts -->
+<!-- source: backend/dev-tool/src/shell/route-registry.ts -->
+<!-- source: backend/dev-tool/src/shell/drawer/drawer.ts -->
+<!-- source: backend/dev-tool/src/shell/drawer/subscriptions.ts -->
+<!-- source: backend/dev-tool/src/shell/drawer/event-bus.ts -->
+<!-- source: backend/dev-tool/src/shell/drawer/buffer.ts -->
+<!-- source: backend/dev-tool/src/components/_shared/panel-skeleton.ts -->
 <!-- source: backend/dev-tool/coverage.json -->
 <!-- source: backend/scripts/dev-tool-check.ts -->
 <!-- source: backend/src/dev-tool-check/check-coverage.ts -->
@@ -19,17 +25,17 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:0dfa48d6cbb48088b08c5fe344394dec919c072bcbe4f9da4683567a38750386 -->
-<!-- last-ticket: myth-tt2g -->
+<!-- source-hash: sha256:c58140aea33fd58811543533123a55e8b881308028c80a901291f1fa851d8a5a -->
+<!-- last-ticket: myth-mbdc -->
 
 <h1>Dev tool</h1>
 
 <p class="lead">
-  A local-only engineering UI that drives the development backend through a Vite proxy, plus the
-  ship gate that keeps it honest. The tool itself is throwaway — not a prototype of the production
-  frontend. The gate is the durable piece: a single command (<code>pnpm dev-tool:check</code>) that
-  fails CI when the prep-pipeline's HTTP, SSE, or BullMQ contracts grow an entry the dev tool can't
-  drive.
+  A local-only engineering UI: a Vite-served single-page shell that exposes every backend route as
+  its own endpoint × method panel, with a shell-owned active-campaign store and a persistent
+  right-side wire-log drawer that owns the SSE stream. The tool itself is throwaway — not a
+  prototype of the production frontend. The ship gate (<code>pnpm dev-tool:check</code>) plus a
+  registry-invariant test keep coverage honest.
 </p>
 
 <!-- @diagram: runtime/dev-tool -->
@@ -37,13 +43,13 @@
 <h2>How it fits together</h2>
 
 <p>
-  The dev tool is a tiny Vite + vanilla TypeScript workspace under
-  <code>backend/dev-tool/</code>, exposed as <code>@mythrun/dev-tool</code> in the monorepo. It
-  serves on <code>http://127.0.0.1:5273</code> via <code>pnpm dev:dev-tool</code> and talks to the
-  local backend on <code>localhost:3000</code> (or whatever <code>PORT</code> is set in
-  <code>backend/.env.development</code>). The browser only ever sees same-origin requests because
-  Vite's dev server proxies <code>/api/*</code> and <code>/health/*</code> to the local backend
-  process; no CORS plugin sits on the backend.
+  The dev tool is a Vite + vanilla TypeScript workspace under <code>backend/dev-tool/</code>,
+  exposed as <code>@mythrun/dev-tool</code> in the monorepo. It serves on
+  <code>http://127.0.0.1:5273</code> via <code>pnpm dev:dev-tool</code> and talks to the local
+  backend on <code>localhost:3000</code> (or whatever <code>PORT</code> is set in
+  <code>backend/.env.development</code>). The browser only sees same-origin requests because Vite's
+  dev server proxies <code>/api/*</code> and <code>/health/*</code> to the local backend process; no
+  CORS plugin sits on the backend.
 </p>
 
 <aside class="wiki-rationale">
@@ -56,326 +62,232 @@
   <a href="../infra/smoke-testing.html">smoke testing</a> instead.
 </aside>
 
+<h2>The shell</h2>
+
 <p>
-  Five files do the work. <code>vite.config.ts</code> binds the dev server to
-  <code>127.0.0.1</code> with <code>strictPort: true</code> and reads <code>PORT</code> out of
-  <code>backend/.env.development</code> at config time so the proxy target stays in lockstep with
-  the backend without a second source of truth. <code>src/identity.ts</code> owns the
-  <code>DEV_SUBS</code> list (<code>dev-user-1</code> through <code>dev-user-5</code>) and persists
-  the active selection in <code>localStorage</code> under <code>mythrun.devtool.devSub</code>.
-  <code>src/api-client.ts</code> is the single <code>fetch</code> wrapper: every HTTP call in the
-  app goes through <code>apiCall(path, init)</code>, which stamps <code>x-mythrun-dev-sub</code> on
-  every request and rejects absolute or protocol-relative paths. <code>src/main.ts</code> mounts the
-  page, self-bootstraps the active dev sub against <code>POST /api/users/register</code> on first
-  load (per principle 3 of the dev-tool reliability contract), and registers fourteen panels in
-  order: identity switcher, health, users, campaign-create, my-campaigns, pipeline-status,
-  live-events, campaign-details, world-snapshot, character-creation, credit-ledger, invites,
-  session-ticket, and billing. The world-snapshot panel landed under myth-exac; the four after
-  credit-ledger landed in <code>myth-e5mn</code> as part of the full-backend-route-coverage
-  retrofit; the character-creation panel landed under MYT-53 alongside its nine routes.
-  <code>src/components/</code> holds the per-panel UI. The reliability harness
-  (<code>scripts/verify.ts</code>) + registry (<code>verify-registry.ts</code>) + contract
-  (<code>AUTHORING.md</code>) live alongside under <code>backend/dev-tool/</code> and are governed
-  by <code>myth-e5mn</code>'s seven principles. The character-creation panel binds to
-  <code>mythrun.watchcampaign</code> and drives the per-player roster + owner action buttons +
-  member submission form; combined with the identity switcher it lets one operator impersonate every
-  player against a single campaign end-to-end.
+  <code>src/main.ts</code> mounts two long-lived pieces into the page's
+  <code>&lt;header&gt;</code> and <code>&lt;main&gt;</code> on load: the identity switcher (a
+  dropdown wired to <code>DEV_SUBS</code> from <code>src/identity.ts</code>) and the shell
+  composition root (<code>src/shell/shell.ts</code>). The shell carves
+  <code>&lt;main&gt;</code> into a banner row on top of a horizontal flex row containing
+  <em>sidebar | mainPane | drawer</em>. Banner + sidebar + drawer mount once and persist for the
+  lifetime of the page. The mainPane is the single slot the shell lazy-mounts a panel into when the
+  user clicks a sidebar leaf, tearing the previous panel down before mounting the next.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Vanilla TS, not React</strong> — the dev tool's job is to make HTTP calls and render their
-  responses. Adding React + a state lib would land 400 KB of dependencies for a throwaway. Vanilla
-  DOM with one <code>apiCall</code> helper keeps the codebase small enough that a contributor can
-  read the whole thing in one sitting and reason about every fetch path without grepping through
-  hooks.
+  <strong>Mount one panel at a time, not all of them at once</strong> — the pre-myth-mbdc layout
+  registered fourteen panels into a single vertical-scroll page; every backend interaction lived in
+  one giant column. As route count grew past forty, panels were competing for attention, the page
+  was unscrollably long, and panels with their own EventSource each opened sibling connections to
+  the same SSE stream. The shell + sidebar + lazy-mount pattern collapses the surface to "one
+  endpoint × method visible at a time" and pushes the SSE socket up to one shared owner (the
+  drawer).
 </aside>
 
-<h2>Bring-up</h2>
-
 <p>
-  From the repo root, three commands. <code>pnpm install</code> materializes the workspace and its
-  Vite dependencies. <code>pnpm dev</code> brings up the backend under <code>tsx watch</code> with
-  the local Postgres + Redis stack (see <a href="./index.html">backend overview</a>).
-  <code>pnpm dev:dev-tool</code> starts Vite on <code>127.0.0.1:5273</code>; opening that URL loads
-  the page and the smoke panel fires a <code>GET /health/ready</code> through the proxy. A green
-  result means every layer of the stack — Vite, the proxy, Fastify, the boot-gate-managed pg + Redis
-  clients — is healthy.
+  Every panel returns a <code>PanelHandle = { root, unmount() }</code> from its mount function. The
+  shell holds the currently-active handle; on sidebar selection change it calls
+  <code>activePanel.unmount()</code>, clears the mainPane's children, looks up the new panel's mount
+  function in the <code>PANEL_MOUNTS</code> map, and mounts it. Panels self-register on import by
+  calling <code>registerPanelMount(method, path, mountFn)</code> from the shell — so the side-effect
+  imports at the top of <code>main.ts</code> are what populate the map. The sidebar's selected leaf
+  persists across reloads in <code>localStorage</code> under <code>devtool.selectedPanel</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Smoke through the proxy, not direct to <code>localhost:3000</code></strong> — exercising
-  the proxy path on the very first render means the bring-up failure modes (proxy target wrong,
-  backend not running, env file not loaded) surface immediately and visibly, instead of hiding until
-  the first identity-stamped call.
+  <strong>Self-registration, not a central panel list</strong> — a central registry would mean every
+  new panel ticks two files (the panel itself + the registry list) and the registry would grow into
+  a hand-maintained merge-conflict magnet. Self-registration via <code>registerPanelMount</code>
+  means the panel module declares the route it implements at the point that knowledge lives, and
+  <code>main.ts</code> just imports the file. The invariant tests at
+  <code>__tests__/verify-registry.test.ts</code> catch the obvious failure modes (panel exists but
+  not imported; route in the contract but no panel).
 </aside>
 
-<h2>The identity switcher</h2>
+<h2>The sidebar</h2>
 
 <p>
-  The header carries a dropdown wired to the <code>DEV_SUBS</code> list. The selected value lives in
+  <code>src/shell/sidebar.ts</code> renders the leaf list, grouped into six sections —
+  <code>CAMPAIGNS</code>, <code>WORLD</code>, <code>CHARACTERS</code>,
+  <code>USERS &amp; ACCESS</code>, <code>BILLING</code>, <code>SYSTEM</code> — in that fixed order.
+  Each leaf is one endpoint × method pair from <code>src/shell/route-registry.ts</code>'s
+  <code>ROUTE_PANELS</code> array; the leaf renders the HTTP method dimmed alongside a
+  human-friendly label ("Create", "Roster", "Grant credits"). Leaves whose route carries
+  <code>requiresCampaign: true</code> render disabled (dimmed, cursor-not-allowed) when the
+  active-campaign store is null, and become selectable the moment a campaign is picked.
+</p>
+
+<p>
+  <code>ROUTE_PANELS</code> is the source of truth for the sidebar's contents. Adding a new backend
+  route is a four-file change: append to <code>backend/src/contract/backend-routes.ts</code>, append
+  to <code>ROUTE_PANELS</code> with its section and label, ship the panel module under
+  <code>src/components/</code>, and either add the panel to a pipeline contract's coverage or list
+  it as exempt. The <code>route-registry.test.ts</code> invariant errors when a backend route is
+  neither in <code>ROUTE_PANELS</code> nor in <code>EXEMPT_ROUTES</code>.
+</p>
+
+<h2>The active-campaign store</h2>
+
+<p>
+  <code>src/shell/active-campaign.ts</code> owns the single source of truth for "which campaign is
+  the operator currently working on." It persists to <code>localStorage</code> under
+  <code>devtool.activeCampaignId</code> and exposes <code>getActiveCampaignId()</code>,
+  <code>setActiveCampaignId(id | null)</code>, and <code>onActiveCampaignChanged(cb)</code>. The
+  CAMPAIGNS / My campaigns panel sets the active id when the operator clicks a row; the banner reads
+  it to render its anchor; the sidebar re-renders on change to enable or dim
+  <code>requiresCampaign</code> leaves; the drawer's subscription manager opens an EventSource for
+  the new id and closes the one for the old.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Shell-owned store, not panel-to-panel custom events</strong> — the pre-myth-mbdc layout
+  used four custom DOM events (<code>mythrun.watchcampaign</code> /
+  <code>mythrun.closewatch</code> / <code>mythrun.opendetails</code> / <code>*.clear</code>) to fan
+  a click in one panel out to siblings. With panels now lazy-mounted one at a time the bus pattern
+  broke down: the listener panel might not be mounted when the event fires. A shell-owned store +
+  subscriber callbacks works regardless of which panel happens to be visible. The four custom events
+  are gone.
+</aside>
+
+<p>
+  A sibling <code>activeCharacterId</code> key co-lives in the same module. The CHARACTERS / Roster
+  panel sets it when the operator clicks "view" on a completed character; the CHARACTERS / Character
+  panel reads it on mount. Clearing the campaign id automatically clears the character id — a
+  character only exists in the context of its campaign.
+</p>
+
+<h2>The wire-log drawer</h2>
+
+<p>
+  <code>src/shell/drawer/drawer.ts</code> is the persistent right-side pane that owns every SSE
+  subscription for the page. It composes four pieces: a subscription manager
+  (<code>subscriptions.ts</code>) that holds one <code>EventSource</code> per subscribed campaign
+  id, an in-process pub/sub event bus (<code>event-bus.ts</code>) that fans messages out to in-page
+  subscribers, a 500-event FIFO ring buffer (<code>buffer.ts</code>) that holds the recent-history
+  view, and the drawer's own UI controls (pause / clear / export-to-clipboard, collapsible to a
+  36-px stripe). The shell wires the trio together once at mount time and the drawer renders rows on
+  every <code>bus.publish</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One EventSource per active campaign, owned by the drawer</strong> — multiple panels need
+  to react to the same SSE stream (status, snapshot, members, character views). In the old layout
+  each opened its own connection, multiplying open sockets and tripping the per-user rate limit on
+  <code>GET /status/stream</code> (see <a href="./pipeline-status.html">pipeline status</a>).
+  Centralising the socket in the drawer and fanning out through an in-process bus means one socket
+  per active campaign, and panels become cheap bus subscribers.
+</aside>
+
+<p>
+  Auto-subscribe happens at two points: on shell mount, if the active-campaign id is non-null, and
+  on identity switch, after the bridge re-runs <code>subscriptions.subscribe(active)</code>.
+  Unsubscribe happens when the active id changes (the old EventSource closes), when identity changes
+  (every open socket closes via <code>closeAll()</code>), and when the shell itself unmounts. Pause
+  + clear state persists across reloads in <code>localStorage</code>.
+</p>
+
+<h2>The identity bridge</h2>
+
+<p>
+  <code>src/shell/identity-bridge.ts</code> registers a single window-level listener for
+  <code>mythrun.identitychanged</code> — the event the identity switcher dispatches when the
+  operator picks a new <code>dev-user-N</code>. The handler runs the shell's
+  <code>onIdentityChange</code> callback, which closes every drawer subscription, re-subscribes to
+  the active campaign id (if any), and re-renders the sidebar. The bridge replaces the four
+  panel-specific clear-on-identity-switch listeners (<code>closewatch</code> +
+  <code>createpanel.clear</code> + <code>detailspanel.clear</code> + <code>ledgerpanel.clear</code>)
+  from the old shell. One listener at the shell level is enough because the active panel's unmount
+  path runs its own cleanup, and the shell-owned stores are what panels read from on mount.
+</p>
+
+<h2>The panels</h2>
+
+<p>
+  Every backend route gets its own panel. As of the myth-mbdc reorg there are 41 leaves in
+  <code>ROUTE_PANELS</code> grouped across six sidebar sections, with a handful of routes (Stripe
+  webhook, registration helpers) sitting in <code>EXEMPT_ROUTES</code> because they don't make sense
+  as a UI surface. Panels share a split-view skeleton at
+  <code>src/components/_shared/panel-skeleton.ts</code> (title + action pane on the left + feedback
+  pane on the right + a <code>data-state</code> attribute the verifier keys on) and a handful of
+  shared renderers (<code>error-block.ts</code> for error display,
+  <code>json-disclosure.ts</code> for expandable JSON dumps, <code>progress-strip.ts</code> for
+  long-running flows). Panels that need live wire data subscribe to the drawer's bus rather than
+  opening their own EventSource.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One panel per endpoint × method, not multi-purpose composites</strong> — the old layout
+  had a single "character-creation panel" that bundled five routes and a "billing panel" that
+  bundled four. Each composite carried its own UI state machine, its own custom events, and its own
+  special-cases for what to show when. Splitting them into single-purpose siblings collapses every
+  panel to "render the action, fire the call, render the response," and the sidebar becomes a
+  navigation map of the backend rather than an arbitrary list of features.
+</aside>
+
+<h2>Identity</h2>
+
+<p>
+  The header's identity dropdown is wired to the <code>DEV_SUBS</code> list (<code>dev-user-1</code>
+  through <code>dev-user-5</code>) from <code>src/identity.ts</code>. The selected value lives in
   <code>localStorage</code> under <code>mythrun.devtool.devSub</code>;
-  <code>api-client.ts</code> reads it on every call and sets it as the
-  <code>x-mythrun-dev-sub</code> header. The Phase 0 smoke panel hits <code>/health/ready</code>,
-  which is a public route — identity has no observable effect on the response. That's expected: the
-  surface that consumes the header lands in MYT-50 alongside the first authenticated pipeline
-  routes, and the auth-bypass plugin (dev-only) is what reads the header to populate
-  <code>request.user</code>. Future multi-player flows switch identities between requests to act as
-  different players against the same world or campaign.
+  <code>src/api-client.ts</code> reads it on every call and stamps it as
+  <code>x-mythrun-dev-sub</code>. On first load <code>main.ts</code> self-bootstraps the active sub
+  against <code>POST /api/users/register</code> so a developer landing on the page against a clean
+  DB sees working panels without manual setup. Identity switches dispatch
+  <code>mythrun.identitychanged</code>, which the identity-bridge catches and uses to drive the
+  drawer + sidebar re-sync.
+</p>
+
+<h2>Verify-registry invariants</h2>
+
+<p>
+  <code>backend/dev-tool/__tests__/verify-registry.test.ts</code> is the build-time gate against the
+  registry rotting. It enforces four invariants. <strong>Forward coverage</strong>: every module
+  under <code>src/components/</code> that exports a <code>mount*</code> function has a matching
+  entry in the verifier's <code>PANEL_REGISTRY</code>. <strong>Reverse coverage</strong>: every
+  registered panel id is imported (or side-effect-imported) by <code>main.ts</code>, so registering
+  a panel that nothing pulls into the bundle is a red test. <strong>Route exhaustion</strong>: the
+  union of every panel's <code>exercises</code> arrays plus <code>EXEMPT_ROUTES</code> covers every
+  entry in <code>BACKEND_ROUTES</code>. <strong>Exempt validity</strong>: every
+  <code>EXEMPT_ROUTES</code> entry must itself be in <code>BACKEND_ROUTES</code> (so a stale exempt
+  entry that names a removed route fails the test).
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Five identities, not three</strong> — the world-and-campaign pipeline spec calls for 2–5
-  player groups; five synthetic users cover that range with one spare for solo-test scenarios.
-  MYT-51's seed migration is responsible for inserting exactly those rows in Postgres so
-  authenticated routes work end-to-end; the dev tool holds the canonical list, the migration
-  consumes it.
-</aside>
-
-<h2 id="the-live-events-panel">The live-events panel</h2>
-
-<p>
-  <code>backend/dev-tool/src/components/live-events-panel.ts</code> is the wire-data inspector for
-  the prep pipeline's SSE stream — every JSON payload published on
-  <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> renders as a card in chronological
-  order, with a derived current-entity inventory underneath. It is deliberately NOT a graph
-  renderer: the design spec (§6 of the MYT-52 streaming-stages document) is explicit that the panel
-  exists to make the wire format inspectable while the streaming stages are being authored and
-  debugged. A graph view of the world the LLM is generating is a different surface and belongs to
-  the eventual player-facing client.
-</p>
-
-<aside class="wiki-rationale">
-  <strong>Inspector, not visualizer</strong> — debugging a streaming-extractor bug needs to see the
-  exact wire payload of every event: the synthKey, the partial entity shape on each
-  <code>entity-updated</code>, the resolver's <code>{ parent_location: null }</code> patch, the
-  cap-fire <code>phase: complete</code> from stage 7. A graph visualization smooths over those
-  details — it shows "a region appeared" but not the seven incremental
-  <code>entity-updated</code> events that filled it in. The dev tool's audience is the engineer
-  authoring the streaming pipeline; the wire-data view is the closest thing to running
-  <code>redis-cli PSUBSCRIBE</code> with a real UI.
-</aside>
-
-<p>
-  Each event renders as a one-line compact summary (event type left-aligned, then primary identifier
-  and key metric — e.g. <code>stage-completed locations_and_npcs $0.1632</code>) with an indented
-  detail line underneath (duration, reason, name). Clicking the primary line expands a full JSON
-  dump of the event for the cases where the compact view loses fidelity.
-</p>
-
-<p>
-  Five filter chips sit at the top of the panel — <code>phase</code> (covers <code>phase</code> +
-  <code>cost-update</code>), <code>stage</code> (every <code>stage-*</code> arm including
-  <code>stage-reset</code>), <code>entity</code> (covers <code>entity-*</code> +
-  <code>finalized</code>), <code>edge</code>, and <code>other</code> as a catch-all for future arms
-  the contract grows. Toggling a chip off hides matching events from the log without evicting them
-  from the underlying buffer; re-toggle to bring them back. The chips collapse the thirteen event
-  arms into five practical buckets for human triage.
-</p>
-
-<h3>The current-entity inventory</h3>
-
-<p>
-  Below the event log, <code>deriveInventory</code> walks the event entries in order and
-  reconstructs the current entity state. <code>entity-added</code> seeds a new row in the inventory
-  map keyed on <code>synthKey</code>. <code>entity-updated</code> applies the patch via RFC 7396
-  merge-patch semantics over top-level keys — null deletes a key, scalar replacements overwrite,
-  nested objects and arrays replace wholesale (no recursion per the contract).
-  <code>finalized</code> binds the synthKey's <code>displayId</code> to the real
-  <code>entityId</code>, which is what the inventory's leftmost column renders.
-  <code>entity-removed</code> deletes the row. <code>stage-reset</code> evicts every row whose
-  synthKey starts with the stage's prefix (e.g. <code>world_and_factions/</code>) — the ROLLBACK
-  invariant: a reset stage's mid-flight entities never persisted, so the client must drop them.
-</p>
-
-<p>
-  Edges aren't rendered as rows; the inventory tracks an <code>edgeCount</code> surfaced as
-  <code>N entities • M edges</code> in the summary line. <code>edgeCount</code> delegates to the
-  placeholder-buffer reducer described below — only fully-reconciled edges count. Visualizing the
-  graph itself is out of scope; the count is what's useful at the wire-debug level.
-</p>
-
-<h3>The placeholder edge buffer</h3>
-
-<p>
-  Stage 4 (<a href="./world-gen.html#stage-4b-phantom-reference-reconciliation"
-    >entity_relationships</a
-  >) emits <code>edge-added</code> events whose <code>from</code> or <code>to</code> may carry a
-  placeholder string of the form <code>new-NNN</code> in place of a real UUID — the LLM declared a
-  phantom entity inline and the relationship references it. Stage 4b
-  (<code>entity_consolidation</code>) later emits an <code>entity-added</code> for each ghost
-  carrying the same string in a new optional <code>placeholderId</code> field; that's the
-  reconciliation key.
-</p>
-
-<p>
-  <code>derivePlaceholderBuffer</code> is the pure reducer that holds the two states. It replays the
-  chronological event log into two maps: <code>placeholderId → synthKey</code> (populated by
-  ghost-tier <code>entity-added</code> events) and <code>synthKey → edge payload</code> (populated
-  by every <code>edge-added</code>, dropped by <code>edge-removed</code>). At the end of the replay
-  it walks the edges in insertion order. An edge whose endpoints are both real UUIDs (or both
-  resolved placeholders) joins the <code>rendered</code> list. An edge with one or more unresolved
-  placeholder endpoints stays in the buffer and contributes to <code>bufferedCount</code>. The
-  inventory summary's edge count is <code>rendered.length</code>; the buffered tier is invisible in
-  the count but still inspectable through the raw event log (each buffered edge's
-  <code>edge-added</code> entry is in the chronological log like any other event).
-</p>
-
-<aside class="wiki-rationale">
-  <strong>Buffer client-side, not server-side</strong> — the alternative is for stage 4b to
-  back-fill the deferred edges on the wire as <code>edge-removed</code> + <code>edge-added</code>
-  pairs once the ghosts persist. That would double the event count and force the server to remember
-  every placeholder-tagged edge it emitted, which is a stateful contract the channel doesn't
-  otherwise have. Buffering on the client is one reducer (Phase 5.3 of myth-tt2g, named
-  <code>derivePlaceholderBuffer</code>) that re-runs over the log on every render — cheap, pure,
-  reversible. The contract grows by one optional field (<code>placeholderId</code>) and one new
-  endpoint flavor (the <code>new-NNN</code> string), neither of which breaks existing consumers that
-  ignore them.
-</aside>
-
-<p>
-  Reconciliation order doesn't matter: the edge can arrive before or after the ghost, since the
-  reducer runs the full replay each time. <code>stage-reset</code> on
-  <code>entity_relationships</code> drops every edge under that stage's synthKey prefix from both
-  the rendered set and the buffer — the same invariant <code>deriveInventory</code> uses to evict
-  the stage's mid-flight entities. The reducer is exported and unit-tested independently of the
-  panel; the panel just consumes <code>{ rendered, bufferedCount }</code>.
-</p>
-
-<h3>The 2000-event cap</h3>
-
-<p>
-  A streaming world-gen run emits hundreds of events — every partial-tree iteration in the streaming
-  extractor that closes a new field produces an <code>entity-updated</code>. With multiple campaigns
-  watched in a session, the event log would grow unbounded. The panel caps the buffer at 2000
-  entries; when an overflow lands, <code>applyCap</code> drops the oldest 100-event batch and
-  inserts a single synthetic <code>[…N earlier events dropped]</code> placeholder at the position of
-  the oldest remaining entry. Subsequent evictions accumulate into the placeholder rather than
-  chaining placeholders — the panel only ever shows one summary card at the top of the log.
-</p>
-
-<aside class="wiki-rationale">
-  <strong>FIFO cap with a placeholder, not a circular buffer with no signal</strong> — silently
-  dropping events would let an engineer scroll up looking for the first
-  <code>entity-added</code> for a specific synthKey and not find it, with no indication of why. The
-  placeholder card makes the eviction visible: scrolling up hits
-  <code>[…137 earlier events dropped]</code> and stops there. The cap is a hard ceiling, not a
-  sliding window, so behaviour is deterministic across runs.
-</aside>
-
-<h3>Wiring to the SSE stream</h3>
-
-<p>
-  The panel listens for two custom DOM events. <code>mythrun.watchcampaign</code> (dispatched by the
-  campaign-details panel when the user clicks "Watch" on a campaign id) opens an SSE connection via
-  <code>openSse('/api/campaigns/:id/status/stream')</code> from <code>sse-client.ts</code>. The
-  first frame is the snapshot — explicitly ignored by the live panel (the status panel renders it).
-  Subsequent <code>message</code> frames are parsed as <code>LiveEvent</code> and pushed through the
-  cap-and-render pipeline. <code>mythrun.closewatch</code> (dispatched on identity switch by
-  <code>main.ts</code>'s <code>onIdentityChanged</code> hook) closes the connection, clears the
-  buffer, and resets the chips back to all-on. Switching identities is the cleanest "start over"
-  trigger; the panel doesn't ship its own close button at Phase 0.
-</p>
-
-<h2 id="the-world-snapshot-panel">The world-snapshot panel</h2>
-
-<p>
-  The wiki-style inspector for the persisted world. Sits between the live-events panel and the
-  campaign-details panel in the layout. It listens on the same SSE stream the live-events panel
-  watches; the moment the phase advances to <code>world_snapshot_ready</code> (after stage 4
-  commits), it fires a single <code>GET /api/campaigns/:campaignId/world-snapshot</code> and renders
-  the response as a two-pane view: a tree of entities-by-kind on the left, a per-entity detail card
-  on the right. The detail card shows the entity's name, kind, prose kernel content, facts, in/out
-  relationships, and stat block (when present).
-</p>
-
-<p>
-  The panel runs a small state machine: <code>idle</code> on mount (no campaign watched),
-  <code>loading</code> while the snapshot fetch is in flight, <code>ready</code> once the response
-  is rendered, <code>error</code> on any HTTP failure. The current state is written to the panel
-  root's <code>data-state</code> attribute, which is what the dev-tool verifier (see
-  <code>backend/dev-tool/scripts/verify.ts</code>) keys on to assert the post-mount steady state is
-  <code>idle</code>. The DOM exposes two further <code>data-region</code> markers —
-  <code>entity-tree</code> on the left pane and <code>entity-detail</code> on the right — so the
-  verifier can target each pane independently.
-</p>
-
-<p>
-  After the initial snapshot lands, the panel stays attached to the SSE stream and applies stage 7
-  (<code>coherence_pass</code>) deltas in place. <code>entity-updated</code> applies a merge-patch
-  to the matching entity row (resolved by <code>synthKey</code> through a
-  <code>Map&lt;synthKey, entityId&gt;</code> the panel builds from <code>finalized</code> events);
-  <code>edge-added</code> and <code>edge-removed</code> mutate the relationships array. The user
-  watches the world settle without a refetch. Reconnect recovery is fetch-and-replace, not merge —
-  any in-flight deltas that arrive between the refetch and steady state re-apply harmlessly.
-</p>
-
-<aside class="wiki-rationale">
-  <strong>A tree-and-detail view, not a graph render</strong> — the snapshot inspector's audience is
-  the engineer authoring world-gen content. Graph layouts are visually pleasing but make it hard to
-  read what's actually in any one entity; a flat tree grouped by kind plus a detailed card for the
-  selected node is the closest analog to the eventual player-facing wiki, and it lets the engineer
-  click through every persisted entity in turn while reading the deltas accumulating in the
-  live-events panel above.
-</aside>
-
-<h2>The campaign-create panel's access-tier bypass</h2>
-
-<p>
-  The campaign-create panel surfaces an opt-in checkbox — "Bypass access tiers (dev mode — see
-  secrets in stream + snapshot)" — that flips a per-world dev-only flag at create time. When
-  checked, the POST body includes <code>devBypassAccessFilter: true</code>; the create route writes
-  <code>true</code> into <code>worlds.dev_bypass_access_filter</code>; the streaming extractor and
-  stage 7 stop tier-filtering their event publication for that world, and the snapshot endpoint
-  widens its tier filter to include <code>discoverable</code> + <code>secret</code>
-  rows. The checkbox defaults OFF. See the world-gen wiki page's
-  <a href="./world-gen.html">dev-mode bypass section</a> for the gating semantics (production users
-  can't reach this code path; the snapshot endpoint additionally requires the requesting user to be
-  in bypass-auth mode for the wider tier set to surface).
-</p>
-
-<aside class="wiki-rationale">
-  <strong>Per-world flag plus per-request scope, not a global toggle</strong> — a global "show
-  secrets" switch would mean a single misclick exposes every dev-created world's hidden material to
-  anyone with a bypass-auth identity. Scoping the flag to the world (set at create time, immutable
-  thereafter) and gating the wider response on the requesting user also being in bypass-auth means
-  the failure mode "accidentally inspect a secret-laden world from a prod-auth context" is
-  structurally impossible — both axes have to align.
+  <strong>A test, not a runtime check</strong> — invariants enforced at runtime fail in the browser,
+  with no actionable signal. As a vitest test they fail at CI time with a clear message ("panel X is
+  registered but not imported by main.ts") and the build never reaches the dev server.
 </aside>
 
 <h2>The ship gate</h2>
 
 <p>
-  The gate exists because the dev tool is the only place inside the repo where the prep pipeline's
-  HTTP, SSE, and BullMQ surfaces are exercised by a human. Without enforcement, "add a new route"
-  silently means "the dev tool has no way to trigger or observe it" — the next contributor to touch
-  that area finds out by guesswork. The gate makes the wiring an explicit, mechanical step.
+  The dev tool is the only place inside the repo where the prep pipeline's HTTP, SSE, and BullMQ
+  surfaces are exercised by a human. Without enforcement, "add a new route" silently means "the dev
+  tool has no way to trigger or observe it" — the next contributor finds out by guesswork. The gate
+  makes the wiring an explicit, mechanical step.
 </p>
 
 <p>
   Three files at <code>backend/src/contract/</code> are the source of truth:
   <code>pipeline-routes.ts</code> (HTTP routes, format <code>'METHOD /api/path'</code>),
   <code>pipeline-events.ts</code> (SSE event names), and <code>pipeline-jobs.ts</code> (BullMQ job
-  names). Each is a <code>readonly string[]</code> typed array, seeded empty at Phase 0; entries
-  accumulate as MYT-50 onward lands real routes.
-  <code>backend/dev-tool/coverage.json</code> declares what the dev tool actually covers, in three
-  matching arrays plus an <code>exempt</code> object whose values are human reasons for entries the
-  tool deliberately skips.
-</p>
-
-<p>
+  names). Each is a <code>readonly string[]</code>. <code>backend/dev-tool/coverage.json</code>
+  declares what the dev tool actually covers, in three matching arrays plus an
+  <code>exempt</code> object whose values are human reasons for entries the tool deliberately skips.
   <code>pnpm dev-tool:check</code> runs <code>backend/scripts/dev-tool-check.ts</code>, which loads
-  the three contract constants and the coverage JSON, then calls the pure
+  the contracts and the coverage JSON and calls the pure
   <code>checkCoverage(contracts, coverage)</code> function from
-  <code>backend/src/dev-tool-check/check-coverage.ts</code>. The function errors when a contract
-  entry is missing from coverage and not in exempt, errors when an exempt reason is shorter than 20
-  characters, errors when an exempt entry references a contract entry that no longer exists, and
-  warns when a coverage entry is no longer in the contract. Errors exit the script with code 1;
-  warnings don't.
+  <code>backend/src/dev-tool-check/check-coverage.ts</code>. It errors when a contract entry is
+  missing from coverage and not exempt, when an exempt reason is shorter than 20 characters, and
+  when an exempt entry references a contract entry that no longer exists; it warns when a coverage
+  entry is no longer in the contract.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Pure function under a CLI shell, not a single script</strong> — the same pure
-  <code>checkCoverage</code> runs under Vitest with synthetic fixtures, so the gate's behavior is
+  <code>checkCoverage</code> runs under Vitest with synthetic fixtures, so the gate's behaviour is
   exercised on every test run, not only when a contributor remembers to run the CLI. The CLI shell
   is the thinnest possible filesystem-and-process wrapper around the pure core.
 </aside>
@@ -384,45 +296,27 @@
   CI wires the gate through <code>.github/workflows/dev-tool-check.yml</code>, a peer of
   <code>wiki-check.yml</code>: it runs on every <code>pull_request</code> and on
   <code>push: branches: [main]</code>, scoped via <code>paths:</code> to the gated surface so
-  unrelated PRs don't pay CI minutes. The install step is
-  <code>pnpm install --frozen-lockfile --filter @mythrun/backend...</code> — the backend workspace
-  is everything the script needs.
-</p>
-
-<aside class="wiki-rationale">
-  <strong>A dedicated workflow file, not a step in <code>deploy.yml</code></strong> —
-  <code>deploy.yml</code> only fires on push-to-main, so a PR that broke the contract would slip
-  past review. Adding the step there would also bloat the deploy job's running time without
-  improving coverage. The peer-workflow pattern matches what <code>wiki-check.yml</code> already
-  does for the same reasons.
-</aside>
-
-<p>
-  The contracts are populated and the gate is load-bearing: eight routes, thirteen events, and one
-  BullMQ job ride the registry today, and every entry is driven by a panel in the dev tool with zero
-  exempt entries. <strong>Adding a pipeline route is a three-file change in a single PR</strong> —
-  append to <code>pipeline-routes.ts</code>, add the UI in <code>backend/dev-tool/src/</code>,
-  extend <code>coverage.json</code>'s <code>routes</code> array. Forgetting any one of them red-CI's
-  the gate. Events and jobs follow the same pattern with their own contract files and arrays. The
-  <code>myth-e5mn</code> retrofit also added a Fastify <code>printRoutes</code> drift test against a
-  separate <code>backend-routes.ts</code> contract for the non-pipeline surface, so even routes that
-  don't belong to world-gen can't sneak past review without being declared.
+  unrelated PRs don't pay CI minutes. The pipeline contract files are populated and the gate is
+  load-bearing: the routes, events, and BullMQ jobs that ride the registry today are all driven by
+  panels in the dev tool with zero exempt entries.
 </p>
 
 <h2>The exempt list</h2>
 
 <p>
-  <code>coverage.json</code>'s <code>exempt</code> object lets the gate accept "contract entry
-  exists, but the dev tool deliberately doesn't drive it." Each entry is keyed by the contract
-  string and its value is a free-text reason; the gate enforces a 20-character minimum so the
-  failure mode "punt past the gate with <code>'TODO'</code>" doesn't fly. A real reason names who
-  decided to exempt, why, and ideally points at the Linear issue that will eventually address the
-  gap. The list is reviewed in PR like any other code change.
+  Two distinct exempt lists exist — one for the pipeline contracts (<code>coverage.json</code>'s
+  <code>exempt</code> object, enforced by <code>dev-tool-check</code>) and one for the all-routes
+  panel-registry invariant (<code>EXEMPT_ROUTES</code> in <code>route-registry.ts</code>, enforced
+  by the vitest test). The pipeline contracts' exempt object is currently empty. The
+  route-registry's <code>EXEMPT_ROUTES</code> currently lists three entries:
+  <code>POST /webhooks/stripe</code> (signature-verified consumer, no human UI),
+  <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel,
+  exercised by the verify harness's identity-bootstrap step), and
+  <code>GET /api/users/check-username</code> (same shape, embedded in the register probe-helper).
 </p>
 
 <aside class="wiki-rationale">
-  <strong>20-character floor, not a free-form text field</strong> — pre-blind-review, the exempt
-  reason was unvalidated. The blind reviewers noted that without a minimum, the gate's escape hatch
+  <strong>20-character minimum on exempt reasons</strong> — without a floor, the gate's escape hatch
   becomes a single keystroke. Twenty characters is enough room for "MYT-NN tracked, defer" and short
   enough that "we'll exempt this for now" stays uncomfortable.
 </aside>
@@ -435,29 +329,29 @@
   <li>
     <strong>Local-only by design.</strong> No env switcher, no staging mode, no
     <code>@fastify/cors</code> plugin on the backend. Staging validation lives in
-    <a href="../infra/smoke-testing.html">smoke testing</a>; the dev tool exists to iterate on the
-    local backend.
+    <a href="../infra/smoke-testing.html">smoke testing</a>.
   </li>
   <li>
-    <strong>All HTTP calls go through <code>api-client.ts</code>'s <code>apiCall</code>.</strong> No
-    bare <code>fetch</code> anywhere else. No absolute URLs. The path guard rejects bare URLs
-    (missing leading <code>/</code>) AND protocol-relative paths (leading <code>//</code>) because
-    <code>fetch('//evil.com/x')</code> would otherwise resolve against the page origin's scheme and
-    leak <code>x-mythrun-dev-sub</code> to a foreign origin.
+    <strong>All HTTP calls go through <code>api-client.ts</code>'s <code>apiCall</code>.</strong>
+    No bare <code>fetch</code> anywhere else. No absolute URLs. The path guard rejects bare URLs
+    (missing leading <code>/</code>) AND protocol-relative paths (leading <code>//</code>) so
+    <code>fetch('//evil.com/x')</code> can't leak <code>x-mythrun-dev-sub</code> to a foreign
+    origin.
   </li>
   <li>
     <strong>Use <code>.textContent</code>, never <code>.innerHTML</code>.</strong> Defense against
-    any stored-XSS-shaped response surface ever appearing in a future panel. Cheap, mandatory.
+    any stored-XSS-shaped response surface ever appearing in a future panel.
   </li>
   <li>
     <strong>No secrets in <code>localStorage</code>.</strong> Only
-    <code>mythrun.devtool.devSub</code> lives there. Tokens, JWTs, Anthropic keys do not. If a
-    future surface needs a token, it goes in-memory or <code>sessionStorage</code> at minimum.
+    <code>mythrun.devtool.devSub</code>, <code>devtool.activeCampaignId</code>,
+    <code>devtool.activeCharacterId</code>, and a few UI prefs (selected panel, drawer open/paused
+    state) live there. Tokens, JWTs, Anthropic keys do not.
   </li>
   <li>
     <strong>The ship gate is not skippable.</strong> <code>pnpm dev-tool:check</code> runs on every
     PR; merging a contract change without the matching coverage entry (or a real exempt reason) is a
-    red CI build, not a "we'll fix it in a follow-up."
+    red CI build.
   </li>
 </ul>
 
@@ -474,12 +368,15 @@
     <code>Local: http://127.0.0.1:5273/</code>.
   </li>
   <li>
-    Open the URL. The health panel fires <code>GET /health/ready</code> on load; a 200 response with
-    <code>{"ready":true}</code> means the proxy, backend, and data layer are all live.
+    Open the URL. The shell mounts, the sidebar populates from <code>ROUTE_PANELS</code>, the banner
+    reports the active campaign (or "(no active campaign)"), and the drawer renders empty. If the
+    active sub doesn't have a users row yet, <code>main.ts</code>'s bootstrap fires
+    <code>POST /api/users/register</code> automatically.
   </li>
   <li>
     Pick an identity from the header dropdown. The selection persists across reloads via
-    <code>localStorage</code>. Every subsequent call carries it as <code>x-mythrun-dev-sub</code>.
+    <code>localStorage</code>. Every subsequent call carries it as <code>x-mythrun-dev-sub</code>;
+    the drawer re-subscribes to the active campaign as the new identity.
   </li>
 </ol>
 
@@ -489,24 +386,30 @@
 <ol>
   <li>
     Append the route to <code>backend/src/contract/pipeline-routes.ts</code> in the
-    <code>'METHOD /api/path'</code> form. This is the source of truth.
+    <code>'METHOD /api/path'</code> form. (And to <code>backend-routes.ts</code> for the all-routes
+    invariant.)
   </li>
   <li>
     Add the route handler under <code>backend/src/routes/</code> and wire it into
     <code>app.ts</code>'s plugin registration.
   </li>
   <li>
-    Add a component under <code>backend/dev-tool/src/components/</code> that drives the new route
-    via <code>apiCall</code>, and mount it in <code>main.ts</code>.
+    Add a panel module under <code>backend/dev-tool/src/components/</code> that drives the route via
+    <code>apiCall</code>. The module exports a <code>mount&lt;Panel&gt;</code> function returning
+    <code>PanelHandle</code>, calls <code>registerPanelMount(method, path, mount...)</code> at the
+    top level, and is side-effect-imported by <code>main.ts</code>. Add an entry in
+    <code>src/shell/route-registry.ts</code>'s <code>ROUTE_PANELS</code> with the section and label.
   </li>
   <li>
     Add the same <code>'METHOD /api/path'</code> string to the <code>routes</code> array in
     <code>backend/dev-tool/coverage.json</code>.
   </li>
   <li>
-    <code>pnpm dev-tool:check</code> locally — must exit 0. If it errors, the message names exactly
-    which contract entry is uncovered or which exempt reason is too short.
-    <strong>The same PR contains all four changes.</strong> CI runs the same check on push.
+    <code>pnpm dev-tool:check</code> locally — must exit 0.
+    <code
+      >pnpm --filter @mythrun/backend test backend/dev-tool/__tests__/verify-registry.test.ts</code
+    >
+    locally — must pass. The same PR contains all five changes; CI runs the same checks on push.
   </li>
 </ol>
 
@@ -519,7 +422,7 @@
   </li>
   <li>
     Write a real reason of at least 20 characters: who decided, why the dev tool can't drive it, and
-    the Linear/MYT-* issue tracking the gap. The gate errors on shorter strings.
+    the Linear/MYT-* issue tracking the gap.
   </li>
   <li>
     Open the PR with the exempt change visible alongside the contract change. Reviewers push back if
@@ -527,31 +430,23 @@
   </li>
   <li>
     When the issue lands and adds coverage, the exempt entry is removed in the same PR — leaving a
-    stale exempt entry whose contract entry has moved into <code>coverage.routes</code> is fine, but
-    leaving an exempt entry whose contract entry no longer exists is an error and red-CI's the gate.
+    stale exempt entry whose contract entry no longer exists red-CI's the gate.
   </li>
 </ol>
 
 <h3 id="diagnose-a-failing-dev-tool-check">Diagnose a failing <code>dev-tool:check</code></h3>
 <ol>
   <li>
-    The script prints one <code>error:</code> line per problem before the summary. Read the line —
-    each names the kind (<code>routes</code> / <code>events</code> / <code>jobs</code>), the entry,
-    and the action required.
+    The script prints one <code>error:</code> line per problem. Read the line — each names the kind
+    (<code>routes</code> / <code>events</code> / <code>jobs</code>), the entry, and the action
+    required.
   </li>
   <li>
-    <strong>"in contract but not in coverage and not in exempt"</strong> — the contract grew an
-    entry the dev tool doesn't drive. Either add the UI + coverage entry, or add an exempt entry
-    with a real reason.
+    <strong>"in contract but not in coverage and not in exempt"</strong> — add the panel + coverage
+    entry, or add an exempt entry with a real reason.
   </li>
-  <li>
-    <strong>"exempt reason is too short"</strong> — the value under
-    <code>exempt.&lt;kind&gt;[entry]</code> is &lt; 20 characters. Write a real reason.
-  </li>
-  <li>
-    <strong>"in exempt but no longer in contract"</strong> — the contract entry was removed but the
-    exempt entry wasn't. Drop the exempt entry.
-  </li>
+  <li><strong>"exempt reason is too short"</strong> — write a real reason (≥ 20 characters).</li>
+  <li><strong>"in exempt but no longer in contract"</strong> — drop the exempt entry.</li>
   <li>
     <strong>Warnings</strong> (<code>warn:</code> prefix) — coverage entry no longer in contract.
     Non-fatal; consider removing the coverage line.
@@ -561,20 +456,18 @@
 <h2>Integration points</h2>
 
 <p>
-  The dev tool drives the <a href="./index.html">backend</a>'s HTTP surface through the Vite proxy;
-  it consumes the same <code>x-mythrun-dev-sub</code> header the auth-bypass plugin in the
+  The dev tool drives the <a href="./index.html">backend</a>'s HTTP surface through the Vite proxy
+  and consumes the same <code>x-mythrun-dev-sub</code> header the auth-bypass plugin in the
   <a href="../auth-billing/jwt-middleware.html">JWT middleware</a> reads to populate
-  <code>request.user</code> in development. The ship gate's contract files
-  (<code>backend/src/contract/</code>) are the seam future
-  <a href="../world-campaign/index.html">world-and-campaign pipeline</a> routes register against;
-  the spec amendment in <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> §12 codifies
-  the local-only stance. Staging validation goes through
-  <a href="../infra/smoke-testing.html">smoke testing</a>, not this tool.
+  <code>request.user</code> in development. The wire-log drawer attaches to the
+  <a href="./pipeline-status.html">pipeline status</a> stream, which the
+  <a href="./world-gen.html">world-gen worker</a> publishes events into. Staging validation goes
+  through <a href="../infra/smoke-testing.html">smoke testing</a>, not this tool.
 </p>
 
 <h2>Appendix: surface</h2>
 
-<h3>Workspace files</h3>
+<h3>Shell files</h3>
 <table>
   <thead>
     <tr>
@@ -584,49 +477,123 @@
   </thead>
   <tbody>
     <tr>
-      <td><code>backend/dev-tool/vite.config.ts</code></td>
+      <td><code>src/main.ts</code></td>
       <td>
-        Vite dev server bound to <code>127.0.0.1:5273</code>; proxies <code>/api/*</code> and
-        <code>/health/*</code> to the local backend at <code>PORT</code> (from
-        <code>backend/.env.development</code>; defaults to 3000).
+        Mounts the identity switcher + the shell; side-effect imports every panel module; bootstraps
+        the active sub against <code>POST /api/users/register</code>.
       </td>
     </tr>
     <tr>
-      <td><code>backend/dev-tool/src/api-client.ts</code></td>
+      <td><code>src/shell/shell.ts</code></td>
       <td>
-        Single <code>fetch</code> wrapper. Sets <code>x-mythrun-dev-sub</code>; rejects absolute /
-        protocol-relative paths.
+        Composition root. Builds banner + sidebar + mainPane + drawer; owns
+        <code>PANEL_MOUNTS</code> + <code>registerPanelMount</code>; tears down the active panel on
+        sidebar selection.
       </td>
     </tr>
     <tr>
-      <td><code>backend/dev-tool/src/identity.ts</code></td>
+      <td><code>src/shell/sidebar.ts</code></td>
       <td>
-        <code>DEV_SUBS</code> (5 entries), <code>getCurrentDevSub()</code>,
-        <code>setCurrentDevSub()</code>, <code>onIdentityChanged()</code>. localStorage key:
-        <code>mythrun.devtool.devSub</code>.
+        Renders <code>ROUTE_PANELS</code> grouped into six sections; dims
+        <code>requiresCampaign</code> leaves when no campaign is active.
       </td>
     </tr>
     <tr>
-      <td><code>backend/dev-tool/src/main.ts</code></td>
-      <td>Page mount, identity dropdown wiring, panel registry.</td>
+      <td><code>src/shell/banner.ts</code></td>
+      <td>Active-campaign anchor pinned below the header.</td>
     </tr>
     <tr>
-      <td><code>backend/dev-tool/src/components/</code></td>
+      <td><code>src/shell/active-campaign.ts</code></td>
       <td>
-        Per-panel UI. <code>health-panel</code>, <code>status-panel</code> (snapshot + applied
-        lifecycle events), <code>live-events-panel</code> (wire-data inspector, all 13 event arms),
-        <code>world-snapshot-panel</code> (myth-exac wiki-style inspector — tree + detail, applies
-        coherence deltas in-place), <code>campaign-create-panel</code> (with the access-tier bypass
-        checkbox), <code>my-campaigns-panel</code>, <code>campaign-details-panel</code>,
-        <code>credit-ledger-panel</code>, <code>identity-switcher</code>.
+        Shell-owned store. <code>getActiveCampaignId</code> / <code>setActiveCampaignId</code> /
+        <code>onActiveCampaignChanged</code>; <code>localStorage</code>-backed. Sibling
+        <code>activeCharacterId</code> co-lives here.
       </td>
     </tr>
     <tr>
-      <td><code>backend/dev-tool/coverage.json</code></td>
+      <td><code>src/shell/identity-bridge.ts</code></td>
       <td>
-        <code>{ version: 1, routes, events, jobs, exempt: { routes, events, jobs } }</code>. The
-        ship-gate manifest.
+        Single shell-level listener for <code>mythrun.identitychanged</code>; drives the on-switch
+        reset orchestrated by the shell.
       </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/route-registry.ts</code></td>
+      <td>
+        <code>ROUTE_PANELS</code> (sidebar source of truth) + <code>EXEMPT_ROUTES</code>
+        (route-registry-invariant escape hatch).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/drawer.ts</code></td>
+      <td>
+        Persistent right-side wire-log pane. Composes subscriptions + bus + buffer; pause / clear /
+        export controls; collapsible.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/subscriptions.ts</code></td>
+      <td>
+        Sole <code>EventSource</code> owner. One ES per subscribed campaign id;
+        <code>subscribe</code> / <code>unsubscribe</code> / <code>closeAll</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/event-bus.ts</code></td>
+      <td>In-process pub/sub. Errors in one subscriber don't poison siblings.</td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/buffer.ts</code></td>
+      <td>500-event FIFO ring buffer. Oldest items evict on overflow.</td>
+    </tr>
+    <tr>
+      <td><code>src/components/_shared/panel-skeleton.ts</code></td>
+      <td>
+        Split-view DOM builder + the <code>PanelHandle</code> = <code>{ root, unmount() }</code>
+        contract every panel returns.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Sidebar sections</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Section</th>
+      <th>Scope</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>CAMPAIGNS</code></td>
+      <td>Create / mine / details / rename / resume / archive / delete.</td>
+    </tr>
+    <tr>
+      <td><code>WORLD</code></td>
+      <td>Status / live events (via the drawer) / snapshot / hierarchy / random tables.</td>
+    </tr>
+    <tr>
+      <td><code>CHARACTERS</code></td>
+      <td>
+        Start (owner) / submit concept / roster / character / starting situations (list + pick) /
+        members.
+      </td>
+    </tr>
+    <tr>
+      <td><code>USERS &amp; ACCESS</code></td>
+      <td>Me / invite create / list / revoke / preview / accept.</td>
+    </tr>
+    <tr>
+      <td><code>BILLING</code></td>
+      <td>
+        SKUs / subscription / balance / history / checkout / portal / upgrade tier / grant credits /
+        my credits.
+      </td>
+    </tr>
+    <tr>
+      <td><code>SYSTEM</code></td>
+      <td>Health / ready / WS ticket.</td>
     </tr>
   </tbody>
 </table>
@@ -664,6 +631,12 @@
     <tr>
       <td><code>backend/scripts/dev-tool-check.ts</code></td>
       <td>CLI shell. Reads files, invokes <code>checkCoverage</code>, exits 0/1.</td>
+    </tr>
+    <tr>
+      <td><code>backend/dev-tool/__tests__/verify-registry.test.ts</code></td>
+      <td>
+        Forward / reverse / route-exhaustion / exempt-validity invariants on the panel registry.
+      </td>
     </tr>
     <tr>
       <td><code>.github/workflows/dev-tool-check.yml</code></td>
@@ -706,8 +679,8 @@
 <h2>Source</h2>
 
 <p>
-  <code>backend/dev-tool/</code>, <code>backend/src/contract/</code>,
-  <code>backend/src/dev-tool-check/check-coverage.ts</code>,
+  <code>backend/dev-tool/src/shell/</code>, <code>backend/dev-tool/src/components/</code>,
+  <code>backend/src/contract/</code>, <code>backend/src/dev-tool-check/check-coverage.ts</code>,
   <code>backend/scripts/dev-tool-check.ts</code>, <code>.github/workflows/dev-tool-check.yml</code>.
   Design spec: <code>docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md</code>;
   parent spec §12: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.

@@ -257,10 +257,10 @@
   the surface — two routes, thirteen event types. With MYT-52 landed all thirteen arms have
   producers (six lifecycle from the processor, seven entity / edge from the streaming extractor +
   the post-COMMIT <code>finalizedEvents</code> pipe) AND a consumer in the
-  <a href="./dev-tool.html#the-live-events-panel">dev tool's live-events panel</a>. The bridge
-  itself is type-blind: every JSON payload published on a campaign channel is forwarded to attached
-  sinks unchanged. The status panel applies the six lifecycle events live; the live-events panel
-  renders all thirteen as wire-data cards.
+  <a href="./dev-tool.html">dev tool's wire-log drawer</a>. The bridge itself is type-blind: every
+  JSON payload published on a campaign channel is forwarded to attached sinks unchanged. The WORLD /
+  Status panel renders the snapshot's phase + stages list; the drawer renders all thirteen event
+  arms as wire-data rows in chronological order.
 </p>
 
 <h2 id="the-two-endpoints">The two endpoints</h2>
@@ -680,16 +680,15 @@
     <code>pnpm db:up</code>, <code>pnpm dev</code>, <code>pnpm dev:dev-tool</code>.
   </li>
   <li>
-    Create a campaign via the dev tool's create-panel (freeform mode is fastest — paste a 20+
-    character concept and submit). The 201 response carries the
-    <code>campaignId</code>; the my-campaigns panel below it shows the new row.
+    Create a campaign via the dev tool's CAMPAIGNS / Create panel (freeform mode is fastest — paste
+    a 20+ character concept and submit). The 201 response carries the <code>campaignId</code>;
+    CAMPAIGNS / My campaigns shows the new row.
   </li>
   <li>
-    Click the Watch button on the campaign in the my-campaigns panel. The
-    <a href="./dev-tool.html">dev tool</a> dispatches <code>mythrun.watchcampaign</code>; both the
-    pipeline-status panel and the live-events panel open SSE connections. The status panel renders
-    the snapshot's phase + stages list and applies lifecycle events live. The live-events panel
-    renders every event arm as a wire-data card.
+    Click a row in My campaigns to set it as the active campaign. The shell's active-campaign store
+    notifies the wire-log drawer, which opens an SSE connection to
+    <code>/api/campaigns/:campaignId/status/stream</code> and starts streaming events into the
+    right-side drawer. Open WORLD / Status to render the snapshot's phase + stages list.
   </li>
   <li>
     To smoke-test the live-event path without the worker, publish a fake event via
@@ -697,10 +696,9 @@
     <code
       >redis-cli PUBLISH "development:use1:pipeline:campaign:&lt;id&gt;"
       '{"type":"phase","phase":"world_gen"}'</code
-    >. Both panels react within a frame's RTT — the status panel's phase row updates, and the
-    live-events panel appends a <code>phase world_gen</code> card. Unknown event types silently fall
-    through to the live-events panel's <code>other</code> bucket (rendered, but not interpreted by
-    the status panel).
+    >. The drawer appends a <code>phase</code> row within a frame's RTT; the WORLD / Status panel
+    reflects the new phase on its next refresh. Unknown event types silently fall through to the
+    drawer's chronological log (rendered, but not interpreted by the status panel).
   </li>
 </ol>
 
@@ -713,11 +711,11 @@
   <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a> page
   covers <code>requireCampaignMember</code> (the preHandler both routes share) and explains the
   <code>redisKeyPrefix</code> envelope every Redis channel uses. The
-  <a href="./dev-tool.html">dev tool</a> page covers the local-only engineering UI whose
-  <code>status-panel.ts</code> drives this surface and explains how the ship gate (<code
-    >pnpm dev-tool:check</code
-  >) keeps the two contract files (<code>pipeline-routes.ts</code>, <code>pipeline-events.ts</code>)
-  honest as new routes and event types land.
+  <a href="./dev-tool.html">dev tool</a> page covers the local-only engineering UI whose WORLD /
+  Status panel drives the snapshot endpoint and whose shell-owned wire-log drawer drives the SSE
+  stream, and explains how the ship gate (<code>pnpm dev-tool:check</code>) keeps the two contract
+  files (<code>pipeline-routes.ts</code>, <code>pipeline-events.ts</code>) honest as new routes and
+  event types land.
 </p>
 
 <p>
@@ -820,9 +818,9 @@
     <tr>
       <td><code>backend/dev-tool/src/components/status-panel.ts</code></td>
       <td>
-        Paste-input <code>campaignId</code> + Watch/Stop. Opens <code>EventSource</code>; renders
-        snapshot frame; applies <code>phase</code> and <code>cost-update</code> live events;
-        surfaces the close-reason on terminal frame.
+        Reads <code>activeCampaignId</code> from the shell store; Refresh button calls
+        <code>GET /api/campaigns/:campaignId/status</code> and renders the phase + stages snapshot +
+        cumulative cost. The SSE stream is owned by the shell's wire-log drawer.
       </td>
     </tr>
   </tbody>
