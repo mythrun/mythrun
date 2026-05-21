@@ -49,6 +49,16 @@ import './components/invites-list-panel.js'
 import './components/invite-revoke-panel.js'
 import './components/invite-preview-panel.js'
 import './components/invite-accept-panel.js'
+// myth-c1gr P6.E — new BILLING-section panels self-register on import.
+// billing-panel + credit-ledger-panel still ship as side-effect imports
+// above; this wave splits out the four BILLING GETs and the dev-credits
+// GET into single-route siblings (one per route × action). The legacy
+// panels keep their remaining POST routes until P6.F deletes them.
+import './components/skus-panel.js'
+import './components/subscription-panel.js'
+import './components/balance-panel.js'
+import './components/history-panel.js'
+import './components/dev-credits-me-panel.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

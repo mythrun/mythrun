@@ -49,6 +49,11 @@ import { mountInvitesListPanel } from './src/components/invites-list-panel.js'
 import { mountInviteRevokePanel } from './src/components/invite-revoke-panel.js'
 import { mountInvitePreviewPanel } from './src/components/invite-preview-panel.js'
 import { mountInviteAcceptPanel } from './src/components/invite-accept-panel.js'
+import { mountSkusPanel } from './src/components/skus-panel.js'
+import { mountSubscriptionPanel } from './src/components/subscription-panel.js'
+import { mountBalancePanel } from './src/components/balance-panel.js'
+import { mountHistoryPanel } from './src/components/history-panel.js'
+import { mountDevCreditsMePanel } from './src/components/dev-credits-me-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
@@ -279,14 +284,16 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     exercises: [route('GET', '/api/campaigns/:campaignId/members')],
   },
   'credit-ledger': {
+    // myth-c1gr P6.E narrowed this entry: GET /api/dev/credits/me moved
+    // to the dev-credits-me panel (one-route-per-panel per spec §3).
+    // credit-ledger-panel.ts source is untouched in P6.E; it gets fully
+    // deleted in P6.F when its sole remaining route (the grant POST) is
+    // re-homed.
     pattern: 'action-only',
     mount: mountCreditLedgerPanel,
     readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
-    exercises: [
-      route('POST', '/api/dev/credits/grant'),
-      route('GET', '/api/dev/credits/me'),
-    ],
+    exercises: [route('POST', '/api/dev/credits/grant')],
   },
   users: {
     // myth-6uu1 P6.D refactor: action-only single-route panel (fetch
@@ -344,18 +351,54 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     exercises: [route('POST', '/api/sessions/:id/ws-ticket')],
   },
   billing: {
+    // myth-c1gr P6.E narrowed this entry: the four BILLING GETs moved
+    // to dedicated single-route panels below (skus, subscription,
+    // balance, history). billing-panel.ts source is untouched in P6.E;
+    // it gets fully deleted in P6.F when its three remaining routes
+    // (the POSTs) are re-homed.
     pattern: 'action-only',
     mount: mountBillingPanel,
     readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
     exercises: [
-      route('GET', '/api/billing/skus'),
-      route('GET', '/api/billing/balance'),
-      route('GET', '/api/billing/subscription'),
-      route('GET', '/api/billing/history'),
       route('POST', '/api/billing/checkout'),
       route('POST', '/api/billing/portal'),
       route('POST', '/api/billing/upgrade-tier'),
     ],
+  },
+  skus: {
+    pattern: 'action-only',
+    mount: mountSkusPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/billing/skus')],
+  },
+  subscription: {
+    pattern: 'action-only',
+    mount: mountSubscriptionPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/billing/subscription')],
+  },
+  balance: {
+    pattern: 'action-only',
+    mount: mountBalancePanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/billing/balance')],
+  },
+  history: {
+    pattern: 'action-only',
+    mount: mountHistoryPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/billing/history')],
+  },
+  'dev-credits-me': {
+    pattern: 'action-only',
+    mount: mountDevCreditsMePanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/dev/credits/me')],
   },
 }
