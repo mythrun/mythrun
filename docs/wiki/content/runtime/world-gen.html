@@ -22,6 +22,9 @@
 <!-- source: backend/src/llm/prep/stages/random-tables.ts -->
 <!-- source: backend/src/llm/prep/stages/coherence-pass.ts -->
 <!-- source: backend/src/llm/prep/world-gen-processor.ts -->
+<!-- source: backend/src/worker/job-context.ts -->
+<!-- source: backend/src/boot/process-error-handlers.ts -->
+<!-- source: backend/src/llm/logger.ts -->
 <!-- source: backend/src/server.ts -->
 <!-- source: backend/src/routes/dev-credits.ts -->
 <!-- source: backend/src/repo/credit-grants.ts -->
@@ -48,7 +51,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:d77c077c4216d78ea5d4f7b6c176c7f65634eb3f8e7c2027822e96c5c202e076 -->
+<!-- source-hash: sha256:ce9e9443d8bd996556b15b6d081b13d4c9b32423238a1aa1af9b834d225b5fbb -->
 <!-- last-ticket: myth-tt2g -->
 
 <h1>World gen</h1>
@@ -1088,6 +1091,79 @@
   <code>code: 'world_gen_capped'</code> instead of re-enqueueing (a re-run would just burn cap
   again).
 </p>
+
+<h3>Worker resilience: two-layer error containment</h3>
+
+<p>
+  Stages 2, 3, and 4 hand the AI SDK's <code>partialObjectStream</code> async iterable to
+  <code>runStreamingStage</code>. Inside the SDK, a transform stream runs incremental Zod validation
+  on each chunk; a chunk that doesn't shape-fit can cause the underlying generator to reject — and
+  because the rejection originates in SDK-owned async machinery, it escapes the stage handler as an
+  unhandled rejection on a microtask the handler doesn't own. Node 24's default behavior is to
+  terminate the process on the next tick. With <code>CONCURRENCY_WORLD_GEN=3</code> that's a
+  worker-wide kill that takes the two sibling jobs down with the failing one. The pipeline has two
+  layers wrapped around this scenario.
+</p>
+
+<p>
+  <strong>Layer 1 — local guard in the streaming extractor.</strong> The <code>for await</code> over
+  <code>partialObjectStream</code> sits inside a <code>try/catch</code>; on rejection the catch
+  emits <code>event: 'streaming.stream_died'</code> at warn level with the stage, the count of
+  survivors already emitted, and the original error wired through <code>errToWire</code>, then
+  rethrows. That rethrow lands back in the stage handler's caller, which rolls back the transaction,
+  writes the sanitized error to <code>pipeline_runs.error</code>, and publishes
+  <code>stage-failed</code> through the normal path. Most rejection lineages are reachable from the
+  local frame and this is where they're caught.
+</p>
+
+<p>
+  <strong>Layer 2 — process-level safety net with ALS job context.</strong>
+  <code>backend/src/worker/job-context.ts</code> exports an <code>AsyncLocalStorage</code> wrapper:
+  the world-gen processor calls
+  <code>runWithJobContext({ jobId, worldId, campaignId })</code> around the whole per-job body, and
+  <code>setStage(stage)</code> at the top of each iteration through <code>WORLD_GEN_STAGES</code>.
+  <code>backend/src/boot/process-error-handlers.ts</code> installs
+  <code>process.on('unhandledRejection', …)</code> +
+  <code>process.on('uncaughtException', …)</code> handlers; <code>server.ts</code> wires them in
+  <code>main()</code> immediately after the pg pool and realtime Redis are constructed, before the
+  boot probes. When a rejection escapes Layer 1, the handler reads <code>getJobContext()</code> to
+  learn which world / campaign / stage was in flight, logs a structured frame at error level, and
+  marks the world failed best-effort — one <code>UPDATE worlds SET status = 'failed'</code> + one
+  <code>publish</code> of <code>{ type: 'phase', phase: 'world_gen_failed' }</code> on the
+  campaign's pipeline channel. Siblings keep running.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>AsyncLocalStorage, not a module-level "current job" variable</strong> — three concurrent
+  jobs means three concurrent async lineages. A single module-level variable would race: which job's
+  identity does the handler read when a rejection from job A is observed while job B was the most
+  recent thing to assign? ALS gives each job its own frame; Node's async-context propagation carries
+  the right value down every microtask the SDK enqueues, so the handler reads the identity of the
+  lineage that actually rejected.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Soft survival, with chronic-failure escalation</strong> — the handler tracks recent
+  rejections in a sliding 5-minute ring buffer. Under <code>ESCALATION_THRESHOLD = 5</code>, the
+  handler logs at fatal level and calls <code>process.exit(1)</code>; the container orchestrator
+  (ECS, or <code>tsx watch</code> locally) restarts and BullMQ re-delivers any stalled jobs. The
+  shape is intentional: a one-off transformer rejection is contained without disrupting siblings,
+  but a wedged dependency that keeps producing rejections becomes a crash-loop the platform sees and
+  alerts on. Installing the handlers also suppresses Node's default terminate-on-unhandled — that
+  suppression is required for soft survival but means the escalation logic is now the only thing
+  protecting us from chronic leakage.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Sync pino destination so the last line reaches stdout before exit</strong> — the LLM
+  logger (<code>backend/src/llm/logger.ts</code>) is the pino instance the handler uses for its
+  diagnostic frame. It's constructed against <code>pino.destination({ sync: true })</code>: the
+  fatal log line has to land in the kernel pipe (dev) or the Docker stdout stream (prod, where
+  awslogs picks it up) before <code>process.exit(1)</code> fires. Pino's default async destination
+  buffers, and a synchronous exit would drop the most important diagnostic. Throughput cost at
+  Mythrun's log volume is negligible; pino documents sync mode as the supported pattern for the exit
+  problem.
+</aside>
 
 <h2>Pipeline events on the wire</h2>
 

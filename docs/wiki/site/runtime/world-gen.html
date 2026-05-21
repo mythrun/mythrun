@@ -1712,6 +1712,79 @@
   again).
 </p>
 
+<h3 id="worker-resilience-two-layer-error-containment">Worker resilience: two-layer error containment</h3>
+
+<p>
+  Stages 2, 3, and 4 hand the AI SDK's <code>partialObjectStream</code> async iterable to
+  <code>runStreamingStage</code>. Inside the SDK, a transform stream runs incremental Zod validation
+  on each chunk; a chunk that doesn't shape-fit can cause the underlying generator to reject — and
+  because the rejection originates in SDK-owned async machinery, it escapes the stage handler as an
+  unhandled rejection on a microtask the handler doesn't own. Node 24's default behavior is to
+  terminate the process on the next tick. With <code>CONCURRENCY_WORLD_GEN=3</code> that's a
+  worker-wide kill that takes the two sibling jobs down with the failing one. The pipeline has two
+  layers wrapped around this scenario.
+</p>
+
+<p>
+  <strong>Layer 1 — local guard in the streaming extractor.</strong> The <code>for await</code> over
+  <code>partialObjectStream</code> sits inside a <code>try/catch</code>; on rejection the catch
+  emits <code>event: 'streaming.stream_died'</code> at warn level with the stage, the count of
+  survivors already emitted, and the original error wired through <code>errToWire</code>, then
+  rethrows. That rethrow lands back in the stage handler's caller, which rolls back the transaction,
+  writes the sanitized error to <code>pipeline_runs.error</code>, and publishes
+  <code>stage-failed</code> through the normal path. Most rejection lineages are reachable from the
+  local frame and this is where they're caught.
+</p>
+
+<p>
+  <strong>Layer 2 — process-level safety net with ALS job context.</strong>
+  <code>backend/src/worker/job-context.ts</code> exports an <code>AsyncLocalStorage</code> wrapper:
+  the world-gen processor calls
+  <code>runWithJobContext({ jobId, worldId, campaignId })</code> around the whole per-job body, and
+  <code>setStage(stage)</code> at the top of each iteration through <code>WORLD_GEN_STAGES</code>.
+  <code>backend/src/boot/process-error-handlers.ts</code> installs
+  <code>process.on('unhandledRejection', …)</code> +
+  <code>process.on('uncaughtException', …)</code> handlers; <code>server.ts</code> wires them in
+  <code>main()</code> immediately after the pg pool and realtime Redis are constructed, before the
+  boot probes. When a rejection escapes Layer 1, the handler reads <code>getJobContext()</code> to
+  learn which world / campaign / stage was in flight, logs a structured frame at error level, and
+  marks the world failed best-effort — one <code>UPDATE worlds SET status = 'failed'</code> + one
+  <code>publish</code> of <code>{ type: 'phase', phase: 'world_gen_failed' }</code> on the
+  campaign's pipeline channel. Siblings keep running.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>AsyncLocalStorage, not a module-level "current job" variable</strong> — three concurrent
+  jobs means three concurrent async lineages. A single module-level variable would race: which job's
+  identity does the handler read when a rejection from job A is observed while job B was the most
+  recent thing to assign? ALS gives each job its own frame; Node's async-context propagation carries
+  the right value down every microtask the SDK enqueues, so the handler reads the identity of the
+  lineage that actually rejected.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Soft survival, with chronic-failure escalation</strong> — the handler tracks recent
+  rejections in a sliding 5-minute ring buffer. Under <code>ESCALATION_THRESHOLD = 5</code>, the
+  handler logs at fatal level and calls <code>process.exit(1)</code>; the container orchestrator
+  (ECS, or <code>tsx watch</code> locally) restarts and BullMQ re-delivers any stalled jobs. The
+  shape is intentional: a one-off transformer rejection is contained without disrupting siblings,
+  but a wedged dependency that keeps producing rejections becomes a crash-loop the platform sees and
+  alerts on. Installing the handlers also suppresses Node's default terminate-on-unhandled — that
+  suppression is required for soft survival but means the escalation logic is now the only thing
+  protecting us from chronic leakage.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Sync pino destination so the last line reaches stdout before exit</strong> — the LLM
+  logger (<code>backend/src/llm/logger.ts</code>) is the pino instance the handler uses for its
+  diagnostic frame. It's constructed against <code>pino.destination({ sync: true })</code>: the
+  fatal log line has to land in the kernel pipe (dev) or the Docker stdout stream (prod, where
+  awslogs picks it up) before <code>process.exit(1)</code> fires. Pino's default async destination
+  buffers, and a synchronous exit would drop the most important diagnostic. Throughput cost at
+  Mythrun's log volume is negligible; pino documents sync mode as the supported pattern for the exit
+  problem.
+</aside>
+
 <h2 id="pipeline-events-on-the-wire">Pipeline events on the wire</h2>
 
 <p>
@@ -2364,7 +2437,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#per-item-drop-on-fail-validation">Per-item drop-on-fail validation</a></li><li style="padding-left:12px"><a href="#stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#per-item-drop-on-fail-validation">Per-item drop-on-fail validation</a></li><li style="padding-left:12px"><a href="#stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:12px"><a href="#worker-resilience-two-layer-error-containment">Worker resilience: two-layer error containment</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
