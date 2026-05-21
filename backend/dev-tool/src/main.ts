@@ -15,13 +15,11 @@ import './components/health-panel.js'
 import './components/status-panel.js'
 import './components/campaign-create-panel.js'
 import './components/campaign-details-panel.js'
-import './components/credit-ledger-panel.js'
 import './components/my-campaigns-panel.js'
 import './components/live-events-panel.js'
 import './components/users-panel.js'
 import './components/invites-panel.js'
 import './components/session-ticket-panel.js'
-import './components/billing-panel.js'
 import './components/world-snapshot-panel.js'
 // myth-ukpc P6.A — new CAMPAIGNS-section panels self-register on import.
 import './components/campaign-rename-panel.js'
@@ -49,16 +47,21 @@ import './components/invites-list-panel.js'
 import './components/invite-revoke-panel.js'
 import './components/invite-preview-panel.js'
 import './components/invite-accept-panel.js'
-// myth-c1gr P6.E — new BILLING-section panels self-register on import.
-// billing-panel + credit-ledger-panel still ship as side-effect imports
-// above; this wave splits out the four BILLING GETs and the dev-credits
-// GET into single-route siblings (one per route × action). The legacy
-// panels keep their remaining POST routes until P6.F deletes them.
+// myth-c1gr P6.E — new BILLING-section GET panels self-register on
+// import. One panel per route × action per spec §3.
 import './components/skus-panel.js'
 import './components/subscription-panel.js'
 import './components/balance-panel.js'
 import './components/history-panel.js'
 import './components/dev-credits-me-panel.js'
+// myth-6hi9 P6.F — new BILLING-section POST panels self-register on
+// import. Replace the deleted billing-panel + credit-ledger-panel; the
+// last side-effect imports for those legacy panels have been removed
+// above. One panel per route × action per spec §3.
+import './components/checkout-panel.js'
+import './components/portal-panel.js'
+import './components/upgrade-tier-panel.js'
+import './components/dev-credits-grant-panel.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

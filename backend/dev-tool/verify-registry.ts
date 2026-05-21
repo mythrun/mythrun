@@ -30,11 +30,9 @@ import { mountCampaignRenamePanel } from './src/components/campaign-rename-panel
 import { mountCampaignResumePanel } from './src/components/campaign-resume-panel.js'
 import { mountCampaignArchivePanel } from './src/components/campaign-archive-panel.js'
 import { mountCampaignDeletePanel } from './src/components/campaign-delete-panel.js'
-import { mountCreditLedgerPanel } from './src/components/credit-ledger-panel.js'
 import { mountUsersPanel } from './src/components/users-panel.js'
 import { mountInvitesPanel } from './src/components/invites-panel.js'
 import { mountSessionTicketPanel } from './src/components/session-ticket-panel.js'
-import { mountBillingPanel } from './src/components/billing-panel.js'
 import { mountWorldSnapshotPanel } from './src/components/world-snapshot-panel.js'
 import { mountHierarchyPanel } from './src/components/hierarchy-panel.js'
 import { mountRandomTablesPanel } from './src/components/random-tables-panel.js'
@@ -54,6 +52,10 @@ import { mountSubscriptionPanel } from './src/components/subscription-panel.js'
 import { mountBalancePanel } from './src/components/balance-panel.js'
 import { mountHistoryPanel } from './src/components/history-panel.js'
 import { mountDevCreditsMePanel } from './src/components/dev-credits-me-panel.js'
+import { mountCheckoutPanel } from './src/components/checkout-panel.js'
+import { mountPortalPanel } from './src/components/portal-panel.js'
+import { mountUpgradeTierPanel } from './src/components/upgrade-tier-panel.js'
+import { mountDevCreditsGrantPanel } from './src/components/dev-credits-grant-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
@@ -283,18 +285,6 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     errorSelector: '[data-state="error"]',
     exercises: [route('GET', '/api/campaigns/:campaignId/members')],
   },
-  'credit-ledger': {
-    // myth-c1gr P6.E narrowed this entry: GET /api/dev/credits/me moved
-    // to the dev-credits-me panel (one-route-per-panel per spec §3).
-    // credit-ledger-panel.ts source is untouched in P6.E; it gets fully
-    // deleted in P6.F when its sole remaining route (the grant POST) is
-    // re-homed.
-    pattern: 'action-only',
-    mount: mountCreditLedgerPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/dev/credits/grant')],
-  },
   users: {
     // myth-6uu1 P6.D refactor: action-only single-route panel (fetch
     // button → user JSON). Check-username moved to EXEMPT_ROUTES.
@@ -350,22 +340,6 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     errorSelector: '[data-state="error"]',
     exercises: [route('POST', '/api/sessions/:id/ws-ticket')],
   },
-  billing: {
-    // myth-c1gr P6.E narrowed this entry: the four BILLING GETs moved
-    // to dedicated single-route panels below (skus, subscription,
-    // balance, history). billing-panel.ts source is untouched in P6.E;
-    // it gets fully deleted in P6.F when its three remaining routes
-    // (the POSTs) are re-homed.
-    pattern: 'action-only',
-    mount: mountBillingPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [
-      route('POST', '/api/billing/checkout'),
-      route('POST', '/api/billing/portal'),
-      route('POST', '/api/billing/upgrade-tier'),
-    ],
-  },
   skus: {
     pattern: 'action-only',
     mount: mountSkusPanel,
@@ -400,5 +374,36 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
     exercises: [route('GET', '/api/dev/credits/me')],
+  },
+  // myth-6hi9 P6.F — new BILLING-section panels. Replace the deleted
+  // billing-panel (three POSTs) + credit-ledger-panel (grant POST).
+  // One panel per endpoint × action per spec §3.
+  checkout: {
+    pattern: 'action-only',
+    mount: mountCheckoutPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/billing/checkout')],
+  },
+  portal: {
+    pattern: 'action-only',
+    mount: mountPortalPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/billing/portal')],
+  },
+  'upgrade-tier': {
+    pattern: 'action-only',
+    mount: mountUpgradeTierPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/billing/upgrade-tier')],
+  },
+  'dev-credits-grant': {
+    pattern: 'action-only',
+    mount: mountDevCreditsGrantPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/dev/credits/grant')],
   },
 }
