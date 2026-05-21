@@ -41,6 +41,13 @@ find "$LOG_DIR" -name 'dev-*.log' -mtime +7 -delete
 
 # Run tsx watch with the same env-file flags package.json's dev:raw uses.
 # Tee raw JSON to today's file; then render terminal via pino-pretty.
-exec pnpm exec tsx watch --env-file=.env.development --env-file-if-exists=../.env.worktree src/server.ts 2>&1 \
+# Note: invoke tsx via node_modules/.bin/tsx directly, not `pnpm exec tsx`.
+# `pnpm exec` consumes --env-file= as one of its own flags before
+# forwarding the command, breaking the tsx --env-file passthrough. The
+# direct .bin/tsx call keeps the Node-level --env-file handling intact.
+exec ./node_modules/.bin/tsx watch \
+  --env-file=.env.development \
+  --env-file-if-exists=../.env.worktree \
+  src/server.ts 2>&1 \
   | tee -a "$LOG_FILE" \
-  | pnpm exec pino-pretty
+  | ./node_modules/.bin/pino-pretty
