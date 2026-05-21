@@ -13,6 +13,7 @@ import {
 import type { RegisterAuthOptions } from './auth/index.js'
 import { loadEnv, type Env } from './config/env.js'
 import { installSignalHandlers } from './boot/signal-handlers.js'
+import { installProcessErrorHandlers } from './boot/process-error-handlers.js'
 import { probeMigrationsCurrent } from './boot/migrations-current.js'
 import { waitFor } from './boot/wait-for.js'
 import { createPgPool } from './db/postgres.js'
@@ -335,6 +336,26 @@ export async function main(): Promise<void> {
     const pgRef = pg
     const rTRRef = rTR
     const rTBRef = rTB
+
+    // myth-449j: install process-level error handlers as early as
+    // possible after pg + rTR are constructed. They suppress Node 24's
+    // default terminate-on-unhandled-rejection so we can soft-survive
+    // a single failing BullMQ job under CONCURRENCY_WORLD_GEN=3 without
+    // killing the two siblings. The handlers use the just-imported llm
+    // logger so the structured-error frame goes through the same pino
+    // instance that the rest of the app uses (pino.destination sync,
+    // see backend/src/llm/logger.ts).
+    const { logger: llmLogger } = await import('./llm/logger.js')
+    installProcessErrorHandlers({
+      pool: pgRef,
+      redisRealtime: rTRRef,
+      redisKeyPrefix: env.redisKeyPrefix,
+      logger: llmLogger,
+      exit: (code) => {
+        process.exit(code)
+      },
+      now: Date.now,
+    })
 
     // Sequential awaits per spec §7.10. Three local services starting
     // under `docker compose up -d --wait` reach healthy at the same
