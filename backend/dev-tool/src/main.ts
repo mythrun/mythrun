@@ -23,7 +23,6 @@ import './components/invites-panel.js'
 import './components/session-ticket-panel.js'
 import './components/billing-panel.js'
 import './components/world-snapshot-panel.js'
-import './components/character-creation-panel.js'
 // myth-ukpc P6.A — new CAMPAIGNS-section panels self-register on import.
 import './components/campaign-rename-panel.js'
 import './components/campaign-resume-panel.js'
@@ -32,6 +31,16 @@ import './components/campaign-delete-panel.js'
 // myth-rdwq P6.B — new WORLD-section panels self-register on import.
 import './components/hierarchy-panel.js'
 import './components/random-tables-panel.js'
+// myth-fn51 P6.C — new CHARACTERS-section panels self-register on import.
+// These replace the old multi-purpose character-creation-panel (one panel
+// per endpoint × action, per the dev-tool reorg spec §3).
+import './components/start-character-creation-panel.js'
+import './components/submit-character-concept-panel.js'
+import './components/characters-roster-panel.js'
+import './components/character-view-panel.js'
+import './components/starting-situations-panel.js'
+import './components/situation-pick-panel.js'
+import './components/members-panel.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

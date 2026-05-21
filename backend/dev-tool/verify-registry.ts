@@ -38,7 +38,13 @@ import { mountBillingPanel } from './src/components/billing-panel.js'
 import { mountWorldSnapshotPanel } from './src/components/world-snapshot-panel.js'
 import { mountHierarchyPanel } from './src/components/hierarchy-panel.js'
 import { mountRandomTablesPanel } from './src/components/random-tables-panel.js'
-import { mountCharacterCreationPanel } from './src/components/character-creation-panel.js'
+import { mountStartCharacterCreationPanel } from './src/components/start-character-creation-panel.js'
+import { mountSubmitCharacterConceptPanel } from './src/components/submit-character-concept-panel.js'
+import { mountCharactersRosterPanel } from './src/components/characters-roster-panel.js'
+import { mountCharacterViewPanel } from './src/components/character-view-panel.js'
+import { mountStartingSituationsPanel } from './src/components/starting-situations-panel.js'
+import { mountSituationPickPanel } from './src/components/situation-pick-panel.js'
+import { mountMembersPanel } from './src/components/members-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
@@ -207,27 +213,58 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     errorSelector: '[data-state="error"]',
     exercises: [route('GET', '/api/campaigns/:campaignId/random-tables')],
   },
-  'character-creation': {
-    // MYT-53 T23. Idle until the user clicks Watch on my-campaigns; the
-    // mythrun.watchcampaign event hands us the campaignId and triggers the
-    // initial roster + starting-situations fetch. All other routes hang off
-    // click handlers (action-only sub-pattern within an event-driven mount),
-    // matching the world-snapshot panel's idle steady state.
-    pattern: 'event-driven',
-    mount: mountCharacterCreationPanel,
-    readySelector: '[data-state="idle"]',
+  // myth-fn51 P6.C — the old multi-purpose 'character-creation' entry was
+  // split into 7 endpoint × action panels below (one per route under the
+  // CHARACTERS sidebar section). The legacy panel + its sub-buttons for
+  // hierarchy / random-tables / archive have moved to P6.A / P6.B panels.
+  'start-character-creation': {
+    pattern: 'action-only',
+    mount: mountStartCharacterCreationPanel,
+    readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
-    exercises: [
-      route('POST', '/api/campaigns/:campaignId/starting-situation'),
-      route('POST', '/api/campaigns/:campaignId/start-character-creation'),
-      route('POST', '/api/campaigns/:campaignId/archive'),
-      route('POST', '/api/campaigns/:campaignId/characters'),
-      route('GET', '/api/campaigns/:campaignId/starting-situations'),
-      route('GET', '/api/campaigns/:campaignId/characters'),
-      route('GET', '/api/campaigns/:campaignId/characters/:charId'),
-      route('GET', '/api/campaigns/:campaignId/hierarchy'),
-      route('GET', '/api/campaigns/:campaignId/random-tables'),
-    ],
+    exercises: [route('POST', '/api/campaigns/:campaignId/start-character-creation')],
+  },
+  'submit-character-concept': {
+    pattern: 'action-only',
+    mount: mountSubmitCharacterConceptPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/campaigns/:campaignId/characters')],
+  },
+  'characters-roster': {
+    pattern: 'action-only',
+    mount: mountCharactersRosterPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/characters')],
+  },
+  'character-view': {
+    pattern: 'action-only',
+    mount: mountCharacterViewPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/characters/:charId')],
+  },
+  'starting-situations': {
+    pattern: 'action-only',
+    mount: mountStartingSituationsPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/starting-situations')],
+  },
+  'situation-pick': {
+    pattern: 'action-only',
+    mount: mountSituationPickPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/campaigns/:campaignId/starting-situation')],
+  },
+  members: {
+    pattern: 'action-only',
+    mount: mountMembersPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/members')],
   },
   'credit-ledger': {
     pattern: 'action-only',
@@ -254,13 +291,15 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     mount: mountInvitesPanel,
     readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
+    // Note: GET /api/campaigns/:campaignId/members was previously exercised
+    // here as a probe; in P6.C it moved to its own dedicated `members` panel
+    // under the CHARACTERS sidebar section.
     exercises: [
       route('POST', '/api/campaigns/:campaignId/invites'),
       route('GET', '/api/campaigns/:campaignId/invites'),
       route('DELETE', '/api/campaigns/:campaignId/invites/:inviteCode'),
       route('GET', '/api/invites/:inviteCode/preview'),
       route('POST', '/api/invites/:inviteCode/accept'),
-      route('GET', '/api/campaigns/:campaignId/members'),
     ],
   },
   'session-ticket': {
