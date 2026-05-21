@@ -24,8 +24,7 @@ beforeEach(() => {
   ;(globalThis as unknown as { EventSource: typeof FakeEventSource }).EventSource = FakeEventSource
 })
 afterEach(() => {
-  // @ts-expect-error cleanup
-  delete (globalThis as unknown as { EventSource?: typeof FakeEventSource }).EventSource
+  delete (globalThis as { EventSource?: typeof FakeEventSource }).EventSource
 })
 
 describe('drawer subscriptions', () => {
@@ -51,7 +50,7 @@ describe('drawer subscriptions', () => {
     const mgr = createSubscriptionManager({ onEvent: vi.fn(), urlFor: (id) => `/x/${id}` })
     mgr.subscribe('cA')
     mgr.subscribe('cB')
-    expect(mgr.list().sort()).toEqual(['cA', 'cB'])
+    expect([...mgr.list()].sort()).toEqual(['cA', 'cB'])
   })
 
   it('onmessage parses payload and forwards to onEvent with campaign id', () => {

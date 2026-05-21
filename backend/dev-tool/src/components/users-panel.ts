@@ -1,25 +1,23 @@
-// User onboarding inspector panel.
+// backend/dev-tool/src/components/users-panel.ts
 //
-// Exercises:
-//   - GET /api/users/me              — fetches the current dev sub's user row
-//   - GET /api/users/check-username  — checks username availability
-//
-// /api/users/me is fetched on mount + on identity change so the dev can
-// see at a glance which row backs the active sub (id, username, display
-// name, free_trial_used, stripe_customer_id). The username-availability
-// row is an action surface: type a username, hit Check, see available
-// + reason.
-//
-// POST /api/users/register is intentionally NOT exposed here — the dev
-// tool's identity bootstrap (scripts/verify.ts + main.ts) handles
-// onboarding the active sub. A second register button would only be
-// useful for adversarial tests (wrong username vs sub, profanity, etc.)
-// and those are covered by the backend route tests.
-//
-// Pattern: fetch-on-mount (the /me probe is the on-mount fetch).
+// myth-6uu1 P6.D — GET /api/users/me.
+// Action-only panel: fetch button → user JSON.
+// The current dev sub's user row (id, username, displayName,
+// freeTrialUsed, stripeCustomerId) is what backs every authenticated
+// route in the bypass auth mode. /api/users/check-username has been
+// moved to EXEMPT_ROUTES in verify-registry (already EXEMPT in the
+// sidebar route-registry — it's a probe-helper, not a sidebar leaf).
+// POST /api/users/register is exercised by main.ts's identity-bootstrap
+// step and is likewise EXEMPT.
 
 import { apiCall } from '../api-client.js'
-import { onIdentityChanged } from '../identity.js'
+import { registerPanelMount } from '../shell/shell.js'
+import {
+  buildSplitView,
+  type PanelHandle,
+} from './_shared/panel-skeleton.js'
+import { renderErrorBlock } from './_shared/error-block.js'
+import { appendJsonDisclosure } from './_shared/json-disclosure.js'
 
 interface UserRow {
   readonly id: string
@@ -30,118 +28,132 @@ interface UserRow {
   readonly freeTrialUsed: boolean
 }
 
-interface CheckResult {
-  readonly available: boolean
-  readonly reason?: string
-  readonly suggestion?: string
+interface MeResponse {
+  readonly user: UserRow
 }
 
-function renderMe(row: UserRow): string {
-  return [
-    `id:               ${row.id}`,
-    `cognitoSub:       ${row.cognitoSub}`,
-    `username:         ${row.username}`,
-    `displayName:      ${row.displayName}`,
-    `stripeCustomerId: ${row.stripeCustomerId ?? '(none)'}`,
-    `freeTrialUsed:    ${String(row.freeTrialUsed)}`,
-  ].join('\n')
+function readCode(body: unknown): string {
+  if (typeof body === 'object' && body !== null && 'code' in body) {
+    const c = (body as { code: unknown }).code
+    if (typeof c === 'string') return c
+  }
+  return 'unknown'
 }
 
-export function mountUsersPanel(parent: HTMLElement): void {
-  const card = document.createElement('section')
-  card.className = 'card'
-  card.setAttribute('data-state', 'loading')
+function renderUser(parent: HTMLElement, row: UserRow): void {
+  const dl = document.createElement('dl')
+  dl.style.fontFamily = 'var(--mono)'
+  dl.style.fontSize = '12px'
+  dl.style.margin = '0'
+  dl.style.display = 'grid'
+  dl.style.gridTemplateColumns = 'max-content 1fr'
+  dl.style.columnGap = '12px'
+  dl.style.rowGap = '2px'
 
-  const title = document.createElement('h2')
-  title.textContent = 'GET /api/users/me + check-username'
+  const rows: ReadonlyArray<readonly [string, string]> = [
+    ['id', row.id],
+    ['cognitoSub', row.cognitoSub],
+    ['username', row.username],
+    ['displayName', row.displayName],
+    ['stripeCustomerId', row.stripeCustomerId ?? '(none)'],
+    ['freeTrialUsed', String(row.freeTrialUsed)],
+  ]
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt')
+    dt.style.color = 'var(--fg-muted)'
+    dt.textContent = k
+    const dd = document.createElement('dd')
+    dd.style.margin = '0'
+    dd.textContent = v
+    dl.appendChild(dt)
+    dl.appendChild(dd)
+  }
+  parent.appendChild(dl)
+}
 
-  const meBlock = document.createElement('pre')
-  meBlock.className = 'result'
-  meBlock.textContent = '(loading...)'
+export function mountUsersPanel(parent: HTMLElement): PanelHandle {
+  const { root, actionEl, feedbackEl, setState } = buildSplitView({
+    parent,
+    title: 'GET /api/users/me',
+  })
 
-  const checkRow = document.createElement('div')
-  checkRow.style.display = 'flex'
-  checkRow.style.gap = '8px'
-  checkRow.style.marginTop = '12px'
-  checkRow.style.alignItems = 'center'
+  const note = document.createElement('div')
+  note.style.fontSize = '12px'
+  note.style.color = 'var(--fg-muted)'
+  note.style.marginBottom = '8px'
+  note.textContent = 'The user row that backs the active dev sub.'
+  actionEl.appendChild(note)
 
-  const usernameInput = document.createElement('input')
-  usernameInput.type = 'text'
-  usernameInput.placeholder = 'username (3-20 chars)'
-  usernameInput.style.width = '240px'
+  const fetchBtn = document.createElement('button')
+  fetchBtn.textContent = 'Fetch'
+  actionEl.appendChild(fetchBtn)
 
-  const checkBtn = document.createElement('button')
-  checkBtn.textContent = 'Check availability'
+  const idle = document.createElement('div')
+  idle.style.color = 'var(--fg-muted)'
+  idle.style.fontSize = '12px'
+  idle.textContent = '(not yet fetched)'
+  feedbackEl.appendChild(idle)
 
-  const checkResult = document.createElement('div')
-  checkResult.className = 'result'
+  setState('ready')
 
-  checkRow.appendChild(usernameInput)
-  checkRow.appendChild(checkBtn)
+  async function fetchMe(): Promise<void> {
+    setState('loading')
+    feedbackEl.replaceChildren()
+    fetchBtn.disabled = true
 
-  async function loadMe(): Promise<void> {
-    meBlock.textContent = 'loading...'
-    card.setAttribute('data-state', 'loading')
-    const res = await apiCall<{ user: UserRow }>('/api/users/me')
-    if (res.status === 200 && res.body !== null) {
-      meBlock.textContent = renderMe(res.body.user)
-      card.setAttribute('data-state', 'loaded')
-      return
-    }
+    const res = await apiCall<MeResponse>('/api/users/me')
+
+    fetchBtn.disabled = false
+
     if (res.status === 403) {
-      // username_required — the active sub doesn't have a users row yet.
-      // The dev tool's bootstrap (main.ts) should have registered it; if
-      // this fires the dev is on a fresh DB or a swapped sub. Surface it
-      // as a loaded "no row" state, not a hard error (the verify harness
-      // bootstraps dev-user-1 explicitly).
-      meBlock.textContent =
-        'no user row for the active sub (403 username_required).\n' +
-        'Use the register helper or switch identity to one that\'s been bootstrapped.'
-      card.setAttribute('data-state', 'loaded')
+      // username_required — the active sub has no user row. Surface as
+      // a readable "no row" state rather than an error block; the dev
+      // tool's bootstrap (main.ts) usually registers the sub on first
+      // load, so this fires only on a fresh DB or a swapped sub.
+      setState('ready')
+      const msg = document.createElement('div')
+      msg.style.color = 'var(--fg-muted)'
+      msg.style.fontSize = '12px'
+      msg.textContent =
+        '(no user row for the active sub — 403 username_required. Switch identity or wait for bootstrap.)'
+      feedbackEl.appendChild(msg)
+      appendJsonDisclosure(feedbackEl, res.body)
       return
     }
-    meBlock.textContent = `error ${String(res.status)}: ${res.error ?? JSON.stringify(res.body)}`
-    card.setAttribute('data-state', 'error')
-  }
 
-  async function checkUsername(): Promise<void> {
-    const u = usernameInput.value.trim()
-    if (u.length === 0) {
-      checkResult.textContent = 'enter a username first'
+    if (res.status !== 200 || res.body === null) {
+      setState('error')
+      renderErrorBlock(feedbackEl, {
+        status: res.status,
+        code: readCode(res.body),
+        message: 'Failed to fetch /api/users/me',
+        raw: res.body,
+      })
       return
     }
-    checkBtn.disabled = true
-    checkResult.textContent = 'checking...'
-    const res = await apiCall<CheckResult>(
-      `/api/users/check-username?username=${encodeURIComponent(u)}`,
-    )
-    if (res.status === 200 && res.body !== null) {
-      const { available, reason, suggestion } = res.body
-      const parts = [`available: ${String(available)}`]
-      if (reason !== undefined) parts.push(`reason: ${reason}`)
-      if (suggestion !== undefined) parts.push(`suggestion: ${suggestion}`)
-      checkResult.textContent = parts.join(' | ')
-    } else {
-      checkResult.textContent = `error ${String(res.status)}: ${res.error ?? JSON.stringify(res.body)}`
-    }
-    checkBtn.disabled = false
+
+    setState('ready')
+    const summary = document.createElement('div')
+    summary.style.color = 'var(--fg-emphasis)'
+    summary.style.marginBottom = '6px'
+    summary.textContent = `200 — ${res.body.user.username}`
+    feedbackEl.appendChild(summary)
+    renderUser(feedbackEl, res.body.user)
+    appendJsonDisclosure(feedbackEl, res.body)
   }
 
-  checkBtn.addEventListener('click', () => {
-    void checkUsername()
-  })
+  const onClick = (): void => {
+    void fetchMe()
+  }
+  fetchBtn.addEventListener('click', onClick)
 
-  onIdentityChanged(() => {
-    checkResult.textContent = ''
-    usernameInput.value = ''
-    void loadMe()
-  })
-
-  card.appendChild(title)
-  card.appendChild(meBlock)
-  card.appendChild(checkRow)
-  card.appendChild(checkResult)
-  parent.appendChild(card)
-
-  void loadMe()
+  return {
+    root,
+    unmount: () => {
+      fetchBtn.removeEventListener('click', onClick)
+      if (root.parentNode !== null) root.parentNode.removeChild(root)
+    },
+  }
 }
+
+registerPanelMount('GET', '/api/users/me', mountUsersPanel)

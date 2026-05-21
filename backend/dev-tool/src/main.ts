@@ -41,6 +41,14 @@ import './components/character-view-panel.js'
 import './components/starting-situations-panel.js'
 import './components/situation-pick-panel.js'
 import './components/members-panel.js'
+// myth-6uu1 P6.D — new USERS & ACCESS-section panels self-register on
+// import. users-panel + invites-panel still ship as side-effect imports
+// above; this wave splits the old invites-panel into 4 single-purpose
+// siblings (one per route × action).
+import './components/invites-list-panel.js'
+import './components/invite-revoke-panel.js'
+import './components/invite-preview-panel.js'
+import './components/invite-accept-panel.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

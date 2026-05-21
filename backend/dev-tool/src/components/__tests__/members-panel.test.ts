@@ -16,11 +16,11 @@ import { mountMembersPanel } from '../members-panel.js'
 const apiCallMock = vi.mocked(apiCall)
 
 interface GlobalDom {
-  document?: Document
-  window?: Window
-  localStorage?: Storage
-  HTMLElement?: typeof HTMLElement
-  CustomEvent?: typeof CustomEvent
+  document?: Document | undefined
+  window?: Window | undefined
+  localStorage?: Storage | undefined
+  HTMLElement?: typeof HTMLElement | undefined
+  CustomEvent?: typeof CustomEvent | undefined
 }
 
 const g = globalThis as unknown as GlobalDom

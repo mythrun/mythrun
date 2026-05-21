@@ -45,6 +45,10 @@ import { mountCharacterViewPanel } from './src/components/character-view-panel.j
 import { mountStartingSituationsPanel } from './src/components/starting-situations-panel.js'
 import { mountSituationPickPanel } from './src/components/situation-pick-panel.js'
 import { mountMembersPanel } from './src/components/members-panel.js'
+import { mountInvitesListPanel } from './src/components/invites-list-panel.js'
+import { mountInviteRevokePanel } from './src/components/invite-revoke-panel.js'
+import { mountInvitePreviewPanel } from './src/components/invite-preview-panel.js'
+import { mountInviteAcceptPanel } from './src/components/invite-accept-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
@@ -100,6 +104,14 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // sub-username, etc.), which the backend routes test suite already
   // covers in depth.
   { method: 'POST', path: '/api/users/register' },
+
+  // GET /api/users/check-username: probe-helper for the register flow.
+  // The route-registry already marks this exempt (it's not a sidebar
+  // leaf). myth-6uu1 P6.D refactored the users-panel down to just
+  // /api/users/me, so the check-username route no longer has a panel
+  // exercising it; the backend routes test suite + verify harness's
+  // identity bootstrap exercise it server-side.
+  { method: 'GET', path: '/api/users/check-username' },
 ]
 
 export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
@@ -277,30 +289,52 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     ],
   },
   users: {
-    pattern: 'fetch-on-mount',
+    // myth-6uu1 P6.D refactor: action-only single-route panel (fetch
+    // button → user JSON). Check-username moved to EXEMPT_ROUTES.
+    pattern: 'action-only',
     mount: mountUsersPanel,
-    readySelector: '[data-state="loaded"]',
+    readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
-    exercises: [
-      route('GET', '/api/users/me'),
-      route('GET', '/api/users/check-username'),
-    ],
+    exercises: [route('GET', '/api/users/me')],
   },
   invites: {
+    // myth-6uu1 P6.D refactor: single-purpose POST-create panel. The
+    // list/revoke/preview/accept actions live in their own sibling
+    // panels (invites-list, invite-revoke, invite-preview, invite-
+    // accept) — one panel per endpoint × action, per spec §3.
     pattern: 'action-only',
     mount: mountInvitesPanel,
     readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
-    // Note: GET /api/campaigns/:campaignId/members was previously exercised
-    // here as a probe; in P6.C it moved to its own dedicated `members` panel
-    // under the CHARACTERS sidebar section.
-    exercises: [
-      route('POST', '/api/campaigns/:campaignId/invites'),
-      route('GET', '/api/campaigns/:campaignId/invites'),
-      route('DELETE', '/api/campaigns/:campaignId/invites/:inviteCode'),
-      route('GET', '/api/invites/:inviteCode/preview'),
-      route('POST', '/api/invites/:inviteCode/accept'),
-    ],
+    exercises: [route('POST', '/api/campaigns/:campaignId/invites')],
+  },
+  'invites-list': {
+    pattern: 'action-only',
+    mount: mountInvitesListPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/invites')],
+  },
+  'invite-revoke': {
+    pattern: 'action-only',
+    mount: mountInviteRevokePanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('DELETE', '/api/campaigns/:campaignId/invites/:inviteCode')],
+  },
+  'invite-preview': {
+    pattern: 'action-only',
+    mount: mountInvitePreviewPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/invites/:inviteCode/preview')],
+  },
+  'invite-accept': {
+    pattern: 'action-only',
+    mount: mountInviteAcceptPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/invites/:inviteCode/accept')],
   },
   'session-ticket': {
     pattern: 'action-only',
