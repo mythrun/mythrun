@@ -53,6 +53,7 @@ import {
   VocabularyRegistrySchema,
   type VocabularyRegistry,
 } from '../schemas/vocabulary-registry.js'
+import { runWithJobContext, setStage } from '../../worker/job-context.js'
 
 // Worker reads the seed-tables block from a constant placeholder until the
 // data file lands. The block only shapes random-table variance; the
@@ -169,132 +170,146 @@ export function createWorldGenProcessor(
     }
     /* c8 ignore stop */
 
-    // BullMQ retry recovery: if a prior attempt flipped worlds.status to
-    // 'failed' (handleStageError eagerly flips on any error), reset to
-    // 'generating' here so the retry runs in the correct state and the
-    // concurrent-generation guard remains accurate. First-attempt invocation
-    // is a no-op (status is already 'generating' from campaign create).
-    await deps.pool.query(
-      `UPDATE worlds SET status = 'generating' WHERE id = $1 AND status = 'failed'`,
-      [ctx.world.id],
-    )
-
-    await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_gen' })
-
-    // Cost-cap is injected once at server boot (see server.ts); workers
-    // stay stateless re. the settings table. Operators changing the
-    // settings row need a worker restart to take effect — by design
-    // (predictable cap per process lifetime; no per-job DB read).
-    const capUsd = deps.costCapUsd
-
-    for (const stage of WORLD_GEN_STAGES) {
-      const claim = await atomicClaimStage(deps.pool, {
-        kind: 'world',
+    // myth-449j: bind job identifiers into AsyncLocalStorage so the
+    // process-level unhandledRejection handler can mark the right
+    // world failed when a rejection escapes both the local guard and
+    // the AI-SDK wrapper's repair chain.
+    await runWithJobContext(
+      {
+        jobId: String(job.id ?? 'unknown'),
         worldId: ctx.world.id,
-        stage,
-      })
-      if (claim !== 'claimed') {
-        // myth-exac T18: on idempotent re-entry, re-publish
-        // phase=world_snapshot_ready as soon as we walk past a completed
-        // stage-4b row. SSE subscribers that reconnected mid-job catch up
-        // on the snapshot-availability signal without needing the
-        // initial-frame snapshot of pipeline_runs. Stage 4b
-        // (entity_consolidation) is the new last entity-creating stage —
-        // it resolves stage-4's phantom declarations into real rows, so
-        // the snapshot is only safely fetchable after it commits.
-        if (stage === 'entity_consolidation' && claim === 'completed') {
-          await publishEvent(deps, campaignId, {
-            type: 'phase',
-            phase: 'world_snapshot_ready',
+        campaignId,
+      },
+      async () => {
+        // BullMQ retry recovery: if a prior attempt flipped worlds.status to
+        // 'failed' (handleStageError eagerly flips on any error), reset to
+        // 'generating' here so the retry runs in the correct state and the
+        // concurrent-generation guard remains accurate. First-attempt invocation
+        // is a no-op (status is already 'generating' from campaign create).
+        await deps.pool.query(
+          `UPDATE worlds SET status = 'generating' WHERE id = $1 AND status = 'failed'`,
+          [ctx.world.id],
+        )
+
+        await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_gen' })
+
+        // Cost-cap is injected once at server boot (see server.ts); workers
+        // stay stateless re. the settings table. Operators changing the
+        // settings row need a worker restart to take effect — by design
+        // (predictable cap per process lifetime; no per-job DB read).
+        const capUsd = deps.costCapUsd
+
+        for (const stage of WORLD_GEN_STAGES) {
+          const claim = await atomicClaimStage(deps.pool, {
+            kind: 'world',
+            worldId: ctx.world.id,
+            stage,
           })
-        }
-        /* c8 ignore next — `continue` arm with claim==='lost-race' or
-         * claim==='completed' on non-entity_consolidation stages. Tested
-         * via the idempotency suite. */
-        continue
-      }
+          setStage(stage)
+          if (claim !== 'claimed') {
+            // myth-exac T18: on idempotent re-entry, re-publish
+            // phase=world_snapshot_ready as soon as we walk past a completed
+            // stage-4b row. SSE subscribers that reconnected mid-job catch up
+            // on the snapshot-availability signal without needing the
+            // initial-frame snapshot of pipeline_runs. Stage 4b
+            // (entity_consolidation) is the new last entity-creating stage —
+            // it resolves stage-4's phantom declarations into real rows, so
+            // the snapshot is only safely fetchable after it commits.
+            if (stage === 'entity_consolidation' && claim === 'completed') {
+              await publishEvent(deps, campaignId, {
+                type: 'phase',
+                phase: 'world_snapshot_ready',
+              })
+            }
+            /* c8 ignore next — `continue` arm with claim==='lost-race' or
+             * claim==='completed' on non-entity_consolidation stages. Tested
+             * via the idempotency suite. */
+            continue
+          }
 
-      await publishEvent(deps, campaignId, {
-        type: 'stage-started',
-        stage,
-        userId: null,
-        startedAt: new Date().toISOString(),
-      })
-      await job.updateProgress({ stage })
-
-      const startedAt = Date.now()
-      try {
-        const refreshed = await refreshContext(deps.pool, ctx, stage)
-        const result = await runStage(deps, refreshed, campaignId, job, stage)
-        await markStageCompleted(deps.pool, refreshed.world.id, stage, result)
-        await publishEvent(deps, campaignId, {
-          type: 'stage-completed',
-          stage,
-          userId: null,
-          durationMs: Date.now() - startedAt,
-          costUsd: result.costUsd,
-        })
-
-        // myth-exac T18 + phantom-reconciliation P4.5: stage 4b
-        // (entity_consolidation) is the boundary where the world snapshot
-        // becomes fetchable — all real entities + hierarchy + relationships
-        // have committed AND any phantom references from stage 4 have been
-        // resolved into real rows (or dropped). Publish the phase
-        // immediately so subscribers can render the snapshot view ahead of
-        // worlds.status flipping to 'complete' (which only happens after
-        // stages 5-7 finish). On idempotent re-entry the equivalent emit
-        // fires from the `claim !== 'claimed'` branch above.
-        if (stage === 'entity_consolidation') {
           await publishEvent(deps, campaignId, {
-            type: 'phase',
-            phase: 'world_snapshot_ready',
+            type: 'stage-started',
+            stage,
+            userId: null,
+            startedAt: new Date().toISOString(),
           })
-        }
+          await job.updateProgress({ stage })
 
-        /* c8 ignore start — capExhausted is the §D5 stage-7 cap-fire
-         * exception: stage 7 (coherence_pass) self-detects that the
-         * world has already exceeded the cost cap before its LLM call
-         * and returns capExhausted=true. The world is functionally
-         * complete (coherence is best-effort polish), so we mark it
-         * complete without going through the cap-refund path. Reached
-         * only when stage 7 wires + cost-cap is exceeded — tested via
-         * stage 7's own unit tests, not exercised in the processor
-         * tests yet. */
-        if (result.capExhausted) {
-          await markWorldComplete(deps.pool, refreshed.world.id)
-          return
+          const startedAt = Date.now()
+          try {
+            const refreshed = await refreshContext(deps.pool, ctx, stage)
+            const result = await runStage(deps, refreshed, campaignId, job, stage)
+            await markStageCompleted(deps.pool, refreshed.world.id, stage, result)
+            await publishEvent(deps, campaignId, {
+              type: 'stage-completed',
+              stage,
+              userId: null,
+              durationMs: Date.now() - startedAt,
+              costUsd: result.costUsd,
+            })
+
+            // myth-exac T18 + phantom-reconciliation P4.5: stage 4b
+            // (entity_consolidation) is the boundary where the world snapshot
+            // becomes fetchable — all real entities + hierarchy + relationships
+            // have committed AND any phantom references from stage 4 have been
+            // resolved into real rows (or dropped). Publish the phase
+            // immediately so subscribers can render the snapshot view ahead of
+            // worlds.status flipping to 'complete' (which only happens after
+            // stages 5-7 finish). On idempotent re-entry the equivalent emit
+            // fires from the `claim !== 'claimed'` branch above.
+            if (stage === 'entity_consolidation') {
+              await publishEvent(deps, campaignId, {
+                type: 'phase',
+                phase: 'world_snapshot_ready',
+              })
+            }
+
+            /* c8 ignore start — capExhausted is the §D5 stage-7 cap-fire
+             * exception: stage 7 (coherence_pass) self-detects that the
+             * world has already exceeded the cost cap before its LLM call
+             * and returns capExhausted=true. The world is functionally
+             * complete (coherence is best-effort polish), so we mark it
+             * complete without going through the cap-refund path. Reached
+             * only when stage 7 wires + cost-cap is exceeded — tested via
+             * stage 7's own unit tests, not exercised in the processor
+             * tests yet. */
+            if (result.capExhausted) {
+              await markWorldComplete(deps.pool, refreshed.world.id)
+              return
+            }
+            /* c8 ignore stop */
+
+            const cumulative = await sumCompletedStageCosts(deps.pool, refreshed.world.id)
+            if (cumulative > capUsd) {
+              await markStageCappedAndRefund(deps, refreshed, stage, cumulative, capUsd)
+              return
+            }
+            await publishEvent(deps, campaignId, {
+              type: 'cost-update',
+              cumulativeUsd: cumulative,
+            })
+            /* c8 ignore start — `handled === 'stop'` is the world_gen_failed
+             * + cost-cap-fired path (tested via stage_not_implemented); the
+             * `throw err` re-enqueue path covers transient infra errors.
+             * v8 counts implicit branch boundaries on the catch closing
+             * brace + for-loop end-iteration that aren't reachable by
+             * either test path. */
+          } catch (err) {
+            const handled = await handleStageError(deps, ctx, stage, err)
+            if (handled === 'stop') return
+            throw err
+          }
         }
         /* c8 ignore stop */
 
-        const cumulative = await sumCompletedStageCosts(deps.pool, refreshed.world.id)
-        if (cumulative > capUsd) {
-          await markStageCappedAndRefund(deps, refreshed, stage, cumulative, capUsd)
-          return
-        }
-        await publishEvent(deps, campaignId, {
-          type: 'cost-update',
-          cumulativeUsd: cumulative,
-        })
-        /* c8 ignore start — `handled === 'stop'` is the world_gen_failed
-         * + cost-cap-fired path (tested via stage_not_implemented); the
-         * `throw err` re-enqueue path covers transient infra errors.
-         * v8 counts implicit branch boundaries on the catch closing
-         * brace + for-loop end-iteration that aren't reachable by
-         * either test path. */
-      } catch (err) {
-        const handled = await handleStageError(deps, ctx, stage, err)
-        if (handled === 'stop') return
-        throw err
-      }
-    }
-    /* c8 ignore stop */
-
-    /* c8 ignore start — markWorldComplete + world_ready emit: reached
-     * only after ALL world-gen stages complete; current tests halt at
-     * stage 2 with `stage_not_implemented`. */
-    await markWorldComplete(deps.pool, ctx.world.id)
-    await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_ready' })
-    /* c8 ignore stop */
+        /* c8 ignore start — markWorldComplete + world_ready emit: reached
+         * only after ALL world-gen stages complete; current tests halt at
+         * stage 2 with `stage_not_implemented`. */
+        await markWorldComplete(deps.pool, ctx.world.id)
+        await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_ready' })
+        /* c8 ignore stop */
+      },
+    )
   }
 }
 
