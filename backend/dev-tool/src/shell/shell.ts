@@ -13,6 +13,19 @@ import { createRingBuffer } from './drawer/buffer.js'
 import { createSubscriptionManager, type DrawerEvent } from './drawer/subscriptions.js'
 import { installIdentityBridge } from './identity-bridge.js'
 import { getActiveCampaignId } from './active-campaign.js'
+import type { PanelHandle } from '../components/_shared/panel-skeleton.js'
+import { ROUTE_PANELS, type RoutePanel } from './route-registry.js'
+
+type PanelMountFn = (parent: HTMLElement) => PanelHandle
+const PANEL_MOUNTS = new Map<string, PanelMountFn>()
+
+function leafKey(method: string, path: string): string {
+  return `${method} ${path}`
+}
+
+export function registerPanelMount(method: string, path: string, fn: PanelMountFn): void {
+  PANEL_MOUNTS.set(leafKey(method, path), fn)
+}
 
 export interface ShellHandle {
   unmount(): void
@@ -56,16 +69,52 @@ export function mountShell(): ShellHandle {
   mainPane.style.flex = '1'
   mainPane.style.overflow = 'auto'
 
+  let activePanel: PanelHandle | null = null
+  function selectPanel(panel: RoutePanel): void {
+    sidebar.setSelected(panel)
+    localStorage.setItem('devtool.selectedPanel', leafKey(panel.method, panel.path))
+    if (activePanel !== null) {
+      activePanel.unmount()
+      activePanel = null
+    }
+    mainPane.replaceChildren()
+    const key = leafKey(panel.method, panel.path)
+    const mountFn = PANEL_MOUNTS.get(key)
+    if (mountFn === undefined) {
+      const placeholder = document.createElement('div')
+      placeholder.style.padding = '24px'
+      placeholder.style.color = 'var(--fg-muted)'
+      placeholder.textContent = `(panel not yet implemented — ${key})`
+      mainPane.appendChild(placeholder)
+      return
+    }
+    activePanel = mountFn(mainPane)
+  }
+
   const sidebar: SidebarHandle = mountSidebar(flexRow, {
-    onSelect: (panel) => {
-      // TODO P5.6: dispatch to the active panel mount. For now, just
-      // mark the leaf as selected.
-      sidebar.setSelected(panel)
-    },
+    onSelect: selectPanel,
     getActiveCampaignId,
   })
   flexRow.appendChild(mainPane)
   const drawer: DrawerHandle = mountDrawer(flexRow, { subscriptions, bus, buffer })
+
+  // Restore last-selected sidebar leaf from localStorage.
+  const persistedKey = localStorage.getItem('devtool.selectedPanel')
+  if (persistedKey !== null) {
+    const [pm, ...pPath] = persistedKey.split(' ')
+    const persistedPath = pPath.join(' ')
+    const persistedPanel = ROUTE_PANELS.find(
+      (p) => p.method === pm && p.path === persistedPath,
+    )
+    if (persistedPanel !== undefined) {
+      // Only restore if leaf is currently selectable (not dimmed by missing campaign).
+      const needsCampaign = persistedPanel.requiresCampaign
+      const hasActive = getActiveCampaignId() !== null
+      if (!needsCampaign || hasActive) {
+        selectPanel(persistedPanel)
+      }
+    }
+  }
 
   const dispose = installIdentityBridge({
     onIdentityChange: () => {
@@ -84,6 +133,7 @@ export function mountShell(): ShellHandle {
   return {
     unmount: () => {
       dispose()
+      if (activePanel !== null) activePanel.unmount()
       drawer.unmount()
       sidebar.unmount()
       banner.unmount()

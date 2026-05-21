@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest'
-import { mountShell } from '../shell.js'
+import { describe, it, expect, vi } from 'vitest'
+import { mountShell, registerPanelMount } from '../shell.js'
+import type { PanelHandle } from '../../components/_shared/panel-skeleton.js'
 
 // Note: the JSDOM env from the pragma provides document/window/localStorage,
 // but Node 25's bare localStorage stub may override JSDOM's. Apply the same
@@ -47,5 +48,22 @@ describe('mountShell', () => {
     expect(document.querySelector('nav')).not.toBeNull()
     expect(document.querySelector('[data-region="main"]')).not.toBeNull()
     expect(document.querySelector('[data-region="drawer"]')).not.toBeNull()
+  })
+
+  it('selecting a sidebar leaf mounts the registered panel and unmounts the previous', () => {
+    ensureDom()
+    const aRoot = document.createElement('div')
+    const bRoot = document.createElement('div')
+    const aHandle: PanelHandle = { root: aRoot, unmount: vi.fn() }
+    const bHandle: PanelHandle = { root: bRoot, unmount: vi.fn() }
+    registerPanelMount('GET', '/api/users/me', (parent) => { parent.appendChild(aRoot); return aHandle })
+    registerPanelMount('GET', '/health', (parent) => { parent.appendChild(bRoot); return bHandle })
+    mountShell()
+    const leafMe = document.querySelector('[data-leaf="GET /api/users/me"]') as HTMLElement
+    const leafHealth = document.querySelector('[data-leaf="GET /health"]') as HTMLElement
+    leafMe.click()
+    expect(aHandle.unmount).not.toHaveBeenCalled()
+    leafHealth.click()
+    expect(aHandle.unmount).toHaveBeenCalledTimes(1)
   })
 })
