@@ -26,6 +26,8 @@
 
 import { apiCall } from '../api-client.js'
 import { openSse, type SseConnection } from '../sse-client.js'
+import { registerPanelMount } from '../shell/shell.js'
+import type { PanelHandle } from './_shared/panel-skeleton.js'
 
 // Events broadcast on the window so the status-panel can pick the new
 // campaignId up without create-panel reaching across module boundaries.
@@ -337,7 +339,7 @@ export function buildHeadline(ev: StageFailedEvent): string {
   }
 }
 
-export function mountCampaignCreatePanel(parent: HTMLElement): void {
+export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
   const card = document.createElement('section')
   card.className = 'card'
   // Action-only panel: the form is the steady state. data-state="ready"
@@ -848,4 +850,15 @@ export function mountCampaignCreatePanel(parent: HTMLElement): void {
   card.appendChild(result)
   card.appendChild(extraDetails)
   parent.appendChild(card)
+
+  return {
+    root: card,
+    unmount: () => {
+      closeSse()
+      clearCooldown()
+      if (card.parentNode !== null) card.parentNode.removeChild(card)
+    },
+  }
 }
+
+registerPanelMount('POST', '/api/campaigns', mountCampaignCreatePanel)

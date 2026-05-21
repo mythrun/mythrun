@@ -10,6 +10,12 @@
 // and on identity switch.
 
 import { apiCall } from '../api-client.js'
+import {
+  getActiveCampaignId,
+  setActiveCampaignId,
+} from '../shell/active-campaign.js'
+import { registerPanelMount } from '../shell/shell.js'
+import type { PanelHandle } from './_shared/panel-skeleton.js'
 
 interface CampaignRow {
   readonly id: string
@@ -18,17 +24,34 @@ interface CampaignRow {
   readonly worldId: string
 }
 
-function buildCampaignRow(c: CampaignRow, onDelete: () => void): HTMLElement {
+function buildCampaignRow(
+  c: CampaignRow,
+  onDelete: () => void,
+  onPick: () => void,
+  isActive: boolean,
+): HTMLElement {
   const row = document.createElement('div')
+  row.setAttribute('data-row-id', c.id)
+  row.setAttribute('data-active', isActive ? 'true' : 'false')
   row.style.display = 'flex'
   row.style.alignItems = 'center'
   row.style.gap = '8px'
   row.style.fontFamily = 'monospace'
   row.style.fontSize = '12px'
+  row.style.cursor = 'pointer'
+  row.style.padding = '4px 6px'
+  row.style.background = isActive ? 'var(--bg-elevated)' : 'transparent'
 
   const label = document.createElement('span')
   label.style.flex = '1'
   label.textContent = `${c.id}  ${c.name ?? '(unnamed)'}  [${c.status}]`
+
+  row.addEventListener('click', (e) => {
+    // Skip if a button inside the row was clicked.
+    const target = e.target as HTMLElement | null
+    if (target !== null && target.tagName === 'BUTTON') return
+    onPick()
+  })
 
   const watchBtn = document.createElement('button')
   watchBtn.textContent = 'Watch'
@@ -74,7 +97,7 @@ async function deleteCampaign(c: CampaignRow, refresh: () => Promise<void>): Pro
   window.alert(`Delete failed: ${String(res.status)} ${res.error ?? JSON.stringify(res.body)}`)
 }
 
-export function mountMyCampaignsPanel(parent: HTMLElement): void {
+export function mountMyCampaignsPanel(parent: HTMLElement): PanelHandle {
   const card = document.createElement('section')
   card.className = 'card'
   card.setAttribute('data-state', 'loading')
@@ -114,25 +137,38 @@ export function mountMyCampaignsPanel(parent: HTMLElement): void {
     }
     status.textContent = `${String(campaigns.length)} campaign(s)`
     card.setAttribute('data-state', 'loaded')
+    const activeId = getActiveCampaignId()
     for (const c of campaigns) {
-      list.appendChild(buildCampaignRow(c, () => void deleteCampaign(c, refresh)))
+      list.appendChild(
+        buildCampaignRow(
+          c,
+          () => void deleteCampaign(c, refresh),
+          () => {
+            setActiveCampaignId(c.id)
+            void refresh()
+          },
+          c.id === activeId,
+        ),
+      )
     }
   }
 
-  refreshBtn.addEventListener('click', () => {
+  const onRefreshClick = (): void => {
     void refresh()
-  })
+  }
+  refreshBtn.addEventListener('click', onRefreshClick)
 
+  const onWatchEvent = (): void => {
+    void refresh()
+  }
+  const onCloseWatchEvent = (): void => {
+    void refresh()
+  }
   // Refresh after every 201 from the create panel — the new campaign
   // should appear without manual refresh.
-  window.addEventListener('mythrun.watchcampaign', () => {
-    void refresh()
-  })
-
+  window.addEventListener('mythrun.watchcampaign', onWatchEvent)
   // Identity switch clears + reloads under the new identity.
-  window.addEventListener('mythrun.closewatch', () => {
-    void refresh()
-  })
+  window.addEventListener('mythrun.closewatch', onCloseWatchEvent)
 
   const headerRow = document.createElement('div')
   headerRow.style.display = 'flex'
@@ -149,4 +185,15 @@ export function mountMyCampaignsPanel(parent: HTMLElement): void {
 
   // Initial load.
   void refresh()
+
+  return {
+    root: card,
+    unmount: () => {
+      window.removeEventListener('mythrun.watchcampaign', onWatchEvent)
+      window.removeEventListener('mythrun.closewatch', onCloseWatchEvent)
+      if (card.parentNode !== null) card.parentNode.removeChild(card)
+    },
+  }
 }
+
+registerPanelMount('GET', '/api/campaigns/mine', mountMyCampaignsPanel)

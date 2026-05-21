@@ -19,6 +19,9 @@
 // All server-returned string fields go through textContent (Roc-C2).
 
 import { apiCall } from '../api-client.js'
+import { getActiveCampaignId } from '../shell/active-campaign.js'
+import { registerPanelMount } from '../shell/shell.js'
+import type { PanelHandle } from './_shared/panel-skeleton.js'
 
 interface Campaign {
   readonly id: string
@@ -206,7 +209,7 @@ function buildDom(): DomRefs {
   }
 }
 
-export function mountCampaignDetailsPanel(parent: HTMLElement): void {
+export function mountCampaignDetailsPanel(parent: HTMLElement): PanelHandle {
   const dom = buildDom()
   const {
     card, title, input, fetchBtn, resumeBtn, inputRow, status, body, resumeStatus,
@@ -318,7 +321,7 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
   })
 
   // External clear hook (identity switch).
-  window.addEventListener('mythrun.detailspanel.clear', () => {
+  const onClear = (): void => {
     input.value = ''
     currentCampaignId = null
     status.textContent = '(no campaign loaded)'
@@ -328,16 +331,18 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
     renameInput.value = ''
     renameRow.style.display = 'none'
     renameStatus.textContent = ''
-  })
+  }
+  window.addEventListener('mythrun.detailspanel.clear', onClear)
 
   // External open hook (dispatched by my-campaigns-panel's Details button).
   // Drop the campaignId into the input + fetch.
-  window.addEventListener('mythrun.opendetails', (e) => {
+  const onOpenDetails = (e: Event): void => {
     const id = (e as CustomEvent<string>).detail
     if (typeof id !== 'string' || id.length === 0) return
     input.value = id
     void fetchDetails()
-  })
+  }
+  window.addEventListener('mythrun.opendetails', onOpenDetails)
 
   card.appendChild(title)
   card.appendChild(inputRow)
@@ -347,4 +352,22 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): void {
   card.appendChild(renameRow)
   card.appendChild(renameStatus)
   parent.appendChild(card)
+
+  // Preload the active campaign id (if any) so the operator doesn't have
+  // to paste it again when navigating in from My campaigns.
+  const initialActive = getActiveCampaignId()
+  if (initialActive !== null) {
+    input.value = initialActive
+  }
+
+  return {
+    root: card,
+    unmount: () => {
+      window.removeEventListener('mythrun.detailspanel.clear', onClear)
+      window.removeEventListener('mythrun.opendetails', onOpenDetails)
+      if (card.parentNode !== null) card.parentNode.removeChild(card)
+    },
+  }
 }
+
+registerPanelMount('GET', '/api/campaigns/:campaignId', mountCampaignDetailsPanel)

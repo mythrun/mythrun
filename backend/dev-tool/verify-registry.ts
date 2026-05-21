@@ -26,6 +26,10 @@ import { mountMyCampaignsPanel } from './src/components/my-campaigns-panel.js'
 import { mountStatusPanel } from './src/components/status-panel.js'
 import { mountLiveEventsPanel } from './src/components/live-events-panel.js'
 import { mountCampaignDetailsPanel } from './src/components/campaign-details-panel.js'
+import { mountCampaignRenamePanel } from './src/components/campaign-rename-panel.js'
+import { mountCampaignResumePanel } from './src/components/campaign-resume-panel.js'
+import { mountCampaignArchivePanel } from './src/components/campaign-archive-panel.js'
+import { mountCampaignDeletePanel } from './src/components/campaign-delete-panel.js'
 import { mountCreditLedgerPanel } from './src/components/credit-ledger-panel.js'
 import { mountUsersPanel } from './src/components/users-panel.js'
 import { mountInvitesPanel } from './src/components/invites-panel.js'
@@ -39,8 +43,12 @@ export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 export interface PanelRegistration {
   /** Interaction pattern; drives which assertions the harness applies. */
   readonly pattern: PanelPattern
-  /** The panel's mount function. Called with a fresh <div> as parent. */
-  readonly mount: (parent: HTMLElement) => void | Promise<void>
+  /** The panel's mount function. Called with a fresh <div> as parent.
+   *  myth-mbdc panels return a PanelHandle (the lifecycle contract from
+   *  spec §10); legacy panels return void; pre-mbdc identity-bootstrap
+   *  helpers can be async. All three shapes are valid; the verifier
+   *  discards the return value either way. */
+  readonly mount: (parent: HTMLElement) => unknown
   /** CSS selector indicating the panel reached its expected post-mount
    *  state. For fetch-on-mount: data-state="loaded". For event-driven:
    *  data-state="idle". For action-only: data-state="ready". */
@@ -137,12 +145,35 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     mount: mountCampaignDetailsPanel,
     readySelector: '[data-state="idle"]',
     errorSelector: '[data-state="error"]',
-    exercises: [
-      route('GET', '/api/campaigns/:campaignId'),
-      route('DELETE', '/api/campaigns/:campaignId'),
-      route('PATCH', '/api/campaigns/:campaignId/name'),
-      route('POST', '/api/campaigns/:campaignId/resume'),
-    ],
+    exercises: [route('GET', '/api/campaigns/:campaignId')],
+  },
+  'campaign-rename': {
+    pattern: 'action-only',
+    mount: mountCampaignRenamePanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('PATCH', '/api/campaigns/:campaignId/name')],
+  },
+  'campaign-resume': {
+    pattern: 'action-only',
+    mount: mountCampaignResumePanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/campaigns/:campaignId/resume')],
+  },
+  'campaign-archive': {
+    pattern: 'action-only',
+    mount: mountCampaignArchivePanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/campaigns/:campaignId/archive')],
+  },
+  'campaign-delete': {
+    pattern: 'action-only',
+    mount: mountCampaignDeletePanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('DELETE', '/api/campaigns/:campaignId')],
   },
   'world-snapshot': {
     // Idle until a campaign is watched (via mythrun.watchcampaign) AND the
