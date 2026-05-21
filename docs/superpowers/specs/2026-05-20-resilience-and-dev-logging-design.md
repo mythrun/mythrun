@@ -21,27 +21,30 @@ Zero `process.on('unhandledRejection')` or `process.on('uncaughtException')` han
 
 ## 2. Defense-in-depth: two layers
 
-### Layer 1 — Local guard in `runStreamingStage` (the known shape)
+### Layer 1 — Local guard in `runStreamingStage` (clean exception conversion)
 
-`backend/src/llm/prep/streaming-extractor.ts` already loops over `partialObjectStream` to drive its closed-entry emit gate. The fix is to add a try/catch around that for-await and a `softRecoveryThreshold: number` parameter to `ArrayConfig` (or rather to the top-level `StreamingExtractorConfig` — one number for the whole call, since soft-recovery is "did we get enough entities to keep going").
+`backend/src/llm/prep/streaming-extractor.ts` already loops over `partialObjectStream` to drive its closed-entry emit gate. The for-await loop is currently NOT wrapped in a try/catch — if the SDK's partialObjectStream iterator rejects, the rejection propagates up to the caller's await chain. The local guard adds the missing try/catch so the rejection is observed at a known boundary, logged with structured context, then rethrown.
 
 On catch:
 
-```
-if (emittedSynthKeys.size >= softRecoveryThreshold) {
+```ts
+try {
+  for await (const partial of partialObjectStream) { ... }
+  // ... post-loop trailing-entry pass ...
+} catch (err) {
   config.logger?.warn({
-    event: 'streaming.soft_recover',
+    event: 'streaming.stream_died',
     stage: config.stage,
-    survivors: emittedSynthKeys.size,
-    threshold: config.softRecoveryThreshold,
+    survivors: emitted.size,
     error: errToWire(err),
-  }, 'streaming-extractor: stream died mid-flight; soft-recovering with survivors')
-  return { finalTree: undefined, emittedSynthKeys }
+  }, 'streaming-extractor: stream died mid-flight; rethrowing')
+  throw err
 }
-throw err
 ```
 
-`finalTree: undefined` is a signal to the handler — "you don't get the synthesized tree; persist what already streamed." Stages 2 and 3 already persist entities mid-stream as `entity-added` events fire, so the in-DB state IS the result. The handler skips its post-loop `tree.regions.forEach(...)` work when finalTree is undefined.
+The handler's `await result.object` then also rejects (the SDK fires both side rejections in parallel; the wrapper's repair chain runs against the `object` rejection per ai.ts:571–586). Persistence does NOT happen on a stream-failed run: `persistTree(client, worldId, validatedTree, ...)` only runs after `result.object` resolves to a validated tree. If the repair chain exhausts, the wrapper rethrows, the stage handler's `await result.object` throws, and the world-gen-processor's per-stage failure handler (`handleStageError`) marks the world failed and publishes `phase: 'world_gen_failed'` as it does today.
+
+**No soft-recovery.** Holistic schema validation of the full tree is the unit of correctness — partial persistence would risk shipping entities that look valid individually but violate cross-entity invariants (e.g., a region's prose name-drops a faction that didn't get persisted). The user's explicit position: if the stream dies, hard-fail. The global handler in Layer 2 is the resilience net for cases the local guard doesn't catch (rejections that escape through SDK-internal side streams).
 
 Stages 4 and 4b use `generateObject`, not `streamObject` — they batch at end-of-stream by construction, so this layer doesn't apply to them. Their failures (which fire from `await result.object` and are caught by the wrapper's repair chain) are already handled correctly.
 
@@ -113,18 +116,13 @@ Cost: one `AsyncLocalStorage.run` per job (cheap), one `setStage` per stage (che
 
 ---
 
-## 4. Per-stage soft-recovery thresholds
+## 4. Why no soft-recovery (the path we considered and dropped)
 
-Each affected stage handler reads its own schema's `.min()` and passes the lower of the relevant fields:
+An earlier draft of this spec proposed soft-recovering stages 2 and 3 with whatever entities passed `sub_schema` validation during the stream. The premise was that "what already streamed is already in DB" — i.e., mid-stream persistence. Reviewing the code revealed that's not what happens: `runStreamingStage` publishes SSE wire events mid-stream but DB persistence happens at end-of-stream via `persistTree(validatedTree, ...)` after `await result.object` resolves to the full validated tree.
 
-| Stage | Schema mins | softRecoveryThreshold |
-|---|---|---|
-| `world_and_factions` | `regions.min(3)` + `factions.min(3)` | 3 |
-| `locations_and_npcs` | `locations.min(5)` + `npcs.min(5)` | 5 |
+Closing that gap would require either mid-stream DB writes (significant restructuring of stages 2 and 3) or a "tolerant persist" that filters end-of-stream by a survivor set. The user's call: neither. Holistic schema validation of the full tree is the unit of correctness. Soft-recovery would risk shipping entities that look valid individually but violate cross-entity invariants — a region's prose name-drops a faction that didn't get persisted, an NPC's parent-location-id points at a location that didn't make it through. The blast radius of partial persistence on a freshly generated world is bigger than the convenience of "use what survived."
 
-Stages 1, 1.5, 4, 4b, 5, 6, 7 don't stream entities through `runStreamingStage`, so they don't need a threshold (their failures are handled by the AI SDK wrapper's repair chain or by the global handler).
-
-**Why the conservative "min of mins" over per-field tracking:** a stage's downstream value depends on having enough of BOTH categories. If `locations_and_npcs` survives with 5 locations and 0 NPCs, that's not "soft-success" — it's a stage that didn't actually produce an NPC inventory. The conservative threshold says "if you can't claim ≥N of each category, fall back to hard-fail." A per-stage tuned variant could be added later if the simple gate is too coarse.
+If a stream dies, hard-fail. Layer 2 catches what Layer 1 doesn't.
 
 ---
 
@@ -169,15 +167,13 @@ Adding pino multistream would break that invariant by making dev do dual-writes 
 - `backend/src/__tests__/unhandled-rejection.test.ts` — process-level handler tests.
 
 **Modified files:**
-- `backend/src/llm/prep/streaming-extractor.ts` — local guard, soft-recovery, threshold param.
-- `backend/src/llm/prep/stages/world-and-factions.ts` — pass `softRecoveryThreshold: 3`; handle `finalTree: undefined`.
-- `backend/src/llm/prep/stages/locations-and-npcs.ts` — pass `softRecoveryThreshold: 5`; handle `finalTree: undefined`.
+- `backend/src/llm/prep/streaming-extractor.ts` — try/catch local guard around the for-await; structured warn on catch; rethrow.
 - `backend/src/llm/prep/world-gen-processor.ts` — wrap per-job body in `runWithJobContext`; call `setStage(stage)` in the stage loop.
 - `backend/src/server.ts` — install `unhandledRejection` + `uncaughtException` handlers in `main()` before `app.listen`.
-- `backend/src/llm/logger.ts` — sync flush in dev/test, async in prod.
+- `backend/src/llm/logger.ts` — sync destination so the global handler's final log reaches stdout before `process.exit(1)`.
 - `backend/package.json` — `dev` script, new `dev:raw`, new `pino-pretty` devDependency.
 - `.gitignore` — `backend/logs/`.
-- `backend/src/llm/prep/__tests__/streaming-extractor.test.ts` — soft-recovery test cases.
+- `backend/src/llm/prep/__tests__/streaming-extractor.test.ts` — stream-died-logs-and-rethrows test case.
 
 ---
 
@@ -185,9 +181,8 @@ Adding pino multistream would break that invariant by making dev do dual-writes 
 
 ### Layer 1 (local guard) — unit tests in streaming-extractor.test.ts
 
-- **Soft-recover happy path.** Drive the partial stream until N entities emit, then have the upstream stream reject. With `softRecoveryThreshold = N - 1`, expect `finalTree: undefined, emittedSynthKeys.size = N`, no rethrow. Expect the `streaming.soft_recover` warn log.
-- **Sub-threshold rethrow.** Same scenario but `softRecoveryThreshold = N + 1`. Expect rethrow with the original error.
-- **No-error happy path.** Stream completes normally. `finalTree` is defined, no soft-recover log.
+- **Stream-died log + rethrow.** Drive the partial stream until N entities emit, then have the upstream stream reject. Expect a `streaming.stream_died` warn log carrying `stage`, `survivors: N`, `error: errToWire(err)`. Expect the original error to propagate (rethrow).
+- **No-error happy path.** Stream completes normally. No `stream_died` log. `finalTree` defined, returned to caller.
 
 ### Layer 2 (global handler) — integration tests in unhandled-rejection.test.ts
 
@@ -219,7 +214,7 @@ Adding pino multistream would break that invariant by making dev do dual-writes 
 ## 9. What this design intentionally doesn't do
 
 - **No retries.** The user's explicit choice: same input → same failure; retries waste credits and operator time. The world is marked failed; the user re-triggers manually.
-- **No per-field thresholds.** `min-of-mins` is the gate. A stage that survives with 5 locations and 0 NPCs counts as below-threshold and hard-fails.
+- **No soft-recovery with survivors.** §4 explains the rationale: holistic-tree validation is the unit of correctness; partial persistence risks cross-entity invariant violations. Hard-fail is the contract.
 - **No multistream in pino.** The dev capture is purely a stdout-pipeline concern; app code stays unchanged.
 - **No log shipping to CloudWatch from dev.** Dev logs are local files; staging and prod continue to use ECS' awslogs driver.
 - **No proactive BullMQ job.moveToFailed from outside the processor.** The lock-expiry path is sufficient. The accepted cost: `worlds.status='failed'` lands immediately, but the BullMQ job stays in "active" for up to ~30s until its lock expires and the stalled-job recovery moves it out. The operator-visible state via the world row + SSE phase event is correct from the moment we mark it; the BullMQ-side lag is internal-only.
