@@ -37,10 +37,15 @@ function panelModulesWithMount(): string[] {
 }
 
 function panelIdsImportedByMain(): string[] {
-  // Read main.ts; find every `from './components/<id>(-panel)?.js'`.
+  // Read main.ts; find every panel module referenced via either a
+  // `from './components/<id>(-panel)?.js'` form OR a side-effect-only
+  // `import './components/<id>(-panel)?.js'` form. The myth-mbdc
+  // migration uses side-effect imports during Phase 6 as panels
+  // self-register via registerPanelMount; both forms keep the panel
+  // in the import graph.
   const text = readFileSync(MAIN_TS, 'utf8')
   const ids: string[] = []
-  const re = /from\s+['"]\.\/components\/([\w-]+)(?:-panel)?\.js['"]/g
+  const re = /(?:from\s+|import\s+)['"]\.\/components\/([\w-]+)(?:-panel)?\.js['"]/g
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     const id = m[1]?.replace(/-panel$/, '')
