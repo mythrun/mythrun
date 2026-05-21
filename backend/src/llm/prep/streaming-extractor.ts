@@ -224,6 +224,17 @@ async function maybeEmit(
   emitted.add(synthKey)
 }
 
+function errToWire(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    }
+  }
+  return { value: String(err) }
+}
+
 export async function runStreamingStage<T>(
   partialObjectStream: AsyncIterable<T>,
   config: StreamingExtractorConfig,
@@ -232,74 +243,87 @@ export async function runStreamingStage<T>(
   let finalTree: T | undefined
   let chunkCount = 0
 
-  for await (const partial of partialObjectStream) {
-    chunkCount += 1
-    finalTree = partial
-    const tree = partial as unknown as Record<string, unknown>
-    for (const arrayCfg of config.arrays) {
-      const arr = tree[arrayCfg.path]
-      /* c8 ignore start — defensive: array config whose path doesn't
-       * resolve to an Array in the in-flight partial. The closed-entry
-       * gate only fires after the LLM has populated the array, so this
-       * branch is reachable only from stage 1-style stages with no
-       * configured array (not from the streaming stages 2-4). */
-      if (!Array.isArray(arr)) continue
-      /* c8 ignore stop */
-      const entries = arr as unknown[]
-      // Process every closed index — all indices except the trailing one
-      // (which may still be growing). Multi-step jumps handled.
-      for (let i = 0; i < entries.length - 1; i++) {
-        const synthKey = `${config.stage}/${arrayCfg.path}/${String(i)}`
-        if (emitted.has(synthKey)) continue
-        const entry = entries[i]
-        /* c8 ignore start — defensive: stage-end Zod requires every
-         * entry to be an object. Reaching this with a non-object means
-         * the LLM emitted a primitive at this array position; Zod will
-         * fail the stage at validate-time. */
-        if (typeof entry !== 'object' || entry === null) continue
+  try {
+    for await (const partial of partialObjectStream) {
+      chunkCount += 1
+      finalTree = partial
+      const tree = partial as unknown as Record<string, unknown>
+      for (const arrayCfg of config.arrays) {
+        const arr = tree[arrayCfg.path]
+        /* c8 ignore start — defensive: array config whose path doesn't
+         * resolve to an Array in the in-flight partial. The closed-entry
+         * gate only fires after the LLM has populated the array, so this
+         * branch is reachable only from stage 1-style stages with no
+         * configured array (not from the streaming stages 2-4). */
+        if (!Array.isArray(arr)) continue
         /* c8 ignore stop */
-        await maybeEmit(config, arrayCfg, entry as Record<string, unknown>, synthKey, emitted)
+        const entries = arr as unknown[]
+        // Process every closed index — all indices except the trailing one
+        // (which may still be growing). Multi-step jumps handled.
+        for (let i = 0; i < entries.length - 1; i++) {
+          const synthKey = `${config.stage}/${arrayCfg.path}/${String(i)}`
+          if (emitted.has(synthKey)) continue
+          const entry = entries[i]
+          /* c8 ignore start — defensive: stage-end Zod requires every
+           * entry to be an object. Reaching this with a non-object means
+           * the LLM emitted a primitive at this array position; Zod will
+           * fail the stage at validate-time. */
+          if (typeof entry !== 'object' || entry === null) continue
+          /* c8 ignore stop */
+          await maybeEmit(config, arrayCfg, entry as Record<string, unknown>, synthKey, emitted)
+        }
       }
+      await config.job.updateProgress(chunkCount)
     }
-    await config.job.updateProgress(chunkCount)
-  }
 
-  /* c8 ignore start — defensive: the AI SDK's partialObjectStream always
-   * yields at least one chunk on a successful call. This throw fires only
-   * if the SDK returns an empty iterable (broken stream / cancellation
-   * before any data) — covered by integration testing, not unit. */
-  if (finalTree === undefined) {
-    throw new Error('streaming-extractor: partialObjectStream yielded no values')
-  }
-  /* c8 ignore stop */
+    /* c8 ignore start — defensive: the AI SDK's partialObjectStream always
+     * yields at least one chunk on a successful call. This throw fires only
+     * if the SDK returns an empty iterable (broken stream / cancellation
+     * before any data) — covered by integration testing, not unit. */
+    if (finalTree === undefined) {
+      throw new Error('streaming-extractor: partialObjectStream yielded no values')
+    }
+    /* c8 ignore stop */
 
-  // Post-loop pass: trailing entry of each array. Stream-end IS the
-  // closure signal for that entry.
-  //
-  // c8 ignore start — the four `continue` guards in this loop body are
-  // defensive (non-array path, zero-length array, already-emitted
-  // trailing index, non-object trailing entry). All four conditions are
-  // rejected upstream — either by Zod stage-end validation (which
-  // requires every configured array to be non-empty and every entry to
-  // be an object) or by the in-loop emit path which already drains all
-  // non-trailing indices. None of these arms are reachable from a
-  // real-stream input; they remain as belt-and-braces for future-stage
-  // changes that might add a less-strict Zod schema.
-  /* c8 ignore start */
-  const finalRoot = finalTree as unknown as Record<string, unknown>
-  for (const arrayCfg of config.arrays) {
-    const arr = finalRoot[arrayCfg.path]
-    if (!Array.isArray(arr)) continue
-    const entries = arr as unknown[]
-    if (entries.length === 0) continue
-    const lastIdx = entries.length - 1
-    const synthKey = `${config.stage}/${arrayCfg.path}/${String(lastIdx)}`
-    if (emitted.has(synthKey)) continue
-    const entry = entries[lastIdx]
-    if (typeof entry !== 'object' || entry === null) continue
-    await maybeEmit(config, arrayCfg, entry as Record<string, unknown>, synthKey, emitted)
-  }
-  /* c8 ignore stop */
+    // Post-loop pass: trailing entry of each array. Stream-end IS the
+    // closure signal for that entry.
+    //
+    // c8 ignore start — the four `continue` guards in this loop body are
+    // defensive (non-array path, zero-length array, already-emitted
+    // trailing index, non-object trailing entry). All four conditions are
+    // rejected upstream — either by Zod stage-end validation (which
+    // requires every configured array to be non-empty and every entry to
+    // be an object) or by the in-loop emit path which already drains all
+    // non-trailing indices. None of these arms are reachable from a
+    // real-stream input; they remain as belt-and-braces for future-stage
+    // changes that might add a less-strict Zod schema.
+    /* c8 ignore start */
+    const finalRoot = finalTree as unknown as Record<string, unknown>
+    for (const arrayCfg of config.arrays) {
+      const arr = finalRoot[arrayCfg.path]
+      if (!Array.isArray(arr)) continue
+      const entries = arr as unknown[]
+      if (entries.length === 0) continue
+      const lastIdx = entries.length - 1
+      const synthKey = `${config.stage}/${arrayCfg.path}/${String(lastIdx)}`
+      if (emitted.has(synthKey)) continue
+      const entry = entries[lastIdx]
+      if (typeof entry !== 'object' || entry === null) continue
+      await maybeEmit(config, arrayCfg, entry as Record<string, unknown>, synthKey, emitted)
+    }
+    /* c8 ignore stop */
 
-  return { finalTree, emittedSynthKeys: emitted }
+    return { finalTree, emittedSynthKeys: emitted }
+  } catch (err) {
+    config.logger?.warn(
+      {
+        event: 'streaming.stream_died',
+        stage: config.stage,
+        survivors: emitted.size,
+        error: errToWire(err),
+      },
+      'streaming-extractor: partialObjectStream rejected mid-flight',
+    )
+    throw err
+  }
 }

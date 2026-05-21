@@ -322,4 +322,49 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
     const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
     expect(events.filter((e) => e.type === 'entity-added').map((e) => e.name)).toEqual(['R1'])
   })
+
+  it('myth-449j: stream rejection produces structured warn log and rethrows', async () => {
+    const redis = makeRedis()
+    const warn = vi.fn()
+    const boom = new Error('upstream-stream-died')
+
+    // Two yielded partials, then the generator rejects.
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async function* failingPartials(): AsyncGenerator {
+      yield { regions: [{ name: 'R1', access_level: 'known', prose: 'p', facts: [] }] }
+      yield {
+        regions: [
+          { name: 'R1', access_level: 'known', prose: 'p', facts: [] },
+          { name: 'R2' },
+        ],
+      }
+      throw boom
+    }
+
+    await expect(
+      runStreamingStage(failingPartials(), {
+        stage: 'world_and_factions',
+        campaignId: 'c-stream-died',
+        job: fakeJob,
+        redisRealtime: redis,
+        keyPrefix: 'test:',
+        arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+        bypassAccessFilter: true,
+        endpointTierMap: new Map(),
+        logger: { warn },
+      }),
+    ).rejects.toBe(boom)
+
+    const streamDiedCalls = warn.mock.calls.filter((c) => {
+      const arg0 = c[0] as unknown
+      if (typeof arg0 !== 'object' || arg0 === null) return false
+      const obj = arg0 as Record<string, unknown>
+      return obj.event === 'streaming.stream_died'
+    })
+    expect(streamDiedCalls).toHaveLength(1)
+    const payload = streamDiedCalls[0]?.[0] as Record<string, unknown>
+    expect(payload.stage).toBe('world_and_factions')
+    expect(payload.survivors).toBe(1)
+    expect(payload.error).toMatchObject({ message: 'upstream-stream-died' })
+  })
 })
