@@ -1,13 +1,14 @@
 // Lists campaigns owned by (or shared with) the current dev-user.
-// Each row carries a Watch button that drives the status panel via
-// the existing `mythrun.watchcampaign` event (per T13's wiring).
+// Each row picks a campaign as the shell's active campaign via
+// `setActiveCampaignId`; the drawer + other panels react through
+// `onActiveCampaignChanged`.
 //
 // Without this panel the user has no way to discover existing
 // campaignIds short of querying Postgres directly — which makes the
 // dev tool's other panels (status, details) feel marooned.
 //
-// Refreshes on initial mount, after the create panel reports a 201,
-// and on identity switch.
+// Refreshes on initial mount and on identity switch (via the shell's
+// identity-bridge unmount/remount cycle).
 
 import { apiCall } from '../api-client.js'
 import {
@@ -53,25 +54,11 @@ function buildCampaignRow(
     onPick()
   })
 
-  const watchBtn = document.createElement('button')
-  watchBtn.textContent = 'Watch'
-  watchBtn.addEventListener('click', () => {
-    window.dispatchEvent(new CustomEvent<string>('mythrun.watchcampaign', { detail: c.id }))
-  })
-
-  const detailsBtn = document.createElement('button')
-  detailsBtn.textContent = 'Details'
-  detailsBtn.addEventListener('click', () => {
-    window.dispatchEvent(new CustomEvent<string>('mythrun.opendetails', { detail: c.id }))
-  })
-
   const deleteBtn = document.createElement('button')
   deleteBtn.textContent = 'Delete'
   deleteBtn.addEventListener('click', onDelete)
 
   row.appendChild(label)
-  row.appendChild(watchBtn)
-  row.appendChild(detailsBtn)
   row.appendChild(deleteBtn)
   return row
 }
@@ -82,9 +69,6 @@ async function deleteCampaign(c: CampaignRow, refresh: () => Promise<void>): Pro
   if (!window.confirm(`Delete campaign ${c.name ?? c.id}? This is permanent.`)) return
   const res = await apiCall(`/api/campaigns/${c.id}`, { method: 'DELETE' })
   if (res.status === 204) {
-    // If the user was watching this campaign, close the stream + clear panels.
-    window.dispatchEvent(new CustomEvent('mythrun.closewatch'))
-    window.dispatchEvent(new CustomEvent('mythrun.detailspanel.clear'))
     void refresh()
     return
   }
@@ -158,18 +142,6 @@ export function mountMyCampaignsPanel(parent: HTMLElement): PanelHandle {
   }
   refreshBtn.addEventListener('click', onRefreshClick)
 
-  const onWatchEvent = (): void => {
-    void refresh()
-  }
-  const onCloseWatchEvent = (): void => {
-    void refresh()
-  }
-  // Refresh after every 201 from the create panel — the new campaign
-  // should appear without manual refresh.
-  window.addEventListener('mythrun.watchcampaign', onWatchEvent)
-  // Identity switch clears + reloads under the new identity.
-  window.addEventListener('mythrun.closewatch', onCloseWatchEvent)
-
   const headerRow = document.createElement('div')
   headerRow.style.display = 'flex'
   headerRow.style.alignItems = 'center'
@@ -189,8 +161,6 @@ export function mountMyCampaignsPanel(parent: HTMLElement): PanelHandle {
   return {
     root: card,
     unmount: () => {
-      window.removeEventListener('mythrun.watchcampaign', onWatchEvent)
-      window.removeEventListener('mythrun.closewatch', onCloseWatchEvent)
       if (card.parentNode !== null) card.parentNode.removeChild(card)
     },
   }

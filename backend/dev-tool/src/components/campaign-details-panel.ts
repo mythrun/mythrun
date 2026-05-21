@@ -148,9 +148,9 @@ interface DomRefs {
 function buildDom(): DomRefs {
   const card = document.createElement('section')
   card.className = 'card'
-  // Event-driven panel: form on mount, fetches only on click or
-  // mythrun.opendetails. data-state="idle" is the verify harness's
-  // steady-state marker.
+  // Form on mount; fetches only on click or when the panel is mounted
+  // with an active campaign id already set. data-state="idle" is the
+  // verify harness's steady-state marker.
   card.setAttribute('data-state', 'idle')
 
   const title = document.createElement('h2')
@@ -320,30 +320,6 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): PanelHandle {
     void rename()
   })
 
-  // External clear hook (identity switch).
-  const onClear = (): void => {
-    input.value = ''
-    currentCampaignId = null
-    status.textContent = '(no campaign loaded)'
-    body.replaceChildren()
-    resumeStatus.textContent = ''
-    resumeBtn.style.display = 'none'
-    renameInput.value = ''
-    renameRow.style.display = 'none'
-    renameStatus.textContent = ''
-  }
-  window.addEventListener('mythrun.detailspanel.clear', onClear)
-
-  // External open hook (dispatched by my-campaigns-panel's Details button).
-  // Drop the campaignId into the input + fetch.
-  const onOpenDetails = (e: Event): void => {
-    const id = (e as CustomEvent<string>).detail
-    if (typeof id !== 'string' || id.length === 0) return
-    input.value = id
-    void fetchDetails()
-  }
-  window.addEventListener('mythrun.opendetails', onOpenDetails)
-
   card.appendChild(title)
   card.appendChild(inputRow)
   card.appendChild(status)
@@ -363,8 +339,6 @@ export function mountCampaignDetailsPanel(parent: HTMLElement): PanelHandle {
   return {
     root: card,
     unmount: () => {
-      window.removeEventListener('mythrun.detailspanel.clear', onClear)
-      window.removeEventListener('mythrun.opendetails', onOpenDetails)
       if (card.parentNode !== null) card.parentNode.removeChild(card)
     },
   }

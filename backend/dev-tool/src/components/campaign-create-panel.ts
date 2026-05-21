@@ -14,10 +14,10 @@
 //                                                judged" expander
 //   429 rejection_storm_cooldown              → Retry-After countdown
 //   503 queue_full                            → Retry-After countdown
-//   201                                       → dispatch a window event
-//                                                 the status panel listens
-//                                                 for and starts watching
-//                                                 the new campaignId
+//   201                                       → set the new campaignId as
+//                                                 the shell's active campaign
+//                                                 so the drawer + other panels
+//                                                 pick it up
 //
 // XSS: `rejectionMessage` is Sonnet-authored and adversarially-influenced
 // by user input (Roc-C2). It is written via `el.textContent` ONLY, never
@@ -25,16 +25,13 @@
 // in this panel.
 
 import { apiCall } from '../api-client.js'
+import { setActiveCampaignId } from '../shell/active-campaign.js'
 import { openSse, type SseConnection } from '../sse-client.js'
 import { registerPanelMount } from '../shell/shell.js'
 import type { PanelHandle } from './_shared/panel-skeleton.js'
 
-// Events broadcast on the window so the status-panel can pick the new
-// campaignId up without create-panel reaching across module boundaries.
-// The credit-ledger panel listens on a separate event for the "scroll
-// to grant button" link in the 403 branch.
-export const WATCH_CAMPAIGN_EVENT = 'mythrun.watchcampaign'
-export const CLOSE_WATCH_EVENT = 'mythrun.closewatch'
+// The credit-ledger panel listens on this event for the "scroll to grant
+// button" link in the 403 branch.
 export const SCROLL_TO_GRANT_EVENT = 'mythrun.scrolltogrant'
 
 interface ConceptRejectedBody {
@@ -434,8 +431,9 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
   let inFlightConcurrentBlock = false
   let cooldownTimer: ReturnType<typeof setInterval> | null = null
   // SSE connection for the just-created campaign. Closed and replaced on
-  // every submit and on identity-switch (mythrun.createpanel.clear), and
-  // closed when the pipeline reaches coherence_pass stage-completed.
+  // every submit, and closed when the pipeline reaches coherence_pass
+  // stage-completed. (Identity-switch unmounts the panel via the shell's
+  // identity-bridge, which calls our unmount → closeSse.)
   let sseConn: SseConnection | null = null
 
   function closeSse(): void {
@@ -765,14 +763,12 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
       const success = readCreateSuccess(res.body)
       if (success !== null) {
         result.textContent = `201 created — campaignId: ${success.campaignId}`
-        // Dispatch to the status-panel; it will populate its input and
-        // begin watching the SSE stream.
-        window.dispatchEvent(
-          new CustomEvent<string>(WATCH_CAMPAIGN_EVENT, { detail: success.campaignId }),
-        )
+        // Make the new campaign the shell's active one — the drawer +
+        // other panels react via onActiveCampaignChanged.
+        setActiveCampaignId(success.campaignId)
         // Also subscribe privately so this panel can react to
         // stage-failed events directly (separate consumer, separate
-        // lifecycle from the status-panel's connection).
+        // lifecycle from the drawer's connection).
         subscribeToStream(success.campaignId)
         setState('submitted')
         submitBtn.disabled = false
@@ -818,24 +814,6 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
 
   submitBtn.addEventListener('click', () => {
     void submit()
-  })
-
-  // External clear hook (identity switch). Resets the form + closes any
-  // pending cooldown timer + clears extra-details. Does NOT toggle mode
-  // (user's choice persists across identity switches by design).
-  window.addEventListener('mythrun.createpanel.clear', () => {
-    conceptTextarea.value = ''
-    for (const t of titleInputs) t.value = ''
-    for (const w of whyInputs) w.value = ''
-    bypassCheckbox.checked = false
-    result.textContent = '(not yet submitted)'
-    extraDetails.replaceChildren()
-    clearCooldown()
-    closeSse()
-    clearFailureSurfaces()
-    setState('ready')
-    inFlightConcurrentBlock = false
-    submitBtn.disabled = false
   })
 
   card.appendChild(title)

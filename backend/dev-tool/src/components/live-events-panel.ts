@@ -1,8 +1,7 @@
 // Live SSE event inspector. Chronological event log + derived current-
-// entity inventory. Subscribes to /api/campaigns/:id/status/stream via
-// openSse (auth header stamped by the sse-client; identity-switcher
-// updates routed in via the mythrun.closewatch event) and renders every
-// event the bridge forwards.
+// entity inventory. The live SSE feed is owned by the wire-log drawer
+// (see shell/drawer/subscriptions.ts); this panel mount is now a
+// minimal placeholder pointing the user to the drawer.
 //
 // Design split: pure helpers (truncation, inventory reducer, cap
 // application, compact-line classification) are exported so the test
