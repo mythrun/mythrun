@@ -1,85 +1,58 @@
-// myth-exac T23+T24+T25 — world-snapshot-panel.
+// myth-rdwq P6.B — world-snapshot-panel.
 //
-// Post-stage-4 wiki-style inspector. Renders the persisted snapshot
-// returned by GET /api/campaigns/:campaignId/world-snapshot as a two-pane
-// tree+detail view, and applies stage-7 (coherence_pass) post-snapshot
-// deltas in-place so the user watches the world settle without a refetch.
+// Refactored from the original event-driven SSE-subscribing panel to the
+// split-view action/feedback shape. The active campaign id is read from
+// the shell's active-campaign store; the user clicks Refresh to fetch
+// GET /api/campaigns/:campaignId/world-snapshot and the feedback pane
+// renders the tree + detail + glossary using the pre-existing helpers
+// from world-snapshot-render.ts.
 //
-// State machine: idle → loading → ready → error (any error code).
-// data-state on the panel root reflects the current state for the
-// JSDOM verifier.
-//
-// SSE subscription is shared with status / live-events panels: the
-// mythrun.watchcampaign event sets the current campaignId; phase events
-// drive idle→loading→ready; finalized events populate the
-// synthKey→DB-id maps; entity-updated / edge-added / edge-removed events
-// patch the local snapshot in place.
-//
-// Reconnect rule (per task spec): on stream re-open, if the phase is at
-// or beyond world_snapshot_ready we REPLACE the local snapshot from a
-// fresh GET — we do not attempt to merge missed deltas.
-//
-// Module split:
-//   - world-snapshot-types.ts: wire mirrors + phase helpers
-//   - world-snapshot-render.ts: pure DOM-rendering helpers + delta appliers
-//   - world-snapshot-panel.ts (this file): mount + controller (SSE + state)
+// Live SSE delta application (phase/finalized/entity-updated/edge-*)
+// migrated to the wire-log drawer per spec §6. The pure rendering +
+// delta-application helpers in world-snapshot-render.ts are preserved
+// for the drawer's future re-use; only the controller wiring changed.
 
 import { apiCall } from '../api-client.js'
-import { openSse, type SseConnection } from '../sse-client.js'
+import { getActiveCampaignId } from '../shell/active-campaign.js'
+import { registerPanelMount } from '../shell/shell.js'
 import {
-  applyEdgeAdded,
-  applyEdgeRemoved,
-  applyEntityUpdated,
+  buildSplitView,
+  type PanelHandle,
+} from './_shared/panel-skeleton.js'
+import { renderErrorBlock } from './_shared/error-block.js'
+import { appendJsonDisclosure } from './_shared/json-disclosure.js'
+import {
   renderDetail,
   renderGlossarySection,
   renderTree,
   renderWorldHeading,
 } from './world-snapshot-render.js'
 import {
-  isPostSnapshotPhase,
   toMutableSnapshot,
   type LocalSnapshot,
-  type SseClosePayload,
-  type SseLiveEvent,
-  type SseSnapshotPayload,
   type WorldSnapshotResponse,
 } from './world-snapshot-types.js'
 
-// ---- DOM ----
+function readCode(body: unknown): string {
+  if (typeof body === 'object' && body !== null && 'code' in body) {
+    const c = (body as { code: unknown }).code
+    if (typeof c === 'string') return c
+  }
+  return 'unknown'
+}
 
-interface ViewRefs {
-  readonly card: HTMLElement
-  readonly status: HTMLElement
+interface FeedbackRefs {
   readonly worldHeading: HTMLElement
   readonly tree: HTMLElement
   readonly detail: HTMLElement
   readonly glossary: HTMLElement
-  readonly retryBtn: HTMLButtonElement
 }
 
-function buildView(): ViewRefs {
-  const card = document.createElement('section')
-  card.className = 'card'
-  // Idle on mount — no campaign selected. The verify harness keys on the
-  // post-mount steady state being 'idle'.
-  card.setAttribute('data-state', 'idle')
-
-  const title = document.createElement('h2')
-  title.textContent = 'GET /api/campaigns/:campaignId/world-snapshot'
-
-  const status = document.createElement('div')
-  status.className = 'result'
-  status.textContent = '(no campaign watched — fires once phase ≥ world_snapshot_ready)'
-
-  const retryBtn = document.createElement('button')
-  retryBtn.textContent = 'Retry'
-  retryBtn.style.display = 'none'
-  retryBtn.style.marginLeft = '8px'
-
+function buildFeedbackRegions(parent: HTMLElement): FeedbackRefs {
   const worldHeading = document.createElement('div')
   worldHeading.style.fontFamily = 'var(--mono)'
   worldHeading.style.fontSize = '13px'
-  worldHeading.style.marginTop = '8px'
+  worldHeading.style.marginTop = '4px'
 
   const splitRow = document.createElement('div')
   splitRow.style.display = 'flex'
@@ -88,12 +61,12 @@ function buildView(): ViewRefs {
   splitRow.style.alignItems = 'stretch'
 
   const tree = document.createElement('div')
-  tree.style.flex = '0 0 280px'
+  tree.style.flex = '0 0 240px'
   tree.style.fontFamily = 'var(--mono)'
   tree.style.fontSize = '12px'
-  tree.style.maxHeight = '480px'
+  tree.style.maxHeight = '420px'
   tree.style.overflowY = 'auto'
-  tree.style.border = '1px solid var(--border)'
+  tree.style.border = '1px solid var(--border-soft)'
   tree.style.padding = '8px'
   tree.setAttribute('data-region', 'entity-tree')
 
@@ -101,9 +74,9 @@ function buildView(): ViewRefs {
   detail.style.flex = '1 1 auto'
   detail.style.fontFamily = 'var(--mono)'
   detail.style.fontSize = '12px'
-  detail.style.maxHeight = '480px'
+  detail.style.maxHeight = '420px'
   detail.style.overflowY = 'auto'
-  detail.style.border = '1px solid var(--border)'
+  detail.style.border = '1px solid var(--border-soft)'
   detail.style.padding = '8px'
   detail.setAttribute('data-region', 'entity-detail')
   detail.textContent = '(select an entity)'
@@ -111,315 +84,118 @@ function buildView(): ViewRefs {
   splitRow.appendChild(tree)
   splitRow.appendChild(detail)
 
-  // myth-pfke T13 — glossary region. Placed beneath the tree/detail split
-  // so the vocabulary registry sits as a full-width section under the
-  // entity inspector. Spec ships glossary with the initial snapshot; no
-  // granular per-entry SSE events in v1, so renderAll() is the only call
-  // site (initial load + reconnect-driven re-render).
   const glossary = document.createElement('div')
   glossary.style.fontFamily = 'var(--mono)'
   glossary.style.fontSize = '12px'
   glossary.style.marginTop = '12px'
-  glossary.style.border = '1px solid var(--border)'
+  glossary.style.border = '1px solid var(--border-soft)'
   glossary.style.padding = '8px'
   glossary.setAttribute('data-region', 'glossary')
 
-  card.appendChild(title)
-  card.appendChild(status)
-  card.appendChild(retryBtn)
-  card.appendChild(worldHeading)
-  card.appendChild(splitRow)
-  card.appendChild(glossary)
+  parent.appendChild(worldHeading)
+  parent.appendChild(splitRow)
+  parent.appendChild(glossary)
 
-  return { card, status, worldHeading, tree, detail, glossary, retryBtn }
+  return { worldHeading, tree, detail, glossary }
 }
 
-// ---- Controller state ----
+export function mountWorldSnapshotPanel(parent: HTMLElement): PanelHandle {
+  const { root, actionEl, feedbackEl, setState } = buildSplitView({
+    parent,
+    title: 'GET /api/campaigns/:campaignId/world-snapshot',
+  })
 
-interface ControllerState {
-  campaignId: string | null
-  phase: string | null
-  snapshot: LocalSnapshot | null
-  selectedEntityId: string | null
-  /** synthKey → entityId (resolved from finalized events). */
-  synthKeyToEntityId: Map<string, string>
-  /** synthKey → relationshipId (resolved from finalized events). */
-  synthKeyToRelationshipId: Map<string, string>
-  conn: SseConnection | null
-  /** Pending re-fetch token: any in-flight fetch whose token mismatches
-   *  the controller's current token is discarded on resolve. Prevents a
-   *  late response from a stale (campaign-switched-away) fetch from
-   *  clobbering the fresh state. */
-  fetchToken: number
-}
+  const note = document.createElement('div')
+  note.style.fontSize = '12px'
+  note.style.color = 'var(--fg-muted)'
+  note.style.marginBottom = '8px'
+  note.textContent =
+    'Fetch the persisted world snapshot (entities, facts, relationships, glossary).'
+  actionEl.appendChild(note)
 
-function createInitialState(): ControllerState {
-  return {
-    campaignId: null,
-    phase: null,
-    snapshot: null,
-    selectedEntityId: null,
-    synthKeyToEntityId: new Map(),
-    synthKeyToRelationshipId: new Map(),
-    conn: null,
-    fetchToken: 0,
-  }
-}
+  const refreshBtn = document.createElement('button')
+  refreshBtn.textContent = 'Refresh'
+  actionEl.appendChild(refreshBtn)
 
-// ---- Mount ----
+  const idle = document.createElement('div')
+  idle.style.color = 'var(--fg-muted)'
+  idle.style.fontSize = '12px'
+  idle.textContent = '(not yet fetched)'
+  feedbackEl.appendChild(idle)
 
-export function mountWorldSnapshotPanel(parent: HTMLElement): void {
-  const refs = buildView()
-  parent.appendChild(refs.card)
-  attachController(refs)
-}
+  setState('ready')
 
-function attachController(refs: ViewRefs): void {
-  const state = createInitialState()
-
-  function setState(s: 'idle' | 'loading' | 'ready' | 'error'): void {
-    refs.card.setAttribute('data-state', s)
-    refs.retryBtn.style.display = s === 'error' ? 'inline-block' : 'none'
-  }
-
-  function selectEntity(id: string | null): void {
-    state.selectedEntityId = id
-    if (state.snapshot) {
-      renderTree(refs.tree, state.snapshot, id, (eid) => {
-        selectEntity(eid)
-      })
-      renderDetail(refs.detail, state.snapshot, id)
-    }
-  }
+  let snapshot: LocalSnapshot | null = null
+  let selectedEntityId: string | null = null
+  let regions: FeedbackRefs | null = null
 
   function renderAll(): void {
-    if (state.snapshot) {
-      renderWorldHeading(refs.worldHeading, state.snapshot)
-      renderTree(refs.tree, state.snapshot, state.selectedEntityId, (eid) => {
-        selectEntity(eid)
-      })
-      renderDetail(refs.detail, state.snapshot, state.selectedEntityId)
-      // myth-pfke T13 — glossary repaints on every full snapshot render.
-      // Covers initial load, reconnect-driven re-fetch, and any caller
-      // that drops back through renderAll() after a delta.
-      renderGlossarySection(refs.glossary, state.snapshot.world.vocabularyRegistry)
-    } else {
-      renderWorldHeading(refs.worldHeading, null)
-      refs.tree.replaceChildren()
-      refs.detail.replaceChildren()
-      refs.detail.textContent = '(select an entity)'
-      refs.glossary.replaceChildren()
+    if (regions === null || snapshot === null) return
+    renderWorldHeading(regions.worldHeading, snapshot)
+    renderTree(regions.tree, snapshot, selectedEntityId, (eid) => {
+      selectedEntityId = eid
+      if (regions !== null && snapshot !== null) {
+        renderTree(regions.tree, snapshot, selectedEntityId, (next) => {
+          selectedEntityId = next
+          renderAll()
+        })
+        renderDetail(regions.detail, snapshot, selectedEntityId)
+      }
+    })
+    renderDetail(regions.detail, snapshot, selectedEntityId)
+    renderGlossarySection(regions.glossary, snapshot.world.vocabularyRegistry)
+  }
+
+  async function refresh(): Promise<void> {
+    const id = getActiveCampaignId()
+    if (id === null) {
+      feedbackEl.replaceChildren()
+      const m = document.createElement('div')
+      m.style.color = 'var(--fg-muted)'
+      m.textContent =
+        '(this endpoint requires an active campaign — pick one in GET /api/campaigns/mine)'
+      feedbackEl.appendChild(m)
+      return
     }
-  }
-
-  function resetSnapshot(): void {
-    state.snapshot = null
-    state.selectedEntityId = null
-    state.synthKeyToEntityId = new Map()
-    state.synthKeyToRelationshipId = new Map()
-    renderAll()
-  }
-
-  async function fetchSnapshot(): Promise<void> {
-    if (state.campaignId === null) return
-    const id = state.campaignId
-    state.fetchToken += 1
-    const token = state.fetchToken
     setState('loading')
-    refs.status.textContent = `loading snapshot for ${id}...`
+    feedbackEl.replaceChildren()
+    refreshBtn.disabled = true
 
     const res = await apiCall<WorldSnapshotResponse>(`/api/campaigns/${id}/world-snapshot`)
 
-    // Stale-response guard: campaign switched or controller reset while
-    // the fetch was in flight.
-    if (token !== state.fetchToken) return
+    refreshBtn.disabled = false
 
-    if (res.status === 200 && res.body !== null) {
-      state.snapshot = toMutableSnapshot(res.body)
-      // Preserve selection if the entity still exists; otherwise drop.
-      if (
-        state.selectedEntityId !== null &&
-        !state.snapshot.entities.some((e) => e.id === state.selectedEntityId)
-      ) {
-        state.selectedEntityId = null
-      }
-      refs.status.textContent =
-        `snapshot loaded (${String(state.snapshot.entities.length)} entities, ` +
-        `${String(state.snapshot.relationships.length)} relationships)`
-      setState('ready')
-      renderAll()
+    if (res.status !== 200 || res.body === null) {
+      setState('error')
+      renderErrorBlock(feedbackEl, {
+        status: res.status,
+        code: readCode(res.body),
+        message: 'Snapshot fetch failed',
+        raw: res.body,
+      })
       return
     }
 
-    refs.status.textContent = `error ${String(res.status)}: ${res.error ?? JSON.stringify(res.body)}`
-    setState('error')
-  }
-
-  function handleFinalized(synthKey: string, entityId: string): void {
-    // Stage-prefix tells us which map to populate. entity_relationships/
-    // is a relationship synthKey; world_and_factions/ and
-    // locations_and_npcs/ are entity synthKeys.
-    if (synthKey.startsWith('entity_relationships/')) {
-      state.synthKeyToRelationshipId.set(synthKey, entityId)
-      // If we stub-rendered an edge with the synthKey as its id, upgrade
-      // it to the real DB id now.
-      if (state.snapshot) {
-        const idx = state.snapshot.relationships.findIndex((r) => r.id === synthKey)
-        if (idx >= 0) {
-          const existing = state.snapshot.relationships[idx]
-          if (existing) {
-            state.snapshot.relationships[idx] = { ...existing, id: entityId }
-            renderAll()
-          }
-        }
-      }
-    } else {
-      state.synthKeyToEntityId.set(synthKey, entityId)
-    }
-  }
-
-  function handleSseEvent(raw: unknown): void {
-    if (typeof raw !== 'object' || raw === null) return
-    const t = (raw as { type?: unknown }).type
-    if (typeof t !== 'string') return
-    const ev = raw as SseLiveEvent
-    if (ev.type === 'phase') {
-      const prev = state.phase
-      state.phase = ev.phase
-      // First crossing into post-snapshot territory → fetch.
-      if (
-        !isPostSnapshotPhase(prev) &&
-        isPostSnapshotPhase(ev.phase) &&
-        state.snapshot === null
-      ) {
-        void fetchSnapshot()
-      }
-      return
-    }
-    if (ev.type === 'finalized') {
-      handleFinalized(ev.synthKey, ev.entityId)
-      return
-    }
-    // Post-snapshot deltas only apply if we already have a snapshot.
-    if (!state.snapshot) return
-    if (ev.type === 'entity-updated') {
-      const entityId = state.synthKeyToEntityId.get(ev.synthKey)
-      if (entityId === undefined) return
-      applyEntityUpdated(state.snapshot, entityId, ev.patch)
-      renderAll()
-      return
-    }
-    if (ev.type === 'edge-added') {
-      applyEdgeAdded(state.snapshot, ev, (sk) => state.synthKeyToEntityId.get(sk) ?? null)
-      renderAll()
-      return
-    }
-    // ev.type === 'edge-removed' is the only remaining arm.
-    const relId = state.synthKeyToRelationshipId.get(ev.synthKey) ?? ev.synthKey
-    applyEdgeRemoved(state.snapshot, relId)
+    setState('ready')
+    snapshot = toMutableSnapshot(res.body)
+    selectedEntityId = null
+    regions = buildFeedbackRegions(feedbackEl)
     renderAll()
+    appendJsonDisclosure(feedbackEl, res.body)
   }
 
-  function closeStream(): void {
-    if (state.conn) {
-      state.conn.close()
-      state.conn = null
-    }
+  const onClick = (): void => {
+    void refresh()
   }
+  refreshBtn.addEventListener('click', onClick)
 
-  function handleSnapshotFrame(data: string): void {
-    try {
-      const snap = JSON.parse(data) as SseSnapshotPayload
-      state.phase = snap.phase
-      // Reconnect rule: if we were already in a post-snapshot phase and
-      // have a local snapshot, REPLACE it from a fresh GET to pick up
-      // anything we missed while disconnected. The first snapshot frame
-      // (initial connect) also lands here — if phase is post-snapshot
-      // and we have no local snapshot yet, fetch.
-      if (isPostSnapshotPhase(snap.phase)) {
-        if (state.snapshot !== null) {
-          // Re-fetch on reconnect (snapshot frame seen with an existing
-          // snapshot ≡ a reconnect — see spec rule "REPLACE local
-          // snapshot from a fresh GET").
-          resetSnapshot()
-        }
-        void fetchSnapshot()
-      }
-    } catch {
-      // Ignore unparseable snapshot frame; live messages still drive
-      // phase transitions.
-    }
+  return {
+    root,
+    unmount: () => {
+      refreshBtn.removeEventListener('click', onClick)
+      if (root.parentNode !== null) root.parentNode.removeChild(root)
+    },
   }
-
-  function handleCloseFrame(data: string): void {
-    try {
-      const payload = JSON.parse(data) as SseClosePayload
-      refs.status.textContent =
-        `${refs.status.textContent} • (server closed: ${payload.reason ?? 'unknown'})`
-    } catch {
-      // ignore
-    }
-    closeStream()
-  }
-
-  function openStream(campaignId: string): void {
-    closeStream()
-    state.conn = openSse(`/api/campaigns/${campaignId}/status/stream`, {
-      onEvent: (ev) => {
-        if (ev.event === 'snapshot') {
-          handleSnapshotFrame(ev.data)
-          return
-        }
-        if (ev.event === 'close') {
-          handleCloseFrame(ev.data)
-          return
-        }
-        if (ev.event === 'message') {
-          try {
-            handleSseEvent(JSON.parse(ev.data))
-          } catch {
-            // Ignore unparseable frames.
-          }
-        }
-      },
-      onError: () => {
-        // Don't flip the panel state to 'error' on a stream error — the
-        // snapshot itself may be loaded and useful. Surface in the
-        // status line.
-        refs.status.textContent = `${refs.status.textContent} • (stream error)`
-        closeStream()
-      },
-    })
-  }
-
-  // ---- External events ----
-
-  // mythrun.watchcampaign fires when the user clicks Watch on the create
-  // / details panel. We piggy-back on the same event the status +
-  // live-events panels listen to, so all three panels track the same
-  // campaign without a separate input.
-  window.addEventListener('mythrun.watchcampaign', (e) => {
-    const id = (e as CustomEvent<string>).detail
-    if (typeof id !== 'string' || id.length === 0) return
-    state.campaignId = id
-    state.phase = null
-    resetSnapshot()
-    setState('idle')
-    refs.status.textContent = `watching ${id} (waiting for world_snapshot_ready)`
-    openStream(id)
-  })
-
-  // mythrun.closewatch: identity switch / explicit stop. Reset everything.
-  window.addEventListener('mythrun.closewatch', () => {
-    closeStream()
-    state.campaignId = null
-    state.phase = null
-    resetSnapshot()
-    setState('idle')
-    refs.status.textContent = '(no campaign watched — fires once phase ≥ world_snapshot_ready)'
-  })
-
-  refs.retryBtn.addEventListener('click', () => {
-    if (state.campaignId !== null) void fetchSnapshot()
-  })
 }
+
+registerPanelMount('GET', '/api/campaigns/:campaignId/world-snapshot', mountWorldSnapshotPanel)

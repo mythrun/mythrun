@@ -759,6 +759,7 @@ interface StubElement {
   parentNode: StubElement | null
   listeners: Map<string, ((e: unknown) => void)[]>
   appendChild: (child: StubElement) => StubElement
+  removeChild: (child: StubElement) => StubElement
   replaceChildren: (...children: StubElement[]) => void
   setAttribute: (name: string, value: string) => void
   getAttribute: (name: string) => string | null
@@ -784,6 +785,14 @@ function makeStubElement(tagName: string): StubElement {
     appendChild(child) {
       child.parentNode = el
       el.children.push(child)
+      return child
+    },
+    removeChild(child) {
+      const idx = el.children.indexOf(child)
+      if (idx >= 0) {
+        el.children.splice(idx, 1)
+        child.parentNode = null
+      }
       return child
     },
     replaceChildren(...children) {
@@ -826,6 +835,13 @@ interface GlobalWithDom {
   CustomEvent:
     | (new <T>(type: string, init?: { detail?: T }) => { type: string; detail: T | undefined })
     | undefined
+  localStorage:
+    | {
+        getItem: (k: string) => string | null
+        setItem: (k: string, v: string) => void
+        removeItem: (k: string) => void
+      }
+    | undefined
 }
 
 const g = globalThis as unknown as GlobalWithDom
@@ -833,6 +849,7 @@ const g = globalThis as unknown as GlobalWithDom
 let originalDocument: GlobalWithDom['document']
 let originalWindow: GlobalWithDom['window']
 let originalCustomEvent: GlobalWithDom['CustomEvent']
+let originalLocalStorage: GlobalWithDom['localStorage']
 const windowListeners = new Map<string, ((e: unknown) => void)[]>()
 
 function dispatchWindow(type: string, detail?: unknown): void {
@@ -844,6 +861,7 @@ beforeAll(() => {
   originalDocument = g.document
   originalWindow = g.window
   originalCustomEvent = g.CustomEvent
+  originalLocalStorage = g.localStorage
   g.document = {
     createElement: (tag: string) => makeStubElement(tag),
   }
@@ -856,6 +874,18 @@ beforeAll(() => {
     dispatchEvent: (event) => {
       dispatchWindow(event.type, event.detail)
       return true
+    },
+  }
+  // In-memory localStorage stub — the placeholder panel reads the active
+  // campaign id via getActiveCampaignId() to pick the empty-state message.
+  const store = new Map<string, string>()
+  g.localStorage = {
+    getItem: (k) => store.get(k) ?? null,
+    setItem: (k, v) => {
+      store.set(k, v)
+    },
+    removeItem: (k) => {
+      store.delete(k)
     },
   }
   g.CustomEvent = function CustomEventStub<T>(
@@ -872,53 +902,28 @@ afterAll(() => {
   g.document = originalDocument
   g.window = originalWindow
   g.CustomEvent = originalCustomEvent
+  g.localStorage = originalLocalStorage
   windowListeners.clear()
 })
 
-describe('mountLiveEventsPanel (DOM stub)', () => {
-  it('mounts a card with chip buttons, status, log, and inventory sections', async () => {
+describe('mountLiveEventsPanel (DOM stub) — myth-rdwq placeholder shape', () => {
+  it('returns a PanelHandle whose root is appended to the parent with data-state="ready"', async () => {
     const { mountLiveEventsPanel } = await import('../live-events-panel.js')
     const parent = makeStubElement('div')
-    mountLiveEventsPanel(parent as unknown as HTMLElement)
+    const handle = mountLiveEventsPanel(parent as unknown as HTMLElement)
     expect(parent.children).toHaveLength(1)
-    const card = parent.children[0]
-    if (!card) throw new Error('expected mount to produce a card child')
-    expect(card.className).toBe('card')
-    // Children: title, chipRow, statusEl, logEl, summaryEl, inventoryEl.
-    expect(card.children.length).toBeGreaterThanOrEqual(6)
-    const statusEl = card.children.find((c) => c.textContent === '(no campaign watched)')
-    expect(statusEl).toBeDefined()
+    const root = parent.children[0]
+    if (!root) throw new Error('expected mount to produce a root child')
+    expect(root.getAttribute('data-state')).toBe('ready')
+    expect(handle.root).toBe(root as unknown as HTMLElement)
   })
 
-  it('mythrun.closewatch resets the panel: status text shows "(no campaign watched)"', async () => {
+  it('unmount removes the panel root from its parent', async () => {
     const { mountLiveEventsPanel } = await import('../live-events-panel.js')
     const parent = makeStubElement('div')
-    mountLiveEventsPanel(parent as unknown as HTMLElement)
-    // Fire closewatch and confirm status text is reset.
-    dispatchWindow('mythrun.closewatch')
-    const card = parent.children[0]
-    if (!card) throw new Error('expected mount to produce a card child')
-    const status = card.children.find((c) => c.className === 'result' && c.textContent !== '')
-    expect(status?.textContent).toBe('(no campaign watched)')
-  })
-
-  it('clicking a chip toggles its active dataset attribute', async () => {
-    const { mountLiveEventsPanel } = await import('../live-events-panel.js')
-    const parent = makeStubElement('div')
-    mountLiveEventsPanel(parent as unknown as HTMLElement)
-    const card = parent.children[0]
-    if (!card) throw new Error('expected mount to produce a card child')
-    // chipRow is the 2nd child (after the title). Its children are 5 chip buttons.
-    const chipRow = card.children[1]
-    if (!chipRow) throw new Error('expected chipRow to be the 2nd child')
-    const phaseChip = chipRow.children.find((c) => c.dataset.chip === 'phase')
-    expect(phaseChip).toBeDefined()
-    expect(phaseChip?.dataset.active).toBe('true')
-    phaseChip?.click()
-    expect(phaseChip?.dataset.active).toBe('false')
-    expect(phaseChip?.textContent).toContain('✗')
-    phaseChip?.click()
-    expect(phaseChip?.dataset.active).toBe('true')
-    expect(phaseChip?.textContent).toContain('✓')
+    const handle = mountLiveEventsPanel(parent as unknown as HTMLElement)
+    expect(parent.children).toHaveLength(1)
+    handle.unmount()
+    expect(parent.children).toHaveLength(0)
   })
 })

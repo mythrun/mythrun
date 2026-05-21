@@ -16,8 +16,20 @@
 // backend src boundary) so the dev-tool tsconfig stays self-contained;
 // any drift between the two surfaces is caught by the bridge tests on
 // the backend side.
+//
+// myth-rdwq P6.B: the panel mount path is now a minimal placeholder —
+// live events are owned by the wire-log drawer (spec §6). The pure
+// reducer helpers (deriveInventory, derivePlaceholderBuffer, compactLine,
+// applyCap, truncateString, primaryKeyOf, summarizeObject,
+// summarizeArray) are PRESERVED below: they're test-covered + the drawer
+// will reuse them once it adopts reducer-based rendering.
 
-import { openSse, type SseConnection } from '../sse-client.js'
+import { getActiveCampaignId } from '../shell/active-campaign.js'
+import { registerPanelMount } from '../shell/shell.js'
+import {
+  buildSplitView,
+  type PanelHandle,
+} from './_shared/panel-skeleton.js'
 
 // ---- Event payload shapes (mirror of pipeline-events.ts) ----
 
@@ -488,252 +500,48 @@ function summarizePatchDetail(patch: Record<string, unknown>): string {
 }
 
 // ---- DOM mount ----
+//
+// myth-rdwq P6.B: minimal placeholder panel. The live SSE feed is owned
+// by the wire-log drawer (spec §6); this panel just points the user there.
+// The drawer's bus is currently encapsulated inside `mountShell()` (not
+// exported), so we don't subscribe here. Phase-7 work will move the
+// reducer helpers above into the drawer renderer.
 
-interface CloseFramePayload {
-  readonly reason?: string
-}
-
-// Filter-chip kinds. The chips collapse the 13 event arms into 5 broad
-// buckets so the user has a reasonable number of toggles. Unknown future
-// arms fall through to "other."
-type FilterChip = 'phase' | 'stage' | 'entity' | 'edge' | 'other'
-
-function chipFor(eventType: string): FilterChip {
-  if (eventType === 'phase' || eventType === 'cost-update') return 'phase'
-  if (eventType.startsWith('stage-')) return 'stage'
-  if (eventType.startsWith('entity-') || eventType === 'finalized') return 'entity'
-  if (eventType.startsWith('edge-')) return 'edge'
-  return 'other'
-}
-
-export function mountLiveEventsPanel(parent: HTMLElement): void {
-  const view = buildView()
-  parent.appendChild(view.card)
-  attachController(view)
-}
-
-interface ViewRefs {
-  readonly card: HTMLElement
-  readonly statusEl: HTMLElement
-  readonly logEl: HTMLElement
-  readonly inventoryEl: HTMLElement
-  readonly summaryEl: HTMLElement
-  readonly chipButtons: ReadonlyMap<FilterChip, HTMLButtonElement>
-}
-
-function buildView(): ViewRefs {
-  const card = document.createElement('section')
-  card.className = 'card'
-  // Event-driven panel: idle on mount, transitions to streaming state
-  // only when mythrun.watchcampaign fires. The verify harness keys on
-  // data-state="idle" to confirm the panel reached its mount-time
-  // steady state.
-  card.setAttribute('data-state', 'idle')
-
-  const title = document.createElement('h2')
-  title.textContent = 'Live SSE events'
-
-  const chipRow = document.createElement('div')
-  chipRow.style.display = 'flex'
-  chipRow.style.gap = '6px'
-  chipRow.style.marginBottom = '8px'
-  chipRow.style.flexWrap = 'wrap'
-
-  const chips: [FilterChip, string][] = [
-    ['phase', 'phase'],
-    ['stage', 'stage'],
-    ['entity', 'entity'],
-    ['edge', 'edge'],
-    ['other', 'other'],
-  ]
-  const chipButtons = new Map<FilterChip, HTMLButtonElement>()
-  for (const [key, label] of chips) {
-    const btn = document.createElement('button')
-    btn.textContent = `${label} ✓`
-    btn.dataset.chip = key
-    btn.dataset.active = 'true'
-    chipRow.appendChild(btn)
-    chipButtons.set(key, btn)
-  }
-
-  const statusEl = document.createElement('div')
-  statusEl.className = 'result'
-  statusEl.textContent = '(no campaign watched)'
-
-  const logEl = document.createElement('div')
-  logEl.style.fontFamily = 'var(--mono)'
-  logEl.style.fontSize = '12px'
-  logEl.style.maxHeight = '300px'
-  logEl.style.overflowY = 'auto'
-  logEl.style.border = '1px solid var(--border)'
-  logEl.style.padding = '8px'
-  logEl.style.marginTop = '8px'
-
-  const summaryEl = document.createElement('div')
-  summaryEl.className = 'result'
-  summaryEl.style.marginTop = '12px'
-  summaryEl.textContent = '0 entities • 0 edges'
-
-  const inventoryEl = document.createElement('div')
-  inventoryEl.style.fontFamily = 'var(--mono)'
-  inventoryEl.style.fontSize = '12px'
-  inventoryEl.style.marginTop = '4px'
-
-  card.appendChild(title)
-  card.appendChild(chipRow)
-  card.appendChild(statusEl)
-  card.appendChild(logEl)
-  card.appendChild(summaryEl)
-  card.appendChild(inventoryEl)
-
-  return { card, statusEl, logEl, inventoryEl, summaryEl, chipButtons }
-}
-
-function attachController(refs: ViewRefs): void {
-  let entries: LogEntry[] = []
-  const activeChips = new Set<FilterChip>(['phase', 'stage', 'entity', 'edge', 'other'])
-  let conn: SseConnection | null = null
-
-  function reset(): void {
-    if (conn) {
-      conn.close()
-      conn = null
-    }
-    entries = []
-    activeChips.clear()
-    for (const k of ['phase', 'stage', 'entity', 'edge', 'other'] as FilterChip[]) {
-      activeChips.add(k)
-    }
-    for (const [key, btn] of refs.chipButtons.entries()) {
-      btn.textContent = `${key} ✓`
-      btn.dataset.active = 'true'
-    }
-    refs.statusEl.textContent = '(no campaign watched)'
-    render()
-  }
-
-  function render(): void {
-    refs.logEl.replaceChildren()
-    for (const entry of entries) {
-      const cardEl = renderEntry(entry, activeChips)
-      if (cardEl) refs.logEl.appendChild(cardEl)
-    }
-    const inv = deriveInventory(entries)
-    refs.summaryEl.textContent = `${String(inv.rows.length)} entities • ${String(inv.edgeCount)} edges`
-    refs.inventoryEl.replaceChildren()
-    for (const row of inv.rows) {
-      const rowEl = document.createElement('div')
-      rowEl.textContent = `${row.displayId}  ${row.kind}  ${row.name ?? '(unnamed)'}`
-      refs.inventoryEl.appendChild(rowEl)
-    }
-    refs.logEl.scrollTop = refs.logEl.scrollHeight
-  }
-
-  function pushEvent(event: LiveEvent): void {
-    entries = [...entries, { kind: 'event', event }]
-    const capped = applyCap(entries)
-    entries = capped as LogEntry[]
-    render()
-  }
-
-  for (const [key, btn] of refs.chipButtons.entries()) {
-    btn.addEventListener('click', () => {
-      if (activeChips.has(key)) {
-        activeChips.delete(key)
-        btn.textContent = `${key} ✗`
-        btn.dataset.active = 'false'
-      } else {
-        activeChips.add(key)
-        btn.textContent = `${key} ✓`
-        btn.dataset.active = 'true'
-      }
-      render()
-    })
-  }
-
-  window.addEventListener('mythrun.watchcampaign', (e) => {
-    const id = (e as CustomEvent<string>).detail
-    if (typeof id !== 'string' || id.length === 0) return
-    if (conn) conn.close()
-    entries = []
-    refs.statusEl.textContent = `watching ${id}`
-    render()
-    conn = openSse(`/api/campaigns/${id}/status/stream`, {
-      onEvent: (ev) => {
-        if (ev.event === 'snapshot') return
-        if (ev.event === 'close') {
-          try {
-            const payload = JSON.parse(ev.data) as CloseFramePayload
-            refs.statusEl.textContent = `(server closed — reason: ${payload.reason ?? 'unknown'})`
-          } catch {
-            refs.statusEl.textContent = '(server closed)'
-          }
-          if (conn) {
-            conn.close()
-            conn = null
-          }
-          return
-        }
-        if (ev.event === 'message') {
-          try {
-            pushEvent(JSON.parse(ev.data) as LiveEvent)
-          } catch {
-            // Ignore unparseable frames.
-          }
-        }
-      },
-      onError: (err) => {
-        refs.statusEl.textContent = `(connection error: ${err.message})`
-        if (conn) {
-          conn.close()
-          conn = null
-        }
-      },
-    })
+export function mountLiveEventsPanel(parent: HTMLElement): PanelHandle {
+  const { root, actionEl, feedbackEl, setState } = buildSplitView({
+    parent,
+    title: 'GET /api/campaigns/:campaignId/status/stream',
   })
 
-  window.addEventListener('mythrun.closewatch', () => {
-    reset()
-  })
-}
+  const note = document.createElement('div')
+  note.style.fontSize = '12px'
+  note.style.color = 'var(--fg-muted)'
+  note.style.marginBottom = '8px'
+  note.textContent =
+    'Live SSE feed is owned by the wire-log drawer (spec §6).'
+  actionEl.appendChild(note)
 
-function renderEntry(entry: LogEntry, activeChips: ReadonlySet<FilterChip>): HTMLElement | null {
-  if (entry.kind === 'placeholder') {
-    const el = document.createElement('div')
-    el.style.color = 'var(--fg-muted)'
-    el.textContent = `[…${String(entry.droppedCount)} earlier events dropped]`
-    return el
+  const placeholder = document.createElement('div')
+  placeholder.style.color = 'var(--fg-muted)'
+  placeholder.style.fontSize = '12px'
+  const id = getActiveCampaignId()
+  if (id === null) {
+    placeholder.textContent =
+      '(this endpoint requires an active campaign — pick one in GET /api/campaigns/mine)'
+  } else {
+    placeholder.textContent =
+      '(events for this campaign appear in the wire-log drawer on the right — the panel-level live feed is being replaced by the drawer)'
   }
-  const event = entry.event
-  const chip = chipFor(event.type)
-  if (!activeChips.has(chip)) return null
-  const compact = compactLine(event)
-  const wrapper = document.createElement('div')
-  wrapper.style.padding = '2px 0'
-  wrapper.style.borderBottom = '1px solid var(--border)'
+  feedbackEl.appendChild(placeholder)
 
-  const primary = document.createElement('div')
-  primary.textContent = compact.primary
-  primary.style.cursor = 'pointer'
+  setState('ready')
 
-  const detail = document.createElement('div')
-  detail.style.color = 'var(--fg-muted)'
-  detail.style.marginLeft = '12px'
-  detail.textContent = compact.detail
-
-  const expanded = document.createElement('pre')
-  expanded.style.display = 'none'
-  expanded.style.background = 'var(--bg)'
-  expanded.style.padding = '6px'
-  expanded.style.fontSize = '11px'
-  expanded.textContent = JSON.stringify(event, null, 2)
-
-  primary.addEventListener('click', () => {
-    expanded.style.display = expanded.style.display === 'none' ? 'block' : 'none'
-  })
-
-  wrapper.appendChild(primary)
-  if (compact.detail !== '') wrapper.appendChild(detail)
-  wrapper.appendChild(expanded)
-  return wrapper
+  return {
+    root,
+    unmount: () => {
+      if (root.parentNode !== null) root.parentNode.removeChild(root)
+    },
+  }
 }
+
+registerPanelMount('GET', '/api/campaigns/:campaignId/status/stream', mountLiveEventsPanel)

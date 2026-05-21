@@ -29,6 +29,9 @@ import './components/campaign-rename-panel.js'
 import './components/campaign-resume-panel.js'
 import './components/campaign-archive-panel.js'
 import './components/campaign-delete-panel.js'
+// myth-rdwq P6.B — new WORLD-section panels self-register on import.
+import './components/hierarchy-panel.js'
+import './components/random-tables-panel.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

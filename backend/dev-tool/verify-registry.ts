@@ -36,6 +36,8 @@ import { mountInvitesPanel } from './src/components/invites-panel.js'
 import { mountSessionTicketPanel } from './src/components/session-ticket-panel.js'
 import { mountBillingPanel } from './src/components/billing-panel.js'
 import { mountWorldSnapshotPanel } from './src/components/world-snapshot-panel.js'
+import { mountHierarchyPanel } from './src/components/hierarchy-panel.js'
+import { mountRandomTablesPanel } from './src/components/random-tables-panel.js'
 import { mountCharacterCreationPanel } from './src/components/character-creation-panel.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
@@ -124,9 +126,12 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     exercises: [route('GET', '/api/campaigns/mine')],
   },
   status: {
-    pattern: 'event-driven',
+    // myth-rdwq P6.B refactor: action+feedback shape (Refresh button +
+    // pipeline_runs snapshot). The SSE stream is owned by the wire-log
+    // drawer; this panel polls the snapshot route.
+    pattern: 'action-only',
     mount: mountStatusPanel,
-    readySelector: '[data-state="idle"]',
+    readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
     exercises: [
       route('GET', '/api/campaigns/:campaignId/status'),
@@ -134,9 +139,12 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     ],
   },
   'live-events': {
-    pattern: 'event-driven',
+    // myth-rdwq P6.B refactor: minimal placeholder panel pointing at the
+    // wire-log drawer (spec §6). The reducer helpers in the source file
+    // are preserved for the drawer's future re-use.
+    pattern: 'action-only',
     mount: mountLiveEventsPanel,
-    readySelector: '[data-state="idle"]',
+    readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
     exercises: [route('GET', '/api/campaigns/:campaignId/status/stream')],
   },
@@ -176,15 +184,28 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     exercises: [route('DELETE', '/api/campaigns/:campaignId')],
   },
   'world-snapshot': {
-    // Idle until a campaign is watched (via mythrun.watchcampaign) AND the
-    // pipeline crosses into world_snapshot_ready. The verifier mounts the
-    // panel against a freshly-started backend with no active watch, so the
-    // post-mount steady state is 'idle' — matching status / live-events.
-    pattern: 'event-driven',
+    // myth-rdwq P6.B refactor: action+feedback shape (Refresh button +
+    // tree/detail/glossary feedback). Post-mount steady state is 'ready'.
+    // SSE delta application migrated to the wire-log drawer.
+    pattern: 'fetch-on-mount',
     mount: mountWorldSnapshotPanel,
-    readySelector: '[data-state="idle"]',
+    readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
     exercises: [route('GET', '/api/campaigns/:campaignId/world-snapshot')],
+  },
+  hierarchy: {
+    pattern: 'fetch-on-mount',
+    mount: mountHierarchyPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/hierarchy')],
+  },
+  'random-tables': {
+    pattern: 'fetch-on-mount',
+    mount: mountRandomTablesPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/random-tables')],
   },
   'character-creation': {
     // MYT-53 T23. Idle until the user clicks Watch on my-campaigns; the
