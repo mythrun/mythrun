@@ -11,7 +11,6 @@ import './styles.css'
 // once they self-register via the registerPanelMount mechanism. When
 // the last side-effect import disappears, the verify-registry rule
 // should be updated to look at registerPanelMount call sites instead.
-import './components/health-panel.js'
 import './components/status-panel.js'
 import './components/campaign-create-panel.js'
 import './components/campaign-details-panel.js'
@@ -19,7 +18,6 @@ import './components/my-campaigns-panel.js'
 import './components/live-events-panel.js'
 import './components/users-panel.js'
 import './components/invites-panel.js'
-import './components/session-ticket-panel.js'
 import './components/world-snapshot-panel.js'
 // myth-ukpc P6.A — new CAMPAIGNS-section panels self-register on import.
 import './components/campaign-rename-panel.js'
@@ -62,6 +60,13 @@ import './components/checkout-panel.js'
 import './components/portal-panel.js'
 import './components/upgrade-tier-panel.js'
 import './components/dev-credits-grant-panel.js'
+// myth-hs6g P6.G — new SYSTEM-section panels self-register on import.
+// Replace the deleted composite health-panel with two single-purpose
+// liveness/readiness probes; rewrite session-ticket-panel in place to
+// the PanelHandle + split-view shape (it kept its file name).
+import './components/health-live-panel.js'
+import './components/health-ready-panel.js'
+import './components/session-ticket-panel.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

@@ -1,84 +1,120 @@
-// WS ticket panel.
+// backend/dev-tool/src/components/session-ticket-panel.ts
 //
-// Exercises POST /api/sessions/:id/ws-ticket — the HTTP half of the
-// WebSocket-ticket exchange. The dev tool doesn't speak WebSockets
-// yet (the upgrade handler lands in the Session Runtime milestone),
-// but the ticket-mint route needs an action surface so the route audit
-// can confirm coverage.
+// myth-hs6g P6.G — POST /api/sessions/:id/ws-ticket.
+// Exercises the HTTP half of the WebSocket-ticket exchange. The dev
+// tool doesn't speak WebSockets yet (the upgrade handler lands in the
+// Session Runtime milestone), but the ticket-mint route needs an
+// action surface so the route audit can confirm coverage.
 //
-// Form: paste a sessionId (UUID), click Mint. The response carries
-// `{ ticket, expiresAt }`; the panel renders both. 404 (session not
-// found) and 403 (not a member) are the common error paths and render
-// as plain status text.
-//
-// Pattern: action-only.
+// Pattern: action-only. Identity-sensitive — but the shell unmounts/
+// remounts on identity switch, so the input clears naturally; no
+// onIdentityChanged listener wired here.
 
 import { apiCall } from '../api-client.js'
-import { onIdentityChanged } from '../identity.js'
+import { registerPanelMount } from '../shell/shell.js'
+import {
+  buildSplitView,
+  type PanelHandle,
+} from './_shared/panel-skeleton.js'
+import { renderErrorBlock } from './_shared/error-block.js'
+import { appendJsonDisclosure } from './_shared/json-disclosure.js'
 
 interface TicketResponse {
   readonly ticket: string
   readonly expiresAt: string
 }
 
-export function mountSessionTicketPanel(parent: HTMLElement): void {
-  const card = document.createElement('section')
-  card.className = 'card'
-  card.setAttribute('data-state', 'ready')
+function readCode(body: unknown): string {
+  if (typeof body === 'object' && body !== null && 'code' in body) {
+    const c = (body as { code: unknown }).code
+    if (typeof c === 'string') return c
+  }
+  return 'unknown'
+}
 
-  const title = document.createElement('h2')
-  title.textContent = 'POST /api/sessions/:id/ws-ticket'
+export function mountSessionTicketPanel(parent: HTMLElement): PanelHandle {
+  const { root, actionEl, feedbackEl, setState } = buildSplitView({
+    parent,
+    title: 'POST /api/sessions/:id/ws-ticket',
+  })
 
   const input = document.createElement('input')
   input.type = 'text'
   input.placeholder = 'sessionId (paste a UUID)'
-  input.style.width = '320px'
+  input.style.width = '100%'
+  input.style.marginBottom = '8px'
+  actionEl.appendChild(input)
 
-  const btn = document.createElement('button')
-  btn.textContent = 'Mint ticket'
-  btn.style.marginLeft = '8px'
+  const submitBtn = document.createElement('button')
+  submitBtn.textContent = 'Mint ticket'
+  actionEl.appendChild(submitBtn)
 
-  const inputRow = document.createElement('div')
-  inputRow.style.display = 'flex'
-  inputRow.style.gap = '8px'
-  inputRow.style.marginBottom = '12px'
-  inputRow.appendChild(input)
-  inputRow.appendChild(btn)
+  const note = document.createElement('div')
+  note.style.fontSize = '12px'
+  note.style.color = 'var(--fg-muted)'
+  note.style.marginTop = '8px'
+  note.textContent = 'HTTP half of the WS handshake; no socket is opened.'
+  actionEl.appendChild(note)
 
-  const result = document.createElement('pre')
-  result.className = 'result'
-  result.textContent = '(no ticket yet)'
+  const idle = document.createElement('div')
+  idle.style.color = 'var(--fg-muted)'
+  idle.style.fontSize = '12px'
+  idle.textContent = '(no ticket yet)'
+  feedbackEl.appendChild(idle)
 
-  async function mint(): Promise<void> {
+  setState('ready')
+
+  async function submit(): Promise<void> {
     const id = input.value.trim()
     if (id.length === 0) {
-      result.textContent = 'paste a sessionId first'
+      feedbackEl.replaceChildren()
+      const m = document.createElement('div')
+      m.style.color = 'var(--fg-muted)'
+      m.textContent = 'paste a sessionId first'
+      feedbackEl.appendChild(m)
       return
     }
-    btn.disabled = true
-    result.textContent = 'minting...'
+    setState('loading')
+    feedbackEl.replaceChildren()
+    submitBtn.disabled = true
+
     const res = await apiCall<TicketResponse>(`/api/sessions/${id}/ws-ticket`, {
       method: 'POST',
     })
-    if (res.status === 200 && res.body !== null) {
-      result.textContent = `ticket:    ${res.body.ticket}\nexpiresAt: ${res.body.expiresAt}`
-    } else {
-      result.textContent = `error ${String(res.status)}: ${res.error ?? JSON.stringify(res.body)}`
+
+    submitBtn.disabled = false
+
+    if (res.status !== 200 || res.body === null) {
+      setState('error')
+      renderErrorBlock(feedbackEl, {
+        status: res.status,
+        code: readCode(res.body),
+        message: 'Mint ticket failed',
+        raw: res.body,
+      })
+      return
     }
-    btn.disabled = false
+
+    setState('ready')
+    const summary = document.createElement('div')
+    summary.style.color = 'var(--fg-emphasis)'
+    summary.textContent = `${String(res.status)} — ticket=${res.body.ticket}`
+    feedbackEl.appendChild(summary)
+    appendJsonDisclosure(feedbackEl, res.body)
   }
 
-  btn.addEventListener('click', () => {
-    void mint()
-  })
+  const onClick = (): void => {
+    void submit()
+  }
+  submitBtn.addEventListener('click', onClick)
 
-  onIdentityChanged(() => {
-    input.value = ''
-    result.textContent = '(no ticket yet)'
-  })
-
-  card.appendChild(title)
-  card.appendChild(inputRow)
-  card.appendChild(result)
-  parent.appendChild(card)
+  return {
+    root,
+    unmount: () => {
+      submitBtn.removeEventListener('click', onClick)
+      if (root.parentNode !== null) root.parentNode.removeChild(root)
+    },
+  }
 }
+
+registerPanelMount('POST', '/api/sessions/:id/ws-ticket', mountSessionTicketPanel)

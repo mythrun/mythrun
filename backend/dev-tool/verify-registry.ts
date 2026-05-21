@@ -20,7 +20,8 @@
 import type { BackendRoute } from '../src/contract/backend-routes.js'
 
 import { mountIdentitySwitcher } from './src/components/identity-switcher.js'
-import { mountHealthPanel } from './src/components/health-panel.js'
+import { mountHealthLivePanel } from './src/components/health-live-panel.js'
+import { mountHealthReadyPanel } from './src/components/health-ready-panel.js'
 import { mountCampaignCreatePanel } from './src/components/campaign-create-panel.js'
 import { mountMyCampaignsPanel } from './src/components/my-campaigns-panel.js'
 import { mountStatusPanel } from './src/components/status-panel.js'
@@ -129,12 +130,24 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     errorSelector: '[data-state="error"]',
     exercises: [],
   },
-  health: {
+  // myth-hs6g P6.G — the old composite 'health' entry was split into
+  // 'health-live' (GET /health) and 'health-ready' (GET /health/ready)
+  // per spec §3 (one panel per endpoint × action). The new panels use
+  // the standard split-view skeleton and emit data-state="ready" on a
+  // successful probe.
+  'health-live': {
     pattern: 'fetch-on-mount',
-    mount: mountHealthPanel,
-    readySelector: '[data-state="loaded"]',
+    mount: mountHealthLivePanel,
+    readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/health'), route('GET', '/health/ready')],
+    exercises: [route('GET', '/health')],
+  },
+  'health-ready': {
+    pattern: 'fetch-on-mount',
+    mount: mountHealthReadyPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/health/ready')],
   },
   'campaign-create': {
     pattern: 'action-only',
