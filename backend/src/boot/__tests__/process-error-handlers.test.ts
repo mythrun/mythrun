@@ -140,4 +140,72 @@ describe('installProcessErrorHandlers', () => {
     await Promise.all([jobA, jobB])
     expect(seenWorldIds).toEqual(['wA'])
   })
+
+  it('mark-failed catches PG errors and continues to the publish step', async () => {
+    const { pool, redisRealtime, exit, install } = makeDeps()
+    pool.query.mockRejectedValue(new Error('pg-down'))
+    installed = install()
+    await runWithJobContext(
+      { jobId: 'jpg', worldId: 'wpg', campaignId: 'cpg' },
+      async () => {
+        process.emit('unhandledRejection', new Error('boom'), Promise.resolve())
+        await flushMicrotasks()
+      },
+    )
+    expect(pool.query).toHaveBeenCalled()
+    expect(redisRealtime.publish).toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('mark-failed catches Redis publish errors after the PG update', async () => {
+    const { pool, redisRealtime, exit, install } = makeDeps()
+    redisRealtime.publish.mockRejectedValue(new Error('redis-down'))
+    installed = install()
+    await runWithJobContext(
+      { jobId: 'jrd', worldId: 'wrd', campaignId: 'crd' },
+      async () => {
+        process.emit('unhandledRejection', new Error('boom'), Promise.resolve())
+        await flushMicrotasks()
+      },
+    )
+    expect(pool.query).toHaveBeenCalled()
+    expect(redisRealtime.publish).toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('non-Error reason (string thrown) is still serialized to wire shape', async () => {
+    const { pool, exit, install } = makeDeps()
+    installed = install()
+    await runWithJobContext(
+      { jobId: 'jstr', worldId: 'wstr', campaignId: 'cstr' },
+      async () => {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        process.emit('unhandledRejection', 'plain-string-rejection', Promise.resolve())
+        await flushMicrotasks()
+      },
+    )
+    expect(pool.query).toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('uncaughtException handler runs the same flow as unhandledRejection', async () => {
+    const { pool, redisRealtime, exit, install } = makeDeps()
+    installed = install()
+    await runWithJobContext(
+      { jobId: 'juc', worldId: 'wuc', campaignId: 'cuc' },
+      async () => {
+        process.emit('uncaughtException', new Error('sync-throw'))
+        await flushMicrotasks()
+      },
+    )
+    expect(pool.query).toHaveBeenCalledWith(
+      `UPDATE worlds SET status = 'failed' WHERE id = $1`,
+      ['wuc'],
+    )
+    expect(redisRealtime.publish).toHaveBeenCalledWith(
+      'test:pipeline:campaign:cuc',
+      JSON.stringify({ type: 'phase', phase: 'world_gen_failed' }),
+    )
+    expect(exit).not.toHaveBeenCalled()
+  })
 })

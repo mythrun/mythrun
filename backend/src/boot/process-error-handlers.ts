@@ -45,8 +45,10 @@ export function installProcessErrorHandlers(
 
   function pruneOld(): void {
     const cutoff = deps.now() - WINDOW_MS
-    while (recent.length > 0 && (recent[0] ?? 0) < cutoff) {
+    let first = recent[0]
+    while (first !== undefined && first < cutoff) {
       recent.shift()
+      first = recent[0]
     }
   }
 

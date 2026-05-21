@@ -367,4 +367,39 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
     expect(payload.survivors).toBe(1)
     expect(payload.error).toMatchObject({ message: 'upstream-stream-died' })
   })
+
+  it('myth-449j: non-Error rejection (string thrown) is still serialized', async () => {
+    const redis = makeRedis()
+    const warn = vi.fn()
+
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async function* stringRejection(): AsyncGenerator {
+      yield { regions: [{ name: 'R1', access_level: 'known', prose: 'p', facts: [] }] }
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'plain-string-error'
+    }
+
+    await expect(
+      runStreamingStage(stringRejection(), {
+        stage: 'world_and_factions',
+        campaignId: 'c-string',
+        job: fakeJob,
+        redisRealtime: redis,
+        keyPrefix: 'test:',
+        arrays: [{ path: 'regions', kind: 'location', role: 'entity' }],
+        bypassAccessFilter: true,
+        endpointTierMap: new Map(),
+        logger: { warn },
+      }),
+    ).rejects.toBe('plain-string-error')
+
+    const streamDiedCalls = warn.mock.calls.filter((c) => {
+      const arg0 = c[0] as unknown
+      if (typeof arg0 !== 'object' || arg0 === null) return false
+      return (arg0 as Record<string, unknown>).event === 'streaming.stream_died'
+    })
+    expect(streamDiedCalls).toHaveLength(1)
+    const payload = streamDiedCalls[0]?.[0] as Record<string, unknown>
+    expect(payload.error).toEqual({ value: 'plain-string-error' })
+  })
 })
