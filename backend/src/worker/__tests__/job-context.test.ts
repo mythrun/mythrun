@@ -28,6 +28,7 @@ describe('job-context (AsyncLocalStorage)', () => {
         expect(getJobContext()?.stage).toBe('world_and_factions')
         setStage('post-stage')
         expect(getJobContext()?.stage).toBe('post-stage')
+        await Promise.resolve()
       },
     )
   })
@@ -57,7 +58,9 @@ describe('job-context (AsyncLocalStorage)', () => {
   })
 
   it('setStage outside a frame is a no-op (does not throw)', () => {
-    expect(() => setStage('world_and_factions')).not.toThrow()
+    expect(() => {
+      setStage('world_and_factions')
+    }).not.toThrow()
     expect(getJobContext()).toBeUndefined()
   })
 })

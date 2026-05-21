@@ -176,7 +176,7 @@ export function createWorldGenProcessor(
     // the AI-SDK wrapper's repair chain.
     await runWithJobContext(
       {
-        jobId: String(job.id ?? 'unknown'),
+        jobId: job.id ?? 'unknown',
         worldId: ctx.world.id,
         campaignId,
       },
