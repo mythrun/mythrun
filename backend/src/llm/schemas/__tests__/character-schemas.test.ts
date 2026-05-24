@@ -1,7 +1,10 @@
+// Note: the MYT-53 single-PC `CharacterIntegrationOutputSchema` was removed
+// in MYT-54 T7. The whole-party `IntegrationResultSchema` is exercised in
+// its own test file: `character-integration.test.ts`.
+
 import { describe, expect, it } from 'vitest'
 import { CharacterConceptOutputSchema } from '../character-concept.js'
 import { CharacterSheetOutputSchema } from '../character-sheet.js'
-import { CharacterIntegrationOutputSchema } from '../character-integration.js'
 
 const validConcept = {
   name: 'Bran of the Hollow',
@@ -94,54 +97,3 @@ describe('CharacterSheetOutputSchema', () => {
   })
 })
 
-const validIntegration = {
-  pc_entity: {
-    name: 'Bran of the Hollow',
-    short_description: 'A road-weary cleric arriving at the tavern',
-  },
-  relationships: [
-    {
-      target_entity_name: 'Vorrel the Merchant',
-      relationship_type: 'owes_debt_to',
-      description: 'A long-running debt going back to a roadside loan three years ago.',
-    },
-  ],
-  facts: [
-    {
-      content: 'Bran was apprenticed at the Bone Sept in his youth.',
-      tags: ['backstory'],
-    },
-  ],
-}
-
-describe('CharacterIntegrationOutputSchema', () => {
-  it('accepts a valid integration output', () => {
-    expect(CharacterIntegrationOutputSchema.safeParse(validIntegration).success).toBe(true)
-  })
-  it('rejects an empty relationships array', () => {
-    expect(
-      CharacterIntegrationOutputSchema.safeParse({ ...validIntegration, relationships: [] })
-        .success,
-    ).toBe(false)
-  })
-  it('rejects a fact content under 10 chars', () => {
-    expect(
-      CharacterIntegrationOutputSchema.safeParse({
-        ...validIntegration,
-        facts: [{ content: 'short', tags: [] }],
-      }).success,
-    ).toBe(false)
-  })
-  it('rejects facts array exceeding cap of 8', () => {
-    const fact = {
-      content: 'A reasonable fact body that exceeds ten characters.',
-      tags: ['x'],
-    }
-    expect(
-      CharacterIntegrationOutputSchema.safeParse({
-        ...validIntegration,
-        facts: new Array(9).fill(fact),
-      }).success,
-    ).toBe(false)
-  })
-})
