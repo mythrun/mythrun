@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url'
-import { Worker as BullmqWorker } from 'bullmq'
+import { Worker as BullmqWorker, type Job } from 'bullmq'
 import { waitFor } from './boot/wait-for.js'
 import { loadEnv } from './config/env.js'
 import { createPgPool } from './db/postgres.js'
@@ -14,6 +14,10 @@ import {
 import { makeStubProcessor } from './worker/stub-processor.js'
 import { startHealthServer } from './worker/health-server.js'
 import { logger } from './llm/logger.js'
+import {
+  createCharacterIntegrationProcessor,
+  type CharacterIntegrationJobPayload,
+} from './llm/prep/character-integration-processor.js'
 
 const HEALTH_PORT = 3001
 const WORKER_PG_POOL_SIZE = 4
@@ -39,13 +43,43 @@ export async function main(): Promise<void> {
   const pg = createPgPool(env.databaseUrl, { max: WORKER_PG_POOL_SIZE })
   await waitFor({ label: 'Postgres', probe: () => pg.query('SELECT 1') })
 
-  // Register BullMQ Workers (stub processors at Phase 0).
+  // Register BullMQ Workers. World-gen still routes through the stub at
+  // boot — MYT-51/52 own its real processor wiring. campaign-setup is now
+  // a router: 'character-integration' jobs hit the MYT-54 T11 processor;
+  // everything else (including MYT-53's 'character-creation' until that
+  // wiring lands) falls through to the stub so unrelated payloads still
+  // succeed.
   const stubProcessor = makeStubProcessor(logger)
   const worldGenWorker = new BullmqWorker(QUEUE_WORLD_GEN, stubProcessor, {
     connection: redisBatch,
     concurrency: CONCURRENCY_WORLD_GEN,
   })
-  const campaignSetupWorker = new BullmqWorker(QUEUE_CAMPAIGN_SETUP, stubProcessor, {
+
+  const integrationProcessor = createCharacterIntegrationProcessor({
+    pool: pg,
+    // MYT-54 T11 placeholder publishEvent: the real Redis PUBLISH wiring
+    // depends on MYT-53's character-creation processor sharing the same
+    // SSE channel (`pipeline:campaign:${campaignId}`). Drop in the real
+    // helper once that lands; logging here keeps boot-time events visible
+    // in the worker stdout without coupling to the realtime client shape.
+    publishEvent: (campaignId, event) => {
+      logger.info(
+        { event: 'worker.integration.publish_event', campaignId, payload: event },
+        'character-integration event (placeholder publish)',
+      )
+      return Promise.resolve()
+    },
+  })
+
+  const campaignSetupRouter = async (job: Job): Promise<void> => {
+    if (job.name === 'character-integration') {
+      await integrationProcessor(job as Job<CharacterIntegrationJobPayload>)
+      return
+    }
+    await stubProcessor(job)
+  }
+
+  const campaignSetupWorker = new BullmqWorker(QUEUE_CAMPAIGN_SETUP, campaignSetupRouter, {
     connection: redisBatch,
     concurrency: CONCURRENCY_CAMPAIGN_SETUP,
   })
