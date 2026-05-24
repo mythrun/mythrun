@@ -418,4 +418,47 @@ describe('GET /api/campaigns/:campaignId (MYT-51 T10)', () => {
       level: 4,
     })
   })
+
+  it("GET /:campaignId — characters[] surfaces an 'integrated' concept (MYT-54 T14)", async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const characterId = uuidv7()
+    await pool.query(
+      `INSERT INTO characters (
+         id, user_id, name, level, class, species, background,
+         str, dex, con, int, wis, cha,
+         hit_points, max_hit_points, armor_class, proficiency_bonus
+       ) VALUES ($1, $2, $3, 4, 'Wizard', 'Elf', 'Sage',
+                 10, 14, 12, 18, 14, 10, 18, 18, 13, 2)`,
+      [characterId, owner.userId, `${scope.id}-Eladrin`],
+    )
+    await pool.query(
+      `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+       VALUES ($1, $2, $3, $4)`,
+      [uuidv7(), seed.campaignId, characterId, owner.userId],
+    )
+    // status='integrated' — the MYT-54 terminal state after cross-PC integration.
+    await pool.query(
+      `INSERT INTO character_concepts (
+         id, campaign_id, user_id, concept_text,
+         situation_grounding_text, guided_choices, status
+       ) VALUES ($1, $2, $3, 'a scholar of forgotten magics with a tense bond to the high council',
+                 'summoned to the tavern by a sealed letter',
+                 '{}'::jsonb, 'integrated')`,
+      [uuidv7(), seed.campaignId, owner.userId],
+    )
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${seed.campaignId}`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{
+      characters: { userId: string; characterId: string; name: string }[]
+    }>()
+    expect(body.characters).toHaveLength(1)
+    expect(body.characters[0]?.userId).toBe(owner.userId)
+    expect(body.characters[0]?.name).toBe(`${scope.id}-Eladrin`)
+  })
 })

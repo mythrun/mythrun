@@ -523,7 +523,11 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       // completed character_concept). The concept→join→character chain
       // is the ground truth — a `campaign_characters` row without a
       // matching completed concept would be a worker bug, so we filter
-      // on `cc.status='completed'` to avoid surfacing half-built rows.
+      // on the concept status to avoid surfacing half-built rows.
+      // MYT-54 T14: 'integrated' is the terminal state after cross-PC
+      // integration; both 'completed' (post-MYT-53) and 'integrated'
+      // (post-MYT-54) mean the PC entity exists and the character row
+      // is in its final shape.
       const charactersResult = await opts.pool.query<{
         user_id: string
         character_id: string
@@ -536,7 +540,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
          JOIN campaign_characters cm
            ON cm.campaign_id = cc.campaign_id AND cm.user_id = cc.user_id
          JOIN characters c ON c.id = cm.character_id
-         WHERE cc.campaign_id = $1 AND cc.status = 'completed'`,
+         WHERE cc.campaign_id = $1 AND cc.status IN ('completed', 'integrated')`,
         [campaign.id],
       )
       const characters = charactersResult.rows.map((r) => ({
