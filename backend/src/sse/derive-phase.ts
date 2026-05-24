@@ -69,10 +69,9 @@ export const CHARCREATION_STAGES = [
   'location_selection',
   'character_concept',
   'character_sheet',
-  'character_integration',
 ] as const
 
-export const POSTCREATION_STAGES = ['materialize_relationships', 'continuity_check'] as const
+export const POSTCREATION_STAGES = ['character_integration'] as const
 
 const STAGE_ORDER: readonly string[] = [
   ...WORLDGEN_STAGES,

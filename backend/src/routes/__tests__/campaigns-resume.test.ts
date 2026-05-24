@@ -426,7 +426,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
       })
       await insertRun(pool, {
         campaignId: seed.campaignId,
-        stage: 'continuity_check',
+        stage: 'character_integration',
         status: 'pending',
       })
       const res = await app.inject({

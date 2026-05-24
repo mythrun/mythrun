@@ -1,6 +1,8 @@
 // backend/src/sse/__tests__/derive-phase.test.ts
 import { describe, expect, it } from 'vitest'
 import {
+  CHARCREATION_STAGES,
+  POSTCREATION_STAGES,
   derivePhase,
   type CampaignRow,
   type WorldRow,
@@ -117,13 +119,13 @@ describe('derivePhase', () => {
     expect(result.phase).toBe('character_creation')
   })
 
-  it('returns post_creation when materialize_relationships is running', () => {
+  it('returns post_creation when character_integration is running', () => {
     const result = derivePhase({
       campaign: baseCampaign,
       world: { ...baseWorld, status: 'complete' },
       runs: [
         run({
-          stage: 'materialize_relationships',
+          stage: 'character_integration',
           status: 'running',
           campaign_id: 'cmp-1',
           world_id: null,
@@ -138,7 +140,7 @@ describe('derivePhase', () => {
     const result = derivePhase({
       campaign: { ...baseCampaign, status: 'active' },
       world: { ...baseWorld, status: 'complete' },
-      runs: [run({ stage: 'continuity_check', status: 'completed' })],
+      runs: [run({ stage: 'character_integration', status: 'completed' })],
     })
     expect(result.phase).toBe('complete')
   })
@@ -346,5 +348,33 @@ describe('derivePhase', () => {
       .map((s) => s.userId)
     // localeCompare('', 'usr-2') < 0 → null entry sorts first.
     expect(ordered).toEqual([null, 'usr-2'])
+  })
+})
+
+describe('post-MYT-54 stage taxonomy', () => {
+  it("CHARCREATION_STAGES does not include 'character_integration'", () => {
+    expect((CHARCREATION_STAGES as readonly string[]).includes('character_integration')).toBe(false)
+  })
+
+  it("POSTCREATION_STAGES is exactly ['character_integration']", () => {
+    expect(POSTCREATION_STAGES).toEqual(['character_integration'])
+  })
+
+  it("computePhase returns 'post_creation' when campaign-scoped character_integration is running", () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: [
+        run({
+          stage: 'character_integration',
+          status: 'running',
+          campaign_id: 'cmp-1',
+          world_id: null,
+          user_id: null,
+          completed_at: null,
+        }),
+      ],
+    })
+    expect(result.phase).toBe('post_creation')
   })
 })
