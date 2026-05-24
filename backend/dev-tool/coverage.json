@@ -17,7 +17,9 @@
     "GET /api/campaigns/:campaignId/characters",
     "GET /api/campaigns/:campaignId/characters/:charId",
     "GET /api/campaigns/:campaignId/hierarchy",
-    "GET /api/campaigns/:campaignId/random-tables"
+    "GET /api/campaigns/:campaignId/random-tables",
+    "GET /api/campaigns/:campaignId/character-creation-progress",
+    "POST /api/campaigns/:campaignId/finalize-character-creation"
   ],
   "events": [
     "phase",
@@ -34,7 +36,7 @@
     "edge-removed",
     "finalized"
   ],
-  "jobs": ["world-gen", "character-creation"],
+  "jobs": ["world-gen", "character-creation", "character-integration"],
   "exempt": {
     "routes": {},
     "events": {},
