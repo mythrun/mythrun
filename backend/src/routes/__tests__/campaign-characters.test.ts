@@ -767,6 +767,50 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       expect(res.statusCode).toBe(403)
       expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
     })
+
+    // myth-k1ee: post-migration starting_situation_entries items also carry
+    // `title` (LLM-emitted) and `locationName` (entities.name lookup). The
+    // route passes the JSONB shape through verbatim so the dev-tool picker
+    // can render evocative headings instead of bare prose blobs.
+    it('200 — passes through title + locationName when present (myth-k1ee shape)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const richEntries = [
+        {
+          index: 0,
+          title: 'The Smoke-Stained Tavern',
+          locationEntityId: '00000000-0000-0000-0000-000000000001',
+          locationName: 'The Hanged Hare',
+          prose: 'A rainy port.',
+        },
+        {
+          index: 1,
+          title: "Dawn at the Ferryman's Gate",
+          locationEntityId: '00000000-0000-0000-0000-000000000002',
+          locationName: 'The Ferryman’s Gate',
+          prose: 'A dusty crossroads.',
+        },
+        {
+          index: 2,
+          title: 'Below the Singing Stone',
+          locationEntityId: '00000000-0000-0000-0000-000000000003',
+          locationName: 'The Singing Stone',
+          prose: 'An abandoned shrine.',
+        },
+      ]
+      await pool.query(
+        `UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`,
+        [seed.worldId, JSON.stringify(richEntries)],
+      )
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/starting-situations`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ situations: richEntries, chosenIndex: null })
+    })
   })
 
   // ======================================================================

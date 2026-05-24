@@ -46,7 +46,8 @@ Choose the 3 most interesting and richest locations from the list above as poten
 
 For each of your 3 chosen locations:
 
-1. **location_name** — Must match a location name from the list above exactly.
-2. **why_interesting** — 1-2 sentences on why a player might start their adventure here. What's the draw? What's in the air?
+1. **title** — A short evocative title for the scene, 5 to 60 characters. This is the headline a player sees in the picker before reading the prose — it should capture the hook, the mood, or the moment. Examples: "The Smoke-Stained Tavern", "Dawn at the Ferryman's Gate", "Below the Singing Stone". Not the location's name. Not a generic phrase ("A New Beginning"). One concrete image.
+2. **location_name** — Must match a location name from the list above exactly.
+3. **why_interesting** — 1-2 sentences on why a player might start their adventure here. What's the draw? What's in the air?
 
-Respond with ONLY the JSON object with a "location_hooks" array containing exactly 3 entries. No markdown fences, no commentary.
+Respond with ONLY the JSON object with a "location_hooks" array containing exactly 3 entries. Each entry must include all three fields above. No markdown fences, no commentary.

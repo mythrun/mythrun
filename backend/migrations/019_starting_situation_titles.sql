@@ -1,0 +1,23 @@
+-- backend/migrations/019_starting_situation_titles.sql
+--
+-- myth-k1ee: extend worlds.starting_situation_entries items with a
+-- `title` (5-60 char, LLM-emitted) and `locationName` (mechanical
+-- lookup from entities.name at write time). Previously each entry was
+-- {index, locationEntityId, prose} — the dev-tool surfaces these to
+-- the owner as the starting-situation picker, and prose alone was too
+-- ambiguous to identify the scene at a glance.
+--
+-- No CHECK constraint on the inner shape — JS-side Zod validation in
+-- the starting_situation stage is the source of truth for shape.
+-- Existing entries (without title/locationName) continue to deserialize
+-- cleanly; the GET /starting-situations route passes the JSONB through
+-- verbatim, so old worlds keep working without a backfill.
+--
+-- No DDL required at the column level — the existing
+-- `jsonb_typeof(starting_situation_entries) = 'array'` CHECK is
+-- preserved and unchanged. This file exists primarily to document the
+-- shape change and to bump the migration sequence so a downstream
+-- developer's pre-flight `pnpm db:migrate` no-ops cleanly.
+
+-- (no-op)
+SELECT 1;

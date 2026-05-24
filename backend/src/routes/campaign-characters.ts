@@ -324,7 +324,16 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       const camp = campaign.rows[0] ?? { world_id: '', starting_situation_index: null }
 
       const world = await opts.pool.query<{
-        starting_situation_entries: { index: number; locationEntityId: string; prose: string }[]
+        // myth-k1ee added `title` + `locationName` to each entry; older
+        // pre-myth-k1ee worlds may still have entries without these fields.
+        // The route passes the JSONB through verbatim so both shapes work.
+        starting_situation_entries: {
+          index: number
+          locationEntityId: string
+          prose: string
+          title?: string
+          locationName?: string
+        }[]
       }>(
         `SELECT starting_situation_entries FROM worlds WHERE id = $1`,
         [camp.world_id],

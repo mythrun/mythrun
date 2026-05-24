@@ -26,6 +26,10 @@ const PROMPT_TEMPLATE = readFileSync(
 )
 
 const locationHookSchema = z.object({
+  // myth-k1ee: short evocative scene title surfaced by the starting-
+  // situations picker. The LLM emits this; the worker passes it through
+  // verbatim into starting_situation_entries[].title.
+  title: z.string().min(5).max(60),
   location_name: z.string().min(1).max(200),
   why_interesting: z.string().min(10).max(600),
 })
@@ -121,7 +125,9 @@ export async function runStartingSituationStage(
 
   const entries = resolved.map((r, index) => ({
     index,
+    title: r.title,
     locationEntityId: r.locationEntityId,
+    locationName: r.locationName,
     prose: r.prose,
   }))
   await client.query(`UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`, [
@@ -149,7 +155,9 @@ function renderPrompt(args: StartingSituationArgs): string {
 }
 
 interface ResolvedEntry {
+  readonly title: string
   readonly locationEntityId: string
+  readonly locationName: string
   readonly prose: string
 }
 
@@ -162,13 +170,22 @@ async function resolveLocationEntries(
     `SELECT id, name FROM entities WHERE world_id = $1 AND entity_type = 'location'`,
     [worldId],
   )
-  const byLowerName = new Map<string, string>()
-  for (const row of r.rows) byLowerName.set(row.name.toLowerCase(), row.id)
+  // Map lower-cased name -> { id, name } so we can resolve the LLM's
+  // case-insensitive match back to the canonical entity name (used for
+  // entries[].locationName so the dev-tool surfaces what the seed row
+  // actually stores, not a re-cased copy of the LLM's emission).
+  const byLowerName = new Map<string, { id: string; name: string }>()
+  for (const row of r.rows) byLowerName.set(row.name.toLowerCase(), row)
   const out: ResolvedEntry[] = []
   for (const hook of hooks) {
-    const id = byLowerName.get(hook.location_name.toLowerCase())
-    if (id === undefined) return null
-    out.push({ locationEntityId: id, prose: hook.why_interesting })
+    const match = byLowerName.get(hook.location_name.toLowerCase())
+    if (match === undefined) return null
+    out.push({
+      title: hook.title,
+      locationEntityId: match.id,
+      locationName: match.name,
+      prose: hook.why_interesting,
+    })
   }
   return out
 }

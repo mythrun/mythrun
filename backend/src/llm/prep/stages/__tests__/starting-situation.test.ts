@@ -43,16 +43,19 @@ function makeClient(): QuerySpy {
 const HOOKS = {
   location_hooks: [
     {
+      title: 'Fog on the Wharf',
       location_name: 'The Salt-Eaten Wharf',
       why_interesting:
         'A waterfront where the morning fog never quite lifts and the dock-hands speak in code.',
     },
     {
+      title: 'The Silent House Above',
       location_name: 'Lantern Hill',
       why_interesting:
         'The silent house looms above the town; everyone has a theory, no one will say theirs out loud.',
     },
     {
+      title: 'A Road Older Than Light',
       location_name: 'The Drowned Causeway',
       why_interesting:
         'A road exposed only at low tide, said to lead somewhere older than the lighthouses.',
@@ -144,9 +147,21 @@ describe('runStartingSituationStage', () => {
     vi.mocked(ai.generateText).mockResolvedValueOnce({
       output: {
         location_hooks: [
-          { location_name: 'The Whispering Well', why_interesting: 'short note about the well' },
-          { location_name: 'Ashen Market', why_interesting: 'a market story' },
-          { location_name: 'Iron Sept', why_interesting: 'a temple ruin' },
+          {
+            title: 'The Well at Dusk',
+            location_name: 'The Whispering Well',
+            why_interesting: 'short note about the well',
+          },
+          {
+            title: 'Ash and Coin',
+            location_name: 'Ashen Market',
+            why_interesting: 'a market story',
+          },
+          {
+            title: 'Where Iron Sleeps',
+            location_name: 'Iron Sept',
+            why_interesting: 'a temple ruin',
+          },
         ],
       },
       finishReason: 'stop',
@@ -166,10 +181,24 @@ describe('runStartingSituationStage', () => {
     const params = entriesUpdate[1]
     const payload = JSON.parse(params[1] as string) as {
       index: number
+      title: string
       locationEntityId: string
+      locationName: string
       prose: string
     }[]
     expect(payload.map((p) => p.locationEntityId)).toEqual(['loc-1', 'loc-2', 'loc-3'])
+    // myth-k1ee: title is LLM-emitted verbatim; locationName is the
+    // canonical entities.name resolved from locationEntityId.
+    expect(payload.map((p) => p.title)).toEqual([
+      'The Well at Dusk',
+      'Ash and Coin',
+      'Where Iron Sleeps',
+    ])
+    expect(payload.map((p) => p.locationName)).toEqual([
+      'The Whispering Well',
+      'Ashen Market',
+      'Iron Sept',
+    ])
   })
 
   it('throws LlmStructuredOutputError after one retry when a location_name does not match', async () => {
@@ -183,9 +212,9 @@ describe('runStartingSituationStage', () => {
     vi.mocked(ai.generateText).mockResolvedValue({
       output: {
         location_hooks: [
-          { location_name: 'Not A Real Place', why_interesting: 'fictional' },
-          { location_name: 'Also Not Real', why_interesting: 'fictional' },
-          { location_name: 'Likewise', why_interesting: 'fictional' },
+          { title: 'A Fake Title', location_name: 'Not A Real Place', why_interesting: 'fictional' },
+          { title: 'Also Fake', location_name: 'Also Not Real', why_interesting: 'fictional' },
+          { title: 'Likewise Fake', location_name: 'Likewise', why_interesting: 'fictional' },
         ],
       },
       finishReason: 'stop',
