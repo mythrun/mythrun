@@ -88,12 +88,17 @@ export async function sumCharacterCreationStageCosts(
   pool: Pool | PoolClient,
   campaignId: string,
 ): Promise<number> {
+  // MYT-54: widened to include the campaign-scoped 'character_integration'
+  // row (user_id IS NULL). Filter by stage rather than by user_id presence
+  // so the per-player character_concept + character_sheet rows and the
+  // campaign-scoped character_integration row all roll up into the same
+  // character_creation_cost_cap_usd budget.
   const result = await pool.query<{ total: number }>(
     `SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total
      FROM pipeline_runs
      WHERE campaign_id = $1
-       AND user_id IS NOT NULL
-       AND status = 'completed'`,
+       AND status = 'completed'
+       AND stage IN ('character_concept', 'character_sheet', 'character_integration')`,
     [campaignId],
   )
   /* c8 ignore start — COALESCE(SUM(...), 0) always returns one row, so

@@ -248,39 +248,61 @@ describe('cost-cap', () => {
       // Four completed per-player rows (2 stages × 2 users) — sums to 0.12.
       await pool.query(
         `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
-         VALUES ($1, $2, 'character_concepts', 'completed', now(), 0.03, $3)`,
+         VALUES ($1, $2, 'character_concept', 'completed', now(), 0.03, $3)`,
         [uuidv7(), campaignId, userId0],
       )
       await pool.query(
         `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
-         VALUES ($1, $2, 'character_details', 'completed', now(), 0.03, $3)`,
+         VALUES ($1, $2, 'character_sheet', 'completed', now(), 0.03, $3)`,
         [uuidv7(), campaignId, userId0],
       )
       await pool.query(
         `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
-         VALUES ($1, $2, 'character_concepts', 'completed', now(), 0.03, $3)`,
+         VALUES ($1, $2, 'character_concept', 'completed', now(), 0.03, $3)`,
         [uuidv7(), campaignId, userId1],
       )
       await pool.query(
         `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
-         VALUES ($1, $2, 'character_details', 'completed', now(), 0.03, $3)`,
+         VALUES ($1, $2, 'character_sheet', 'completed', now(), 0.03, $3)`,
         [uuidv7(), campaignId, userId1],
       )
       const sum = await sumCharacterCreationStageCosts(pool, campaignId)
       expect(sum).toBeCloseTo(0.12, 6)
     })
 
-    it('excludes non-completed rows and world-gen rows (user_id IS NULL)', async () => {
+    it('includes campaign-scoped character_integration row (MYT-54)', async () => {
+      const { campaignId, userId } = await seedUserWorldCampaign()
+      // Per-player rows
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_concept', 'completed', now(), 0.05, $3)`,
+        [uuidv7(), campaignId, userId],
+      )
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_sheet', 'completed', now(), 0.10, $3)`,
+        [uuidv7(), campaignId, userId],
+      )
+      // Campaign-scoped integration row (user_id NULL — the MYT-54 shape).
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_integration', 'completed', now(), 0.42, NULL)`,
+        [uuidv7(), campaignId],
+      )
+      const sum = await sumCharacterCreationStageCosts(pool, campaignId)
+      expect(sum).toBeCloseTo(0.57, 6)
+    })
+
+    it('excludes non-completed rows and world-gen rows', async () => {
       const { campaignId, userId, worldId } = await seedUserWorldCampaign()
       // Running row — excluded by status filter.
       await pool.query(
         `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
-         VALUES ($1, $2, 'character_concepts', 'running', now(), 0.10, $3)`,
+         VALUES ($1, $2, 'character_concept', 'running', now(), 0.10, $3)`,
         [uuidv7(), campaignId, userId],
       )
-      // World-gen row (user_id NULL) keyed via world_id — excluded by the
-      // user_id IS NOT NULL filter even though the same campaign_id-less
-      // row would never match anyway.
+      // World-gen row — excluded by stage-list filter (concept_intake is
+      // not in ('character_concept','character_sheet','character_integration')).
       await pool.query(
         `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, cost_usd, user_id)
          VALUES ($1, $2, 'concept_intake', 'completed', now(), 1.00, NULL)`,
