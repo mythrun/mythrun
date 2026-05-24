@@ -119,11 +119,19 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'campaigns',
+    check_clause: `CHECK (((pre_integration_notes IS NULL) OR (length(pre_integration_notes) <= 4000)))`,
+  },
+  {
+    table_name: 'campaigns',
     check_clause: `CHECK (((starting_situation_index IS NULL) OR ((starting_situation_index >= 0) AND (starting_situation_index <= 2))))`,
   },
   {
     table_name: 'campaigns',
     check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))`,
+  },
+  {
+    table_name: 'character_concepts',
+    check_clause: `CHECK (((concept_output IS NULL) OR (jsonb_typeof(concept_output) = 'object'::text)))`,
   },
   {
     table_name: 'character_concepts',
@@ -135,7 +143,7 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'character_concepts',
-    check_clause: `CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text])))`,
+    check_clause: `CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text, 'integrated'::text])))`,
   },
   {
     table_name: 'character_skills',
@@ -665,6 +673,7 @@ describe('schema-parity (integration)', () => {
       '015_vocabulary_registry.sql',
       '016_character_concepts.sql',
       '017_entity_consolidation.sql',
+      '018_character_integration.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
