@@ -11,8 +11,8 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
-<!-- source-hash: sha256:588411b1cfb27038d2dada6a2b1849c4d9fb5fd43daa80ac58b13b5d8e29cfa4 -->
-<!-- last-ticket: myth-tt2g -->
+<!-- source-hash: sha256:0769f5f3b2011653ea019c79d4bb660a1d11bcde7bcb872cafa079f63cb3bf02 -->
+<!-- last-ticket: MYT-54 -->
 
 <h1>Pipeline status</h1>
 
@@ -204,8 +204,10 @@
     <tr>
       <td><code>post_creation</code></td>
       <td>
-        Any post-creation stage (<code>materialize_relationships</code>,
-        <code>continuity_check</code>) is <code>running</code> or <code>pending</code>.
+        The campaign-scoped post-creation stage <code>character_integration</code> (MYT-54) is
+        <code>running</code> or <code>pending</code>. This is the single-pass party-into-world weave
+        that fires after the owner clicks finalize. See
+        <a href="./character-integration.html">character integration</a>.
       </td>
     </tr>
     <tr>

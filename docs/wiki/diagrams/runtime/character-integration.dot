@@ -1,0 +1,136 @@
+digraph character_integration {
+  // Character integration — MYT-54. One campaign-scoped Opus pass weaves
+  // every submitted PC into the world. Owner clicks "Finalize character
+  // creation"; the route flips campaigns.status='setup'→retains-setup,
+  // writes pre_integration_notes, and enqueues a single
+  // 'character-integration' job on the campaign-setup queue. The worker
+  // claims the campaign-scoped pipeline_runs row (user_id NULL via the
+  // new ClaimRequest 'campaign' arm), runs the handler. Handler loads
+  // the party + world dump OUTSIDE the DB transaction, runs cost-cap
+  // pre-flight, calls Opus with IntegrationResultSchema, validates
+  // worker-side invariants (cardinality + identity + PC↔PC mirror +
+  // unknown-target drop), then writes everything in one transaction:
+  // PC entities → kernels/facts/relationships → newFacts on world
+  // entities → characters.entity_id + concept status='integrated' +
+  // campaigns.status='active'. Post-commit, derivePhase reads
+  // campaigns.status='active' and the SSE 'phase: complete' signal
+  // reaches subscribers via the existing pipeline-status surface.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  owner [label="Owner\n(clicks 'Finalize\n character creation')", color="ember", fontcolor="ember"];
+
+  subgraph cluster_api {
+    label="API process";
+    style="dashed";
+
+    route [label="campaign-characters.ts\nPOST /api/campaigns/:id/\n  finalize-character-creation\n  body: { pre_integration_notes? }"];
+    tx_route [label="route txn\n  UPDATE campaigns\n   SET pre_integration_notes\n   WHERE status='setup'\n  COUNT(*) completed concepts > 0\n  queue.add('character-integration')"];
+  }
+
+  subgraph cluster_redis {
+    label="Redis";
+    style="dotted";
+
+    queue   [label="BullMQ queue\ncampaign-setup\njobId: ci-{campaignId}\n(BullMQ dedups)", color="ember", fontcolor="ember"];
+    channel [label="{redisKeyPrefix}\npipeline:campaign:{campaignId}\nstage-* / phase events", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_worker {
+    label="Worker  (campaign-setup queue)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    claim [label="character-integration-\n  processor.ts\natomicClaimStage(kind:'campaign',\n  campaignId, stage)\n'completed' → no-op\n'lost-race' → return", color="ember", fontcolor="ember"];
+
+    subgraph cluster_handler_pre {
+      label="handler — OUTSIDE txn";
+      style="dotted";
+
+      load_party  [label="loadParty\n  JOIN character_concepts\n  + campaign_members + users\n  + campaign_characters + characters\n  WHERE status='completed'"];
+      load_world  [label="world-dump.ts\nloadWorldInventory +\nrenderWorldDump\n  (entities + kernels +\n   facts + relationships)"];
+      cap_check   [label="enforceCostCap\nsumCharacterCreation-\n  StageCosts(campaignId)\n  + estimateIntegrationCost\n  > cap?  → throw terminal"];
+      llm         [label="generateObject\n  model: Opus\n  schema: IntegrationResultSchema\n  prompt: party + world + notes\n  (30–120s)"];
+      validate    [label="validateAndMirror\n  cardinality + identity\n   (LlmStructuredOutputError)\n  unknown UUIDs / userIds\n   silently dropped + logged\n  PC↔PC mirror: A→B then\n   synthesize B→A"];
+    }
+
+    subgraph cluster_handler_tx {
+      label="handler — single txn (4 passes)";
+      style="dotted";
+      color="ember";
+      fontcolor="ember";
+
+      pass1 [label="pass 1: INSERT entities\n  entity_type='pc'\n  name disambiguation"];
+      pass2 [label="pass 2: per-PC\n  prose_kernels + facts +\n  relationships (PC↔world\n  resolved via id, PC↔PC\n  resolved via userId map)"];
+      pass3 [label="pass 3: newFacts\n  on existing world entities"];
+      pass4 [label="pass 4: link + flip\n  characters.entity_id\n  character_concepts.status\n    = 'integrated'\n  campaigns.status = 'active'"];
+    }
+
+    mark [label="processor: mark\npipeline_runs.status='completed'\ncost_usd = llmCostUsd\npublishEvent('stage-completed')", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres";
+    style="dotted";
+
+    campaigns_t       [label="campaigns\n  pre_integration_notes\n  status: setup → active"];
+    concepts_t        [label="character_concepts\n  status: completed → integrated\n  concept_output JSONB (MYT-53)"];
+    entities_t        [label="entities + prose_kernels\n+ facts + relationships\n  (PC + new world facts)"];
+    pipeline_runs_t   [label="pipeline_runs\n  campaign_id, user_id NULL\n  stage='character_integration'"];
+    characters_t      [label="characters\n  entity_id ← PC entity"];
+  }
+
+  subgraph cluster_sse {
+    label="SSE surface";
+    style="dotted";
+
+    derive [label="derive-phase.ts\nPOSTCREATION_STAGES =\n  ['character_integration']\ncampaigns.status='active'\n  → phase='complete'"];
+    sub    [label="pipeline-subscriber.ts\n→ attached SSE sinks"];
+  }
+
+  // Owner → API → queue
+  owner    -> route    [label="POST finalize"];
+  route    -> tx_route;
+  tx_route -> campaigns_t [label="UPDATE notes\n+ flip-on-COMMIT", style=dashed];
+  tx_route -> queue       [label="add ci-{id}"];
+  tx_route -> owner       [label="202 { campaignId, jobId }", style=dashed];
+
+  // Worker pickup
+  queue -> claim [label="job { campaignId,\n  ownerUserId }"];
+  claim -> pipeline_runs_t [label="INSERT pending\n(ON CONFLICT no-op)", style=dashed];
+
+  // Handler pre-txn
+  claim       -> load_party;
+  load_party  -> load_world;
+  load_world  -> cap_check;
+  load_party  -> concepts_t   [label="status='completed'", style=dotted];
+  load_world  -> entities_t   [label="world inventory", style=dotted];
+  cap_check   -> pipeline_runs_t [label="SUM cost_usd\n  stage IN (...)", style=dotted];
+  cap_check   -> llm;
+  llm         -> validate;
+
+  // Handler txn
+  validate -> pass1;
+  pass1    -> pass2;
+  pass2    -> pass3;
+  pass3    -> pass4;
+  pass1    -> entities_t      [label="PC entities", style=dotted];
+  pass2    -> entities_t      [label="kernels + facts\n+ relationships", style=dotted];
+  pass3    -> entities_t      [label="newFacts on\n  world entities", style=dotted];
+  pass4    -> characters_t    [label="entity_id ←", style=dotted];
+  pass4    -> concepts_t      [label="status=\n  'integrated'", style=dotted];
+  pass4    -> campaigns_t     [label="status='active'", style=dashed];
+
+  // Mark + publish
+  pass4 -> mark;
+  mark  -> pipeline_runs_t [label="completed +\n  cost_usd", style=dotted];
+  mark  -> channel         [label="stage-completed", style=dashed];
+
+  // SSE phase derivation
+  derive  -> campaigns_t [label="reads status", style=dotted];
+  channel -> sub         [label="pmessage"];
+  sub     -> owner       [label="phase: complete", style=dashed];
+}

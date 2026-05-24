@@ -1,0 +1,376 @@
+<!-- source: backend/src/llm/prep/stages/character-integration.ts -->
+<!-- source: backend/src/llm/prep/character-integration-processor.ts -->
+<!-- source: backend/src/llm/prompts/prep/character-integration.txt -->
+<!-- source: backend/src/llm/schemas/character-integration.ts -->
+<!-- source: backend/src/llm/prep/world-dump.ts -->
+<!-- source: backend/src/routes/campaign-characters.ts -->
+<!-- source: backend/migrations/018_character_integration.sql -->
+<!-- source: docs/superpowers/specs/2026-05-23-myt-54-character-integration-design.md -->
+<!-- source-hash: sha256:143dbcad510fb7854444b7f774c2e4ca7076bf7ef857108bff9414b576a71d32 -->
+<!-- last-ticket: MYT-54 -->
+
+<h1>Character integration</h1>
+
+<p class="lead">
+  When the owner finalizes character creation, a single Opus call sees the whole party plus the
+  whole world plus the owner's free-text notes, and weaves every PC into the world in one structured
+  response — then a single Postgres transaction lands the new PC entities, their facts and
+  relationships (including PC↔PC edges), and flips the campaign live.
+</p>
+
+<!-- @diagram: runtime/character-integration -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Character integration is phase 5 of the campaign lifecycle — the fan-in step that follows the
+  per-player parallel character creation in
+  <a href="./character-creation.html">phase 4</a>. The flow has four moving pieces along the
+  diagram: an owner trigger at the API, a single BullMQ job, a worker handler that does the LLM work
+  outside the database, and a single transaction that lands every write at once. The campaign
+  transitions from <code>status='setup'</code> to <code>status='active'</code> as the last write in
+  that transaction, which is also how the SSE surface learns the pipeline is done.
+</p>
+
+<h3>Owner finalize</h3>
+
+<p>
+  The owner POSTs to <code>/api/campaigns/:campaignId/finalize-character-creation</code> with an
+  optional <code>pre_integration_notes</code> field (up to 4000 chars of free text — "Theo and Mira
+  are siblings; Garrett owes the dwarf cleric a debt"). The route runs a transactional UPDATE that
+  writes the notes and gates on <code>WHERE status = 'setup'</code> — a second click after the
+  campaign has already gone active returns <code>409 not_in_setup</code> without touching the queue.
+  A second gate requires at least one <code>character_concepts</code> row with
+  <code>status='completed'</code> so the integration job never runs against an empty party. On
+  success the route enqueues one <code>character-integration</code> job with the deterministic jobId
+  <code>ci-{campaignId}</code> on the <code>campaign-setup</code> queue and returns
+  <code>202</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Deterministic jobId, queue-level dedup</strong> — BullMQ dedups on duplicate jobIds, so a
+  frantic double-click from the owner is a no-op at the queue layer even before the
+  <code>status='setup'</code> guard catches the second route call. Belt and suspenders, because the
+  integration job is expensive (a 30–120s Opus call) and starting two of them on the same campaign
+  would corrupt the world.
+</aside>
+
+<h3>One LLM call, not N</h3>
+
+<p>
+  The worker side of the diagram is one BullMQ job that walks one Opus call against one schema. The
+  handler loads the party (every <code>character_concepts</code> row joined with its character sheet
+  and the user's display name), loads the campaign's pre-integration notes and starting situation
+  prose, and loads the world inventory via the shared <code>world-dump.ts</code> module. Those four
+  inputs render into a single prompt: every PC's identity and sheet alongside every existing world
+  entity's UUID, name, prose kernel, facts, and outgoing relationships. Opus returns one
+  <code>IntegrationResult</code> covering every PC at once.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why one Opus call, not N parallel per-player calls</strong> — the prototype shipped
+  per-player integration. The structural problem was coherence: if four players each get their own
+  pass, two of them can quietly contradict each other (one PC's backstory says they killed the
+  bandit leader; another's says they're working for him), and the only fix is a post-pass coherence
+  check that hauls the same context back into a fifth LLM call to reconcile. Collapsing visibility
+  into the single pass replaces both calls. PC↔PC relationships also become a first-class output —
+  the model emits "Mira → Theo (sister)" once and the worker mirrors it — instead of two per-player
+  passes each hallucinating their half.
+</aside>
+
+<h3>LLM outside the transaction, writes inside it</h3>
+
+<p>
+  The Opus call happens before any <code>BEGIN</code>. The handler runs it against the raw pool, not
+  against an open <code>PoolClient</code>: a 30–120s call would otherwise tie up one of the pool's
+  connections for its full duration, and at the worker's BullMQ concurrency of 5 a slow campaign
+  would exhaust the pool inside one minute. Once Opus returns and worker-side validation passes (see
+  below), the handler opens one client, runs <code>BEGIN</code>, walks four ordered passes against
+  it, and runs <code>COMMIT</code>. The four passes share one transaction because the entity IDs
+  minted in pass 1 are foreign-key referenced by passes 2 through 4 — splitting them would leak
+  partial parties on a mid-write failure.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>LLM outside the transaction</strong> — Anthropic's tail latency on a multi-PC structured
+  generation runs into the upper minutes. The pg pool is sized for short-lived OLTP queries, not
+  Anthropic round-trips. Holding a connection for an Opus call would block other workers (and other
+  API requests sharing the pool) on every concurrent integration. The trade is a wider "did the
+  world change underneath us?" window between read and write, which is acceptable here: the world is
+  stable in <code>setup</code>, the route's <code>status='setup'</code> guard prevents two
+  concurrent integrations, and any unknown-UUID drift in the LLM output is dropped at validation
+  time.
+</aside>
+
+<h3>Worker-side validation and PC↔PC mirroring</h3>
+
+<p>
+  The handler runs three classes of check on the LLM output before any database write. The first two
+  are hard invariants that, if violated, raise <code>LlmStructuredOutputError</code> and let the
+  AI-SDK wrapper's repair strategy take a second swing:
+</p>
+
+<ul>
+  <li>
+    <strong>Cardinality:</strong> <code>characters.length === party.length</code> — the LLM must
+    emit exactly one PC row per party member, no more, no less.
+  </li>
+  <li>
+    <strong>Identity:</strong> the set of emitted <code>userId</code> values equals the input
+    party's set — no duplicates, no unknown players.
+  </li>
+</ul>
+
+<p>
+  The third class is softer: any relationship <code>targetId</code> (UUID into
+  <code>entities</code>) or <code>targetUserId</code> (UUID into <code>users</code>) the LLM emitted
+  that doesn't match the loaded inventory is silently dropped and a <code>console.warn</code> is
+  logged. Same for <code>newFacts</code> entries that target an unknown entity.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why PC↔PC edges are emitted once and mirrored worker-side</strong> — the LLM is asked to
+  emit one canonical edge per PC pair (the prompt explicitly says so). The realistic failure mode
+  isn't "the LLM emits zero edges between two PCs the owner described as siblings"; it's "the LLM
+  emits one side and forgets the other." A one-canonical-emission + worker-side mirror is robust to
+  that. Asking for both sides and validating symmetry would just turn a tolerable asymmetry into a
+  hard <code>LlmStructuredOutputError</code> retry loop.
+</aside>
+
+<h3>The single transaction</h3>
+
+<p>
+  Writes happen in four passes inside one transaction. Pass 1 inserts an <code>entities</code> row
+  per PC (<code>entity_type='pc'</code>, <code>access_level='known'</code>), disambiguating names
+  against the world's existing entities and against other PCs in the same batch — collisions get a
+  <code>(userid-fragment)</code> suffix. The pass builds a <code>userId → entityId</code> map that
+  passes 2–4 reuse. Pass 2 walks each PC: inserts the prose kernel, the per-PC facts (with
+  <code>narrative_status='undelivered'</code>), and the relationships — PC↔world edges resolve
+  through <code>targetId</code> directly, PC↔PC edges resolve through the userId map. Pass 3 writes
+  the <code>newFacts</code> entries onto existing world entities. Pass 4 backfills
+  <code>characters.entity_id</code>, flips every <code>character_concepts.status</code> to
+  <code>'integrated'</code>, and flips <code>campaigns.status</code> to <code>'active'</code>. Only
+  after <code>COMMIT</code> does the processor mark <code>pipeline_runs</code> completed and publish
+  the <code>stage-completed</code> SSE event.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Status flip is the last write inside the transaction</strong> — the SSE
+  <code>phase: complete</code> signal is derived (not published directly): the
+  <code>derive-phase.ts</code> taxonomy reads <code>campaigns.status='active'</code> and returns
+  <code>'complete'</code>. Putting the flip last in the transaction means subscribers cannot ever
+  observe <code>status='active'</code> against a partial party; if anything earlier in the
+  transaction fails, ROLLBACK takes the status flip with it.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3>Re-run a failed integration</h3>
+
+<ol>
+  <li>
+    <p>Check the failure mode in <code>pipeline_runs</code>:</p>
+    <pre><code>SELECT status, error, cost_usd, completed_at
+  FROM pipeline_runs
+ WHERE campaign_id = '&lt;id&gt;'
+   AND stage = 'character_integration'
+   AND user_id IS NULL;</code></pre>
+    <p>
+      A row with <code>status='failed'</code> and a
+      <code>character_creation_cost_cap_exceeded</code> error means the pre-flight gate fired —
+      raise <code>settings.character_creation_cost_cap_usd</code> and restart the worker (the cap is
+      read at boot, not per job).
+    </p>
+  </li>
+  <li>
+    <p>
+      The owner re-POSTs <code>/api/campaigns/:campaignId/finalize-character-creation</code> with
+      the same body. The route's <code>status='setup'</code> guard still admits — the integration
+      handler ran but failed, so the campaign is still in <code>setup</code>. The atomic claim
+      re-arms from the prior <code>failed</code> row (the
+      <code>(campaign_id, stage, user_id IS NULL)</code> uniqueness allows replacement on a
+      non-completed prior).
+    </p>
+  </li>
+  <li>
+    <p>
+      Watch the new attempt on the SSE stream (<code
+        >GET /api/campaigns/:campaignId/status/stream</code
+      >). A clean run ends with one <code>stage-completed</code> event and a
+      <code>phase: complete</code> derived snapshot.
+    </p>
+  </li>
+</ol>
+
+<h3>Check the cost-cap status</h3>
+
+<ol>
+  <li>
+    <p>Sum the character-creation spend so far for a campaign:</p>
+    <pre><code>SELECT COALESCE(SUM(cost_usd), 0)::float8 AS spent_usd
+  FROM pipeline_runs
+ WHERE campaign_id = '&lt;id&gt;'
+   AND status = 'completed'
+   AND stage IN (
+     'character_concept',
+     'character_sheet',
+     'character_integration'
+   );</code></pre>
+    <p>
+      The query is the same as
+      <code>sumCharacterCreationStageCosts</code> in <code>cost-cap.ts</code> — widened in MYT-54 to
+      cover the campaign-scoped integration row alongside the per-player character-creation rows so
+      all three roll up into the same budget.
+    </p>
+  </li>
+  <li>
+    <p>
+      Compare against the active cap:
+      <code>SELECT value FROM settings WHERE key = 'character_creation_cost_cap_usd'</code>. Cap
+      changes need a worker restart to take effect.
+    </p>
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  Upstream: <a href="./character-creation.html">character creation</a> runs the per-player pipeline;
+  integration consumes its <code>concept_output</code> JSONB column (the CharacterConceptOutput
+  payload added in MYT-54 so the integration pass can read each PC's narrative pieces — backstory,
+  personality traits — without re-querying the per-player pipeline's intermediate state). The MYT-53
+  pipeline ends at <code>character_sheet</code>; the prior per-player
+  <code>character_integration</code> stage is retired.
+</p>
+
+<p>
+  Sideways: the world inventory rendered into the prompt comes from
+  <code>backend/src/llm/prep/world-dump.ts</code>, shared with the
+  <a href="./world-gen.html#stage-7-coherence_pass">coherence pass</a> in world gen — same inventory
+  shape, same deterministic textual rendering, two consumers.
+</p>
+
+<p>
+  Downstream: the <a href="./pipeline-status.html#phase-derivation">pipeline-status</a> surface
+  picks up the campaign's new state without any direct publish — the
+  <code>POSTCREATION_STAGES</code> taxonomy in <code>derive-phase.ts</code> includes
+  <code>character_integration</code>, and the <code>campaigns.status='active'</code> flip drives the
+  <code>phase: 'complete'</code> verdict that subscribers see.
+</p>
+
+<h2>Appendix: inputs and outputs</h2>
+
+<h3><code>IntegrationResultSchema</code></h3>
+
+<p>
+  The single Zod schema the Opus call validates against (defined in
+  <code>backend/src/llm/schemas/character-integration.ts</code>):
+</p>
+
+<ul>
+  <li>
+    <code>characters</code> — array of 1–8 <code>PCIntegration</code>:
+    <ul>
+      <li><code>userId</code>, <code>displayName</code> — echo of the input party member.</li>
+      <li>
+        <code>entity</code> — <code>{ name, proseKernel }</code> (1–2 paragraph PC summary, 80–1200
+        chars).
+      </li>
+      <li>
+        <code>facts</code> — 1–10 fact rows, each
+        <code>{ content, tags[], aboutEntityId }</code> where <code>aboutEntityId</code> is either a
+        world entity UUID or null for a self-fact.
+      </li>
+      <li>
+        <code>relationships</code> — 0–10 discriminated-union edges by <code>targetKind</code>:
+        <code>'npc' | 'faction' | 'location'</code> carry <code>targetId</code> (entity UUID);
+        <code>'pc'</code> carries <code>targetUserId</code> (the other player's UUID into
+        <code>users</code>).
+      </li>
+    </ul>
+  </li>
+  <li>
+    <code>newFacts</code> — optional array of facts to attach to existing world entities (NPCs,
+    factions, locations) where integrating a PC requires it (e.g. "this PC knew NPC X from their
+    backstory"). Each row: <code>{ entityId, content, tags[] }</code>.
+  </li>
+</ul>
+
+<h3>Lifecycle of <code>character_concepts.status</code></h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Set by</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>submitted</code></td>
+      <td>POST <code>/characters</code> (member writes concept + grounding text).</td>
+    </tr>
+    <tr>
+      <td><code>processing</code></td>
+      <td>
+        POST <code>/start-character-creation</code> (owner triggers per-player fan-out, atomic
+        flip).
+      </td>
+    </tr>
+    <tr>
+      <td><code>completed</code></td>
+      <td>Per-player character-creation pipeline finished — PC sheet exists, no entity yet.</td>
+    </tr>
+    <tr>
+      <td><code>failed</code></td>
+      <td>Per-player pipeline failed terminally; member can re-POST to reset to submitted.</td>
+    </tr>
+    <tr>
+      <td><code>integrated</code></td>
+      <td>
+        MYT-54 character-integration handler's pass 4 — PC has an entity row, facts, relationships,
+        and the campaign is now <code>active</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Cost-cap settings key</h3>
+
+<p>
+  The cap value is read from <code>settings.character_creation_cost_cap_usd</code> by
+  <code>readCharacterCreationCostCap</code>. The cap covers the per-player
+  <code>character_concept</code> and <code>character_sheet</code> rows plus the campaign-scoped
+  <code>character_integration</code> row — one budget across all character-creation spend. The
+  integration handler's pre-flight estimator is deliberately pessimistic (<code
+    >~1200 output tokens per PC + per-PC prompt overhead + world dump</code
+  >) so a near-cap campaign fires the gate BEFORE the LLM call rather than mid-stream. Cap changes
+  take effect on worker restart.
+</p>
+
+<h3>Schema additions (migration 018)</h3>
+
+<ul>
+  <li>
+    <code>campaigns.pre_integration_notes TEXT</code> — owner-provided free-text relationship notes,
+    ≤4000 chars, NULL when omitted.
+  </li>
+  <li>
+    <code>character_concepts.concept_output JSONB</code> — persists the structured
+    <code>CharacterConceptOutput</code> from MYT-53's per-player stage 2 so the integration pass can
+    read each PC's narrative pieces. JSONB so the shape can evolve.
+  </li>
+  <li>
+    <code>character_concepts.status</code> CHECK extended to include <code>'integrated'</code>.
+  </li>
+  <li>
+    No new partial unique index — migration 001's
+    <code>idx_pipeline_runs_unique</code> on
+    <code>(COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel))</code>
+    already enforces uniqueness for the campaign-scoped row with NULL user_id.
+  </li>
+</ul>
+
+<h2>Source</h2>
+
+<p><code>backend/src/llm/prep/stages/character-integration.ts</code></p>

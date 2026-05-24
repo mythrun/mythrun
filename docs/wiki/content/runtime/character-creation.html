@@ -18,8 +18,8 @@
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md -->
-<!-- source-hash: sha256:13551c46b0be92f93dfab114175090077001371ee17c33a8389f2e59dab26dee -->
-<!-- last-ticket: MYT-53 -->
+<!-- source-hash: sha256:cd2fca6a2343ddd57b2cde22286eebb9dc5609f824c4d5acac8b970c3bb5554d -->
+<!-- last-ticket: MYT-54 -->
 
 <h1>Character creation</h1>
 
@@ -28,13 +28,15 @@
   snapshot is fetchable, the owner picks one of the three generated starting situations for the
   entire party, members each submit a character (a concept text plus a situation-grounding text),
   and the owner triggers fan-out. Fan-out enqueues one <code>character-creation</code> job per
-  submitted player on the <code>campaign-setup</code> BullMQ queue; each job walks four stages
-  (<code>location_selection</code> → <code>character_concept</code> → <code>character_sheet</code> →
-  <code>character_integration</code>) and ends with the PC as a real <code>entities</code> row of
-  type <code>'pc'</code>, joined to a populated <code>characters</code> row, with PC↔world
-  relationships and facts written into the world. The status panel and live-events feed render
-  per-player progress via the existing campaign-scoped channel. Cross-PC weaving and the owner's
-  established-relationships prompt are MYT-54's scope; MYT-53 is per-player only.
+  submitted player on the <code>campaign-setup</code> BullMQ queue; each job walks three stages
+  (<code>location_selection</code> → <code>character_concept</code> → <code>character_sheet</code>)
+  and ends with a populated <code>characters</code> row plus the structured
+  <code>concept_output</code> JSONB blob the MYT-54
+  <a href="./character-integration.html">character integration</a> pass consumes. The status panel
+  and live-events feed render per-player progress via the existing campaign-scoped channel.
+  Materializing the PC as an <code>entities</code> row, writing PC↔world facts and relationships,
+  and weaving the party together happen later — in the single campaign-scoped Opus pass MYT-54 fires
+  when the owner finalizes character creation.
 </p>
 
 <h2>How it fits together</h2>
@@ -43,10 +45,11 @@
   Character creation is phase 4 of the campaign lifecycle. Phase 2 (<a href="./world-gen.html"
     >world generation</a
   >) and phase 3 (wiki read via <code>GET /api/campaigns/:campaignId/world-snapshot</code>) ship
-  today. Phase 5 (cross-PC integration) is MYT-54; phase 1 (pre-world-gen lobby retrofit) is a
-  separate bead. MYT-53 owns the middle three steps — owner picks situation, members submit
-  characters, owner triggers fan-out — plus the four-stage per-player worker pipeline that turns
-  those submissions into PCs in the world.
+  today. Phase 5 (<a href="./character-integration.html">cross-PC integration</a>) ships as MYT-54;
+  phase 1 (pre-world-gen lobby retrofit) is a separate bead. MYT-53 owns the middle three steps —
+  owner picks situation, members submit characters, owner triggers fan-out — plus the three-stage
+  per-player worker pipeline that turns those submissions into characters ready for the MYT-54
+  integration pass.
 </p>
 
 <pre><code>                    ┌──────────────────────────────────────────────────┐
@@ -84,30 +87,29 @@ creation            │   campaigns.starting_situation_index ← {0,1,2}   │
                     │                                                  │
                     │   ├── 1. location_selection (no LLM)             │
                     │   │     reads campaigns.starting_situation_index │
-                    │   │     defers fact-write to stage 4             │
+                    │   │     resolves locationEntityId for stage      │
+                    │   │     into worker memory                       │
                     │   ├── 2. character_concept (Sonnet)              │
-                    │   │     generateObject; holds narrative payload  │
-                    │   │     in worker memory for stage 3             │
-                    │   ├── 3. character_sheet (Sonnet)                │
-                    │   │     generateObject; INSERT characters +      │
-                    │   │     campaign_characters join + bulk-INSERT   │
-                    │   │     character_skills / _features /           │
-                    │   │     _equipment / _spells                     │
-                    │   └── 4. character_integration (Opus)            │
-                    │         generateObject; INSERT entities row      │
-                    │         (entity_type='pc'), links                │
-                    │         characters.entity_id, writes PC↔world    │
-                    │         relationships + facts including the      │
-                    │         deferred "starts at $location" fact.     │
-                    │         Post-commit publishes entity-added +     │
-                    │         edge-added events                        │
+                    │   │     generateObject; persists narrative as    │
+                    │   │     character_concepts.concept_output JSONB  │
+                    │   │     (MYT-54: read by integration pass)       │
+                    │   └── 3. character_sheet (Sonnet)                │
+                    │         generateObject; INSERT characters +      │
+                    │         campaign_characters join + bulk-INSERT   │
+                    │         character_skills / _features /           │
+                    │         _equipment / _spells.                    │
+                    │         characters.entity_id stays NULL until    │
+                    │         MYT-54 integration pass.                 │
                     │                                                  │
                     │ pipeline_runs.user_id distinguishes per-player   │
                     │ rows; the status panel renders per-player        │
                     │ progress unchanged from world-gen.               │
                     └──────────────────────────────────────────────────┘
                                           ↓
-PHASE 5 ▶ MYT-54    Owner-gated cross-PC integration + post-creation stages
+PHASE 5 ★ MYT-54:   Owner POSTs /finalize-character-creation → single
+Character           campaign-scoped Opus pass writes every PC entity,
+integration         fact, and relationship (including PC↔PC edges) in
+                    one transaction. See character-integration page.
 PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </code></pre>
 
@@ -136,15 +138,16 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   </li>
   <li>
     <code>situationGroundingText</code> (20–2000 chars, always required): "Why is this character at
-    this tavern?" — the player's framing of how their PC arrives at the owner-chosen opening. Stage
-    4 (<code>character_integration</code>) consumes it.
+    this tavern?" — the player's framing of how their PC arrives at the owner-chosen opening. The
+    MYT-54 <a href="./character-integration.html">integration pass</a> consumes it when weaving the
+    PC into the world.
   </li>
 </ul>
 
 <p>
-  Without the grounding prompt, stage 4 has only a generic "introduce this PC to the world"
-  instruction to work with; with it, stage 4 has the player's specific entry-point narrative to
-  weave through the PC's facts and PC↔world relationships. The frontend reframes the grounding
+  Without the grounding prompt the integration pass has only a generic "introduce this PC to the
+  world" instruction to work with; with it, the pass has the player's specific entry-point narrative
+  to weave through the PC's facts and PC↔world relationships. The frontend reframes the grounding
   prompt for late joiners ("describe the situation the party is currently in and how your character
   fits") but the backend column is the same.
 </p>
@@ -274,7 +277,7 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   self-contained rather than mixing with membership state.
 </aside>
 
-<h2>The four stages</h2>
+<h2>The three stages</h2>
 
 <p>
   The processor in <code>backend/src/llm/prep/character-creation-processor.ts</code> parallels
@@ -284,7 +287,10 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   character-creation rows in <code>pipeline_runs</code> are keyed on
   <code>(world_id, stage, user_id)</code> rather than <code>(world_id, stage, NULL)</code> — N
   players run N concurrent rows per stage without colliding. Per-player failure does not abort other
-  parallel jobs.
+  parallel jobs. The fourth stage (<code>character_integration</code>) sketched in earlier drafts
+  was retired in MYT-54 — its job moved to the
+  <a href="./character-integration.html">campaign-scoped single-pass</a> the owner triggers when
+  every player's row reaches <code>completed</code>.
 </p>
 
 <table>
@@ -333,23 +339,8 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
         <code>character_equipment</code>, <code>character_spells</code>). Single transaction: INSERT
         into <code>characters</code> (narrative + mechanics together) + INSERT into
         <code>campaign_characters</code> + bulk-INSERT into the four sub-tables.
-        <code>characters.entity_id</code> stays NULL until stage 4.
-      </td>
-    </tr>
-    <tr>
-      <td><code>character_integration</code></td>
-      <td>Opus <code>generateObject</code></td>
-      <td>~24–30s</td>
-      <td>~$0.10</td>
-      <td>
-        INSERTs the PC <code>entities</code> row (<code>entity_type='pc'</code>,
-        <code>access_level='known'</code>), backfills <code>characters.entity_id</code>, writes
-        PC↔world relationship rows + PC↔world fact rows including the deferred
-        <em>"starts at $location"</em> fact (re-derived from
-        <code>campaigns.starting_situation_index</code> +
-        <code>worlds.starting_situation_entries</code>). After the COMMIT lands, the handler
-        publishes <code>entity-added</code> for the PC and <code>edge-added</code> for each
-        persisted relationship to the campaign's pipeline channel.
+        <code>characters.entity_id</code> stays NULL until the MYT-54
+        <a href="./character-integration.html">integration pass</a> backfills it.
       </td>
     </tr>
   </tbody>
@@ -372,27 +363,11 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Stages 2–3 are Sonnet, stage 4 is Opus</strong> — the parent pipeline spec sketched all
-  four stages as Opus. Stages 2–3 produce bounded structured output (a portable-character payload,
+  <strong>Stages 2–3 are Sonnet</strong> — the parent pipeline spec sketched all character-creation
+  stages as Opus. Stages 2–3 produce bounded structured output (a portable-character payload,
   D&amp;D 5e SRD-compliant mechanical rows); Sonnet handles that reliably and is ~3× cheaper input,
-  5× cheaper output. Stage 4 is the load-bearing PC↔world integration: it receives the world
-  snapshot, the player's grounding text, and the chosen situation, and produces a coherent narrative
-  weave (relationships + facts tagged with the PC entity). The narrative-judgement and
-  cross-reference work matches the Slow Thinker role; Opus is the right tier here.
-</aside>
-
-<aside class="wiki-rationale">
-  <strong>Stage 4 is <code>generateObject</code>, not <code>streamObject</code></strong> — the spec
-  sketched stage 4 as a streaming call so per-chunk entity / edge previews could feed the live
-  graph. In practice stage 4 has no per-chunk consumer: the SSE <code>entity-added</code> +
-  <code>edge-added</code> events fire AFTER the transactional COMMIT, never from
-  <code>partialObjectStream</code> chunks, so the live graph only learns about a PC and its edges
-  once the row is durable. The Vercel AI SDK's <code>streamObject</code> is pull-based —
-  <code>await stream.object</code> never settles unless the caller concurrently iterates
-  <code>partialObjectStream</code> — which means a stage 4 that awaited the object without iterating
-  hung indefinitely. <code>generateObject</code> is eagerly executed, returns the same validated
-  tree in the same wall-time (real-Anthropic smoke: ~24s), and matches the post-commit-only event
-  shape the handler actually emits.
+  5× cheaper output. The load-bearing PC↔world integration is Opus, but it runs out of band — see
+  the campaign-scoped <a href="./character-integration.html">integration pass</a>.
 </aside>
 
 <h2>Lifecycle and late joiners</h2>
@@ -439,52 +414,48 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   fan-out. The processor's re-run is idempotent at the stage boundary, not delete-and-recreate:
   stage 3 detects an existing <code>characters</code> row for
   <code>(campaign_id, user_id)</code> and UPDATEs rather than INSERTs (TRUNCATE-then-INSERT on the
-  four sub-tables); stage 4 detects an existing <code>characters.entity_id</code> and skips the
-  entity creation (TRUNCATE-then-INSERT on PC-tagged relationships / facts). The frontend reframes
-  the second prompt for late joiners ("describe the situation the party is currently in and how your
-  character fits") but both forms map to the same <code>situation_grounding_text</code> column.
+  four sub-tables). The frontend reframes the second prompt for late joiners ("describe the
+  situation the party is currently in and how your character fits") but both forms map to the same
+  <code>situation_grounding_text</code> column.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Resubmit-after-failure is idempotent on stage outputs, not a clean slate</strong> — the
-  alternative (DELETE the partial PC + sub-table rows on failure) would force the player to re-enter
-  their prose just because stage 4 timed out once. Idempotent re-runs let a transient Anthropic 503
-  self-heal without losing the player's input or the work stages 2–3 already completed. The
-  <code>UNIQUE(campaign_id, user_id)</code> on <code>campaign_characters</code> +
-  <code>UNIQUE(world_id, name)</code> on <code>entities</code> would otherwise turn the re-run into
-  a constraint violation. Players who genuinely want a clean slate (different name, race, class)
-  re-roll through an admin path — there is no member-facing DELETE in v1.
+  alternative (DELETE the partial character row on failure) would force the player to re-enter their
+  prose just because a Sonnet call timed out once. Idempotent re-runs let a transient Anthropic 503
+  self-heal without losing the player's input or the work stage 2 already completed. The
+  <code>UNIQUE(campaign_id, user_id)</code> on <code>campaign_characters</code> would otherwise turn
+  the re-run into a constraint violation. Players who genuinely want a clean slate (different name,
+  race, class) re-roll through an admin path — there is no member-facing DELETE in v1.
 </aside>
 
-<h2>Cross-PC integration is MYT-54, not MYT-53</h2>
+<h2>Cross-PC integration moved to MYT-54</h2>
 
 <p>
-  Stage 4 (<code>character_integration</code>) is <strong>per-player only</strong>. It writes
-  PC↔world relationships and PC↔world facts; it does not touch PC↔PC links. Players who want
-  explicit cross-character relationships ("we're siblings", "I owe him money") get that in MYT-54,
-  which layers on top of MYT-53's per-player output:
+  The per-player pipeline now ends at stage 3 (<code>character_sheet</code>). MYT-54 retired the
+  per-player <code>character_integration</code> stage 4 outright: PCs no longer become
+  <code>entities</code> rows from the per-player pass. Instead, MYT-53's stage 2
+  (<code>character_concept</code>) persists its structured output to the new
+  <code>character_concepts.concept_output</code> JSONB column, and the owner-triggered
+  <a href="./character-integration.html">character integration</a> pass reads every PC's concept
+  output plus the world inventory in one Opus call and writes every PC entity, fact, and
+  relationship (including PC↔PC edges) in a single transaction.
 </p>
+
+<p>Two consequences for the per-player surface this page documents:</p>
 
 <ul>
   <li>
-    MYT-54 adds a post-fan-out barrier that waits for every per-player job to reach
-    <code>'completed'</code>.
+    A <code>character_concepts</code> row reaches <code>status='completed'</code> after stage 3
+    finishes. The fifth lifecycle state, <code>'integrated'</code>, is set by the MYT-54 integration
+    handler, not by anything on this page.
   </li>
   <li>
-    MYT-54 adds an owner-only prompt at fan-out time: "any established relationships between
-    characters to give the LLM upfront?"
-  </li>
-  <li>
-    MYT-54's cross-PC integration stage reads that input and every per-player PC, then writes
-    cross-PC relationship edges and cross-references in facts.
+    The cost-cap budget (<code>character_creation_cost_cap_usd</code>) covers both the per-player
+    <code>character_concept</code> + <code>character_sheet</code> rows and the campaign-scoped
+    <code>character_integration</code> row — one budget across all character-creation spend.
   </li>
 </ul>
-
-<p>
-  MYT-53's data shapes are designed so MYT-54 can layer on without reshaping per-player output — PC
-  entities, relationships, and facts already exist as first-class rows that the cross-PC pass can
-  read and amend.
-</p>
 
 <h2>Operating this piece</h2>
 

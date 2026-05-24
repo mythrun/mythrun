@@ -1553,7 +1553,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="campaigns" id="schema-table-campaigns">
   <summary>
     <span class="schema-table-name">campaigns</span>
-    <span class="schema-table-meta">10 columns · 1 index · 2 CHECKs · 24 FKs</span>
+    <span class="schema-table-meta">11 columns · 1 index · 3 CHECKs · 24 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1628,6 +1628,13 @@ END)</code></li>
         <td>—</td>
         <td>—</td>
       </tr>
+      <tr data-column-name="pre_integration_notes">
+        <td><code>pre_integration_notes</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
@@ -1636,6 +1643,7 @@ END)</code></li>
   </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
+    <li><code>CHECK (((pre_integration_notes IS NULL) OR (length(pre_integration_notes) &lt;= 4000)))</code></li>
     <li><code>CHECK (((starting_situation_index IS NULL) OR ((starting_situation_index &gt;= 0) AND (starting_situation_index &lt;= 2))))</code></li>
     <li><code>CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))</code></li>
   </ul>
@@ -1643,7 +1651,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="character_concepts" id="schema-table-character_concepts">
   <summary>
     <span class="schema-table-name">character_concepts</span>
-    <span class="schema-table-meta">10 columns · 1 index · 3 CHECKs · 48 FKs</span>
+    <span class="schema-table-meta">11 columns · 1 index · 4 CHECKs · 48 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1660,14 +1668,14 @@ END)</code></li>
         <td><code>uuid</code></td>
         <td>NO</td>
         <td>—</td>
-        <td><code>campaigns(id)</code> ON DELETE CASCADE</td>
+        <td><code>campaign_members(user_id)</code> ON DELETE CASCADE</td>
       </tr>
       <tr data-column-name="user_id">
         <td><code>user_id</code></td>
         <td><code>uuid</code></td>
         <td>NO</td>
         <td>—</td>
-        <td><code>campaign_members(campaign_id)</code> ON DELETE CASCADE</td>
+        <td><code>users(id)</code> ON DELETE CASCADE</td>
       </tr>
       <tr data-column-name="concept_text">
         <td><code>concept_text</code></td>
@@ -1718,6 +1726,13 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="concept_output">
+        <td><code>concept_output</code></td>
+        <td><code>jsonb</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
@@ -1726,9 +1741,10 @@ END)</code></li>
   </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
+    <li><code>CHECK (((concept_output IS NULL) OR (jsonb_typeof(concept_output) = 'object'::text)))</code></li>
     <li><code>CHECK (((concept_text IS NULL) OR ((length(concept_text) &gt;= 20) AND (length(concept_text) &lt;= 4000))))</code></li>
     <li><code>CHECK (((length(situation_grounding_text) &gt;= 20) AND (length(situation_grounding_text) &lt;= 2000)))</code></li>
-    <li><code>CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text])))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text, 'integrated'::text])))</code></li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="character_equipment" id="schema-table-character_equipment">
