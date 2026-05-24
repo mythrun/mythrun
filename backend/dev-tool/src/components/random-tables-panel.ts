@@ -2,7 +2,12 @@
 //
 // myth-rdwq P6.B — GET /api/campaigns/:campaignId/random-tables.
 // Rehomed from the old character-creation panel's "Other views" section.
-// Action: Refresh button. Feedback: random tables JSON detail.
+// Action: Refresh button. Feedback: per-table roll-range tables + raw
+// JSON disclosure.
+//
+// myth-94bu: domain-aware renderer — replaces the raw JSON dump with one
+// small <table> per random table (roll-range | content). Raw JSON is
+// preserved as a collapsible footer.
 
 import { apiCall } from '../api-client.js'
 import { getActiveCampaignId } from '../shell/active-campaign.js'
@@ -20,6 +25,158 @@ function readCode(body: unknown): string {
     if (typeof c === 'string') return c
   }
   return 'unknown'
+}
+
+interface RandomTableEntry {
+  readonly rollMin: number
+  readonly rollMax: number
+  readonly content: string
+}
+
+interface RandomTable {
+  readonly id: string
+  readonly name: string
+  readonly category: string
+  readonly entries: readonly RandomTableEntry[]
+}
+
+function parseTables(body: unknown): readonly RandomTable[] {
+  if (typeof body !== 'object' || body === null) return []
+  if (!('tables' in body)) return []
+  const raw = body.tables
+  if (!Array.isArray(raw)) return []
+  const out: RandomTable[] = []
+  for (const t of raw) {
+    if (typeof t !== 'object' || t === null) continue
+    const rec = t as Record<string, unknown>
+    if (
+      typeof rec.id !== 'string' ||
+      typeof rec.name !== 'string' ||
+      typeof rec.category !== 'string'
+    ) {
+      continue
+    }
+    const entriesRaw = Array.isArray(rec.entries) ? rec.entries : []
+    const entries: RandomTableEntry[] = []
+    for (const e of entriesRaw) {
+      if (typeof e !== 'object' || e === null) continue
+      const er = e as Record<string, unknown>
+      if (
+        typeof er.rollMin === 'number' &&
+        typeof er.rollMax === 'number' &&
+        typeof er.content === 'string'
+      ) {
+        entries.push({
+          rollMin: er.rollMin,
+          rollMax: er.rollMax,
+          content: er.content,
+        })
+      }
+    }
+    out.push({ id: rec.id, name: rec.name, category: rec.category, entries })
+  }
+  return out
+}
+
+function renderRandomTables(
+  parent: HTMLElement,
+  tables: readonly RandomTable[],
+): void {
+  const section = document.createElement('section')
+  section.style.marginTop = '8px'
+
+  const heading = document.createElement('h2')
+  heading.style.fontSize = '12px'
+  heading.style.fontWeight = '600'
+  heading.style.color = 'var(--fg-emphasis)'
+  heading.style.margin = '0 0 6px 0'
+  heading.textContent = `Random tables (${String(tables.length)})`
+  section.appendChild(heading)
+
+  if (tables.length === 0) {
+    const empty = document.createElement('div')
+    empty.style.color = 'var(--fg-muted)'
+    empty.style.fontSize = '12px'
+    empty.textContent = '(no random tables for this world)'
+    section.appendChild(empty)
+    parent.appendChild(section)
+    return
+  }
+
+  for (const t of tables) {
+    const tableHeading = document.createElement('h3')
+    tableHeading.style.fontSize = '12px'
+    tableHeading.style.fontWeight = '600'
+    tableHeading.style.color = 'var(--fg-default)'
+    tableHeading.style.margin = '10px 0 4px 0'
+    tableHeading.textContent = `${t.name} `
+    const cat = document.createElement('span')
+    cat.style.color = 'var(--fg-muted)'
+    cat.style.fontWeight = '400'
+    cat.textContent = `[${t.category}]`
+    tableHeading.appendChild(cat)
+    section.appendChild(tableHeading)
+
+    if (t.entries.length === 0) {
+      const empty = document.createElement('div')
+      empty.style.color = 'var(--fg-muted)'
+      empty.style.fontSize = '12px'
+      empty.textContent = '(no entries)'
+      section.appendChild(empty)
+      continue
+    }
+
+    const tableEl = document.createElement('table')
+    tableEl.style.borderCollapse = 'collapse'
+    tableEl.style.fontSize = '12px'
+    tableEl.style.fontFamily = 'var(--mono)'
+    tableEl.style.width = '100%'
+
+    const thead = document.createElement('thead')
+    const headerRow = document.createElement('tr')
+    const thRoll = document.createElement('th')
+    thRoll.textContent = 'Roll'
+    thRoll.style.textAlign = 'left'
+    thRoll.style.padding = '2px 8px 2px 0'
+    thRoll.style.color = 'var(--fg-muted)'
+    thRoll.style.fontWeight = '500'
+    thRoll.style.borderBottom = '1px solid var(--border-soft)'
+    const thEntry = document.createElement('th')
+    thEntry.textContent = 'Entry'
+    thEntry.style.textAlign = 'left'
+    thEntry.style.padding = '2px 0'
+    thEntry.style.color = 'var(--fg-muted)'
+    thEntry.style.fontWeight = '500'
+    thEntry.style.borderBottom = '1px solid var(--border-soft)'
+    headerRow.appendChild(thRoll)
+    headerRow.appendChild(thEntry)
+    thead.appendChild(headerRow)
+    tableEl.appendChild(thead)
+
+    const tbody = document.createElement('tbody')
+    for (const e of t.entries) {
+      const tr = document.createElement('tr')
+      const tdRoll = document.createElement('td')
+      tdRoll.style.padding = '2px 8px 2px 0'
+      tdRoll.style.color = 'var(--accent)'
+      tdRoll.style.verticalAlign = 'top'
+      tdRoll.style.whiteSpace = 'nowrap'
+      tdRoll.textContent =
+        e.rollMin === e.rollMax
+          ? String(e.rollMin)
+          : `${String(e.rollMin)}–${String(e.rollMax)}`
+      const tdEntry = document.createElement('td')
+      tdEntry.style.padding = '2px 0'
+      tdEntry.style.color = 'var(--fg-default)'
+      tdEntry.textContent = e.content
+      tr.appendChild(tdRoll)
+      tr.appendChild(tdEntry)
+      tbody.appendChild(tr)
+    }
+    tableEl.appendChild(tbody)
+    section.appendChild(tableEl)
+  }
+  parent.appendChild(section)
 }
 
 export function mountRandomTablesPanel(parent: HTMLElement): PanelHandle {
@@ -82,6 +239,7 @@ export function mountRandomTablesPanel(parent: HTMLElement): PanelHandle {
     summary.style.color = 'var(--fg-emphasis)'
     summary.textContent = `${String(res.status)} tables loaded`
     feedbackEl.appendChild(summary)
+    renderRandomTables(feedbackEl, parseTables(res.body))
     appendJsonDisclosure(feedbackEl, res.body)
   }
 

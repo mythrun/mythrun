@@ -117,4 +117,51 @@ describe('mountHierarchyPanel', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(handle.root.getAttribute('data-state')).toBe('error')
   })
+
+  // myth-94bu: domain-aware renderer asserts.
+  it('renders the parent-child tree with relation count + truncated ids', async () => {
+    setActiveCampaignId('camp-1')
+    apiCallMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      body: {
+        hierarchy: [
+          { id: 'h-1', parentEntityId: 'parent-aaaaaaaa-1', childEntityId: 'child-bbbbbbbb-1' },
+          { id: 'h-2', parentEntityId: 'parent-aaaaaaaa-1', childEntityId: 'child-bbbbbbbb-2' },
+        ],
+      },
+      latencyMs: 10,
+    })
+    const parent = makeParent()
+    const handle = mountHierarchyPanel(parent)
+    const btn = handle.root.querySelector('button')
+    if (btn === null) throw new Error('expected button')
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+    const text = handle.root.textContent
+    expect(text).toContain('Hierarchy (2 relations)')
+    expect(text).toContain('parent-a') // truncated id prefix of the root
+    expect(text).toContain('2 children')
+    expect(text).toContain('child-bb')
+    // Raw JSON disclosure is preserved as a footer.
+    expect(handle.root.querySelector('details')).not.toBeNull()
+  })
+
+  it('renders the empty-state line when hierarchy is empty', async () => {
+    setActiveCampaignId('camp-1')
+    apiCallMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      body: { hierarchy: [] },
+      latencyMs: 10,
+    })
+    const parent = makeParent()
+    const handle = mountHierarchyPanel(parent)
+    const btn = handle.root.querySelector('button')
+    if (btn === null) throw new Error('expected button')
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(handle.root.textContent).toContain('Hierarchy (0 relations)')
+    expect(handle.root.textContent).toContain('(no parent-child relations yet)')
+  })
 })

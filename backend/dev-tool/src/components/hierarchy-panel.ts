@@ -2,7 +2,14 @@
 //
 // myth-rdwq P6.B — GET /api/campaigns/:campaignId/hierarchy.
 // Rehomed from the old character-creation panel's "Other views" section.
-// Action: Refresh button. Feedback: hierarchy JSON detail.
+// Action: Refresh button. Feedback: hierarchy tree view + raw JSON disclosure.
+//
+// myth-94bu: domain-aware renderer — replaces the raw JSON dump with an
+// indented tree of parent→child entity relationships. The endpoint
+// returns flat (parentEntityId, childEntityId) pairs from the
+// entity_hierarchy table, so the tree shown here is structural only
+// (entity ids, not names — name resolution lives in the world-snapshot
+// view). Raw JSON is preserved as a collapsible footer.
 
 import { apiCall } from '../api-client.js'
 import { getActiveCampaignId } from '../shell/active-campaign.js'
@@ -20,6 +27,115 @@ function readCode(body: unknown): string {
     if (typeof c === 'string') return c
   }
   return 'unknown'
+}
+
+interface HierarchyRow {
+  readonly id: string
+  readonly parentEntityId: string
+  readonly childEntityId: string
+}
+
+function parseHierarchy(body: unknown): readonly HierarchyRow[] {
+  if (typeof body !== 'object' || body === null) return []
+  if (!('hierarchy' in body)) return []
+  const raw = body.hierarchy
+  if (!Array.isArray(raw)) return []
+  const out: HierarchyRow[] = []
+  for (const r of raw) {
+    if (typeof r !== 'object' || r === null) continue
+    const rec = r as Record<string, unknown>
+    if (
+      typeof rec.id === 'string' &&
+      typeof rec.parentEntityId === 'string' &&
+      typeof rec.childEntityId === 'string'
+    ) {
+      out.push({
+        id: rec.id,
+        parentEntityId: rec.parentEntityId,
+        childEntityId: rec.childEntityId,
+      })
+    }
+  }
+  return out
+}
+
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id
+}
+
+function renderHierarchyTree(
+  parent: HTMLElement,
+  rows: readonly HierarchyRow[],
+): void {
+  const section = document.createElement('section')
+  section.style.marginTop = '8px'
+
+  const heading = document.createElement('h2')
+  heading.style.fontSize = '12px'
+  heading.style.fontWeight = '600'
+  heading.style.color = 'var(--fg-emphasis)'
+  heading.style.margin = '0 0 6px 0'
+  heading.textContent = `Hierarchy (${String(rows.length)} relations)`
+  section.appendChild(heading)
+
+  if (rows.length === 0) {
+    const empty = document.createElement('div')
+    empty.style.color = 'var(--fg-muted)'
+    empty.style.fontSize = '12px'
+    empty.textContent = '(no parent-child relations yet)'
+    section.appendChild(empty)
+    parent.appendChild(section)
+    return
+  }
+
+  // Build parent→children map. Roots are parents that never appear as a
+  // child in any row.
+  const childrenOf = new Map<string, string[]>()
+  const childIds = new Set<string>()
+  const allIds = new Set<string>()
+  for (const r of rows) {
+    const arr = childrenOf.get(r.parentEntityId) ?? []
+    arr.push(r.childEntityId)
+    childrenOf.set(r.parentEntityId, arr)
+    childIds.add(r.childEntityId)
+    allIds.add(r.parentEntityId)
+    allIds.add(r.childEntityId)
+  }
+  const roots: string[] = []
+  for (const id of allIds) {
+    if (!childIds.has(id)) roots.push(id)
+  }
+  roots.sort()
+
+  const list = document.createElement('div')
+  list.style.fontFamily = 'var(--mono)'
+  list.style.fontSize = '12px'
+  list.style.lineHeight = '1.5'
+
+  const seen = new Set<string>()
+  const renderNode = (entityId: string, depth: number): void => {
+    if (seen.has(entityId)) return
+    seen.add(entityId)
+    const kids = childrenOf.get(entityId) ?? []
+    const row = document.createElement('div')
+    row.style.paddingLeft = `${String(depth * 16)}px`
+    row.style.color = 'var(--fg-default)'
+    const marker = kids.length > 0 ? '▾' : '—'
+    const tail = kids.length > 0 ? ` (${String(kids.length)} children)` : ''
+    row.textContent = `${marker} ${shortId(entityId)}${tail}`
+    row.title = entityId
+    list.appendChild(row)
+    for (const child of kids) renderNode(child, depth + 1)
+  }
+  for (const r of roots) renderNode(r, 0)
+  // Surface any orphans (entities not reachable from a root — defensive
+  // against cycles or stale rows).
+  for (const id of allIds) {
+    if (!seen.has(id)) renderNode(id, 0)
+  }
+
+  section.appendChild(list)
+  parent.appendChild(section)
 }
 
 export function mountHierarchyPanel(parent: HTMLElement): PanelHandle {
@@ -82,6 +198,7 @@ export function mountHierarchyPanel(parent: HTMLElement): PanelHandle {
     summary.style.color = 'var(--fg-emphasis)'
     summary.textContent = `${String(res.status)} hierarchy loaded`
     feedbackEl.appendChild(summary)
+    renderHierarchyTree(feedbackEl, parseHierarchy(res.body))
     appendJsonDisclosure(feedbackEl, res.body)
   }
 

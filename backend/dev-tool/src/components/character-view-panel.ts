@@ -4,6 +4,11 @@
 // Reads the active charId from localStorage (populated by the roster
 // panel's "view" click). If no active charId, renders the canonical
 // empty-state pointer to the roster.
+//
+// myth-94bu: domain-aware renderer — character-sheet card view. The
+// parser + DOM authoring live in character-view-render.ts to keep this
+// module focused on the panel lifecycle. Raw JSON is preserved as a
+// collapsible footer after the sheet.
 
 import { apiCall } from '../api-client.js'
 import {
@@ -17,6 +22,10 @@ import {
 } from './_shared/panel-skeleton.js'
 import { renderErrorBlock } from './_shared/error-block.js'
 import { appendJsonDisclosure } from './_shared/json-disclosure.js'
+import {
+  parseCharacter,
+  renderCharacterSheet,
+} from './character-view-render.js'
 
 function readCode(body: unknown): string {
   if (typeof body === 'object' && body !== null && 'code' in body) {
@@ -98,6 +107,7 @@ export function mountCharacterViewPanel(parent: HTMLElement): PanelHandle {
     summary.style.color = 'var(--fg-emphasis)'
     summary.textContent = `${String(res.status)} — character ${charId} loaded`
     feedbackEl.appendChild(summary)
+    renderCharacterSheet(feedbackEl, parseCharacter(res.body))
     appendJsonDisclosure(feedbackEl, res.body)
   }
 

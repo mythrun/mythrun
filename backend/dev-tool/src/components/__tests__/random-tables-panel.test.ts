@@ -115,4 +115,69 @@ describe('mountRandomTablesPanel', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(handle.root.getAttribute('data-state')).toBe('error')
   })
+
+  // myth-94bu: domain-aware renderer asserts.
+  it('renders each table as a section with roll-range rows', async () => {
+    setActiveCampaignId('camp-1')
+    apiCallMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      body: {
+        tables: [
+          {
+            id: 't-1',
+            name: 'Forest Encounters',
+            category: 'encounter',
+            entries: [
+              { rollMin: 1, rollMax: 3, content: 'A pack of wolves' },
+              { rollMin: 4, rollMax: 4, content: 'A lost merchant' },
+            ],
+          },
+          {
+            id: 't-2',
+            name: 'Tavern Rumors',
+            category: 'rumor',
+            entries: [{ rollMin: 1, rollMax: 1, content: 'The well is cursed' }],
+          },
+        ],
+      },
+      latencyMs: 10,
+    })
+    const parent = makeParent()
+    const handle = mountRandomTablesPanel(parent)
+    const btn = handle.root.querySelector('button')
+    if (btn === null) throw new Error('expected button')
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+    const text = handle.root.textContent
+    expect(text).toContain('Random tables (2)')
+    expect(text).toContain('Forest Encounters')
+    expect(text).toContain('[encounter]')
+    expect(text).toContain('1–3')
+    expect(text).toContain('A pack of wolves')
+    expect(text).toContain('Tavern Rumors')
+    expect(text).toContain('The well is cursed')
+    // Each table renders its own <table>.
+    expect(handle.root.querySelectorAll('table').length).toBe(2)
+    // Raw JSON disclosure preserved.
+    expect(handle.root.querySelector('details')).not.toBeNull()
+  })
+
+  it('renders empty-state when there are no tables', async () => {
+    setActiveCampaignId('camp-1')
+    apiCallMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      body: { tables: [] },
+      latencyMs: 10,
+    })
+    const parent = makeParent()
+    const handle = mountRandomTablesPanel(parent)
+    const btn = handle.root.querySelector('button')
+    if (btn === null) throw new Error('expected button')
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(handle.root.textContent).toContain('Random tables (0)')
+    expect(handle.root.textContent).toContain('(no random tables for this world)')
+  })
 })
