@@ -67,6 +67,9 @@ import './components/dev-credits-grant-panel.js'
 import './components/health-live-panel.js'
 import './components/health-ready-panel.js'
 import './components/session-ticket-panel.js'
+// MYT-54 T15 — campaign-scoped character-integration progress panel.
+import './components/character-creation-progress-panel.js'
+import './components/finalize-character-creation-panel.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

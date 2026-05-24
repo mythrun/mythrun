@@ -44,6 +44,8 @@ import { mountCharacterViewPanel } from './src/components/character-view-panel.j
 import { mountStartingSituationsPanel } from './src/components/starting-situations-panel.js'
 import { mountSituationPickPanel } from './src/components/situation-pick-panel.js'
 import { mountMembersPanel } from './src/components/members-panel.js'
+import { mountCharacterCreationProgressPanel } from './src/components/character-creation-progress-panel.js'
+import { mountFinalizeCharacterCreationPanel } from './src/components/finalize-character-creation-panel.js'
 import { mountInvitesListPanel } from './src/components/invites-list-panel.js'
 import { mountInviteRevokePanel } from './src/components/invite-revoke-panel.js'
 import { mountInvitePreviewPanel } from './src/components/invite-preview-panel.js'
@@ -324,6 +326,20 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
     readySelector: '[data-state="ready"]',
     errorSelector: '[data-state="error"]',
     exercises: [route('GET', '/api/campaigns/:campaignId/invites')],
+  },
+  'character-creation-progress': {
+    pattern: 'action-only',
+    mount: mountCharacterCreationProgressPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('GET', '/api/campaigns/:campaignId/character-creation-progress')],
+  },
+  'finalize-character-creation': {
+    pattern: 'action-only',
+    mount: mountFinalizeCharacterCreationPanel,
+    readySelector: '[data-state="ready"]',
+    errorSelector: '[data-state="error"]',
+    exercises: [route('POST', '/api/campaigns/:campaignId/finalize-character-creation')],
   },
   'invite-revoke': {
     pattern: 'action-only',

@@ -54,6 +54,8 @@ export const ROUTE_PANELS: readonly RoutePanel[] = [
   { method: 'GET',    path: '/api/campaigns/:campaignId/starting-situations',        section: 'CHARACTERS', label: 'Situations (list)', requiresCampaign: true, longRunning: false },
   { method: 'POST',   path: '/api/campaigns/:campaignId/starting-situation',         section: 'CHARACTERS', label: 'Situation (pick)', requiresCampaign: true, longRunning: false },
   { method: 'GET',    path: '/api/campaigns/:campaignId/members',                    section: 'CHARACTERS', label: 'Members',         requiresCampaign: true,  longRunning: false },
+  { method: 'GET',    path: '/api/campaigns/:campaignId/character-creation-progress', section: 'CHARACTERS', label: 'Creation progress', requiresCampaign: true, longRunning: false },
+  { method: 'POST',   path: '/api/campaigns/:campaignId/finalize-character-creation', section: 'CHARACTERS', label: 'Finalize integration', requiresCampaign: true, longRunning: true },
 
   // USERS & ACCESS
   { method: 'GET',    path: '/api/users/me',                                         section: 'USERS',     label: 'Me',               requiresCampaign: false, longRunning: false },
