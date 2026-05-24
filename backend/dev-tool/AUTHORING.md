@@ -95,6 +95,8 @@ on import.
 | GET /api/campaigns/:campaignId/characters/:charId | character-view | action-only |
 | GET /api/campaigns/:campaignId/starting-situations | starting-situations | action-only |
 | POST /api/campaigns/:campaignId/starting-situation | situation-pick | action-only |
+| GET /api/campaigns/:campaignId/character-creation-progress | character-creation-progress | action-only |
+| POST /api/campaigns/:campaignId/finalize-character-creation | finalize-character-creation | action-only |
 | GET /api/campaigns/:campaignId/members | members | action-only |
 | POST /api/campaigns/:campaignId/invites | invites | action-only |
 | GET /api/campaigns/:campaignId/invites | invites-list | action-only |

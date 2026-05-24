@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
-import { Queue, Worker, type JobType } from 'bullmq'
+import { Queue, Worker, type Job, type JobType } from 'bullmq'
 import type {
   AppDeps,
 } from './app-deps.js'
@@ -23,7 +23,14 @@ import { createRepo } from './repo/index.js'
 import { getStripeClient } from './billing/stripe-client.js'
 import { probeStripeContract } from './billing/probe.js'
 import { createWorldGenProcessor } from './llm/prep/world-gen-processor.js'
-import { createCharacterCreationProcessor } from './llm/prep/character-creation-processor.js'
+import {
+  createCharacterCreationProcessor,
+  type CharacterCreationJobPayload,
+} from './llm/prep/character-creation-processor.js'
+import {
+  createCharacterIntegrationProcessor,
+  type CharacterIntegrationJobPayload,
+} from './llm/prep/character-integration-processor.js'
 import { readCharacterCreationCostCap, readCostCap } from './llm/prep/cost-cap.js'
 import {
   CONCURRENCY_CAMPAIGN_SETUP,
@@ -212,16 +219,36 @@ async function buildCharacterCreationWorker(
     probe: () => connection.ping(),
     signal,
   })
+  // MYT-54 T20 fix: route on job.name so the campaign-setup queue serves
+  // both 'character-creation' (per-player, MYT-53) and 'character-
+  // integration' (campaign-scoped, MYT-54). Without this dispatch, an
+  // integration job is silently swallowed by the character-creation
+  // processor — it destructures the missing user_id, claims wrong stages
+  // with user_id=NULL, and leaves pipeline_runs rows stuck `running`
+  // while the campaign never flips to `active`. See dev-tool-verifier
+  // smoke run on 2026-05-23 for the failure trace.
+  const publishEvent = async (campaignId: string, event: Record<string, unknown>): Promise<void> => {
+    const channel = `${redisKeyPrefix}pipeline:campaign:${campaignId}`
+    await redisRealtime.publish(channel, JSON.stringify(event))
+  }
+  const characterCreationProcessor = createCharacterCreationProcessor({
+    pool,
+    costCapUsd,
+    publishEvent,
+  })
+  const characterIntegrationProcessor = createCharacterIntegrationProcessor({
+    pool,
+    publishEvent,
+  })
   return new Worker(
     QUEUE_CAMPAIGN_SETUP,
-    createCharacterCreationProcessor({
-      pool,
-      costCapUsd,
-      publishEvent: async (campaignId, event) => {
-        const channel = `${redisKeyPrefix}pipeline:campaign:${campaignId}`
-        await redisRealtime.publish(channel, JSON.stringify(event))
-      },
-    }),
+    async (job) => {
+      if (job.name === 'character-integration') {
+        await characterIntegrationProcessor(job as Job<CharacterIntegrationJobPayload>)
+        return
+      }
+      await characterCreationProcessor(job as Job<CharacterCreationJobPayload>)
+    },
     { connection, concurrency: CONCURRENCY_CAMPAIGN_SETUP },
   )
 }
