@@ -12,7 +12,12 @@
 import { JSDOM } from 'jsdom'
 
 import { BACKEND_ROUTES } from '../../src/contract/backend-routes.js'
-import { EXEMPT_ROUTES, PANEL_REGISTRY } from '../verify-registry.js'
+import {
+  EXEMPT_ROUTES,
+  PAGE_REGISTRY,
+  PANEL_EXERCISES,
+  type PageRegistration,
+} from '../verify-registry.js'
 import { setCurrentDevSub } from '../src/identity.js'
 
 const BACKEND_URL = 'http://localhost:3030'
@@ -233,9 +238,9 @@ export async function pollForSelector(
 // captures console.error noise. Always tears down the JSDOM context so
 // globals don't leak between panels.
 export async function verifyPanel(name: string): Promise<PanelResult> {
-  const reg = PANEL_REGISTRY[name]
+  const reg = (PAGE_REGISTRY as Readonly<Record<string, PageRegistration>>)[name]
   if (!reg) {
-    return { panel: name, status: 'boot-error', details: 'not in PANEL_REGISTRY' }
+    return { panel: name, status: 'boot-error', details: 'not in PAGE_REGISTRY' }
   }
   const ctx = setupJsdomContext()
   try {
@@ -263,9 +268,9 @@ export async function verifyPanel(name: string): Promise<PanelResult> {
       }
     }
     // outcome === 'ready'; check console.error.
-    const filtered = ctx.consoleErrors.filter((msg) => {
+    const filtered = ctx.consoleErrors.filter((msg: string) => {
       if (!reg.errorAllowlist) return true
-      return !reg.errorAllowlist.some((allow) => msg.includes(allow))
+      return !reg.errorAllowlist.some((allow: string) => msg.includes(allow))
     })
     if (filtered.length > 0) {
       return {
@@ -292,8 +297,17 @@ export async function verifyPanel(name: string): Promise<PanelResult> {
 // sees it without re-running the test suite.
 export function routeAudit(): string[] {
   const covered = new Set<string>()
-  for (const reg of Object.values(PANEL_REGISTRY)) {
-    for (const r of reg.exercises) {
+  // myth-0smu: route exhaustion now unions PANEL_EXERCISES across every
+  // panel id referenced by every workflow page in PAGE_REGISTRY. The
+  // page is the structural unit but routes belong to panels.
+  const reachablePanelIds = new Set<string>()
+  for (const page of Object.values(PAGE_REGISTRY)) {
+    for (const pid of page.panels) reachablePanelIds.add(pid)
+  }
+  for (const pid of reachablePanelIds) {
+    const routes = PANEL_EXERCISES[pid]
+    if (routes === undefined) continue
+    for (const r of routes) {
       covered.add(`${r.method} ${r.path}`)
     }
   }
@@ -320,7 +334,7 @@ async function main(): Promise<void> {
     `[bootstrap] ${DEV_SUB} ${bootstrap.userRegistered ? 'registered' : 'pre-existing'}; credits granted`,
   )
 
-  const panelNames = Object.keys(PANEL_REGISTRY)
+  const panelNames = Object.keys(PAGE_REGISTRY)
   const results: PanelResult[] = []
   for (const name of panelNames) {
     const result = await verifyPanel(name)

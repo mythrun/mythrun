@@ -1,23 +1,21 @@
 // backend/dev-tool/src/shell/sidebar.ts
 //
-// myth-mbdc: endpoint × action leaves grouped by section. Disabled
-// leaves render dim when their route requires an active campaign
-// and none is set.
+// myth-0smu: workflow-per-page sidebar. Each leaf is one of the 6
+// entity-scoped pages declared in workflow-registry.ts. Pages that
+// require an active campaign (World, Characters) dim when none is set.
 
-import { ROUTE_PANELS, type RoutePanel, type SidebarSection } from './route-registry.js'
+import { WORKFLOWS, type WorkflowDescriptor } from './workflow-registry.js'
 
 export interface SidebarOpts {
-  readonly onSelect: (panel: RoutePanel) => void
+  readonly onSelect: (workflow: WorkflowDescriptor) => void
   readonly getActiveCampaignId: () => string | null
 }
 export interface SidebarHandle {
   readonly root: HTMLElement
   unmount(): void
   refresh(): void
-  setSelected(panel: RoutePanel | null): void
+  setSelected(workflow: WorkflowDescriptor | null): void
 }
-
-const SECTION_ORDER: readonly SidebarSection[] = ['CAMPAIGNS', 'WORLD', 'CHARACTERS', 'USERS', 'BILLING', 'SYSTEM']
 
 export function mountSidebar(parent: HTMLElement, opts: SidebarOpts): SidebarHandle {
   const root = document.createElement('nav')
@@ -28,57 +26,50 @@ export function mountSidebar(parent: HTMLElement, opts: SidebarOpts): SidebarHan
   root.style.overflow = 'auto'
   root.style.maxHeight = '100vh'
 
-  let selected: RoutePanel | null = null
-
-  function leafKey(p: RoutePanel): string {
-    return `${p.method} ${p.path}`
-  }
+  let selected: WorkflowDescriptor | null = null
 
   function render(): void {
     root.replaceChildren()
     const active = opts.getActiveCampaignId()
-    for (const section of SECTION_ORDER) {
-      const panels = ROUTE_PANELS.filter((p) => p.section === section)
-      if (panels.length === 0) continue
-      const header = document.createElement('div')
-      header.className = 'label-small'
-      header.setAttribute('data-section', section)
-      header.style.marginTop = '10px'
-      header.textContent = section
-      root.appendChild(header)
-      for (const p of panels) {
-        const leaf = document.createElement('div')
-        leaf.setAttribute('data-leaf', leafKey(p))
-        leaf.style.padding = '2px 6px'
-        leaf.style.cursor = 'pointer'
-        leaf.style.lineHeight = '1.6'
-        const disabled = p.requiresCampaign && active === null
-        if (disabled) {
-          leaf.setAttribute('data-disabled', 'true')
-          leaf.style.color = 'var(--fg-muted)'
-          leaf.style.cursor = 'not-allowed'
-        } else {
-          leaf.style.color = 'var(--fg-default)'
-        }
-        if (selected !== null && leafKey(selected) === leafKey(p)) {
-          leaf.style.background = 'var(--bg-banner)'
-          leaf.style.color = 'var(--fg-emphasis)'
-          leaf.style.borderLeft = '2px solid var(--accent)'
-        }
-        const method = document.createElement('span')
-        method.style.color = 'var(--fg-muted)'
-        method.style.marginRight = '4px'
-        method.textContent = p.method
-        leaf.appendChild(method)
-        const label = document.createElement('span')
-        label.textContent = p.label
-        leaf.appendChild(label)
-        leaf.addEventListener('click', () => {
-          if (disabled) return
-          opts.onSelect(p)
-        })
-        root.appendChild(leaf)
+    const header = document.createElement('div')
+    header.className = 'label-small'
+    header.setAttribute('data-section', 'WORKFLOWS')
+    header.style.marginTop = '4px'
+    header.style.marginBottom = '6px'
+    header.textContent = 'WORKFLOWS'
+    root.appendChild(header)
+
+    for (const w of WORKFLOWS) {
+      const leaf = document.createElement('div')
+      leaf.setAttribute('data-leaf', w.id)
+      leaf.style.padding = '8px 10px'
+      leaf.style.marginBottom = '2px'
+      leaf.style.borderRadius = '3px'
+      leaf.style.cursor = 'pointer'
+      leaf.style.fontSize = '14px'
+      leaf.style.lineHeight = '1.4'
+      const disabled = w.requiresCampaign && active === null
+      if (disabled) {
+        leaf.setAttribute('data-disabled', 'true')
+        leaf.style.color = 'var(--fg-muted)'
+        leaf.style.cursor = 'not-allowed'
+      } else {
+        leaf.style.color = 'var(--fg-default)'
       }
+      if (selected !== null && selected.id === w.id) {
+        leaf.setAttribute('data-selected', 'true')
+        leaf.style.background = 'var(--bg-banner)'
+        leaf.style.color = 'var(--fg-emphasis)'
+        leaf.style.borderLeft = '2px solid var(--accent)'
+      }
+      const label = document.createElement('span')
+      label.textContent = w.title
+      leaf.appendChild(label)
+      leaf.addEventListener('click', () => {
+        if (disabled) return
+        opts.onSelect(w)
+      })
+      root.appendChild(leaf)
     }
   }
 
@@ -89,8 +80,8 @@ export function mountSidebar(parent: HTMLElement, opts: SidebarOpts): SidebarHan
     root,
     unmount: () => { parent.removeChild(root) },
     refresh: render,
-    setSelected: (p) => {
-      selected = p
+    setSelected: (w) => {
+      selected = w
       render()
     },
   }

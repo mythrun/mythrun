@@ -1,15 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
-import { mountShell, registerPanelMount } from '../shell.js'
-import type { PanelHandle } from '../../components/_shared/panel-skeleton.js'
+import { mountShell } from '../shell.js'
 
-// Note: the JSDOM env from the pragma provides document/window/localStorage,
-// but Node 25's bare localStorage stub may override JSDOM's. Apply the same
-// MapStorage shim pattern other shell tests use if needed.
+// myth-0smu: the shell now mounts workflow pages (Campaigns / World /
+// Characters / Users & Access / Billing / System) instead of individual
+// (endpoint × method) panels. Tests pinned to the workflow layer.
 
 function ensureDom(): void {
-  // Document/window are already set up by JSDOM env from the pragma.
-  // If localStorage methods are missing, install a Map-backed shim.
   const ls = (globalThis as { localStorage?: { clear?: () => void } }).localStorage
   if (ls === undefined || typeof ls.clear !== 'function') {
     class MapStorage implements Storage {
@@ -29,7 +26,6 @@ function ensureDom(): void {
       writable: true,
     })
   }
-  // Make sure <header> and <main> exist.
   if (!document.querySelector('header')) {
     const h = document.createElement('header')
     document.body.appendChild(h)
@@ -40,34 +36,41 @@ function ensureDom(): void {
   }
 }
 
+// fetch may be unset in the JSDOM env; the header-chrome polls
+// /health and /api/campaigns/mine on mount. Stub it to return a
+// minimal valid shape so the shell mount completes without errors.
+function stubFetch(): void {
+  ;(globalThis as { fetch?: unknown }).fetch = vi.fn((input: unknown) => {
+    const url = typeof input === 'string' ? input : ''
+    if (url.includes('/health')) {
+      return Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    }
+    if (url.includes('/api/campaigns/mine')) {
+      return Promise.resolve(new Response(JSON.stringify({ campaigns: [] }), { status: 200 }))
+    }
+    return Promise.resolve(new Response('{}', { status: 200 }))
+  })
+}
+
 describe('mountShell', () => {
-  it('mounts banner + sidebar + main + drawer into document', () => {
+  it('mounts header chrome + banner + sidebar + main + drawer into document', () => {
     ensureDom()
+    stubFetch()
     mountShell()
+    expect(document.querySelector('[data-region="header-chrome"]')).not.toBeNull()
     expect(document.querySelector('[data-region="banner"]')).not.toBeNull()
     expect(document.querySelector('nav')).not.toBeNull()
     expect(document.querySelector('[data-region="main"]')).not.toBeNull()
     expect(document.querySelector('[data-region="drawer"]')).not.toBeNull()
   })
 
-  it('selecting a sidebar leaf mounts the registered panel and unmounts the previous', () => {
+  it('default workflow is Campaigns; sidebar shows one leaf per workflow', () => {
     ensureDom()
-    const aRoot = document.createElement('div')
-    const bRoot = document.createElement('div')
-    const aUnmount = vi.fn()
-    const bUnmount = vi.fn()
-    const aHandle: PanelHandle = { root: aRoot, unmount: aUnmount }
-    const bHandle: PanelHandle = { root: bRoot, unmount: bUnmount }
-    registerPanelMount('GET', '/api/users/me', (parent) => { parent.appendChild(aRoot); return aHandle })
-    registerPanelMount('GET', '/health', (parent) => { parent.appendChild(bRoot); return bHandle })
+    stubFetch()
     mountShell()
-    const leafMe = document.querySelector<HTMLElement>('[data-leaf="GET /api/users/me"]')
-    const leafHealth = document.querySelector<HTMLElement>('[data-leaf="GET /health"]')
-    if (leafMe === null) throw new Error('leafMe missing')
-    if (leafHealth === null) throw new Error('leafHealth missing')
-    leafMe.click()
-    expect(aUnmount).not.toHaveBeenCalled()
-    leafHealth.click()
-    expect(aUnmount).toHaveBeenCalledTimes(1)
+    const leaves = document.querySelectorAll('[data-leaf]')
+    expect(leaves.length).toBeGreaterThanOrEqual(6)
+    // Default workflow id is persisted in localStorage by selectWorkflow.
+    expect(localStorage.getItem('devtool.selectedWorkflow')).toBe('campaigns')
   })
 })

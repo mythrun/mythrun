@@ -1,96 +1,142 @@
 // backend/dev-tool/verify-registry.ts
 //
-// Panel registry for the dev-tool verifier (myth-e5mn). Each panel
-// declares its interaction pattern + DOM markers; the verify harness
-// (scripts/verify.ts) uses these to apply pattern-appropriate assertions.
+// myth-0smu: workflow-page registry for the dev-tool verifier. After
+// the sidebar reorg (route-per-panel → workflow-per-page), the verify
+// harness's natural unit is the workflow page, not the individual
+// panel. Each entry below declares one of the 6 entity-scoped pages,
+// the panel ids it composes, and the post-mount steady-state marker
+// the harness polls for.
 //
-// Three build-time invariants are enforced by __tests__/verify-registry.test.ts:
-//   1. Forward coverage: every panel module exporting a mount* function
-//      has a registry entry.
-//   2. Reverse coverage: every registry key is imported by main.ts.
-//   3. Route exhaustion: union(PANEL_REGISTRY.*.exercises) ∪ EXEMPT_ROUTES
-//      ⊇ BACKEND_ROUTES.
+// Four build-time invariants are enforced by __tests__/verify-registry.test.ts:
+//   1. Forward coverage — every panel module exporting a `mount*`
+//      function is composed by at least one page (or listed in
+//      EXEMPT_PANELS).
+//   2. Workflow coverage — every WorkflowId in workflow-registry has
+//      a PAGE_REGISTRY entry, and every PAGE_REGISTRY key matches a
+//      WorkflowId.
+//   3. Reverse coverage — every page is imported by main.ts.
+//   4. Route exhaustion — union(every panel referenced by every page,
+//      via PANEL_EXERCISES) ∪ EXEMPT_ROUTES ⊇ BACKEND_ROUTES.
 //
-// EXEMPT_ROUTES carries routes that intentionally cannot have a UI panel
-// — the Stripe webhook (signature-verified consumer, no human UI) and
-// POST /api/users/register (exercised by the harness's identity-bootstrap
-// step, not a UI surface). Anything added here must be justified in a
-// comment so future readers know why a panel wasn't authored.
+// EXEMPT_ROUTES carries routes that intentionally cannot have a UI
+// panel — the Stripe webhook (signature-verified consumer, no human
+// UI) and POST /api/users/register / GET /api/users/check-username
+// (exercised by the harness's identity-bootstrap step + the dev tool's
+// self-bootstrap, not standalone UI panels). Anything added here must
+// be justified in a comment.
 
 import type { BackendRoute } from '../src/contract/backend-routes.js'
+import {
+  WORKFLOWS,
+  type WorkflowId,
+} from './src/shell/workflow-registry.js'
 
-import { mountIdentitySwitcher } from './src/components/identity-switcher.js'
-import { mountHealthLivePanel } from './src/components/health-live-panel.js'
-import { mountHealthReadyPanel } from './src/components/health-ready-panel.js'
-import { mountCampaignCreatePanel } from './src/components/campaign-create-panel.js'
-import { mountMyCampaignsPanel } from './src/components/my-campaigns-panel.js'
-import { mountStatusPanel } from './src/components/status-panel.js'
-import { mountLiveEventsPanel } from './src/components/live-events-panel.js'
-import { mountCampaignDetailsPanel } from './src/components/campaign-details-panel.js'
-import { mountCampaignRenamePanel } from './src/components/campaign-rename-panel.js'
-import { mountCampaignResumePanel } from './src/components/campaign-resume-panel.js'
-import { mountCampaignArchivePanel } from './src/components/campaign-archive-panel.js'
-import { mountCampaignDeletePanel } from './src/components/campaign-delete-panel.js'
-import { mountUsersPanel } from './src/components/users-panel.js'
-import { mountInvitesPanel } from './src/components/invites-panel.js'
-import { mountSessionTicketPanel } from './src/components/session-ticket-panel.js'
-import { mountWorldSnapshotPanel } from './src/components/world-snapshot-panel.js'
-import { mountHierarchyPanel } from './src/components/hierarchy-panel.js'
-import { mountRandomTablesPanel } from './src/components/random-tables-panel.js'
-import { mountSubmitCharacterConceptPanel } from './src/components/submit-character-concept-panel.js'
-import { mountCharactersRosterPanel } from './src/components/characters-roster-panel.js'
-import { mountCharacterViewPanel } from './src/components/character-view-panel.js'
-import { mountStartingSituationsPanel } from './src/components/starting-situations-panel.js'
-import { mountSituationPickPanel } from './src/components/situation-pick-panel.js'
-import { mountMembersPanel } from './src/components/members-panel.js'
-import { mountCharacterCreationProgressPanel } from './src/components/character-creation-progress-panel.js'
-import { mountFinalizeCharacterCreationPanel } from './src/components/finalize-character-creation-panel.js'
-import { mountInvitesListPanel } from './src/components/invites-list-panel.js'
-import { mountInviteRevokePanel } from './src/components/invite-revoke-panel.js'
-import { mountInvitePreviewPanel } from './src/components/invite-preview-panel.js'
-import { mountInviteAcceptPanel } from './src/components/invite-accept-panel.js'
-import { mountSkusPanel } from './src/components/skus-panel.js'
-import { mountSubscriptionPanel } from './src/components/subscription-panel.js'
-import { mountBalancePanel } from './src/components/balance-panel.js'
-import { mountHistoryPanel } from './src/components/history-panel.js'
-import { mountDevCreditsMePanel } from './src/components/dev-credits-me-panel.js'
-import { mountCheckoutPanel } from './src/components/checkout-panel.js'
-import { mountPortalPanel } from './src/components/portal-panel.js'
-import { mountUpgradeTierPanel } from './src/components/upgrade-tier-panel.js'
-import { mountDevCreditsGrantPanel } from './src/components/dev-credits-grant-panel.js'
+import { mountCampaignsPage } from './src/pages/campaigns-page.js'
+import { mountWorldPage } from './src/pages/world-page.js'
+import { mountCharactersPage } from './src/pages/characters-page.js'
+import { mountUsersPage } from './src/pages/users-page.js'
+import { mountBillingPage } from './src/pages/billing-page.js'
+import { mountSystemPage } from './src/pages/system-page.js'
 
 export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
-export interface PanelRegistration {
-  /** Interaction pattern; drives which assertions the harness applies. */
+// Per-panel route exercises. The page composition table (PAGE_REGISTRY
+// below) lists panel ids; this map records which BACKEND_ROUTES each
+// panel id covers. Keeping this separate from the page entries keeps
+// the page entries readable and lets the route-exhaustion invariant be
+// computed independently of page composition.
+export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> = {
+  // CAMPAIGNS-page panels
+  'campaign-create': [{ method: 'POST', path: '/api/campaigns' }],
+  'my-campaigns': [{ method: 'GET', path: '/api/campaigns/mine' }],
+  'campaign-details': [{ method: 'GET', path: '/api/campaigns/:campaignId' }],
+  'campaign-rename': [{ method: 'PATCH', path: '/api/campaigns/:campaignId/name' }],
+  'campaign-resume': [{ method: 'POST', path: '/api/campaigns/:campaignId/resume' }],
+  'campaign-archive': [{ method: 'POST', path: '/api/campaigns/:campaignId/archive' }],
+  'campaign-delete': [{ method: 'DELETE', path: '/api/campaigns/:campaignId' }],
+
+  // WORLD-page panels
+  status: [
+    { method: 'GET', path: '/api/campaigns/:campaignId/status' },
+    { method: 'GET', path: '/api/campaigns/:campaignId/status/stream' },
+  ],
+  'live-events': [{ method: 'GET', path: '/api/campaigns/:campaignId/status/stream' }],
+  'world-snapshot': [{ method: 'GET', path: '/api/campaigns/:campaignId/world-snapshot' }],
+  hierarchy: [{ method: 'GET', path: '/api/campaigns/:campaignId/hierarchy' }],
+  'random-tables': [{ method: 'GET', path: '/api/campaigns/:campaignId/random-tables' }],
+
+  // CHARACTERS-page panels
+  'submit-character-concept': [{ method: 'POST', path: '/api/campaigns/:campaignId/characters' }],
+  'characters-roster': [{ method: 'GET', path: '/api/campaigns/:campaignId/characters' }],
+  'character-view': [{ method: 'GET', path: '/api/campaigns/:campaignId/characters/:charId' }],
+  'starting-situations': [{ method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' }],
+  'situation-pick': [{ method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' }],
+  members: [{ method: 'GET', path: '/api/campaigns/:campaignId/members' }],
+  'character-creation-progress': [
+    { method: 'GET', path: '/api/campaigns/:campaignId/character-creation-progress' },
+  ],
+  'finalize-character-creation': [
+    { method: 'POST', path: '/api/campaigns/:campaignId/finalize-character-creation' },
+  ],
+
+  // USERS & ACCESS-page panels
+  users: [{ method: 'GET', path: '/api/users/me' }],
+  invites: [{ method: 'POST', path: '/api/campaigns/:campaignId/invites' }],
+  'invites-list': [{ method: 'GET', path: '/api/campaigns/:campaignId/invites' }],
+  'invite-revoke': [
+    { method: 'DELETE', path: '/api/campaigns/:campaignId/invites/:inviteCode' },
+  ],
+  'invite-preview': [{ method: 'GET', path: '/api/invites/:inviteCode/preview' }],
+  'invite-accept': [{ method: 'POST', path: '/api/invites/:inviteCode/accept' }],
+
+  // BILLING & CREDITS-page panels
+  skus: [{ method: 'GET', path: '/api/billing/skus' }],
+  subscription: [{ method: 'GET', path: '/api/billing/subscription' }],
+  balance: [{ method: 'GET', path: '/api/billing/balance' }],
+  history: [{ method: 'GET', path: '/api/billing/history' }],
+  checkout: [{ method: 'POST', path: '/api/billing/checkout' }],
+  portal: [{ method: 'POST', path: '/api/billing/portal' }],
+  'upgrade-tier': [{ method: 'POST', path: '/api/billing/upgrade-tier' }],
+  'dev-credits-grant': [{ method: 'POST', path: '/api/dev/credits/grant' }],
+  'dev-credits-me': [{ method: 'GET', path: '/api/dev/credits/me' }],
+
+  // SYSTEM-page panels
+  'health-live': [{ method: 'GET', path: '/health' }],
+  'health-ready': [{ method: 'GET', path: '/health/ready' }],
+  'session-ticket': [{ method: 'POST', path: '/api/sessions/:id/ws-ticket' }],
+}
+
+// Panels that legitimately have a `mount*` export but are NOT composed
+// by any page. Today: identity-switcher (mounted in header chrome, not
+// part of any workflow page). Adding to this list requires a comment
+// justifying why the panel isn't reachable from a page.
+export const EXEMPT_PANELS: readonly string[] = [
+  // identity-switcher: lives in the <header> chrome, not a workflow
+  // page. mounted directly by main.ts via mountIdentitySwitcher.
+  'identity-switcher',
+]
+
+export interface PageRegistration {
+  /** Interaction pattern; drives which assertions the harness applies.
+   *  Pages aggregate many panels — the page is `event-driven` because
+   *  it doesn't fetch on its own; its composed panels do. */
   readonly pattern: PanelPattern
-  /** The panel's mount function. Called with a fresh <div> as parent.
-   *  myth-mbdc panels return a PanelHandle (the lifecycle contract from
-   *  spec §10); legacy panels return void; pre-mbdc identity-bootstrap
-   *  helpers can be async. All three shapes are valid; the verifier
-   *  discards the return value either way. */
+  /** The page's mount function. Called with a fresh <div> as parent. */
   readonly mount: (parent: HTMLElement) => unknown
-  /** CSS selector indicating the panel reached its expected post-mount
-   *  state. For fetch-on-mount: data-state="loaded". For event-driven:
-   *  data-state="idle". For action-only: data-state="ready". */
+  /** CSS selector indicating the page reached its expected post-mount
+   *  state. Pages mount their composed panels synchronously then return,
+   *  so the page itself is "ready" once its data-page attribute is set. */
   readonly readySelector: string
-  /** CSS selector indicating the panel rendered an error banner.
-   *  Distinct from "loaded" so empty-but-healthy state isn't misread. */
+  /** CSS selector indicating the page rendered an error banner. */
   readonly errorSelector: string
   /** Max ms to wait for readySelector OR errorSelector after mount. */
   readonly readyTimeoutMs?: number
   /** console.error messages allowed during mount. Substring match. */
   readonly errorAllowlist?: readonly string[]
-  /** Backend routes this panel exercises. Typed import prevents drift. */
-  readonly exercises: readonly BackendRoute[]
-}
-
-// One route from BACKEND_ROUTES, picked by method+path. Helper for declaring
-// `exercises` arrays without re-typing the route literal.
-function route(method: BackendRoute['method'], path: string): BackendRoute {
-  // The registry test (route exhaustion invariant) ensures every value
-  // returned here is in BACKEND_ROUTES; if not, the test fails on union.
-  return { method, path }
+  /** Panel ids composed by this page, in mount order. The route
+   *  exhaustion invariant unions PANEL_EXERCISES[panelId] across every
+   *  page entry's panels list. */
+  readonly panels: readonly string[]
 }
 
 /**
@@ -115,316 +161,108 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   { method: 'POST', path: '/api/users/register' },
 
   // GET /api/users/check-username: probe-helper for the register flow.
-  // The route-registry already marks this exempt (it's not a sidebar
-  // leaf). myth-6uu1 P6.D refactored the users-panel down to just
-  // /api/users/me, so the check-username route no longer has a panel
-  // exercising it; the backend routes test suite + verify harness's
-  // identity bootstrap exercise it server-side.
+  // No standalone UI surface — exercised server-side by tests +
+  // identity bootstrap.
   { method: 'GET', path: '/api/users/check-username' },
 ]
 
-export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
-  'identity-switcher': {
+export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
+  campaigns: {
     pattern: 'event-driven',
-    mount: mountIdentitySwitcher,
-    readySelector: '[data-state="idle"]',
+    mount: mountCampaignsPage,
+    // Pages set data-page on their root synchronously, so the marker is
+    // present the moment the mount fn returns. Verifier polls for this.
+    readySelector: '[data-page]',
     errorSelector: '[data-state="error"]',
-    exercises: [],
-  },
-  // myth-hs6g P6.G — the old composite 'health' entry was split into
-  // 'health-live' (GET /health) and 'health-ready' (GET /health/ready)
-  // per spec §3 (one panel per endpoint × action). The new panels use
-  // the standard split-view skeleton and emit data-state="ready" on a
-  // successful probe.
-  'health-live': {
-    pattern: 'fetch-on-mount',
-    mount: mountHealthLivePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/health')],
-  },
-  'health-ready': {
-    pattern: 'fetch-on-mount',
-    mount: mountHealthReadyPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/health/ready')],
-  },
-  'campaign-create': {
-    pattern: 'action-only',
-    mount: mountCampaignCreatePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns')],
-  },
-  'my-campaigns': {
-    pattern: 'fetch-on-mount',
-    mount: mountMyCampaignsPanel,
-    readySelector: '[data-state="loaded"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/mine')],
-  },
-  status: {
-    // myth-rdwq P6.B refactor: action+feedback shape (Refresh button +
-    // pipeline_runs snapshot). The SSE stream is owned by the wire-log
-    // drawer; this panel polls the snapshot route.
-    pattern: 'action-only',
-    mount: mountStatusPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [
-      route('GET', '/api/campaigns/:campaignId/status'),
-      route('GET', '/api/campaigns/:campaignId/status/stream'),
+    panels: [
+      'campaign-create',
+      'my-campaigns',
+      // Below five are active-campaign-only; the verifier's identity
+      // bootstrap step sets up a user but doesn't create a campaign, so
+      // they may not be present in the first boot. The route-exhaustion
+      // invariant still credits them — they're part of this page's
+      // declared composition.
+      'campaign-details',
+      'campaign-rename',
+      'campaign-resume',
+      'campaign-archive',
+      'campaign-delete',
     ],
   },
-  'live-events': {
-    // myth-rdwq P6.B refactor: minimal placeholder panel pointing at the
-    // wire-log drawer (spec §6). The reducer helpers in the source file
-    // are preserved for the drawer's future re-use.
-    pattern: 'action-only',
-    mount: mountLiveEventsPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/status/stream')],
-  },
-  'campaign-details': {
+  world: {
     pattern: 'event-driven',
-    mount: mountCampaignDetailsPanel,
-    readySelector: '[data-state="idle"]',
+    mount: mountWorldPage,
+    readySelector: '[data-page]',
     errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId')],
+    panels: [
+      'status',
+      'live-events',
+      'world-snapshot',
+      'hierarchy',
+      'random-tables',
+    ],
   },
-  'campaign-rename': {
-    pattern: 'action-only',
-    mount: mountCampaignRenamePanel,
-    readySelector: '[data-state="ready"]',
+  characters: {
+    pattern: 'event-driven',
+    mount: mountCharactersPage,
+    readySelector: '[data-page]',
     errorSelector: '[data-state="error"]',
-    exercises: [route('PATCH', '/api/campaigns/:campaignId/name')],
-  },
-  'campaign-resume': {
-    pattern: 'action-only',
-    mount: mountCampaignResumePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns/:campaignId/resume')],
-  },
-  'campaign-archive': {
-    pattern: 'action-only',
-    mount: mountCampaignArchivePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns/:campaignId/archive')],
-  },
-  'campaign-delete': {
-    pattern: 'action-only',
-    mount: mountCampaignDeletePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('DELETE', '/api/campaigns/:campaignId')],
-  },
-  'world-snapshot': {
-    // myth-rdwq P6.B refactor: action+feedback shape (Refresh button +
-    // tree/detail/glossary feedback). Post-mount steady state is 'ready'.
-    // SSE delta application migrated to the wire-log drawer.
-    pattern: 'fetch-on-mount',
-    mount: mountWorldSnapshotPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/world-snapshot')],
-  },
-  hierarchy: {
-    pattern: 'fetch-on-mount',
-    mount: mountHierarchyPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/hierarchy')],
-  },
-  'random-tables': {
-    pattern: 'fetch-on-mount',
-    mount: mountRandomTablesPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/random-tables')],
-  },
-  // myth-fn51 P6.C — the old multi-purpose 'character-creation' entry was
-  // split into 7 endpoint × action panels below (one per route under the
-  // CHARACTERS sidebar section). The legacy panel + its sub-buttons for
-  // hierarchy / random-tables / archive have moved to P6.A / P6.B panels.
-  'submit-character-concept': {
-    pattern: 'action-only',
-    mount: mountSubmitCharacterConceptPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns/:campaignId/characters')],
-  },
-  'characters-roster': {
-    pattern: 'action-only',
-    mount: mountCharactersRosterPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/characters')],
-  },
-  'character-view': {
-    pattern: 'action-only',
-    mount: mountCharacterViewPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/characters/:charId')],
-  },
-  'starting-situations': {
-    pattern: 'action-only',
-    mount: mountStartingSituationsPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/starting-situations')],
-  },
-  'situation-pick': {
-    pattern: 'action-only',
-    mount: mountSituationPickPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns/:campaignId/starting-situation')],
-  },
-  members: {
-    pattern: 'action-only',
-    mount: mountMembersPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/members')],
+    panels: [
+      'starting-situations',
+      'situation-pick',
+      'submit-character-concept',
+      'character-creation-progress',
+      'characters-roster',
+      'character-view',
+      'members',
+      'finalize-character-creation',
+    ],
   },
   users: {
-    // myth-6uu1 P6.D refactor: action-only single-route panel (fetch
-    // button → user JSON). Check-username moved to EXEMPT_ROUTES.
-    pattern: 'action-only',
-    mount: mountUsersPanel,
-    readySelector: '[data-state="ready"]',
+    pattern: 'event-driven',
+    mount: mountUsersPage,
+    readySelector: '[data-page]',
     errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/users/me')],
+    panels: [
+      'users',
+      'invites',
+      'invites-list',
+      'invite-revoke',
+      'invite-preview',
+      'invite-accept',
+    ],
   },
-  invites: {
-    // myth-6uu1 P6.D refactor: single-purpose POST-create panel. The
-    // list/revoke/preview/accept actions live in their own sibling
-    // panels (invites-list, invite-revoke, invite-preview, invite-
-    // accept) — one panel per endpoint × action, per spec §3.
-    pattern: 'action-only',
-    mount: mountInvitesPanel,
-    readySelector: '[data-state="ready"]',
+  billing: {
+    pattern: 'event-driven',
+    mount: mountBillingPage,
+    readySelector: '[data-page]',
     errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns/:campaignId/invites')],
+    panels: [
+      'skus',
+      'balance',
+      'subscription',
+      'history',
+      'checkout',
+      'portal',
+      'upgrade-tier',
+      'dev-credits-grant',
+      'dev-credits-me',
+    ],
   },
-  'invites-list': {
-    pattern: 'action-only',
-    mount: mountInvitesListPanel,
-    readySelector: '[data-state="ready"]',
+  system: {
+    pattern: 'event-driven',
+    mount: mountSystemPage,
+    readySelector: '[data-page]',
     errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/invites')],
-  },
-  'character-creation-progress': {
-    pattern: 'action-only',
-    mount: mountCharacterCreationProgressPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/campaigns/:campaignId/character-creation-progress')],
-  },
-  'finalize-character-creation': {
-    pattern: 'action-only',
-    mount: mountFinalizeCharacterCreationPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns/:campaignId/finalize-character-creation')],
-  },
-  'invite-revoke': {
-    pattern: 'action-only',
-    mount: mountInviteRevokePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('DELETE', '/api/campaigns/:campaignId/invites/:inviteCode')],
-  },
-  'invite-preview': {
-    pattern: 'action-only',
-    mount: mountInvitePreviewPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/invites/:inviteCode/preview')],
-  },
-  'invite-accept': {
-    pattern: 'action-only',
-    mount: mountInviteAcceptPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/invites/:inviteCode/accept')],
-  },
-  'session-ticket': {
-    pattern: 'action-only',
-    mount: mountSessionTicketPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/sessions/:id/ws-ticket')],
-  },
-  skus: {
-    pattern: 'action-only',
-    mount: mountSkusPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/billing/skus')],
-  },
-  subscription: {
-    pattern: 'action-only',
-    mount: mountSubscriptionPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/billing/subscription')],
-  },
-  balance: {
-    pattern: 'action-only',
-    mount: mountBalancePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/billing/balance')],
-  },
-  history: {
-    pattern: 'action-only',
-    mount: mountHistoryPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/billing/history')],
-  },
-  'dev-credits-me': {
-    pattern: 'action-only',
-    mount: mountDevCreditsMePanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('GET', '/api/dev/credits/me')],
-  },
-  // myth-6hi9 P6.F — new BILLING-section panels. Replace the deleted
-  // billing-panel (three POSTs) + credit-ledger-panel (grant POST).
-  // One panel per endpoint × action per spec §3.
-  checkout: {
-    pattern: 'action-only',
-    mount: mountCheckoutPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/billing/checkout')],
-  },
-  portal: {
-    pattern: 'action-only',
-    mount: mountPortalPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/billing/portal')],
-  },
-  'upgrade-tier': {
-    pattern: 'action-only',
-    mount: mountUpgradeTierPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/billing/upgrade-tier')],
-  },
-  'dev-credits-grant': {
-    pattern: 'action-only',
-    mount: mountDevCreditsGrantPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/dev/credits/grant')],
+    panels: ['health-live', 'health-ready', 'session-ticket'],
   },
 }
+
+// Back-compat alias for any external reader still expecting the old
+// shape. The runtime verify harness in scripts/verify.ts has been
+// updated to enumerate PAGE_REGISTRY directly.
+export const PANEL_REGISTRY = PAGE_REGISTRY
+
+// Sanity: every WorkflowId in WORKFLOWS has an entry above. Verified
+// by the invariant test; this comment documents the contract.
+void WORKFLOWS

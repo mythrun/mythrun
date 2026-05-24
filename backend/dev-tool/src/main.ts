@@ -4,71 +4,16 @@ import { getCurrentDevSub, onIdentityChanged } from './identity.js'
 import { apiCall } from './api-client.js'
 import './styles.css'
 
-// myth-mbdc migration: side-effect imports of existing panels so the
-// verify-registry's reverse-coverage invariant (every registered panel
-// must be imported by main.ts) keeps passing during Phase 6's panel-by-
-// panel refactor. Each Phase 6 group removes the import for its panels
-// once they self-register via the registerPanelMount mechanism. When
-// the last side-effect import disappears, the verify-registry rule
-// should be updated to look at registerPanelMount call sites instead.
-import './components/status-panel.js'
-import './components/campaign-create-panel.js'
-import './components/campaign-details-panel.js'
-import './components/my-campaigns-panel.js'
-import './components/live-events-panel.js'
-import './components/users-panel.js'
-import './components/invites-panel.js'
-import './components/world-snapshot-panel.js'
-// myth-ukpc P6.A — new CAMPAIGNS-section panels self-register on import.
-import './components/campaign-rename-panel.js'
-import './components/campaign-resume-panel.js'
-import './components/campaign-archive-panel.js'
-import './components/campaign-delete-panel.js'
-// myth-rdwq P6.B — new WORLD-section panels self-register on import.
-import './components/hierarchy-panel.js'
-import './components/random-tables-panel.js'
-// myth-fn51 P6.C — new CHARACTERS-section panels self-register on import.
-// These replace the old multi-purpose character-creation-panel (one panel
-// per endpoint × action, per the dev-tool reorg spec §3).
-import './components/submit-character-concept-panel.js'
-import './components/characters-roster-panel.js'
-import './components/character-view-panel.js'
-import './components/starting-situations-panel.js'
-import './components/situation-pick-panel.js'
-import './components/members-panel.js'
-// myth-6uu1 P6.D — new USERS & ACCESS-section panels self-register on
-// import. users-panel + invites-panel still ship as side-effect imports
-// above; this wave splits the old invites-panel into 4 single-purpose
-// siblings (one per route × action).
-import './components/invites-list-panel.js'
-import './components/invite-revoke-panel.js'
-import './components/invite-preview-panel.js'
-import './components/invite-accept-panel.js'
-// myth-c1gr P6.E — new BILLING-section GET panels self-register on
-// import. One panel per route × action per spec §3.
-import './components/skus-panel.js'
-import './components/subscription-panel.js'
-import './components/balance-panel.js'
-import './components/history-panel.js'
-import './components/dev-credits-me-panel.js'
-// myth-6hi9 P6.F — new BILLING-section POST panels self-register on
-// import. Replace the deleted billing-panel + credit-ledger-panel; the
-// last side-effect imports for those legacy panels have been removed
-// above. One panel per route × action per spec §3.
-import './components/checkout-panel.js'
-import './components/portal-panel.js'
-import './components/upgrade-tier-panel.js'
-import './components/dev-credits-grant-panel.js'
-// myth-hs6g P6.G — new SYSTEM-section panels self-register on import.
-// Replace the deleted composite health-panel with two single-purpose
-// liveness/readiness probes; rewrite session-ticket-panel in place to
-// the PanelHandle + split-view shape (it kept its file name).
-import './components/health-live-panel.js'
-import './components/health-ready-panel.js'
-import './components/session-ticket-panel.js'
-// MYT-54 T15 — campaign-scoped character-integration progress panel.
-import './components/character-creation-progress-panel.js'
-import './components/finalize-character-creation-panel.js'
+// myth-0smu workflow-page reorg: side-effect imports of the 6 page
+// composers so each page's registerWorkflowMount() call site runs at
+// boot. Each page composer imports the panels it composes directly,
+// so the dev-tool no longer needs per-panel side-effect imports here.
+import './pages/campaigns-page.js'
+import './pages/world-page.js'
+import './pages/characters-page.js'
+import './pages/users-page.js'
+import './pages/billing-page.js'
+import './pages/system-page.js'
 
 const header = document.querySelector<HTMLElement>('header')
 const main = document.querySelector<HTMLElement>('main')

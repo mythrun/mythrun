@@ -762,7 +762,24 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
     if (res.status === 201) {
       const success = readCreateSuccess(res.body)
       if (success !== null) {
-        result.textContent = `201 created — campaignId: ${success.campaignId}`
+        result.replaceChildren()
+        const line = document.createElement('div')
+        line.textContent = `201 created — campaignId: ${success.campaignId}`
+        result.appendChild(line)
+        // myth-0smu: surface a "Watch progress →" affordance that
+        // navigates the shell to the World workflow (where status +
+        // snapshot + hierarchy + random tables are co-located).
+        const watch = document.createElement('button')
+        watch.textContent = 'Watch progress →'
+        watch.style.marginTop = '6px'
+        watch.addEventListener('click', () => {
+          window.dispatchEvent(
+            new CustomEvent<{ workflowId: string }>('mythrun.navigate-workflow', {
+              detail: { workflowId: 'world' },
+            }),
+          )
+        })
+        result.appendChild(watch)
         // Make the new campaign the shell's active one — the drawer +
         // other panels react via onActiveCampaignChanged.
         setActiveCampaignId(success.campaignId)

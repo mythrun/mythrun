@@ -140,7 +140,7 @@ export function mountHeaderChrome(parent: HTMLElement): HeaderChromeHandle {
       healthText.style.color = 'var(--fg-muted)'
     } else {
       pip.style.background = 'var(--danger)'
-      healthText.textContent = `${String(res.status)}`
+      healthText.textContent = String(res.status)
       healthText.style.color = 'var(--danger)'
     }
   }
