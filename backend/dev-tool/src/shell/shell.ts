@@ -12,7 +12,9 @@ import { createEventBus } from './drawer/event-bus.js'
 import { createRingBuffer } from './drawer/buffer.js'
 import { createSubscriptionManager, type DrawerEvent } from './drawer/subscriptions.js'
 import { installIdentityBridge } from './identity-bridge.js'
-import { getActiveCampaignId } from './active-campaign.js'
+import { mountHeaderChrome } from './header-chrome.js'
+import { getActiveCampaignId, onActiveCampaignChanged } from './active-campaign.js'
+import { apiCall } from '../api-client.js'
 import type { PanelHandle } from '../components/_shared/panel-skeleton.js'
 import { ROUTE_PANELS, type RoutePanel } from './route-registry.js'
 
@@ -46,6 +48,12 @@ export function mountShell(): ShellHandle {
   ;(main).style.maxWidth = 'unset'
   ;(main).style.height = 'calc(100vh - 80px)'
   ;(main).style.flexDirection = 'column'
+
+  // myth-3lpf + myth-39ud: header chrome — global health pip + active
+  // campaign dropdown sit above the banner. They live outside the
+  // banner because the banner re-renders on every SSE event and we
+  // don't want the dropdown's open state to thrash with it.
+  const chrome = mountHeaderChrome(main as HTMLElement)
 
   const bannerContainer = document.createElement('div')
   ;(main).appendChild(bannerContainer)
@@ -116,6 +124,25 @@ export function mountShell(): ShellHandle {
     }
   }
 
+  // myth-0nmz: banner state cached so SSE-driven stage updates can
+  // re-render with the last-known campaign name instead of '(unknown)'.
+  let currentBannerName: string | null = null
+
+  function deriveStageLabel(event: DrawerEvent): string | null {
+    const data = event.data
+    if (event.type === 'phase' && typeof data['phase'] === 'string') return data['phase']
+    if (event.type === 'stage-started' && typeof data['stage'] === 'string') {
+      return `${data['stage']} (running)`
+    }
+    if (event.type === 'stage-completed' && typeof data['stage'] === 'string') {
+      return `${data['stage']} (complete)`
+    }
+    if (event.type === 'stage-failed' && typeof data['stage'] === 'string') {
+      return `${data['stage']} (failed)`
+    }
+    return null
+  }
+
   const dispose = installIdentityBridge({
     onIdentityChange: () => {
       subscriptions.closeAll()
@@ -128,10 +155,69 @@ export function mountShell(): ShellHandle {
 
   // Auto-subscribe to the active campaign on mount.
   const initialActive = getActiveCampaignId()
-  if (initialActive !== null) subscriptions.subscribe(initialActive)
+  if (initialActive !== null) {
+    subscriptions.subscribe(initialActive)
+    void refreshBannerName(initialActive)
+  }
+
+  // myth-a1ib: panels can dispatch a typed mythrun.navigate event to
+  // ask the shell to switch the active sidebar leaf. Used by the
+  // roster panel's View button (and prospectively any future
+  // 'drill in' affordance).
+  const onNavigate = (e: Event): void => {
+    const ce = e as CustomEvent<{ method: string; path: string }>
+    const target = ROUTE_PANELS.find(
+      (p) => p.method === ce.detail.method && p.path === ce.detail.path,
+    )
+    if (target !== undefined) selectPanel(target)
+  }
+  window.addEventListener('mythrun.navigate', onNavigate)
+
+  // myth-0nmz: wire active-campaign changes to drawer SSE + banner.
+  // Before this fix, setActiveCampaignId from create/details panels
+  // never told the drawer to open a stream, so wire log + banner +
+  // stage panel all stayed silent during world-gen.
+  const offActiveCampaign = onActiveCampaignChanged((newId) => {
+    subscriptions.closeAll()
+    if (newId !== null) {
+      subscriptions.subscribe(newId)
+      void refreshBannerName(newId)
+    } else {
+      banner.setCampaign(null)
+    }
+    sidebar.refresh()
+  })
+
+  // Forward SSE events into the banner's stage label so users see live
+  // progress without manually refreshing any panel.
+  const offBus = bus.subscribe((event) => {
+    const active = getActiveCampaignId()
+    if (active === null || event.campaignId !== active) return
+    const stage = deriveStageLabel(event)
+    if (stage === null) return
+    const current = currentBannerName
+    banner.setCampaign({ id: active, name: current ?? '(loading)', stage })
+  })
+
+  async function refreshBannerName(campaignId: string): Promise<void> {
+    const res = await apiCall<{ campaign?: { name?: string } }>(
+      `/api/campaigns/${campaignId}`,
+    )
+    if (res.status === 200 && res.body?.campaign?.name !== undefined) {
+      currentBannerName = res.body.campaign.name
+      banner.setCampaign({ id: campaignId, name: currentBannerName, stage: '(starting…)' })
+    } else {
+      currentBannerName = null
+      banner.setCampaign({ id: campaignId, name: '(unknown)', stage: '(starting…)' })
+    }
+  }
 
   return {
     unmount: () => {
+      chrome.unmount()
+      window.removeEventListener('mythrun.navigate', onNavigate)
+      offBus()
+      offActiveCampaign()
       dispose()
       if (activePanel !== null) activePanel.unmount()
       drawer.unmount()

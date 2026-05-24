@@ -72,15 +72,17 @@ function renderRoster(parent: HTMLElement, roster: RosterResponse): void {
       const charId = m.characterId
       viewBtn.addEventListener('click', () => {
         setActiveCharacterId(charId)
-        // Trigger sidebar refresh so the operator sees the active-
-        // character state reflected (and so any future sidebar
-        // gating on activeCharacterId picks it up). The shell
-        // listens via the identitychanged bridge; broadcasting that
-        // event is the cleapest existing handle the panel has into
-        // the shell from inside a panel.
+        // myth-a1ib: navigate to the character-view panel. Previously
+        // this dispatched mythrun.identitychanged with a fake detail,
+        // which (a) closed the drawer's SSE subscription as a side
+        // effect, and (b) didn't navigate. Fire a typed nav event
+        // the shell listens for.
         window.dispatchEvent(
-          new CustomEvent<string>('mythrun.identitychanged', {
-            detail: 'character-pick',
+          new CustomEvent<{ method: string; path: string }>('mythrun.navigate', {
+            detail: {
+              method: 'GET',
+              path: '/api/campaigns/:campaignId/characters/:charId',
+            },
           }),
         )
       })

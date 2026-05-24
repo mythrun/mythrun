@@ -140,9 +140,20 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
   }
   refreshBtn.addEventListener('click', onClick)
 
+  // myth-0nmz: auto-refresh on a 3s interval while the panel is mounted.
+  // The drawer's SSE bus exists but no plumbing pipes events into per-
+  // panel callbacks today (a known gap the workflow-page reorg will fix);
+  // polling at 3s gives the user a live-ish view during world-gen without
+  // re-architecting per-panel subscription plumbing.
+  void refresh()
+  const timer = setInterval(() => {
+    void refresh()
+  }, 3000)
+
   return {
     root,
     unmount: () => {
+      clearInterval(timer)
       refreshBtn.removeEventListener('click', onClick)
       if (root.parentNode !== null) root.parentNode.removeChild(root)
     },
