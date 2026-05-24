@@ -1,0 +1,1287 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dev tool · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="dev-tool">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html" class="active">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Dev tool</div>
+        <article>
+<h1>Dev tool</h1>
+
+<p class="lead">
+  A local-only engineering UI: a Vite-served single-page shell whose sidebar lists six entity-scoped
+  workflow pages — Campaigns, World, Characters, Users &amp; Access, Billing &amp; Credits, System —
+  and each page composes the relevant single-purpose panels into one scrolling column. A header
+  chrome bar pins an always-on backend health pip and an active-campaign dropdown above the banner;
+  a persistent right-side wire-log drawer owns the sole SSE stream for the active campaign. The tool
+  itself is throwaway — not a prototype of the production frontend. The ship gate (<code
+    >pnpm dev-tool:check</code
+  >) plus a four-invariant registry test keep coverage honest.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="2176pt" height="1000pt"
+ viewBox="14.00 14.00 2161.00 985.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 981.4)">
+<title>dev_tool</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-967 2142.75,-967 2142.75,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_shell</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="788.86,-8 788.86,-282 2130.75,-282 2130.75,-8 788.86,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1459.81" y="-268.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">src/shell/ &#160;(composition root)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_pages</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="54.21,-503 54.21,-620 545.93,-620 545.93,-503 54.21,-503"/>
+<text xml:space="preserve" text-anchor="middle" x="300.07" y="-606.1" font-family="Courier,monospace" font-size="11.00">src/pages/ &#160;(one composer per workflow)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_drawer_internals</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1181.39,-425 1181.39,-503 2130.75,-503 2130.75,-425 1181.39,-425"/>
+<text xml:space="preserve" text-anchor="middle" x="1656.07" y="-489.1" font-family="Courier,monospace" font-size="11.00">drawer internals</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_panels</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="385.53,-620 385.53,-751 998.77,-751 998.77,-620 385.53,-620"/>
+<text xml:space="preserve" text-anchor="middle" x="692.15" y="-737.1" font-family="Courier,monospace" font-size="11.00">src/components/ &#160;(single&#45;purpose panels)</text>
+</g>
+<g id="clust5" class="cluster">
+<title>cluster_gate</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="8,-751 8,-955 955.86,-955 955.86,-751 8,-751"/>
+<text xml:space="preserve" text-anchor="middle" x="481.93" y="-941.1" font-family="Courier,monospace" font-size="11.00">ship gate + registry invariants</text>
+</g>
+<!-- browser -->
+<g id="node1" class="node">
+<title>browser</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1331.89,-325.84 1207.8,-325.84 1207.8,-282.16 1331.89,-282.16 1331.89,-325.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-307.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">browser</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-294.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">127.0.0.1:5273</text>
+</g>
+<!-- chrome -->
+<g id="node2" class="node">
+<title>chrome</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1755.93,-148.04 1612.03,-148.04 1612.03,-77.96 1755.93,-77.96 1755.93,-148.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-129.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">header&#45;chrome.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-116.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">health pip (5s) +</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-103.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">active&#45;campaign</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-89.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dropdown (10s)</text>
+</g>
+<!-- browser&#45;&gt;chrome -->
+<g id="edge1" class="edge">
+<title>browser&#45;&gt;chrome</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1332.41,-307.93C1397.91,-308.65 1500.63,-299.37 1563.92,-242 1591.21,-217.27 1565.36,-191.3 1588.92,-163 1593.52,-157.48 1598.88,-152.49 1604.67,-147.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1605.95,-150.09 1610.18,-144 1603.07,-146.12 1605.95,-150.09"/>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-320.27" font-family="Courier,monospace" font-size="10.00">page load →</text>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-308.27" font-family="Courier,monospace" font-size="10.00">mountShell</text>
+</g>
+<!-- banner -->
+<g id="node4" class="node">
+<title>banner</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2117.55,-148.04 1986.86,-148.04 1986.86,-77.96 2117.55,-77.96 2117.55,-148.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-129.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">banner.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-116.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">active&#45;campaign</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-103.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">anchor + live</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-89.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage label</text>
+</g>
+<!-- chrome&#45;&gt;banner -->
+<g id="edge2" class="edge">
+<title>chrome&#45;&gt;banner</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1756.46,-113C1820.31,-113 1913.44,-113 1977.85,-113"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1977.53,-115.45 1984.53,-113 1977.53,-110.55 1977.53,-115.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1873.04" y="-116" font-family="Courier,monospace" font-size="10.00">above (always&#45;on)</text>
+</g>
+<!-- sidebar -->
+<g id="node3" class="node">
+<title>sidebar</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1765.83,-260.64 1602.13,-260.64 1602.13,-177.36 1765.83,-177.36 1765.83,-260.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-242.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sidebar.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-228.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">6 workflow leaves</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-215.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Campaigns / World /</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-202.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Characters / Users /</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-189.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Billing / System</text>
+</g>
+<!-- mainPane -->
+<g id="node5" class="node">
+<title>mainPane</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2130.75,-259.04 1973.65,-259.04 1973.65,-188.96 2130.75,-188.96 2130.75,-259.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-240.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mainPane</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-227.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mounts one workflow</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-214.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">page at a time</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-200.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(unmount on switch)</text>
+</g>
+<!-- sidebar&#45;&gt;mainPane -->
+<g id="edge3" class="edge">
+<title>sidebar&#45;&gt;mainPane</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1766.25,-220.11C1825,-220.91 1904.26,-221.99 1964.27,-222.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1964.13,-225.26 1971.16,-222.91 1964.2,-220.36 1964.13,-225.26"/>
+<text xml:space="preserve" text-anchor="middle" x="1873.04" y="-237.38" font-family="Courier,monospace" font-size="10.00">leaf click →</text>
+<text xml:space="preserve" text-anchor="middle" x="1873.04" y="-225.38" font-family="Courier,monospace" font-size="10.00">selectWorkflow(mountFn)</text>
+</g>
+<!-- drawer -->
+<g id="node6" class="node">
+<title>drawer</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="955.86,-260.44 805.36,-260.44 805.36,-203.56 955.86,-203.56 955.86,-260.44"/>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-241.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">drawer/drawer.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-228.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wire&#45;log + pause /</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-215.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">clear / export</text>
+</g>
+<!-- activeCamp -->
+<g id="node7" class="node">
+<title>activeCamp</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1348.39,-166.44 1191.29,-166.44 1191.29,-109.56 1348.39,-109.56 1348.39,-166.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-147.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">active&#45;campaign.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-134.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">shell&#45;owned store</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-121.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">get/set + subscribe</text>
+</g>
+<!-- activeCamp&#45;&gt;chrome -->
+<g id="edge9" class="edge">
+<title>activeCamp&#45;&gt;chrome</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1349.02,-121.57C1362.59,-119.29 1376.61,-117.29 1389.9,-116 1461.7,-109.05 1543.87,-108.88 1602.89,-110.11"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1602.56,-112.55 1609.61,-110.26 1602.67,-107.65 1602.56,-112.55"/>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-119" font-family="Courier,monospace" font-size="10.00">dropdown selection</text>
+</g>
+<!-- activeCamp&#45;&gt;sidebar -->
+<g id="edge11" class="edge">
+<title>activeCamp&#45;&gt;sidebar</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1348.9,-149.96C1408.12,-159.42 1491.43,-173.58 1563.92,-189 1573.36,-191.01 1583.17,-193.24 1592.95,-195.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1592.37,-197.94 1599.74,-197.19 1593.51,-193.18 1592.37,-197.94"/>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-204" font-family="Courier,monospace" font-size="10.00">dims requiresCampaign</text>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-192" font-family="Courier,monospace" font-size="10.00">leaves when null</text>
+</g>
+<!-- activeCamp&#45;&gt;banner -->
+<g id="edge10" class="edge">
+<title>activeCamp&#45;&gt;banner</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1348.87,-114.69C1362.53,-110.72 1376.61,-106.69 1389.9,-103 1477.99,-78.55 1498.24,-62.65 1588.92,-51 1672.73,-40.23 1695.07,-41.56 1779.03,-51 1847.4,-58.69 1923.64,-76.92 1977.99,-91.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1977.04,-93.91 1984.44,-93.39 1978.33,-89.18 1977.04,-93.91"/>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-54" font-family="Courier,monospace" font-size="10.00">onActiveCampaignChanged</text>
+</g>
+<!-- subs -->
+<g id="node12" class="node">
+<title>subs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1358.29,-481.44 1181.39,-481.44 1181.39,-424.56 1358.29,-424.56 1358.29,-481.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-462.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">subscriptions.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-449.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sole EventSource owner</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-436.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one ES per active id</text>
+</g>
+<!-- activeCamp&#45;&gt;subs -->
+<g id="edge12" class="edge">
+<title>activeCamp&#45;&gt;subs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1193.99,-166.98C1187.13,-171.14 1180.59,-175.81 1174.79,-181 1093.16,-254.05 987.45,-309.2 1054.28,-396 1081.79,-431.73 1128.89,-446.74 1172.07,-452.5"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1171.6,-454.91 1178.84,-453.31 1172.18,-450.04 1171.6,-454.91"/>
+<text xml:space="preserve" text-anchor="middle" x="1086.78" y="-387" font-family="Courier,monospace" font-size="10.00">auto&#45;subscribe on set</text>
+</g>
+<!-- identityBr -->
+<g id="node8" class="node">
+<title>identityBr</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="972.37,-166.44 788.86,-166.44 788.86,-109.56 972.37,-109.56 972.37,-166.44"/>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-147.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">identity&#45;bridge.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-134.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">single listener for</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-121.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun.identitychanged</text>
+</g>
+<!-- identityBr&#45;&gt;activeCamp -->
+<g id="edge13" class="edge">
+<title>identityBr&#45;&gt;activeCamp</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M972.89,-138C1036.1,-138 1119.74,-138 1181.97,-138"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1181.79,-140.45 1188.79,-138 1181.79,-135.55 1181.79,-140.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1086.78" y="-141" font-family="Courier,monospace" font-size="10.00">re&#45;subscribe</text>
+</g>
+<!-- workflowReg -->
+<g id="node9" class="node">
+<title>workflowReg</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1351.69,-252.44 1187.99,-252.44 1187.99,-195.56 1351.69,-195.56 1351.69,-252.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-233.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">workflow&#45;registry.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-220.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WORKFLOWS list +</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-207.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getWorkflowMount</text>
+</g>
+<!-- workflowReg&#45;&gt;sidebar -->
+<g id="edge4" class="edge">
+<title>workflowReg&#45;&gt;sidebar</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1352.27,-223.01C1421.7,-222.17 1521.37,-220.96 1593.11,-220.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1592.94,-222.54 1599.91,-220.01 1592.88,-217.64 1592.94,-222.54"/>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-225.52" font-family="Courier,monospace" font-size="10.00">WORKFLOWS</text>
+</g>
+<!-- pages -->
+<g id="node10" class="node">
+<title>pages</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="545.93,-599.24 382.23,-599.24 382.23,-502.76 545.93,-502.76 545.93,-599.24"/>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-580.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">6 page composers</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-567.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns / world /</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-554.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">characters / users /</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-541.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">billing / system</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-527.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(each mounts N</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-514.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">panels inline)</text>
+</g>
+<!-- pages&#45;&gt;mainPane -->
+<g id="edge5" class="edge">
+<title>pages&#45;&gt;mainPane</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M546.48,-552.56C630.07,-554.03 763.92,-556 879.61,-556 879.61,-556 879.61,-556 1684.98,-556 1801.05,-556 1856.44,-588.37 1942.05,-510 1973.31,-481.39 1953.03,-457.98 1967.05,-418 1985.68,-364.9 2012.17,-305.84 2030.43,-266.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2032.42,-268.51 2033.19,-261.14 2027.98,-266.42 2032.42,-268.51"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-571" font-family="Courier,monospace" font-size="10.00">page mount →</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-559" font-family="Courier,monospace" font-size="10.00">PanelHandle</text>
+</g>
+<!-- panels -->
+<g id="node15" class="node">
+<title>panels</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="998.77,-729.84 762.46,-729.84 762.46,-620.16 998.77,-620.16 998.77,-729.84"/>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-711.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">40+ panel modules</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-698.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mountXxxPanel</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-684.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PanelHandle = { root, unmount }</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-671.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">domain renderers:</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-658.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hierarchy tree /</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-645.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">random tables /</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-632.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">character sheet</text>
+</g>
+<!-- pages&#45;&gt;panels -->
+<g id="edge7" class="edge">
+<title>pages&#45;&gt;panels</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M546.48,-575.35C605.51,-593.01 686.45,-617.22 753.76,-637.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="752.75,-639.61 760.16,-639.27 754.16,-634.91 752.75,-639.61"/>
+<text xml:space="preserve" text-anchor="middle" x="662.44" y="-646.35" font-family="Courier,monospace" font-size="10.00">compose N</text>
+<text xml:space="preserve" text-anchor="middle" x="662.44" y="-634.35" font-family="Courier,monospace" font-size="10.00">mountXxxPanel</text>
+</g>
+<!-- pageShared -->
+<g id="node11" class="node">
+<title>pageShared</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="191.5,-586.04 54.21,-586.04 54.21,-515.96 191.5,-515.96 191.5,-586.04"/>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-567.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">_shared/</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-554.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">page&#45;skeleton.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-541.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildPageBody +</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-527.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mountSection</text>
+</g>
+<!-- pageShared&#45;&gt;pages -->
+<g id="edge6" class="edge">
+<title>pageShared&#45;&gt;pages</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M192.09,-551C244.08,-551 316.14,-551 372.88,-551"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="372.68,-553.45 379.68,-551 372.68,-548.55 372.68,-553.45"/>
+<text xml:space="preserve" text-anchor="middle" x="301.72" y="-554" font-family="Courier,monospace" font-size="10.00">buildPageBody</text>
+</g>
+<!-- bus -->
+<g id="node13" class="node">
+<title>bus</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1759.23,-471.84 1608.73,-471.84 1608.73,-428.16 1759.23,-428.16 1759.23,-471.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-453.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">event&#45;bus.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-440.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in&#45;process pub/sub</text>
+</g>
+<!-- subs&#45;&gt;bus -->
+<g id="edge14" class="edge">
+<title>subs&#45;&gt;bus</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1358.94,-452.24C1369.37,-452.16 1379.87,-452.08 1389.9,-452 1460.58,-451.46 1540.85,-450.92 1599.5,-450.53"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1599.19,-452.99 1606.17,-450.49 1599.15,-448.09 1599.19,-452.99"/>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-455" font-family="Courier,monospace" font-size="10.00">onmessage → publish</text>
+</g>
+<!-- vite -->
+<g id="node21" class="node">
+<title>vite</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1779.03,-659.84 1588.92,-659.84 1588.92,-616.16 1779.03,-616.16 1779.03,-659.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-641.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">vite.config.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1683.98" y="-628.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">proxy /api/* + /health/*</text>
+</g>
+<!-- subs&#45;&gt;vite -->
+<g id="edge21" class="edge">
+<title>subs&#45;&gt;vite</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1335.69,-482.11C1415.25,-517.82 1548.91,-577.82 1625.12,-612.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1623.72,-614.09 1631.11,-614.72 1625.73,-609.62 1623.72,-614.09"/>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-610.33" font-family="Courier,monospace" font-size="10.00">EventSource</text>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-598.33" font-family="Courier,monospace" font-size="10.00">/api/campaigns/:id/</text>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-586.33" font-family="Courier,monospace" font-size="10.00">status/stream</text>
+</g>
+<!-- bus&#45;&gt;banner -->
+<g id="edge17" class="edge">
+<title>bus&#45;&gt;banner</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1728.93,-427.51C1786.16,-396.04 1885.54,-333.56 1942.05,-253 1963.2,-222.85 1945.5,-203.87 1967.05,-174 1972.23,-166.83 1978.5,-160.17 1985.27,-154.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1986.5,-156.26 1990.22,-149.85 1983.31,-152.54 1986.5,-156.26"/>
+<text xml:space="preserve" text-anchor="middle" x="1873.04" y="-393.01" font-family="Courier,monospace" font-size="10.00">live stage label</text>
+<text xml:space="preserve" text-anchor="middle" x="1873.04" y="-381.01" font-family="Courier,monospace" font-size="10.00">(phase / stage&#45;*)</text>
+</g>
+<!-- bus&#45;&gt;drawer -->
+<g id="edge16" class="edge">
+<title>bus&#45;&gt;drawer</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1608.1,-437.18C1508.25,-419.32 1326.48,-384.12 1174.79,-340 1100.8,-318.48 1018.64,-287.58 960.16,-264.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="961.17,-262.11 953.76,-261.79 959.36,-266.66 961.17,-262.11"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-390.06" font-family="Courier,monospace" font-size="10.00">render rows</text>
+</g>
+<!-- buffer -->
+<g id="node14" class="node">
+<title>buffer</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2130.75,-475.84 1973.65,-475.84 1973.65,-432.16 2130.75,-432.16 2130.75,-475.84"/>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-457.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buffer.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-444.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">500&#45;event FIFO ring</text>
+</g>
+<!-- bus&#45;&gt;buffer -->
+<g id="edge15" class="edge">
+<title>bus&#45;&gt;buffer</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1759.97,-450.82C1819.33,-451.47 1902.31,-452.37 1964.51,-453.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1964.31,-455.5 1971.33,-453.13 1964.36,-450.6 1964.31,-455.5"/>
+<text xml:space="preserve" text-anchor="middle" x="1873.04" y="-455.71" font-family="Courier,monospace" font-size="10.00">push</text>
+</g>
+<!-- api -->
+<g id="node22" class="node">
+<title>api</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1364.9,-682.44 1174.79,-682.44 1174.79,-625.56 1364.9,-625.56 1364.9,-682.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-663.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">src/api&#45;client.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-650.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">apiCall + sse&#45;client</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.84" y="-637.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stamps x&#45;mythrun&#45;dev&#45;sub</text>
+</g>
+<!-- panels&#45;&gt;api -->
+<g id="edge18" class="edge">
+<title>panels&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M999.37,-668.61C1052.38,-665.74 1114.39,-662.38 1165.56,-659.6"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1165.66,-662.05 1172.52,-659.22 1165.39,-657.16 1165.66,-662.05"/>
+<text xml:space="preserve" text-anchor="middle" x="1086.78" y="-670" font-family="Courier,monospace" font-size="10.00">apiCall(...)</text>
+</g>
+<!-- shared -->
+<g id="node16" class="node">
+<title>shared</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="542.63,-716.64 385.53,-716.64 385.53,-633.36 542.63,-633.36 542.63,-716.64"/>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-698.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">components/_shared/</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-684.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">panel&#45;skeleton.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-671.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">error&#45;block.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-658.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">json&#45;disclosure.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-645.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">progress&#45;strip.ts</text>
+</g>
+<!-- shared&#45;&gt;panels -->
+<g id="edge8" class="edge">
+<title>shared&#45;&gt;panels</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M543.05,-675C602.2,-675 684.75,-675 753.28,-675"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="753.18,-677.45 760.18,-675 753.18,-672.55 753.18,-677.45"/>
+<text xml:space="preserve" text-anchor="middle" x="662.44" y="-690" font-family="Courier,monospace" font-size="10.00">reused split&#45;view</text>
+<text xml:space="preserve" text-anchor="middle" x="662.44" y="-678" font-family="Courier,monospace" font-size="10.00">+ error / JSON / progress</text>
+</g>
+<!-- contracts -->
+<g id="node17" class="node">
+<title>contracts</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="208.01,-834.64 37.7,-834.64 37.7,-751.36 208.01,-751.36 208.01,-834.64"/>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-816.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">backend/src/contract/</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-802.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">backend&#45;routes.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-789.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline&#45;routes.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-776.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline&#45;events.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-763.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline&#45;jobs.ts</text>
+</g>
+<!-- check -->
+<g id="node19" class="node">
+<title>check</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="562.43,-857.64 365.72,-857.64 365.72,-774.36 562.43,-774.36 562.43,-857.64"/>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-839.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dev&#45;tool&#45;check.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-825.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ verify&#45;registry.test.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-812.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(PAGE_REGISTRY +</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-799.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PANEL_EXERCISES,</text>
+<text xml:space="preserve" text-anchor="middle" x="464.08" y="-786.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">4 invariants)</text>
+</g>
+<!-- contracts&#45;&gt;check -->
+<g id="edge22" class="edge">
+<title>contracts&#45;&gt;check</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M208.58,-798.74C253.38,-801.78 308.83,-805.54 356.52,-808.78"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="356.06,-811.2 363.21,-809.23 356.39,-806.31 356.06,-811.2"/>
+<text xml:space="preserve" text-anchor="middle" x="301.72" y="-810.24" font-family="Courier,monospace" font-size="10.00">read at boot</text>
+</g>
+<!-- coverage -->
+<g id="node18" class="node">
+<title>coverage</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="237.71,-934.04 8,-934.04 8,-863.96 237.71,-863.96 237.71,-934.04"/>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-915.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">backend/dev&#45;tool/</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-902.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">coverage.json</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-889.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{ routes, events, jobs,</text>
+<text xml:space="preserve" text-anchor="middle" x="122.86" y="-875.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;exempt: { reasons ≥ 20 } }</text>
+</g>
+<!-- coverage&#45;&gt;check -->
+<g id="edge23" class="edge">
+<title>coverage&#45;&gt;check</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M238.23,-871.02C276.5,-861.65 318.97,-851.26 356.61,-842.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="357.08,-844.46 363.3,-840.41 355.92,-839.7 357.08,-844.46"/>
+<text xml:space="preserve" text-anchor="middle" x="301.72" y="-867.93" font-family="Courier,monospace" font-size="10.00">read at boot</text>
+</g>
+<!-- ci -->
+<g id="node20" class="node">
+<title>ci</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="955.86,-837.84 805.36,-837.84 805.36,-794.16 955.86,-794.16 955.86,-837.84"/>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-819.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.github/workflows/</text>
+<text xml:space="preserve" text-anchor="middle" x="880.61" y="-806.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dev&#45;tool&#45;check.yml</text>
+</g>
+<!-- check&#45;&gt;ci -->
+<g id="edge24" class="edge">
+<title>check&#45;&gt;ci</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M563.05,-816C633.99,-816 728.85,-816 796.19,-816"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="795.85,-818.45 802.85,-816 795.85,-813.55 795.85,-818.45"/>
+<text xml:space="preserve" text-anchor="middle" x="662.44" y="-819" font-family="Courier,monospace" font-size="10.00">pnpm dev&#45;tool:check</text>
+</g>
+<!-- backend -->
+<g id="node23" class="node">
+<title>backend</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2137.35,-659.84 1967.05,-659.84 1967.05,-616.16 2137.35,-616.16 2137.35,-659.84"/>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-641.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">local backend</text>
+<text xml:space="preserve" text-anchor="middle" x="2052.2" y="-628.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">localhost:3000 (PORT)</text>
+</g>
+<!-- vite&#45;&gt;backend -->
+<g id="edge20" class="edge">
+<title>vite&#45;&gt;backend</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1779.77,-638C1834.59,-638 1903.29,-638 1957.87,-638"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1957.68,-640.45 1964.68,-638 1957.68,-635.55 1957.68,-640.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1873.04" y="-641" font-family="Courier,monospace" font-size="10.00">proxied</text>
+</g>
+<!-- api&#45;&gt;vite -->
+<g id="edge19" class="edge">
+<title>api&#45;&gt;vite</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1365.39,-650.33C1429.42,-647.84 1513.99,-644.56 1579.77,-642.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1579.79,-644.46 1586.69,-641.74 1579.6,-639.56 1579.79,-644.46"/>
+<text xml:space="preserve" text-anchor="middle" x="1476.91" y="-652.27" font-family="Courier,monospace" font-size="10.00">x&#45;mythrun&#45;dev&#45;sub: dev&#45;user&#45;N</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The dev tool is a Vite + vanilla TypeScript workspace under <code>backend/dev-tool/</code>,
+  exposed as <code>@mythrun/dev-tool</code> in the monorepo. It serves on
+  <code>http://127.0.0.1:5273</code> via <code>pnpm dev:dev-tool</code> and talks to the local
+  backend on <code>localhost:3000</code> (or whatever <code>PORT</code> is set in
+  <code>backend/.env.development</code>). The browser only sees same-origin requests because Vite's
+  dev server proxies <code>/api/*</code> and <code>/health/*</code> to the local backend process; no
+  CORS plugin sits on the backend.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Local-only, not staging-pointable</strong> — Mythrun ships a six-layer defense against the
+  auth-bypass plugin ever booting in a deployed environment (see
+  <a href="../auth-billing/jwt-middleware.html">JWT middleware</a>). A dev tool that could swap
+  origins to point at staging would be an internet-exposed surface that mints requests with
+  arbitrary <code>x-mythrun-dev-sub</code> identities — a credentialless RCE on auth. There is no
+  env switcher, no staging mode, no CORS plugin. Staging validation goes through
+  <a href="../infra/smoke-testing.html">smoke testing</a> instead.
+</aside>
+
+<h2 id="the-shell">The shell</h2>
+
+<p>
+  <code>src/main.ts</code> mounts the identity switcher into the page's
+  <code>&lt;header&gt;</code> and the shell composition root (<code>src/shell/shell.ts</code>) into
+  <code>&lt;main&gt;</code> on load. The shell builds, in vertical order: the header chrome row
+  (always-on health pip + active campaign dropdown), the banner row, then a horizontal flex row
+  containing <em>sidebar | mainPane | drawer</em>. Header chrome, banner, sidebar, and drawer mount
+  once and persist for the lifetime of the page. The mainPane is the single slot the shell
+  lazy-mounts a <em>workflow page</em> into when the user clicks a sidebar leaf, tearing the
+  previous page down before mounting the next.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Workflow-per-page, not panel-per-route</strong> — an earlier iteration of this UI mounted
+  one panel at a time, with the sidebar listing every backend endpoint × method as its own leaf.
+  Real E2E walks of the prep pipeline showed the cost: contextually related actions (create a
+  campaign, watch its status, inspect its snapshot, pick a starting situation) were spread across
+  four sidebar leaves and four mount/unmount cycles, when they should sit on one scroll. The
+  workflow reorg flips the model: the sidebar now lists six <em>entity pages</em> (Campaigns, World,
+  Characters, Users &amp; Access, Billing, System), and each page mounts the relevant single-purpose
+  panels inline into one scrolling column. Click "World" once → see status, live-events, snapshot,
+  hierarchy, and random-tables stacked vertically, all wired to the same active campaign.
+</aside>
+
+<p>
+  Every workflow page returns a <code>PanelHandle = { root, unmount() }</code> — the same contract
+  individual panels return. The shell holds the currently-active handle; on sidebar selection change
+  it calls <code>activePage.unmount()</code>, clears the mainPane's children, looks up the new
+  page's mount function in the <code>WORKFLOW_MOUNTS</code> registry, and mounts it. The page
+  composer's mount function in turn calls <code>buildPageBody(parent, title)</code> to lay out the
+  scrolling column, then iterates over its panel list calling
+  <code>body.mountSection(id, mountFn)</code> for each one. A page's <code>unmount()</code> walks
+  its panel handles in reverse order, calling each panel's own <code>unmount()</code> before
+  removing the section host. The sidebar's selected leaf persists across reloads in
+  <code>localStorage</code> under <code>devtool.selectedWorkflow</code>.
+</p>
+
+<h2 id="the-sidebar">The sidebar</h2>
+
+<p>
+  <code>src/shell/sidebar.ts</code> renders the six workflow leaves from <code>WORKFLOWS</code> in
+  <code>src/shell/workflow-registry.ts</code>: Campaigns, World, Characters, Users &amp; Access,
+  Billing &amp; Credits, System — in that fixed order. Each leaf is a single line of text (no
+  HTTP-method dimming, no per-endpoint nesting). Leaves whose entry carries
+  <code>requiresCampaign: true</code> — currently World and Characters — render disabled (dimmed,
+  cursor-not-allowed) when the active-campaign store is null, and become selectable the moment a
+  campaign is picked. The page that owns the selected workflow is mounted lazily through
+  <code>getWorkflowMount(id)</code>; <code>workflow-registry.ts</code> itself only carries the
+  static descriptor list (id + title + requiresCampaign) so tests that need the shape don't pay for
+  the full panel graph at import time. The page composers register their mount fns via
+  <code>registerWorkflowMount(id, fn)</code> as a side effect of being imported by
+  <code>main.ts</code>.
+</p>
+
+<h2 id="the-header-chrome">The header chrome</h2>
+
+<p>
+  <code>src/shell/header-chrome.ts</code> mounts a narrow always-on row above the banner with two
+  widgets: a backend health pip that polls <code>GET /health</code> every five seconds and renders a
+  green/red dot plus the round-trip latency, and an active-campaign dropdown that polls
+  <code>GET /api/campaigns/mine</code> every ten seconds and lets the operator switch the active
+  campaign without first navigating to the Campaigns page. Changing the dropdown writes through the
+  shared <code>setActiveCampaignId</code> store, which fires every other subscriber (banner, sidebar
+  dim-state, drawer SSE re-subscribe) the same way a row click in the My Campaigns panel would.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Chrome lives outside the banner, not inside it</strong> — the banner re-renders on every
+  SSE event so its stage label can tick live with the worker. If the dropdown were nested inside the
+  banner, the operator's open-but-not-yet-clicked select element would thrash and close on every
+  stage transition. Pinning the chrome row above the banner gives the dropdown a stable DOM tree of
+  its own. The health pip is in the same row only because they share the "always-on, small,
+  monospace" visual register; the two widgets are otherwise independent.
+</aside>
+
+<h2 id="the-active-campaign-store">The active-campaign store</h2>
+
+<p>
+  <code>src/shell/active-campaign.ts</code> owns the single source of truth for "which campaign is
+  the operator currently working on." It persists to <code>localStorage</code> under
+  <code>devtool.activeCampaignId</code> and exposes <code>getActiveCampaignId()</code>,
+  <code>setActiveCampaignId(id | null)</code>, and <code>onActiveCampaignChanged(cb)</code>. Four
+  subscribers fan out from a change: the header chrome's dropdown updates its selection, the banner
+  reads it to render its anchor and resets the cached campaign name, the sidebar re-renders to
+  enable or dim <code>requiresCampaign</code> leaves, and the drawer's subscription manager opens an
+  EventSource for the new id and closes the one for the old. A sibling
+  <code>activeCharacterId</code> key co-lives in the same module; the roster panel sets it when the
+  operator clicks "View" on a completed character, and the character-view panel reads it on mount.
+  Clearing the campaign id automatically clears the character id — a character only exists in the
+  context of its campaign.
+</p>
+
+<h2 id="the-six-workflow-pages">The six workflow pages</h2>
+
+<p>
+  Each page lives in <code>src/pages/&lt;workflow&gt;-page.ts</code> and consists of a single
+  exported <code>mount&lt;Workflow&gt;Page(parent)</code> function plus an idempotent
+  <code>registerWorkflowMount(id, mountFn)</code> call at the bottom. The composer pattern is the
+  same across all six: call <code>buildPageBody(parent, title)</code> from the shared
+  <code>_shared/page-skeleton.ts</code> helper, then mount each panel-section in order via
+  <code>body.mountSection(id, mountFn)</code>. Pages whose sections depend on an active campaign use
+  a <code>onActiveCampaignChanged</code> subscription to mount or unmount that block as the store
+  flips.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Page</th>
+      <th>Composed panels (top → bottom)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>Campaigns</code></td>
+      <td>Create / My campaigns / (active-only:) Details / Rename / Resume / Archive / Delete.</td>
+    </tr>
+    <tr>
+      <td><code>World</code></td>
+      <td>
+        Status (snapshot + live polling) / Live events / World snapshot / Hierarchy / Random tables.
+      </td>
+    </tr>
+    <tr>
+      <td><code>Characters</code></td>
+      <td>
+        Starting situations / Situation pick (owner) / Submit character concept (member) /
+        Character-creation progress / Roster / Character view / Members / Finalize character
+        creation.
+      </td>
+    </tr>
+    <tr>
+      <td><code>Users &amp; Access</code></td>
+      <td>Me / Create invite / List invites / Revoke / Preview / Accept.</td>
+    </tr>
+    <tr>
+      <td><code>Billing &amp; Credits</code></td>
+      <td>
+        SKUs / Balance / Subscription / History / Checkout / Portal / Upgrade tier / Grant credits /
+        My credits.
+      </td>
+    </tr>
+    <tr>
+      <td><code>System</code></td>
+      <td>Health (liveness) / Health (ready) / WS ticket.</td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Page composition is dumb, the panels are smart</strong> — the page composers are pure
+  layout (mount these N panel mount fns into a scrolling column, listen for active-campaign changes
+  to show/hide the per-campaign block). All UI state lives inside the panel modules themselves,
+  which remain single-purpose and individually testable. Splitting composition from behaviour lets
+  the same panel module be reused by tests, by the verify harness, and (in principle) by future
+  shells without dragging in the page-level reactive layer.
+</aside>
+
+<h2 id="cross-page-navigation">Cross-page navigation</h2>
+
+<p>
+  Two custom DOM events wire panel-internal "drill in" actions to the shell's workflow switcher.
+  <code>mythrun.navigate-workflow</code> carries <code>{ workflowId }</code> and asks the shell to
+  switch the sidebar directly — the post-create "Watch progress →" button on the campaign-create
+  panel dispatches it with <code>workflowId: 'world'</code> to land the operator on the World page
+  the moment a new campaign is in flight. <code>mythrun.navigate</code> (legacy) carries
+  <code>{ method, path }</code>; the shell maps the route to the workflow page that composes the
+  matching panel and switches there. The roster panel's "View" button dispatches this with the
+  character-view route, and the shell switches to the Characters page where the character-view panel
+  sits inline among its siblings.
+</p>
+
+<h2 id="the-wire-log-drawer">The wire-log drawer</h2>
+
+<p>
+  <code>src/shell/drawer/drawer.ts</code> is the persistent right-side pane that owns every SSE
+  subscription for the page. It composes four pieces: a subscription manager
+  (<code>subscriptions.ts</code>) that holds one <code>EventSource</code> per subscribed campaign
+  id, an in-process pub/sub event bus (<code>event-bus.ts</code>) that fans messages out to in-page
+  subscribers, a 500-event FIFO ring buffer (<code>buffer.ts</code>) that holds the recent-history
+  view, and the drawer's own UI controls (pause / clear / export-to-clipboard, collapsible to a
+  36-px stripe). The shell wires the trio together once at mount time and the drawer renders rows on
+  every <code>bus.publish</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One EventSource per active campaign, owned by the drawer</strong> — multiple panels need
+  to react to the same SSE stream (status, snapshot, members, character views). If each panel opened
+  its own connection, multiple sockets would race to the same campaign channel and multiplying open
+  connections would trip the per-user rate limit on <code>GET /status/stream</code> (see
+  <a href="./pipeline-status.html">pipeline status</a>). Centralising the socket in the drawer and
+  fanning out through an in-process bus means one socket per active campaign, and panels become
+  cheap bus subscribers.
+</aside>
+
+<p>
+  The shell's own subscription to the bus has one extra responsibility: it forwards SSE
+  <code>phase</code>, <code>stage-started</code>, <code>stage-completed</code>, and
+  <code>stage-failed</code> events into the banner's stage label, so an operator watching the
+  pipeline run sees the live stage update at the top of the page without manually refreshing any
+  panel. The status panel inside the World page polls
+  <code>GET /api/campaigns/:campaignId/status</code> every three seconds while mounted — a tactical
+  refresh until the panel migrates to direct bus subscription. The status panel also re-renders its
+  in-progress duration cell every one second via a local <code>setInterval</code>, so the "running"
+  row counts up against the wall clock without re-fetching.
+</p>
+
+<p>
+  Auto-subscribe happens at three points: on shell mount, if the active-campaign id is non-null; on
+  identity switch, after the bridge re-runs <code>subscriptions.subscribe(active)</code>; and on
+  every <code>onActiveCampaignChanged</code> notification (a row click in My Campaigns, the header
+  dropdown changing, or a panel calling <code>setActiveCampaignId</code> directly). Unsubscribe
+  happens when the active id changes (the old EventSource closes), when identity changes (every open
+  socket closes via <code>closeAll()</code>), and when the shell itself unmounts. Pause + clear
+  state persists across reloads in <code>localStorage</code>.
+</p>
+
+<h2 id="the-identity-bridge">The identity bridge</h2>
+
+<p>
+  <code>src/shell/identity-bridge.ts</code> registers a single window-level listener for
+  <code>mythrun.identitychanged</code> — the event the identity switcher dispatches when the
+  operator picks a new <code>dev-user-N</code>. The handler runs the shell's
+  <code>onIdentityChange</code> callback, which closes every drawer subscription, re-subscribes to
+  the active campaign id (if any), and re-renders the sidebar. One listener at the shell level is
+  enough because the active page's <code>unmount</code> path runs its own cleanup and the
+  shell-owned stores are what panels read from on mount.
+</p>
+
+<h2 id="the-panels">The panels</h2>
+
+<p>
+  Forty-plus single-purpose panel modules live under <code>src/components/</code>. Each is a
+  <code>mountXxxPanel(parent)</code> function returning a <code>PanelHandle</code>. They share a
+  split-view skeleton at <code>src/components/_shared/panel-skeleton.ts</code> (title + action pane
+  on the left + feedback pane on the right + a <code>data-state</code> attribute the verifier keys
+  on) and a handful of shared renderers (<code>error-block.ts</code>,
+  <code>json-disclosure.ts</code> for expandable JSON dumps, <code>progress-strip.ts</code> for
+  long-running flows). Panels that need live wire data subscribe to the drawer's bus rather than
+  opening their own EventSource.
+</p>
+
+<p>
+  Three panels — hierarchy, random tables, character view — graduate beyond raw-JSON disclosure to
+  <em>domain renderers</em>. The hierarchy panel parses the entity tree into a parent → child
+  structure and renders an indented list with caret markers and child counts. The random-tables
+  panel renders one <code>&lt;table&gt;</code> per entry with Roll | Entry columns (ranges collapse
+  to a single value when min === max). The character view delegates to
+  <code>character-view-render.ts</code> to draw a character-sheet card: name and subtitle,
+  ability-score table with modifiers, vitals, and three sections for features, equipment, and
+  spells. The raw-JSON disclosure stays in each panel as a collapsible footer so the operator can
+  inspect the underlying payload when the rendered view isn't enough.
+</p>
+
+<h2 id="identity">Identity</h2>
+
+<p>
+  The header's identity dropdown is wired to the <code>DEV_SUBS</code> list (<code>dev-user-1</code>
+  through <code>dev-user-5</code>) from <code>src/identity.ts</code>. The selected value lives in
+  <code>localStorage</code> under <code>mythrun.devtool.devSub</code>;
+  <code>src/api-client.ts</code> reads it on every call and stamps it as
+  <code>x-mythrun-dev-sub</code>. On first load <code>main.ts</code> self-bootstraps the active sub
+  against <code>POST /api/users/register</code> so a developer landing on the page against a clean
+  DB sees working panels without manual setup. Identity switches dispatch
+  <code>mythrun.identitychanged</code>, which the identity-bridge catches and uses to drive the
+  drawer + sidebar re-sync.
+</p>
+
+<h2 id="verify-registry-invariants">Verify-registry invariants</h2>
+
+<p>
+  <code>backend/dev-tool/__tests__/verify-registry.test.ts</code> is the build-time gate against the
+  registry rotting. It enforces four invariants over the workflow-page registry in
+  <code>backend/dev-tool/verify-registry.ts</code>:
+</p>
+
+<ul>
+  <li>
+    <strong>Forward coverage</strong> — every module under <code>src/components/</code> that exports
+    a <code>mount*</code> function is composed by at least one page (its id appears in some page's
+    <code>panels[]</code> in <code>PAGE_REGISTRY</code>) OR is listed in <code>EXEMPT_PANELS</code>.
+  </li>
+  <li>
+    <strong>Workflow coverage</strong> — every <code>WorkflowId</code> in
+    <code>workflow-registry.ts</code>'s <code>WORKFLOWS</code> list has a matching
+    <code>PAGE_REGISTRY</code> entry, and every <code>PAGE_REGISTRY</code> key is a real
+    <code>WorkflowId</code>. Two-way bijection so adding a workflow forces a page composer.
+  </li>
+  <li>
+    <strong>Reverse coverage</strong> — every page composer file under <code>src/pages/</code> is
+    imported by <code>main.ts</code>, so registering a page that nothing pulls into the bundle is a
+    red test.
+  </li>
+  <li>
+    <strong>Route exhaustion</strong> — the union of <code>PANEL_EXERCISES[id]</code> for every
+    panel id reachable from any <code>PAGE_REGISTRY</code> entry's <code>panels[]</code>, plus
+    <code>EXEMPT_ROUTES</code>, covers every entry in <code>BACKEND_ROUTES</code>. The exempt list
+    must itself reference real backend routes (so a stale exempt entry that names a removed route
+    fails the test).
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>A test, not a runtime check</strong> — invariants enforced at runtime fail in the browser,
+  with no actionable signal. As a vitest test they fail at CI time with a clear message ("panel X is
+  on disk but not composed by any page") and the build never reaches the dev server.
+  <code>PANEL_EXERCISES</code> is a separate map from <code>PAGE_REGISTRY</code> on purpose: it
+  declares the (panel id → routes it exercises) edges without forcing the page entries to repeat
+  them, and the route-exhaustion calculation unions them across whichever pages reach those panels.
+</aside>
+
+<h2 id="the-ship-gate">The ship gate</h2>
+
+<p>
+  The dev tool is the only place inside the repo where the prep pipeline's HTTP, SSE, and BullMQ
+  surfaces are exercised by a human. Without enforcement, "add a new route" silently means "the dev
+  tool has no way to trigger or observe it" — the next contributor finds out by guesswork. The gate
+  makes the wiring an explicit, mechanical step.
+</p>
+
+<p>
+  Three files at <code>backend/src/contract/</code> are the source of truth:
+  <code>pipeline-routes.ts</code> (HTTP routes, format <code>'METHOD /api/path'</code>),
+  <code>pipeline-events.ts</code> (SSE event names), and <code>pipeline-jobs.ts</code> (BullMQ job
+  names). Each is a <code>readonly string[]</code>. <code>backend/dev-tool/coverage.json</code>
+  declares what the dev tool actually covers, in three matching arrays plus an
+  <code>exempt</code> object whose values are human reasons for entries the tool deliberately skips.
+  <code>pnpm dev-tool:check</code> runs <code>backend/scripts/dev-tool-check.ts</code>, which loads
+  the contracts and the coverage JSON and calls the pure
+  <code>checkCoverage(contracts, coverage)</code> function from
+  <code>backend/src/dev-tool-check/check-coverage.ts</code>. It errors when a contract entry is
+  missing from coverage and not exempt, when an exempt reason is shorter than 20 characters, and
+  when an exempt entry references a contract entry that no longer exists; it warns when a coverage
+  entry is no longer in the contract.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Pure function under a CLI shell, not a single script</strong> — the same pure
+  <code>checkCoverage</code> runs under Vitest with synthetic fixtures, so the gate's behaviour is
+  exercised on every test run, not only when a contributor remembers to run the CLI. The CLI shell
+  is the thinnest possible filesystem-and-process wrapper around the pure core.
+</aside>
+
+<p>
+  CI wires the gate through <code>.github/workflows/dev-tool-check.yml</code>, a peer of
+  <code>wiki-check.yml</code>: it runs on every <code>pull_request</code> and on
+  <code>push: branches: [main]</code>, scoped via <code>paths:</code> to the gated surface so
+  unrelated PRs don't pay CI minutes. The pipeline contract files are populated and the gate is
+  load-bearing: the routes, events, and BullMQ jobs that ride the registry today are all driven by
+  panels in the dev tool with zero exempt entries.
+</p>
+
+<h2 id="the-exempt-list">The exempt list</h2>
+
+<p>
+  Two distinct exempt lists exist — one for the pipeline contracts (<code>coverage.json</code>'s
+  <code>exempt</code> object, enforced by <code>dev-tool-check</code>) and one for the all-routes
+  panel-registry invariant (<code>EXEMPT_ROUTES</code> in
+  <code>backend/dev-tool/verify-registry.ts</code>, enforced by the vitest test). The pipeline
+  contracts' exempt object is currently empty. The verifier's <code>EXEMPT_ROUTES</code> currently
+  lists three entries: <code>POST /webhooks/stripe</code> (signature-verified consumer, no human
+  UI), <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel +
+  the dev tool's self-bootstrap), and <code>GET /api/users/check-username</code> (same shape,
+  embedded in the register probe-helper).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>20-character minimum on exempt reasons</strong> — without a floor, the gate's escape hatch
+  becomes a single keystroke. Twenty characters is enough room for "MYT-NN tracked, defer" and short
+  enough that "we'll exempt this for now" stays uncomfortable.
+</aside>
+
+<h2 id="hard-rules">Hard rules</h2>
+
+<p>Five conventions are enforced by code review and the structure of the codebase itself:</p>
+
+<ul>
+  <li>
+    <strong>Local-only by design.</strong> No env switcher, no staging mode, no
+    <code>@fastify/cors</code> plugin on the backend. Staging validation lives in
+    <a href="../infra/smoke-testing.html">smoke testing</a>.
+  </li>
+  <li>
+    <strong>All HTTP calls go through <code>api-client.ts</code>'s <code>apiCall</code>.</strong>
+    No bare <code>fetch</code> anywhere else. No absolute URLs. The path guard rejects bare URLs
+    (missing leading <code>/</code>) AND protocol-relative paths (leading <code>//</code>) so
+    <code>fetch('//evil.com/x')</code> can't leak <code>x-mythrun-dev-sub</code> to a foreign
+    origin.
+  </li>
+  <li>
+    <strong>Use <code>.textContent</code>, never <code>.innerHTML</code>.</strong> Defense against
+    any stored-XSS-shaped response surface ever appearing in a future panel.
+  </li>
+  <li>
+    <strong>No secrets in <code>localStorage</code>.</strong> Only
+    <code>mythrun.devtool.devSub</code>, <code>devtool.activeCampaignId</code>,
+    <code>devtool.activeCharacterId</code>, <code>devtool.selectedWorkflow</code>, and a few UI
+    prefs (drawer open / paused state) live there. Tokens, JWTs, Anthropic keys do not.
+  </li>
+  <li>
+    <strong>The ship gate is not skippable.</strong> <code>pnpm dev-tool:check</code> runs on every
+    PR; merging a contract change without the matching coverage entry (or a real exempt reason) is a
+    red CI build.
+  </li>
+</ul>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="run-the-dev-tool-locally">Run the dev tool locally</h3>
+<ol>
+  <li>
+    Bring up the backend per the <a href="./index.html">backend page</a>: <code>pnpm db:up</code>,
+    then <code>pnpm dev</code> in one terminal. Wait for the <code>app.listen</code> log line.
+  </li>
+  <li>
+    In a second terminal, from the repo root: <code>pnpm dev:dev-tool</code>. Vite reports
+    <code>Local: http://127.0.0.1:5273/</code>.
+  </li>
+  <li>
+    Open the URL. The shell mounts, the header chrome reports the backend's
+    <code>GET /health</code> latency and the active campaign in its dropdown, the banner reports the
+    active campaign (or "(no active campaign)"), the sidebar shows the six workflow leaves, and the
+    drawer renders empty. If the active sub doesn't have a users row yet, <code>main.ts</code>'s
+    bootstrap fires <code>POST /api/users/register</code> automatically.
+  </li>
+  <li>
+    Pick an identity from the header dropdown. The selection persists across reloads via
+    <code>localStorage</code>. Every subsequent call carries it as <code>x-mythrun-dev-sub</code>;
+    the drawer re-subscribes to the active campaign as the new identity.
+  </li>
+</ol>
+
+<h3 id="add-a-pipeline-route-the-shape-the-gate-enforces">
+  Add a pipeline route (the shape the gate enforces)
+</h3>
+<ol>
+  <li>
+    Append the route to <code>backend/src/contract/pipeline-routes.ts</code> in the
+    <code>'METHOD /api/path'</code> form. (And to <code>backend-routes.ts</code> for the all-routes
+    invariant.)
+  </li>
+  <li>
+    Add the route handler under <code>backend/src/routes/</code> and wire it into
+    <code>app.ts</code>'s plugin registration.
+  </li>
+  <li>
+    Add a panel module under <code>backend/dev-tool/src/components/</code> that drives the route via
+    <code>apiCall</code>. The module exports a <code>mount&lt;Panel&gt;</code> function returning
+    <code>PanelHandle</code>.
+  </li>
+  <li>
+    Decide which workflow page should compose the new panel. Open
+    <code>src/pages/&lt;workflow&gt;-page.ts</code> and add a
+    <code>body.mountSection(id, mountFn)</code> call at the right position in the column. Update
+    <code>verify-registry.ts</code>: add the panel id to that page's <code>panels[]</code> array in
+    <code>PAGE_REGISTRY</code>, and add a <code>PANEL_EXERCISES</code> entry mapping the panel id to
+    the route(s) it exercises.
+  </li>
+  <li>
+    Add the same <code>'METHOD /api/path'</code> string to the <code>routes</code> array in
+    <code>backend/dev-tool/coverage.json</code>.
+  </li>
+  <li>
+    <code>pnpm dev-tool:check</code> locally — must exit 0.
+    <code
+      >pnpm --filter @mythrun/backend test backend/dev-tool/__tests__/verify-registry.test.ts</code
+    >
+    locally — must pass. The same PR contains all six changes; CI runs the same checks on push.
+  </li>
+</ol>
+
+<h3 id="exempt-a-contract-entry">Exempt a contract entry (rare)</h3>
+<ol>
+  <li>
+    Add the contract string as a key under
+    <code>coverage.exempt.&lt;routes|events|jobs&gt;</code> in
+    <code>backend/dev-tool/coverage.json</code>. The value is the reason.
+  </li>
+  <li>
+    Write a real reason of at least 20 characters: who decided, why the dev tool can't drive it, and
+    the Linear/MYT-* issue tracking the gap.
+  </li>
+  <li>
+    Open the PR with the exempt change visible alongside the contract change. Reviewers push back if
+    the reason isn't substantive.
+  </li>
+  <li>
+    When the issue lands and adds coverage, the exempt entry is removed in the same PR — leaving a
+    stale exempt entry whose contract entry no longer exists red-CI's the gate.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-failing-dev-tool-check">Diagnose a failing <code>dev-tool:check</code></h3>
+<ol>
+  <li>
+    The script prints one <code>error:</code> line per problem. Read the line — each names the kind
+    (<code>routes</code> / <code>events</code> / <code>jobs</code>), the entry, and the action
+    required.
+  </li>
+  <li>
+    <strong>"in contract but not in coverage and not in exempt"</strong> — add the panel + page
+    composition + coverage entry, or add an exempt entry with a real reason.
+  </li>
+  <li><strong>"exempt reason is too short"</strong> — write a real reason (≥ 20 characters).</li>
+  <li><strong>"in exempt but no longer in contract"</strong> — drop the exempt entry.</li>
+  <li>
+    <strong>Warnings</strong> (<code>warn:</code> prefix) — coverage entry no longer in contract.
+    Non-fatal; consider removing the coverage line.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The dev tool drives the <a href="./index.html">backend</a>'s HTTP surface through the Vite proxy
+  and consumes the same <code>x-mythrun-dev-sub</code> header the auth-bypass plugin in the
+  <a href="../auth-billing/jwt-middleware.html">JWT middleware</a> reads to populate
+  <code>request.user</code> in development. The wire-log drawer attaches to the
+  <a href="./pipeline-status.html">pipeline status</a> stream, which the
+  <a href="./world-gen.html">world-gen worker</a> and the
+  <a href="./character-creation.html">character-creation pipeline</a> publish events into. The
+  Characters page renders the
+  <a href="./character-integration.html">character-integration</a> finalize button alongside the
+  per-player submission panels. Staging validation goes through
+  <a href="../infra/smoke-testing.html">smoke testing</a>, not this tool.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="shell-files">Shell files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/main.ts</code></td>
+      <td>
+        Mounts the identity switcher + the shell; side-effect imports every page composer (each page
+        in turn imports its panels); bootstraps the active sub against
+        <code>POST /api/users/register</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/shell.ts</code></td>
+      <td>
+        Composition root. Builds header chrome + banner + sidebar + mainPane + drawer; owns the
+        active-page lifecycle; routes <code>mythrun.navigate</code> /
+        <code>mythrun.navigate-workflow</code> events to the workflow switcher.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/header-chrome.ts</code></td>
+      <td>
+        Always-on row above the banner. Backend health pip (polls
+        <code>GET /health</code> every 5 s) + active-campaign dropdown (polls
+        <code>GET /api/campaigns/mine</code> every 10 s).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/sidebar.ts</code></td>
+      <td>
+        Renders <code>WORKFLOWS</code> as six leaves; dims <code>requiresCampaign</code> leaves when
+        no campaign is active.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/banner.ts</code></td>
+      <td>
+        Active-campaign anchor pinned below the chrome. Live stage label updates via shell's bus
+        subscription.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/active-campaign.ts</code></td>
+      <td>
+        Shell-owned store. <code>getActiveCampaignId</code> / <code>setActiveCampaignId</code> /
+        <code>onActiveCampaignChanged</code>; <code>localStorage</code>-backed. Sibling
+        <code>activeCharacterId</code> co-lives here.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/identity-bridge.ts</code></td>
+      <td>
+        Single shell-level listener for <code>mythrun.identitychanged</code>; drives the on-switch
+        reset orchestrated by the shell.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/workflow-registry.ts</code></td>
+      <td>
+        <code>WORKFLOWS</code> descriptor list (6 entries) + <code>registerWorkflowMount</code> /
+        <code>getWorkflowMount</code> for the lazy-resolved mount fns.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/drawer.ts</code></td>
+      <td>
+        Persistent right-side wire-log pane. Composes subscriptions + bus + buffer; pause / clear /
+        export controls; collapsible.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/subscriptions.ts</code></td>
+      <td>
+        Sole <code>EventSource</code> owner. One ES per subscribed campaign id;
+        <code>subscribe</code> / <code>unsubscribe</code> / <code>closeAll</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/event-bus.ts</code></td>
+      <td>In-process pub/sub. Errors in one subscriber don't poison siblings.</td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/buffer.ts</code></td>
+      <td>500-event FIFO ring buffer. Oldest items evict on overflow.</td>
+    </tr>
+    <tr>
+      <td><code>src/pages/_shared/page-skeleton.ts</code></td>
+      <td>
+        <code>buildPageBody(parent, title)</code> →
+        <code>{ root, mountSection, removeSection, unmountAll }</code>. The dumb-layout helper every
+        page composer builds on top of.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/pages/&lt;workflow&gt;-page.ts</code></td>
+      <td>
+        Six page composers (campaigns / world / characters / users / billing / system). Each mounts
+        its panels into the body and calls <code>registerWorkflowMount</code> on import.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/components/_shared/panel-skeleton.ts</code></td>
+      <td>
+        Split-view DOM builder + the <code>PanelHandle</code> = <code>{ root, unmount() }</code>
+        contract every panel returns.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/components/character-view-render.ts</code></td>
+      <td>
+        Character-sheet renderer extracted from <code>character-view-panel.ts</code>. Draws name +
+        subtitle, ability-score table, vitals, and feature / equipment / spell sections.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="sidebar-workflows">Sidebar workflows</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Workflow</th>
+      <th>Requires active campaign?</th>
+      <th>Scope</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>Campaigns</code></td>
+      <td>No</td>
+      <td>Create / list / per-campaign details + rename + resume + archive + delete.</td>
+    </tr>
+    <tr>
+      <td><code>World</code></td>
+      <td>Yes</td>
+      <td>
+        Status (with live duration ticker) / live events (via drawer) / snapshot / hierarchy (tree)
+        / random tables (per-table tables).
+      </td>
+    </tr>
+    <tr>
+      <td><code>Characters</code></td>
+      <td>Yes</td>
+      <td>
+        Starting situations + pick (owner) / submit concept (member) / progress / roster / character
+        sheet / members / finalize.
+      </td>
+    </tr>
+    <tr>
+      <td><code>Users &amp; Access</code></td>
+      <td>No</td>
+      <td>Me / invite create + list + revoke + preview + accept.</td>
+    </tr>
+    <tr>
+      <td><code>Billing &amp; Credits</code></td>
+      <td>No</td>
+      <td>
+        SKUs / subscription / balance / history / checkout / portal / upgrade tier / grant credits /
+        my credits.
+      </td>
+    </tr>
+    <tr>
+      <td><code>System</code></td>
+      <td>No</td>
+      <td>Health (liveness + ready) / WS ticket.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="ship-gate-files">Ship gate files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>backend/src/contract/pipeline-routes.ts</code></td>
+      <td>
+        <code>PIPELINE_ROUTES: readonly string[]</code> — HTTP route source of truth, format
+        <code>'METHOD /api/path'</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/contract/pipeline-events.ts</code></td>
+      <td><code>PIPELINE_SSE_EVENTS: readonly string[]</code> — SSE event names.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/contract/pipeline-jobs.ts</code></td>
+      <td><code>PIPELINE_BULLMQ_JOBS: readonly string[]</code> — BullMQ job names.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/dev-tool-check/check-coverage.ts</code></td>
+      <td>
+        Pure <code>checkCoverage(contracts, coverage)</code> function. Vitest-tested directly.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/scripts/dev-tool-check.ts</code></td>
+      <td>CLI shell. Reads files, invokes <code>checkCoverage</code>, exits 0/1.</td>
+    </tr>
+    <tr>
+      <td><code>backend/dev-tool/verify-registry.ts</code></td>
+      <td>
+        <code>PAGE_REGISTRY</code> + <code>PANEL_EXERCISES</code> + <code>EXEMPT_PANELS</code> +
+        <code>EXEMPT_ROUTES</code> — the data the verify harness and the four invariants share.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/dev-tool/__tests__/verify-registry.test.ts</code></td>
+      <td>Forward / workflow / reverse / route-exhaustion invariants on the page registry.</td>
+    </tr>
+    <tr>
+      <td><code>.github/workflows/dev-tool-check.yml</code></td>
+      <td>
+        CI runs <code>pnpm dev-tool:check</code> on every PR + push to main, scoped to the gated
+        surface via <code>paths:</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="bring-up-surface">Bring-up surface</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Command</th>
+      <th>Effect</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>pnpm install</code></td>
+      <td>Materializes the <code>@mythrun/dev-tool</code> workspace alongside the backend.</td>
+    </tr>
+    <tr>
+      <td><code>pnpm dev</code></td>
+      <td>Starts the local backend on <code>PORT</code> (default 3000).</td>
+    </tr>
+    <tr>
+      <td><code>pnpm dev:dev-tool</code></td>
+      <td>Starts Vite on <code>127.0.0.1:5273</code> with the proxy aimed at the backend.</td>
+    </tr>
+    <tr>
+      <td><code>pnpm dev-tool:check</code></td>
+      <td>Runs the ship gate locally. Exit 1 on any uncovered contract entry.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/dev-tool/src/shell/</code>, <code>backend/dev-tool/src/pages/</code>,
+  <code>backend/dev-tool/src/components/</code>, <code>backend/src/contract/</code>,
+  <code>backend/src/dev-tool-check/check-coverage.ts</code>,
+  <code>backend/scripts/dev-tool-check.ts</code>, <code>.github/workflows/dev-tool-check.yml</code>.
+  Design spec: <code>docs/superpowers/specs/2026-05-11-myt-47-dev-tool-phase-0-design.md</code>;
+  parent spec §12: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-shell">The shell</a></li><li style="padding-left:0"><a href="#the-sidebar">The sidebar</a></li><li style="padding-left:0"><a href="#the-header-chrome">The header chrome</a></li><li style="padding-left:0"><a href="#the-active-campaign-store">The active-campaign store</a></li><li style="padding-left:0"><a href="#the-six-workflow-pages">The six workflow pages</a></li><li style="padding-left:0"><a href="#cross-page-navigation">Cross-page navigation</a></li><li style="padding-left:0"><a href="#the-wire-log-drawer">The wire-log drawer</a></li><li style="padding-left:0"><a href="#the-identity-bridge">The identity bridge</a></li><li style="padding-left:0"><a href="#the-panels">The panels</a></li><li style="padding-left:0"><a href="#identity">Identity</a></li><li style="padding-left:0"><a href="#verify-registry-invariants">Verify-registry invariants</a></li><li style="padding-left:0"><a href="#the-ship-gate">The ship gate</a></li><li style="padding-left:0"><a href="#the-exempt-list">The exempt list</a></li><li style="padding-left:0"><a href="#hard-rules">Hard rules</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-dev-tool-locally">Run the dev tool locally</a></li><li style="padding-left:12px"><a href="#add-a-pipeline-route-the-shape-the-gate-enforces">Add a pipeline route (the shape the gate enforces)</a></li><li style="padding-left:12px"><a href="#exempt-a-contract-entry">Exempt a contract entry (rare)</a></li><li style="padding-left:12px"><a href="#diagnose-a-failing-dev-tool-check">Diagnose a failing dev-tool:check</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#shell-files">Shell files</a></li><li style="padding-left:12px"><a href="#sidebar-workflows">Sidebar workflows</a></li><li style="padding-left:12px"><a href="#ship-gate-files">Ship gate files</a></li><li style="padding-left:12px"><a href="#bring-up-surface">Bring-up surface</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>
