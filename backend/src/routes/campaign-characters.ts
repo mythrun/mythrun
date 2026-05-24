@@ -373,6 +373,86 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
   )
 
   // --------------------------------------------------------------------
+  // MYT-54 T12: GET /character-creation-progress — per-PC status board.
+  //
+  // Visible to ALL campaign members (owner OR player) — the finalize UI
+  // uses it to drive the "are you sure?" confirmation. Two queries:
+  // (1) the member roster ordered by joined_at for a stable display,
+  // (2) every character_concepts row for the campaign. Members with a
+  // row land in `concepts[]` (status passed through verbatim, including
+  // the post-MYT-54 'integrated' state); members without one land in
+  // `missing[]`. `error` (JSONB) is included only when the row's status
+  // is 'failed' — the JSONB is forwarded as-is so the client owns the
+  // display shape.
+  // --------------------------------------------------------------------
+  app.get<{ Params: { campaignId: string } }>(
+    '/api/campaigns/:campaignId/character-creation-progress',
+    {
+      preHandler: requireCampaignMember(repo),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const memberRes = await opts.pool.query<{ user_id: string; display_name: string }>(
+        `SELECT cm.user_id, u.display_name
+           FROM campaign_members cm
+           JOIN users u ON u.id = cm.user_id
+          WHERE cm.campaign_id = $1
+          ORDER BY cm.joined_at`,
+        [req.params.campaignId],
+      )
+
+      const conceptRes = await opts.pool.query<{
+        user_id: string
+        status: string
+        submitted_at: Date
+        error: unknown
+      }>(
+        `SELECT user_id, status, submitted_at, error
+           FROM character_concepts
+          WHERE campaign_id = $1`,
+        [req.params.campaignId],
+      )
+      const byUserId = new Map(conceptRes.rows.map((r) => [r.user_id, r]))
+
+      const concepts: {
+        userId: string
+        displayName: string
+        status: string
+        submittedAt: string
+        error?: unknown
+      }[] = []
+      const missing: { userId: string; displayName: string }[] = []
+      for (const m of memberRes.rows) {
+        const c = byUserId.get(m.user_id)
+        if (c) {
+          concepts.push({
+            userId: m.user_id,
+            displayName: m.display_name,
+            status: c.status,
+            submittedAt: c.submitted_at.toISOString(),
+            // `error` is only emitted when the row is in 'failed'.
+            // Other terminal states (completed/integrated) never set it
+            // and shouldn't surface it even if the column is non-null
+            // due to historical writes.
+            ...(c.status === 'failed' && c.error !== null && c.error !== undefined
+              ? { error: c.error }
+              : {}),
+          })
+        } else {
+          missing.push({ userId: m.user_id, displayName: m.display_name })
+        }
+      }
+
+      return reply.code(200).send({
+        campaignId: req.params.campaignId,
+        totalMembers: memberRes.rows.length,
+        concepts,
+        missing,
+      })
+    },
+  )
+
+  // --------------------------------------------------------------------
   // T18: GET /characters/:charId — full character read for one PC.
   //
   // The join check protects against fishing for a character_id by

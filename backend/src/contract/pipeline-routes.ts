@@ -35,6 +35,8 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'GET /api/campaigns/:campaignId/characters/:charId',
   'GET /api/campaigns/:campaignId/hierarchy',
   'GET /api/campaigns/:campaignId/random-tables',
+  // MYT-54 T12 — per-PC character-creation progress board (any member).
+  'GET /api/campaigns/:campaignId/character-creation-progress',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

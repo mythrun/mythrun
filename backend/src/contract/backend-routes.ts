@@ -45,6 +45,8 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/characters/:charId' },
   { method: 'GET', path: '/api/campaigns/:campaignId/hierarchy' },
   { method: 'GET', path: '/api/campaigns/:campaignId/random-tables' },
+  // MYT-54 — per-PC character-creation progress board (any member can view)
+  { method: 'GET', path: '/api/campaigns/:campaignId/character-creation-progress' },
 
   // Sessions
   { method: 'POST', path: '/api/sessions/:id/ws-ticket' },
