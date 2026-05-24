@@ -30,30 +30,30 @@ const pcEntitySchema = z.object({
 const factSchema = z.object({
   content: z.string().min(20).max(800),
   tags: z.array(z.string().min(1).max(40)).min(1).max(5),
-  aboutEntityId: z.string().uuid().nullable(),
+  aboutEntityId: z.uuid().nullable(),
 })
 
 const npcRelationshipSchema = z.object({
   targetKind: z.literal('npc'),
-  targetId: z.string().uuid(),
+  targetId: z.uuid(),
   type: z.string().min(2).max(60),
   description: z.string().min(20).max(800),
 })
 const factionRelationshipSchema = z.object({
   targetKind: z.literal('faction'),
-  targetId: z.string().uuid(),
+  targetId: z.uuid(),
   type: z.string().min(2).max(60),
   description: z.string().min(20).max(800),
 })
 const locationRelationshipSchema = z.object({
   targetKind: z.literal('location'),
-  targetId: z.string().uuid(),
+  targetId: z.uuid(),
   type: z.string().min(2).max(60),
   description: z.string().min(20).max(800),
 })
 const pcRelationshipSchema = z.object({
   targetKind: z.literal('pc'),
-  targetUserId: z.string().uuid(),
+  targetUserId: z.uuid(),
   type: z.string().min(2).max(60),
   description: z.string().min(20).max(800),
 })
@@ -66,7 +66,7 @@ const relationshipSchema = z.discriminatedUnion('targetKind', [
 ])
 
 const pcIntegrationSchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.uuid(),
   displayName: z.string().min(1).max(100),
   entity: pcEntitySchema,
   facts: z.array(factSchema).min(1).max(10),
@@ -74,7 +74,7 @@ const pcIntegrationSchema = z.object({
 })
 
 const newFactSchema = z.object({
-  entityId: z.string().uuid(),
+  entityId: z.uuid(),
   content: z.string().min(20).max(800),
   tags: z.array(z.string().min(1).max(40)).min(1).max(5),
 })

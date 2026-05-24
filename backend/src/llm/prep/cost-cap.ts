@@ -19,6 +19,26 @@ export class CostCapParseError extends Error {
   }
 }
 
+// MYT-54 T10: thrown by the character-integration handler's pre-flight when
+// `sumCharacterCreationStageCosts + estimateIntegrationCost > cap`. The
+// processor (T11) catches this and marks the pipeline_runs row failed with
+// code `character_creation_cost_cap_exceeded`. Terminal — no BullMQ retry.
+export class CostCapExceededError extends Error {
+  readonly code = 'character_creation_cost_cap_exceeded'
+  readonly terminal = true
+  constructor(
+    message: string,
+    readonly details: {
+      readonly spent: number
+      readonly estimated: number
+      readonly cap: number
+    },
+  ) {
+    super(message)
+    this.name = 'CostCapExceededError'
+  }
+}
+
 export async function readCostCap(pool: Pool | PoolClient): Promise<number> {
   const result = await pool.query<{ value: string }>(
     `SELECT value FROM settings WHERE key = 'world_gen_cost_cap_usd'`,

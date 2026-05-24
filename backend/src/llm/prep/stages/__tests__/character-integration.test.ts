@@ -1,32 +1,19 @@
-// Stage 4 was originally written against streamObject per the parent spec,
-// but a real-LLM smoke surfaced that AI SDK's streamObject is pull-based —
-// `await stream.object` hangs indefinitely unless the caller iterates
-// partialObjectStream too. Stage 4's persister has no per-chunk consumer
-// (its SSE events fire post-COMMIT), so we switched to generateObject.
-// Mocked via the canonical `generateText`-pass-through pattern.
 // backend/src/llm/prep/stages/__tests__/character-integration.test.ts
 //
-// MYT-53 / myth-pytq T10: stage 4 of the character-creation worker. Opus
-// streamObject producing the PC entity + PC↔world relationships + PC-tagged
-// facts. Owns the SINGLE INSERT into `entities` (entity_type='pc'), updates
-// `characters.entity_id`, and persists relationships + facts in one
-// transaction. Idempotent re-run: if `characters.entity_id` is already set,
-// reuse the entity row and DELETE-then-re-INSERT relationships/facts.
+// MYT-54 T10: campaign-scoped character-integration handler. Single Opus
+// pass over the whole party, then a single transaction that creates one PC
+// entity per player, materializes PC↔world + PC↔PC relationships, writes
+// starter facts + prose kernels, flips `character_concepts.status` to
+// 'integrated', and flips `campaigns.status` to 'active'.
 //
-// The Zod schema does NOT line up 1:1 with the DB columns (see
-// character-integration.ts header for the mapping table):
-//   pc_entity.short_description -> persisted as a fact with topic='introduction'
-//     (entities has no short_description column).
-//   relationships table uses source_entity_id / target_entity_id (NOT
-//     source_id / target_id).
-//   facts has NO `tags` column — handler uses tags[0] as `topic`
-//     (default 'backstory').
-//   facts.narrative_status defaults to 'undelivered'.
-//   facts.access_level for new PC-tagged facts defaults to 'known'.
+// Mocking pattern lifted from character-sheet.test.ts / coherence-pass.test.ts:
+// the AI SDK's `generateText` is the single underlying call (the
+// `generateObject` wrapper in our ai.ts delegates to it under the hood with
+// Output.object schema). We mock `'ai'`'s `generateText` directly so the
+// real prompt rendering + schema parsing path runs in tests.
 //
-// Mock target: `'ai'` (the Vercel SDK) — matches the proven pattern used by
-// every peer stage test in this directory. Real Postgres seed pattern lifted
-// from character-sheet.test.ts.
+// Real Postgres seed pattern: per-test scope via makeTestScope; cleanup
+// removes scope-owned rows after each test and the pool at afterAll.
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest'
 import { fileURLToPath } from 'node:url'
@@ -44,6 +31,8 @@ import {
 } from '../../../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
 import { runCharacterIntegrationStage } from '../character-integration.js'
+import { CostCapExceededError } from '../../cost-cap.js'
+import { LlmStructuredOutputError } from '../../../errors.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -68,84 +57,60 @@ function silentLogger(): ReturnType<typeof pino> {
   )
 }
 
-const NARRATIVE = {
-  name: 'Bran of the Hollow',
-  race: 'human',
-  class: 'cleric',
-  background: 'acolyte',
-  level: 1,
-  alignment: 'lawful neutral',
-  age: 27,
-  gender: 'man',
-  physical_description:
-    'A tall man, weather-worn from years on the road, with a shaved scalp and a faded sept-mark on the back of his left hand.',
-  personality_traits: ['measured', 'patient'],
-  ideals: ['order serves the weak'],
-  bonds: ['the temple that raised him'],
-  flaws: ['quick to suspect deception'],
-  backstory:
-    'Bran was apprenticed at the Bone Sept in his twelfth year, when the priests took him in after a winter on the moors orphaned him. Twenty years later, when the Sept burned, he walked out with a tin ladle and a name he was no longer sure was his. He has been on the road since, doing temple work for coin, telling himself he is still a cleric of the Hollow, listening for the small voice that used to answer him at the altar.',
+// Reusable narrative shape — every seeded PC gets one of these as
+// `character_concepts.concept_output` JSONB.
+function makeNarrative(name: string): Record<string, unknown> {
+  return {
+    name,
+    race: 'human',
+    class: 'cleric',
+    background: 'acolyte',
+    level: 1,
+    alignment: 'lawful neutral',
+    age: 27,
+    gender: 'man',
+    physical_description:
+      `A weather-worn ${name.toLowerCase()} with the bearing of someone who has walked too many roads alone in a country that has long since stopped remembering them.`,
+    personality_traits: ['speaks in measured tones', 'pauses before answering'],
+    ideals: ['order serves the weak'],
+    bonds: ['the temple that raised them'],
+    flaws: ['quick to suspect deception'],
+    backstory:
+      'Apprenticed at the Bone Sept in their twelfth year, when the priests took them in after a winter on the moors orphaned them. Twenty years later, when the Sept burned, they walked out with a tin ladle and a name they were no longer sure was theirs. They have been on the road since, doing temple work for coin, telling themselves they are still a cleric of the Hollow, listening for the small voice that used to answer them at the altar.',
+  }
 }
 
-interface SeedResult {
-  readonly userId: string
-  readonly worldId: string
-  readonly campaignId: string
-  readonly characterId: string
-  readonly locationId: string
-  readonly factionId: string
+// Small array-access helper — eslint forbids non-null assertions, and
+// every test that picks `userIds[N]` from a known-length seed needs a
+// safe narrow.
+function at<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`array index ${String(i)} is out of bounds`)
+  return v
 }
 
-function generateTextMockReturn(payload: unknown): {
-  output: unknown
-  finishReason: string
-  usage: { inputTokens: number; outputTokens: number; totalTokens: number }
-} {
+// The Vercel AI SDK's generateText returns a wide shape; tests need only
+// `output` (the parsed object), `finishReason`, and `usage`. Cast to `never`
+// at the call site — matches the established peer-test convention.
+function generateTextMockReturn(payload: unknown): never {
   return {
     output: payload,
     finishReason: 'stop',
     usage: { inputTokens: 2000, outputTokens: 1000, totalTokens: 3000 },
-  }
+  } as never
 }
 
-const INTEGRATION = {
-  pc_entity: {
-    name: 'Bran of the Hollow',
-    short_description:
-      'A road-weary cleric tying his fate to the Hollow and the silence of the old gods through the long autumn rains.',
-  },
-  relationships: [
-    {
-      target_entity_name: 'Bone Sept',
-      relationship_type: 'apprenticed_at',
-      description:
-        'Trained at the Bone Sept in youth, learned the old liturgies before the burning twenty years ago.',
-    },
-    // Unresolved name — LLM hallucinated a faction that doesn't exist in
-    // the seeded world. Handler silently skips this entry (no FK violation
-    // surfaces to Postgres).
-    {
-      target_entity_name: 'Phantom Order That Never Existed',
-      relationship_type: 'hostile_to',
-      description:
-        'A relationship the LLM invented that does not match any seeded entity by name.',
-    },
-  ],
-  facts: [
-    {
-      content: 'Bran was apprenticed at the Bone Sept in his youth.',
-      tags: ['backstory'],
-    },
-    // Empty tags array — handler defaults topic to 'backstory'.
-    {
-      content: 'A general motivation fact with no tags at all.',
-      tags: [],
-    },
-  ],
+interface SeedResult {
+  readonly campaignId: string
+  readonly worldId: string
+  readonly ownerUserId: string
+  readonly userIds: readonly string[]
+  readonly locationId: string
+  readonly factionId: string
 }
 
-// myth-5jdo: characters.user_id is RESTRICT-FK to users — must delete
-// scope-user characters BEFORE cleanupTestScope's user delete.
+// Helper to clean characters scoped to a TestScope's users — characters.user_id
+// is RESTRICT-FK, must precede the scope user delete (myth-5jdo).
 async function cleanupCharactersFor(p: Pool, scope: TestScope): Promise<void> {
   await p.query(
     `DELETE FROM characters
@@ -155,10 +120,10 @@ async function cleanupCharactersFor(p: Pool, scope: TestScope): Promise<void> {
   await cleanupTestScope(p, scope)
 }
 
-describe('runCharacterIntegrationStage', () => {
+describe('runCharacterIntegrationStage (MYT-54)', () => {
   let pool: Pool
   let scope: TestScope
-  let userCounter: number
+  let userCounter = 0
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
@@ -168,61 +133,93 @@ describe('runCharacterIntegrationStage', () => {
       migrationsDir: REAL_MIGRATIONS_DIR,
       logger: silentLogger(),
     })
-    scope = makeTestScope('charint')
-    userCounter = 0
+    scope = makeTestScope('charint54')
   })
 
   afterAll(async () => {
-    // myth-5jdo: characters delete must precede scope user delete.
     await cleanupCharactersFor(pool, scope)
     await pool.end()
   })
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    await cleanupCharactersFor(pool, scope)
   })
 
-  async function seed(): Promise<SeedResult> {
-    const userId = uuidv7()
+  async function seed(partySize: number): Promise<SeedResult> {
     const worldId = uuidv7()
     const campaignId = uuidv7()
-    const characterId = uuidv7()
     const locationId = uuidv7()
     const factionId = uuidv7()
-    const n = userCounter++
+    const userIds: string[] = []
 
+    // First member is the owner.
+    const ownerUserId = uuidv7()
+    userIds.push(ownerUserId)
     await pool.query(
       `INSERT INTO users (id, cognito_sub, display_name, username)
        VALUES ($1, $2, $3, $4)`,
-      [userId, scope.userSub(n), scope.displayName(n), scope.username(n)],
+      [
+        ownerUserId,
+        scope.userSub(userCounter),
+        scope.displayName(userCounter),
+        scope.username(userCounter),
+      ],
     )
+    userCounter += 1
+
+    for (let i = 1; i < partySize; i += 1) {
+      const uid = uuidv7()
+      userIds.push(uid)
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          uid,
+          scope.userSub(userCounter),
+          scope.displayName(userCounter),
+          scope.username(userCounter),
+        ],
+      )
+      userCounter += 1
+    }
+
     await pool.query(
-      `INSERT INTO worlds (id, created_by, name, concept, status, starting_situation_entries)
-       VALUES ($1, $2, $3, 'C', 'complete', $4::jsonb)`,
+      `INSERT INTO worlds (
+         id, created_by, name, concept, status,
+         starting_situation_entries, vocabulary_registry
+       )
+       VALUES ($1, $2, $3, 'C', 'complete', $4::jsonb, $5::jsonb)`,
       [
         worldId,
-        userId,
-        scope.worldName(n),
+        ownerUserId,
+        scope.worldName(userCounter),
         JSON.stringify([
           {
             index: 0,
             locationEntityId: locationId,
-            prose: 'You arrive at The Tavern as the storm breaks.',
+            prose: 'The party gathers at The Tavern as the storm breaks.',
           },
         ]),
+        JSON.stringify({ entries: [], adjacent_franchises: [] }),
       ],
     )
     await pool.query(
-      `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index)
-       VALUES ($1, $2, $3, $4, 0)`,
-      [campaignId, worldId, userId, scope.campaignName(n)],
+      `INSERT INTO campaigns (id, world_id, created_by, name, status, starting_situation_index)
+       VALUES ($1, $2, $3, $4, 'setup', 0)`,
+      [campaignId, worldId, ownerUserId, scope.campaignName(userCounter)],
     )
-    await pool.query(
-      `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
-       VALUES ($1, $2, $3, 'owner', true)`,
-      [uuidv7(), campaignId, userId],
-    )
-    // World entities: location ('The Tavern') + faction ('Bone Sept').
+
+    // Owner is the first member, role 'owner'; others 'player'.
+    for (const [i, uid] of userIds.entries()) {
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, $4, true)`,
+        [uuidv7(), campaignId, uid, i === 0 ? 'owner' : 'player'],
+      )
+    }
+
+    // World entities: one location and one faction the LLM can reference.
     await pool.query(
       `INSERT INTO entities (id, world_id, entity_type, name, access_level)
        VALUES ($1, $2, 'location', 'The Tavern', 'known')`,
@@ -233,217 +230,348 @@ describe('runCharacterIntegrationStage', () => {
        VALUES ($1, $2, 'faction', 'Bone Sept', 'known')`,
       [factionId, worldId],
     )
-    // Characters row WITHOUT entity_id set — that's stage 4's job.
-    await pool.query(
-      `INSERT INTO characters (
-         id, user_id, name, level, class, species, background,
-         str, dex, con, int, wis, cha,
-         hit_points, max_hit_points, armor_class, proficiency_bonus
-       )
-       VALUES ($1, $2, 'Bran of the Hollow', 1, 'cleric', 'human', 'acolyte',
-               12, 10, 14, 13, 16, 11, 9, 9, 14, 2)`,
-      [characterId, userId],
-    )
-    await pool.query(
-      `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
-       VALUES ($1, $2, $3, $4)`,
-      [uuidv7(), campaignId, characterId, userId],
-    )
 
-    return { userId, worldId, campaignId, characterId, locationId, factionId }
+    // One completed character_concepts + characters row per party member.
+    for (const [i, uid] of userIds.entries()) {
+      const characterId = uuidv7()
+      await pool.query(
+        `INSERT INTO character_concepts (
+           id, campaign_id, user_id, concept_text, situation_grounding_text,
+           status, concept_output
+         )
+         VALUES ($1, $2, $3, $4, $5, 'completed', $6::jsonb)`,
+        [
+          uuidv7(),
+          campaignId,
+          uid,
+          `A cleric concept for player ${String(i)} drawn from the bone sept tradition.`,
+          `Arrived at The Tavern through the autumn storms for player ${String(i)}.`,
+          JSON.stringify(makeNarrative(`Player${String(i)}`)),
+        ],
+      )
+      await pool.query(
+        `INSERT INTO characters (
+           id, user_id, name, level, class, species, background,
+           str, dex, con, int, wis, cha,
+           hit_points, max_hit_points, armor_class, proficiency_bonus
+         )
+         VALUES ($1, $2, $3, 1, 'cleric', 'human', 'acolyte',
+                 12, 10, 14, 13, 16, 11, 9, 9, 14, 2)`,
+        [characterId, uid, `Player${String(i)}`],
+      )
+      await pool.query(
+        `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+         VALUES ($1, $2, $3, $4)`,
+        [uuidv7(), campaignId, characterId, uid],
+      )
+    }
+
+    return { campaignId, worldId, ownerUserId, userIds, locationId, factionId }
   }
 
-  it('creates a pc entity, links characters.entity_id, persists relationships and facts including the deferred location fact', async () => {
-    const { userId, worldId, campaignId, characterId, factionId } = await seed()
+  it('writes PC entities + facts + relationships + flips campaign to active (happy 3-PC)', async () => {
+    const { campaignId, ownerUserId, userIds, factionId } = await seed(3)
+    const secondUserId = at(userIds, 1)
 
-    mockGenerateText.mockResolvedValueOnce(generateTextMockReturn(INTEGRATION) as never)
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: userIds.map((uid, i) => ({
+          userId: uid,
+          displayName: `Player${String(i)}`,
+          entity: {
+            name: `PC ${String(i)}`,
+            proseKernel:
+              `Player${String(i)} is a cleric who came down from the northern hills to serve at the temple that raised them, carrying a sept-mark on their hand.`,
+          },
+          facts: [
+            {
+              content: `Player${String(i)} was raised at the Bone Sept and bears its faded mark.`,
+              tags: ['origin'],
+              aboutEntityId: null,
+            },
+          ],
+          relationships:
+            i === 0
+              ? [
+                  {
+                    targetKind: 'pc' as const,
+                    targetUserId: secondUserId,
+                    type: 'sibling_of',
+                    description:
+                      'They are siblings, raised together at the Bone Sept before the burning.',
+                  },
+                  {
+                    targetKind: 'faction' as const,
+                    targetId: factionId,
+                    type: 'apprenticed_at',
+                    description:
+                      'Apprenticed at the Bone Sept in their twelfth year before the burning.',
+                  },
+                ]
+              : [],
+        })),
+      }),
+    )
 
-    const events: Record<string, unknown>[] = []
     const result = await runCharacterIntegrationStage(pool, {
       campaignId,
-      userId,
-      worldId,
-      characterId,
-      narrative: NARRATIVE,
-      situationGroundingText:
-        'arrived seeking word of an old companion through the fall storms.',
-      publishEvent: (e) => {
-        events.push(e)
-        return Promise.resolve()
-      },
+      ownerUserId,
     })
 
-    expect(result.entityId).toBeDefined()
-    expect(result.inputTokens).toBe(2000)
-    expect(result.outputTokens).toBe(1000)
-    // Opus pricing: 15.0 input / 75.0 output per Mtok.
-    expect(result.costUsd).toBeCloseTo(
-      (2000 / 1_000_000) * 15.0 + (1000 / 1_000_000) * 75.0,
-      6,
+    expect(result.characterIds).toHaveLength(3)
+    expect(result.llmCostUsd).toBeGreaterThan(0)
+
+    const { rows: campRows } = await pool.query<{ status: string }>(
+      `SELECT status FROM campaigns WHERE id = $1`,
+      [campaignId],
+    )
+    expect(campRows[0]?.status).toBe('active')
+
+    const { rows: pcRows } = await pool.query<{ id: string }>(
+      `SELECT id FROM entities WHERE world_id = (SELECT world_id FROM campaigns WHERE id = $1) AND entity_type = 'pc'`,
+      [campaignId],
+    )
+    expect(pcRows).toHaveLength(3)
+
+    // PC↔PC sibling edge from player 0 to player 1 + worker-mirrored edge
+    // from player 1 to player 0 + the player-0 → faction edge = 3 total.
+    const { rows: relRows } = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM relationships
+         WHERE source_entity_id IN (SELECT id FROM entities WHERE entity_type = 'pc'
+                                       AND world_id = (SELECT world_id FROM campaigns WHERE id = $1))`,
+      [campaignId],
+    )
+    expect(Number(relRows[0]?.count)).toBeGreaterThanOrEqual(3)
+
+    // character_concepts all flipped to integrated.
+    const { rows: concRows } = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM character_concepts
+         WHERE campaign_id = $1 AND status = 'integrated'`,
+      [campaignId],
+    )
+    expect(Number(concRows[0]?.count)).toBe(3)
+
+    // characters.entity_id populated for every PC. Resolve characters via
+    // campaign_characters join (characters.campaign_id was dropped in
+    // migration 009).
+    const { rows: chRows } = await pool.query<{ entity_id: string | null }>(
+      `SELECT ch.entity_id
+         FROM characters ch
+         JOIN campaign_characters cc ON cc.character_id = ch.id
+        WHERE cc.campaign_id = $1`,
+      [campaignId],
+    )
+    expect(chRows).toHaveLength(3)
+    for (const r of chRows) {
+      expect(r.entity_id).not.toBeNull()
+    }
+
+    // prose_kernels written for every PC entity.
+    const { rows: pkRows } = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM prose_kernels
+         WHERE entity_id IN (SELECT id FROM entities WHERE entity_type = 'pc'
+                                       AND world_id = (SELECT world_id FROM campaigns WHERE id = $1))`,
+      [campaignId],
+    )
+    expect(Number(pkRows[0]?.count)).toBe(3)
+  })
+
+  it('throws LlmStructuredOutputError when characters.length !== party.length', async () => {
+    const { campaignId, ownerUserId } = await seed(3)
+
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: [], // wrong count — schema requires >=1 so we need a single-entry
+      }),
+    )
+    // The schema enforces `characters.length >= 1`, so an empty array fails
+    // at parse time → repair attempts → final LlmStructuredOutputError.
+    // For a length-mismatch invariant where the count is wrong but non-zero,
+    // we mock a 1-entry response against a 3-PC party.
+    mockGenerateText.mockReset()
+    mockGenerateText.mockResolvedValue(
+      generateTextMockReturn({
+        characters: [
+          {
+            userId: uuidv7(), // doesn't match any party member either
+            displayName: 'Solo',
+            entity: {
+              name: 'Solo PC',
+              proseKernel:
+                'A solo entry where the LLM returned only one character for a three-PC party — this should trip the worker-side invariant after schema parse succeeds.',
+            },
+            facts: [
+              {
+                content:
+                  'Some self-fact for the solo PC describing why they exist.',
+                tags: ['origin'],
+                aboutEntityId: null,
+              },
+            ],
+            relationships: [],
+          },
+        ],
+      }),
     )
 
-    const ent = await pool.query(
-      `SELECT entity_type, name, access_level, world_id FROM entities WHERE id = $1`,
-      [result.entityId],
+    await expect(
+      runCharacterIntegrationStage(pool, { campaignId, ownerUserId }),
+    ).rejects.toBeInstanceOf(LlmStructuredOutputError)
+  })
+
+  it('throws CostCapExceededError when running estimate would exceed character_creation_cost_cap_usd', async () => {
+    const { campaignId, ownerUserId } = await seed(3)
+
+    // Pre-load completed runs that already total $4.99 against a $5.00 cap.
+    await pool.query(
+      `INSERT INTO pipeline_runs (id, campaign_id, stage, status, cost_usd, user_id)
+       VALUES ($1, $2, 'character_concept', 'completed', 4.99, NULL)`,
+      [uuidv7(), campaignId],
     )
-    expect(ent.rows[0]).toMatchObject({
-      entity_type: 'pc',
-      name: 'Bran of the Hollow',
-      access_level: 'known',
-      world_id: worldId,
+
+    await expect(
+      runCharacterIntegrationStage(pool, { campaignId, ownerUserId }),
+    ).rejects.toBeInstanceOf(CostCapExceededError)
+    // LLM must NOT have been called once the cap is exhausted.
+    expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
+  it('drops unknown targetId in relationships and logs (does not fail)', async () => {
+    const { campaignId, ownerUserId, userIds } = await seed(1)
+
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: [
+          {
+            userId: at(userIds, 0),
+            displayName: 'Solo',
+            entity: {
+              name: 'Solo PC',
+              proseKernel:
+                'A solo PC integration test fixture whose only emitted relationship points at a UUID the world dump does not contain, which the worker should silently drop.',
+            },
+            facts: [
+              {
+                content:
+                  'A self-fact describing why this solo PC came to the tavern in the storm.',
+                tags: ['origin'],
+                aboutEntityId: null,
+              },
+            ],
+            relationships: [
+              {
+                targetKind: 'npc' as const,
+                targetId: '019eeeee-0000-0000-0000-deadbeefdead',
+                type: 'mentor_of',
+                description:
+                  'A relationship the LLM invented for an NPC the world dump does not contain.',
+              },
+            ],
+          },
+        ],
+      }),
+    )
+
+    const result = await runCharacterIntegrationStage(pool, {
+      campaignId,
+      ownerUserId,
     })
 
-    const ch = await pool.query<{ entity_id: string | null }>(
-      `SELECT entity_id FROM characters WHERE id = $1`,
-      [characterId],
+    expect(result.characterIds).toHaveLength(1)
+    const { rows: relRows } = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM relationships
+         WHERE source_entity_id = $1`,
+      [result.characterIds[0]],
     )
-    expect(ch.rows[0]?.entity_id).toBe(result.entityId)
+    expect(Number(relRows[0]?.count)).toBe(0)
+  })
 
-    const rels = await pool.query<{
+  it('mirrors PC↔PC relationships when only one side was emitted by the LLM', async () => {
+    const { campaignId, ownerUserId, userIds } = await seed(2)
+
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: [
+          {
+            userId: at(userIds, 0),
+            displayName: 'Ada',
+            entity: {
+              name: 'Ada',
+              proseKernel:
+                'Ada is the elder sibling, raised at the Bone Sept before the burning and now wandering the wet roads searching for word of her brother.',
+            },
+            facts: [
+              {
+                content: 'Ada is the elder of the two siblings from the Bone Sept.',
+                tags: ['family'],
+                aboutEntityId: null,
+              },
+            ],
+            relationships: [
+              {
+                targetKind: 'pc' as const,
+                targetUserId: at(userIds, 1),
+                type: 'sibling_of',
+                description: 'Older sibling of Ben; raised together at the Bone Sept.',
+              },
+            ],
+          },
+          {
+            userId: at(userIds, 1),
+            displayName: 'Ben',
+            entity: {
+              name: 'Ben',
+              proseKernel:
+                'Ben is the younger sibling, equally a cleric of the Hollow but more given to suspicion of strangers and the silences between songs.',
+            },
+            facts: [
+              {
+                content: 'Ben is the younger of the two siblings from the Bone Sept.',
+                tags: ['family'],
+                aboutEntityId: null,
+              },
+            ],
+            relationships: [], // LLM emitted the edge only on Ada's side
+          },
+        ],
+      }),
+    )
+
+    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+
+    const { rows: pcEntityRows } = await pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM entities
+         WHERE entity_type = 'pc'
+           AND world_id = (SELECT world_id FROM campaigns WHERE id = $1)`,
+      [campaignId],
+    )
+    expect(pcEntityRows).toHaveLength(2)
+    const adaEntity = pcEntityRows.find((r) => r.name === 'Ada')
+    const benEntity = pcEntityRows.find((r) => r.name === 'Ben')
+    if (adaEntity === undefined || benEntity === undefined) {
+      throw new Error('PC entities missing for Ada/Ben after integration')
+    }
+
+    const { rows: relRows } = await pool.query<{
+      source_entity_id: string
       target_entity_id: string
       relationship_type: string
     }>(
-      `SELECT target_entity_id, relationship_type FROM relationships WHERE source_entity_id = $1`,
-      [result.entityId],
+      `SELECT source_entity_id, target_entity_id, relationship_type
+         FROM relationships
+        WHERE source_entity_id = ANY($1::uuid[])`,
+      [pcEntityRows.map((r) => r.id)],
     )
-    expect(rels.rowCount).toBe(1)
-    expect(rels.rows[0]).toMatchObject({
-      target_entity_id: factionId,
-      relationship_type: 'apprenticed_at',
-    })
-
-    const facts = await pool.query<{
-      topic: string
-      content: string
-      narrative_status: string
-      access_level: string
-    }>(
-      `SELECT topic, content, narrative_status, access_level FROM facts WHERE entity_id = $1 ORDER BY topic`,
-      [result.entityId],
+    expect(relRows).toHaveLength(2)
+    const adaToBen = relRows.find(
+      (r) => r.source_entity_id === adaEntity.id && r.target_entity_id === benEntity.id,
     )
-    // At minimum: backstory (from LLM) + introduction (short_description) +
-    // starting_location (deferred). Allow >=2 if the handler folds
-    // short_description elsewhere.
-    expect(facts.rowCount).toBeGreaterThanOrEqual(2)
-    const startsAt = facts.rows.find((f) => f.topic === 'starting_location')
-    expect(startsAt).toBeDefined()
-    expect(startsAt?.content).toMatch(/starts at|The Tavern/i)
-    // All persisted facts default to known / undelivered.
-    for (const f of facts.rows) {
-      expect(f.access_level).toBe('known')
-      expect(f.narrative_status).toBe('undelivered')
-    }
-
-    // SSE events: at least one entity-added (for the PC) + one edge-added
-    // (for the PC → faction relationship).
-    expect(events.some((e) => e.type === 'entity-added')).toBe(true)
-    expect(events.some((e) => e.type === 'edge-added')).toBe(true)
-  })
-
-  it('idempotent re-run: existing characters.entity_id reused, edges/facts DELETEd + re-INSERTed', async () => {
-    const { userId, worldId, campaignId, characterId, factionId } = await seed()
-
-    // First run.
-    mockGenerateText.mockResolvedValueOnce(generateTextMockReturn(INTEGRATION) as never)
-    const first = await runCharacterIntegrationStage(pool, {
-      campaignId,
-      userId,
-      worldId,
-      characterId,
-      narrative: NARRATIVE,
-      situationGroundingText: 'arrived at the tavern.',
-      publishEvent: () => Promise.resolve(),
-    })
-
-    const firstFactCount = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM facts WHERE entity_id = $1`,
-      [first.entityId],
+    const benToAda = relRows.find(
+      (r) => r.source_entity_id === benEntity.id && r.target_entity_id === adaEntity.id,
     )
-    const firstRelCount = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM relationships WHERE source_entity_id = $1`,
-      [first.entityId],
-    )
-
-    // Second run with a different INTEGRATION payload (different fact content,
-    // same single relationship target).
-    const INTEGRATION_V2 = {
-      pc_entity: {
-        name: 'Bran of the Hollow',
-        short_description:
-          'A road-weary cleric who has begun listening for the silence of the old gods, in the second telling of his arrival.',
-      },
-      relationships: [
-        {
-          target_entity_name: 'Bone Sept',
-          relationship_type: 'apprenticed_at',
-          description:
-            'Was raised at the Bone Sept and bears its faded sept-mark on the back of his left hand.',
-        },
-        // Same shape as first-run INTEGRATION: one resolved + one unresolved,
-        // so re-run + first-run fact/rel counts match. The unresolved name
-        // is silently skipped, so both runs produce the same DB state.
-        {
-          target_entity_name: 'Phantom Order V2',
-          relationship_type: 'hostile_to',
-          description:
-            'A relationship the LLM invented that does not match any seeded entity by name.',
-        },
-      ],
-      facts: [
-        {
-          content: 'Bran carries a sept-mark from his apprentice years.',
-          tags: ['backstory'],
-        },
-        {
-          content: 'A V2 motivation fact with no tags at all.',
-          tags: [],
-        },
-      ],
-    }
-    mockGenerateText.mockResolvedValueOnce(generateTextMockReturn(INTEGRATION_V2) as never)
-    const second = await runCharacterIntegrationStage(pool, {
-      campaignId,
-      userId,
-      worldId,
-      characterId,
-      narrative: NARRATIVE,
-      situationGroundingText: 'arrived at the tavern.',
-      publishEvent: () => Promise.resolve(),
-    })
-
-    expect(second.entityId).toBe(first.entityId)
-
-    // characters.entity_id is still the same.
-    const ch = await pool.query<{ entity_id: string | null }>(
-      `SELECT entity_id FROM characters WHERE id = $1`,
-      [characterId],
-    )
-    expect(ch.rows[0]?.entity_id).toBe(first.entityId)
-
-    // Exactly one relationship row — the previous one was DELETEd, the new
-    // one inserted. Same count as first run, not doubled.
-    const rels = await pool.query<{
-      target_entity_id: string
-      description: string
-    }>(
-      `SELECT target_entity_id, description FROM relationships WHERE source_entity_id = $1`,
-      [first.entityId],
-    )
-    expect(rels.rowCount).toBe(Number(firstRelCount.rows[0]?.count ?? '0'))
-    expect(rels.rows[0]?.target_entity_id).toBe(factionId)
-    expect(rels.rows[0]?.description).toMatch(/sept-mark/)
-
-    // Facts: same count as first run. The new backstory content replaces the
-    // old one — verify by content match.
-    const factsAfter = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM facts WHERE entity_id = $1`,
-      [first.entityId],
-    )
-    expect(factsAfter.rows[0]?.count).toBe(firstFactCount.rows[0]?.count)
-    const matchingFacts = await pool.query<{ content: string }>(
-      `SELECT content FROM facts WHERE entity_id = $1 AND content LIKE '%sept-mark%'`,
-      [first.entityId],
-    )
-    expect(matchingFacts.rowCount).toBe(1)
+    expect(adaToBen).toBeDefined()
+    expect(benToAda).toBeDefined()
+    // Same edge type on both sides (mirror).
+    expect(benToAda?.relationship_type).toBe('sibling_of')
   })
 })

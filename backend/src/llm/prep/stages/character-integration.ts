@@ -1,63 +1,59 @@
 // backend/src/llm/prep/stages/character-integration.ts
 //
-// MYT-53 / myth-pytq T10: stage 4 of the character-creation worker. Opus
-// streamObject producing the PC entity + PC↔world relationships +
-// PC-tagged facts. Creates a single `entities` row (entity_type='pc'),
-// links `characters.entity_id`, and persists relationships + facts in one
-// transaction. The deferred "starts at $location" fact is re-derived here
-// from worlds.starting_situation_entries (spec §Risks #3 — the only
-// surface that ties the per-player character back to the campaign-wide
-// starting situation chosen by the owner pre-fan-out).
+// MYT-54 T10: campaign-scoped character-integration stage. A single Opus
+// pass over the entire party weaves every PC into the world in one shot.
+// The handler:
 //
-// Idempotent re-run: if `characters.entity_id` is already set, reuse the
-// existing entity row, UPDATE its name, and DELETE-then-re-INSERT every
-// relationship + fact tagged with that entity. Mirrors the
-// character-sheet.ts retry semantic.
+//   1. Loads the party (every character_concepts row with status='completed'
+//      for this campaign, joined with its character row + the player's
+//      display name + the structured CharacterConceptOutput JSONB blob).
+//   2. Loads campaign meta (pre_integration_notes + starting situation prose).
+//   3. Loads the world inventory and renders it into a deterministic prompt
+//      block (via the shared world-dump module).
+//   4. Runs a cost-cap pre-flight: prior completed character-creation costs
+//      plus this stage's estimate must fit under the cap.
+//   5. Calls Opus with the IntegrationResultSchema. The call happens OUTSIDE
+//      the DB transaction (the call can take 30–120s and we must not hold a
+//      PoolClient that long).
+//   6. Validates the LLM output against worker-side invariants:
+//      - characters.length === party.length (else LlmStructuredOutputError).
+//      - userId set matches the input party exactly (else LlmStructuredOutputError).
+//      - Unknown targetId / targetUserId / newFacts.entityId are SILENTLY
+//        DROPPED with a console.warn (LLM hallucination tolerance).
+//      - PC↔PC mirror: if A→B is emitted but B→A is not, synthesize the
+//        mirror edge on B with the same type/description.
+//   7. Persists everything in ONE transaction:
+//      - INSERT entities (entity_type='pc') for each PC.
+//      - INSERT prose_kernels for each PC.
+//      - INSERT facts (per-PC + newFacts on existing world entities).
+//      - INSERT relationships (PC↔world and PC↔PC, resolved via maps).
+//      - UPDATE characters.entity_id and character_concepts.status='integrated'
+//        for each PC.
+//      - UPDATE campaigns.status='active'.
+//   8. Returns the LLM cost + the resolved PC entity UUIDs.
 //
-// Zod-to-DB mapping (the CharacterIntegrationOutputSchema does NOT line
-// up 1:1 with the column names from migration 001 + 014 + 016 — the plan
-// pseudocode was wrong on multiple of these):
-//
-//   pc_entity.name              -> entities.name (entity_type='pc')
-//   pc_entity.short_description -> persisted as a fact with
-//                                  topic='introduction' (entities has no
-//                                  short_description column).
-//   relationships[].target_entity_name
-//                               -> resolved case-insensitively to an
-//                                  entities.id; unresolved names are
-//                                  skipped (logged at the call site
-//                                  rather than here — this is a known
-//                                  LLM failure mode, design §D9
-//                                  follow-on).
-//   relationships[]             -> relationships table. NOTE the column
-//                                  names are source_entity_id /
-//                                  target_entity_id, NOT source_id /
-//                                  target_id.
-//   facts[].tags[0]             -> facts.topic (default 'backstory' when
-//                                  tags is empty — facts.topic is NOT
-//                                  NULL and the table has no `tags`
-//                                  column).
-//   (no Zod field)              -> facts.narrative_status — defaults to
-//                                  'undelivered' for fresh PC-prep facts.
-//   (no Zod field)              -> facts.access_level — defaults to
-//                                  'known' for PC-tagged facts.
-//
-// Post-commit the handler emits one `entity-added` event (for the PC) and
-// one `edge-added` event per persisted relationship via the
-// `publishEvent` callback. Wire-feed shape mirrors stage-3 / stage-4 of
-// world-gen for consumers reusing those event listeners.
+// The processor (T11) owns pipeline_runs claim/complete/fail bookkeeping;
+// this handler does NOT touch pipeline_runs.
 
-import type { Pool, PoolClient } from 'pg'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
+import type { Pool } from 'pg'
 import { generateObject } from '../../ai.js'
 import { OPUS } from '../../models.js'
+import { LlmStructuredOutputError } from '../../errors.js'
 import {
-  CharacterIntegrationOutputSchema,
-  type CharacterIntegrationOutput,
+  IntegrationResultSchema,
+  type IntegrationResult,
+  type PCIntegration,
+  type IntegrationRelationship,
 } from '../../schemas/character-integration.js'
-import type { CharacterConceptOutput } from '../../schemas/character-concept.js'
+import { loadWorldInventory, renderWorldDump, type WorldInventory } from '../world-dump.js'
+import {
+  sumCharacterCreationStageCosts,
+  readCharacterCreationCostCap,
+  CostCapExceededError,
+} from '../cost-cap.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 
 const PROMPT_TEMPLATE = readFileSync(
@@ -68,27 +64,52 @@ const PROMPT_TEMPLATE = readFileSync(
   'utf8',
 )
 
-// Anthropic Opus pricing per https://www.anthropic.com/pricing. Held
-// local to the stage so a per-stage tier change is one-file scoped — same
-// convention as character-concept.ts / character-sheet.ts.
+// Anthropic Opus pricing — same constants as character-concept.ts /
+// character-sheet.ts. Held local so a per-stage tier change is one-file
+// scoped.
 const OPUS_INPUT_PER_MTOK = 15.0
 const OPUS_OUTPUT_PER_MTOK = 75.0
 
+// Cost estimator constants — rough budget for the pre-flight gate. The
+// estimator is intentionally pessimistic: better to gate a near-cap run
+// than to blow past the cap mid-call.
+const APPROX_CHARS_PER_TOKEN = 4
+const ESTIMATED_OUTPUT_TOKENS_PER_PC = 1200
+// Static prompt overhead (template + party-block boilerplate per PC).
+const PROMPT_OVERHEAD_CHARS = 4000
+const PROMPT_OVERHEAD_CHARS_PER_PC = 2000
+
 export interface CharacterIntegrationArgs {
   readonly campaignId: string
-  readonly userId: string
-  readonly worldId: string
-  readonly characterId: string
-  readonly narrative: CharacterConceptOutput
-  readonly situationGroundingText: string
-  readonly publishEvent: (event: Record<string, unknown>) => Promise<void>
+  readonly ownerUserId: string
 }
 
-export interface CharacterIntegrationStageResult {
-  readonly entityId: string
-  readonly costUsd: number
-  readonly inputTokens: number
-  readonly outputTokens: number
+export interface CharacterIntegrationResult {
+  readonly llmCostUsd: number
+  readonly characterIds: readonly string[]
+}
+
+// In-memory shape of one party member loaded from the join.
+interface PartyMember {
+  readonly userId: string
+  readonly displayName: string
+  readonly conceptText: string | null
+  readonly situationGroundingText: string
+  readonly conceptOutput: Record<string, unknown> | null
+  readonly characterId: string | null
+  readonly characterName: string | null
+  readonly characterClass: string | null
+  readonly characterSpecies: string | null
+  readonly characterBackground: string | null
+  readonly characterLevel: number | null
+  readonly characterHitPoints: number | null
+  readonly characterArmorClass: number | null
+}
+
+interface CampaignMeta {
+  readonly preIntegrationNotes: string | null
+  readonly worldId: string
+  readonly startingSituationProse: string
 }
 
 interface SituationEntry {
@@ -97,245 +118,597 @@ interface SituationEntry {
   readonly prose: string
 }
 
-interface WorldEntity {
-  readonly id: string
-  readonly name: string
-  readonly entityType: string
-}
-
-interface ResolvedStartLocation {
-  readonly id: string
-  readonly name: string
-  readonly prose: string
+interface DroppedTargets {
+  readonly unknownTargetUuids: string[]
+  readonly unknownTargetUserIds: string[]
+  readonly unknownNewFactEntityIds: string[]
 }
 
 export async function runCharacterIntegrationStage(
   pool: Pool,
   args: CharacterIntegrationArgs,
-): Promise<CharacterIntegrationStageResult> {
-  // 1. Resolve the starting situation — re-derive the location entity
-  //    chosen by the campaign owner pre-fan-out. Stage 1 (location-
-  //    selection) already validated this, but stage 4 re-reads it so the
-  //    deferred "starts at $location" fact lands here (spec §Risks #3).
-  const startLocation = await resolveStartLocation(pool, args.campaignId, args.worldId)
+): Promise<CharacterIntegrationResult> {
+  // 1. Load the party.
+  const party = await loadParty(pool, args.campaignId)
+  if (party.length === 0) {
+    throw new Error('no_completed_concepts')
+  }
 
-  // 2. List the world entities the LLM can reference by name. Restrict
-  //    to the relationship-eligible kinds; PCs from prior players are
-  //    excluded by the entity_type filter.
-  const worldEntities = await listReferenceableEntities(pool, args.worldId)
+  // 2. Load campaign meta + starting-situation prose.
+  const meta = await loadCampaignMeta(pool, args.campaignId)
 
-  // 3. Generate the integration tree via Opus + generateObject. We use
-  //    the non-streaming wrapper here even though the parent spec called
-  //    for streamObject: stage 4 emits its SSE events POST-COMMIT (in
-  //    publishPostCommitEvents, after persistIntegration's transaction
-  //    lands), not from streamObject's partialObjectStream chunks. The AI
-  //    SDK's streamObject is pull-based — `await stream.object` never
-  //    resolves unless the consumer concurrently iterates
-  //    `partialObjectStream` (or another stream). Since this handler has
-  //    no per-chunk consumer, streamObject silently hung indefinitely.
-  //    generateObject is eagerly-executed and a drop-in replacement for
-  //    our shape; smoke against real Anthropic confirms it produces the
-  //    same validated tree in ~24s (vs streamObject hanging forever).
-  const prompt = renderPrompt(args, startLocation, worldEntities)
+  // 3. Load world dump (open + release a client just for this read).
+  const worldInv = await loadWorldInventoryUsingPool(pool, meta.worldId)
+  const worldDump = renderWorldDump(worldInv)
+  const worldVocabulary = await loadWorldVocabularyText(pool, meta.worldId)
+
+  // 4. Cost-cap pre-flight. Throw BEFORE making the LLM call.
+  await enforceCostCap(pool, args.campaignId, party.length, worldDump.length)
+
+  // 5. Render prompt + Opus call (OUTSIDE the DB transaction).
+  const llmResult = await callIntegrationLlm({
+    party,
+    worldInv,
+    worldDump,
+    worldVocabulary,
+    preIntegrationNotes: meta.preIntegrationNotes,
+    startingSituationProse: meta.startingSituationProse,
+  })
+
+  // 6. Worker-side invariant validation + PC↔PC mirror.
+  const { validated, dropped } = validateAndMirror(llmResult.output, { party, worldInv })
+  logDroppedTargets(dropped)
+
+  // 7. Single-transaction writes.
+  const entityIds = await writeIntegration(pool, args, meta.worldId, validated, worldInv)
+
+  /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always populates
+   * inputTokens / outputTokens on the final usage emission; the optional-
+   * chain narrowing is defense-in-depth. */
+  const inputTokens = llmResult.usage.inputTokens ?? 0
+  const outputTokens = llmResult.usage.outputTokens ?? 0
+  /* c8 ignore stop */
+  const llmCostUsd =
+    (inputTokens / 1_000_000) * OPUS_INPUT_PER_MTOK +
+    (outputTokens / 1_000_000) * OPUS_OUTPUT_PER_MTOK
+  return { llmCostUsd, characterIds: entityIds }
+}
+
+async function loadWorldInventoryUsingPool(pool: Pool, worldId: string): Promise<WorldInventory> {
+  const client = await pool.connect()
+  try {
+    return await loadWorldInventory(client, worldId)
+  } finally {
+    client.release()
+  }
+}
+
+async function enforceCostCap(
+  pool: Pool,
+  campaignId: string,
+  partySize: number,
+  worldDumpLen: number,
+): Promise<void> {
+  const spentSoFar = await sumCharacterCreationStageCosts(pool, campaignId)
+  const cap = await readCharacterCreationCostCap(pool)
+  const estimatedCost = estimateIntegrationCost(partySize, worldDumpLen)
+  if (spentSoFar + estimatedCost > cap) {
+    throw new CostCapExceededError(
+      `character_creation_cost_cap_exceeded: spent=${String(spentSoFar)} est=${String(estimatedCost)} cap=${String(cap)}`,
+      { spent: spentSoFar, estimated: estimatedCost, cap },
+    )
+  }
+}
+
+interface CallIntegrationLlmArgs {
+  readonly party: readonly PartyMember[]
+  readonly worldInv: WorldInventory
+  readonly worldDump: string
+  readonly worldVocabulary: string
+  readonly preIntegrationNotes: string | null
+  readonly startingSituationProse: string
+}
+
+async function callIntegrationLlm(
+  args: CallIntegrationLlmArgs,
+): Promise<{
+  output: IntegrationResult
+  usage: { inputTokens?: number | undefined; outputTokens?: number | undefined }
+}> {
+  const partyBlock = renderPartyBlock(args.party)
+  const prompt = renderPrompt({
+    preIntegrationNotes: args.preIntegrationNotes,
+    startingSituationProse: args.startingSituationProse,
+    worldVocabulary: args.worldVocabulary,
+    worldDump: args.worldDump,
+    party: partyBlock,
+  })
   const result = await generateObject({
     model: OPUS,
-    schema: CharacterIntegrationOutputSchema,
+    schema: IntegrationResultSchema,
     prompt,
     maxRetries: 0,
     callSite: 'character-integration',
-    schemaName: 'CharacterIntegrationOutputSchema',
+    schemaName: 'IntegrationResultSchema',
     repairStrategy: 'sonnet',
     providerOptions: { mythrun: { stage: 'character_integration' } },
   })
-
-  const validatedTree: CharacterIntegrationOutput = result.output
-  const usage = result.usage
-
-  // 5. Persist everything in a single transaction.
-  const entityId = await persistIntegration(
-    pool,
-    args,
-    validatedTree,
-    startLocation,
-    worldEntities,
-  )
-
-  // 6. Post-commit: emit SSE events. Done AFTER the COMMIT so any
-  //    ROLLBACK above doesn't surface a phantom PC in the wire feed.
-  await publishPostCommitEvents(args, entityId, validatedTree, worldEntities)
-
-  /* c8 ignore start — Anthropic provider always populates usage tokens;
-   * `?? 0` fallback keeps StageCostResult strict-number. Same convention
-   * as character-concept.ts and character-sheet.ts. */
-  const inputTokens = usage.inputTokens ?? 0
-  const outputTokens = usage.outputTokens ?? 0
-  /* c8 ignore stop */
-  return {
-    entityId,
-    costUsd:
-      (inputTokens / 1_000_000) * OPUS_INPUT_PER_MTOK +
-      (outputTokens / 1_000_000) * OPUS_OUTPUT_PER_MTOK,
-    inputTokens,
-    outputTokens,
-  }
+  return { output: result.output, usage: result.usage }
 }
 
-async function resolveStartLocation(
-  pool: Pool,
-  campaignId: string,
-  worldId: string,
-): Promise<ResolvedStartLocation> {
-  const campaign = await pool.query<{ starting_situation_index: number | null }>(
-    `SELECT starting_situation_index FROM campaigns WHERE id = $1`,
+// ---------------------------------------------------------------------------
+// Loaders.
+// ---------------------------------------------------------------------------
+
+async function loadParty(pool: Pool, campaignId: string): Promise<readonly PartyMember[]> {
+  const result = await pool.query<{
+    user_id: string
+    display_name: string
+    concept_text: string | null
+    situation_grounding_text: string
+    concept_output: Record<string, unknown> | null
+    character_id: string | null
+    character_name: string | null
+    character_class: string | null
+    character_species: string | null
+    character_background: string | null
+    character_level: number | null
+    character_hit_points: number | null
+    character_armor_class: number | null
+  }>(
+    // characters.campaign_id was dropped in migration 009 — membership lives
+    // in campaign_characters. Join through it to reach the per-(campaign,
+    // user) characters row.
+    `SELECT
+       cc.user_id,
+       u.display_name,
+       cc.concept_text,
+       cc.situation_grounding_text,
+       cc.concept_output,
+       ch.id           AS character_id,
+       ch.name         AS character_name,
+       ch.class        AS character_class,
+       ch.species      AS character_species,
+       ch.background   AS character_background,
+       ch.level        AS character_level,
+       ch.hit_points   AS character_hit_points,
+       ch.armor_class  AS character_armor_class
+       FROM character_concepts cc
+       JOIN campaign_members cm USING (campaign_id, user_id)
+       JOIN users u ON cm.user_id = u.id
+       LEFT JOIN campaign_characters cch
+         ON cch.campaign_id = cc.campaign_id AND cch.user_id = cc.user_id
+       LEFT JOIN characters ch ON ch.id = cch.character_id
+      WHERE cc.campaign_id = $1
+        AND cc.status = 'completed'
+      ORDER BY cc.submitted_at ASC`,
     [campaignId],
   )
-  const idx = campaign.rows[0]?.starting_situation_index
-  /* c8 ignore start — index-null defense: POST /start-character-creation
-   * gates on starting_situation_index IS NOT NULL before enqueuing, so by
-   * the time stage 4 runs the owner has always picked. The throw is a
-   * safety net against schema drift / direct DB tampering. */
-  if (idx === null || idx === undefined) {
-    throw new Error(
-      `character-integration: campaigns.starting_situation_index is NULL for campaign ${campaignId}`,
-    )
-  }
-  /* c8 ignore stop */
-  const world = await pool.query<{ starting_situation_entries: SituationEntry[] }>(
-    `SELECT starting_situation_entries FROM worlds WHERE id = $1`,
-    [worldId],
+  return result.rows.map((r) => ({
+    userId: r.user_id,
+    displayName: r.display_name,
+    conceptText: r.concept_text,
+    situationGroundingText: r.situation_grounding_text,
+    conceptOutput: r.concept_output,
+    characterId: r.character_id,
+    characterName: r.character_name,
+    characterClass: r.character_class,
+    characterSpecies: r.character_species,
+    characterBackground: r.character_background,
+    characterLevel: r.character_level,
+    characterHitPoints: r.character_hit_points,
+    characterArmorClass: r.character_armor_class,
+  }))
+}
+
+async function loadCampaignMeta(pool: Pool, campaignId: string): Promise<CampaignMeta> {
+  const result = await pool.query<{
+    pre_integration_notes: string | null
+    world_id: string
+    starting_situation_index: number | null
+    starting_situation_entries: SituationEntry[]
+  }>(
+    `SELECT c.pre_integration_notes,
+            c.world_id,
+            c.starting_situation_index,
+            w.starting_situation_entries
+       FROM campaigns c
+       JOIN worlds w ON w.id = c.world_id
+      WHERE c.id = $1`,
+    [campaignId],
   )
-  // worldId came from campaigns.world_id (FK to worlds.id); row guaranteed.
-  // starting_situation_entries is NOT NULL DEFAULT '[]'.
-  const worldRow = world.rows[0]
-  /* c8 ignore next 3 — invariant per campaigns.world_id FK NOT NULL */
-  if (worldRow === undefined) {
-    throw new Error(`world ${worldId} not found — FK invariant violated`)
-  }
-  const entries = worldRow.starting_situation_entries
-  const entry = entries.find((e) => e.index === idx)
-  /* c8 ignore start — entries-shape defense: starting_situation stage
-   * always emits exactly 3 entries indexed {0,1,2}; campaigns
-   * starting_situation_index CHECK bounds idx to {0,1,2}. Fires only if
-   * the entries array was mutated after world-gen (operator action). */
-  if (entry === undefined) {
-    throw new Error(
-      `character-integration: no entry for index ${String(idx)} in worlds.starting_situation_entries for world ${worldId}`,
-    )
-  }
-  /* c8 ignore stop */
-  const ent = await pool.query<{ id: string; name: string }>(
-    `SELECT id, name FROM entities WHERE id = $1 AND world_id = $2`,
-    [entry.locationEntityId, worldId],
-  )
-  const row = ent.rows[0]
-  /* c8 ignore start — drift-defense: entity referenced by starting_situation_entries
-   * was deleted between owner pick and stage 4. starting_situation stage's name→id
-   * resolution + the worker's claim sequence make this near-impossible in production;
-   * the throw is a safety net for an operator action mid-flight. */
+  const row = result.rows[0]
+  /* c8 ignore next 3 — invariant: callers (route + processor) gate on
+   * campaign existence before invoking; FK NOT NULL on world_id. */
   if (row === undefined) {
-    throw new Error(
-      `character-integration: starting-location entity not found — id=${entry.locationEntityId} world=${worldId} (state drift between owner pick and stage 4)`,
-    )
+    throw new Error(`character-integration: campaign ${campaignId} not found`)
   }
-  /* c8 ignore stop */
-  return { id: row.id, name: row.name, prose: entry.prose }
+  const idx = row.starting_situation_index
+  let startingSituationProse = '(no starting situation chosen)'
+  if (idx !== null) {
+    const entry = row.starting_situation_entries.find((e) => e.index === idx)
+    if (entry !== undefined) {
+      startingSituationProse = entry.prose
+    }
+  }
+  return {
+    preIntegrationNotes: row.pre_integration_notes,
+    worldId: row.world_id,
+    startingSituationProse,
+  }
 }
 
-async function listReferenceableEntities(
-  pool: Pool,
-  worldId: string,
-): Promise<readonly WorldEntity[]> {
-  const result = await pool.query<{ id: string; name: string; entity_type: string }>(
-    `SELECT id, name, entity_type FROM entities
-       WHERE world_id = $1 AND entity_type IN ('location', 'faction', 'npc')
-       ORDER BY entity_type, name`,
+// Render worlds.vocabulary_registry as a simple bulleted list of "term:
+// definition" lines. Matches the renderVocabularyRegistry shape used by
+// coherence-pass / random-tables, but pulled inline so character-integration
+// doesn't have to thread a parsed VocabularyRegistry through the call chain.
+async function loadWorldVocabularyText(pool: Pool, worldId: string): Promise<string> {
+  const result = await pool.query<{ vocabulary_registry: unknown }>(
+    `SELECT vocabulary_registry FROM worlds WHERE id = $1`,
     [worldId],
   )
-  return result.rows.map((r) => ({ id: r.id, name: r.name, entityType: r.entity_type }))
+  const reg = result.rows[0]?.vocabulary_registry
+  if (typeof reg !== 'object' || reg === null) return '(no vocabulary registered)'
+  const entries = (reg as { entries?: unknown }).entries
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return '(no vocabulary registered)'
+  }
+  const lines: string[] = []
+  for (const e of entries) {
+    if (typeof e !== 'object' || e === null) continue
+    const term = (e as { term?: unknown }).term
+    const definition = (e as { definition?: unknown }).definition
+    if (typeof term === 'string' && typeof definition === 'string') {
+      lines.push(`- ${term}: ${definition}`)
+    }
+  }
+  return lines.length > 0 ? lines.join('\n') : '(no vocabulary registered)'
 }
 
-function renderEntitiesBlock(entities: readonly WorldEntity[]): string {
-  return entities.map((e) => `- [${e.entityType}] ${e.name}`).join('\n')
+// ---------------------------------------------------------------------------
+// Prompt rendering.
+// ---------------------------------------------------------------------------
+
+function renderPartyBlock(party: readonly PartyMember[]): string {
+  const blocks: string[] = []
+  for (const m of party) {
+    const sheet = [m.characterSpecies ?? '?', m.characterClass ?? '?'].join(' ')
+    const bg = m.characterBackground !== null ? ` (${m.characterBackground})` : ''
+    const lines: string[] = []
+    lines.push(`### ${m.displayName} (userId: ${m.userId})`)
+    lines.push(`- Race / Class / Background: ${sheet}${bg}`)
+    if (m.characterLevel !== null) {
+      lines.push(
+        `- Level / HP / AC: ${String(m.characterLevel)} / ${String(m.characterHitPoints ?? '?')} / ${String(m.characterArmorClass ?? '?')}`,
+      )
+    }
+    if (m.conceptText !== null && m.conceptText.length > 0) {
+      lines.push(`- Concept: ${m.conceptText}`)
+    }
+    lines.push(`- Situation grounding: ${m.situationGroundingText}`)
+    if (m.conceptOutput !== null) {
+      const backstory = (m.conceptOutput as { backstory?: unknown }).backstory
+      if (typeof backstory === 'string') {
+        lines.push(`- Backstory: ${backstory}`)
+      }
+      const personality = (m.conceptOutput as { personality_traits?: unknown }).personality_traits
+      if (Array.isArray(personality) && personality.length > 0) {
+        lines.push(`- Personality: ${personality.filter((p): p is string => typeof p === 'string').join('; ')}`)
+      }
+    }
+    blocks.push(lines.join('\n'))
+  }
+  return blocks.join('\n\n')
 }
 
-function renderPrompt(
-  args: CharacterIntegrationArgs,
-  startLocation: ResolvedStartLocation,
-  entities: readonly WorldEntity[],
-): string {
-  return PROMPT_TEMPLATE.replace('{{name}}', args.narrative.name)
-    .replace('{{race}}', args.narrative.race)
-    .replace('{{class}}', args.narrative.class)
-    .replace('{{background}}', args.narrative.background)
-    .replace('{{backstory}}', args.narrative.backstory)
-    .replace('{{physicalDescription}}', args.narrative.physical_description)
-    .replace('{{situationGroundingText}}', args.situationGroundingText)
-    .replace('{{startingSituationProse}}', startLocation.prose)
-    .replace('{{worldEntities}}', renderEntitiesBlock(entities))
+interface PromptVars {
+  readonly preIntegrationNotes: string | null
+  readonly startingSituationProse: string
+  readonly worldVocabulary: string
+  readonly worldDump: string
+  readonly party: string
 }
 
-// Single transactional write spanning 1 entities row + N relationships + M
-// facts + the characters.entity_id update. Exceeds the 50-line budget
-// because the statements are inherently coupled — splitting would lose the
-// single-BEGIN/COMMIT semantic that the idempotent re-run path depends on
-// (see character-sheet.ts for the same suppression / same rationale).
-async function persistIntegration(
+function renderPrompt(vars: PromptVars): string {
+  const notes =
+    vars.preIntegrationNotes !== null && vars.preIntegrationNotes.length > 0
+      ? vars.preIntegrationNotes
+      : '(none)'
+  return PROMPT_TEMPLATE.replace('{{preIntegrationNotes}}', notes)
+    .replace('{{startingSituationProse}}', vars.startingSituationProse)
+    .replace('{{worldVocabulary}}', vars.worldVocabulary)
+    .replace('{{worldDump}}', vars.worldDump)
+    .replace('{{party}}', vars.party)
+}
+
+// ---------------------------------------------------------------------------
+// Cost estimator.
+// ---------------------------------------------------------------------------
+
+// Rough pre-flight estimate: input tokens approximated as
+// (prompt-overhead + per-PC-prompt + world-dump) / 4 chars/token; output
+// tokens approximated as N_PCs * 1200 (a generous reservation). Multiplied
+// by Opus pricing. Pessimistic by design — the cost cap should fire BEFORE
+// the LLM call, not after.
+function estimateIntegrationCost(partySize: number, worldDumpLen: number): number {
+  const promptChars =
+    PROMPT_OVERHEAD_CHARS + partySize * PROMPT_OVERHEAD_CHARS_PER_PC + worldDumpLen
+  const inputTokens = Math.ceil(promptChars / APPROX_CHARS_PER_TOKEN)
+  const outputTokens = partySize * ESTIMATED_OUTPUT_TOKENS_PER_PC
+  return (
+    (inputTokens / 1_000_000) * OPUS_INPUT_PER_MTOK +
+    (outputTokens / 1_000_000) * OPUS_OUTPUT_PER_MTOK
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Validation + PC↔PC mirroring.
+// ---------------------------------------------------------------------------
+
+interface ValidateContext {
+  readonly party: readonly PartyMember[]
+  readonly worldInv: WorldInventory
+}
+
+interface ValidateOutput {
+  readonly validated: IntegrationResult
+  readonly dropped: DroppedTargets
+}
+
+function validateAndMirror(raw: IntegrationResult, ctx: ValidateContext): ValidateOutput {
+  // Cardinality + identity invariants — hard-fail with LlmStructuredOutputError
+  // so the repair strategy gets a second swing at producing the right shape.
+  if (raw.characters.length !== ctx.party.length) {
+    throw new LlmStructuredOutputError(
+      `character_integration: characters.length (${String(raw.characters.length)}) !== party.length (${String(ctx.party.length)})`,
+    )
+  }
+  const partyUserIds = new Set(ctx.party.map((p) => p.userId))
+  const emittedUserIds = new Set<string>()
+  for (const pc of raw.characters) {
+    if (emittedUserIds.has(pc.userId)) {
+      throw new LlmStructuredOutputError(
+        `character_integration: duplicate userId ${pc.userId} in characters[]`,
+      )
+    }
+    emittedUserIds.add(pc.userId)
+    if (!partyUserIds.has(pc.userId)) {
+      throw new LlmStructuredOutputError(
+        `character_integration: characters[].userId ${pc.userId} is not in the input party`,
+      )
+    }
+  }
+  for (const uid of partyUserIds) {
+    if (!emittedUserIds.has(uid)) {
+      throw new LlmStructuredOutputError(
+        `character_integration: characters[] is missing party member ${uid}`,
+      )
+    }
+  }
+
+  // Filter unknown targets (silent drop + log) and mirror PC↔PC edges.
+  const dropped: DroppedTargets = {
+    unknownTargetUuids: [],
+    unknownTargetUserIds: [],
+    unknownNewFactEntityIds: [],
+  }
+  const filteredCharacters = raw.characters.map((pc) =>
+    filterCharacterTargets(pc, ctx, dropped, partyUserIds),
+  )
+  const mirroredCharacters = mirrorPcPcEdges(filteredCharacters)
+
+  const filteredNewFacts = (raw.newFacts ?? []).filter((nf) => {
+    if (ctx.worldInv.entitiesById.has(nf.entityId)) return true
+    dropped.unknownNewFactEntityIds.push(nf.entityId)
+    return false
+  })
+
+  return {
+    validated: {
+      characters: mirroredCharacters,
+      ...(filteredNewFacts.length > 0 ? { newFacts: filteredNewFacts } : {}),
+    },
+    dropped,
+  }
+}
+
+function filterCharacterTargets(
+  pc: PCIntegration,
+  ctx: ValidateContext,
+  dropped: DroppedTargets,
+  partyUserIds: ReadonlySet<string>,
+): PCIntegration {
+  const keptRelationships = pc.relationships.filter((rel) => {
+    if (rel.targetKind === 'pc') {
+      if (!partyUserIds.has(rel.targetUserId)) {
+        dropped.unknownTargetUserIds.push(rel.targetUserId)
+        return false
+      }
+      return true
+    }
+    if (!ctx.worldInv.entitiesById.has(rel.targetId)) {
+      dropped.unknownTargetUuids.push(rel.targetId)
+      return false
+    }
+    return true
+  })
+  return { ...pc, relationships: keptRelationships }
+}
+
+// PC↔PC mirror: walk every emitted A → B edge, ensure a symmetric B → A
+// exists on B; if not, synthesize one with the same type + description.
+// Sole-canonical-emission approach — the LLM may emit only one side.
+function mirrorPcPcEdges(characters: readonly PCIntegration[]): PCIntegration[] {
+  // Mutable copy of relationships per userId.
+  const relsByUserId = new Map<string, IntegrationRelationship[]>()
+  for (const pc of characters) {
+    relsByUserId.set(pc.userId, [...pc.relationships])
+  }
+
+  for (const pc of characters) {
+    for (const rel of pc.relationships) {
+      if (rel.targetKind !== 'pc') continue
+      const targetRels = relsByUserId.get(rel.targetUserId)
+      if (targetRels === undefined) continue
+      const hasSymmetric = targetRels.some(
+        (r) => r.targetKind === 'pc' && r.targetUserId === pc.userId,
+      )
+      if (!hasSymmetric) {
+        targetRels.push({
+          targetKind: 'pc',
+          targetUserId: pc.userId,
+          type: rel.type,
+          description: rel.description,
+        })
+      }
+    }
+  }
+
+  return characters.map((pc) => ({
+    ...pc,
+    relationships: relsByUserId.get(pc.userId) ?? [...pc.relationships],
+  }))
+}
+
+function logDroppedTargets(dropped: DroppedTargets): void {
+  for (const id of dropped.unknownTargetUuids) {
+    console.warn(`[integration] dropping relationship with unresolved targetId=${id}`)
+  }
+  for (const uid of dropped.unknownTargetUserIds) {
+    console.warn(`[integration] dropping relationship with unresolved targetUserId=${uid}`)
+  }
+  for (const id of dropped.unknownNewFactEntityIds) {
+    console.warn(`[integration] dropping newFacts entry with unresolved entityId=${id}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Persistence — single transaction.
+// ---------------------------------------------------------------------------
+
+// Single transaction spanning every write: PC entities, prose kernels,
+// facts, relationships, characters.entity_id, character_concepts.status,
+// campaigns.status. Exceeds the 50-line budget because the multi-pass write
+// order is inherently coupled (entity IDs from pass 1 are referenced in
+// passes 2–4). Splitting would lose the single-BEGIN/COMMIT semantic.
+// eslint-disable-next-line max-lines-per-function
+async function writeIntegration(
   pool: Pool,
   args: CharacterIntegrationArgs,
-  out: CharacterIntegrationOutput,
-  startLocation: ResolvedStartLocation,
-  worldEntities: readonly WorldEntity[],
-): Promise<string> {
+  worldId: string,
+  validated: IntegrationResult,
+  worldInv: WorldInventory,
+): Promise<string[]> {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
 
-    // Lookup-or-INSERT keyed on characters.entity_id. Idempotent re-run:
-    // if the row already points at an entity, reuse it and DELETE the
-    // dependent rows before re-INSERTing.
-    const ch = await client.query<{ entity_id: string | null }>(
-      `SELECT entity_id FROM characters WHERE id = $1`,
-      [args.characterId],
-    )
-    let entityId = ch.rows[0]?.entity_id ?? null
-
-    if (entityId === null) {
-      entityId = uuidv7()
+    // Pass 1: INSERT PC entities, build userId → entity_id map.
+    const entityIdByUserId = new Map<string, string>()
+    const nameOccupiedBy = buildOccupiedEntityNames(worldInv)
+    for (const pc of validated.characters) {
+      const entityId = uuidv7()
+      const finalName = disambiguateName(
+        pc.entity.name,
+        pc.userId,
+        nameOccupiedBy,
+        validated.characters,
+      )
       await client.query(
         `INSERT INTO entities (id, world_id, entity_type, name, access_level)
          VALUES ($1, $2, 'pc', $3, 'known')`,
-        [entityId, args.worldId, out.pc_entity.name],
+        [entityId, worldId, finalName],
       )
-      await client.query(
-        `UPDATE characters SET entity_id = $1, updated_at = now() WHERE id = $2`,
-        [entityId, args.characterId],
-      )
-    } else {
-      await client.query(
-        `UPDATE entities SET name = $2, access_level = 'known', updated_at = now()
-           WHERE id = $1`,
-        [entityId, out.pc_entity.name],
-      )
-      // DELETE every PC-touching relationship + every PC-tagged fact.
-      // Relationships are bidirectional in the sense that future code may
-      // INSERT with the PC as either source or target — clear both sides
-      // to keep the re-run shape clean.
-      await client.query(
-        `DELETE FROM relationships WHERE source_entity_id = $1 OR target_entity_id = $1`,
-        [entityId],
-      )
-      await client.query(`DELETE FROM facts WHERE entity_id = $1`, [entityId])
+      entityIdByUserId.set(pc.userId, entityId)
+      nameOccupiedBy.set(finalName.toLowerCase(), entityId)
     }
 
-    await insertRelationships(client, entityId, out, worldEntities)
-    await insertFacts(client, entityId, out, startLocation)
+    // Pass 2: prose_kernels + facts + relationships per PC.
+    for (const pc of validated.characters) {
+      const entityId = entityIdByUserId.get(pc.userId)
+      /* c8 ignore next 3 — invariant: pass 1 sets a value for every pc.userId */
+      if (entityId === undefined) {
+        throw new Error(`entity id for userId ${pc.userId} missing after pass 1`)
+      }
+      await client.query(
+        `INSERT INTO prose_kernels (id, entity_id, content)
+         VALUES ($1, $2, $3)`,
+        [uuidv7(), entityId, pc.entity.proseKernel],
+      )
+      for (const fact of pc.facts) {
+        await client.query(
+          `INSERT INTO facts (id, entity_id, topic, access_level, narrative_status, content)
+           VALUES ($1, $2, $3, 'known', 'undelivered', $4)`,
+          [
+            uuidv7(),
+            fact.aboutEntityId ?? entityId,
+            fact.tags[0] ?? 'backstory',
+            fact.content,
+          ],
+        )
+      }
+      for (const rel of pc.relationships) {
+        const targetEntityId =
+          rel.targetKind === 'pc'
+            ? entityIdByUserId.get(rel.targetUserId)
+            : rel.targetId
+        /* c8 ignore next 3 — invariant: validateAndMirror filters unresolved
+         * targets before we get here. */
+        if (targetEntityId === undefined) continue
+        await client.query(
+          `INSERT INTO relationships
+             (id, source_entity_id, target_entity_id, relationship_type, description)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [uuidv7(), entityId, targetEntityId, rel.type, rel.description],
+        )
+      }
+    }
+
+    // Pass 3: newFacts on existing world entities.
+    for (const nf of validated.newFacts ?? []) {
+      await client.query(
+        `INSERT INTO facts (id, entity_id, topic, access_level, narrative_status, content)
+         VALUES ($1, $2, $3, 'known', 'undelivered', $4)`,
+        [uuidv7(), nf.entityId, nf.tags[0] ?? 'backstory', nf.content],
+      )
+    }
+
+    // Pass 4: link characters.entity_id, flip concept status. characters
+    // has no campaign_id column (dropped in migration 009); the (campaign,
+    // user) → character_id mapping lives in campaign_characters. Resolve
+    // and update by character_id.
+    for (const pc of validated.characters) {
+      const entityId = entityIdByUserId.get(pc.userId)
+      /* c8 ignore next 3 — invariant: pass 1 set a value for every pc.userId */
+      if (entityId === undefined) continue
+      await client.query(
+        `UPDATE characters
+            SET entity_id = $1, updated_at = now()
+          WHERE id = (
+            SELECT character_id FROM campaign_characters
+             WHERE campaign_id = $2 AND user_id = $3
+          )`,
+        [entityId, args.campaignId, pc.userId],
+      )
+      await client.query(
+        `UPDATE character_concepts
+            SET status = 'integrated', updated_at = now()
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [args.campaignId, pc.userId],
+      )
+    }
+
+    // Final: flip campaign to active.
+    await client.query(
+      `UPDATE campaigns SET status = 'active', updated_at = now() WHERE id = $1`,
+      [args.campaignId],
+    )
 
     await client.query('COMMIT')
-    return entityId
-    /* c8 ignore start — ROLLBACK arm fires only when one of the INSERTs
-     * throws (PG constraint violation, connection drop). The four sub-table
-     * inserts use validated Zod inputs + bound-checked schemas, so this
-     * is true defense-in-depth, not a happy-path branch. */
+    return Array.from(entityIdByUserId.values())
+    /* c8 ignore start — ROLLBACK arm: fires only when a PG constraint
+     * violation or a connection drop trips inside the txn. Tests exercise
+     * the happy path; this is defense-in-depth. */
   } catch (err) {
     await client.query('ROLLBACK')
     throw err
@@ -345,83 +718,33 @@ async function persistIntegration(
   }
 }
 
-async function insertRelationships(
-  client: PoolClient,
-  entityId: string,
-  out: CharacterIntegrationOutput,
-  worldEntities: readonly WorldEntity[],
-): Promise<void> {
-  // Case-insensitive name resolution. Same pattern as
-  // starting-situation.resolveLocationEntries — names are user-facing and
-  // LLMs are inconsistent about casing. Unresolved names are skipped
-  // silently here; the wiring layer surfaces this as a worker WARN.
-  const byLowerName = new Map(worldEntities.map((e) => [e.name.toLowerCase(), e.id]))
-  for (const rel of out.relationships) {
-    const targetId = byLowerName.get(rel.target_entity_name.toLowerCase())
-    if (targetId === undefined) continue
-    await client.query(
-      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [uuidv7(), entityId, targetId, rel.relationship_type, rel.description],
-    )
+// Seed the disambiguation table with every existing entity name in the
+// world. Returns lowercase-name → entity_id. The PC pass 1 then disambiguates
+// each newly-inserted name against this map. Pure in-memory view of the
+// world inventory we already loaded; no DB hit.
+function buildOccupiedEntityNames(worldInv: WorldInventory): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const e of worldInv.entitiesById.values()) {
+    out.set(e.name.toLowerCase(), e.id)
   }
+  return out
 }
 
-async function insertFacts(
-  client: PoolClient,
-  entityId: string,
-  out: CharacterIntegrationOutput,
-  startLocation: ResolvedStartLocation,
-): Promise<void> {
-  // LLM-emitted facts. tags[0] → topic; default 'backstory' when the LLM
-  // emits an empty tags array (schema allows max:8 but not min — defensive).
-  for (const f of out.facts) {
-    const topic = f.tags[0] ?? 'backstory'
-    await client.query(
-      `INSERT INTO facts (id, entity_id, topic, access_level, narrative_status, content)
-       VALUES ($1, $2, $3, 'known', 'undelivered', $4)`,
-      [uuidv7(), entityId, topic, f.content],
-    )
-  }
-  // pc_entity.short_description folded into a fact with topic='introduction'.
-  // entities has no short_description column, so this is the only place to
-  // keep the LLM-authored intro line available for retrieval at runtime.
-  await client.query(
-    `INSERT INTO facts (id, entity_id, topic, access_level, narrative_status, content)
-     VALUES ($1, $2, 'introduction', 'known', 'undelivered', $3)`,
-    [uuidv7(), entityId, out.pc_entity.short_description],
-  )
-  // Deferred "starts at $location" fact — re-derived from
-  // worlds.starting_situation_entries. The only surface that ties the
-  // per-player character back to the campaign-wide starting situation.
-  await client.query(
-    `INSERT INTO facts (id, entity_id, topic, access_level, narrative_status, content)
-     VALUES ($1, $2, 'starting_location', 'known', 'undelivered', $3)`,
-    [uuidv7(), entityId, `${out.pc_entity.name} starts at ${startLocation.name}.`],
-  )
-}
-
-async function publishPostCommitEvents(
-  args: CharacterIntegrationArgs,
-  entityId: string,
-  out: CharacterIntegrationOutput,
-  worldEntities: readonly WorldEntity[],
-): Promise<void> {
-  await args.publishEvent({
-    type: 'entity-added',
-    entityId,
-    entityType: 'pc',
-    userId: args.userId,
-  })
-  const byLowerName = new Map(worldEntities.map((e) => [e.name.toLowerCase(), e.id]))
-  for (const rel of out.relationships) {
-    const targetId = byLowerName.get(rel.target_entity_name.toLowerCase())
-    if (targetId === undefined) continue
-    await args.publishEvent({
-      type: 'edge-added',
-      sourceId: entityId,
-      targetId,
-      userId: args.userId,
-    })
-  }
+// Disambiguate by appending a `(userid-fragment)` suffix when the name
+// collides on (world_id, name) — entities table has UNIQUE on (world_id,
+// name) per migration 017_entity_consolidation (verified by grep at
+// implementation time). The suffix is short + readable in admin views.
+function disambiguateName(
+  proposed: string,
+  userId: string,
+  occupied: Map<string, string>,
+  allPCs: readonly PCIntegration[],
+): string {
+  const lower = proposed.toLowerCase()
+  // If two PCs emit the same name, both need disambiguation.
+  const collidesInBatch =
+    allPCs.filter((p) => p.entity.name.toLowerCase() === lower).length > 1
+  if (!occupied.has(lower) && !collidesInBatch) return proposed
+  const suffix = userId.slice(0, 6)
+  return `${proposed} (${suffix})`
 }

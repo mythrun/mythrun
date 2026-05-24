@@ -141,7 +141,7 @@ describe('IntegrationResultSchema', () => {
   it('rejects more than 8 characters', () => {
     const nine = Array.from({ length: 9 }, (_, i) => ({
       ...minimalPayload.characters[0],
-      userId: `0190a000-0000-7000-8000-00000000010${i}`,
+      userId: `0190a000-0000-7000-8000-00000000010${String(i)}`,
     }))
     expect(IntegrationResultSchema.safeParse({ characters: nine }).success).toBe(false)
   })
