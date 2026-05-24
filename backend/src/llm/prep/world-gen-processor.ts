@@ -153,6 +153,13 @@ type ClaimResult = 'claimed' | 'completed' | 'lost-race'
 export type ClaimRequest =
   | { kind: 'world'; worldId: string; stage: string }
   | { kind: 'campaign-user'; campaignId: string; userId: string; stage: string }
+  // MYT-54 T6: campaign-scoped claim with user_id=NULL. Mirrors the
+  // world-gen shape (also user_id=NULL) but keys on campaign_id rather
+  // than world_id. Used by the character-integration worker (one row per
+  // (campaign, stage), no per-user fan-out). The unique index on
+  // (COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel))
+  // already enforces uniqueness for this shape — no new index needed.
+  | { kind: 'campaign'; campaignId: string; stage: string }
 
 export function createWorldGenProcessor(
   deps: WorldGenDeps,
@@ -400,7 +407,10 @@ export async function atomicClaimStage(
   if (req.kind === 'world') {
     return claimWorldStage(pool, id, req.worldId, req.stage)
   }
-  return claimCampaignUserStage(pool, id, req.campaignId, req.userId, req.stage)
+  if (req.kind === 'campaign-user') {
+    return claimCampaignUserStage(pool, id, req.campaignId, req.userId, req.stage)
+  }
+  return claimCampaignStage(pool, id, req.campaignId, req.stage)
 }
 
 async function claimWorldStage(
@@ -522,6 +532,68 @@ async function claimCampaignUserStage(
   /* c8 ignore start — mirrors world-level stuck-reset: tests stage rows
    * so the query either claims (rowCount > 0) or the row is no longer
    * matched. */
+  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
+  return 'lost-race'
+  /* c8 ignore stop */
+}
+
+// MYT-54 T6: campaign-scoped claim path for the character-integration
+// worker. Keyed on campaign_id with user_id IS NULL — one row per
+// (campaign, stage). Mirrors the per-player path's structure exactly
+// (insert/ON CONFLICT → existing-row inspection → stuck-reset); only
+// the keying differs (campaign_id, no user_id). The shared unique
+// index on COALESCE(world_id, campaign_id), stage, COALESCE(user_id,
+// sentinel) folds user_id=NULL to the sentinel, so the ON CONFLICT
+// projection matches the per-row uniqueness guarantee.
+async function claimCampaignStage(
+  pool: Pool,
+  newId: string,
+  campaignId: string,
+  stage: string,
+): Promise<ClaimResult> {
+  const insertResult = await pool.query<{ id: string }>(
+    `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+     VALUES ($1, $2, $3, 'running', now(), NULL)
+     ON CONFLICT (
+       COALESCE(world_id, campaign_id),
+       stage,
+       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
+     )
+     DO UPDATE SET status = 'running', started_at = now(),
+                   error = NULL, completed_at = NULL
+       WHERE pipeline_runs.status IN ('pending', 'failed')
+     RETURNING id`,
+    [newId, campaignId, stage],
+  )
+  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
+
+  const existing = await pool.query<{ status: string; started_at: Date | null }>(
+    `SELECT status, started_at FROM pipeline_runs
+      WHERE campaign_id = $1 AND stage = $2 AND user_id IS NULL`,
+    [campaignId, stage],
+  )
+  const row = existing.rows[0]
+  /* c8 ignore start — defensive arms mirror the world-level path: the
+   * SELECT was triggered by an ON CONFLICT in the preceding INSERT, so
+   * the row is guaranteed to exist and to be in one of the three valid
+   * statuses. */
+  if (row === undefined) return 'lost-race'
+  if (row.status === 'completed') return 'completed'
+  if (row.status !== 'running') return 'lost-race'
+  /* c8 ignore stop */
+
+  const stuckReset = await pool.query<{ id: string }>(
+    `UPDATE pipeline_runs
+        SET status = 'running', started_at = now(), error = NULL
+      WHERE campaign_id = $1 AND stage = $2 AND user_id IS NULL
+        AND status = 'running'
+        AND started_at < now() - INTERVAL '5 minutes'
+      RETURNING id`,
+    [campaignId, stage],
+  )
+  /* c8 ignore start — mirrors the per-player stuck-reset: tests stage
+   * rows so the query either claims (rowCount > 0) or the row is no
+   * longer matched. */
   if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
   return 'lost-race'
   /* c8 ignore stop */
