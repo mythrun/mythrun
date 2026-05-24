@@ -174,6 +174,14 @@ export async function runCharacterCreationJob(
       // re-entry, so it's safe to only set them on a fresh claim path.
       if (stage === 'character_concept' && result.concept !== undefined) {
         conceptOutput = result.concept
+        // myth-y7xt T2: persist the structured narrative so MYT-54's campaign-
+        // scoped character_integration worker can read it.
+        await deps.pool.query(
+          `UPDATE character_concepts
+              SET concept_output = $1::jsonb, updated_at = now()
+            WHERE campaign_id = $2 AND user_id = $3`,
+          [JSON.stringify(conceptOutput), campaignId, userId],
+        )
       }
       if (stage === 'character_sheet' && result.characterId !== undefined) {
         characterId = result.characterId
