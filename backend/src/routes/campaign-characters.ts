@@ -268,7 +268,7 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
           req.params.campaignId,
           dbUser.id,
         )
-        /* c8 ignore next 6 — the upsert immediately above wrote
+        /* c8 ignore start — the upsert immediately above wrote
          * status='submitted', and the row is uniquely keyed on
          * (campaign_id, user_id) so the flip MUST find it. The null
          * branch is defense-in-depth against a concurrent admin DELETE
@@ -277,6 +277,7 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
           await client.query('ROLLBACK')
           return await reply.code(409).send({ code: 'concept_lost_race' })
         }
+        /* c8 ignore stop */
         const jobId = `cc-${req.params.campaignId}-${dbUser.id}`
         await queue.add(
           'character-creation',
@@ -292,9 +293,11 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       } catch (err) {
         await client.query('ROLLBACK')
         throw err
-      } finally {
+      } /* c8 ignore start — v8-instrumentation artifact on the finally
+         * branch boundary; the queue-throw rollback test exercises the
+         * catch + release path. */ finally {
         client.release()
-      }
+      } /* c8 ignore stop */
     },
   )
 
