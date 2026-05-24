@@ -108,33 +108,42 @@ function isSnapshot(body: unknown): body is StatusSnapshot {
 }
 
 interface RenderedSnapshot {
-  // The <pre> element holding the stage table. The local 1s tick
-  // re-renders only this node's textContent so running-stage durations
-  // count up without reflowing the rest of the panel.
+  // The DOM nodes holding each piece of the rendered snapshot. The 3s
+  // poll's in-place update + the 1s local tick both rewrite these
+  // nodes' textContent so durations count up + new stages appear
+  // without re-flowing the rest of the panel.
+  readonly phaseEl: HTMLDivElement
   readonly stagesEl: HTMLPreElement
-  readonly snap: StatusSnapshot
+  readonly costEl: HTMLDivElement
+  snap: StatusSnapshot
 }
 
 function renderSnapshot(parent: HTMLElement, snap: StatusSnapshot): RenderedSnapshot {
-  const phase = document.createElement('div')
-  phase.style.fontFamily = 'var(--mono)'
-  phase.textContent = `phase: ${snap.phase}`
-  parent.appendChild(phase)
+  const phaseEl = document.createElement('div')
+  phaseEl.style.fontFamily = 'var(--mono)'
+  phaseEl.textContent = `phase: ${snap.phase}`
+  parent.appendChild(phaseEl)
 
   const stagesEl = document.createElement('pre')
   stagesEl.style.fontFamily = 'var(--mono)'
   stagesEl.style.fontSize = '12px'
   stagesEl.style.marginTop = '8px'
+  // myth-timer-overflow fix: pre has fixed-width fields (padEnd) that
+  // overflow the container in narrower pages. Allow horizontal scroll
+  // inside the <pre> instead of pushing the duration cell off-screen.
+  stagesEl.style.overflowX = 'auto'
+  stagesEl.style.whiteSpace = 'pre'
+  stagesEl.style.maxWidth = '100%'
   stagesEl.setAttribute('data-role', 'stage-table')
   stagesEl.textContent = renderStageRows(snap, Date.now())
   parent.appendChild(stagesEl)
 
-  const cost = document.createElement('div')
-  cost.style.marginTop = '8px'
-  cost.textContent = `cumulative cost: $${snap.cumulativeCostUsd.toFixed(4)}`
-  parent.appendChild(cost)
+  const costEl = document.createElement('div')
+  costEl.style.marginTop = '8px'
+  costEl.textContent = `cumulative cost: $${snap.cumulativeCostUsd.toFixed(4)}`
+  parent.appendChild(costEl)
 
-  return { stagesEl, snap }
+  return { phaseEl, stagesEl, costEl, snap }
 }
 
 export function mountStatusPanel(parent: HTMLElement): PanelHandle {
@@ -168,7 +177,7 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
   // until the first successful fetch lands.
   let lastRendered: RenderedSnapshot | null = null
 
-  async function refresh(): Promise<void> {
+  async function refresh(opts: { silent?: boolean } = {}): Promise<void> {
     const id = getActiveCampaignId()
     if (id === null) {
       feedbackEl.replaceChildren()
@@ -180,16 +189,27 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
       feedbackEl.appendChild(m)
       return
     }
-    setState('loading')
-    feedbackEl.replaceChildren()
-    lastRendered = null
-    refreshBtn.disabled = true
+    // myth-jitter fix: only wipe + rebuild on the FIRST fetch (no
+    // lastRendered yet) or when the user clicked Refresh explicitly.
+    // Auto-refresh polls update the existing snapshot in place so the
+    // DOM doesn't flash + the scroll position doesn't reset.
+    const isFirstOrUserDriven = !opts.silent || lastRendered === null
+    if (isFirstOrUserDriven) {
+      setState('loading')
+      feedbackEl.replaceChildren()
+      lastRendered = null
+      refreshBtn.disabled = true
+    }
 
     const res = await apiCall(`/api/campaigns/${id}/status`)
 
     refreshBtn.disabled = false
 
     if (res.status !== 200 || !isSnapshot(res.body)) {
+      // Errors always wipe + rerender — the panel is in a different
+      // state now and the user needs to see it.
+      feedbackEl.replaceChildren()
+      lastRendered = null
       setState('error')
       renderErrorBlock(feedbackEl, {
         status: res.status,
@@ -201,6 +221,17 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
     }
 
     setState('ready')
+    if (lastRendered !== null) {
+      // In-place update: snap → re-render stage rows + phase + cost
+      // without removing the DOM. The JSON disclosure is left as-is
+      // (it's snapshot-of-last-click anyway; user can re-expand to
+      // see the live body, or click Refresh for a full re-render).
+      lastRendered.snap = res.body
+      lastRendered.stagesEl.textContent = renderStageRows(res.body, Date.now())
+      lastRendered.phaseEl.textContent = `phase: ${res.body.phase}`
+      lastRendered.costEl.textContent = `cumulative cost: $${res.body.cumulativeCostUsd.toFixed(4)}`
+      return
+    }
     lastRendered = renderSnapshot(feedbackEl, res.body)
     appendJsonDisclosure(feedbackEl, res.body)
   }
@@ -217,7 +248,7 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
   // re-architecting per-panel subscription plumbing.
   void refresh()
   const pollTimer = setInterval(() => {
-    void refresh()
+    void refresh({ silent: true })
   }, 3000)
 
   // myth-zeiw: 1s local tick. Re-renders the stage-table textContent of

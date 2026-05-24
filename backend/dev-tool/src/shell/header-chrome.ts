@@ -63,22 +63,41 @@ export function mountHeaderChrome(parent: HTMLElement): HeaderChromeHandle {
   dropdown.style.minWidth = '200px'
   row.appendChild(dropdown)
 
+  // myth-jitter fix: cache the last rendered campaign-id list so the
+  // 10s poll only rewrites the dropdown when the available campaigns
+  // actually change. Re-rendering on every poll caused a visible
+  // flicker + dropped any in-progress user gesture on the <select>.
+  let lastSignature: string | null = null
+
   async function refreshDropdown(): Promise<void> {
     const res = await apiCall<MineResponse>('/api/campaigns/mine')
+    const current = getActiveCampaignId()
+    const items: MineCampaign[] =
+      res.status === 200 && res.body !== null ? Array.from(res.body.campaigns) : []
+    const signature = JSON.stringify({
+      current,
+      ids: items.map((c) => `${c.id}|${c.name}`),
+    })
+    if (signature === lastSignature) {
+      // No change in available campaigns OR in the active id. Make sure
+      // the dropdown's current selection still matches the active id
+      // (covers the case where another consumer setActiveCampaignId'd
+      // to one of the existing options) and bail without re-rendering.
+      if (current !== null && dropdown.value !== current) dropdown.value = current
+      return
+    }
+    lastSignature = signature
     dropdown.replaceChildren()
     const blank = document.createElement('option')
     blank.value = ''
     blank.textContent = '(none)'
     dropdown.appendChild(blank)
-    const current = getActiveCampaignId()
-    if (res.status === 200 && res.body !== null) {
-      for (const c of res.body.campaigns) {
-        const opt = document.createElement('option')
-        opt.value = c.id
-        opt.textContent = `${c.name} · ${c.id.slice(0, 8)}…`
-        if (c.id === current) opt.selected = true
-        dropdown.appendChild(opt)
-      }
+    for (const c of items) {
+      const opt = document.createElement('option')
+      opt.value = c.id
+      opt.textContent = `${c.name} · ${c.id.slice(0, 8)}…`
+      if (c.id === current) opt.selected = true
+      dropdown.appendChild(opt)
     }
     if (current !== null && dropdown.value === '') {
       // Active campaign not in the mine list (might be a fresh creation
