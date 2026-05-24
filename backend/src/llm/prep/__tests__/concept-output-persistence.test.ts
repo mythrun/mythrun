@@ -112,27 +112,11 @@ const VALID_SHEET = {
   spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
 }
 
-const VALID_INTEGRATION = {
-  pc_entity: {
-    name: 'Bran of the Hollow',
-    short_description:
-      'A road-weary cleric tying his fate to the Hollow and the silence of the old gods through the long autumn rains.',
-  },
-  relationships: [
-    {
-      target_entity_name: 'Bone Sept',
-      relationship_type: 'apprenticed_at',
-      description:
-        'Trained at the Bone Sept in youth, learned the old liturgies before the burning twenty years ago.',
-    },
-  ],
-  facts: [
-    {
-      content: 'Bran was apprenticed at the Bone Sept in his youth.',
-      tags: ['backstory'],
-    },
-  ],
-}
+// VALID_INTEGRATION (the stage-4 fixture) lived here under MYT-53.
+// MYT-54 T3 lifted character_integration out of the per-player pipeline,
+// so runCharacterCreationJob no longer drives stage 4. The campaign-scoped
+// fixture for MYT-54's character-integration-processor lives in that
+// processor's own test file (added in T10).
 
 interface SeedResult {
   readonly userId: string
@@ -259,17 +243,13 @@ describe('character-creation-processor — stage 2 persists concept_output', () 
     } as never)
     // Stage 3: character_sheet — returns VALID_SHEET so the processor walks
     // past stage 2 cleanly. The assertion below targets the DB row stage 2
-    // wrote; stages 3 + 4 are scaffolding to keep the run from rolling back.
+    // wrote; stage 3 is scaffolding to keep the run from rolling back.
+    // MYT-54 T3: stage 4 (character_integration) was lifted out of the
+    // per-player pipeline, so no third mock is needed here.
     mockGenerateText.mockResolvedValueOnce({
       output: VALID_SHEET,
       finishReason: 'stop',
       usage: { inputTokens: 2000, outputTokens: 2000, totalTokens: 4000 },
-    } as never)
-    // Stage 4: character_integration — returns VALID_INTEGRATION.
-    mockGenerateText.mockResolvedValueOnce({
-      output: VALID_INTEGRATION,
-      finishReason: 'stop',
-      usage: { inputTokens: 1800, outputTokens: 1200, totalTokens: 3000 },
     } as never)
 
     await runCharacterCreationJob(

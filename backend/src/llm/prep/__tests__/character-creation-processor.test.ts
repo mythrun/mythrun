@@ -109,27 +109,10 @@ const VALID_SHEET = {
   spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
 }
 
-const VALID_INTEGRATION = {
-  pc_entity: {
-    name: 'Bran of the Hollow',
-    short_description:
-      'A road-weary cleric tying his fate to the Hollow and the silence of the old gods through the long autumn rains.',
-  },
-  relationships: [
-    {
-      target_entity_name: 'Bone Sept',
-      relationship_type: 'apprenticed_at',
-      description:
-        'Trained at the Bone Sept in youth, learned the old liturgies before the burning twenty years ago.',
-    },
-  ],
-  facts: [
-    {
-      content: 'Bran was apprenticed at the Bone Sept in his youth.',
-      tags: ['backstory'],
-    },
-  ],
-}
+// VALID_INTEGRATION (the stage-4 fixture) lived here under MYT-53. T3
+// removed the per-player integration stage; the campaign-scoped fixture
+// for MYT-54's character-integration-processor lives in that processor's
+// own test file (added in T10).
 
 interface SeedResult {
   readonly userId: string
@@ -306,18 +289,12 @@ describe('runCharacterCreationJob', () => {
       finishReason: 'stop',
       usage: { inputTokens: 2000, outputTokens: 2000, totalTokens: 4000 },
     } as never)
-    // Stage 4: character_integration (Opus generateObject — switched from
-    // streamObject after smoke uncovered the SDK's stream-pull semantics
-    // require iterating partialObjectStream; stage 4 has no per-chunk
-    // consumer, so generateObject is the correct primitive).
-    mockGenerateText.mockResolvedValueOnce({
-      output: VALID_INTEGRATION,
-      finishReason: 'stop',
-      usage: { inputTokens: 1800, outputTokens: 1200, totalTokens: 3000 },
-    } as never)
+    // MYT-54 T3: stage 4 (character_integration) was lifted out of this
+    // per-player pipeline into a campaign-scoped Opus pass — no third
+    // mock is needed here for the per-player end-to-end run.
   }
 
-  it('runs all four stages end-to-end and marks character_concepts.completed', async () => {
+  it('runs all per-player stages end-to-end and marks character_concepts.completed', async () => {
     const { userId, campaignId } = await seed()
     setupHappyPathMocks()
 
@@ -336,15 +313,16 @@ describe('runCharacterCreationJob', () => {
     )
     await processor(makeJob(campaignId, userId) as unknown as Parameters<typeof processor>[0])
 
-    // All four pipeline_runs rows in 'completed' state, keyed on
-    // (campaign_id, user_id).
+    // MYT-54 T3: the per-player pipeline now has 3 stages — the prior
+    // per-player 'character_integration' was lifted to a campaign-scoped
+    // Opus pass (owned by MYT-54's character-integration-processor).
     const runs = await pool.query<{ stage: string; status: string }>(
       `SELECT stage, status FROM pipeline_runs
        WHERE campaign_id = $1 AND user_id = $2
        ORDER BY started_at`,
       [campaignId, userId],
     )
-    expect(runs.rowCount).toBe(4)
+    expect(runs.rowCount).toBe(3)
     for (const r of runs.rows) {
       expect(r.status).toBe('completed')
     }
@@ -353,7 +331,6 @@ describe('runCharacterCreationJob', () => {
       'location_selection',
       'character_concept',
       'character_sheet',
-      'character_integration',
     ])
 
     // characters row exists for the user, linked via campaign_characters.
@@ -366,15 +343,11 @@ describe('runCharacterCreationJob', () => {
     expect(characters.rowCount).toBe(1)
     expect(characters.rows[0]?.name).toBe('Bran of the Hollow')
 
-    // PC entity row exists.
-    const pcEnt = await pool.query<{ id: string }>(
-      `SELECT e.id FROM entities e
-       JOIN characters c ON c.entity_id = e.id
-       JOIN campaign_characters cc ON cc.character_id = c.id
-       WHERE cc.campaign_id = $1 AND cc.user_id = $2 AND e.entity_type = 'pc'`,
-      [campaignId, userId],
-    )
-    expect(pcEnt.rowCount).toBe(1)
+    // MYT-54 T3: the PC `entities` row (entity_type='pc') is no longer
+    // created by this per-player pipeline. It is now produced by the
+    // campaign-scoped character-integration-processor (MYT-54), so the
+    // legacy `entities`-row + characters.entity_id assertions belong in
+    // that processor's test (added in T10).
 
     // character_concepts flipped to 'completed'.
     const concept = await pool.query<{ status: string }>(
@@ -383,8 +356,10 @@ describe('runCharacterCreationJob', () => {
     )
     expect(concept.rows[0]?.status).toBe('completed')
 
-    // Events: stage-started + stage-completed for each stage + at least one
-    // entity-added + at least one edge-added (from stage 4).
+    // Events: stage-started + stage-completed for each of the 3 per-player
+    // stages. entity-added/edge-added events are now emitted by the
+    // campaign-scoped character_integration processor (MYT-54), not by
+    // this per-player path — they are NOT asserted here.
     const startedStages = events
       .filter((e) => e.type === 'stage-started')
       .map((e) => e.stage)
@@ -392,7 +367,6 @@ describe('runCharacterCreationJob', () => {
       'location_selection',
       'character_concept',
       'character_sheet',
-      'character_integration',
     ])
     const completedStages = events
       .filter((e) => e.type === 'stage-completed')
@@ -401,10 +375,7 @@ describe('runCharacterCreationJob', () => {
       'location_selection',
       'character_concept',
       'character_sheet',
-      'character_integration',
     ])
-    expect(events.some((e) => e.type === 'entity-added')).toBe(true)
-    expect(events.some((e) => e.type === 'edge-added')).toBe(true)
   })
 
   it('isolates per-player failures: terminal LLM error fails one row without aborting the job', async () => {
@@ -500,12 +471,13 @@ describe('runCharacterCreationJob', () => {
     const ourRuns = await pool.query<{ stage: string }>(
       `SELECT stage FROM pipeline_runs
        WHERE campaign_id = $1 AND user_id = $2 AND stage IN
-         ('location_selection', 'character_sheet', 'character_integration')`,
+         ('location_selection', 'character_sheet')`,
       [campaignId, userId],
     )
     expect(ourRuns.rowCount).toBe(0)
 
-    // Neither the concept nor sheet nor integration LLM calls fired.
+    // Neither the concept nor sheet LLM calls fired. (Stage 4 is now
+    // campaign-scoped, owned by MYT-54's character-integration-processor.)
     expect(mockGenerateText).not.toHaveBeenCalled()
     expect(mockStreamObject).not.toHaveBeenCalled()
 
@@ -550,7 +522,7 @@ describe('runCharacterCreationJob', () => {
        WHERE campaign_id = $1 AND user_id = $2`,
       [campaignId, userId],
     )
-    expect(firstRunsCount.rows[0]?.n).toBe('4')
+    expect(firstRunsCount.rows[0]?.n).toBe('3')
 
     // Second run with same payload. We do NOT mock any new LLM responses —
     // the atomicClaimStage should return 'completed' for each of the 4
@@ -574,14 +546,15 @@ describe('runCharacterCreationJob', () => {
     expect(secondCharacters.rowCount).toBe(1)
     expect(secondCharacters.rows[0]?.id).toBe(firstCharacterId)
 
-    // Still exactly 4 pipeline_runs rows (atomicClaimStage's ON CONFLICT
-    // path didn't INSERT new rows; the row count is invariant).
+    // Still exactly 3 pipeline_runs rows — MYT-54 T3 dropped the
+    // per-player stage 4. atomicClaimStage's ON CONFLICT path didn't
+    // INSERT new rows; the row count is invariant across re-entry.
     const secondRunsCount = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM pipeline_runs
        WHERE campaign_id = $1 AND user_id = $2`,
       [campaignId, userId],
     )
-    expect(secondRunsCount.rows[0]?.n).toBe('4')
+    expect(secondRunsCount.rows[0]?.n).toBe('3')
 
     // character_concepts still 'completed'.
     const concept = await pool.query<{ status: string }>(
@@ -670,42 +643,10 @@ describe('runCharacterCreationJob', () => {
     expect(stageFailed?.willRetry).toBe(true)
   })
 
-  it('throws on stage 4 re-entry without ctx.characterId or ctx.conceptOutput', async () => {
-    // Setup: pre-insert pipeline_runs for stages 1, 2, 3 as 'completed'.
-    // On re-entry, atomicClaimStage skips all 3; stage 4 is fresh-claimed.
-    // ctx.characterId and ctx.conceptOutput are both null → stage 4's
-    // re-entry guard throws + marks failed.
-    const { userId, campaignId } = await seed()
-    for (const stage of ['location_selection', 'character_concept', 'character_sheet']) {
-      await pool.query(
-        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, user_id, cost_usd, input_tokens, output_tokens)
-         VALUES ($1, $2, $3, 'completed', now(), now(), $4, 0.02, 100, 50)`,
-        [uuidv7(), campaignId, stage, userId],
-      )
-    }
-    const events: Record<string, unknown>[] = []
-    await expect(
-      runCharacterCreationJob(
-        makeDeps(pool, {
-          publishEvent: (cid, e) => {
-            events.push({ campaignId: cid, ...e })
-            return Promise.resolve()
-          },
-        }),
-        makeJob(campaignId, userId),
-      ),
-    ).rejects.toThrow(/re-entry without in-process state/)
-    const intRow = await pool.query<{ status: string; error: string | null }>(
-      `SELECT status, error FROM pipeline_runs
-       WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_integration'`,
-      [campaignId, userId],
-    )
-    expect(intRow.rows[0]?.status).toBe('failed')
-    expect(intRow.rows[0]?.error).toMatch(/re-entry without in-process state/)
-    const stageFailed = events.find(
-      (e) => e.type === 'stage-failed' && e.stage === 'character_integration',
-    )
-    expect(stageFailed).toBeDefined()
-    expect(stageFailed?.willRetry).toBe(true)
-  })
+  // MYT-54 T3 removed the per-player 'character_integration' stage. The
+  // legacy "throws on stage 4 re-entry without ctx.characterId or
+  // ctx.conceptOutput" test exercised a re-entry guard inside that stage's
+  // dispatch branch; both the stage and the guard moved to MYT-54's
+  // campaign-scoped character-integration-processor, so the equivalent
+  // re-entry test belongs there (added in T10).
 })

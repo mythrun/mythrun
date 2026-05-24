@@ -31,7 +31,6 @@ import { sumCharacterCreationStageCosts } from './cost-cap.js'
 import { runLocationSelectionStage } from './stages/location-selection.js'
 import { runCharacterConceptStage } from './stages/character-concept.js'
 import { runCharacterSheetStage } from './stages/character-sheet.js'
-import { runCharacterIntegrationStage } from './stages/character-integration.js'
 import { createCharacterConceptsRepo } from '../../repo/character-concepts.js'
 import type { CharacterConceptOutput } from '../schemas/character-concept.js'
 import {
@@ -48,13 +47,16 @@ export type CharacterCreationStage =
   | 'location_selection'
   | 'character_concept'
   | 'character_sheet'
-  | 'character_integration'
 
-const STAGES: readonly CharacterCreationStage[] = [
+// MYT-54 T3: 'character_integration' is now a campaign-scoped stage owned
+// by MYT-54's character-integration-processor; see
+// backend/src/llm/prep/character-integration-processor.ts (to be created
+// in T11). The constant is exported (and named STAGES_IN_ORDER) so tests
+// can pin the per-player pipeline shape against silent re-introductions.
+export const STAGES_IN_ORDER: readonly CharacterCreationStage[] = [
   'location_selection',
   'character_concept',
   'character_sheet',
-  'character_integration',
 ]
 
 export interface CharacterCreationDeps {
@@ -138,7 +140,7 @@ export async function runCharacterCreationJob(
   let conceptOutput: CharacterConceptOutput | null = null
   let characterId: string | null = null
 
-  for (const stage of STAGES) {
+  for (const stage of STAGES_IN_ORDER) {
     const claim = await atomicClaimStage(deps.pool, {
       kind: 'campaign-user',
       campaignId,
@@ -232,8 +234,10 @@ export async function runCharacterCreationJob(
     }
   }
 
-  // 4. All four stages completed — flip the concept row to 'completed'
-  //    and emit the terminal phase event.
+  // 4. All per-player stages completed — flip the concept row to
+  //    'completed' and emit the terminal phase event. The campaign-scoped
+  //    character_integration stage (MYT-54) runs separately, owner-
+  //    triggered, after all members reach this state.
   await conceptsRepo.markCompleted(campaignId, userId)
   await deps.publishEvent(campaignId, {
     type: 'phase',
@@ -281,78 +285,38 @@ async function runStage(
       concept: r.concept,
     }
   }
-  if (stage === 'character_sheet') {
-    // stage 3 has no re-entry recovery: the stage 2 output (narrative)
-    // is in-memory only (not persisted between stage 2's run and stage
-    // 3's INSERT into characters). If a worker crashes after stage 2's
-    // pipeline_runs marker commits but before stage 3 enters, BullMQ
-    // retry hits a 'completed' stage 2 claim → skips → ctx.conceptOutput
-    // is undefined here. That's a terminal failure; player resubmits.
-    if (ctx.conceptOutput === null) {
-      throw new Error(
-        'character_sheet: re-entry without ctx.conceptOutput; stage 2 output cannot be recovered. Player must resubmit.',
-      )
-    }
-    const narrative = ctx.conceptOutput
-    const w = await loadWorldContext(deps.pool, ctx.worldId)
-    const r = await runCharacterSheetStage(deps.pool, {
-      campaignId: ctx.campaignId,
-      userId: ctx.userId,
-      worldId: ctx.worldId,
-      narrative,
-      worldTone: w.tone,
-      worldEra: w.era,
-    })
-    return {
-      costUsd: r.costUsd,
-      inputTokens: r.inputTokens,
-      outputTokens: r.outputTokens,
-      characterId: r.characterId,
-    }
-  }
-  // character_integration. Same re-entry semantic as stage 3: requires
-  // ctx threading from the prior stages in THIS worker invocation. A
-  // crash between stage 3's commit and stage 4 marks the row failed
-  // (player resubmits). Avoids the placeholder-narrative reload path
-  // that returned bogus values for fields not persisted on `characters`.
-  if (ctx.characterId === null || ctx.conceptOutput === null) {
+  // character_sheet is the terminal per-player stage. stage 3 has no
+  // re-entry recovery: the stage 2 output (narrative) is in-memory only
+  // (not persisted between stage 2's run and stage 3's INSERT into
+  // characters). If a worker crashes after stage 2's pipeline_runs
+  // marker commits but before stage 3 enters, BullMQ retry hits a
+  // 'completed' stage 2 claim → skips → ctx.conceptOutput is undefined
+  // here. That's a terminal failure; player resubmits.
+  //
+  // MYT-54 T3: 'character_integration' is now a campaign-scoped stage
+  // owned by MYT-54's character-integration-processor; see
+  // backend/src/llm/prep/character-integration-processor.ts (to be created
+  // in T11). It does NOT appear in this per-player switch.
+  if (ctx.conceptOutput === null) {
     throw new Error(
-      'character_integration: re-entry without in-process state (characterId or conceptOutput); cannot recover. Player must resubmit.',
+      'character_sheet: re-entry without ctx.conceptOutput; stage 2 output cannot be recovered. Player must resubmit.',
     )
   }
-  const integrationCharacterId = ctx.characterId
-  const integrationNarrative = ctx.conceptOutput
-  const groundingRes = await deps.pool.query<{
-    situation_grounding_text: string
-  }>(
-    `SELECT situation_grounding_text FROM character_concepts
-       WHERE campaign_id = $1 AND user_id = $2`,
-    [ctx.campaignId, ctx.userId],
-  )
-  // character_concepts row was flipped to 'processing' by the route's
-  // flipAllSubmittedToProcessing, which only matches rows that POST
-  // /characters validated + persisted with situation_grounding_text
-  // populated (Zod min(20) + DB NOT NULL CHECK length 20..2000).
-  const grounding = groundingRes.rows[0]?.situation_grounding_text
-  /* c8 ignore next 5 — invariant per flipAllSubmittedToProcessing */
-  if (grounding === undefined) {
-    throw new Error(
-      `character_concepts row missing for campaign=${ctx.campaignId} user=${ctx.userId} — flip invariant violated`,
-    )
-  }
-  const r = await runCharacterIntegrationStage(deps.pool, {
+  const narrative = ctx.conceptOutput
+  const w = await loadWorldContext(deps.pool, ctx.worldId)
+  const r = await runCharacterSheetStage(deps.pool, {
     campaignId: ctx.campaignId,
     userId: ctx.userId,
     worldId: ctx.worldId,
-    characterId: integrationCharacterId,
-    narrative: integrationNarrative,
-    situationGroundingText: grounding,
-    publishEvent: (e) => deps.publishEvent(ctx.campaignId, e),
+    narrative,
+    worldTone: w.tone,
+    worldEra: w.era,
   })
   return {
     costUsd: r.costUsd,
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
+    characterId: r.characterId,
   }
 }
 
