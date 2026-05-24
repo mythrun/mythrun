@@ -43,6 +43,15 @@ export interface StageEntry {
   readonly status: 'pending' | 'running' | 'completed' | 'failed'
   readonly userId: string | null
   readonly costUsd: number
+  // myth-zeiw: per-stage timing for the dev-tool status panel.
+  // ISO-8601 strings on the wire — `Date` values from pg.query are
+  // serialized through `reply.send` (which calls toJSON on Date),
+  // producing the same shape. `null` for stages that haven't started
+  // (pending) or haven't completed (running). Duration is computed
+  // client-side so the panel can render a live count-up for running
+  // stages without re-fetching.
+  readonly startedAt: string | null
+  readonly completedAt: string | null
 }
 
 export interface PhaseAndStages {
@@ -118,6 +127,8 @@ export function derivePhase(input: {
       status: r.status,
       userId: r.user_id,
       costUsd: r.cost_usd,
+      startedAt: r.started_at === null ? null : r.started_at.toISOString(),
+      completedAt: r.completed_at === null ? null : r.completed_at.toISOString(),
     }))
 
   const cumulativeCostUsd = runs.reduce((acc, r) => acc + r.cost_usd, 0)

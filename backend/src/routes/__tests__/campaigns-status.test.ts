@@ -152,6 +152,56 @@ describe('campaigns status routes', () => {
     expect(body.cumulativeCostUsd).toBe(0)
   })
 
+  // myth-zeiw: per-stage timing on the wire. Status surface must
+  // include startedAt + completedAt (ISO-8601 strings) on each
+  // pipeline_runs row so the dev-tool can compute a live count-up
+  // duration for running stages and a fixed duration for completed
+  // ones. Both timestamps are sourced from pipeline_runs.started_at /
+  // completed_at.
+  it('GET /api/campaigns/:campaignId/status emits startedAt + completedAt per stage', async () => {
+    const { campaignId, devSub, userId } = await seedCampaignWithMember()
+    // Seed one completed worldgen row + one running worldgen row.
+    // user_id IS NULL for worldgen stages — owner attribution lives
+    // on the campaign row, not the pipeline_runs row.
+    const worldRow = await pool.query<{ world_id: string }>(
+      `SELECT world_id FROM campaigns WHERE id = $1`,
+      [campaignId],
+    )
+    const worldId = worldRow.rows[0]?.world_id
+    if (typeof worldId !== 'string') throw new Error('expected world row')
+    const startedCompleted = new Date('2026-05-12T00:00:00.000Z')
+    const endCompleted = new Date('2026-05-12T00:00:42.000Z')
+    const startedRunning = new Date('2026-05-12T00:01:00.000Z')
+    await pool.query(
+      `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, completed_at, cost_usd, user_id)
+       VALUES ($1, $2, 'concept_intake', 'completed', $3, $4, 0.0042, NULL),
+              ($5, $2, 'world_and_factions', 'running', $6, NULL, 0, NULL)`,
+      [uuidv7(), worldId, startedCompleted, endCompleted, uuidv7(), startedRunning],
+    )
+    void userId
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaignId}/status`,
+      headers: { 'x-mythrun-dev-sub': devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    interface WireStage {
+      stage: string
+      status: string
+      startedAt: string | null
+      completedAt: string | null
+    }
+    const body: { stages: readonly WireStage[] } = res.json()
+    const completed = body.stages.find((s) => s.stage === 'concept_intake')
+    const running = body.stages.find((s) => s.stage === 'world_and_factions')
+    if (!completed) throw new Error('expected concept_intake row')
+    if (!running) throw new Error('expected world_and_factions row')
+    expect(completed.startedAt).toBe(startedCompleted.toISOString())
+    expect(completed.completedAt).toBe(endCompleted.toISOString())
+    expect(running.startedAt).toBe(startedRunning.toISOString())
+    expect(running.completedAt).toBeNull()
+  })
+
   it('GET /api/campaigns/:campaignId/status returns 403 for non-members', async () => {
     const { campaignId } = await seedCampaignWithMember(0)
     const otherUserId = uuidv7()

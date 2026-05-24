@@ -24,12 +24,69 @@ interface StageEntry {
   readonly status: string
   readonly userId: string | null
   readonly costUsd: number
+  // myth-zeiw: timestamps for per-stage duration. ISO-8601 on the wire;
+  // null for stages that haven't started (pending) or haven't completed
+  // (running). Duration is computed locally so the running-stage cell
+  // can tick every 1s without re-fetching.
+  readonly startedAt: string | null
+  readonly completedAt: string | null
 }
 
 interface StatusSnapshot {
   readonly phase: string
   readonly stages: readonly StageEntry[]
   readonly cumulativeCostUsd: number
+}
+
+// Format a millisecond delta as "Ns" or "Nm Ms" (e.g. 42s, 3m 12s).
+// myth-zeiw: tiny helper, no i18n, mono-friendly.
+function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000))
+  if (totalSec < 60) return `${String(totalSec)}s`
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${String(m)}m ${String(s)}s`
+}
+
+// Compute the duration cell for a stage at the given `now`. Running
+// rows count up from started_at; completed rows are fixed; pending /
+// failed-without-completion / unknown render an em-dash. Failed rows
+// with both timestamps surface as "failed @ <duration>" so the user
+// can see how long the stage burned before giving up.
+function durationCell(s: StageEntry, now: number): string {
+  // Treat undefined the same as null. Older snapshot bodies (and the
+  // pre-myth-zeiw test fixtures) carry neither field; the row should
+  // still render with an em-dash fallback rather than NaN.
+  const startedAt = s.startedAt ?? null
+  const completedAt = s.completedAt ?? null
+  if (s.status === 'completed' && startedAt !== null && completedAt !== null) {
+    const started = Date.parse(startedAt)
+    const completed = Date.parse(completedAt)
+    return formatDuration(completed - started)
+  }
+  if (s.status === 'running' && startedAt !== null) {
+    const started = Date.parse(startedAt)
+    return formatDuration(now - started)
+  }
+  if (s.status === 'failed' && startedAt !== null && completedAt !== null) {
+    const started = Date.parse(startedAt)
+    const completed = Date.parse(completedAt)
+    return `failed @ ${formatDuration(completed - started)}`
+  }
+  return '—'
+}
+
+function renderStageRows(snap: StatusSnapshot, now: number): string {
+  return snap.stages
+    .map((s) => {
+      const stage = s.stage.padEnd(28)
+      const status = s.status.padEnd(10)
+      const user = (s.userId ?? '-').padEnd(38)
+      const cost = `$${s.costUsd.toFixed(4)}`.padEnd(10)
+      const dur = durationCell(s, now)
+      return `${stage} ${status} ${user} ${cost} ${dur}`
+    })
+    .join('\n')
 }
 
 function readCode(body: unknown): string {
@@ -50,7 +107,15 @@ function isSnapshot(body: unknown): body is StatusSnapshot {
   )
 }
 
-function renderSnapshot(parent: HTMLElement, snap: StatusSnapshot): void {
+interface RenderedSnapshot {
+  // The <pre> element holding the stage table. The local 1s tick
+  // re-renders only this node's textContent so running-stage durations
+  // count up without reflowing the rest of the panel.
+  readonly stagesEl: HTMLPreElement
+  readonly snap: StatusSnapshot
+}
+
+function renderSnapshot(parent: HTMLElement, snap: StatusSnapshot): RenderedSnapshot {
   const phase = document.createElement('div')
   phase.style.fontFamily = 'var(--mono)'
   phase.textContent = `phase: ${snap.phase}`
@@ -60,18 +125,16 @@ function renderSnapshot(parent: HTMLElement, snap: StatusSnapshot): void {
   stagesEl.style.fontFamily = 'var(--mono)'
   stagesEl.style.fontSize = '12px'
   stagesEl.style.marginTop = '8px'
-  stagesEl.textContent = snap.stages
-    .map(
-      (s) =>
-        `${s.stage.padEnd(28)} ${s.status.padEnd(10)} ${s.userId ?? '-'} $${s.costUsd.toFixed(4)}`,
-    )
-    .join('\n')
+  stagesEl.setAttribute('data-role', 'stage-table')
+  stagesEl.textContent = renderStageRows(snap, Date.now())
   parent.appendChild(stagesEl)
 
   const cost = document.createElement('div')
   cost.style.marginTop = '8px'
   cost.textContent = `cumulative cost: $${snap.cumulativeCostUsd.toFixed(4)}`
   parent.appendChild(cost)
+
+  return { stagesEl, snap }
 }
 
 export function mountStatusPanel(parent: HTMLElement): PanelHandle {
@@ -100,10 +163,16 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
 
   setState('ready')
 
+  // myth-zeiw: most-recently-rendered snapshot, captured so the 1s tick
+  // can recompute running-stage durations without re-fetching. Null
+  // until the first successful fetch lands.
+  let lastRendered: RenderedSnapshot | null = null
+
   async function refresh(): Promise<void> {
     const id = getActiveCampaignId()
     if (id === null) {
       feedbackEl.replaceChildren()
+      lastRendered = null
       const m = document.createElement('div')
       m.style.color = 'var(--fg-muted)'
       m.textContent =
@@ -113,6 +182,7 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
     }
     setState('loading')
     feedbackEl.replaceChildren()
+    lastRendered = null
     refreshBtn.disabled = true
 
     const res = await apiCall(`/api/campaigns/${id}/status`)
@@ -131,7 +201,7 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
     }
 
     setState('ready')
-    renderSnapshot(feedbackEl, res.body)
+    lastRendered = renderSnapshot(feedbackEl, res.body)
     appendJsonDisclosure(feedbackEl, res.body)
   }
 
@@ -146,14 +216,26 @@ export function mountStatusPanel(parent: HTMLElement): PanelHandle {
   // polling at 3s gives the user a live-ish view during world-gen without
   // re-architecting per-panel subscription plumbing.
   void refresh()
-  const timer = setInterval(() => {
+  const pollTimer = setInterval(() => {
     void refresh()
   }, 3000)
+
+  // myth-zeiw: 1s local tick. Re-renders the stage-table textContent of
+  // the last-fetched snapshot so running-stage durations count up
+  // visibly between the 3s server polls. Touches the same <pre> node
+  // (data-role="stage-table"); no fetch, no re-flow of the rest of the
+  // panel. If the snapshot has no running stages the recompute is a
+  // no-op string rebuild — cheap and not worth gating.
+  const tickTimer = setInterval(() => {
+    if (lastRendered === null) return
+    lastRendered.stagesEl.textContent = renderStageRows(lastRendered.snap, Date.now())
+  }, 1000)
 
   return {
     root,
     unmount: () => {
-      clearInterval(timer)
+      clearInterval(pollTimer)
+      clearInterval(tickTimer)
       refreshBtn.removeEventListener('click', onClick)
       if (root.parentNode !== null) root.parentNode.removeChild(root)
     },
