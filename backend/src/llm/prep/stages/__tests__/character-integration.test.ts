@@ -574,4 +574,185 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
     // Same edge type on both sides (mirror).
     expect(benToAda?.relationship_type).toBe('sibling_of')
   })
+
+  it('writes newFacts to existing world entities', async () => {
+    const { campaignId, ownerUserId, userIds, worldId } = await seed(1)
+
+    // Seed one extra world NPC entity that the LLM will add a fact to.
+    const npcId = uuidv7()
+    await pool.query(
+      `INSERT INTO entities (id, world_id, entity_type, name, access_level)
+       VALUES ($1, $2, 'npc', $3, 'known')`,
+      [npcId, worldId, `${scope.id}-Ranulf`],
+    )
+
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: [
+          {
+            userId: at(userIds, 0),
+            displayName: 'Solo',
+            entity: {
+              name: 'Solo PC',
+              proseKernel:
+                'A solo PC whose backstory adds a small fact to an existing NPC the world dump already knows about.',
+            },
+            facts: [
+              {
+                content:
+                  'A self-fact about why this PC sought out Ranulf in the first place.',
+                tags: ['origin'],
+                aboutEntityId: null,
+              },
+            ],
+            relationships: [],
+          },
+        ],
+        newFacts: [
+          {
+            entityId: npcId,
+            content:
+              "Ranulf still has the woolen scarf this PC's mother knitted him before she died.",
+            tags: ['backstory'],
+          },
+        ],
+      }),
+    )
+
+    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+
+    const { rows: npcFactRows } = await pool.query<{ content: string }>(
+      `SELECT content FROM facts WHERE entity_id = $1`,
+      [npcId],
+    )
+    expect(npcFactRows).toHaveLength(1)
+    expect(npcFactRows[0]?.content).toContain('woolen scarf')
+  })
+
+  it('disambiguates PC entity names when two PCs collide on entity.name', async () => {
+    const { campaignId, ownerUserId, userIds, worldId } = await seed(2)
+
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: userIds.map((userId) => ({
+          userId,
+          displayName: 'Marik',
+          entity: {
+            name: 'Marik',  // same name for both — collides on entities(world_id, name)
+            proseKernel:
+              'Two PCs both want to be named Marik. The worker must disambiguate post-LLM by appending a userId-fragment suffix.',
+          },
+          facts: [
+            {
+              content: 'Both Mariks have a long-standing rivalry over the same name.',
+              tags: ['backstory'],
+              aboutEntityId: null,
+            },
+          ],
+          relationships: [],
+        })),
+      }),
+    )
+
+    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+
+    const { rows: pcRows } = await pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM entities WHERE entity_type = 'pc' AND world_id = $1`,
+      [worldId],
+    )
+    expect(pcRows).toHaveLength(2)
+    // Both names start with 'Marik' but differ (suffix disambiguation).
+    const names = pcRows.map((r) => r.name).sort()
+    expect(names[0]).toMatch(/^Marik/)
+    expect(names[1]).toMatch(/^Marik/)
+    expect(names[0]).not.toBe(names[1])
+  })
+
+  it('drops unknown targetUserId in PC↔PC relationships and logs', async () => {
+    const { campaignId, ownerUserId, userIds } = await seed(1)
+
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: [
+          {
+            userId: at(userIds, 0),
+            displayName: 'Solo',
+            entity: {
+              name: 'Solo PC',
+              proseKernel:
+                'A solo PC whose emitted PC↔PC relationship points at a userId not in the party set.',
+            },
+            facts: [
+              {
+                content: 'A self-fact for the dropped-pc-userId coverage test.',
+                tags: ['origin'],
+                aboutEntityId: null,
+              },
+            ],
+            relationships: [
+              {
+                targetKind: 'pc' as const,
+                targetUserId: '019eeeee-0000-0000-0000-ffffffffffff',
+                type: 'rival_of',
+                description: 'A PC↔PC rivalry that points at a userId not in this party.',
+              },
+            ],
+          },
+        ],
+      }),
+    )
+
+    const result = await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+
+    expect(result.characterIds).toHaveLength(1)
+    const { rows: relRows } = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM relationships WHERE source_entity_id = $1`,
+      [result.characterIds[0]],
+    )
+    expect(Number(relRows[0]?.count)).toBe(0)
+  })
+
+  it('drops newFacts with unknown entityId and logs', async () => {
+    const { campaignId, ownerUserId, userIds } = await seed(1)
+
+    mockGenerateText.mockResolvedValueOnce(
+      generateTextMockReturn({
+        characters: [
+          {
+            userId: at(userIds, 0),
+            displayName: 'Solo',
+            entity: {
+              name: 'Solo PC',
+              proseKernel:
+                'A solo PC whose newFacts entry points at an entity UUID the world dump does not contain.',
+            },
+            facts: [
+              {
+                content: 'A self-fact for the dropped-newFacts coverage test.',
+                tags: ['origin'],
+                aboutEntityId: null,
+              },
+            ],
+            relationships: [],
+          },
+        ],
+        newFacts: [
+          {
+            entityId: '019eeeee-0000-0000-0000-cccccccccccc',
+            content: 'A fact the LLM invented for an entity the world dump does not contain.',
+            tags: ['backstory'],
+          },
+        ],
+      }),
+    )
+
+    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+
+    // Verify NO facts.entity_id matches the hallucinated UUID.
+    const { rows: factRows } = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM facts WHERE entity_id = $1`,
+      ['019eeeee-0000-0000-0000-cccccccccccc'],
+    )
+    expect(Number(factRows[0]?.count)).toBe(0)
+  })
 })
