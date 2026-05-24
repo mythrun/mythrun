@@ -33,10 +33,23 @@ import type { CharacterDbRow } from '../repo/mappers.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
 
+// Per-player MYT-53 jobs carry `{ campaignId, userId }`; the campaign-
+// scoped MYT-54 T11 'character-integration' job carries
+// `{ campaignId, ownerUserId }`. Both names land on the same
+// `campaign-setup` queue (see worker.ts router), so the single .add()
+// surface here admits either payload via a discriminated union on `name`.
+// Existing implementers (server.ts buildCharacterCreationQueue, the test
+// spies) forward through to BullMQ's `Queue.add()`, which already accepts
+// arbitrary job-data shapes — the narrowing here is purely the route
+// plugin's compile-time contract.
+export type CharacterCreationJobData =
+  | { campaignId: string; userId: string }
+  | { campaignId: string; ownerUserId: string }
+
 export interface CharacterCreationQueueLike {
   add(
-    name: string,
-    data: { campaignId: string; userId: string },
+    name: 'character-creation' | 'character-integration',
+    data: CharacterCreationJobData,
     opts?: { jobId?: string },
   ): Promise<unknown>
 }
@@ -63,6 +76,16 @@ const StartingSituationBodySchema = z.object({
 const PostCharacterBodySchema = z.object({
   conceptText: z.string().min(20).max(4000),
   situationGroundingText: z.string().min(20).max(2000),
+})
+
+// MYT-54 T13 body. `pre_integration_notes` is fully optional: missing,
+// explicit null, and empty string all mean "no notes" and collapse to
+// NULL in the campaigns.pre_integration_notes column at write time. The
+// upper bound matches the DB CHECK in migration 018 so a too-long blob
+// fails at the route boundary (400 bad_body) rather than as a 500 from
+// Postgres rejecting the row.
+const FinalizeBodySchema = z.object({
+  pre_integration_notes: z.string().min(0).max(4000).nullable().optional(),
 })
 
 // Row shape returned by the T17 roster JOIN. Declared at module scope so the
@@ -605,6 +628,109 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
           entries: entriesByTable.get(t.id) ?? [],
         })),
       })
+    },
+  )
+
+  // --------------------------------------------------------------------
+  // MYT-54 T13: POST /finalize-character-creation
+  //
+  // Owner-only fan-in trigger. Wraps the column flip
+  // (`campaigns.pre_integration_notes`) + queue enqueue in a single
+  // transaction so a successful 202 implies both the notes are persisted
+  // AND the singleton `ci-${campaignId}` job is on the `campaign-setup`
+  // queue (picked up by the MYT-54 T11 processor, which calls the T10
+  // handler). jobId is deterministic — BullMQ dedups on duplicate IDs,
+  // so a frantic double-click from the owner is safe at the queue layer.
+  //
+  // Body normalization: missing OR empty-string `pre_integration_notes`
+  // collapse to NULL in the column — the integration handler treats
+  // "no notes" as a single state regardless of which client surface
+  // emitted it.
+  // --------------------------------------------------------------------
+  app.post<{
+    Params: { campaignId: string }
+    Body: z.infer<typeof FinalizeBodySchema>
+  }>(
+    '/api/campaigns/:campaignId/finalize-character-creation',
+    {
+      preHandler: requireCampaignMember(repo, 'owner'),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const parsed = FinalizeBodySchema.safeParse(req.body)
+      if (!parsed.success) {
+        return reply.code(400).send({ code: 'bad_body' })
+      }
+      const noteRaw = parsed.data.pre_integration_notes
+      // Empty string and null/undefined all collapse to NULL — the column
+      // is nullable and the handler treats "no notes" as a single state.
+      const notes = noteRaw !== null && noteRaw !== undefined && noteRaw.length > 0 ? noteRaw : null
+
+      const queue = opts.characterCreationQueue
+      if (!queue) {
+        return reply.code(503).send({ code: 'queue_not_ready' })
+      }
+      const dbUser = requireDbUser(req)
+
+      const client = await opts.pool.connect()
+      try {
+        await client.query('BEGIN')
+
+        // Transactional flip: 0 rows back means status was already
+        // 'active' or 'archived' (i.e. finalize already ran or owner
+        // archived the campaign). Returning 409 + ROLLBACK keeps the
+        // contract tight — the queue is never touched on the 409 path.
+        const upd = await client.query(
+          `UPDATE campaigns
+              SET pre_integration_notes = $1, updated_at = now()
+            WHERE id = $2 AND status = 'setup'
+            RETURNING id`,
+          [notes, req.params.campaignId],
+        )
+        if (upd.rowCount === 0) {
+          await client.query('ROLLBACK')
+          // return-await: the finally { client.release() } runs after
+          // this return, so the inflight reply Promise must be awaited
+          // inside the try (matches T13 start-character-creation).
+          return await reply.code(409).send({ code: 'not_in_setup' })
+        }
+
+        // At least one 'completed' concept required — fan-in trigger.
+        // Without this gate the integration job would run with an empty
+        // party and produce zero characters.
+        const completedRes = await client.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n
+             FROM character_concepts
+            WHERE campaign_id = $1 AND status = 'completed'`,
+          [req.params.campaignId],
+        )
+        /* c8 ignore next — COUNT(*) always returns a row, fallback unreachable */
+        const n = Number.parseInt(completedRes.rows[0]?.n ?? '0', 10)
+        if (n === 0) {
+          await client.query('ROLLBACK')
+          return await reply.code(409).send({ code: 'no_completed_concepts' })
+        }
+
+        // Singleton jobId — BullMQ dedups, so a re-POST while the job
+        // is queued/processing is a no-op at the queue layer.
+        const jobId = `ci-${req.params.campaignId}`
+        await queue.add(
+          'character-integration',
+          { campaignId: req.params.campaignId, ownerUserId: dbUser.id },
+          { jobId },
+        )
+        await client.query('COMMIT')
+        return await reply.code(202).send({ campaignId: req.params.campaignId, jobId })
+      } catch (err) {
+        await client.query('ROLLBACK')
+        throw err
+      } /* c8 ignore start — v8 marks the `} finally {` branch boundary
+         * uncovered even though both the COMMIT-success path and the
+         * ROLLBACK-then-throw path are exercised by tests. The
+         * client.release() inside is reached on every path; this is a
+         * v8-instrumentation artifact, not a real coverage gap. */ finally {
+        client.release()
+      } /* c8 ignore stop */
     },
   )
 }

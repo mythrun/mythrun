@@ -27,6 +27,7 @@ import { bypassPlugin } from '../../auth/bypass-plugin.js'
 import { requireOnboarded } from '../../auth/require-onboarded.js'
 import {
   campaignCharactersPlugin,
+  type CharacterCreationJobData,
   type CharacterCreationQueueLike,
 } from '../campaign-characters.js'
 import {
@@ -137,8 +138,8 @@ function createQueueSpy(): QueueSpy {
   const add = vi.fn().mockResolvedValue({ id: 'stub-job' })
   const queue: CharacterCreationQueueLike = {
     add: (
-      name: string,
-      data: { campaignId: string; userId: string },
+      name: 'character-creation' | 'character-integration',
+      data: CharacterCreationJobData,
       opts?: { jobId?: string },
     ): Promise<unknown> => add(name, data, opts) as Promise<unknown>,
   }

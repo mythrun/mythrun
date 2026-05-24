@@ -37,6 +37,9 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'GET /api/campaigns/:campaignId/random-tables',
   // MYT-54 T12 — per-PC character-creation progress board (any member).
   'GET /api/campaigns/:campaignId/character-creation-progress',
+  // MYT-54 T13 — owner fan-in trigger for the campaign-scoped
+  // character_integration stage (singleton job, BullMQ-deduped on jobId).
+  'POST /api/campaigns/:campaignId/finalize-character-creation',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

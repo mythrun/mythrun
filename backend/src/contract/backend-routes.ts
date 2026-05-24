@@ -47,6 +47,9 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/random-tables' },
   // MYT-54 — per-PC character-creation progress board (any member can view)
   { method: 'GET', path: '/api/campaigns/:campaignId/character-creation-progress' },
+  // MYT-54 T13 — owner fan-in trigger that flips campaigns.pre_integration_notes
+  // and enqueues the singleton `ci-${campaignId}` character-integration job.
+  { method: 'POST', path: '/api/campaigns/:campaignId/finalize-character-creation' },
 
   // Sessions
   { method: 'POST', path: '/api/sessions/:id/ws-ticket' },
