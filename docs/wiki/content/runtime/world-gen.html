@@ -51,7 +51,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:e8e56c24df24c32b7610c3313996779732b61386e6ec1496ce22875c17c2530d -->
+<!-- source-hash: sha256:05b62ab880e7dbf755ab92268efd0ed919055fd453f0824cb8cc82c6e2cdb9f9 -->
 <!-- last-ticket: myth-tt2g -->
 
 <h1>World gen</h1>
@@ -652,8 +652,9 @@
       <td>
         <code>worlds.starting_situations</code> (prose blob) +
         <code>worlds.starting_situation_entries</code> (the three structured
-        <code>{ index, locationEntityId, prose }</code> rows MYT-53's character-creation flow picks
-        one from)
+        <code>{ index, locationEntityId, locationName, title, prose }</code> rows MYT-53's
+        character-creation flow picks one from; the LLM emits the title, the worker resolves
+        <code>locationName</code> from <code>entities.name</code> after the stage commits)
       </td>
       <td>none</td>
     </tr>

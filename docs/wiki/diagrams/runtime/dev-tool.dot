@@ -1,9 +1,12 @@
 digraph dev_tool {
-  // The dev tool shell. A throwaway, local-only engineering UI: one panel
-  // per backend route × method. A shell-owned active-campaign store + a
-  // persistent right-side wire-log drawer (sole EventSource owner) feed
-  // every panel. The ship gate (pnpm dev-tool:check) plus a registry
-  // invariant test keep coverage honest.
+  // The dev tool shell. A throwaway, local-only engineering UI. The
+  // sidebar drives 6 entity-scoped workflow pages; each page composes
+  // multiple single-purpose panel mount fns into a scrolling column.
+  // Header chrome (always-on health pip + active-campaign dropdown)
+  // sits above the banner; a persistent right-side drawer owns the
+  // sole EventSource for the active campaign. The ship gate
+  // (pnpm dev-tool:check) plus a registry invariant test keep
+  // coverage honest.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -17,13 +20,22 @@ digraph dev_tool {
     color="ember";
     fontcolor="ember";
 
-    sidebar      [label="sidebar.ts\nendpoint × method leaves\nCAMPAIGNS / WORLD /\nCHARACTERS / USERS /\nBILLING / SYSTEM"];
-    banner       [label="banner.ts\nactive-campaign\nanchor"];
-    mainPane     [label="mainPane\nlazy-mounts one\nPanelHandle at a time\n(unmount on switch)"];
+    chrome       [label="header-chrome.ts\nhealth pip (5s) +\nactive-campaign\ndropdown (10s)"];
+    sidebar      [label="sidebar.ts\n6 workflow leaves\nCampaigns / World /\nCharacters / Users /\nBilling / System"];
+    banner       [label="banner.ts\nactive-campaign\nanchor + live\nstage label"];
+    mainPane     [label="mainPane\nmounts one workflow\npage at a time\n(unmount on switch)"];
     drawer       [label="drawer/drawer.ts\nwire-log + pause /\nclear / export"];
     activeCamp   [label="active-campaign.ts\nshell-owned store\nget/set + subscribe"];
     identityBr   [label="identity-bridge.ts\nsingle listener for\nmythrun.identitychanged"];
-    routeReg     [label="route-registry.ts\nROUTE_PANELS\n+ EXEMPT_ROUTES"];
+    workflowReg  [label="workflow-registry.ts\nWORKFLOWS list +\ngetWorkflowMount"];
+  }
+
+  subgraph cluster_pages {
+    label="src/pages/  (one composer per workflow)";
+    style="dashed";
+
+    pages [label="6 page composers\ncampaigns / world /\ncharacters / users /\nbilling / system\n(each mounts N\npanels inline)"];
+    pageShared [label="_shared/\npage-skeleton.ts\nbuildPageBody +\nmountSection"];
   }
 
   subgraph cluster_drawer_internals {
@@ -36,10 +48,10 @@ digraph dev_tool {
   }
 
   subgraph cluster_panels {
-    label="src/components/  (one panel per route × method)";
+    label="src/components/  (single-purpose panels)";
     style="dashed";
 
-    panels [label="42 panels\nself-register via\nregisterPanelMount(\n  method, path, mountFn)\nPanelHandle = { root, unmount }"];
+    panels [label="40+ panel modules\nmountXxxPanel\nPanelHandle = { root, unmount }\ndomain renderers:\nhierarchy tree /\nrandom tables /\ncharacter sheet"];
     shared [label="components/_shared/\npanel-skeleton.ts\nerror-block.ts\njson-disclosure.ts\nprogress-strip.ts"];
   }
 
@@ -49,7 +61,7 @@ digraph dev_tool {
 
     contracts [label="backend/src/contract/\nbackend-routes.ts\npipeline-routes.ts\npipeline-events.ts\npipeline-jobs.ts"];
     coverage  [label="backend/dev-tool/\ncoverage.json\n{ routes, events, jobs,\n  exempt: { reasons ≥ 20 } }"];
-    check     [label="dev-tool-check.ts\n+ verify-registry.test.ts\n(forward / reverse /\nroute-exhaustion)"];
+    check     [label="dev-tool-check.ts\n+ verify-registry.test.ts\n(PAGE_REGISTRY +\nPANEL_EXERCISES,\n4 invariants)"];
     ci        [label=".github/workflows/\ndev-tool-check.yml"];
   }
 
@@ -58,25 +70,29 @@ digraph dev_tool {
   backend [label="local backend\nlocalhost:3000 (PORT)", color="ember", fontcolor="ember"];
 
   // Browser → shell mount
-  browser -> sidebar [label="page load → mountShell"];
-  sidebar -> mainPane [label="leaf click →\nselectPanel(mountFn)"];
-  routeReg -> sidebar [label="ROUTE_PANELS\n× section labels"];
-  panels -> mainPane [label="mountFn → PanelHandle", style=dashed];
+  browser -> chrome [label="page load →\nmountShell"];
+  chrome -> banner [label="above (always-on)", style=dotted];
+  sidebar -> mainPane [label="leaf click →\nselectWorkflow(mountFn)"];
+  workflowReg -> sidebar [label="WORKFLOWS"];
+  pages -> mainPane [label="page mount →\nPanelHandle", style=dashed];
+  pageShared -> pages [style=dotted, label="buildPageBody"];
+  pages -> panels [label="compose N\nmountXxxPanel", style=dashed];
   shared -> panels [style=dotted, label="reused split-view\n+ error / JSON / progress"];
 
   // Active-campaign fan-out
+  activeCamp -> chrome [label="dropdown selection"];
   activeCamp -> banner [label="onActiveCampaignChanged"];
   activeCamp -> sidebar [label="dims requiresCampaign\nleaves when null"];
   activeCamp -> subs [label="auto-subscribe on set"];
 
   // Identity bridge
-  identityBr -> activeCamp [label="clear on switch"];
-  identityBr -> drawer [label="re-subscribe", style=dashed];
+  identityBr -> activeCamp [label="re-subscribe", style=dashed];
 
   // Drawer internals
   subs -> bus [label="onmessage → publish"];
   bus -> buffer [label="push"];
   bus -> drawer [label="render rows"];
+  bus -> banner [label="live stage label\n(phase / stage-*)", style=dashed];
 
   // HTTP path
   panels -> api [label="apiCall(...)", style=dashed];
