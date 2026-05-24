@@ -154,22 +154,27 @@ export function createCharacterConceptsRepo(pool: Pool) {
       )
     },
 
-    // Atomic claim helper for the fan-out route: flip every 'submitted'
-    // row for a campaign to 'processing' inside the route's transaction
-    // alongside the BullMQ enqueue. The route's BEGIN ... COMMIT envelopes
-    // both this UPDATE and the queue.add() so a failed enqueue rolls back.
-    flipAllSubmittedToProcessing: async (
+    // myth-nmg9: per-player flip used inside POST /characters' own
+    // transaction. The upsert wrote status='submitted'; this call
+    // immediately advances it to 'processing' so the per-player BullMQ
+    // job can be enqueued in the same transaction. Replaces the old
+    // batch flipAllSubmittedToProcessing path used by the retired
+    // POST /start-character-creation route.
+    flipSubmittedToProcessing: async (
       client: PoolClient,
       campaignId: string,
-    ): Promise<readonly { userId: string; conceptId: string }[]> => {
+      userId: string,
+    ): Promise<{ userId: string; conceptId: string } | null> => {
       const result = await client.query<{ id: string; user_id: string }>(
         `UPDATE character_concepts
          SET status = 'processing', updated_at = now()
-         WHERE campaign_id = $1 AND status = 'submitted'
+         WHERE campaign_id = $1 AND user_id = $2 AND status = 'submitted'
          RETURNING id, user_id`,
-        [campaignId],
+        [campaignId, userId],
       )
-      return result.rows.map((r) => ({ conceptId: r.id, userId: r.user_id }))
+      const row = result.rows[0]
+      if (row === undefined) return null
+      return { conceptId: row.id, userId: row.user_id }
     },
   }
 }

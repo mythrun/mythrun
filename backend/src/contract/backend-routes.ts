@@ -37,7 +37,6 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/world-snapshot' }, // myth-exac
   // MYT-53 — per-player parallel character creation
   { method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' },
-  { method: 'POST', path: '/api/campaigns/:campaignId/start-character-creation' },
   { method: 'POST', path: '/api/campaigns/:campaignId/archive' },
   { method: 'POST', path: '/api/campaigns/:campaignId/characters' },
   { method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' },

@@ -37,7 +37,6 @@ import { mountSessionTicketPanel } from './src/components/session-ticket-panel.j
 import { mountWorldSnapshotPanel } from './src/components/world-snapshot-panel.js'
 import { mountHierarchyPanel } from './src/components/hierarchy-panel.js'
 import { mountRandomTablesPanel } from './src/components/random-tables-panel.js'
-import { mountStartCharacterCreationPanel } from './src/components/start-character-creation-panel.js'
 import { mountSubmitCharacterConceptPanel } from './src/components/submit-character-concept-panel.js'
 import { mountCharactersRosterPanel } from './src/components/characters-roster-panel.js'
 import { mountCharacterViewPanel } from './src/components/character-view-panel.js'
@@ -251,13 +250,6 @@ export const PANEL_REGISTRY: Readonly<Record<string, PanelRegistration>> = {
   // split into 7 endpoint × action panels below (one per route under the
   // CHARACTERS sidebar section). The legacy panel + its sub-buttons for
   // hierarchy / random-tables / archive have moved to P6.A / P6.B panels.
-  'start-character-creation': {
-    pattern: 'action-only',
-    mount: mountStartCharacterCreationPanel,
-    readySelector: '[data-state="ready"]',
-    errorSelector: '[data-state="error"]',
-    exercises: [route('POST', '/api/campaigns/:campaignId/start-character-creation')],
-  },
   'submit-character-concept': {
     pattern: 'action-only',
     mount: mountSubmitCharacterConceptPanel,

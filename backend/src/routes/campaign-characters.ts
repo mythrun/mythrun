@@ -157,71 +157,12 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
     },
   )
 
-  // --------------------------------------------------------------------
-  // T13: POST /start-character-creation
-  //
-  // BEGIN; flipAllSubmittedToProcessing; .add() for each; COMMIT. If
-  // any .add() throws, ROLLBACK first then rethrow so Fastify renders
-  // 500 with the rows still in 'submitted'.
-  // --------------------------------------------------------------------
-  app.post<{ Params: { campaignId: string } }>(
-    '/api/campaigns/:campaignId/start-character-creation',
-    {
-      preHandler: requireCampaignMember(repo, 'owner'),
-      config: { pipelineRoute: true },
-    },
-    async (req, reply) => {
-      const queue = opts.characterCreationQueue
-      if (!queue) {
-        return reply.code(503).send({ code: 'queue_not_ready' })
-      }
-
-      const camp = await opts.pool.query<{ starting_situation_index: number | null }>(
-        `SELECT starting_situation_index FROM campaigns WHERE id = $1`,
-        [req.params.campaignId],
-      )
-      const idx = camp.rows[0]?.starting_situation_index
-      if (idx === null || idx === undefined) {
-        return reply.code(409).send({ code: 'starting_situation_not_chosen' })
-      }
-
-      const client = await opts.pool.connect()
-      try {
-        await client.query('BEGIN')
-        const flipped = await repo.characterConcepts.flipAllSubmittedToProcessing(
-          client,
-          req.params.campaignId,
-        )
-        if (flipped.length === 0) {
-          await client.query('ROLLBACK')
-          // return-await: finally { client.release() } runs after this
-          // return, so the Promise must be awaited inside the try.
-          return await reply.code(409).send({ code: 'no_submitters' })
-        }
-        const enqueued: { userId: string; jobId: string }[] = []
-        for (const f of flipped) {
-          const jobId = `cc-${req.params.campaignId}-${f.userId}`
-          await queue.add(
-            'character-creation',
-            { campaignId: req.params.campaignId, userId: f.userId },
-            { jobId },
-          )
-          enqueued.push({ userId: f.userId, jobId })
-        }
-        await client.query('COMMIT')
-        return await reply.code(200).send({ enqueued })
-      } catch (err) {
-        await client.query('ROLLBACK')
-        throw err
-      } /* c8 ignore start — v8 marks the `} finally {` branch boundary
-         * uncovered even though both the COMMIT-success path and the
-         * ROLLBACK-then-throw path are exercised by tests. The
-         * client.release() inside is reached on every path; this is a
-         * v8-instrumentation artifact, not a real coverage gap. */ finally {
-        client.release()
-      } /* c8 ignore stop */
-    },
-  )
+  // myth-nmg9: POST /start-character-creation is RETIRED. Per-player
+  // pipeline now auto-triggers from inside POST /characters' own
+  // transaction (the upsert→flip→enqueue sequence below). Removing
+  // the owner-batch step matches the user-described flow: as soon as
+  // a player submits a concept (with starting_situation chosen), their
+  // pipeline starts without waiting on an explicit owner action.
 
   // --------------------------------------------------------------------
   // T14: POST /archive
@@ -300,6 +241,17 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
         return reply.code(409).send({ code: 'concept_locked' })
       }
 
+      // myth-nmg9: submit + flip + enqueue in one transaction. The
+      // upsert writes status='submitted'; the flip immediately advances
+      // to 'processing'; the enqueue puts the per-player BullMQ job on
+      // the campaign-setup queue. If the enqueue throws, the rollback
+      // leaves the row at its previous state (either nonexistent for a
+      // first submit, or 'submitted'/'failed' for a resubmit).
+      const queue = opts.characterCreationQueue
+      if (!queue) {
+        return reply.code(503).send({ code: 'queue_not_ready' })
+      }
+
       const row = await repo.characterConcepts.upsert({
         campaignId: req.params.campaignId,
         userId: dbUser.id,
@@ -307,7 +259,42 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
         situationGroundingText: body.situationGroundingText,
         guidedChoices: {},
       })
-      return reply.code(200).send({ conceptId: row.id, status: row.status })
+
+      const client = await opts.pool.connect()
+      try {
+        await client.query('BEGIN')
+        const flipped = await repo.characterConcepts.flipSubmittedToProcessing(
+          client,
+          req.params.campaignId,
+          dbUser.id,
+        )
+        /* c8 ignore next 6 — the upsert immediately above wrote
+         * status='submitted', and the row is uniquely keyed on
+         * (campaign_id, user_id) so the flip MUST find it. The null
+         * branch is defense-in-depth against a concurrent admin DELETE
+         * between the upsert and the flip. */
+        if (flipped === null) {
+          await client.query('ROLLBACK')
+          return await reply.code(409).send({ code: 'concept_lost_race' })
+        }
+        const jobId = `cc-${req.params.campaignId}-${dbUser.id}`
+        await queue.add(
+          'character-creation',
+          { campaignId: req.params.campaignId, userId: dbUser.id },
+          { jobId },
+        )
+        await client.query('COMMIT')
+        return await reply.code(200).send({
+          conceptId: row.id,
+          status: 'processing',
+          jobId,
+        })
+      } catch (err) {
+        await client.query('ROLLBACK')
+        throw err
+      } finally {
+        client.release()
+      }
     },
   )
 

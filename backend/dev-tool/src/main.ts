@@ -30,7 +30,6 @@ import './components/random-tables-panel.js'
 // myth-fn51 P6.C — new CHARACTERS-section panels self-register on import.
 // These replace the old multi-purpose character-creation-panel (one panel
 // per endpoint × action, per the dev-tool reorg spec §3).
-import './components/start-character-creation-panel.js'
 import './components/submit-character-concept-panel.js'
 import './components/characters-roster-panel.js'
 import './components/character-view-panel.js'

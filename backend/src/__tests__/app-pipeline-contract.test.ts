@@ -43,7 +43,6 @@ vi.mock('../contract/pipeline-routes.js', () => ({
     'GET /api/campaigns/:campaignId/world-snapshot',
     // MYT-53 per-player character creation (campaign-characters plugin):
     'POST /api/campaigns/:campaignId/starting-situation',
-    'POST /api/campaigns/:campaignId/start-character-creation',
     'POST /api/campaigns/:campaignId/characters',
     'GET /api/campaigns/:campaignId/starting-situations',
     'GET /api/campaigns/:campaignId/characters',

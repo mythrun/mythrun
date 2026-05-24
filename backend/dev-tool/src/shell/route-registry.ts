@@ -47,7 +47,6 @@ export const ROUTE_PANELS: readonly RoutePanel[] = [
   { method: 'GET',    path: '/api/campaigns/:campaignId/random-tables',              section: 'WORLD',     label: 'Random tables',    requiresCampaign: true,  longRunning: false },
 
   // CHARACTERS
-  { method: 'POST',   path: '/api/campaigns/:campaignId/start-character-creation',   section: 'CHARACTERS', label: 'Start (owner)',   requiresCampaign: true,  longRunning: true  },
   { method: 'POST',   path: '/api/campaigns/:campaignId/characters',                 section: 'CHARACTERS', label: 'Submit concept',  requiresCampaign: true,  longRunning: true  },
   { method: 'GET',    path: '/api/campaigns/:campaignId/characters',                 section: 'CHARACTERS', label: 'Roster',          requiresCampaign: true,  longRunning: false },
   { method: 'GET',    path: '/api/campaigns/:campaignId/characters/:charId',         section: 'CHARACTERS', label: 'Character',       requiresCampaign: true,  longRunning: false },
