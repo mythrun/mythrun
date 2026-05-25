@@ -42,7 +42,7 @@ case "$file_path" in
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "You edited the dev tool or a backend route contract source this turn. Before handing back, dispatch the dev-tool-verifier subagent with the prompt at backend/dev-tool/AUTHORING.md end-of-file. The verifier owns coverage + per-panel functional correctness — this is the standing dev-tool reliability rule."
+    "additionalContext": "You edited the dev tool or a backend route contract source this turn. Before handing back, dispatch the dev-tool-verifier subagent using Agent tool with subagent_type=\"dev-tool-verifier\" (registered in .claude/agents/dev-tool-verifier.md). The dispatch prompt MUST include an explicit `E2E: required` or `E2E: skip — <reason>` line per the tiered-smoke protocol in backend/dev-tool/AUTHORING.md step 5. Do NOT dispatch with subagent_type=\"general-purpose\" — the handoff classifier reads agent_type and will flag the marker write as a memory-rule violation."
   }
 }
 EOF
