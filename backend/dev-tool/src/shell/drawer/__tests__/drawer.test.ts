@@ -177,7 +177,7 @@ describe('drawer.mountDrawer', () => {
         clear: () => undefined,
       },
     })
-    const text = handle.root.textContent ?? ''
+    const text = handle.root.textContent
     expect(text).toContain('allied_with')
     expect(text).toContain('019e6047…')
     expect(text).toContain('new-007')
