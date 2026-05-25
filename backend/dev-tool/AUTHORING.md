@@ -214,9 +214,28 @@ You may NOT run:
    - `pnpm --filter @mythrun/dev-tool test` — green.
    - `pnpm dev-tool:verify` — green (all panels ok, no uncovered routes — or uncovered routes are all in the Escalated section).
    - `pnpm dev-tool:check` — green (manifest matches).
-   - **REAL-LLM E2E SMOKE — REQUIRED, NOT OPTIONAL.** This is THE step. Typecheck / lint / tests / JSDOM-verify all run against mocks or shallow DOM; none of them prove the wire works. You MUST drive at least the canonical world-gen flow end-to-end against the running stack at the WIRE LEVEL — `curl` for HTTP, `curl --no-buffer` (or `sse-cat`) for SSE, `docker compose exec postgres psql` for DB inspection. Browser automation does NOT count. Mocked tests do NOT count. JSDOM `pnpm dev-tool:verify` does NOT count. If you skip this step you have not done your job.
+   - **REAL-LLM E2E SMOKE — controller-gated, default required.** Typecheck / lint / tests / JSDOM-verify all run against mocks or shallow DOM; none of them prove the wire works. When the smoke runs, it drives the canonical world-gen flow end-to-end against the running stack at the WIRE LEVEL — `curl` for HTTP, `curl --no-buffer` (or `sse-cat`) for SSE, `docker compose exec postgres psql` for DB inspection. Browser automation does NOT count. Mocked tests do NOT count. JSDOM `pnpm dev-tool:verify` does NOT count.
 
-     **Canonical smoke flow:**
+     **Whether to run is decided by the controller, not by you.** The controller's dispatch prompt MUST contain exactly one line of the form:
+
+     ```
+     E2E: required — <one-line justification>
+     E2E: skip — <one-line justification naming which skip-eligible category applies>
+     ```
+
+     There is no default. If the dispatch prompt is silent on E2E, report back immediately with status `E2E_CLASSIFICATION_MISSING` and do nothing else — do not run the smoke, do not write the marker, do not run the other steps. Force the controller to classify.
+
+     **Skip-eligible diffs** — these are the only categories the controller may name in an `E2E: skip` line. If the actual diff in `HEAD` falls outside the named category, you have the authority and obligation to **bounce the classification**: report back with status `E2E_MISCLASSIFIED`, do not write the marker, and quote the offending file(s). The controller will either re-dispatch with `E2E: required` or fix the classification.
+
+     | Skip-eligible | Always required |
+     |---|---|
+     | Padding / color / font / copy / label / layout in a panel | New panel mounted or new route registered |
+     | Test-only or comment-only changes | Any edit to `sse-client.ts`, `api-client.ts`, `identity.ts`, `verify-registry.ts`, `main.ts` |
+     | Wiki narrative under `docs/wiki/` (already gated by `wiki:check`) | Any edit under `backend/src/` reachable from a dev-tool call (routes, repo, llm, sse, worker, contract) |
+     | Renames with no behavior change (the test suite proves no-op) | Schema / contract / route-handler / migration changes |
+     | Status-panel column widths, drawer chrome, sidebar labels | Identity, auth, or `x-mythrun-dev-sub` flow edits |
+
+     **Canonical smoke flow (only when E2E: required):**
      1. Resolve the dev sub via the dev tool's identity bootstrap (the same mechanism `backend/dev-tool/src/main.ts` uses — read it; the header is `x-mythrun-dev-sub`).
      2. POST `/api/campaigns` with the body shape required by `CreateCampaignBodySchema` (see `backend/src/routes/campaigns.ts`): a discriminated `{world: {kind: 'new', source: {mode: 'freeform', concept: <≥20-char prompt>}}}`. As of myth-4lhr the name is NOT a body field — campaigns are inserted with a placeholder name and `concept_intake` auto-names from the LLM. Example concept: "a port city where wizards trade secrets for moonlight." Assert HTTP 201 + a campaign id + a world id in the response. If the response is not 201, inspect the body, root-cause the failure, fix or escalate. Do not proceed.
      3. Open the SSE stream at `/api/campaigns/:campaignId/status/stream`. Read events until a terminal phase event (`world_snapshot_ready`, `world_ready`, or `failed`) arrives within a 3-minute budget. Tee the stream to a log so you can inspect event ordering on failure.
@@ -235,7 +254,7 @@ You may NOT run:
      - PG constraint surprises on real-world entity / fact / relationship shape
      - Anthropic API auth lapses (silent 401 the panel never surfaces)
 
-     The smoke costs ~$1–2 of Anthropic per dispatch. That is the price of catching what MYT-51 shipped through — 756 passing tests and two never-driven bugs in production. Pay it every dispatch.
+     The smoke costs ~$1–2 of Anthropic per dispatch. That cost is justified for behavior changes against real Anthropic / real Postgres / real BullMQ. It is not justified for pure UI tweaks, copy edits, or comment changes — hence the controller gate.
 
 6. **Update the coverage inventory** in `AUTHORING.md` if new routes/panels landed.
 
@@ -261,7 +280,11 @@ You may NOT run:
 ## Marker written
 - yes (clean dispatch, no edits) | no (edits applied, controller commits + re-dispatches)
 
-## E2E smoke result (REQUIRED — must report, never omit)
+## E2E smoke result (must report — pick exactly one shape)
+- classification: required | skipped | misclassified | classification-missing
+- controller's justification (verbatim from the dispatch prompt's `E2E:` line): <quote>
+
+If `classification: required`, ALSO include:
 - campaign id: <id>
 - world id: <id>
 - terminal phase reached: world_snapshot_ready | world_ready | failed | (timeout — never reached)
@@ -272,6 +295,18 @@ You may NOT run:
 - backend errors observed: <none, or list of 5xx / PG / worker errors>
 - verdict: PASS | FAIL (any FAIL means do not report success — fix and re-run)
 
+If `classification: skipped`, ALSO include:
+- diff inspected: <list of files in HEAD's last commit(s)>
+- skip-eligible category matched: <one of the rows from the table>
+- verdict: PASS (no smoke run; classification confirmed against diff)
+
+If `classification: misclassified`, ALSO include:
+- offending file(s) outside the named skip category: <paths>
+- verdict: BOUNCED (controller must re-dispatch with E2E: required or fix the classification)
+
+If `classification: classification-missing`, ALSO include:
+- verdict: BOUNCED (controller's dispatch prompt had no E2E: line; nothing was run)
+
 ## Bugs fixed
 - <one bullet per fix, file + summary>
 - (none)
@@ -281,7 +316,7 @@ You may NOT run:
 - (none)
 ```
 
-If the "E2E smoke result" section is missing or its verdict is FAIL, the controller WILL re-dispatch you. There is no way to ship dev-tool changes without a passing smoke. Do not waste a dispatch — run the smoke.
+If the smoke verdict is FAIL, BOUNCED, or the section is missing, the controller WILL re-dispatch you. Skipped smokes ship if the classification holds against the diff; required smokes ship only on PASS.
 
 Do NOT commit. Leave files in the working tree; the controller stages and commits everything.
 
