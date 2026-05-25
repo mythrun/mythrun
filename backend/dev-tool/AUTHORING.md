@@ -178,9 +178,9 @@ You may read but NOT edit:
 You may run:
 - `pnpm dev-tool:verify`
 - `pnpm dev-tool:check`
-- `pnpm --filter @mythrun/dev-tool test`
 - `pnpm --filter @mythrun/dev-tool typecheck`
 - `pnpm --filter @mythrun/dev-tool lint`
+- dev-tool tests: there is no `test` script on `@mythrun/dev-tool` itself (vitest is installed in `@mythrun/backend`). Run from the backend workspace: `cd backend && pnpm exec vitest run dev-tool` for the whole dev-tool test tree, or `pnpm exec vitest run dev-tool/<relative-path>` for a specific file.
 
 You may NOT run:
 - `git add`, `git commit`, `git push` — the controller commits.
@@ -208,13 +208,16 @@ You may NOT run:
    - Stop attempting fixes for that panel.
    - Add a bullet under Escalated in your final report describing what you tried and what's blocking.
 
-5. **Final pre-handoff verification.**
+5. **Final pre-handoff verification.** This step splits into a static gate (always runs) and an E2E smoke (controller-gated). Run the static gate first; do the smoke decision afterward.
+
+   **Static gate — always runs, every dispatch:**
    - `pnpm --filter @mythrun/dev-tool typecheck` — clean.
    - `pnpm --filter @mythrun/dev-tool lint` — clean.
-   - `pnpm --filter @mythrun/dev-tool test` — green.
+   - dev-tool tests via `cd backend && pnpm exec vitest run dev-tool` — green. (No `test` script on `@mythrun/dev-tool`; see the "You may run" list above.)
    - `pnpm dev-tool:verify` — green (all panels ok, no uncovered routes — or uncovered routes are all in the Escalated section).
    - `pnpm dev-tool:check` — green (manifest matches).
-   - **REAL-LLM E2E SMOKE — controller-gated, default required.** Typecheck / lint / tests / JSDOM-verify all run against mocks or shallow DOM; none of them prove the wire works. When the smoke runs, it drives the canonical world-gen flow end-to-end against the running stack at the WIRE LEVEL — `curl` for HTTP, `curl --no-buffer` (or `sse-cat`) for SSE, `docker compose exec postgres psql` for DB inspection. Browser automation does NOT count. Mocked tests do NOT count. JSDOM `pnpm dev-tool:verify` does NOT count.
+
+   **E2E smoke — controller-gated:** Typecheck / lint / tests / JSDOM-verify all run against mocks or shallow DOM; none of them prove the wire works. When the smoke runs, it drives the canonical world-gen flow end-to-end against the running stack at the WIRE LEVEL — `curl` for HTTP, `curl --no-buffer` (or `sse-cat`) for SSE, `docker compose exec postgres psql` for DB inspection. Browser automation does NOT count. Mocked tests do NOT count. JSDOM `pnpm dev-tool:verify` does NOT count.
 
      **Whether to run is decided by the controller, not by you.** The controller's dispatch prompt MUST contain exactly one line of the form:
 
