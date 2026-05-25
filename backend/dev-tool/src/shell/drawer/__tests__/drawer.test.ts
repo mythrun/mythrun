@@ -121,4 +121,99 @@ describe('drawer.mountDrawer', () => {
     expect(localStorage.getItem('devtool.drawer.paused')).toBe('false')
     handle.unmount()
   })
+
+  // myth-wirepayload: rows render an inline summary derived from the
+  // event payload (which stage / which entity name / which relationship)
+  // and disclose the full JSON via <details> on click. Below tests the
+  // public shape: summaries appear in row text; the JSON payload renders
+  // when the row is opened.
+  it('row text includes a stage name for stage-started events', () => {
+    const parent = withDom()
+    const buffer: DrawerEvent[] = [
+      {
+        campaignId: 'c01234567',
+        type: 'stage-started',
+        data: { type: 'stage-started', stage: 'world_and_factions', userId: null, startedAt: '2026-05-25T18:00:00Z' },
+        receivedAt: 0,
+      },
+    ]
+    const handle = mountDrawer(parent, {
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: {
+        push: () => undefined,
+        items: () => buffer,
+        size: () => buffer.length,
+        clear: () => undefined,
+      },
+    })
+    expect(handle.root.textContent).toContain('world_and_factions')
+    handle.unmount()
+  })
+
+  it('row text includes the relationship verb + endpoint short ids for edge-added', () => {
+    const parent = withDom()
+    const buffer: DrawerEvent[] = [
+      {
+        campaignId: 'c01234567',
+        type: 'edge-added',
+        data: {
+          type: 'edge-added',
+          synthKey: 'entity_relationships/relationships/3',
+          from: '019e6047-aaaa-bbbb-cccc-dddddddddddd',
+          to: 'new-007',
+          relationship: 'allied_with',
+        },
+        receivedAt: 0,
+      },
+    ]
+    const handle = mountDrawer(parent, {
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: {
+        push: () => undefined,
+        items: () => buffer,
+        size: () => buffer.length,
+        clear: () => undefined,
+      },
+    })
+    const text = handle.root.textContent ?? ''
+    expect(text).toContain('allied_with')
+    expect(text).toContain('019e6047…')
+    expect(text).toContain('new-007')
+    handle.unmount()
+  })
+
+  it('opening a row renders the full JSON payload (lazy via <details>)', () => {
+    const parent = withDom()
+    const buffer: DrawerEvent[] = [
+      {
+        campaignId: 'c01234567',
+        type: 'entity-added',
+        data: { type: 'entity-added', synthKey: 'world_and_factions/factions/2', entityKind: 'faction', name: 'The Silvermark' },
+        receivedAt: 0,
+      },
+    ]
+    const handle = mountDrawer(parent, {
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: {
+        push: () => undefined,
+        items: () => buffer,
+        size: () => buffer.length,
+        clear: () => undefined,
+      },
+    })
+    const det = handle.root.querySelector<HTMLDetailsElement>('details')
+    if (det === null) throw new Error('details missing')
+    // Closed: only summary text present, no <pre>.
+    expect(det.querySelector('pre')).toBeNull()
+    det.open = true
+    det.dispatchEvent(new Event('toggle'))
+    const pre = det.querySelector('pre')
+    expect(pre).not.toBeNull()
+    expect(pre?.textContent).toContain('"synthKey"')
+    expect(pre?.textContent).toContain('"The Silvermark"')
+    handle.unmount()
+  })
 })
