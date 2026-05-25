@@ -2,62 +2,92 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createSubscriptionManager } from '../subscriptions.js'
 
-// JSDOM has no real EventSource; we stub it. myth-wirelog extended
-// the subscription manager to listen for named events
-// (snapshot/phase/stage-started/...) via addEventListener as well as
-// onmessage, so the fake needs an addEventListener that the manager
-// can attach handlers to + a helper to dispatch by name.
-interface FakeES {
-  onmessage: ((e: MessageEvent) => void) | null
-  onerror: ((e: Event) => void) | null
-  close(): void
-  readyState: number
-  url: string
-  addEventListener(name: string, fn: (e: MessageEvent) => void): void
-  dispatch(name: string, data: string): void
+// myth-y58n: subscriptions now goes through sse-client.openSse(), which
+// reads the dev identity via getCurrentDevSub() → localStorage. We mock
+// the identity module so the test doesn't depend on localStorage state
+// or jsdom-flavored storage backends.
+vi.mock('../../../identity.js', () => ({
+  getCurrentDevSub: () => 'dev-user-1',
+}))
+
+// myth-y58n: subscriptions now goes through openSse() (fetch-based)
+// instead of the native EventSource so the dev-identity header can be
+// stamped on the SSE request. Tests drive a fake fetch that returns a
+// ReadableStream the manager parses, plus a per-fetch handle so a test
+// can push frames and abort.
+
+interface OpenStream {
+  readonly url: string
+  push: (chunk: string) => void
+  endStream: () => void
+  signal: AbortSignal
 }
-const opened: FakeES[] = []
-class FakeEventSource implements FakeES {
-  onmessage: ((e: MessageEvent) => void) | null = null
-  onerror: ((e: Event) => void) | null = null
-  readyState = 0
-  private readonly listeners = new Map<string, (e: MessageEvent) => void>()
-  constructor(public url: string) { opened.push(this) }
-  close(): void { this.readyState = 2 }
-  addEventListener(name: string, fn: (e: MessageEvent) => void): void {
-    this.listeners.set(name, fn)
-  }
-  dispatch(name: string, data: string): void {
-    const fn = this.listeners.get(name)
-    if (fn) fn(new MessageEvent(name, { data }))
+const openStreams: OpenStream[] = []
+
+function makeFetchStub(): typeof fetch {
+  return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    let pushChunk!: (chunk: string) => void
+    let endStream!: () => void
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder()
+        pushChunk = (s) => {
+          controller.enqueue(enc.encode(s))
+        }
+        endStream = () => {
+          controller.close()
+        }
+      },
+    })
+    const signal = init?.signal ?? new AbortController().signal
+    openStreams.push({ url, push: pushChunk, endStream, signal })
+    return Promise.resolve(
+      new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    )
   }
 }
 
 beforeEach(() => {
-  opened.length = 0
-  ;(globalThis as unknown as { EventSource: typeof FakeEventSource }).EventSource = FakeEventSource
+  openStreams.length = 0
+  vi.stubGlobal('fetch', makeFetchStub())
 })
 afterEach(() => {
-  delete (globalThis as unknown as { EventSource?: typeof FakeEventSource }).EventSource
+  vi.unstubAllGlobals()
 })
 
+async function tick(): Promise<void> {
+  // Let microtasks flush so async fetch + stream reads run before we
+  // assert. Two awaits because openSse fires fetch in a void task and
+  // the first chunk read also schedules.
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 describe('drawer subscriptions', () => {
-  it('subscribe opens an EventSource per campaign id and dedupes', () => {
+  it('subscribe opens a fetch SSE per campaign id and dedupes', async () => {
     const onEvent = vi.fn()
-    const mgr = createSubscriptionManager({ onEvent, urlFor: (id) => `/api/campaigns/${id}/status/stream` })
+    const mgr = createSubscriptionManager({
+      onEvent,
+      urlFor: (id) => `/api/campaigns/${id}/status/stream`,
+    })
     mgr.subscribe('cA')
     mgr.subscribe('cA')
     mgr.subscribe('cB')
-    expect(opened).toHaveLength(2)
-    expect(opened[0]?.url).toContain('cA')
-    expect(opened[1]?.url).toContain('cB')
+    await tick()
+    expect(openStreams).toHaveLength(2)
+    expect(openStreams[0]?.url).toContain('cA')
+    expect(openStreams[1]?.url).toContain('cB')
   })
 
-  it('unsubscribe closes the EventSource', () => {
+  it('unsubscribe aborts the open SSE', async () => {
     const mgr = createSubscriptionManager({ onEvent: vi.fn(), urlFor: (id) => `/x/${id}` })
     mgr.subscribe('cA')
+    await tick()
     mgr.unsubscribe('cA')
-    expect(opened[0]?.readyState).toBe(2)
+    expect(openStreams[0]?.signal.aborted).toBe(true)
   })
 
   it('list returns the currently subscribed campaign ids', () => {
@@ -67,48 +97,57 @@ describe('drawer subscriptions', () => {
     expect([...mgr.list()].sort()).toEqual(['cA', 'cB'])
   })
 
-  it('onmessage parses payload and forwards to onEvent with campaign id', () => {
+  it('unnamed data frame with body type forwards type to onEvent', async () => {
     const onEvent = vi.fn()
     const mgr = createSubscriptionManager({ onEvent, urlFor: (id) => `/x/${id}` })
     mgr.subscribe('cA')
-    const fake = opened[0]
-    if (fake === undefined) throw new Error('expected one EventSource to be opened')
-    fake.onmessage?.(new MessageEvent('message', { data: '{"type":"phase","data":{"phase":"world_gen"}}' }))
-    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ campaignId: 'cA', type: 'phase' }))
+    await tick()
+    const s = openStreams[0]
+    if (s === undefined) throw new Error('expected one stream')
+    s.push('data: {"type":"phase","data":{"phase":"world_gen"}}\n\n')
+    await tick()
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: 'cA', type: 'phase' }),
+    )
   })
 
-  it('closeAll closes every subscription', () => {
+  it('closeAll aborts every subscription', async () => {
     const mgr = createSubscriptionManager({ onEvent: vi.fn(), urlFor: (id) => `/x/${id}` })
     mgr.subscribe('cA')
     mgr.subscribe('cB')
+    await tick()
     mgr.closeAll()
-    expect(opened.every((o) => o.readyState === 2)).toBe(true)
+    expect(openStreams.every((s) => s.signal.aborted)).toBe(true)
   })
 
-  it('named events (event: snapshot, event: phase, etc.) are captured via addEventListener (myth-wirelog)', () => {
+  it('named events (event: snapshot, event: stage-completed) are captured (myth-wirelog)', async () => {
     const onEvent = vi.fn()
     const mgr = createSubscriptionManager({ onEvent, urlFor: (id) => `/x/${id}` })
     mgr.subscribe('cA')
-    const fake = opened[0]
-    if (fake === undefined) throw new Error('expected one EventSource')
-    fake.dispatch('snapshot', '{"phase":"world_gen","stages":[]}')
+    await tick()
+    const s = openStreams[0]
+    if (s === undefined) throw new Error('expected one stream')
+    s.push('event: snapshot\ndata: {"phase":"world_gen","stages":[]}\n\n')
+    await tick()
     expect(onEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({ campaignId: 'cA', type: 'snapshot' }),
     )
-    fake.dispatch('stage-completed', '{"type":"stage-completed","stage":"concept_intake"}')
+    s.push('event: stage-completed\ndata: {"type":"stage-completed","stage":"concept_intake"}\n\n')
+    await tick()
     expect(onEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({ campaignId: 'cA', type: 'stage-completed' }),
     )
   })
 
-  it('named event without a body type uses the event name (myth-wirelog)', () => {
+  it('named event without a body type falls back to event name (myth-wirelog)', async () => {
     const onEvent = vi.fn()
     const mgr = createSubscriptionManager({ onEvent, urlFor: (id) => `/x/${id}` })
     mgr.subscribe('cA')
-    const fake = opened[0]
-    if (fake === undefined) throw new Error('expected one EventSource')
-    // event: phase / data: {"phase":"world_gen"} — the JSON has no `type` field.
-    fake.dispatch('phase', '{"phase":"world_gen"}')
+    await tick()
+    const s = openStreams[0]
+    if (s === undefined) throw new Error('expected one stream')
+    s.push('event: phase\ndata: {"phase":"world_gen"}\n\n')
+    await tick()
     expect(onEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({ campaignId: 'cA', type: 'phase' }),
     )

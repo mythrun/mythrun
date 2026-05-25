@@ -1,8 +1,15 @@
 // backend/dev-tool/src/shell/drawer/subscriptions.ts
 //
-// myth-mbdc: EventSource lifecycle manager. One EventSource per
-// subscribed campaign; the drawer owns these; long-running panels
-// subscribe to the bus instead of opening their own.
+// myth-mbdc: SSE lifecycle manager for the wire-log drawer.
+//
+// myth-y58n: uses the fetch-based `openSse()` helper (sse-client.ts),
+// NOT the browser-native EventSource. EventSource cannot set custom
+// request headers, which means it cannot carry `x-mythrun-dev-sub` —
+// the dev backend's auth plugin then 403s every connection and the
+// drawer stays empty. openSse() reads SSE over `fetch` and stamps the
+// dev-identity header the same way `apiCall` does.
+
+import { openSse, type SseConnection } from '../../sse-client.js'
 
 export interface DrawerEvent {
   readonly campaignId: string
@@ -24,43 +31,15 @@ export interface SubscriptionManager {
 }
 
 export function createSubscriptionManager(opts: SubscriptionManagerOpts): SubscriptionManager {
-  const open = new Map<string, EventSource>()
+  const open = new Map<string, SseConnection>()
 
   function close(campaignId: string): void {
-    const es = open.get(campaignId)
-    if (es !== undefined) {
-      es.close()
+    const conn = open.get(campaignId)
+    if (conn !== undefined) {
+      conn.close()
       open.delete(campaignId)
     }
   }
-
-  // myth-wirelog: the backend SSE emits BOTH unnamed `data:` frames
-  // (each with a `{type, ...}` JSON body) AND named frames with an
-  // `event:` line (initial `snapshot`, `phase` updates, the
-  // server-side `close` ping). EventSource.onmessage fires ONLY for
-  // unnamed frames; named events need an explicit addEventListener.
-  // Subscribe to both so the wire log captures everything the backend
-  // sends — pre-this-fix the user saw 0 events in the drawer even
-  // though stage-completed / entity-added were arriving, because the
-  // initial snapshot was named and the drawer's "first-touch" never
-  // happened until an unnamed event arrived (often many seconds in).
-  const NAMED_EVENTS = [
-    'snapshot',
-    'phase',
-    'stage-started',
-    'stage-completed',
-    'stage-failed',
-    'cost-update',
-    'entity-added',
-    'entity-updated',
-    'entity-removed',
-    'edge-added',
-    'edge-removed',
-    'job-failed',
-    'stage-reset',
-    'finalized',
-    'close',
-  ] as const
 
   function handleFrame(campaignId: string, eventName: string, data: string): void {
     let raw: { type?: unknown; data?: unknown } & Record<string, unknown>
@@ -69,22 +48,15 @@ export function createSubscriptionManager(opts: SubscriptionManagerOpts): Subscr
     } catch {
       return
     }
-    // Frame-name precedence rules:
-    //   1. Unnamed `data:` frames carry `{type: "..."}` in the body —
-    //      pull `type` from there (events are typed in their JSON).
-    //   2. Named `event: X` frames whose body has no `type` use the
-    //      event name (matches the wire-log semantic the user expects:
-    //      "what kind of event did the server send").
+    // Unnamed `data:` frames carry `{type: "..."}` in the body; named
+    // `event: X` frames whose body has no `type` use the event name.
+    // openSse normalizes the unnamed case to event === 'message'.
     const type =
       typeof raw.type === 'string'
         ? raw.type
         : eventName === 'message'
           ? 'unknown'
           : eventName
-    // The full body becomes `data` so the drawer can render any
-    // payload key the LLM-team added without a per-event mapping.
-    // Strip the `type` field if it was promoted, otherwise it'd
-    // duplicate.
     const { type: _t, ...rest } = raw
     void _t
     opts.onEvent({ campaignId, type, data: rest, receivedAt: Date.now() })
@@ -93,16 +65,12 @@ export function createSubscriptionManager(opts: SubscriptionManagerOpts): Subscr
   return {
     subscribe: (campaignId) => {
       if (open.has(campaignId)) return
-      const es = new EventSource(opts.urlFor(campaignId))
-      es.onmessage = (e) => {
-        handleFrame(campaignId, 'message', String(e.data))
-      }
-      for (const name of NAMED_EVENTS) {
-        es.addEventListener(name, (e) => {
-          handleFrame(campaignId, name, String(e.data))
-        })
-      }
-      open.set(campaignId, es)
+      const conn = openSse(opts.urlFor(campaignId), {
+        onEvent: (e) => {
+          handleFrame(campaignId, e.event, e.data)
+        },
+      })
+      open.set(campaignId, conn)
     },
     unsubscribe: close,
     list: () => Array.from(open.keys()),
