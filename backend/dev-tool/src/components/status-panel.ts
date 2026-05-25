@@ -76,12 +76,25 @@ function durationCell(s: StageEntry, now: number): string {
   return '—'
 }
 
+// myth-padding fix: render userId as the 8-char prefix + ellipsis when
+// present (the same elision the header dropdown uses for campaign ids),
+// or a bare hyphen when null. Padding the column to 38 chars to fit a
+// full UUID left a 37-space gap on every world-gen row (userId always
+// null there) — visually disconnected the cost/duration columns from
+// the stage name. Hyphen-not-em-dash: the em-dash is reserved for the
+// duration-unknown fallback and assertions in the status-panel test
+// keep those two semantics distinct.
+function formatUserCell(userId: string | null): string {
+  if (userId === null) return '-'
+  return `${userId.slice(0, 8)}…`
+}
+
 function renderStageRows(snap: StatusSnapshot, now: number): string {
   return snap.stages
     .map((s) => {
       const stage = s.stage.padEnd(28)
       const status = s.status.padEnd(10)
-      const user = (s.userId ?? '-').padEnd(38)
+      const user = formatUserCell(s.userId).padEnd(10)
       const cost = `$${s.costUsd.toFixed(4)}`.padEnd(10)
       const dur = durationCell(s, now)
       return `${stage} ${status} ${user} ${cost} ${dur}`
