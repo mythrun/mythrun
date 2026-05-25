@@ -571,17 +571,25 @@ export function streamObject<T>(
   const wrappedObject: Promise<T> = sdkResult.object.then(
     (val) => val as T,
     async (err: unknown) => {
-      if (!(err instanceof LlmStructuredOutputError)) {
-        throw err
+      // myth-2lmc: the Vercel AI SDK throws `AI_NoObjectGeneratedError`
+      // when the streamed JSON fails the post-stream Zod check. That
+      // error class is in the `ai` package and isn't an instance of our
+      // LlmStructuredOutputError, so without mapping the repair chain
+      // would never fire and every stage-4 Zod miss became a permanent
+      // stage failure. Mirror generateObject's pattern: route through
+      // mapToMythrunError first, then check.
+      const mapped = err instanceof LlmStructuredOutputError ? err : mapToMythrunError(err)
+      if (!(mapped instanceof LlmStructuredOutputError)) {
+        throw mapped
       }
-      const attempt = await attemptRepair<T>(err, ctx)
+      const attempt = await attemptRepair<T>(mapped, ctx)
       if (attempt.result !== undefined) {
         logRepair(ctx, attempt, 'info')
         return attempt.result.output
       }
       logRepair(ctx, attempt, 'warn')
-      attachDiagnostic(err, buildDiagnostic(ctx, attempt))
-      throw err
+      attachDiagnostic(mapped, buildDiagnostic(ctx, attempt))
+      throw mapped
     },
   )
 
