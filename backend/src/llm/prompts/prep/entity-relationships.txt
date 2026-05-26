@@ -1,11 +1,10 @@
-{# Stage 4 (entity_relationships) — MYT-52 design §3.3.
-   The worker renders the entityInventory placeholder below with the full
-   entity inventory (UUID + name + kind + brief prose) before the LLM
-   call. The LLM emits relationships referencing entities by their UUID
-   from the supplied inventory. Hallucinated UUIDs are silently dropped
-   at INSERT time. #}
+{# Stage 4 (entity_relationships) — myth-2ob3 name-based revision.
+   The worker renders the entityInventory placeholder with each entity's
+   normalized name, kind, and brief prose. The LLM emits relationships
+   referencing entities by their EXACT name; the server resolves names
+   to UUIDs before INSERT. Unresolved names are dropped with a WARN. #}
 
-You are formalizing the structured relationships between entities in a freshly-generated D&D 5e world. Stages 2 and 3 produced regions, factions, locations, and NPCs along with prose that often describes how those entities relate. Your job is to extract those relationships into a strict structured form so downstream systems can reason about them mechanically.
+You are formalizing the structured relationships between entities in a freshly-generated D&D 5e world. Stages 2 and 3 produced regions, factions, locations, and NPCs along with prose that often describes how those entities relate. Your job is to extract those relationships into structured form so downstream systems can reason about them mechanically.
 
 ## World Vocabulary
 
@@ -20,68 +19,57 @@ You are formalizing the structured relationships between entities in a freshly-g
 
 ## Entity Inventory
 
-Each entity below is identified by its **UUID** — you MUST reference entities by their UUID exactly as listed. Do not invent UUIDs. Do not paraphrase, partial-match, or shorten them. A relationship that references a UUID not in this list will be silently dropped from the world.
+Each entity below is identified by its **name** — the exact string you must echo back when referencing this entity. Case-sensitive. Do not paraphrase, do not abbreviate, do not add articles the name didn't have. The system will silently drop any relationship that references a name not in this list.
 
 {{entityInventory}}
 
 ## Your Task
 
-Produce a JSON object with three arrays:
+Produce a JSON object with three arrays, in this order:
 
-1. **`relationships`** — between 5 and 80 entries. Each entry has:
-   - **`from`** — the source entity's UUID from the inventory above, OR a placeholder ID for an entity declared in `new_entity_declarations` below.
-   - **`to`** — the target entity's UUID from the inventory above, OR a placeholder ID for an entity declared in `new_entity_declarations` below.
-   - **`relationship`** — exactly one of the closed set below. If a connection doesn't fit any of these labels cleanly, map it to the closest fit or skip it; do NOT invent new labels.
-   - **`description`** — 10–600 characters of free text describing the relationship. Concrete, specific, grounded in the prose above.
+1. **`new_entity_declarations`** — up to 15 entries (may be empty). For any entity named in the prose above that is NOT in the inventory, declare it here so the system knows to create it. Use the same name spelling you'll use when referencing the entity in `relationships` below. Each declaration: `{ "name": "<exact name>", "entity_type": "faction" | "location" | "npc" }`.
 
-   Closed set of `relationship` values:
-   `serves`, `opposed_to`, `allied_with`, `rival_of`, `controls`, `family_member`, `mentors`, `employed_by`, `located_in`, `leads`, `member_of`, `rules`, `former_servant_of`, `pursues`, `protects`, `betrayed_by`.
+2. **`relationships`** — between 5 and 80 entries. Each entry:
+   - **`from_name`** — the source entity's name, exactly as listed in the inventory (or in `new_entity_declarations`).
+   - **`to_name`** — the target entity's name, same constraints.
+   - **`relationship`** — a short verb or verb-phrase predicate. Typically 1–3 words, snake_case preferred, ≤30 characters. Examples: `allied_with`, `pursues`, `former_servant_of`, `courted_by`, `professional_counterparty_of`, `mentors`, `betrayed_by`, `serves`, `member_of`, `leads`, `controls`. Do NOT write a full sentence here — sentence-level texture goes in `description`.
+   - **`description`** — 10–600 characters of free text describing the relationship. Concrete, specific, grounded in the prose above. Do not restate the `relationship` predicate; expand on it. If the relationship is contested, asymmetric, or has nuance the verb can't capture, this is where that texture lives.
 
-2. **`hierarchy_stragglers`** — up to 20 entries (may be empty). Each entry has `parent_entity_id` and `child_entity_id` (both UUIDs from the inventory). Use this ONLY for parent-child location containment that stage 3 missed — for example, a settlement that should be inside a region but wasn't linked. Do NOT use this for ordinary relationships; those go in `relationships`.
-
-3. **`new_entity_declarations`** — up to 15 entries (may be empty). Use this when the prose above names a faction, location, or NPC that is structurally important but does NOT appear in the inventory. See the next section for the mechanism.
+3. **`hierarchy_stragglers`** — up to 20 entries (may be empty). Each entry: `{ "parent_name": "<exact name>", "child_name": "<exact name>" }`. Use this ONLY for parent-child location containment that stage 3 missed — for example, a settlement that should be inside a region but wasn't linked. Do NOT use this for ordinary relationships; those go in `relationships`.
 
 ## Declaring missing entities (phantom references)
 
-Read the prose carefully. When it names a faction, location, or NPC that is NOT in the inventory above — call this a "phantom reference" — you MUST declare it here rather than skip the relationship. The system will create the real entity in a subsequent step.
+When the prose names a faction, location, or NPC that is NOT in the inventory above — call this a "phantom reference" — you MUST declare it in `new_entity_declarations` rather than skip the relationship. The system will create the real entity in a subsequent step.
 
-Examples of phantom references you should declare:
-- A region's prose names a rival hunting band that has no entity row.
-- A faction's prose names an institution it answers to that has no entity row.
-- A location's prose names a parent realm or a sister settlement that has no entity row.
+Worked example. The inventory contains "The Long Vigil" but the prose mentions "The Ironjaw" contesting territory with it — and "The Ironjaw" is not in the inventory. The correct output is:
 
-To declare a phantom:
-1. Add an entry to `new_entity_declarations` with a placeholder ID of the form `new-001`, `new-002`, etc., the entity's intended name (as named in the prose), and its type (`faction`, `location`, or `npc`).
-2. Use that placeholder ID in `relationships` for any relationship that points at the phantom.
-
-Worked example. If the inventory contains The Long Vigil (UUID `aaaa-...`) and the prose says The Long Vigil contests territory with the Ironjaw — but no Ironjaw entity exists in the inventory — the correct output is:
-
+```
 {
+  "new_entity_declarations": [
+    { "name": "The Ironjaw", "entity_type": "faction" }
+  ],
   "relationships": [
     {
-      "from": "aaaa-...",
-      "to": "new-001",
+      "from_name": "The Long Vigil",
+      "to_name": "The Ironjaw",
       "relationship": "rival_of",
       "description": "The Long Vigil and the Ironjaw contest territory in the Bone Reach."
     }
   ],
-  "hierarchy_stragglers": [],
-  "new_entity_declarations": [
-    { "placeholder_id": "new-001", "name": "The Ironjaw", "entity_type": "faction" }
-  ]
+  "hierarchy_stragglers": []
 }
+```
 
 Rules:
 - Declare a phantom ONLY when the entity is named explicitly in prose AND is needed as a relationship endpoint. Don't invent entities to pad the world.
-- Every placeholder ID used in `relationships.from` or `relationships.to` MUST have a matching `new_entity_declarations` entry. Orphan placeholders are silently dropped.
-- Pick the simplest placeholder IDs in order: `new-001`, `new-002`, etc. Don't skip numbers.
+- Every name used in `relationships.from_name` or `relationships.to_name` MUST either appear in the inventory OR have a matching `new_entity_declarations` entry. Names that match neither are silently dropped.
+- If your prose references an entity that's already in the inventory (even loosely), DO NOT declare a phantom for it — use the inventory entry. The system prefers inventory matches over declarations on name collision.
 
 ## Guidance
 
-- Read the prose carefully. Many relationships are implicit (rivalries, vassalages, employment, family ties, geographic containment). Extract the implicit ones along with the explicit ones.
-- Favor specific connections (this NPC betrayed this faction) over generic ones (this NPC is connected to politics). Generic edges are not useful downstream.
-- Emit between 5 and 80 relationships. Quality over quantity, but a typical world produces 10–30.
-- You are free to emit multiple relationships between the same pair of entities if they hold multiple distinct relations (e.g. `allied_with` AND `family_member`).
-- Do not narrate. Each `description` should read like a structured note, not a story paragraph.
+- Surface relationships the prose makes explicit. Don't invent dynamics the world doesn't describe.
+- It's fine for two entities to have multiple distinct relationships (e.g., `allied_with` AND `family_member`); emit one row per logical relationship.
+- The `relationship` predicate should be one the world's setting actually supports. Don't reach for generic categories when a specific one fits.
+- Description should add information the predicate doesn't carry: who initiated, who benefits, what tension exists, what the relationship's history is.
 
-Respond with ONLY the JSON object. No markdown fences, no commentary.
+Emit ONLY the JSON object. No preamble, no commentary, no markdown fences.
