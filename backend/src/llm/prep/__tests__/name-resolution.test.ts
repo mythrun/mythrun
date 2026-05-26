@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { normalizeName } from '../name-resolution.js'
 import { buildResolutionContext } from '../name-resolution.js'
+import { resolveRelationship } from '../name-resolution.js'
 import type { WorldInventory } from '../world-dump.js'
 
 describe('normalizeName', () => {
@@ -82,5 +83,63 @@ describe('buildResolutionContext', () => {
     expect(
       ctx.relIdByTriple.get('Mother Ehren')?.get('The Drowned Quarter')?.get('leads'),
     ).toEqual(['rel-1'])
+  })
+})
+
+const decls = new Map<string, { synthId: string; entityType: string }>([
+  ['The Whisper Council', { synthId: 'new-001', entityType: 'faction' }],
+])
+
+describe('resolveRelationship', () => {
+  it('resolves both endpoints when both names are in inventory', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'Mother Ehren', to_name: 'The Drowned Quarter',
+      relationship: 'leads', description: 'd',
+    }, decls)
+    expect(r.kind).toBe('resolved')
+    if (r.kind === 'resolved') {
+      expect(r.sourceEntityId).toBe('ent-1')
+      expect(r.targetEntityId).toBe('ent-2')
+      expect(r.relationshipType).toBe('leads')
+    }
+  })
+
+  it('returns phantom_target when source is real and target is a declaration', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'Mother Ehren', to_name: 'The Whisper Council',
+      relationship: 'pursues', description: 'd',
+    }, decls)
+    expect(r.kind).toBe('phantom_target')
+  })
+
+  it('drops with unknown_source when source name is not in inventory or declarations', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'Nobody', to_name: 'The Drowned Quarter',
+      relationship: 'leads', description: 'd',
+    }, decls)
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('unknown_source')
+  })
+
+  it('drops with ambiguous_source when source name has multiple inventory matches', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'Pell', to_name: 'The Drowned Quarter',
+      relationship: 'leads', description: 'd',
+    }, decls)
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_source')
+  })
+
+  it('normalizes whitespace before lookup', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: '  Mother  Ehren  ', to_name: 'The Drowned Quarter',
+      relationship: 'leads', description: 'd',
+    }, decls)
+    expect(r.kind).toBe('resolved')
   })
 })

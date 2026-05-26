@@ -93,3 +93,136 @@ export function buildResolutionContext(inv: WorldInventory): NameResolutionConte
 
   return { entityIdByName, ambiguousEntityNames, factIdByPair, relIdByTriple }
 }
+
+export interface ResolvedRelationship {
+  readonly kind: 'resolved'
+  readonly sourceEntityId: string
+  readonly targetEntityId: string
+  readonly relationshipType: string
+  readonly description: string
+}
+export interface PhantomTarget {
+  readonly kind: 'phantom_target'
+  readonly sourceEntityId: string
+  readonly phantomName: string
+  readonly synthId: string
+  readonly relationshipType: string
+  readonly description: string
+}
+export interface PhantomSource {
+  readonly kind: 'phantom_source'
+  readonly phantomName: string
+  readonly synthId: string
+  readonly targetEntityId: string
+  readonly relationshipType: string
+  readonly description: string
+}
+export interface PhantomBoth {
+  readonly kind: 'phantom_both'
+  readonly sourceName: string
+  readonly sourceSynthId: string
+  readonly targetName: string
+  readonly targetSynthId: string
+  readonly relationshipType: string
+  readonly description: string
+}
+export interface DroppedRelationship {
+  readonly kind: 'dropped'
+  readonly reason:
+    | 'unknown_source'
+    | 'unknown_target'
+    | 'unknown_both'
+    | 'ambiguous_source'
+    | 'ambiguous_target'
+}
+export type RelationshipResolution =
+  | ResolvedRelationship
+  | PhantomTarget
+  | PhantomSource
+  | PhantomBoth
+  | DroppedRelationship
+
+export interface EmittedRelationship {
+  readonly from_name: string
+  readonly to_name: string
+  readonly relationship: string
+  readonly description: string
+}
+
+type DeclarationsMap = ReadonlyMap<string, { readonly synthId: string; readonly entityType: string }>
+
+function lookupEndpoint(
+  ctx: NameResolutionContext,
+  rawName: string,
+  decls: DeclarationsMap,
+):
+  | { kind: 'real'; id: string }
+  | { kind: 'phantom'; synthId: string }
+  | { kind: 'unknown' }
+  | { kind: 'ambiguous' } {
+  const n = normalizeName(rawName)
+  if (ctx.ambiguousEntityNames.has(n)) return { kind: 'ambiguous' }
+  const real = ctx.entityIdByName.get(n)
+  if (real !== undefined) return { kind: 'real', id: real }
+  const phantom = decls.get(n)
+  if (phantom !== undefined) return { kind: 'phantom', synthId: phantom.synthId }
+  return { kind: 'unknown' }
+}
+
+export function resolveRelationship(
+  ctx: NameResolutionContext,
+  emitted: EmittedRelationship,
+  declarations: DeclarationsMap,
+): RelationshipResolution {
+  const from = lookupEndpoint(ctx, emitted.from_name, declarations)
+  const to = lookupEndpoint(ctx, emitted.to_name, declarations)
+
+  if (from.kind === 'ambiguous') return { kind: 'dropped', reason: 'ambiguous_source' }
+  if (to.kind === 'ambiguous') return { kind: 'dropped', reason: 'ambiguous_target' }
+
+  if (from.kind === 'real' && to.kind === 'real') {
+    return {
+      kind: 'resolved',
+      sourceEntityId: from.id,
+      targetEntityId: to.id,
+      relationshipType: emitted.relationship,
+      description: emitted.description,
+    }
+  }
+  if (from.kind === 'real' && to.kind === 'phantom') {
+    return {
+      kind: 'phantom_target',
+      sourceEntityId: from.id,
+      phantomName: normalizeName(emitted.to_name),
+      synthId: to.synthId,
+      relationshipType: emitted.relationship,
+      description: emitted.description,
+    }
+  }
+  if (from.kind === 'phantom' && to.kind === 'real') {
+    return {
+      kind: 'phantom_source',
+      phantomName: normalizeName(emitted.from_name),
+      synthId: from.synthId,
+      targetEntityId: to.id,
+      relationshipType: emitted.relationship,
+      description: emitted.description,
+    }
+  }
+  if (from.kind === 'phantom' && to.kind === 'phantom') {
+    return {
+      kind: 'phantom_both',
+      sourceName: normalizeName(emitted.from_name),
+      sourceSynthId: from.synthId,
+      targetName: normalizeName(emitted.to_name),
+      targetSynthId: to.synthId,
+      relationshipType: emitted.relationship,
+      description: emitted.description,
+    }
+  }
+  if (from.kind === 'unknown' && to.kind === 'unknown') {
+    return { kind: 'dropped', reason: 'unknown_both' }
+  }
+  if (from.kind === 'unknown') return { kind: 'dropped', reason: 'unknown_source' }
+  return { kind: 'dropped', reason: 'unknown_target' }
+}
