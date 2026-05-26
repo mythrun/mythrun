@@ -50,6 +50,9 @@ vi.mock('../../../../repo/relationships.js', () => ({
           rows.map((_r, i) => `rel-${String(i)}`),
       ),
     deleteByWorld: vi.fn().mockResolvedValue(undefined),
+    // myth-2ob3: loadWorldInventory (used by stage 4 to build the resolver
+    // context) calls relationships.listByWorld. Default to no prior rels.
+    listByWorld: vi.fn().mockResolvedValue([]),
   },
 }))
 
@@ -139,17 +142,16 @@ const INVENTORY = [
 ]
 
 interface TreeRelationship {
-  readonly from: string
-  readonly to: string
+  readonly from_name: string
+  readonly to_name: string
   readonly relationship: string
   readonly description: string
 }
 interface TreeStraggler {
-  readonly parent_entity_id: string
-  readonly child_entity_id: string
+  readonly parent_name: string
+  readonly child_name: string
 }
 interface TreeDeclaration {
-  readonly placeholder_id: string
   readonly name: string
   readonly entity_type: 'faction' | 'location' | 'npc'
 }
@@ -159,14 +161,24 @@ interface RelationshipsTree {
   readonly new_entity_declarations: readonly TreeDeclaration[]
 }
 
+// myth-2ob3: name-based fixtures. Names match the INVENTORY entries above;
+// the resolver maps them to UUIDs at persist time.
+const NAME_E1 = 'The Iron Coast'
+const NAME_E2 = 'Silver Brotherhood'
+const NAME_E3 = 'Captain Aerion'
+const NAME_E4 = 'Saltwatch Keep'
+const NAME_E5 = 'Stormhaven'
+const NAME_E6 = 'Magister Vance'
+const NAME_GHOST = 'Ghostly Apparition' // unresolvable — not in inventory
+
 function makeValidTree(): RelationshipsTree {
   return {
     relationships: [
-      { from: E1, to: E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
-      { from: E2, to: E3, relationship: 'leads', description: 'Aerion commands the brotherhood' },
-      { from: E3, to: E4, relationship: 'protects', description: 'Aerion holds the keep' },
-      { from: E4, to: E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast' },
-      { from: E5, to: E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
+      { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
+      { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'Aerion commands the brotherhood' },
+      { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'Aerion holds the keep' },
+      { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast' },
+      { from_name: NAME_E5, to_name: NAME_E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
     ],
     hierarchy_stragglers: [],
     new_entity_declarations: [],
@@ -262,20 +274,20 @@ describe('runEntityRelationshipsStage', () => {
     expect(edgeEvents).toHaveLength(5)
   })
 
-  it('drops hallucinated UUIDs (not in inventory) without throwing — WARN, INSERT continues with valid rows', async () => {
+  it('drops hallucinated names (not in inventory) without throwing — WARN, INSERT continues with valid rows', async () => {
     const tree = {
       relationships: [
         // Valid
-        { from: E1, to: E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
         // Hallucinated source — drop
-        { from: GHOST, to: E2, relationship: 'serves', description: 'Phantom serves brotherhood' },
+        { from_name: NAME_GHOST, to_name: NAME_E2, relationship: 'serves', description: 'Phantom serves brotherhood' },
         // Hallucinated target — drop
-        { from: E3, to: GHOST, relationship: 'pursues', description: 'Aerion pursues a ghost' },
+        { from_name: NAME_E3, to_name: NAME_GHOST, relationship: 'pursues', description: 'Aerion pursues a ghost' },
         // Valid
-        { from: E2, to: E3, relationship: 'leads', description: 'Aerion commands the brotherhood' },
-        { from: E3, to: E4, relationship: 'protects', description: 'Aerion holds the keep' },
-        { from: E4, to: E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast' },
-        { from: E5, to: E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'Aerion commands the brotherhood' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'Aerion holds the keep' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast' },
+        { from_name: NAME_E5, to_name: NAME_E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -302,7 +314,7 @@ describe('runEntityRelationshipsStage', () => {
       readonly targetEntityId: string
     }[]
     expect(insertedRows).toHaveLength(5)
-    // No row references GHOST
+    // No row references GHOST UUID
     for (const row of insertedRows) {
       expect(row.sourceEntityId).not.toBe(GHOST)
       expect(row.targetEntityId).not.toBe(GHOST)
@@ -314,11 +326,11 @@ describe('runEntityRelationshipsStage', () => {
       relationships: makeValidTree().relationships,
       hierarchy_stragglers: [
         // Valid (E4 is in inventory, E1 is in inventory, E4 not yet in entity_hierarchy)
-        { parent_entity_id: E1, child_entity_id: E4 },
+        { parent_name: NAME_E1, child_name: NAME_E4 },
         // Drop: child already has a parent (stage 3 wins)
-        { parent_entity_id: E1, child_entity_id: E5 },
-        // Drop: parent UUID not in inventory
-        { parent_entity_id: GHOST, child_entity_id: E6 },
+        { parent_name: NAME_E1, child_name: NAME_E5 },
+        // Drop: parent name not in inventory
+        { parent_name: NAME_GHOST, child_name: NAME_E6 },
       ],
       new_entity_declarations: [],
     }
@@ -328,6 +340,8 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
+    // myth-2ob3: the existing-child-id probe queries with entity UUIDs
+    // (resolved from names by the partitioner), so the mock returns E5.
     const client = makeClient([{ child_entity_id: E5 }])
 
     await runEntityRelationshipsStage(client as never, {
@@ -337,7 +351,7 @@ describe('runEntityRelationshipsStage', () => {
       keyPrefix: 'test:',
     })
 
-    // Only one hierarchy insert: E1→E4
+    // Only one hierarchy insert: E1→E4 (names resolved to UUIDs)
     expect(entityHierarchy.insert).toHaveBeenCalledTimes(1)
     expect(entityHierarchy.insert).toHaveBeenCalledWith(expect.anything(), {
       parentEntityId: E1,
@@ -494,20 +508,22 @@ describe('runEntityRelationshipsStage', () => {
     expect(prompt).toContain('Aelmoor')
     expect(prompt).toContain('misted, melancholy')
     expect(prompt).toContain('The Iron Coast')
-    expect(prompt).toContain(E1)
+    // myth-2ob3: the LLM sees NAMES, not UUIDs. The rendered inventory
+    // line is "- <name>  [<entityType>]" — no UUID.
+    expect(prompt).not.toContain(E1)
     expect(prompt).toContain('Silver Brotherhood')
     expect(prompt).not.toContain('{{entityInventory}}')
     expect(prompt).not.toContain('{{worldName}}')
   })
 
   it('all hierarchy stragglers fail inventory filter — early-return, no SQL probe + no inserts', async () => {
-    // Every straggler references at least one unknown UUID — the filter
-    // strips them all and the persister skips the existing-row probe.
+    // Every straggler references at least one unknown name — the resolver
+    // drops them all and the persister skips the existing-row probe.
     const tree = {
       relationships: makeValidTree().relationships,
       hierarchy_stragglers: [
-        { parent_entity_id: GHOST, child_entity_id: E1 },
-        { parent_entity_id: E1, child_entity_id: GHOST },
+        { parent_name: NAME_GHOST, child_name: NAME_E1 },
+        { parent_name: NAME_E1, child_name: NAME_GHOST },
       ],
       new_entity_declarations: [],
     }
@@ -567,15 +583,15 @@ describe('runEntityRelationshipsStage', () => {
     const padded = {
       relationships: [
         // known → known (the only edge that should surface as finalized)
-        { from: E1, to: E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
+        { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule' },
         // known → secret
-        { from: E1, to: E3, relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
-        // secret → secret
-        { from: E3, to: E3, relationship: 'allied_with', description: 'Cabal members protect each other' },
+        { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
+        // secret → secret (self-loop on same entity name)
+        { from_name: 'Hidden Cabal', to_name: 'Hidden Cabal', relationship: 'allied_with', description: 'Cabal members protect each other' },
         // secret → known
-        { from: E3, to: E1, relationship: 'pursues', description: 'Cabal watches the iron coast' },
+        { from_name: 'Hidden Cabal', to_name: 'Iron Coast', relationship: 'pursues', description: 'Cabal watches the iron coast' },
         // secret → known
-        { from: E3, to: E2, relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
+        { from_name: 'Hidden Cabal', to_name: 'Brotherhood', relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -657,11 +673,11 @@ describe('runEntityRelationshipsStage', () => {
     ])
     const tree = {
       relationships: [
-        { from: E1, to: E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
-        { from: E1, to: E3, relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
-        { from: E3, to: E3, relationship: 'allied_with', description: 'Cabal members protect each other' },
-        { from: E3, to: E1, relationship: 'pursues', description: 'Cabal watches the iron coast' },
-        { from: E3, to: E2, relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
+        { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule' },
+        { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
+        { from_name: 'Hidden Cabal', to_name: 'Hidden Cabal', relationship: 'allied_with', description: 'Cabal members protect each other' },
+        { from_name: 'Hidden Cabal', to_name: 'Iron Coast', relationship: 'pursues', description: 'Cabal watches the iron coast' },
+        { from_name: 'Hidden Cabal', to_name: 'Brotherhood', relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -693,17 +709,21 @@ describe('runEntityRelationshipsStage', () => {
   // `relationships` table; placeholder-touching relationships + declarations
   // are written to `worlds.entity_consolidation_pending` for stage 4b.
   it('routes placeholder-endpoint relationships to pending state column', async () => {
+    // myth-2ob3: the streaming extractor mints synthIds (`new-NNN`) for
+    // each declaration as it streams. With one declaration, the synthId is
+    // `new-001`. The natural streaming-emit order pulls declarations into
+    // pendingDeclarations BEFORE relationships resolve.
     const tree = {
+      // declarations FIRST so the streaming extractor populates the
+      // pendingDeclarations map before resolving relationship items.
+      new_entity_declarations: [{ name: 'The Ironjaw', entity_type: 'faction' as const }],
       relationships: [
         // Real → real (persists into relationships table)
-        { from: E1, to: E2, relationship: 'rival_of', description: 'Iron Coast rivals the brotherhood' },
-        // Real → placeholder (routed to pending state)
-        { from: E2, to: 'new-001', relationship: 'opposed_to', description: 'Brotherhood opposes phantom faction' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'rival_of', description: 'Iron Coast rivals the brotherhood' },
+        // Real → declared-phantom (routed to pending state via synthId)
+        { from_name: NAME_E2, to_name: 'The Ironjaw', relationship: 'opposed_to', description: 'Brotherhood opposes phantom faction' },
       ],
       hierarchy_stragglers: [],
-      new_entity_declarations: [
-        { placeholder_id: 'new-001', name: 'The Ironjaw', entity_type: 'faction' as const },
-      ],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(tree),
@@ -761,24 +781,22 @@ describe('runEntityRelationshipsStage', () => {
     })
   })
 
-  it('drops hallucinated-UUID→placeholder relationships (unknown from, placeholder to)', async () => {
-    // myth-pfke P3.3: covers the from-side hallucination arm of
-    // partitionWithPlaceholders — the `to` is a declared placeholder, the
-    // `from` is a UUID NOT in the inventory. Must drop, not throw.
+  it('drops hallucinated-name→placeholder relationships (unknown from, placeholder to)', async () => {
+    // myth-2ob3: covers the from-side unknown arm — the `to` is a declared
+    // phantom name, the `from` is a name NOT in the inventory. Must drop,
+    // not throw.
     const tree = {
+      new_entity_declarations: [{ name: 'The Ironjaw', entity_type: 'faction' as const }],
       relationships: [
         // Pad with 4 valid real→real rows so the schema's min(5) holds.
-        { from: E1, to: E2, relationship: 'controls', description: 'a' },
-        { from: E2, to: E3, relationship: 'leads', description: 'b' },
-        { from: E3, to: E4, relationship: 'protects', description: 'c' },
-        { from: E4, to: E1, relationship: 'located_in', description: 'd' },
-        // The drop target: hallucinated UUID from, placeholder to.
-        { from: GHOST, to: 'new-001', relationship: 'pursues', description: 'ghost→phantom' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd' },
+        // The drop target: hallucinated name from, phantom to.
+        { from_name: NAME_GHOST, to_name: 'The Ironjaw', relationship: 'pursues', description: 'ghost→phantom' },
       ],
       hierarchy_stragglers: [],
-      new_entity_declarations: [
-        { placeholder_id: 'new-001', name: 'The Ironjaw', entity_type: 'faction' as const },
-      ],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(tree),
@@ -809,24 +827,22 @@ describe('runEntityRelationshipsStage', () => {
     expect(pendingJson.relationships).toHaveLength(0)
   })
 
-  it('drops placeholder→hallucinated-UUID relationships (placeholder from, unknown to)', async () => {
-    // myth-pfke P3.3: covers the to-side hallucination arm of
-    // partitionWithPlaceholders — the `from` is a declared placeholder, the
-    // `to` is a UUID NOT in the inventory. Must drop, not throw.
+  it('drops placeholder→hallucinated-name relationships (placeholder from, unknown to)', async () => {
+    // myth-2ob3: covers the to-side unknown arm — the `from` is a declared
+    // phantom name, the `to` is a name NOT in the inventory. Must drop,
+    // not throw.
     const tree = {
+      new_entity_declarations: [{ name: 'The Ironjaw', entity_type: 'faction' as const }],
       relationships: [
         // Pad with 4 valid real→real rows so the schema's min(5) holds.
-        { from: E1, to: E2, relationship: 'controls', description: 'a' },
-        { from: E2, to: E3, relationship: 'leads', description: 'b' },
-        { from: E3, to: E4, relationship: 'protects', description: 'c' },
-        { from: E4, to: E1, relationship: 'located_in', description: 'd' },
-        // The drop target: placeholder from, hallucinated UUID to.
-        { from: 'new-001', to: GHOST, relationship: 'pursues', description: 'phantom→ghost' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd' },
+        // The drop target: phantom from, hallucinated name to.
+        { from_name: 'The Ironjaw', to_name: NAME_GHOST, relationship: 'pursues', description: 'phantom→ghost' },
       ],
       hierarchy_stragglers: [],
-      new_entity_declarations: [
-        { placeholder_id: 'new-001', name: 'The Ironjaw', entity_type: 'faction' as const },
-      ],
     }
     vi.mocked(ai.streamObject).mockReturnValueOnce({
       partialObjectStream: makeStream(tree),
@@ -854,20 +870,19 @@ describe('runEntityRelationshipsStage', () => {
     }
   })
 
-  it('drops placeholder-endpoint relationships with no matching declaration (orphan placeholder WARN)', async () => {
-    // Covers the droppedOrphanPlaceholderCount WARN log arm (lines 346-355).
-    // The LLM emits a relationship referencing `new-999` but provides no
-    // matching entry in `new_entity_declarations`. The row must drop without
-    // throwing and the WARN must fire (we observe state-effects: the
-    // placeholder row never reaches the pending-state UPDATE).
+  it('drops relationship rows with unresolvable name endpoints (unknown-name WARN)', async () => {
+    // myth-2ob3: covers the unknown-name drop arm — the LLM emits a
+    // relationship referencing a name that's neither in inventory nor in
+    // new_entity_declarations. The row must drop without throwing; the
+    // pending-state UPDATE still fires but no placeholder row appears.
     const tree = {
       relationships: [
-        { from: E1, to: E2, relationship: 'controls', description: 'a' },
-        { from: E2, to: E3, relationship: 'leads', description: 'b' },
-        { from: E3, to: E4, relationship: 'protects', description: 'c' },
-        { from: E4, to: E1, relationship: 'located_in', description: 'd' },
-        // Orphan placeholder — no declaration for new-999.
-        { from: E1, to: 'new-999', relationship: 'opposed_to', description: 'phantom orphan' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd' },
+        // Unknown name on the to side — no inventory match, no declaration.
+        { from_name: NAME_E1, to_name: 'Some Unknown Entity', relationship: 'opposed_to', description: 'phantom orphan' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -912,7 +927,7 @@ describe('runEntityRelationshipsStage', () => {
     // Stage 4 + 4b are a single retry unit (design §D9 + P3.4).
     const tree = {
       relationships: [
-        { from: E1, to: E2, relationship: 'rival_of', description: 'Fresh rel' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'rival_of', description: 'Fresh rel' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],

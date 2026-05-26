@@ -37,18 +37,25 @@ import { SONNET } from '../../models.js'
 import { logger } from '../../logger.js'
 import {
   EntityRelationshipsSchema,
+  declarationItemSchema,
   relationshipItemSchema,
   type EntityRelationshipsOutput,
 } from '../../schemas/entity-relationships.js'
 import { runStreamingStage } from '../streaming-extractor.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
-import { entities } from '../../../repo/entities.js'
 import { relationships } from '../../../repo/relationships.js'
 import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
 import type { AccessLevel } from '../../../repo/facts.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
+import { loadWorldInventory } from '../world-dump.js'
+import {
+  buildResolutionContext,
+  resolveRelationship,
+  resolveProseTarget,
+  type NameResolutionContext,
+} from '../name-resolution.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/entity-relationships.txt'),
@@ -87,12 +94,14 @@ interface InventoryEntry {
   readonly id: string
   readonly entityType: string
   readonly name: string
+  readonly accessLevel: AccessLevel
 }
 
 function renderInventory(inv: readonly InventoryEntry[]): string {
-  // Compact reference block: one entity per line, "UUID  [kind]  Name".
-  // Kept terse so the prompt token budget stays tight.
-  return inv.map((e) => `- ${e.id}  [${e.entityType}]  ${e.name}`).join('\n')
+  // Name-based inventory: one entity per line. The LLM uses these names
+  // verbatim in from_name/to_name fields; the server resolves names →
+  // UUIDs at persist time.
+  return inv.map((e) => `- ${e.name}  [${e.entityType}]`).join('\n')
 }
 
 function buildPrompt(args: EntityRelationshipsArgs, inventory: readonly InventoryEntry[]): string {
@@ -138,7 +147,7 @@ interface ValidDeclaration {
   readonly entityType: 'faction' | 'location' | 'npc'
 }
 
-interface PartitionedWithPlaceholders {
+interface PartitionedByNames {
   readonly realRelationships: AcceptedRow[]
   readonly placeholderRelationships: PlaceholderRelationshipRow[]
   readonly validDeclarations: ValidDeclaration[]
@@ -146,65 +155,83 @@ interface PartitionedWithPlaceholders {
   readonly droppedOrphanPlaceholderCount: number
 }
 
-function partitionWithPlaceholders(
+function partitionByNames(
   tree: EntityRelationshipsOutput,
-  entityIds: ReadonlySet<string>,
-): PartitionedWithPlaceholders {
-  const declarationMap = new Map(
-    tree.new_entity_declarations.map((d) => [d.placeholder_id, d]),
-  )
+  ctx: NameResolutionContext,
+  pendingDeclarations: ReadonlyMap<string, { synthId: string; entityType: string }>,
+): PartitionedByNames {
   const realRelationships: AcceptedRow[] = []
   const placeholderRelationships: PlaceholderRelationshipRow[] = []
   let droppedHallucinatedCount = 0
   let droppedOrphanPlaceholderCount = 0
 
   for (const [i, r] of tree.relationships.entries()) {
-    const fromIsPlaceholder = r.from.startsWith('new-')
-    const toIsPlaceholder = r.to.startsWith('new-')
-    if (fromIsPlaceholder || toIsPlaceholder) {
-      // Orphan check: every placeholder endpoint must have a matching declaration.
-      const fromOrphan = fromIsPlaceholder && !declarationMap.has(r.from)
-      const toOrphan = toIsPlaceholder && !declarationMap.has(r.to)
-      if (fromOrphan || toOrphan) {
-        droppedOrphanPlaceholderCount += 1
-        continue
-      }
-      // If one side is a UUID, it must exist in the inventory.
-      if (!fromIsPlaceholder && !entityIds.has(r.from)) {
-        droppedHallucinatedCount += 1
-        continue
-      }
-      if (!toIsPlaceholder && !entityIds.has(r.to)) {
-        droppedHallucinatedCount += 1
-        continue
-      }
-      placeholderRelationships.push({
-        from: r.from,
-        to: r.to,
-        relationship: r.relationship,
-        description: r.description,
-      })
-      continue
+    const res = resolveRelationship(ctx, r, pendingDeclarations)
+    switch (res.kind) {
+      case 'resolved':
+        realRelationships.push({
+          sourceEntityId: res.sourceEntityId,
+          targetEntityId: res.targetEntityId,
+          relationshipType: res.relationshipType,
+          description: res.description,
+          sourceIndex: i,
+        })
+        break
+      case 'phantom_target':
+        placeholderRelationships.push({
+          from: res.sourceEntityId,
+          to: res.synthId,
+          relationship: res.relationshipType,
+          description: res.description,
+        })
+        break
+      case 'phantom_source':
+        placeholderRelationships.push({
+          from: res.synthId,
+          to: res.targetEntityId,
+          relationship: res.relationshipType,
+          description: res.description,
+        })
+        break
+      case 'phantom_both':
+        placeholderRelationships.push({
+          from: res.sourceSynthId,
+          to: res.targetSynthId,
+          relationship: res.relationshipType,
+          description: res.description,
+        })
+        break
+      case 'dropped':
+        // ambiguous_source / ambiguous_target / unknown_* — all surface as
+        // drop with reason WARN at the call-site (the run loop logs the
+        // aggregate count below).
+        if (
+          res.reason === 'unknown_source' ||
+          res.reason === 'unknown_target' ||
+          res.reason === 'unknown_both'
+        ) {
+          droppedHallucinatedCount += 1
+        } else {
+          droppedOrphanPlaceholderCount += 1
+        }
+        break
     }
-    // Both endpoints are UUIDs — preserve existing hallucination check.
-    if (!entityIds.has(r.from) || !entityIds.has(r.to)) {
-      droppedHallucinatedCount += 1
-      continue
-    }
-    realRelationships.push({
-      sourceEntityId: r.from,
-      targetEntityId: r.to,
-      relationshipType: r.relationship,
-      description: r.description,
-      sourceIndex: i,
-    })
   }
 
-  const validDeclarations: ValidDeclaration[] = tree.new_entity_declarations.map((d) => ({
-    placeholderId: d.placeholder_id,
-    name: d.name,
-    entityType: d.entity_type,
-  }))
+  // Mint validDeclarations from the pending map (which the streaming
+  // extractor populated as the LLM emitted items). Each declaration's
+  // synthId is server-side stable; downstream stage 4b reads
+  // placeholderId from the same field name.
+  const validDeclarations: ValidDeclaration[] = Array.from(pendingDeclarations.entries()).map(
+    ([name, p]) => ({
+      placeholderId: p.synthId,
+      name,
+      // Cast preserves the {'faction' | 'location' | 'npc'} narrowing — the
+      // extractor only mints synthIds for entries whose entity_type is one of
+      // those three (declarationItemSchema enforces this at Zod-validate time).
+      entityType: p.entityType as 'faction' | 'location' | 'npc',
+    }),
+  )
 
   return {
     realRelationships,
@@ -219,18 +246,41 @@ async function persistStragglers(
   client: PoolClient,
   tree: EntityRelationshipsOutput,
   worldId: string,
-  entityIds: ReadonlySet<string>,
+  ctx: NameResolutionContext,
 ): Promise<void> {
   if (tree.hierarchy_stragglers.length === 0) return
 
-  // Filter against entity inventory first.
-  const inventoryFiltered = tree.hierarchy_stragglers.filter(
-    (s) => entityIds.has(s.parent_entity_id) && entityIds.has(s.child_entity_id),
-  )
-  if (inventoryFiltered.length === 0) return
+  // Resolve parent_name + child_name to entity UUIDs. Drop rows where
+  // either endpoint doesn't resolve (unknown_entity / ambiguous_entity).
+  interface ResolvedStraggler {
+    parentEntityId: string
+    childEntityId: string
+  }
+  const resolved: ResolvedStraggler[] = []
+  for (const s of tree.hierarchy_stragglers) {
+    const parent = resolveProseTarget(ctx, { entity_name: s.parent_name })
+    const child = resolveProseTarget(ctx, { entity_name: s.child_name })
+    if (parent.kind !== 'resolved' || child.kind !== 'resolved') {
+      logger.warn(
+        {
+          stage: 'entity_relationships',
+          parent_name: s.parent_name,
+          child_name: s.child_name,
+          reason:
+            parent.kind === 'dropped'
+              ? `parent_${parent.reason}`
+              : `child_${child.kind === 'dropped' ? child.reason : 'unknown'}`,
+        },
+        'entity_relationships: hierarchy straggler dropped — name unresolvable',
+      )
+      continue
+    }
+    resolved.push({ parentEntityId: parent.entityId, childEntityId: child.entityId })
+  }
+  if (resolved.length === 0) return
 
   // Pre-filter against existing entity_hierarchy rows — stage 3 wins (design §D9).
-  const childIds = inventoryFiltered.map((s) => s.child_entity_id)
+  const childIds = resolved.map((s) => s.childEntityId)
   const existing = await client.query<{ child_entity_id: string }>(
     `SELECT child_entity_id FROM entity_hierarchy
        WHERE child_entity_id = ANY($1::uuid[])
@@ -239,13 +289,13 @@ async function persistStragglers(
   )
   const existingSet = new Set(existing.rows.map((r) => r.child_entity_id))
 
-  for (const s of inventoryFiltered) {
-    if (existingSet.has(s.child_entity_id)) {
+  for (const s of resolved) {
+    if (existingSet.has(s.childEntityId)) {
       logger.warn(
         {
           stage: 'entity_relationships',
-          parent: s.parent_entity_id,
-          child: s.child_entity_id,
+          parent: s.parentEntityId,
+          child: s.childEntityId,
           reason: 'hierarchy_collision_stage3_wins',
         },
         'entity_relationships: hierarchy straggler dropped — child already has a parent from stage 3',
@@ -253,8 +303,8 @@ async function persistStragglers(
       continue
     }
     await entityHierarchy.insert(client, {
-      parentEntityId: s.parent_entity_id,
-      childEntityId: s.child_entity_id,
+      parentEntityId: s.parentEntityId,
+      childEntityId: s.childEntityId,
     })
   }
 }
@@ -263,9 +313,14 @@ export async function runEntityRelationshipsStage(
   client: PoolClient,
   args: EntityRelationshipsArgs,
 ): Promise<StageDispatchResult> {
-  // 1. Read entity inventory — the LLM operates on real UUIDs (design §D9).
-  const inventory = await entities.listByWorld(client, args.worldId)
-  const entityIds = new Set(inventory.map((e) => e.id))
+  // 1. Load the FULL world inventory (entities + prose + facts + relationships).
+  // The full shape is needed by buildResolutionContext + by the renderer.
+  // myth-2ob3: stage 4 operates on entity NAMES (not UUIDs); the resolver
+  // maps names → UUIDs at persist time.
+  const fullInventory = await loadWorldInventory(client, args.worldId)
+  const inventory: readonly InventoryEntry[] = Array.from(fullInventory.entitiesById.values())
+  const nameResolutionCtx = buildResolutionContext(fullInventory)
+  const pendingDeclarations = new Map<string, { synthId: string; entityType: string }>()
   // myth-exac T15: endpoint-tier map for stage 4 — the streaming extractor
   // gates mid-flight `edge-added` events on whether BOTH endpoints are
   // `known`. The post-commit `finalized` events are gated by the same
@@ -310,10 +365,23 @@ export async function runEntityRelationshipsStage(
     redisRealtime: args.redisRealtime,
     keyPrefix: args.keyPrefix,
     arrays: [
+      // Declarations stream FIRST (schema field order is declarations →
+      // relationships → hierarchy). Per myth-2ob3 §5: the streaming-extractor
+      // mints `new-NNN` synthIds into pendingDeclarations as it sees
+      // declaration entries close; downstream relationship entries
+      // reference those synthIds via the resolver.
+      {
+        path: 'new_entity_declarations',
+        kind: 'declaration',
+        role: 'entity',
+        sub_schema: declarationItemSchema,
+      },
       { path: 'relationships', kind: 'edge', role: 'edge', sub_schema: relationshipItemSchema },
     ],
     bypassAccessFilter: args.bypassAccessFilter,
     endpointTierMap,
+    nameResolutionCtx,
+    pendingDeclarations,
   })
 
   // 4. The wrapper's `object` promise resolves to the validated tree (or
@@ -330,7 +398,7 @@ export async function runEntityRelationshipsStage(
   // Real→real rows persist into `relationships`; placeholder-touching rows
   // (with matching declarations) are buffered into
   // `worlds.entity_consolidation_pending` for stage 4b to materialize.
-  const partitioned = partitionWithPlaceholders(validatedTree, entityIds)
+  const partitioned = partitionByNames(validatedTree, nameResolutionCtx, pendingDeclarations)
   if (partitioned.droppedHallucinatedCount > 0) {
     logger.warn(
       {
@@ -368,7 +436,7 @@ export async function runEntityRelationshipsStage(
       description: a.description,
     })),
   )
-  await persistStragglers(client, validatedTree, args.worldId, entityIds)
+  await persistStragglers(client, validatedTree, args.worldId, nameResolutionCtx)
 
   // 6b. Persist phantom declarations + placeholder relationships to the
   // pending-state column for stage 4b to consume (myth-pfke P3.3). Always

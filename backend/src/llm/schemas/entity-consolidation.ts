@@ -3,9 +3,19 @@
 // Stage 4b (entity_consolidation) schema. Each ghost entity has the
 // same depth as stage 2-3 entities: prose (40-2400 chars), 2-12 facts,
 // access_level, optional parent_location_id for locations.
+//
+// myth-2ob3 T8/T9: placeholder_id is now SERVER-MINTED in stage 4
+// (format `new-NNN`, persisted into the worlds.entity_consolidation_pending
+// declarations array). Stage 4b's LLM echoes those IDs back when emitting
+// ghost entities, so the schema validates the same `new-NNN` shape inline
+// here (no longer re-exported from entity-relationships.ts which dropped
+// the LLM-side placeholder_id field in T5).
 
 import { z } from 'zod'
-import { placeholderIdSchema } from './entity-relationships.js'
+
+const PLACEHOLDER_ID_PATTERN = /^new-\d{3}$/
+
+const placeholderIdSchema = z.string().regex(PLACEHOLDER_ID_PATTERN)
 
 const ACCESS_LEVEL = z.enum(['known', 'discoverable', 'secret'])
 
