@@ -13,10 +13,12 @@ describe('normalizeName', () => {
 
   it('applies Unicode NFC normalization', () => {
     // 'é' as NFD (e + combining acute U+0301) vs NFC (single code point U+00E9).
-    // Constructed via escapes so the byte distinction survives source-file
-    // pipelines that would otherwise auto-normalize visually-identical literals.
-    const nfd = 'Marén'
-    const nfc = 'Marén'
+    // Use \u escapes so the on-disk bytes stay distinct even if a future tool
+    // (editor save action, prettier upgrade, copy-paste) NFC-normalizes the
+    // source file — otherwise the two literals would silently collapse to the
+    // same bytes and the inequality precondition would pass for the wrong reason.
+    const nfd = 'Mar\u0065\u0301n'
+    const nfc = 'Mar\u00e9n'
     expect(nfd).not.toBe(nfc)
     expect(normalizeName(nfd)).toBe(nfc)
   })
