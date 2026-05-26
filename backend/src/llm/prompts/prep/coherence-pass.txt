@@ -1,9 +1,8 @@
-{# Stage 7 — Coherence Pass.
-   Per MYT-52 design §3.6. Non-streaming Sonnet call. The worker assembles
-   a full world dump (entities + their prose kernel + facts + outgoing
-   relationships) and renders it into {{worldDump}}. The model emits a
-   list of patches keyed by real UUID. Auto-fix only — no `warnings` arm.
-   The model SHOULD NOT restate the full world; it should emit ONLY
+{# Stage 7 — Coherence Pass — myth-2ob3 name-based revision.
+   The worker renders the full world (entities, prose, facts, relationships)
+   into {{worldDump}}. The model emits patches identified by NAME; the
+   server resolves names to UUIDs before applying. Auto-fix only — no
+   `warnings` arm. The model SHOULD NOT restate the full world; emit ONLY
    the patches needed to repair concrete inconsistencies it sees.
 #}
 
@@ -18,7 +17,7 @@ You are an editorial reviewer auditing a freshly generated tabletop D&D 5e campa
 - **Factual contradictions** between an entity's prose kernel and one of its facts (e.g., the prose says the village burned down decades ago, but a fact says the bakery is open daily).
 - **Typos or malformed names** in entity names (only fix when you are confident the typo is unintentional — names with deliberate odd spellings are part of the setting).
 - **Stale prose** that references an entity that has since been removed or renamed elsewhere in the world.
-- **Relationship inconsistencies** — e.g., relationship description says "uncle of" but type is set to "rival_of", or both endpoints describe each other as strangers but a relationship exists.
+- **Relationship inconsistencies** — e.g., the relationship description explicitly contradicts the type+endpoints triple (says "not actually allied with X" but type is `allied_with`), or both endpoints describe each other as strangers but a relationship exists.
 - **Duplicate relationships** that say the same thing in slightly different words — delete the weaker one.
 
 ## What you should NOT do
@@ -26,40 +25,44 @@ You are an editorial reviewer auditing a freshly generated tabletop D&D 5e campa
 - Do NOT restate or "improve" prose that is internally consistent.
 - Do NOT rewrite passages for tone or pacing — only fix concrete inconsistencies.
 - Do NOT invent new entities or relationships.
-- Do NOT emit a patch if you are uncertain. Imprecise emissions waste downstream work; the eval harness or a future pass will catch what you let through.
+- Do NOT emit a patch if you are uncertain. Imprecise emissions waste downstream work.
+
+## How to identify targets in your patches
+
+Identify rows by NAME, not UUID. The world dump below renders each entity, fact, and relationship; reference them by:
+
+- **Entities** — by their `name` field (exact case-sensitive match to the world dump).
+- **Facts** — by `(entity_name, fact_topic)` — the entity that owns the fact, plus the fact's topic. If multiple facts on the same entity share a topic, you cannot uniquely identify one; skip that patch.
+- **Relationships** — by `(source_name, target_name, current_type)` — the source entity name, target entity name, and the relationship's current type as it appears in the dump.
+
+A name typo or wrong topic / wrong current_type makes the patch unresolvable and the system silently drops it. Be exact.
+
+## Important: rename ordering
+
+If you emit a `rename_entity_by_name` patch in this response, continue to use the entity's OLD name throughout the rest of your patches. The system applies all `rename_entity_by_name` patches LAST, after every other patch has resolved against the pre-rename world. This means a `fix_prose_by_name` patch for "The Drowned Quarter" (the OLD name) WILL find and update that entity even if you also emit a rename to "The Sunken District" in the same response.
+
+When you rename an entity, audit other entities' prose for references to the OLD name and emit `fix_prose_by_name` patches for each — renames without companion prose-fix patches leave the world incoherent.
 
 ## World dump
-
-Every entity is listed by its real UUID. Every fact and every relationship is also identified by UUID. Use those exact UUID strings in the patches you emit — do not abbreviate, do not paraphrase.
 
 {{worldDump}}
 
 ## Patch kinds available
 
-- `fix_fact` — UPDATE a single fact's content. Requires `factId`, `newContent`, `rationale`.
-- `fix_prose` — UPDATE a single entity's prose kernel. Requires `entityId`, `newProse`, `rationale`.
-- `fix_relationship` — UPDATE a relationship's type and/or description. Requires `relationshipId`, optional `newType`, optional `newDescription`, `rationale`.
-- `rename_entity` — UPDATE an entity's name. Requires `entityId`, `newName`, `rationale`.
-- `delete_relationship` — DELETE a relationship row. Requires `relationshipId`, `rationale`.
+All patches identify their target by name. Each rationale is a single sentence (~20–400 chars) explaining the concrete inconsistency you are correcting. The rationale is logged for audit; it is NOT shown to the player.
 
-Each rationale must be a single sentence (~20-400 characters) explaining the concrete inconsistency you are correcting. The rationale is logged for audit; it is NOT shown to the player.
+- `fix_fact_by_name` — UPDATE a single fact's content. Requires `entity_name`, `fact_topic`, `new_content`, `rationale`.
+- `fix_prose_by_name` — UPDATE a single entity's prose kernel. Requires `entity_name`, `new_prose`, `rationale`.
+- `fix_relationship_by_name` — UPDATE a relationship's type and/or description. Requires `source_name`, `target_name`, `current_type`, optional `newType` (a short verb-phrase predicate: 1–3 words, snake_case preferred, ≤30 characters; examples: `allied_with`, `pursues`, `former_servant_of`), optional `newDescription`, `rationale`.
+- `rename_entity_by_name` — UPDATE an entity's name. Requires `old_name`, `new_name`, `rationale`.
+- `delete_relationship_by_name` — DELETE a relationship row. Requires `source_name`, `target_name`, `current_type`, `rationale`.
+
+## PROSE-TIER CONSISTENCY (CRITICAL)
+
+When patching entity prose or facts, do NOT cross tier boundaries. A `known`-tier entity's prose is the public-knowledge view — what anyone in the world casually knows. Do NOT merge `discoverable` or `secret`-tier detail from neighboring entities into a `known` entity's prose, even if doing so would "improve coherence" — the tier boundary is load-bearing, and a leak via prose is a leak.
+
+If a patch needs information that lives in another entity, only use information from entities whose access_level is at or below the patched entity's tier. (Patches to `known` entities can only draw on `known` content. Patches to `discoverable` entities can draw on `known` or `discoverable`. Patches to `secret` entities can draw on anything.)
 
 ## Your task
 
 Respond with ONLY a JSON object of the shape `{ "patches": [...] }` containing at most 40 patches. If you cannot find any inconsistencies worth correcting, emit `{ "patches": [] }`. No markdown fences, no commentary.
-
-PROSE-TIER CONSISTENCY (CRITICAL):
-
-When patching entity prose or facts, do NOT cross tier boundaries. A
-`known`-tier entity's prose is the public-knowledge view — what
-anyone in the world casually knows. Do NOT merge `discoverable` or
-`secret`-tier detail from neighboring entities into a `known`
-entity's prose, even if doing so would "improve coherence" — the
-tier boundary is load-bearing, and a leak via prose is a leak.
-
-If a patch needs information that lives in another entity, only use
-information from entities whose access_level is at or below the
-patched entity's tier. (Patches to `known` entities can only draw
-on `known` content. Patches to `discoverable` entities can draw on
-`known` or `discoverable`. Patches to `secret` entities can draw on
-anything.)
