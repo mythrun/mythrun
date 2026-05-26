@@ -143,3 +143,89 @@ describe('resolveRelationship', () => {
     expect(r.kind).toBe('resolved')
   })
 })
+
+import {
+  resolveFact,
+  resolveProseTarget,
+  resolveRename,
+  resolveDeleteRelationship,
+  resolveFixRelationship,
+} from '../name-resolution.js'
+
+describe('resolveFact', () => {
+  it('resolves a unique (entity, topic) pair to a fact id', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveFact(ctx, { entity_name: 'Mother Ehren', fact_topic: 'role' })
+    expect(r.kind).toBe('resolved')
+    if (r.kind === 'resolved') expect(r.factId).toBe('fact-1')
+  })
+
+  it('drops on ambiguous (multiple facts under same topic)', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveFact(ctx, { entity_name: 'Mother Ehren', fact_topic: 'history' })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_fact')
+  })
+
+  it('drops on unknown entity name', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveFact(ctx, { entity_name: 'Nobody', fact_topic: 'role' })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('unknown_entity')
+  })
+
+  it('drops on unknown topic', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveFact(ctx, { entity_name: 'Mother Ehren', fact_topic: 'nonexistent' })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('unknown_fact')
+  })
+})
+
+describe('resolveProseTarget', () => {
+  it('resolves an entity by name', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveProseTarget(ctx, { entity_name: 'Mother Ehren' })
+    expect(r.kind).toBe('resolved')
+    if (r.kind === 'resolved') expect(r.entityId).toBe('ent-1')
+  })
+
+  it('drops on ambiguous entity name', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveProseTarget(ctx, { entity_name: 'Pell' })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_entity')
+  })
+})
+
+describe('resolveRename', () => {
+  it('resolves old_name to entityId', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRename(ctx, { old_name: 'Mother Ehren', new_name: 'Mother E' })
+    expect(r.kind).toBe('resolved')
+    if (r.kind === 'resolved') {
+      expect(r.entityId).toBe('ent-1')
+      expect(r.newName).toBe('Mother E')
+    }
+  })
+})
+
+describe('resolveFixRelationship / resolveDeleteRelationship', () => {
+  it('resolves a unique (source, target, type) triple to a relationship id', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveFixRelationship(ctx, {
+      source_name: 'Mother Ehren', target_name: 'The Drowned Quarter', current_type: 'leads',
+    })
+    expect(r.kind).toBe('resolved')
+    if (r.kind === 'resolved') expect(r.relationshipId).toBe('rel-1')
+  })
+
+  it('drops when triple matches nothing', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveDeleteRelationship(ctx, {
+      source_name: 'Mother Ehren', target_name: 'The Drowned Quarter', current_type: 'rivals',
+    })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('unknown_relationship')
+  })
+})

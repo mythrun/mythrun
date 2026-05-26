@@ -226,3 +226,82 @@ export function resolveRelationship(
   if (from.kind === 'unknown') return { kind: 'dropped', reason: 'unknown_source' }
   return { kind: 'dropped', reason: 'unknown_target' }
 }
+
+export type FactResolution =
+  | { kind: 'resolved'; factId: string; entityId: string }
+  | { kind: 'dropped'; reason: 'unknown_entity' | 'ambiguous_entity' | 'unknown_fact' | 'ambiguous_fact' }
+
+export function resolveFact(
+  ctx: NameResolutionContext,
+  emitted: { entity_name: string; fact_topic: string },
+): FactResolution {
+  const n = normalizeName(emitted.entity_name)
+  if (ctx.ambiguousEntityNames.has(n)) return { kind: 'dropped', reason: 'ambiguous_entity' }
+  const entityId = ctx.entityIdByName.get(n)
+  if (entityId === undefined) return { kind: 'dropped', reason: 'unknown_entity' }
+  const byTopic = ctx.factIdByPair.get(n)
+  const matches = byTopic?.get(emitted.fact_topic) ?? []
+  if (matches.length === 0) return { kind: 'dropped', reason: 'unknown_fact' }
+  if (matches.length > 1) return { kind: 'dropped', reason: 'ambiguous_fact' }
+  return { kind: 'resolved', factId: matches[0]!, entityId }
+}
+
+export type EntityResolution =
+  | { kind: 'resolved'; entityId: string }
+  | { kind: 'dropped'; reason: 'unknown_entity' | 'ambiguous_entity' }
+
+export function resolveProseTarget(
+  ctx: NameResolutionContext,
+  emitted: { entity_name: string },
+): EntityResolution {
+  const n = normalizeName(emitted.entity_name)
+  if (ctx.ambiguousEntityNames.has(n)) return { kind: 'dropped', reason: 'ambiguous_entity' }
+  const id = ctx.entityIdByName.get(n)
+  if (id === undefined) return { kind: 'dropped', reason: 'unknown_entity' }
+  return { kind: 'resolved', entityId: id }
+}
+
+export type RenameResolution =
+  | { kind: 'resolved'; entityId: string; newName: string }
+  | { kind: 'dropped'; reason: 'unknown_entity' | 'ambiguous_entity' }
+
+export function resolveRename(
+  ctx: NameResolutionContext,
+  emitted: { old_name: string; new_name: string },
+): RenameResolution {
+  const n = normalizeName(emitted.old_name)
+  if (ctx.ambiguousEntityNames.has(n)) return { kind: 'dropped', reason: 'ambiguous_entity' }
+  const id = ctx.entityIdByName.get(n)
+  if (id === undefined) return { kind: 'dropped', reason: 'unknown_entity' }
+  return { kind: 'resolved', entityId: id, newName: emitted.new_name }
+}
+
+export type RelationshipPatchResolution =
+  | { kind: 'resolved'; relationshipId: string }
+  | { kind: 'dropped'; reason: 'unknown_relationship' | 'ambiguous_relationship' }
+
+function lookupRelTriple(
+  ctx: NameResolutionContext,
+  src: string, tgt: string, type: string,
+): RelationshipPatchResolution {
+  const sn = normalizeName(src)
+  const tn = normalizeName(tgt)
+  const arr = ctx.relIdByTriple.get(sn)?.get(tn)?.get(type) ?? []
+  if (arr.length === 0) return { kind: 'dropped', reason: 'unknown_relationship' }
+  if (arr.length > 1) return { kind: 'dropped', reason: 'ambiguous_relationship' }
+  return { kind: 'resolved', relationshipId: arr[0]! }
+}
+
+export function resolveFixRelationship(
+  ctx: NameResolutionContext,
+  emitted: { source_name: string; target_name: string; current_type: string },
+): RelationshipPatchResolution {
+  return lookupRelTriple(ctx, emitted.source_name, emitted.target_name, emitted.current_type)
+}
+
+export function resolveDeleteRelationship(
+  ctx: NameResolutionContext,
+  emitted: { source_name: string; target_name: string; current_type: string },
+): RelationshipPatchResolution {
+  return lookupRelTriple(ctx, emitted.source_name, emitted.target_name, emitted.current_type)
+}
