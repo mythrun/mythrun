@@ -418,7 +418,8 @@ describe('streaming-extractor name-based resolution (myth-2ob3)', () => {
       relationshipsById: new Map(),
     })
     const pending = new Map<string, { synthId: string; entityType: string }>()
-    async function* stream(): AsyncGenerator<unknown> {
+    // eslint-disable-next-line @typescript-eslint/require-await -- AsyncGenerator stub yields a single chunk with no awaits; the async marker is required for the AsyncGenerator return type, not for an actual await.
+    async function* stream(): AsyncGenerator {
       yield {
         relationships: [
           {
@@ -434,8 +435,10 @@ describe('streaming-extractor name-based resolution (myth-2ob3)', () => {
     await runStreamingStage(stream(), {
       stage: 'entity_relationships',
       campaignId: 'c1',
+      // eslint-disable-next-line @typescript-eslint/require-await -- test stub matches Job.updateProgress's async signature.
       job: { updateProgress: async () => undefined },
       redisRealtime: {
+        // eslint-disable-next-line @typescript-eslint/require-await -- test stub matches Redis.publish's async signature.
         publish: async (_c: string, m: string) => {
           published.push(m)
           return 1
