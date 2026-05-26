@@ -131,15 +131,18 @@ const addFactPatch = z.object({
   entity_name: z.string().min(1).max(200),
   topic: z.string().min(1).max(120),
   content: z.string().min(10).max(2000),
+  access_level: z.enum(['known', 'discoverable', 'secret']),
   rationale: z.string().min(20).max(400),
 })
 ```
 
-Apply: resolve `entity_name` against the inventory (drop with WARN if unresolvable). INSERT a new `facts` row with a fresh UUIDv7 + the specified topic/content. Emit a `fact-added` SSE event (see §6).
+Apply: resolve `entity_name` against the inventory (drop with WARN if unresolvable). INSERT a new `facts` row with a fresh UUIDv7 + the specified topic/content/access_level. Emit a `fact-added` SSE event (see §6).
 
-**Schema-enforced tier — `access_level` is NOT a model-chosen field.** The new fact's `access_level` is fixed at `inv.entitiesById.get(entityId).accessLevel` — i.e., it inherits the owning entity's tier. Rationale: CLAUDE.md Non-Negotiable Principle #1 ("Enforced ignorance is a hard boundary, not a prompting suggestion") forbids relying on prompt-level constraints to prevent tier leaks. The model is allowed to draw on facts/prose at or below the entity's tier (the existing PROSE-TIER CONSISTENCY rule covers what content sources are valid), but the resulting fact's tier matches the owning entity's. This eliminates the class of failure where the model decides a `secret`-tier fact belongs on a `known`-tier entity, or vice versa.
+**Tier-assignment trust.** The model picks `access_level` per fact, matching the existing pipeline pattern. Stages 2/3/4 already trust the LLM to assign tiers at write time on every fact they emit (`access_level: z.enum(['known','discoverable','secret'])` on `factItemSchema`). Coherence runs before the world is canonical — the Fast Thinker doesn't snapshot the world until after stage 9 completes — so a coherence-time tier choice is functionally equivalent to a stage-2/3/4 tier choice from the player's perspective: they only ever see post-coherence canon.
 
-Consequence: a `known`-tier entity can only gain `known`-tier facts via this patch. To attach a `secret`-tier fact to a `known`-tier entity, the model has no path — and that's correct, because such a fact is a known-tier reveal vector by design. Adding a tier downgrade (`secret` content under a `known` envelope) was always a leak waiting to happen.
+Principle #1 ("Enforced ignorance is a hard boundary, not a prompting suggestion") governs READ-time filtering at session time — the Fast Thinker's snapshot-fetch queries `known`-tier only, and that filter is non-bypassable. Principle #1 does NOT constrain pre-canon write-time tier-assignment judgment, which the pipeline trusts the LLM with everywhere.
+
+The **aggregate** risk (the model systematically downgrading secrets across many worlds) is real and is the §7.4 smoke's job to detect — see the tier-balance check there. Per-patch tier choices are model judgment, same as stage 2's; aggregate behavior is the gate.
 
 ### 3.4 `delete_fact_by_name` — new
 
@@ -299,7 +302,7 @@ Per myth-2ob3 §9.3:
 - **Lexical self-flagging count.** Run a real-LLM world-gen, then grep the `relationships.description` column for the lexical signatures of self-flagging (case-insensitive): `not at the`, `is not`, `does not`, `not a `, `incorrectly`, `is wrong`, `actually`, `not really`. Manually audit hits for true contradictions vs. legitimate negations ("not yet bound by formal treaty"). **Target: ≤1 true self-flagging description per 76 relationships** (proportional to the Narrowing Path baseline of 7/76). The lexical regex is the automated first pass; eyeball confirms true positives.
 - **Vocabulary-uptake check.** Aggregate emit counts per patch kind, post-coherence. Pre-change baseline (Narrowing Path): mostly `fix_relationship_by_name` (description-only) and `delete_relationship_by_name`. Post-change expectation: at least some `fix_relationship_by_name` patches carry `newSource` or `newTarget`; some `add_relationship_by_name` and `add_fact_by_name` emit. Zero of the new kinds = prompt failed to teach the model.
 - **myth-p4sz regression check.** `delete_relationship_by_name` and `fix_relationship_by_name` produce `edge-removed` events on the SSE feed. Dev-tool drawer should show non-zero counts.
-- **Tier-leak audit.** Sample 10 random `fact-added` events from the smoke run. For each, verify the fact's content does NOT reference any `secret`-tier or `discoverable`-tier content from neighbors. Target: zero leaks. (This is the manual gate that protects against the scenario M-C3 worried about; once the schema-enforced tier in §3.3 is in place, the leak surface is bounded but the prompt-side discipline still matters for content sources.)
+- **Aggregate tier-balance check.** Snapshot pre-coherence fact-tier counts (`known` / `discoverable` / `secret`) from the inventory at stage 7 start. After coherence applies, count again. Compute per-tier delta. The model is allowed to add/remove facts at any tier — that's existing-pipeline trust, same as stages 2/3/4 — but the net direction matters at the aggregate level. **Target: post-coherence world preserves comparable proportions of `discoverable` and `secret` content** (within ±20% of baseline, or absolute count drop ≤ 2 facts, whichever is more generous on small worlds). If coherence systematically downgrades secrets to known across smoke runs (e.g., loses 50%+ of secret-tier facts world-over-world), the prompt is broken at the tier-judgment surface and needs to be re-pinned. Per-patch tier choice is model judgment, same as stage 2's; this aggregate signal is the gate against systematic destruction of secrets.
 
 ## 8. Migration of existing worlds
 
@@ -321,6 +324,7 @@ Single PR. Schema + prompt + apply + tests all ship together. Close-loop per CLA
 - **`add_fact_by_name` topic collision.** If the model adds a fact under a topic that already has a fact on that entity, the resulting set has two facts at the same `(entity, topic)`. Future `fix_fact_by_name` and `delete_fact_by_name` against that pair will then drop with `ambiguous_fact`. Defense: in `applyAddFact`, check the existing fact list for the (entity, topic) pair; if present, drop with WARN (`would_be_duplicate_topic`) and skip. One-line guard.
 - **Stage 4b interaction (confirmation).** Coherence runs after stage 4b. The inventory loaded at stage 7 start includes ghost entities materialized by 4b + their relationships, persisted to the DB with their stage-4b synthKeys (per §2.4's persistence column). `add_relationship_by_name` against a ghost endpoint resolves normally — the ghost is a real entity by the time coherence sees it. No special handling needed.
 - **Performance.** Each `add_*` is an INSERT + a name-resolution lookup; both are ~ms. No regression expected.
+- **Tier-judgment trust on `add_fact_by_name`.** The model picks `access_level` per fact, matching the existing stage-2/3/4 trust pattern. Per-fact tier choice is judgment, not a leak vector — coherence runs pre-canon so post-coherence tiers ARE the canon. The risk is **aggregate** (systematic secret-tier erosion across many worlds), not per-patch. Defense: §7.4's aggregate tier-balance check. If smoke runs show coherence consistently downgrading secrets, the prompt is broken and gets re-pinned; the schema doesn't try to enforce a judgment the LLM is already trusted with everywhere else.
 
 ## 11. Non-goals
 
