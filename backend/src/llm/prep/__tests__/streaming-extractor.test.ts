@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { z } from 'zod'
 import { runStreamingStage } from '../streaming-extractor.js'
+import { buildResolutionContext } from '../name-resolution.js'
 
 interface FakeRedis {
   publish: ReturnType<typeof vi.fn>
@@ -401,5 +402,57 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
     expect(streamDiedCalls).toHaveLength(1)
     const payload = streamDiedCalls[0]?.[0] as Record<string, unknown>
     expect(payload.error).toEqual({ value: 'plain-string-error' })
+  })
+})
+
+describe('streaming-extractor name-based resolution (myth-2ob3)', () => {
+  it('resolves edge endpoints from names to UUIDs when nameResolutionCtx is provided', async () => {
+    const published: string[] = []
+    const ctx = buildResolutionContext({
+      entitiesById: new Map([
+        ['ent-1', { id: 'ent-1', name: 'Mother Ehren', entityType: 'npc', accessLevel: 'known' as const }],
+        ['ent-2', { id: 'ent-2', name: 'The Drowned Quarter', entityType: 'location', accessLevel: 'known' as const }],
+      ]),
+      proseByEntityId: new Map(),
+      factsById: new Map(),
+      relationshipsById: new Map(),
+    })
+    const pending = new Map<string, { synthId: string; entityType: string }>()
+    async function* stream(): AsyncGenerator<unknown> {
+      yield {
+        relationships: [
+          {
+            from_name: 'Mother Ehren',
+            to_name: 'The Drowned Quarter',
+            relationship: 'leads',
+            description: 'Mother Ehren leads the council.',
+          },
+          {}, // trailing sentinel so index 0 closes
+        ],
+      }
+    }
+    await runStreamingStage(stream(), {
+      stage: 'entity_relationships',
+      campaignId: 'c1',
+      job: { updateProgress: async () => undefined },
+      redisRealtime: {
+        publish: async (_c: string, m: string) => {
+          published.push(m)
+          return 1
+        },
+      },
+      keyPrefix: 'test:',
+      arrays: [{ path: 'relationships', kind: 'edge', role: 'edge' }],
+      bypassAccessFilter: true,
+      endpointTierMap: new Map([['ent-1', 'known'], ['ent-2', 'known']]),
+      nameResolutionCtx: ctx,
+      pendingDeclarations: pending,
+    })
+    const edgeMsg = published.find((m) => m.includes('"edge-added"'))
+    expect(edgeMsg).toBeDefined()
+    if (edgeMsg === undefined) return
+    const parsed = JSON.parse(edgeMsg) as { from: string; to: string }
+    expect(parsed.from).toBe('ent-1')
+    expect(parsed.to).toBe('ent-2')
   })
 })

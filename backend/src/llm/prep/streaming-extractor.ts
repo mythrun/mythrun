@@ -22,6 +22,8 @@ import type { Job } from 'bullmq'
 import type { Redis } from 'ioredis'
 import type { ZodType } from 'zod'
 import type { AccessLevel } from '../../repo/facts.js'
+import type { NameResolutionContext } from './name-resolution.js'
+import { resolveRelationship, normalizeName } from './name-resolution.js'
 
 export type WorldGenStage =
   | 'concept_intake'
@@ -57,6 +59,15 @@ export interface StreamingExtractorConfig {
   readonly logger?: {
     warn: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
   }
+  // myth-2ob3: stage 4 passes a name-resolution context + a mutable
+  // pendingDeclarations map (populated as the LLM emits items into
+  // `new_entity_declarations`). When present, the extractor resolves
+  // edge endpoints from names to UUIDs (or server-minted `new-NNN`
+  // synthetic IDs for phantom-declared targets) before publishing
+  // `edge-added`. When absent (stages 2, 3), the extractor publishes
+  // raw entry fields — today's behavior.
+  readonly nameResolutionCtx?: NameResolutionContext
+  readonly pendingDeclarations?: Map<string, { synthId: string; entityType: string }>
 }
 
 export interface StreamingExtractorResult<T> {
@@ -118,23 +129,57 @@ function shouldEmitEdge(
   entry: Record<string, unknown>,
   bypass: boolean,
   endpointTierMap: ReadonlyMap<string, AccessLevel>,
+  resolvedFrom: string | null,
+  resolvedTo: string | null,
 ): boolean {
-  const from = entry.from
-  const to = entry.to
+  if (resolvedFrom === null || resolvedTo === null) return false
   const rel = entry.relationship
-  // c8 ignore start — defensive shape checks for closed entries; under
-  // the closed-entry emit gate the Zod schema has already filled all
-  // three fields with strings of min length 1. These return-falses are
-  // belt-and-braces for malformed stream input.
-  /* c8 ignore start */
-  if (typeof from !== 'string' || from.length === 0) return false
-  if (typeof to !== 'string' || to.length === 0) return false
   if (typeof rel !== 'string' || rel.length === 0) return false
-  /* c8 ignore stop */
   if (bypass) return true
-  const fromTier = endpointTierMap.get(from)
-  const toTier = endpointTierMap.get(to)
+  const fromTier = endpointTierMap.get(resolvedFrom)
+  const toTier = endpointTierMap.get(resolvedTo)
   return fromTier === 'known' && toTier === 'known'
+}
+
+function resolveEdgeEndpoints(
+  config: StreamingExtractorConfig,
+  entry: Record<string, unknown>,
+): { from: string | null; to: string | null } {
+  if (config.nameResolutionCtx === undefined || config.pendingDeclarations === undefined) {
+    // Legacy path: stages 2/3 emit entry.from / entry.to as-is.
+    const from = entry.from
+    const to = entry.to
+    return {
+      from: typeof from === 'string' && from.length > 0 ? from : null,
+      to: typeof to === 'string' && to.length > 0 ? to : null,
+    }
+  }
+  // Name-based path (stage 4). Resolve via the shared module.
+  if (typeof entry.from_name !== 'string' || typeof entry.to_name !== 'string') {
+    return { from: null, to: null }
+  }
+  const res = resolveRelationship(
+    config.nameResolutionCtx,
+    {
+      from_name: entry.from_name,
+      to_name: entry.to_name,
+      relationship: typeof entry.relationship === 'string' ? entry.relationship : '',
+      description: typeof entry.description === 'string' ? entry.description : '',
+    },
+    config.pendingDeclarations,
+  )
+  switch (res.kind) {
+    case 'resolved':
+      return { from: res.sourceEntityId, to: res.targetEntityId }
+    case 'phantom_target':
+      return { from: res.sourceEntityId, to: res.synthId }
+    case 'phantom_source':
+      return { from: res.synthId, to: res.targetEntityId }
+    case 'phantom_both':
+      return { from: res.sourceSynthId, to: res.targetSynthId }
+    case 'dropped':
+      return { from: null, to: null }
+  }
 }
 
 async function publishEntityAdded(
@@ -159,6 +204,8 @@ async function publishEdgeAdded(
   config: StreamingExtractorConfig,
   synthKey: string,
   entry: Record<string, unknown>,
+  resolvedFrom: string,
+  resolvedTo: string,
 ): Promise<void> {
   const channel = `${config.keyPrefix}pipeline:campaign:${config.campaignId}`
   await config.redisRealtime.publish(
@@ -166,8 +213,8 @@ async function publishEdgeAdded(
     JSON.stringify({
       type: 'edge-added',
       synthKey,
-      from: entry.from as string,
-      to: entry.to as string,
+      from: resolvedFrom,
+      to: resolvedTo,
       relationship: entry.relationship as string,
     }),
   )
@@ -214,12 +261,34 @@ async function maybeEmit(
     }
   }
   if (arrayCfg.role === 'entity') {
+    // myth-2ob3: declaration observation. When a declaration entry closes
+    // (has name + entity_type) AND pendingDeclarations is provided, bind
+    // it to a synthetic `new-NNN` ID so subsequent edge resolution can
+    // find it. Idempotent: same name maps to the same synthId across the
+    // pass.
+    if (
+      config.pendingDeclarations !== undefined &&
+      typeof entry.name === 'string' &&
+      typeof entry.entity_type === 'string'
+    ) {
+      const name = normalizeName(entry.name)
+      if (!config.pendingDeclarations.has(name)) {
+        const next = config.pendingDeclarations.size + 1
+        const synthId = `new-${String(next).padStart(3, '0')}`
+        config.pendingDeclarations.set(name, { synthId, entityType: entry.entity_type })
+      }
+    }
     if (shouldEmitEntity(entry, config.bypassAccessFilter, config.logger, synthKey)) {
       await publishEntityAdded(config, synthKey, arrayCfg, entry)
     }
   } else {
-    if (shouldEmitEdge(entry, config.bypassAccessFilter, config.endpointTierMap)) {
-      await publishEdgeAdded(config, synthKey, entry)
+    const { from, to } = resolveEdgeEndpoints(config, entry)
+    if (
+      from !== null &&
+      to !== null &&
+      shouldEmitEdge(entry, config.bypassAccessFilter, config.endpointTierMap, from, to)
+    ) {
+      await publishEdgeAdded(config, synthKey, entry, from, to)
     }
   }
   emitted.add(synthKey)
