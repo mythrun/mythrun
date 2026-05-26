@@ -64,6 +64,15 @@ import {
   renderWorldDump,
   type WorldInventory,
 } from '../world-dump.js'
+import {
+  buildResolutionContext,
+  resolveFact,
+  resolveProseTarget,
+  resolveRename,
+  resolveFixRelationship,
+  resolveDeleteRelationship,
+  type NameResolutionContext,
+} from '../name-resolution.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/coherence-pass.txt'),
@@ -103,6 +112,7 @@ export interface CoherencePassArgs {
 
 interface ApplyContext {
   readonly inv: WorldInventory
+  readonly resolver: NameResolutionContext
   readonly logger: Pick<pino.Logger, 'warn' | 'info'>
   readonly stage: 'coherence_pass'
   // myth-exac T16: when true, every patch's SSE event surfaces in
@@ -148,14 +158,10 @@ function warnUnknown(
 
 async function applyFixFact(
   client: PoolClient,
-  patch: Extract<CoherencePatch, { kind: 'fix_fact' }>,
-  ctx: ApplyContext,
+  patch: Extract<CoherencePatch, { kind: 'fix_fact_by_name' }>,
+  factId: string,
 ): Promise<ApplyResult> {
-  if (!ctx.inv.factsById.has(patch.factId)) {
-    warnUnknown(ctx, patch.kind, 'factId', patch.factId)
-    return { events: [] }
-  }
-  await facts.updateContentById(client, patch.factId, { content: patch.newContent })
+  await facts.updateContentById(client, factId, { content: patch.new_content })
   // fix_fact emits NO SSE event per §3.6 — facts are not exposed as
   // standalone client-side entities; the FE re-reads them on next entity
   // query.
@@ -164,82 +170,82 @@ async function applyFixFact(
 
 async function applyFixProse(
   client: PoolClient,
-  patch: Extract<CoherencePatch, { kind: 'fix_prose' }>,
+  patch: Extract<CoherencePatch, { kind: 'fix_prose_by_name' }>,
+  entityId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
-  if (!ctx.inv.entitiesById.has(patch.entityId)) {
-    warnUnknown(ctx, patch.kind, 'entityId', patch.entityId)
-    return { events: [] }
-  }
   // DB write happens unconditionally — coherence repairs every tier.
-  await proseKernels.updateByEntityId(client, patch.entityId, { content: patch.newProse })
+  await proseKernels.updateByEntityId(client, entityId, { content: patch.new_prose })
   // myth-exac T16: SSE event only when target is known-tier (or bypass).
-  if (!shouldEmitEntityEvent(ctx, patch.entityId)) {
+  if (!shouldEmitEntityEvent(ctx, entityId)) {
     return { events: [] }
   }
-  const synthKey = synthKeyByEntityId[patch.entityId]
+  const synthKey = synthKeyByEntityId[entityId]
   /* c8 ignore start — defense-in-depth: in T13's integration the synthKey
    * map is always populated for every UUID; tests exercise the populated
    * path. The patch persisted but we can't address the entity on the wire
    * (no synthKey in the map) — log + drop the event; the DB is still
    * consistent. */
   if (synthKey === undefined) {
-    warnUnknown(ctx, patch.kind, 'entityId', patch.entityId)
+    warnUnknown(ctx, patch.kind, 'entityId', entityId)
     return { events: [] }
   }
   /* c8 ignore stop */
   return {
-    events: [{ type: 'entity-updated', synthKey, patch: { prose: patch.newProse } }],
+    events: [{ type: 'entity-updated', synthKey, patch: { prose: patch.new_prose } }],
   }
 }
 
 async function applyRenameEntity(
   client: PoolClient,
-  patch: Extract<CoherencePatch, { kind: 'rename_entity' }>,
+  patch: Extract<CoherencePatch, { kind: 'rename_entity_by_name' }>,
+  entityId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
-  if (!ctx.inv.entitiesById.has(patch.entityId)) {
-    warnUnknown(ctx, patch.kind, 'entityId', patch.entityId)
-    return { events: [] }
-  }
   // DB write happens unconditionally — coherence repairs every tier.
   await client.query(`UPDATE entities SET name = $1 WHERE id = $2`, [
-    patch.newName,
-    patch.entityId,
+    patch.new_name,
+    entityId,
   ])
   // myth-exac T16: SSE event only when target is known-tier (or bypass).
-  if (!shouldEmitEntityEvent(ctx, patch.entityId)) {
+  if (!shouldEmitEntityEvent(ctx, entityId)) {
     return { events: [] }
   }
-  const synthKey = synthKeyByEntityId[patch.entityId]
+  const synthKey = synthKeyByEntityId[entityId]
   /* c8 ignore start — defense-in-depth: see applyFixProse comment. */
   if (synthKey === undefined) {
-    warnUnknown(ctx, patch.kind, 'entityId', patch.entityId)
+    warnUnknown(ctx, patch.kind, 'entityId', entityId)
     return { events: [] }
   }
   /* c8 ignore stop */
   return {
-    events: [{ type: 'entity-updated', synthKey, patch: { name: patch.newName } }],
+    events: [{ type: 'entity-updated', synthKey, patch: { name: patch.new_name } }],
   }
 }
 
 async function applyFixRelationship(
   client: PoolClient,
-  patch: Extract<CoherencePatch, { kind: 'fix_relationship' }>,
+  patch: Extract<CoherencePatch, { kind: 'fix_relationship_by_name' }>,
+  relationshipId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
-  const existing = ctx.inv.relationshipsById.get(patch.relationshipId)
+  // The resolver guarantees the relationshipId exists in inventory.
+  /* c8 ignore start — defense-in-depth: the resolver only returns
+   * `resolved` when the triple was found in inv.relationshipsById, so
+   * the lookup is guaranteed to succeed here. */
+  const existing = ctx.inv.relationshipsById.get(relationshipId)
   if (existing === undefined) {
-    warnUnknown(ctx, patch.kind, 'relationshipId', patch.relationshipId)
+    warnUnknown(ctx, patch.kind, 'relationshipId', relationshipId)
     return { events: [] }
   }
+  /* c8 ignore stop */
   // Per §3.6: fix_relationship emits edge-removed + edge-added on a NEW
   // synthKey (the edge entity is logically replaced). DB writes happen
   // unconditionally — myth-exac T16 only gates the SSE emit.
-  await relationships.deleteById(client, patch.relationshipId)
+  await relationships.deleteById(client, relationshipId)
   const newRelationshipType = patch.newType ?? existing.relationshipType
   const newDescription = patch.newDescription ?? existing.description
   const newId = uuidv7()
@@ -257,7 +263,7 @@ async function applyFixRelationship(
   if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
     return { events: [] }
   }
-  const oldSynthKey = synthKeyByEntityId[patch.relationshipId]
+  const oldSynthKey = synthKeyByEntityId[relationshipId]
   const newSynthKey = `coherence_pass/edges/${newId}`
   const events: PipelineEvent[] = []
   if (oldSynthKey !== undefined) {
@@ -266,7 +272,7 @@ async function applyFixRelationship(
      * for an existing relationship) is not reachable under T13's
      * integration. */
   } else {
-    warnUnknown(ctx, patch.kind, 'relationshipId', patch.relationshipId)
+    warnUnknown(ctx, patch.kind, 'relationshipId', relationshipId)
   }
   /* c8 ignore stop */
   events.push({
@@ -281,26 +287,29 @@ async function applyFixRelationship(
 
 async function applyDeleteRelationship(
   client: PoolClient,
-  patch: Extract<CoherencePatch, { kind: 'delete_relationship' }>,
+  patch: Extract<CoherencePatch, { kind: 'delete_relationship_by_name' }>,
+  relationshipId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
-  const existing = ctx.inv.relationshipsById.get(patch.relationshipId)
+  /* c8 ignore start — defense-in-depth: resolver guarantees existence. */
+  const existing = ctx.inv.relationshipsById.get(relationshipId)
   if (existing === undefined) {
-    warnUnknown(ctx, patch.kind, 'relationshipId', patch.relationshipId)
+    warnUnknown(ctx, patch.kind, 'relationshipId', relationshipId)
     return { events: [] }
   }
+  /* c8 ignore stop */
   // DB write happens unconditionally — coherence repairs every tier.
-  await relationships.deleteById(client, patch.relationshipId)
+  await relationships.deleteById(client, relationshipId)
   // myth-exac T16: SSE event only when BOTH endpoints are known-tier
   // (or bypass on).
   if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
     return { events: [] }
   }
-  const synthKey = synthKeyByEntityId[patch.relationshipId]
+  const synthKey = synthKeyByEntityId[relationshipId]
   /* c8 ignore start — defense-in-depth: see applyFixProse comment. */
   if (synthKey === undefined) {
-    warnUnknown(ctx, patch.kind, 'relationshipId', patch.relationshipId)
+    warnUnknown(ctx, patch.kind, 'relationshipId', relationshipId)
     return { events: [] }
   }
   /* c8 ignore stop */
@@ -311,8 +320,8 @@ async function applyDeleteRelationship(
 
 // Apply one patch against the in-flight transaction. Returns 0..N event
 // payloads (queued for post-COMMIT publish by the outer scope). Patches
-// that reference unknown UUIDs are silently skipped + logged at WARN per
-// §3.6.
+// whose name-based identifiers don't resolve against the per-pass
+// inventory snapshot are silently skipped + logged at WARN per §3.6.
 async function applyPatch(
   client: PoolClient,
   patch: CoherencePatch,
@@ -320,16 +329,91 @@ async function applyPatch(
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
   switch (patch.kind) {
-    case 'fix_fact':
-      return applyFixFact(client, patch, ctx)
-    case 'fix_prose':
-      return applyFixProse(client, patch, ctx, synthKeyByEntityId)
-    case 'rename_entity':
-      return applyRenameEntity(client, patch, ctx, synthKeyByEntityId)
-    case 'fix_relationship':
-      return applyFixRelationship(client, patch, ctx, synthKeyByEntityId)
-    case 'delete_relationship':
-      return applyDeleteRelationship(client, patch, ctx, synthKeyByEntityId)
+    case 'fix_fact_by_name': {
+      const res = resolveFact(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            entity_name: patch.entity_name,
+            fact_topic: patch.fact_topic,
+          },
+          'coherence_pass: patch references unknown entity+topic; skipping',
+        )
+        return { events: [] }
+      }
+      return applyFixFact(client, patch, res.factId)
+    }
+    case 'fix_prose_by_name': {
+      const res = resolveProseTarget(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            entity_name: patch.entity_name,
+          },
+          'coherence_pass: patch references unknown entity; skipping',
+        )
+        return { events: [] }
+      }
+      return applyFixProse(client, patch, res.entityId, ctx, synthKeyByEntityId)
+    }
+    case 'rename_entity_by_name': {
+      const res = resolveRename(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            old_name: patch.old_name,
+          },
+          'coherence_pass: rename patch references unknown entity; skipping',
+        )
+        return { events: [] }
+      }
+      return applyRenameEntity(client, patch, res.entityId, ctx, synthKeyByEntityId)
+    }
+    case 'fix_relationship_by_name': {
+      const res = resolveFixRelationship(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            source: patch.source_name,
+            target: patch.target_name,
+            type: patch.current_type,
+          },
+          'coherence_pass: patch references unknown relationship triple; skipping',
+        )
+        return { events: [] }
+      }
+      return applyFixRelationship(client, patch, res.relationshipId, ctx, synthKeyByEntityId)
+    }
+    case 'delete_relationship_by_name': {
+      const res = resolveDeleteRelationship(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            source: patch.source_name,
+            target: patch.target_name,
+            type: patch.current_type,
+          },
+          'coherence_pass: delete patch references unknown relationship; skipping',
+        )
+        return { events: [] }
+      }
+      return applyDeleteRelationship(client, patch, res.relationshipId, ctx, synthKeyByEntityId)
+    }
   }
 }
 
@@ -402,21 +486,36 @@ export async function runCoherencePassStage(
 
   const output: CoherenceOutput = result.output
 
-  // Apply every patch in order on the caller-owned transaction.
-  // Unknown-ID skips are logged + dropped without aborting. Each
-  // successful patch contributes 0..N event payloads that the outer
-  // scope publishes after its own COMMIT.
+  // Build the per-pass resolver from the inventory snapshot. Per
+  // myth-2ob3 §4.1, rename patches apply LAST so every other patch's
+  // name-based identifiers resolve against the pre-rename world. The
+  // resolver itself is never mutated mid-pass.
+  const applyCtx: ApplyContext = {
+    inv: inventory,
+    resolver: buildResolutionContext(inventory),
+    logger: args.logger,
+    stage: 'coherence_pass',
+    bypassAccessFilter: args.bypassAccessFilter,
+  }
+
+  const renamePatches: CoherencePatch[] = []
+  const otherPatches: CoherencePatch[] = []
+  for (const p of output.patches) {
+    if (p.kind === 'rename_entity_by_name') renamePatches.push(p)
+    else otherPatches.push(p)
+  }
+
+  // Apply every patch on the caller-owned transaction. Renames run
+  // LAST so prose/fact/relationship patches resolve against the pre-
+  // rename context. Unknown-name skips are logged + dropped without
+  // aborting. Each successful patch contributes 0..N event payloads
+  // that the outer scope publishes after its own COMMIT.
   const finalizedEvents: PipelineEvent[] = []
-  for (const patch of output.patches) {
+  for (const patch of [...otherPatches, ...renamePatches]) {
     const { events } = await applyPatch(
       client,
       patch,
-      {
-        inv: inventory,
-        logger: args.logger,
-        stage: 'coherence_pass',
-        bypassAccessFilter: args.bypassAccessFilter,
-      },
+      applyCtx,
       args.synthKeyByEntityId,
     )
     finalizedEvents.push(...events)

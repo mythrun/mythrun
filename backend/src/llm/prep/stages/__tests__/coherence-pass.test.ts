@@ -35,10 +35,6 @@ const ENTITY_C = '33333333-3333-3333-3333-333333333333'
 const FACT_X = '44444444-4444-4444-4444-444444444444'
 const REL_R = '55555555-5555-5555-5555-555555555555'
 const REL_S = '66666666-6666-6666-6666-666666666666'
-const UNKNOWN_ENTITY = '99999999-9999-9999-9999-999999999999'
-const UNKNOWN_FACT = '99999999-9999-9999-9999-99999999fff0'
-const UNKNOWN_REL = '99999999-9999-9999-9999-99999999fff1'
-
 // SynthKeys minted by stages 2/3/4 for those entities/rels. Stage 7
 // resolves entityId → synthKey via the supplied map.
 const SYNTH = {
@@ -201,33 +197,38 @@ describe('runCoherencePassStage', () => {
       output: {
         patches: [
           {
-            kind: 'fix_prose',
-            entityId: ENTITY_A,
-            newProse: 'A weathered fishing village half-rebuilt after the fire.',
+            kind: 'fix_prose_by_name',
+            entity_name: 'Old Eredil',
+            new_prose: 'A weathered fishing village half-rebuilt after the fire.',
             rationale: 'Prose said burned-down but a fact references active bakery.',
           },
           {
-            kind: 'fix_fact',
-            factId: FACT_X,
-            newContent: 'The village burned a generation ago; only the harbor remains.',
+            kind: 'fix_fact_by_name',
+            entity_name: 'Old Eredil',
+            fact_topic: 'history',
+            new_content: 'The village burned a generation ago; only the harbor remains.',
             rationale: 'Original wording contradicted the rebuild timeline elsewhere.',
           },
           {
-            kind: 'rename_entity',
-            entityId: ENTITY_B,
-            newName: 'Mara Salt-Hand',
+            kind: 'rename_entity_by_name',
+            old_name: 'Mara',
+            new_name: 'Mara Salt-Hand',
             rationale: 'Other entities reference Mara Salt-Hand; full name unifies.',
           },
           {
-            kind: 'fix_relationship',
-            relationshipId: REL_R,
+            kind: 'fix_relationship_by_name',
+            source_name: 'Old Eredil',
+            target_name: 'Mara',
+            current_type: 'rivalry',
             newType: 'distrusts',
             newDescription: 'Mara distrusts the village elders and avoids the upper square.',
             rationale: 'Type rivalry was too strong for the prose; softened to distrust.',
           },
           {
-            kind: 'delete_relationship',
-            relationshipId: REL_S,
+            kind: 'delete_relationship_by_name',
+            source_name: 'Mara',
+            target_name: 'The Wharf',
+            current_type: 'employed_by',
             rationale: 'Duplicate relationship; redundant with REL_R after fix.',
           },
         ],
@@ -268,45 +269,50 @@ describe('runCoherencePassStage', () => {
     expect(edgeAdded?.to).toBe(ENTITY_B)
   })
 
-  it('skips patches that reference unknown UUIDs and logs WARN, but applies the rest', async () => {
+  it('skips patches that reference unknown names and logs WARN, but applies the rest', async () => {
     mockGenerateText.mockResolvedValueOnce({
       output: {
         patches: [
-          // One good patch + five hallucinated-id patches (skipped + warned).
+          // One good patch + five hallucinated-name patches (skipped + warned).
           {
-            kind: 'fix_prose',
-            entityId: ENTITY_A,
-            newProse: 'A weathered fishing village that has slowly rebuilt itself.',
+            kind: 'fix_prose_by_name',
+            entity_name: 'Old Eredil',
+            new_prose: 'A weathered fishing village that has slowly rebuilt itself.',
             rationale: 'Prose said burned-down but a fact references active bakery.',
           },
           {
-            kind: 'fix_prose',
-            entityId: UNKNOWN_ENTITY,
-            newProse: 'Some prose that should never be persisted to the DB.',
-            rationale: 'LLM hallucinated this entity id.',
+            kind: 'fix_prose_by_name',
+            entity_name: 'Phantom Village',
+            new_prose: 'Some prose that should never be persisted to the DB.',
+            rationale: 'LLM hallucinated this entity name.',
           },
           {
-            kind: 'fix_fact',
-            factId: UNKNOWN_FACT,
-            newContent: 'New content that should never land.',
-            rationale: 'LLM hallucinated this fact id.',
+            kind: 'fix_fact_by_name',
+            entity_name: 'Old Eredil',
+            fact_topic: 'imaginary-topic',
+            new_content: 'New content that should never land.',
+            rationale: 'LLM hallucinated this fact topic.',
           },
           {
-            kind: 'delete_relationship',
-            relationshipId: UNKNOWN_REL,
-            rationale: 'LLM hallucinated this relationship id.',
+            kind: 'delete_relationship_by_name',
+            source_name: 'Mara',
+            target_name: 'Phantom Tower',
+            current_type: 'guards',
+            rationale: 'LLM hallucinated this relationship.',
           },
           {
-            kind: 'rename_entity',
-            entityId: UNKNOWN_ENTITY,
-            newName: 'Phantom Name',
-            rationale: 'LLM hallucinated this entity id.',
+            kind: 'rename_entity_by_name',
+            old_name: 'Phantom Village',
+            new_name: 'Phantom Name',
+            rationale: 'LLM hallucinated this entity name.',
           },
           {
-            kind: 'fix_relationship',
-            relationshipId: UNKNOWN_REL,
+            kind: 'fix_relationship_by_name',
+            source_name: 'Old Eredil',
+            target_name: 'Mara',
+            current_type: 'phantom_type',
             newType: 'phantom_link',
-            rationale: 'LLM hallucinated this relationship id.',
+            rationale: 'LLM hallucinated this relationship triple.',
           },
         ],
       },
@@ -325,6 +331,55 @@ describe('runCoherencePassStage', () => {
 
     // Five unknown-id WARN logs (one per skipped patch).
     expect(logger.warn).toHaveBeenCalledTimes(5)
+  })
+
+  it('rename patches apply LAST so other patches resolve against pre-rename names (myth-2ob3 §4.1)', async () => {
+    // Batch contains both a rename for Mara and a fix_prose targeting
+    // Mara (by the original pre-rename name). The fix_prose patch must
+    // resolve against the pre-rename inventory and update Mara's prose;
+    // the rename then renames the entity. Both apply successfully on
+    // the same entity — no "unknown name" drop.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [
+          {
+            kind: 'rename_entity_by_name',
+            old_name: 'Mara',
+            new_name: 'Mara Salt-Hand',
+            rationale: 'Other entities reference Mara Salt-Hand; full name unifies.',
+          },
+          {
+            kind: 'fix_prose_by_name',
+            entity_name: 'Mara',
+            new_prose: 'A guarded harbormaster who knows every name on the tide log.',
+            rationale: 'Sharpening prose with sensory detail and craft.',
+          },
+        ],
+      },
+      usage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger, result } = await runStage()
+
+    // No drops: both patches resolved against the pre-rename inventory.
+    expect(logger.warn).not.toHaveBeenCalled()
+
+    // Both patches applied: one entity-updated event for prose, one for
+    // the rename — both keyed by ENTITY_B's synthKey.
+    const updates = eventsOfType(result.finalizedEvents, 'entity-updated')
+    expect(updates).toHaveLength(2)
+    for (const u of updates) {
+      expect(u.synthKey).toBe(SYNTH[ENTITY_B])
+    }
+
+    // Verify the actual SQL ordering — prose update happened BEFORE the
+    // entity-name UPDATE (rename last).
+    const sqlCalls = client.query.mock.calls.map((c: unknown[]) => c[0] as string)
+    const proseIdx = sqlCalls.findIndex((sql) => sql.includes('prose_kernels'))
+    const renameIdx = sqlCalls.findIndex((sql) => sql.includes('UPDATE entities SET name'))
+    expect(proseIdx).toBeGreaterThanOrEqual(0)
+    expect(renameIdx).toBeGreaterThanOrEqual(0)
+    expect(proseIdx).toBeLessThan(renameIdx)
   })
 
   it('completes successfully when LLM emits zero patches (no-op coherence)', async () => {
@@ -381,15 +436,19 @@ describe('runCoherencePassStage', () => {
         patches: [
           {
             // Only newType supplied — description falls back to existing.
-            kind: 'fix_relationship',
-            relationshipId: REL_R,
+            kind: 'fix_relationship_by_name',
+            source_name: 'Old Eredil',
+            target_name: 'Mara',
+            current_type: 'rivalry',
             newType: 'allies_with',
             rationale: 'Rivalry is too strong; allies fits the prose better.',
           },
           {
             // Only newDescription supplied — type falls back to existing.
-            kind: 'fix_relationship',
-            relationshipId: REL_S,
+            kind: 'fix_relationship_by_name',
+            source_name: 'Mara',
+            target_name: 'The Wharf',
+            current_type: 'employed_by',
             newDescription: 'Mara now serves as the wharf master, hand-picked.',
             rationale: 'Description was too thin; sharpening with new detail.',
           },
@@ -452,9 +511,9 @@ describe('runCoherencePassStage', () => {
       output: {
         patches: [
           {
-            kind: 'fix_prose',
-            entityId: ENTITY_A,
-            newProse: 'A rebuilt fishing village.',
+            kind: 'fix_prose_by_name',
+            entity_name: 'Old Eredil',
+            new_prose: 'A rebuilt fishing village.',
             rationale: 'Sharpening prose to match world facts.',
           },
         ],
@@ -476,15 +535,15 @@ describe('runCoherencePassStage', () => {
       output: {
         patches: [
           {
-            kind: 'fix_prose',
-            entityId: ENTITY_B,
-            newProse: 'A guarded harbormaster who knows the tides.',
+            kind: 'fix_prose_by_name',
+            entity_name: 'Mara',
+            new_prose: 'A guarded harbormaster who knows the tides.',
             rationale: 'Sharpening prose.',
           },
           {
-            kind: 'rename_entity',
-            entityId: ENTITY_C,
-            newName: 'The Old Wharf',
+            kind: 'rename_entity_by_name',
+            old_name: 'The Wharf',
+            new_name: 'The Old Wharf',
             rationale: 'Disambiguate from new wharf.',
           },
         ],
@@ -514,8 +573,10 @@ describe('runCoherencePassStage', () => {
           // REL_R links ENTITY_A (known) ↔ ENTITY_B (discoverable).
           // SSE must NOT fire for either edge-removed or edge-added.
           {
-            kind: 'fix_relationship',
-            relationshipId: REL_R,
+            kind: 'fix_relationship_by_name',
+            source_name: 'Old Eredil',
+            target_name: 'Mara',
+            current_type: 'rivalry',
             newType: 'distrusts',
             newDescription: 'Mara distrusts the elders.',
             rationale: 'Tone the rivalry down to distrust.',
@@ -523,8 +584,10 @@ describe('runCoherencePassStage', () => {
           // REL_S links ENTITY_B (discoverable) ↔ ENTITY_C (known).
           // SSE must NOT fire here either.
           {
-            kind: 'delete_relationship',
-            relationshipId: REL_S,
+            kind: 'delete_relationship_by_name',
+            source_name: 'Mara',
+            target_name: 'The Wharf',
+            current_type: 'employed_by',
             rationale: 'Redundant edge.',
           },
         ],
@@ -547,8 +610,10 @@ describe('runCoherencePassStage', () => {
       output: {
         patches: [
           {
-            kind: 'fix_relationship',
-            relationshipId: REL_R,
+            kind: 'fix_relationship_by_name',
+            source_name: 'Old Eredil',
+            target_name: 'Mara',
+            current_type: 'rivalry',
             newType: 'distrusts',
             newDescription: 'Mara distrusts the elders.',
             rationale: 'Tone down rivalry.',
@@ -568,27 +633,31 @@ describe('runCoherencePassStage', () => {
       output: {
         patches: [
           {
-            kind: 'fix_prose',
-            entityId: ENTITY_B,
-            newProse: 'A guarded harbormaster.',
+            kind: 'fix_prose_by_name',
+            entity_name: 'Mara',
+            new_prose: 'A guarded harbormaster.',
             rationale: 'Sharpen.',
           },
           {
-            kind: 'rename_entity',
-            entityId: ENTITY_C,
-            newName: 'The Old Wharf',
+            kind: 'rename_entity_by_name',
+            old_name: 'The Wharf',
+            new_name: 'The Old Wharf',
             rationale: 'Disambiguate.',
           },
           {
-            kind: 'fix_relationship',
-            relationshipId: REL_R,
+            kind: 'fix_relationship_by_name',
+            source_name: 'Old Eredil',
+            target_name: 'Mara',
+            current_type: 'rivalry',
             newType: 'distrusts',
             newDescription: 'Mara distrusts the elders.',
             rationale: 'Tone down.',
           },
           {
-            kind: 'delete_relationship',
-            relationshipId: REL_S,
+            kind: 'delete_relationship_by_name',
+            source_name: 'Mara',
+            target_name: 'The Wharf',
+            current_type: 'employed_by',
             rationale: 'Redundant.',
           },
         ],
