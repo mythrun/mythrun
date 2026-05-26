@@ -1241,10 +1241,11 @@
         <code>worlds.entity_consolidation_pending</code> for stage 4b
       </td>
       <td>
-        <code>edge-added</code> per relationship as <code>from</code>, <code>to</code>, and
-        <code>relationship</code> close together (endpoints may be placeholder strings of the form
-        <code>new-NNN</code> when stage 4 deferred a phantom for stage 4b); no
-        <code>finalized</code> for edges (edges have no client-visible synth-to-real-id mapping)
+        <code>edge-added</code> per relationship as the LLM-emitted
+        <code>from_name</code>, <code>to_name</code>, and <code>relationship</code> (free-text
+        verb-phrase predicate) close together. The server resolves names to UUIDs at publish
+        time; phantom-declared endpoints get server-minted <code>new-NNN</code> synthetic IDs.
+        No <code>finalized</code> for edges (edges have no client-visible synth-to-real-id mapping).
       </td>
     </tr>
     <tr>
@@ -1290,17 +1291,20 @@
       <td>Sonnet</td>
       <td>non-streaming</td>
       <td>
-        patch-driven: <code>fix_fact</code> updates <code>facts.content</code>,
-        <code>fix_prose</code> updates <code>prose_kernels</code>, <code>fix_relationship</code> is
-        a DELETE + INSERT on <code>relationships</code>, <code>rename_entity</code> updates
-        <code>entities.name</code>, <code>delete_relationship</code> DELETEs.
+        patch-driven, all patches identified by NAME (resolved server-side to UUIDs):
+        <code>fix_fact_by_name</code> updates <code>facts.content</code>,
+        <code>fix_prose_by_name</code> updates <code>prose_kernels</code>,
+        <code>fix_relationship_by_name</code> is a DELETE + INSERT on <code>relationships</code>,
+        <code>rename_entity_by_name</code> updates <code>entities.name</code>,
+        <code>delete_relationship_by_name</code> DELETEs. Rename patches apply LAST so other
+        patches in the same batch resolve against the pre-rename context.
         <strong>No new entities, ever</strong> — coherence never creates rows it didn't see.
       </td>
       <td>
-        post-COMMIT: <code>entity-updated</code> per <code>fix_prose</code> /
-        <code>rename_entity</code>; <code>edge-removed</code> + <code>edge-added</code> for
-        <code>fix_relationship</code>; <code>edge-removed</code> for
-        <code>delete_relationship</code>. Plus the optional cap-fire
+        post-COMMIT: <code>entity-updated</code> per <code>fix_prose_by_name</code> /
+        <code>rename_entity_by_name</code>; <code>edge-removed</code> + <code>edge-added</code>
+        for <code>fix_relationship_by_name</code>; <code>edge-removed</code> for
+        <code>delete_relationship_by_name</code>. Plus the optional cap-fire
         <code>{ type: 'phase', phase: 'complete' }</code> when stage 7 sees
         <code>capExhausted</code> on entry.
       </td>
@@ -1464,24 +1468,27 @@
   benefit is durability against LLM ID hallucination.
 </aside>
 
-<h3 id="stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</h3>
+<h3 id="stage-4-s-name-resolver">Stage 4's name resolver</h3>
 
 <p>
-  <code>entity_relationships</code> is the one stage that DOES feed entity UUIDs into the prompt —
-  relationships are inherently between identified entities and naming them by string here would
-  create ambiguity stage 3's resolver doesn't have to deal with. The handler loads
-  <code>entities.listByWorld</code> at stage start and renders the inventory as
-  <code>- ${uuid} [${kind}] ${name}</code> lines in the prompt. The LLM is instructed to use real
-  UUIDs only.
+  <code>entity_relationships</code> is name-based on both sides of the LLM interface, like the
+  other world-gen stages. The handler loads the full world inventory via
+  <code>loadWorldInventory</code> at stage start, builds a
+  <code>NameResolutionContext</code> (normalized-name → entityId Maps plus fact and
+  relationship-triple indexes), and renders the inventory as <code>- ${name} [${kind}]</code>
+  lines in the prompt. The LLM emits relationships referencing entities by
+  <code>from_name</code> + <code>to_name</code>; the server resolves names to UUIDs before
+  INSERT.
 </p>
 
 <p>
-  The LLM does hallucinate occasionally — emitting a UUID that's plausible-shaped but doesn't exist
-  in the world. The handler defends with a pre-INSERT filter: build a
-  <code>Set&lt;entityId&gt;</code> from the loaded inventory, drop every relationship row whose
-  <code>from</code> or <code>to</code> isn't in the set (WARN-logged but not thrown — it's a known
-  LLM failure mode, dropping doesn't corrupt the world). The same filter applies to any
-  hierarchy-straggler rows stage 4 emits as a fallback for stage 3's misses.
+  Unresolvable names — typos, hallucinated names, names the LLM emitted but never declared as
+  phantoms — are dropped with a structured WARN. The dropped relationship doesn't reach the
+  DB; the world ends up with fewer relationships than the LLM intended, but every surviving
+  row is verifiably consistent. Phantom-declared endpoints (entities the LLM names in
+  <code>new_entity_declarations</code> for stage 4b to materialize) are routed to
+  <code>worlds.entity_consolidation_pending</code> with server-minted <code>new-NNN</code>
+  synthetic IDs that survive across stages.
 </p>
 
 <p>
@@ -2434,7 +2441,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-uuid-pre-filter">Stage 4's UUID pre-filter</a></li><li style="padding-left:12px"><a href="#per-item-drop-on-fail-validation">Per-item drop-on-fail validation</a></li><li style="padding-left:12px"><a href="#stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:12px"><a href="#worker-resilience-two-layer-error-containment">Worker resilience: two-layer error containment</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-name-resolver">Stage 4's name resolver</a></li><li style="padding-left:12px"><a href="#per-item-drop-on-fail-validation">Per-item drop-on-fail validation</a></li><li style="padding-left:12px"><a href="#stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:12px"><a href="#worker-resilience-two-layer-error-containment">Worker resilience: two-layer error containment</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -654,8 +654,8 @@
 <p>
   <code>src/shell/drawer/drawer.ts</code> is the persistent right-side pane that owns every SSE
   subscription for the page. It composes four pieces: a subscription manager
-  (<code>subscriptions.ts</code>) that holds one <code>EventSource</code> per subscribed campaign
-  id, an in-process pub/sub event bus (<code>event-bus.ts</code>) that fans messages out to in-page
+  (<code>subscriptions.ts</code>) that holds one SSE connection per subscribed campaign id, an
+  in-process pub/sub event bus (<code>event-bus.ts</code>) that fans messages out to in-page
   subscribers, a 500-event FIFO ring buffer (<code>buffer.ts</code>) that holds the recent-history
   view, and the drawer's own UI controls (pause / clear / export-to-clipboard, collapsible to a
   36-px stripe). The shell wires the trio together once at mount time and the drawer renders rows on
@@ -663,13 +663,25 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>One EventSource per active campaign, owned by the drawer</strong> — multiple panels need
-  to react to the same SSE stream (status, snapshot, members, character views). If each panel opened
-  its own connection, multiple sockets would race to the same campaign channel and multiplying open
-  connections would trip the per-user rate limit on <code>GET /status/stream</code> (see
-  <a href="./pipeline-status.html">pipeline status</a>). Centralising the socket in the drawer and
-  fanning out through an in-process bus means one socket per active campaign, and panels become
-  cheap bus subscribers.
+  <strong>One SSE connection per active campaign, owned by the drawer</strong> — multiple panels
+  need to react to the same SSE stream (status, snapshot, members, character views). If each panel
+  opened its own connection, multiple sockets would race to the same campaign channel and
+  multiplying open connections would trip the per-user rate limit on
+  <code>GET /status/stream</code> (see <a href="./pipeline-status.html">pipeline status</a>).
+  Centralising the socket in the drawer and fanning out through an in-process bus means one socket
+  per active campaign, and panels become cheap bus subscribers.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Fetch-based SSE, not native <code>EventSource</code></strong> — the browser's built-in
+  <code>EventSource</code> cannot set custom request headers, so it cannot carry
+  <code>x-mythrun-dev-sub</code> to the backend's auth plugin. Every native subscription returned
+  403 and the drawer stayed silent. The subscription manager now uses the fetch-based
+  <code>openSse()</code> helper in <code>src/sse-client.ts</code>: <code>fetch</code> with the
+  identity header set, then a hand-rolled SSE frame parser over the response's
+  <code>ReadableStream</code>. The drawer-facing API (<code>subscribe</code> /
+  <code>unsubscribe</code> / <code>closeAll</code>) is identical; the in-page bus + buffer don't
+  know which transport opened the socket.
 </aside>
 
 <p>
@@ -689,8 +701,8 @@
   identity switch, after the bridge re-runs <code>subscriptions.subscribe(active)</code>; and on
   every <code>onActiveCampaignChanged</code> notification (a row click in My Campaigns, the header
   dropdown changing, or a panel calling <code>setActiveCampaignId</code> directly). Unsubscribe
-  happens when the active id changes (the old EventSource closes), when identity changes (every open
-  socket closes via <code>closeAll()</code>), and when the shell itself unmounts. Pause + clear
+  happens when the active id changes (the old SSE connection aborts), when identity changes (every
+  open socket closes via <code>closeAll()</code>), and when the shell itself unmounts. Pause + clear
   state persists across reloads in <code>localStorage</code>.
 </p>
 
@@ -716,7 +728,7 @@
   on) and a handful of shared renderers (<code>error-block.ts</code>,
   <code>json-disclosure.ts</code> for expandable JSON dumps, <code>progress-strip.ts</code> for
   long-running flows). Panels that need live wire data subscribe to the drawer's bus rather than
-  opening their own EventSource.
+  opening their own SSE connection.
 </p>
 
 <p>
