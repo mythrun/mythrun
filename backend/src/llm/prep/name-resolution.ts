@@ -51,7 +51,7 @@ export function buildResolutionContext(inv: WorldInventory): NameResolutionConte
       continue
     }
     seenNames.add(n)
-    if (!ambiguousEntityNames.has(n)) entityIdByName.set(n, e.id)
+    entityIdByName.set(n, e.id)
   }
 
   const factIdByPair = new Map<string, Map<string, string[]>>()
