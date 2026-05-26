@@ -209,3 +209,30 @@ describe('relationships repo', () => {
     })
   })
 })
+
+describe('relationships table — synth_key column', () => {
+  // myth-p4sz / myth-imxg.1: persist a wire-format synth_key on relationships
+  // rows so coherence_pass stage 7 can look up the existing row's identity
+  // when emitting edge-removed SSE events. Migration 020 adds the column as
+  // nullable TEXT and backfills existing rows with deterministic placeholders.
+  let pool: Pool
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createTestPool(databaseUrl)
+  })
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  it('has a nullable text synth_key column', async () => {
+    const { rows } = await pool.query<{ data_type: string; is_nullable: 'YES' | 'NO' }>(
+      `SELECT data_type, is_nullable
+         FROM information_schema.columns
+        WHERE table_name = 'relationships' AND column_name = 'synth_key'`,
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.data_type).toBe('text')
+    expect(rows[0]?.is_nullable).toBe('YES')
+  })
+})

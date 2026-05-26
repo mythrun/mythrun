@@ -675,6 +675,7 @@ describe('schema-parity (integration)', () => {
       '017_entity_consolidation.sql',
       '018_character_integration.sql',
       '019_starting_situation_titles.sql',
+      '020_relationships_synth_key.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
