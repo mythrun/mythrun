@@ -241,9 +241,10 @@ export function resolveFact(
   if (entityId === undefined) return { kind: 'dropped', reason: 'unknown_entity' }
   const byTopic = ctx.factIdByPair.get(n)
   const matches = byTopic?.get(emitted.fact_topic) ?? []
-  if (matches.length === 0) return { kind: 'dropped', reason: 'unknown_fact' }
-  if (matches.length > 1) return { kind: 'dropped', reason: 'ambiguous_fact' }
-  return { kind: 'resolved', factId: matches[0]!, entityId }
+  const [first, second] = matches
+  if (first === undefined) return { kind: 'dropped', reason: 'unknown_fact' }
+  if (second !== undefined) return { kind: 'dropped', reason: 'ambiguous_fact' }
+  return { kind: 'resolved', factId: first, entityId }
 }
 
 export type EntityResolution =
@@ -287,9 +288,10 @@ function lookupRelTriple(
   const sn = normalizeName(src)
   const tn = normalizeName(tgt)
   const arr = ctx.relIdByTriple.get(sn)?.get(tn)?.get(type) ?? []
-  if (arr.length === 0) return { kind: 'dropped', reason: 'unknown_relationship' }
-  if (arr.length > 1) return { kind: 'dropped', reason: 'ambiguous_relationship' }
-  return { kind: 'resolved', relationshipId: arr[0]! }
+  const [first, second] = arr
+  if (first === undefined) return { kind: 'dropped', reason: 'unknown_relationship' }
+  if (second !== undefined) return { kind: 'dropped', reason: 'ambiguous_relationship' }
+  return { kind: 'resolved', relationshipId: first }
 }
 
 export function resolveFixRelationship(
