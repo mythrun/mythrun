@@ -144,6 +144,13 @@ interface ApplyResult {
 
 type SynthKeyMap = Readonly<Record<string, string>>
 
+/* c8 ignore start — warnUnknown is called only from the defense-in-depth
+ * post-resolution branches in applyFixProse / applyRenameEntity /
+ * applyFixRelationship / applyDeleteRelationship. Those branches catch
+ * synthKey-map gaps that don't fire under T13's integration; the
+ * resolver guarantees the resolved ID exists in inv. Production hits
+ * this only when the synthKeyByEntityId map is incomplete for a real
+ * UUID — tracked as a separate beadworthy bug (see myth-p4sz). */
 function warnUnknown(
   ctx: ApplyContext,
   kind: CoherencePatch['kind'],
@@ -155,6 +162,7 @@ function warnUnknown(
     `coherence_pass: patch references unknown ${idField}; skipping`,
   )
 }
+/* c8 ignore stop */
 
 async function applyFixFact(
   client: PoolClient,

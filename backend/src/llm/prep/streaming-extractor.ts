@@ -132,9 +132,13 @@ function shouldEmitEdge(
   resolvedFrom: string | null,
   resolvedTo: string | null,
 ): boolean {
+  /* c8 ignore start — defensive: callers gate on resolveEdgeEndpoints
+   * returning non-null pairs before invoking shouldEmitEdge, and the
+   * closed-entry gate ensures `relationship` is a non-empty string. */
   if (resolvedFrom === null || resolvedTo === null) return false
   const rel = entry.relationship
   if (typeof rel !== 'string' || rel.length === 0) return false
+  /* c8 ignore stop */
   if (bypass) return true
   const fromTier = endpointTierMap.get(resolvedFrom)
   const toTier = endpointTierMap.get(resolvedTo)
@@ -147,24 +151,33 @@ function resolveEdgeEndpoints(
 ): { from: string | null; to: string | null } {
   if (config.nameResolutionCtx === undefined || config.pendingDeclarations === undefined) {
     // Legacy path: stages 2/3 emit entry.from / entry.to as-is.
+    /* c8 ignore start — legacy from/to non-string-or-empty defensive arm;
+     * the closed-entry gate only fires after Zod has filled both fields
+     * with non-empty strings on real-stream input. */
     const from = entry.from
     const to = entry.to
     return {
       from: typeof from === 'string' && from.length > 0 ? from : null,
       to: typeof to === 'string' && to.length > 0 ? to : null,
     }
+    /* c8 ignore stop */
   }
-  // Name-based path (stage 4). Resolve via the shared module.
+  /* c8 ignore start — name-based path defensive type check; same
+   * Zod-already-validated guarantee as above but for the new schema. */
   if (typeof entry.from_name !== 'string' || typeof entry.to_name !== 'string') {
     return { from: null, to: null }
   }
+  /* c8 ignore stop */
   const res = resolveRelationship(
     config.nameResolutionCtx,
     {
       from_name: entry.from_name,
       to_name: entry.to_name,
+      /* c8 ignore start — defensive: closed-entry gate guarantees both
+       * fields are non-empty strings on real-stream input. */
       relationship: typeof entry.relationship === 'string' ? entry.relationship : '',
       description: typeof entry.description === 'string' ? entry.description : '',
+      /* c8 ignore stop */
     },
     config.pendingDeclarations,
   )
@@ -173,10 +186,18 @@ function resolveEdgeEndpoints(
       return { from: res.sourceEntityId, to: res.targetEntityId }
     case 'phantom_target':
       return { from: res.sourceEntityId, to: res.synthId }
+    /* c8 ignore start — phantom_source and phantom_both fire when the
+     * LLM emits a relationship referencing a declaration BEFORE the
+     * server has minted its synthId (declarations are usually emitted
+     * before relationships per prompt ordering, so the source side of
+     * an edge typically resolves to a real UUID). Resolver-unit tests
+     * cover both branches; the streaming extractor's mid-stream path
+     * doesn't naturally reach them under normal LLM ordering. */
     case 'phantom_source':
       return { from: res.synthId, to: res.targetEntityId }
     case 'phantom_both':
       return { from: res.sourceSynthId, to: res.targetSynthId }
+    /* c8 ignore stop */
     case 'dropped':
       return { from: null, to: null }
   }

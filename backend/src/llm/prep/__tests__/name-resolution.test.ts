@@ -229,3 +229,97 @@ describe('resolveFixRelationship / resolveDeleteRelationship', () => {
     if (r.kind === 'dropped') expect(r.reason).toBe('unknown_relationship')
   })
 })
+
+describe('resolveRelationship — additional outcomes', () => {
+  const phantoms = new Map<string, { synthId: string; entityType: string }>([
+    ['The Whisper Council', { synthId: 'new-001', entityType: 'faction' }],
+    ['The Shadow Cartel', { synthId: 'new-002', entityType: 'faction' }],
+  ])
+
+  it('returns phantom_source when source is declared and target is real', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'The Whisper Council', to_name: 'The Drowned Quarter',
+      relationship: 'allied_with', description: 'desc',
+    }, phantoms)
+    expect(r.kind).toBe('phantom_source')
+  })
+
+  it('returns phantom_both when both endpoints are declared phantoms', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'The Whisper Council', to_name: 'The Shadow Cartel',
+      relationship: 'rival_of', description: 'desc',
+    }, phantoms)
+    expect(r.kind).toBe('phantom_both')
+  })
+
+  it('drops with unknown_both when neither name resolves anywhere', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'Nobody A', to_name: 'Nobody B',
+      relationship: 'leads', description: 'desc',
+    }, phantoms)
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('unknown_both')
+  })
+
+  it('drops with unknown_target when source resolves but target does not', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'Mother Ehren', to_name: 'Nobody',
+      relationship: 'leads', description: 'desc',
+    }, phantoms)
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('unknown_target')
+  })
+})
+
+describe('resolveRelationship — ambiguous_target branch', () => {
+  it('drops with ambiguous_target when target has multiple inventory matches', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRelationship(ctx, {
+      from_name: 'Mother Ehren', to_name: 'Pell',
+      relationship: 'leads', description: 'desc',
+    }, new Map())
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_target')
+  })
+})
+
+describe('resolveFact / resolveRename — ambiguous_entity branch', () => {
+  it('resolveFact drops with ambiguous_entity for duplicate-name entity', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveFact(ctx, { entity_name: 'Pell', fact_topic: 'role' })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_entity')
+  })
+  it('resolveRename drops with ambiguous_entity for duplicate-name entity', () => {
+    const ctx = buildResolutionContext(makeInv())
+    const r = resolveRename(ctx, { old_name: 'Pell', new_name: 'Pell Orvast' })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_entity')
+  })
+})
+
+describe('lookupRelTriple — ambiguous_relationship branch', () => {
+  it('drops with ambiguous_relationship when two relationships share triple', () => {
+    // Inventory with two relationships having the same (source, target, type).
+    const inv: import('../world-dump.js').WorldInventory = {
+      entitiesById: new Map([
+        ['e-a', { id: 'e-a', name: 'A', entityType: 'npc', accessLevel: 'known' as const }],
+        ['e-b', { id: 'e-b', name: 'B', entityType: 'npc', accessLevel: 'known' as const }],
+      ]),
+      proseByEntityId: new Map(),
+      factsById: new Map(),
+      relationshipsById: new Map([
+        ['r-1', { id: 'r-1', sourceEntityId: 'e-a', targetEntityId: 'e-b', relationshipType: 'leads', description: 'first' }],
+        ['r-2', { id: 'r-2', sourceEntityId: 'e-a', targetEntityId: 'e-b', relationshipType: 'leads', description: 'duplicate' }],
+      ]),
+    }
+    const ctx = buildResolutionContext(inv)
+    const r = resolveFixRelationship(ctx, { source_name: 'A', target_name: 'B', current_type: 'leads' })
+    expect(r.kind).toBe('dropped')
+    if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_relationship')
+  })
+})

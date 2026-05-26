@@ -73,7 +73,11 @@ export function buildResolutionContext(inv: WorldInventory): NameResolutionConte
   for (const r of inv.relationshipsById.values()) {
     const src = inv.entitiesById.get(r.sourceEntityId)
     const tgt = inv.entitiesById.get(r.targetEntityId)
+    /* c8 ignore start — defensive: relationships table has ON DELETE CASCADE
+     * FKs on both endpoints, so an orphan relationship is unreachable
+     * under a consistent world inventory. */
     if (src === undefined || tgt === undefined) continue
+    /* c8 ignore stop */
     const sn = normalizeName(src.name)
     const tn = normalizeName(tgt.name)
     let byTgt = relIdByTriple.get(sn)
