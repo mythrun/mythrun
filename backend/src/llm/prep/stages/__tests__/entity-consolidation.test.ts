@@ -301,6 +301,7 @@ describe('runEntityConsolidationStage', () => {
       readonly targetEntityId: string
       readonly relationshipType: string
       readonly description: string
+      readonly synthKey: string
     }[]
     expect(relRows).toHaveLength(1)
     expect(relRows[0]).toEqual({
@@ -308,7 +309,17 @@ describe('runEntityConsolidationStage', () => {
       targetEntityId: insertCall.id,
       relationshipType: 'rival_of',
       description: 'Long Vigil rivals the Ironjaw over Bone Reach territory.',
+      // myth-imxg.5: insert-time synth_key carries the same wire identity
+      // the per-resolved-relationship `edge-added` event publishes, so
+      // stage 7 can address the row by the same string stage 4b established
+      // on the wire.
+      synthKey: 'entity_consolidation/relationships/0',
     })
+    // synth_key shape: one per resolved relationship, indexed in insertMany
+    // order (same `i` as the edge-added event emission below).
+    expect(relRows.map((r) => r.synthKey)).toEqual([
+      'entity_consolidation/relationships/0',
+    ])
 
     // Pending state UPDATE clears declarations + relationships to empty.
     const clearCall = client.query.mock.calls.find((call) => {

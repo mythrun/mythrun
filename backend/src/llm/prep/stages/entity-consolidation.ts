@@ -292,7 +292,16 @@ export async function runEntityConsolidationStage(
     })
   }
   if (resolvedRels.length > 0) {
-    await relationships.insertMany(client, resolvedRels)
+    // myth-imxg.5: stamp each row with the same synth_key the post-INSERT
+    // `edge-added` event publishes below. The `i` index here MUST match the
+    // `i` used by the event-emission loop — they're keyed off the same
+    // resolvedRels array, in the same order — so stage 7 can later address
+    // these rows on the wire by their established identity.
+    const resolvedRelsWithKeys = resolvedRels.map((rel, i) => ({
+      ...rel,
+      synthKey: `entity_consolidation/relationships/${String(i)}`,
+    }))
+    await relationships.insertMany(client, resolvedRelsWithKeys)
     // myth-pfke P5.2: per-resolved-relationship `edge-added` event.
     // Endpoints are REAL UUIDs at this point (resolved via
     // placeholderToUuid above); the FE buffered-edges UX only needs to
