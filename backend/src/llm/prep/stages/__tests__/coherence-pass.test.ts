@@ -258,10 +258,13 @@ describe('runCoherencePassStage', () => {
     const rename = updates.find((p) => p.synthKey === SYNTH[ENTITY_B])
     expect(rename?.patch).toMatchObject({ name: 'Mara Salt-Hand' })
 
+    // edge-removed events read synthKey from inventory (the relationships
+    // table's synth_key column), NOT from the per-entity SYNTH map.
+    // Mirrors the fixture rows above (entity_relationships/relationships/N).
     const removed = eventsOfType(result.finalizedEvents, 'edge-removed')
-    const edgeRemovedR = removed.find((p) => p.synthKey === SYNTH[REL_R])
+    const edgeRemovedR = removed.find((p) => p.synthKey === 'entity_relationships/relationships/0')
     expect(edgeRemovedR?.reason).toBe('coherence_deleted')
-    const edgeRemovedS = removed.find((p) => p.synthKey === SYNTH[REL_S])
+    const edgeRemovedS = removed.find((p) => p.synthKey === 'entity_relationships/relationships/1')
     expect(edgeRemovedS?.reason).toBe('coherence_deleted')
 
     const added = eventsOfType(result.finalizedEvents, 'edge-added')

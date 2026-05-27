@@ -152,10 +152,13 @@ type SynthKeyMap = Readonly<Record<string, string>>
 /* c8 ignore start — warnUnknown is called only from the defense-in-depth
  * post-resolution branches in applyFixProse / applyRenameEntity /
  * applyFixRelationship / applyDeleteRelationship. Those branches catch
- * synthKey-map gaps that don't fire under T13's integration; the
- * resolver guarantees the resolved ID exists in inv. Production hits
- * this only when the synthKeyByEntityId map is incomplete for a real
- * UUID — tracked as a separate beadworthy bug (see myth-p4sz). */
+ * synthKey-map gaps that don't fire under T13's integration; the resolver
+ * guarantees the resolved ID exists in inv. Production hits this only when
+ * the synthKey map (either synthKeyByEntityId for entity patches, or
+ * synthKeyByRelationshipId for edge patches) is missing the resolved id —
+ * which would mean the stage handler's population loop failed to enumerate
+ * inv.entitiesById / inv.relationshipsById exhaustively. Code-bug condition,
+ * not a data condition. */
 function warnUnknown(
   ctx: ApplyContext,
   kind: CoherencePatch['kind'],
@@ -243,7 +246,6 @@ async function applyFixRelationship(
   patch: Extract<CoherencePatch, { kind: 'fix_relationship_by_name' }>,
   relationshipId: string,
   ctx: ApplyContext,
-  synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
   // The resolver guarantees the relationshipId exists in inventory.
   /* c8 ignore start — defense-in-depth: the resolver only returns
@@ -276,14 +278,16 @@ async function applyFixRelationship(
   if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
     return { events: [] }
   }
-  const oldSynthKey = synthKeyByEntityId[relationshipId]
+  const oldSynthKey = ctx.synthKeyByRelationshipId[relationshipId]
   const newSynthKey = `coherence_pass/edges/${newId}`
   const events: PipelineEvent[] = []
   if (oldSynthKey !== undefined) {
     events.push({ type: 'edge-removed', synthKey: oldSynthKey, reason: 'coherence_deleted' })
-    /* c8 ignore start — defense-in-depth: the `else` arm (missing synthKey
-     * for an existing relationship) is not reachable under T13's
-     * integration. */
+    /* c8 ignore start — defense-in-depth: synthKeyByRelationshipId is built
+     * from inv.relationshipsById exhaustively (each rel's synth_key is
+     * persisted by migration 020 + backfilled). A miss here means the
+     * stage handler failed to populate the map — a code bug, not a
+     * data condition. */
   } else {
     warnUnknown(ctx, patch.kind, 'relationshipId', relationshipId)
   }
@@ -303,7 +307,6 @@ async function applyDeleteRelationship(
   patch: Extract<CoherencePatch, { kind: 'delete_relationship_by_name' }>,
   relationshipId: string,
   ctx: ApplyContext,
-  synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
   /* c8 ignore start — defense-in-depth: resolver guarantees existence. */
   const existing = ctx.inv.relationshipsById.get(relationshipId)
@@ -319,8 +322,12 @@ async function applyDeleteRelationship(
   if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
     return { events: [] }
   }
-  const synthKey = synthKeyByEntityId[relationshipId]
-  /* c8 ignore start — defense-in-depth: see applyFixProse comment. */
+  const synthKey = ctx.synthKeyByRelationshipId[relationshipId]
+  /* c8 ignore start — defense-in-depth: synthKeyByRelationshipId is built
+   * from inv.relationshipsById exhaustively (each rel's synth_key is
+   * persisted by migration 020 + backfilled). A miss here means the
+   * stage handler failed to populate the map — a code bug, not a
+   * data condition. */
   if (synthKey === undefined) {
     warnUnknown(ctx, patch.kind, 'relationshipId', relationshipId)
     return { events: [] }
@@ -407,7 +414,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyFixRelationship(client, patch, res.relationshipId, ctx, synthKeyByEntityId)
+      return applyFixRelationship(client, patch, res.relationshipId, ctx)
     }
     case 'delete_relationship_by_name': {
       const res = resolveDeleteRelationship(ctx.resolver, patch)
@@ -425,7 +432,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyDeleteRelationship(client, patch, res.relationshipId, ctx, synthKeyByEntityId)
+      return applyDeleteRelationship(client, patch, res.relationshipId, ctx)
     }
     /* c8 ignore start */
     case 'add_relationship_by_name': {
