@@ -246,9 +246,9 @@ describe('runCoherencePassStage', () => {
     expect(result.outputTokens).toBe(2000)
     expect(result.capExhausted).toBe(false)
 
-    // 5 finalized events (per §3.6 — fix_fact emits nothing;
-    // fix_relationship emits both edge-removed AND edge-added).
-    expect(result.finalizedEvents).toHaveLength(5)
+    // 6 finalized events (per §3.6 / myth-imxg T20 — fix_fact now emits
+    // fact-updated; fix_relationship emits both edge-removed AND edge-added).
+    expect(result.finalizedEvents).toHaveLength(6)
 
     const updates = eventsOfType(result.finalizedEvents, 'entity-updated')
     const prose = updates.find((p) => p.synthKey === SYNTH[ENTITY_A])
@@ -257,6 +257,11 @@ describe('runCoherencePassStage', () => {
     })
     const rename = updates.find((p) => p.synthKey === SYNTH[ENTITY_B])
     expect(rename?.patch).toMatchObject({ name: 'Mara Salt-Hand' })
+
+    // fix_fact_by_name targeting topic='history' surfaces as fact-updated.
+    const factUpdates = eventsOfType(result.finalizedEvents, 'fact-updated')
+    expect(factUpdates).toHaveLength(1)
+    expect(factUpdates[0]?.topic).toBe('history')
 
     // edge-removed events read synthKey from inventory (the relationships
     // table's synth_key column), NOT from the per-entity SYNTH map.
@@ -1232,5 +1237,62 @@ describe('runCoherencePassStage', () => {
     )
     expect(deletes).toHaveLength(1)  // DB DELETE still happens
     expect(result.finalizedEvents.filter((e) => e.type === 'fact-removed')).toHaveLength(0)  // SSE suppressed
+  })
+
+  // myth-imxg T20 — fix_fact_by_name now emits fact-updated.
+  //
+  // Pre-T20 fix_fact silently updated the DB and returned no events; the FE
+  // had to re-query to observe the change. Per T12's schema change the FE
+  // now handles fact events per-row, so fix_fact emits fact-updated with
+  // the new content + the prior topic/accessLevel snapshot.
+
+  it('fix_fact_by_name emits fact-updated (previously silent)', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'fix_fact_by_name',
+          entity_name: 'Old Eredil',
+          fact_topic: 'history',
+          new_content: 'The village survived the fire and rebuilt within a generation.',
+          rationale: 'Existing fact contradicted prose; tighten the timeline.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { result } = await runStage({ bypassAccessFilter: true })
+    const updated = eventsOfType(result.finalizedEvents, 'fact-updated')
+    expect(updated).toHaveLength(1)
+    expect(updated[0]?.topic).toBe('history')
+    expect(updated[0]?.content).toContain('rebuilt')
+    expect(updated[0]?.factId).toBe(FACT_X)
+    expect(updated[0]?.entitySynthKey).toBe(SYNTH[ENTITY_A])
+    expect(updated[0]?.accessLevel).toBe('known')
+  })
+
+  it('fix_fact_by_name persists DB update but suppresses SSE on non-known tier', async () => {
+    // For 100% branch coverage on the shouldEmitEntityEvent gate.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'fix_fact_by_name',
+          entity_name: 'Old Eredil',
+          fact_topic: 'history',
+          new_content: 'The village survived the fire and rebuilt within a generation.',
+          rationale: 'Same as the happy-path test but with non-known tier — DB still updates, SSE suppressed.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({
+      accessLevels: { [ENTITY_A]: 'secret' },  // non-known tier
+    })
+
+    const updates = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('UPDATE facts'),
+    )
+    expect(updates).toHaveLength(1)  // DB UPDATE still happens
+    expect(result.finalizedEvents.filter((e) => e.type === 'fact-updated')).toHaveLength(0)  // SSE suppressed
   })
 })

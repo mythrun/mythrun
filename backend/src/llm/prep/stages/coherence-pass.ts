@@ -178,12 +178,40 @@ async function applyFixFact(
   client: PoolClient,
   patch: Extract<CoherencePatch, { kind: 'fix_fact_by_name' }>,
   factId: string,
+  entityId: string,
+  ctx: ApplyContext,
+  synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
   await facts.updateContentById(client, factId, { content: patch.new_content })
-  // fix_fact emits NO SSE event per §3.6 — facts are not exposed as
-  // standalone client-side entities; the FE re-reads them on next entity
-  // query.
-  return { events: [] }
+  // fix_fact emits a `fact-updated` SSE event (myth-imxg §6). The FE
+  // applies the patch to its prior fact row identified by factId.
+  if (!shouldEmitEntityEvent(ctx, entityId)) return { events: [] }
+  const entitySynthKey = synthKeyByEntityId[entityId]
+  /* c8 ignore start — defense-in-depth: entity synthKey map is empty in
+   * world-gen-processor today (MYT-52-followup); this branch fires
+   * unconditionally in prod until that wiring lands. */
+  if (entitySynthKey === undefined) {
+    warnUnknown(ctx, patch.kind, 'entityId', entityId)
+    return { events: [] }
+  }
+  /* c8 ignore stop */
+  const fact = ctx.inv.factsById.get(factId)
+  /* c8 ignore start — defense-in-depth: resolver returns resolved only when the fact exists. */
+  if (fact === undefined) {
+    warnUnknown(ctx, patch.kind, 'factId', factId)
+    return { events: [] }
+  }
+  /* c8 ignore stop */
+  return {
+    events: [{
+      type: 'fact-updated',
+      entitySynthKey,
+      factId,
+      topic: fact.topic,  // topic unchanged by fix_fact
+      content: patch.new_content,
+      accessLevel: fact.accessLevel as 'known' | 'discoverable' | 'secret',
+    }],
+  }
 }
 
 async function applyFixProse(
@@ -516,7 +544,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyFixFact(client, patch, res.factId)
+      return applyFixFact(client, patch, res.factId, res.entityId, ctx, synthKeyByEntityId)
     }
     case 'fix_prose_by_name': {
       const res = resolveProseTarget(ctx.resolver, patch)
