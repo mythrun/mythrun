@@ -13,6 +13,11 @@ export interface InsertRelationshipInput {
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
+  // myth-imxg.2: required so stage 7 (coherence pass) can address the
+  // existing row on the wire by its synth_key when emitting edge-removed
+  // SSE events. Column is nullable in the schema (migration 020) but
+  // every write path going forward must supply a value.
+  readonly synthKey: string
 }
 
 export interface Relationship {
@@ -21,6 +26,7 @@ export interface Relationship {
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
+  readonly synthKey: string
 }
 
 // DB row shape for listByWorld's SELECT (no created_at column read).
@@ -30,6 +36,7 @@ interface RelationshipListByWorldDbRow {
   readonly target_entity_id: string
   readonly relationship_type: string
   readonly description: string
+  readonly synth_key: string
 }
 
 function toRelationship(row: RelationshipListByWorldDbRow): Relationship {
@@ -39,6 +46,7 @@ function toRelationship(row: RelationshipListByWorldDbRow): Relationship {
     targetEntityId: row.target_entity_id,
     relationshipType: row.relationship_type,
     description: row.description,
+    synthKey: row.synth_key,
   }
 }
 
@@ -52,6 +60,7 @@ export interface RelationshipRow {
   readonly relationshipType: string
   readonly description: string
   readonly createdAt: Date
+  readonly synthKey: string
 }
 
 interface RelationshipDbRow {
@@ -61,6 +70,7 @@ interface RelationshipDbRow {
   readonly relationship_type: string
   readonly description: string
   readonly created_at: Date
+  readonly synth_key: string
 }
 
 function toRelationshipRow(row: RelationshipDbRow): RelationshipRow {
@@ -71,6 +81,7 @@ function toRelationshipRow(row: RelationshipDbRow): RelationshipRow {
     relationshipType: row.relationship_type,
     description: row.description,
     createdAt: row.created_at,
+    synthKey: row.synth_key,
   }
 }
 
@@ -86,11 +97,11 @@ async function insertMany(client: ClientLike, rows: readonly InsertRelationshipI
   for (const row of rows) {
     const id = uuidv7()
     ids.push(id)
-    values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)})`)
-    params.push(id, row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description)
+    values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)})`)
+    params.push(id, row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description, row.synthKey)
   }
   await client.query(
-    `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
+    `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
      VALUES ${values.join(', ')}`,
     params,
   )
@@ -99,7 +110,7 @@ async function insertMany(client: ClientLike, rows: readonly InsertRelationshipI
 
 async function listByWorld(client: ClientLike, worldId: string): Promise<Relationship[]> {
   const result = await client.query<RelationshipListByWorldDbRow>(
-    `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description
+    `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description, r.synth_key
        FROM relationships r
        JOIN entities e ON e.id = r.source_entity_id
        WHERE e.world_id = $1`,
@@ -119,7 +130,7 @@ async function listAmong(
   if (entityIds.length === 0) return []
   const result = await client.query<RelationshipDbRow>(
     `SELECT id, source_entity_id, target_entity_id, relationship_type,
-            description, created_at
+            description, created_at, synth_key
        FROM relationships
       WHERE source_entity_id = ANY($1) AND target_entity_id = ANY($1)
       ORDER BY id`,

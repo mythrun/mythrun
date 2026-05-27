@@ -50,7 +50,7 @@ describe('relationships repo', () => {
 
   it('insertMany writes relationship rows', async () => {
     await relationships.insertMany(pool, [
-      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A controls B.' },
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A controls B.', synthKey: 'test/rel/0' },
     ])
     const rows = await pool.query<{ relationship_type: string; description: string }>(
       `SELECT relationship_type, description FROM relationships WHERE source_entity_id = $1`,
@@ -73,7 +73,7 @@ describe('relationships repo', () => {
 
   it('listByWorld returns rows joined via source entity', async () => {
     await relationships.insertMany(pool, [
-      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'X' },
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'X', synthKey: 'test/rel/0' },
     ])
     const rows = await relationships.listByWorld(pool, worldId)
     expect(rows).toHaveLength(1)
@@ -82,7 +82,7 @@ describe('relationships repo', () => {
 
   it('deleteByWorld removes all relationships whose source entity is in the world', async () => {
     await relationships.insertMany(pool, [
-      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'X' },
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'X', synthKey: 'test/rel/0' },
     ])
     await relationships.deleteByWorld(pool, worldId)
     // Scope to the test's source entities — parallel siblings may have
@@ -96,7 +96,7 @@ describe('relationships repo', () => {
 
   it('updateById updates the type + description', async () => {
     await relationships.insertMany(pool, [
-      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old' },
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old', synthKey: 'test/rel/0' },
     ])
     const row = await pool.query<{ id: string }>(
       `SELECT id FROM relationships WHERE source_entity_id = $1`,
@@ -115,7 +115,7 @@ describe('relationships repo', () => {
     // Covers the relationshipType-undefined branch of the conditional
     // set-builder. The both-fields case is covered by the test above.
     await relationships.insertMany(pool, [
-      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old' },
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'old', synthKey: 'test/rel/0' },
     ])
     const row = await pool.query<{ id: string }>(
       `SELECT id FROM relationships WHERE source_entity_id = $1`,
@@ -135,7 +135,7 @@ describe('relationships repo', () => {
   it('updateById is a no-op when the patch is empty (returns 0)', async () => {
     // Covers the sets.length === 0 early-return path.
     await relationships.insertMany(pool, [
-      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'unchanged' },
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'unchanged', synthKey: 'test/rel/0' },
     ])
     const row = await pool.query<{ id: string }>(
       `SELECT id FROM relationships WHERE source_entity_id = $1`,
@@ -148,7 +148,7 @@ describe('relationships repo', () => {
 
   it('deleteById removes a single row', async () => {
     await relationships.insertMany(pool, [
-      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'x' },
+      { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'x', synthKey: 'test/rel/0' },
     ])
     const row = await pool.query<{ id: string }>(
       `SELECT id FROM relationships WHERE source_entity_id = $1`,
@@ -175,8 +175,8 @@ describe('relationships repo', () => {
         id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known', createdIn: 'stage:test',
       })
       await relationships.insertMany(pool, [
-        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },
-        { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C' },
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B', synthKey: 'test/rel/0' },
+        { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C', synthKey: 'test/rel/1' },
       ])
 
       const rows = await relationships.listAmong(pool, [entA, entB])
@@ -192,8 +192,8 @@ describe('relationships repo', () => {
         id: entC, worldId, entityType: 'location', name: 'C', accessLevel: 'known', createdIn: 'stage:test',
       })
       await relationships.insertMany(pool, [
-        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },
-        { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C' },
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B', synthKey: 'test/rel/0' },
+        { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C', synthKey: 'test/rel/1' },
       ])
 
       const rows = await relationships.listAmong(pool, [entA, entB, entC])
@@ -202,7 +202,7 @@ describe('relationships repo', () => {
 
     it('returns [] for an empty entity id list (no round-trip)', async () => {
       await relationships.insertMany(pool, [
-        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B' },
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B', synthKey: 'test/rel/0' },
       ])
       const rows = await relationships.listAmong(pool, [])
       expect(rows).toEqual([])
@@ -234,5 +234,62 @@ describe('relationships table — synth_key column', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]?.data_type).toBe('text')
     expect(rows[0]?.is_nullable).toBe('YES')
+  })
+})
+
+describe('relationships.insertMany — writes synth_key', () => {
+  // myth-imxg.2: the repo layer carries synthKey end-to-end. insertMany
+  // persists it on write; listByWorld + listAmong SELECT and return it so
+  // stage 7 (coherence pass) can address the row on the wire by its synth_key.
+  let pool: Pool
+  let scope: TestScope
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createTestPool(databaseUrl)
+    scope = makeTestScope('relationships-synthkey')
+  })
+  afterAll(async () => {
+    await cleanupTestScope(pool, scope)
+    await pool.end()
+  })
+
+  it('persists the supplied synthKey and listByWorld returns it', async () => {
+    const userId = uuidv7()
+    const worldId = uuidv7()
+    const entA = uuidv7()
+    const entB = uuidv7()
+    await pool.query(
+      `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+      [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
+    )
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
+      [worldId, userId, scope.worldName(0)],
+    )
+    await entities.insert(pool, {
+      id: entA, worldId, entityType: 'faction', name: 'A', accessLevel: 'known', createdIn: 'stage:test',
+    })
+    await entities.insert(pool, {
+      id: entB, worldId, entityType: 'location', name: 'B', accessLevel: 'known', createdIn: 'stage:test',
+    })
+
+    const synthKey = 'entity_relationships/relationships/0'
+    const [relId] = await relationships.insertMany(pool, [{
+      sourceEntityId: entA,
+      targetEntityId: entB,
+      relationshipType: 'adjacent_to',
+      description: 'Test edge.',
+      synthKey,
+    }])
+
+    const rows = await relationships.listByWorld(pool, worldId)
+    const row = rows.find((r) => r.id === relId)
+    expect(row?.synthKey).toBe(synthKey)
+
+    // listAmong is the snapshot-view read path; it should expose synthKey too.
+    const amongRows = await relationships.listAmong(pool, [entA, entB])
+    const amongRow = amongRows.find((r) => r.id === relId)
+    expect(amongRow?.synthKey).toBe(synthKey)
   })
 })
