@@ -36,6 +36,11 @@ export const PIPELINE_SSE_EVENTS: readonly string[] = [
   'entity-removed',
   'edge-added',
   'edge-removed',
+  // Fact events (myth-imxg): per-fact wire updates for coherence
+  // add_fact_by_name / delete_fact_by_name / fix_fact_by_name patches.
+  'fact-added',
+  'fact-removed',
+  'fact-updated',
   'finalized',
 ] as const
 
@@ -148,4 +153,26 @@ export type PipelineEvent =
       relationship: string
     }
   | { type: 'edge-removed'; synthKey: string; reason: 'repair_dropped' | 'coherence_deleted' }
+  // myth-imxg: per-fact wire events. Symmetric with entity/edge add/remove.
+  // entitySynthKey is the owning entity's synthKey (same map the
+  // entity-updated event uses); factId is the row's UUID; topic/content/
+  // accessLevel snapshot the new shape. fact-updated carries the new
+  // content + topic; the FE replaces its prior fact row of the same id.
+  | {
+      type: 'fact-added'
+      entitySynthKey: string
+      factId: string
+      topic: string
+      content: string
+      accessLevel: 'known' | 'discoverable' | 'secret'
+    }
+  | { type: 'fact-removed'; entitySynthKey: string; factId: string }
+  | {
+      type: 'fact-updated'
+      entitySynthKey: string
+      factId: string
+      topic: string
+      content: string
+      accessLevel: 'known' | 'discoverable' | 'secret'
+    }
   | { type: 'finalized'; synthKey: string; entityId: string }
