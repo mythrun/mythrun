@@ -39,10 +39,18 @@ const fixRelationshipPatch = z.object({
   source_name: z.string().min(1).max(200),
   target_name: z.string().min(1).max(200),
   current_type: z.string().min(2).max(60),
+  newSource: z.string().min(1).max(200).optional(),
+  newTarget: z.string().min(1).max(200).optional(),
   newType: z.string().min(2).max(60).optional(),
   newDescription: z.string().min(10).max(600).optional(),
   rationale: z.string().min(20).max(400),
-})
+}).refine(
+  (p) => p.newSource !== undefined
+    || p.newTarget !== undefined
+    || p.newType !== undefined
+    || p.newDescription !== undefined,
+  { message: 'fix_relationship_by_name requires at least one of newSource, newTarget, newType, newDescription' },
+)
 
 const renameEntityPatch = z.object({
   kind: z.literal('rename_entity_by_name'),

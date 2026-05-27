@@ -85,3 +85,57 @@ describe('CoherenceOutputSchema', () => {
     expect(() => CoherenceOutputSchema.parse({ patches })).toThrow()
   })
 })
+
+describe('fix_relationship_by_name — newSource / newTarget', () => {
+  it('accepts newSource alone', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'fix_relationship_by_name',
+        source_name: 'A',
+        target_name: 'B',
+        current_type: 'allied_with',
+        newSource: 'A-prime',
+        rationale: 'The original source was the wrong entity; correcting.',
+      }),
+    ).not.toThrow()
+  })
+
+  it('accepts newTarget alone', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'fix_relationship_by_name',
+        source_name: 'A',
+        target_name: 'B',
+        current_type: 'allied_with',
+        newTarget: 'B-prime',
+        rationale: 'Wrong target — relationship should land on B-prime.',
+      }),
+    ).not.toThrow()
+  })
+
+  it('accepts newSource + newTarget together', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'fix_relationship_by_name',
+        source_name: 'A',
+        target_name: 'B',
+        current_type: 'allied_with',
+        newSource: 'A-prime',
+        newTarget: 'B-prime',
+        rationale: 'Both endpoints were wrong; redirect both.',
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects a patch with NO new* fields (.refine no-op guard)', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'fix_relationship_by_name',
+        source_name: 'A',
+        target_name: 'B',
+        current_type: 'allied_with',
+        rationale: 'Reviewer flagged this but supplied no actual change.',
+      }),
+    ).toThrow(/at least one of newSource, newTarget, newType, newDescription/)
+  })
+})
