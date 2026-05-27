@@ -984,6 +984,134 @@ describe('runCoherencePassStage', () => {
     expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(0)
   })
 
+  // myth-imxg T18 — add_fact_by_name apply path.
+  //
+  // T7 added add_fact_by_name to the schema; T18 wires the dispatcher arm
+  // to insert a new facts row + emit fact-added. Topic-collision guard at
+  // the apply layer prevents creating ambiguous (entity, topic) pairs that
+  // future fix_fact / delete_fact patches would drop with 'ambiguous_fact'.
+
+  it('add_fact_by_name inserts a fact + emits fact-added', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'add_fact_by_name',
+          entity_name: 'Old Eredil',
+          topic: 'governance',
+          content: 'Old Eredil is administered by the harbor council.',
+          access_level: 'known',
+          rationale: 'Prose explicitly references the council; structured fact was missed.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({ bypassAccessFilter: true })
+
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO facts'),
+    )
+    expect(inserts).toHaveLength(1)
+
+    // Schema-violation guard: facts.narrative_status is NOT NULL with no
+    // DEFAULT, so the INSERT must name the column and supply the canonical
+    // 'undelivered' literal. Mocked clients don't enforce schema; this
+    // assertion is what catches a future refactor that drops the column.
+    const insertCall = inserts[0]
+    const sql = insertCall?.[0] as string
+    expect(sql).toContain('narrative_status')
+    // 'undelivered' is the canonical default per backend/src/repo/facts.ts:56-58
+    expect(sql).toContain("'undelivered'")
+
+    const added = eventsOfType(result.finalizedEvents, 'fact-added')
+    expect(added).toHaveLength(1)
+    expect(added[0]?.topic).toBe('governance')
+    expect(added[0]?.accessLevel).toBe('known')
+    expect(added[0]?.entitySynthKey).toBe(SYNTH[ENTITY_A])
+  })
+
+  it('add_fact_by_name drops with WARN when (entity, topic) already exists', async () => {
+    // Fixture has Old Eredil / topic='history'. Try to add another with same topic.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'add_fact_by_name',
+          entity_name: 'Old Eredil',
+          topic: 'history',
+          content: 'A different angle on the village history.',
+          access_level: 'known',
+          rationale: 'The model emitted an add for a topic that already has a fact.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger } = await runStage({})
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO facts'),
+    )
+    expect(inserts).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'would_be_duplicate_topic' }),
+      expect.any(String),
+    )
+  })
+
+  it('add_fact_by_name persists the DB row but suppresses fact-added when entity is non-known', async () => {
+    // ENTITY_B → 'discoverable' tier; without bypassAccessFilter the
+    // SSE fact-added must be suppressed but the INSERT must still land.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'add_fact_by_name',
+          entity_name: 'Mara',
+          topic: 'role',
+          content: 'Mara serves as the harbormaster of Old Eredil.',
+          access_level: 'discoverable',
+          rationale: 'Prose says she runs the harbor; structured fact was missed.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({
+      accessLevels: { [ENTITY_B]: 'discoverable' },
+    })
+
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO facts'),
+    )
+    expect(inserts).toHaveLength(1)
+    expect(eventsOfType(result.finalizedEvents, 'fact-added')).toHaveLength(0)
+  })
+
+  it('add_fact_by_name drops with WARN when entity name unresolvable', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'add_fact_by_name',
+          entity_name: 'Nobody',
+          topic: 'role',
+          content: 'No entity by that name exists.',
+          access_level: 'known',
+          rationale: 'The model thought Nobody existed.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger, result } = await runStage({})
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO facts'),
+    )
+    expect(inserts).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'coherence_pass', kind: 'add_fact_by_name' }),
+      expect.any(String),
+    )
+    expect(result.finalizedEvents.filter((e) => e.type === 'fact-added')).toHaveLength(0)
+  })
+
   it('uses synthKeyByRelationshipId from inventory when emitting edge-removed (myth-p4sz)', async () => {
     mockGenerateText.mockResolvedValueOnce({
       output: {

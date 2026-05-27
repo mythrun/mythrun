@@ -408,6 +408,64 @@ async function applyAddRelationship(
   }
 }
 
+async function applyAddFact(
+  client: PoolClient,
+  patch: Extract<CoherencePatch, { kind: 'add_fact_by_name' }>,
+  entityId: string,
+  ctx: ApplyContext,
+  synthKeyByEntityId: SynthKeyMap,
+): Promise<ApplyResult> {
+  // §10 topic-collision guard: if a fact already exists under this
+  // (entity, topic) pair, drop with WARN — avoids creating an ambiguous
+  // pair that future fix_fact / delete_fact would drop with 'ambiguous_fact'.
+  /* c8 ignore start — `?? ''` fallback: the resolver only returns
+   * `resolved` when the entity UUID exists in inv.entitiesById, so `.name`
+   * is always defined. Mirrors the defense-in-depth in applyAddRelationship. */
+  const entityName = normalizeName(ctx.inv.entitiesById.get(entityId)?.name ?? '')
+  /* c8 ignore stop */
+  const existingByTopic = ctx.resolver.factIdByPair.get(entityName)?.get(patch.topic) ?? []
+  if (existingByTopic.length > 0) {
+    ctx.logger.warn(
+      {
+        stage: ctx.stage,
+        kind: patch.kind,
+        reason: 'would_be_duplicate_topic',
+        entity: patch.entity_name,
+        topic: patch.topic,
+      },
+      'coherence_pass: add_fact (entity, topic) collides with existing fact; skipping',
+    )
+    return { events: [] }
+  }
+
+  const newId = uuidv7()
+  await client.query(
+    `INSERT INTO facts (id, entity_id, topic, content, access_level, narrative_status)
+     VALUES ($1, $2, $3, $4, $5, 'undelivered')`,
+    [newId, entityId, patch.topic, patch.content, patch.access_level],
+  )
+  if (!shouldEmitEntityEvent(ctx, entityId)) return { events: [] }
+  const entitySynthKey = synthKeyByEntityId[entityId]
+  /* c8 ignore start — defense-in-depth: entity synthKey map is empty in
+   * world-gen-processor today (MYT-52-followup); this branch fires
+   * unconditionally in prod until that wiring lands. */
+  if (entitySynthKey === undefined) {
+    warnUnknown(ctx, patch.kind, 'entityId', entityId)
+    return { events: [] }
+  }
+  /* c8 ignore stop */
+  return {
+    events: [{
+      type: 'fact-added',
+      entitySynthKey,
+      factId: newId,
+      topic: patch.topic,
+      content: patch.content,
+      accessLevel: patch.access_level,
+    }],
+  }
+}
+
 // Apply one patch against the in-flight transaction. Returns 0..N event
 // payloads (queued for post-COMMIT publish by the outer scope). Patches
 // whose name-based identifiers don't resolve against the per-pass
@@ -550,13 +608,22 @@ async function applyPatch(
       }
       return applyAddRelationship(client, patch, res.sourceEntityId, res.targetEntityId, ctx)
     }
-    /* c8 ignore start */
     case 'add_fact_by_name': {
-      // Apply wiring lands in T18 (myth-imxg.18); until then, drop with WARN.
-      ctx.logger.warn({ stage: ctx.stage, kind: patch.kind }, 'coherence_pass: add_fact_by_name not yet wired (T18); skipping')
-      return { events: [] }
+      const res = resolveProseTarget(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            entity_name: patch.entity_name,
+          },
+          'coherence_pass: add_fact patch entity unresolvable; skipping',
+        )
+        return { events: [] }
+      }
+      return applyAddFact(client, patch, res.entityId, ctx, synthKeyByEntityId)
     }
-    /* c8 ignore stop */
     /* c8 ignore start */
     case 'delete_fact_by_name': {
       // Apply wiring lands in T19 (myth-imxg.19); until then, drop with WARN.
