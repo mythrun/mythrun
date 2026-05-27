@@ -11,6 +11,7 @@
 //   - fix_prose_by_name         UPDATE prose_kernels.content
 //   - fix_relationship_by_name  UPDATE relationships.relationship_type / description
 //   - add_relationship_by_name  INSERT INTO relationships
+//   - add_fact_by_name          INSERT INTO facts
 //   - rename_entity_by_name     UPDATE entities.name
 //   - delete_relationship_by_name  DELETE FROM relationships
 //
@@ -62,6 +63,15 @@ const addRelationshipPatch = z.object({
   rationale: z.string().min(20).max(400),
 })
 
+const addFactPatch = z.object({
+  kind: z.literal('add_fact_by_name'),
+  entity_name: z.string().min(1).max(200),
+  topic: z.string().min(1).max(120),
+  content: z.string().min(10).max(2000),
+  access_level: z.enum(['known', 'discoverable', 'secret']),
+  rationale: z.string().min(20).max(400),
+})
+
 const renameEntityPatch = z.object({
   kind: z.literal('rename_entity_by_name'),
   old_name: z.string().min(1).max(200),
@@ -82,6 +92,7 @@ export const CoherencePatchSchema = z.discriminatedUnion('kind', [
   fixProsePatch,
   fixRelationshipPatch,
   addRelationshipPatch,
+  addFactPatch,
   renameEntityPatch,
   deleteRelationshipPatch,
 ])

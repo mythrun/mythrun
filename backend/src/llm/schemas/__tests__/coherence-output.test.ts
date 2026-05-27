@@ -167,3 +167,33 @@ describe('add_relationship_by_name', () => {
     ).toThrow()
   })
 })
+
+describe('add_fact_by_name', () => {
+  it('accepts a valid patch with each access_level', () => {
+    for (const access_level of ['known', 'discoverable', 'secret'] as const) {
+      expect(() =>
+        CoherencePatchSchema.parse({
+          kind: 'add_fact_by_name',
+          entity_name: 'Brother Anselm',
+          topic: 'duties',
+          content: 'Walks the cloister every dawn to inspect the offering candles.',
+          access_level,
+          rationale: `Prose strongly implies this; not yet structured. Tier ${access_level}.`,
+        }),
+      ).not.toThrow()
+    }
+  })
+
+  it('rejects unknown access_level', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'add_fact_by_name',
+        entity_name: 'A',
+        topic: 'x',
+        content: 'short but legal length',
+        access_level: 'public',
+        rationale: 'Reasonable length here for the test.',
+      }),
+    ).toThrow()
+  })
+})

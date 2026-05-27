@@ -429,6 +429,13 @@ async function applyPatch(
       return { events: [] }
     }
     /* c8 ignore stop */
+    /* c8 ignore start */
+    case 'add_fact_by_name': {
+      // Apply wiring lands in T18 (myth-imxg.18); until then, drop with WARN.
+      ctx.logger.warn({ stage: ctx.stage, kind: patch.kind }, 'coherence_pass: add_fact_by_name not yet wired (T18); skipping')
+      return { events: [] }
+    }
+    /* c8 ignore stop */
   }
 }
 
