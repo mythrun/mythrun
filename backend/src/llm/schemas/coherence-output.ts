@@ -6,14 +6,15 @@
 // server-side resolver maps names to UUIDs before applying patches.
 // Unresolvable names are dropped with structured WARNs.
 //
-// Patch kinds:
-//   - fix_fact_by_name          UPDATE facts.content
-//   - fix_prose_by_name         UPDATE prose_kernels.content
-//   - fix_relationship_by_name  UPDATE relationships.relationship_type / description
-//   - add_relationship_by_name  INSERT INTO relationships
-//   - add_fact_by_name          INSERT INTO facts
-//   - rename_entity_by_name     UPDATE entities.name
+// Patch kinds (8-arm discriminated union):
+//   - fix_fact_by_name             UPDATE facts.content
+//   - fix_prose_by_name            UPDATE prose_kernels.content
+//   - fix_relationship_by_name     UPDATE relationships.relationship_type / description
+//   - add_relationship_by_name     INSERT INTO relationships
+//   - add_fact_by_name             INSERT INTO facts
+//   - rename_entity_by_name        UPDATE entities.name
 //   - delete_relationship_by_name  DELETE FROM relationships
+//   - delete_fact_by_name          DELETE FROM facts
 //
 // Auto-fix only — no `warnings` arm. The LLM emits only patches it has
 // high confidence in. The list is bounded to 40 to keep per-stage spend
@@ -87,14 +88,22 @@ const deleteRelationshipPatch = z.object({
   rationale: z.string().min(20).max(400),
 })
 
+const deleteFactPatch = z.object({
+  kind: z.literal('delete_fact_by_name'),
+  entity_name: z.string().min(1).max(200),
+  fact_topic: z.string().min(1).max(120),
+  rationale: z.string().min(60).max(400),  // higher floor — deletes are irreversible
+})
+
 export const CoherencePatchSchema = z.discriminatedUnion('kind', [
   fixFactPatch,
   fixProsePatch,
   fixRelationshipPatch,
-  addRelationshipPatch,
-  addFactPatch,
   renameEntityPatch,
   deleteRelationshipPatch,
+  addRelationshipPatch,
+  addFactPatch,
+  deleteFactPatch,
 ])
 
 export type CoherencePatch = z.infer<typeof CoherencePatchSchema>

@@ -197,3 +197,27 @@ describe('add_fact_by_name', () => {
     ).toThrow()
   })
 })
+
+describe('delete_fact_by_name', () => {
+  it('accepts a valid patch with a 60+ char rationale', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'delete_fact_by_name',
+        entity_name: 'Brother Anselm',
+        fact_topic: 'pet_dog',
+        rationale: 'The fact says Anselm keeps a dog, but the prose explicitly says the monastery forbids animals; delete since no fix preserves the fact.',
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects rationale shorter than 60 chars (irreversible delete floor)', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'delete_fact_by_name',
+        entity_name: 'X',
+        fact_topic: 'y',
+        rationale: 'too short for delete',
+      }),
+    ).toThrow()
+  })
+})
