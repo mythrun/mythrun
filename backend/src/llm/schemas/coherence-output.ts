@@ -10,6 +10,7 @@
 //   - fix_fact_by_name          UPDATE facts.content
 //   - fix_prose_by_name         UPDATE prose_kernels.content
 //   - fix_relationship_by_name  UPDATE relationships.relationship_type / description
+//   - add_relationship_by_name  INSERT INTO relationships
 //   - rename_entity_by_name     UPDATE entities.name
 //   - delete_relationship_by_name  DELETE FROM relationships
 //
@@ -52,6 +53,15 @@ const fixRelationshipPatch = z.object({
   { message: 'fix_relationship_by_name requires at least one of newSource, newTarget, newType, newDescription' },
 )
 
+const addRelationshipPatch = z.object({
+  kind: z.literal('add_relationship_by_name'),
+  source_name: z.string().min(1).max(200),
+  target_name: z.string().min(1).max(200),
+  relationship: z.string().min(2).max(60),
+  description: z.string().min(10).max(600),
+  rationale: z.string().min(20).max(400),
+})
+
 const renameEntityPatch = z.object({
   kind: z.literal('rename_entity_by_name'),
   old_name: z.string().min(1).max(200),
@@ -71,6 +81,7 @@ export const CoherencePatchSchema = z.discriminatedUnion('kind', [
   fixFactPatch,
   fixProsePatch,
   fixRelationshipPatch,
+  addRelationshipPatch,
   renameEntityPatch,
   deleteRelationshipPatch,
 ])

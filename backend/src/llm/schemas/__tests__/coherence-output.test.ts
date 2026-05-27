@@ -139,3 +139,31 @@ describe('fix_relationship_by_name — newSource / newTarget', () => {
     ).toThrow(/at least one of newSource, newTarget, newType, newDescription/)
   })
 })
+
+describe('add_relationship_by_name', () => {
+  it('accepts a valid patch', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'add_relationship_by_name',
+        source_name: 'Brother Anselm',
+        target_name: 'Stillwater Monastery',
+        relationship: 'keeper_of',
+        description: 'Anselm serves as the Keeper of the Order at Stillwater.',
+        rationale: 'Prose explicitly states this; structured stage missed it.',
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects short description', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'add_relationship_by_name',
+        source_name: 'A',
+        target_name: 'B',
+        relationship: 'allied_with',
+        description: 'short',
+        rationale: 'Reasonable length but description fails the floor.',
+      }),
+    ).toThrow()
+  })
+})
