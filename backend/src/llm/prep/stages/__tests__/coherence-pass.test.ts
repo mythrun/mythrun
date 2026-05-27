@@ -120,6 +120,7 @@ function makeClient(
       target_entity_id: ENTITY_B,
       relationship_type: 'rivalry',
       description: 'Mara distrusts the village elders.',
+      synth_key: 'entity_relationships/relationships/0',
     },
     {
       id: REL_S,
@@ -127,6 +128,7 @@ function makeClient(
       target_entity_id: ENTITY_C,
       relationship_type: 'employed_by',
       description: 'Mara works the wharf.',
+      synth_key: 'entity_relationships/relationships/1',
     },
   ]
   return {
@@ -726,5 +728,44 @@ describe('runCoherencePassStage', () => {
     expect(prompt).toContain('[access_level: known]')
     expect(prompt).toContain('[access_level: discoverable]')
     expect(prompt).toContain('[access_level: secret]')
+  })
+
+  it('uses synthKeyByRelationshipId from inventory when emitting edge-removed (myth-p4sz)', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'delete_relationship_by_name',
+          source_name: 'Mara',
+          target_name: 'The Wharf',
+          current_type: 'employed_by',
+          rationale: 'Duplicate / unsupported by prose; remove this edge.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    // CRITICAL: synthKeyByEntityId map deliberately does NOT contain entries
+    // for relationship UUIDs. The handler should emit edge-removed by reading
+    // the synthKey from the inventory load (via the new relationship column),
+    // not from synthKeyByEntityId.
+    const client = makeClient({})
+    const logger = makeLogger()
+    const result = await runCoherencePassStage(asClient(client), {
+      logger: asLogger(logger),
+      worldId: WORLD_ID,
+      vocabularyRegistry: EMPTY_REGISTRY,
+      synthKeyByEntityId: {
+        [ENTITY_A]: SYNTH[ENTITY_A],
+        [ENTITY_B]: SYNTH[ENTITY_B],
+        [ENTITY_C]: SYNTH[ENTITY_C],
+        // NOTE: deliberately NO REL_S / REL_R entries here — the entity
+        // synthKey map should NOT cover relationships (that was the bug).
+      },
+      bypassAccessFilter: true,
+    })
+
+    const removed = eventsOfType(result.finalizedEvents, 'edge-removed')
+    expect(removed).toHaveLength(1)
+    expect(removed[0]?.synthKey).toBe('entity_relationships/relationships/1')  // from inventory
   })
 })

@@ -121,6 +121,11 @@ interface ApplyContext {
   // patches still persist to the DB but do NOT emit (the FT snapshot
   // wouldn't contain them).
   readonly bypassAccessFilter: boolean
+  // myth-p4sz: relationship UUID → stage-4/4b synthKey. Populated once
+  // at stage start from the inventory's relationships (whose `synthKey`
+  // column is persisted by migration 020). Replaces the misnamed lookup
+  // into synthKeyByEntityId[relationshipId].
+  readonly synthKeyByRelationshipId: Readonly<Record<string, string>>
 }
 
 // myth-exac T16: emit gates for stage-7 SSE events. DB writes happen
@@ -519,12 +524,22 @@ export async function runCoherencePassStage(
   // myth-2ob3 §4.1, rename patches apply LAST so every other patch's
   // name-based identifiers resolve against the pre-rename world. The
   // resolver itself is never mutated mid-pass.
+  //
+  // myth-p4sz: build a relationship-keyed synthKey map from the
+  // inventory's persisted synthKey column. T15 swaps the apply functions
+  // over to this map; until then the field is wired through but unused.
+  const synthKeyByRelationshipId: Record<string, string> = {}
+  for (const rel of inventory.relationshipsById.values()) {
+    synthKeyByRelationshipId[rel.id] = rel.synthKey
+  }
+
   const applyCtx: ApplyContext = {
     inv: inventory,
     resolver: buildResolutionContext(inventory),
     logger: args.logger,
     stage: 'coherence_pass',
     bypassAccessFilter: args.bypassAccessFilter,
+    synthKeyByRelationshipId,
   }
 
   const renamePatches: CoherencePatch[] = []
