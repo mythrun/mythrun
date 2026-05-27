@@ -39,6 +39,10 @@ export interface WorldInventory {
       targetEntityId: string
       relationshipType: string
       description: string
+      // myth-imxg.3: persisted by stages 4/4b/7 (migration 020); stage 7
+      // reads it for edge-removed SSE events. Structurally propagated by
+      // loadWorldInventory's `new Map(relRows.map((r) => [r.id, r]))`.
+      synthKey: string
     }
   >
 }

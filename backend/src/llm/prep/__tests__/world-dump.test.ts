@@ -23,6 +23,8 @@ import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../db/migrate.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
+import { entities } from '../../../repo/entities.js'
+import { relationships } from '../../../repo/relationships.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -178,6 +180,64 @@ describe('world-dump', () => {
       const dump = renderWorldDump(inv)
       expect(dump).toContain(seeded.entityAName)
       expect(dump).toContain(seeded.entityBName)
+    } finally {
+      client.release()
+    }
+  })
+})
+
+describe('loadWorldInventory — synthKey on relationships', () => {
+  // myth-imxg.3: WorldInventory.relationshipsById must expose the persisted
+  // synth_key per relationship so downstream consumers (stage 7 coherence
+  // pass, T14's synthKeyByRelationshipId build) can address the row on the
+  // wire by its synth_key. The repo layer (T2) already surfaces synthKey on
+  // listByWorld; this test asserts the inventory type carries it through.
+  let pool: Pool
+  let scope: TestScope
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createTestPool(databaseUrl)
+    scope = makeTestScope('worlddump-synthkey')
+  })
+  afterAll(async () => {
+    await cleanupTestScope(pool, scope)
+    await pool.end()
+  })
+
+  it('returns synthKey per relationship', async () => {
+    const userId = uuidv7()
+    const worldId = uuidv7()
+    const entA = uuidv7()
+    const entB = uuidv7()
+    await pool.query(
+      `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+      [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
+    )
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
+      [worldId, userId, scope.worldName(0)],
+    )
+    await entities.insert(pool, {
+      id: entA, worldId, entityType: 'faction', name: 'A', accessLevel: 'known', createdIn: 'stage:test',
+    })
+    await entities.insert(pool, {
+      id: entB, worldId, entityType: 'location', name: 'B', accessLevel: 'known', createdIn: 'stage:test',
+    })
+
+    const synthKey = 'entity_relationships/relationships/3'
+    const [relId] = await relationships.insertMany(pool, [{
+      sourceEntityId: entA,
+      targetEntityId: entB,
+      relationshipType: 'adjacent_to',
+      description: 'Test edge.',
+      synthKey,
+    }])
+
+    const client = await pool.connect()
+    try {
+      const inv = await loadWorldInventory(client, worldId)
+      expect(inv.relationshipsById.get(relId ?? '')?.synthKey).toBe(synthKey)
     } finally {
       client.release()
     }
