@@ -150,6 +150,7 @@ import {
   resolveRename,
   resolveDeleteRelationship,
   resolveFixRelationship,
+  resolveAddRelationship,
 } from '../name-resolution.js'
 
 describe('resolveFact', () => {
@@ -321,5 +322,70 @@ describe('lookupRelTriple — ambiguous_relationship branch', () => {
     const r = resolveFixRelationship(ctx, { source_name: 'A', target_name: 'B', current_type: 'leads' })
     expect(r.kind).toBe('dropped')
     if (r.kind === 'dropped') expect(r.reason).toBe('ambiguous_relationship')
+  })
+})
+
+describe('resolveAddRelationship', () => {
+  function makeAddRelInv(
+    entities: readonly { id: string; name: string }[],
+  ): WorldInventory {
+    return {
+      entitiesById: new Map(
+        entities.map((e) => [
+          e.id,
+          { id: e.id, name: e.name, entityType: 'npc', accessLevel: 'known' as const },
+        ]),
+      ),
+      proseByEntityId: new Map(),
+      factsById: new Map(),
+      relationshipsById: new Map(),
+    }
+  }
+
+  it('returns resolved with both entity ids when both names match', () => {
+    const ctx = buildResolutionContext(
+      makeAddRelInv([
+        { id: 'E1', name: 'Alpha' },
+        { id: 'E2', name: 'Beta' },
+      ]),
+    )
+    const res = resolveAddRelationship(ctx, { source_name: 'Alpha', target_name: 'Beta' })
+    expect(res).toEqual({ kind: 'resolved', sourceEntityId: 'E1', targetEntityId: 'E2' })
+  })
+
+  it('returns dropped/unknown_source when source name does not exist', () => {
+    const ctx = buildResolutionContext(makeAddRelInv([{ id: 'E2', name: 'Beta' }]))
+    const res = resolveAddRelationship(ctx, { source_name: 'Alpha', target_name: 'Beta' })
+    expect(res).toEqual({ kind: 'dropped', reason: 'unknown_source' })
+  })
+
+  it('returns dropped/unknown_target when target name does not exist', () => {
+    const ctx = buildResolutionContext(makeAddRelInv([{ id: 'E1', name: 'Alpha' }]))
+    const res = resolveAddRelationship(ctx, { source_name: 'Alpha', target_name: 'Beta' })
+    expect(res).toEqual({ kind: 'dropped', reason: 'unknown_target' })
+  })
+
+  it('returns dropped/ambiguous_source when source name is duplicated', () => {
+    const ctx = buildResolutionContext(
+      makeAddRelInv([
+        { id: 'E1', name: 'Alpha' },
+        { id: 'E1b', name: 'Alpha' },
+        { id: 'E2', name: 'Beta' },
+      ]),
+    )
+    const res = resolveAddRelationship(ctx, { source_name: 'Alpha', target_name: 'Beta' })
+    expect(res).toEqual({ kind: 'dropped', reason: 'ambiguous_source' })
+  })
+
+  it('returns dropped/ambiguous_target when target name is duplicated', () => {
+    const ctx = buildResolutionContext(
+      makeAddRelInv([
+        { id: 'E1', name: 'Alpha' },
+        { id: 'E2', name: 'Beta' },
+        { id: 'E2b', name: 'Beta' },
+      ]),
+    )
+    const res = resolveAddRelationship(ctx, { source_name: 'Alpha', target_name: 'Beta' })
+    expect(res).toEqual({ kind: 'dropped', reason: 'ambiguous_target' })
   })
 })

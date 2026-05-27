@@ -311,3 +311,35 @@ export function resolveDeleteRelationship(
 ): RelationshipPatchResolution {
   return lookupRelTriple(ctx, emitted.source_name, emitted.target_name, emitted.current_type)
 }
+
+export type AddRelationshipResolution =
+  | { kind: 'resolved'; sourceEntityId: string; targetEntityId: string }
+  | {
+      kind: 'dropped'
+      reason: 'unknown_source' | 'unknown_target' | 'ambiguous_source' | 'ambiguous_target'
+    }
+
+/**
+ * Resolves the two endpoint names of an `add_relationship_by_name` coherence
+ * patch. Unlike `resolveRelationship` (stage 4), this does NOT support phantom
+ * declarations — coherence runs after stage 4b, so every entity the world
+ * contains already exists. Unresolvable endpoints drop the patch entirely.
+ *
+ * Resolution order mirrors `resolveRelationship`: ambiguity is checked before
+ * existence, so when both names are ambiguous the function returns
+ * `ambiguous_source` (the first check wins).
+ */
+export function resolveAddRelationship(
+  ctx: NameResolutionContext,
+  emitted: { source_name: string; target_name: string },
+): AddRelationshipResolution {
+  const src = normalizeName(emitted.source_name)
+  const tgt = normalizeName(emitted.target_name)
+  if (ctx.ambiguousEntityNames.has(src)) return { kind: 'dropped', reason: 'ambiguous_source' }
+  if (ctx.ambiguousEntityNames.has(tgt)) return { kind: 'dropped', reason: 'ambiguous_target' }
+  const sourceEntityId = ctx.entityIdByName.get(src)
+  if (sourceEntityId === undefined) return { kind: 'dropped', reason: 'unknown_source' }
+  const targetEntityId = ctx.entityIdByName.get(tgt)
+  if (targetEntityId === undefined) return { kind: 'dropped', reason: 'unknown_target' }
+  return { kind: 'resolved', sourceEntityId, targetEntityId }
+}
