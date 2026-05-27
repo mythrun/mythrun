@@ -72,6 +72,12 @@ async function updateContentById(
   return result.rowCount ?? 0
 }
 
+async function deleteById(client: ClientLike, id: string): Promise<number> {
+  const result = await client.query(`DELETE FROM facts WHERE id = $1`, [id])
+  /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on DELETE. */
+  return result.rowCount ?? 0
+}
+
 interface FactDbRow {
   readonly id: string
   readonly entity_id: string
@@ -119,4 +125,4 @@ async function listByEntities(
   return result.rows.map(toFactRow)
 }
 
-export const facts = { insertMany, updateContentById, listByEntities } as const
+export const facts = { insertMany, updateContentById, deleteById, listByEntities } as const

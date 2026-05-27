@@ -1150,4 +1150,87 @@ describe('runCoherencePassStage', () => {
     expect(removed).toHaveLength(1)
     expect(removed[0]?.synthKey).toBe('entity_relationships/relationships/1')  // from inventory
   })
+
+  // myth-imxg T19 — delete_fact_by_name apply path.
+  //
+  // T10 added delete_fact_by_name to the schema; T19 wires the dispatcher arm
+  // to DELETE the fact row + emit fact-removed. The 60-char rationale floor
+  // is schema-enforced at Zod; the apply step doesn't need to re-check it.
+  // Resolver checks (entity, topic) — covers ambiguous topic + unknown entity.
+
+  it('delete_fact_by_name removes the fact + emits fact-removed', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'delete_fact_by_name',
+          entity_name: 'Old Eredil',
+          fact_topic: 'history',
+          rationale: 'Prose explicitly says the village burned generations ago; the history fact is wrong AND no content edit could fix the contradiction.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({ bypassAccessFilter: true })
+
+    const deletes = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('DELETE FROM facts'),
+    )
+    expect(deletes).toHaveLength(1)
+    const removed = eventsOfType(result.finalizedEvents, 'fact-removed')
+    expect(removed).toHaveLength(1)
+    expect(removed[0]?.factId).toBe(FACT_X)
+    expect(removed[0]?.entitySynthKey).toBe(SYNTH[ENTITY_A])
+  })
+
+  it('delete_fact_by_name drops with WARN when (entity, topic) unresolvable', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'delete_fact_by_name',
+          entity_name: 'Nobody',
+          fact_topic: 'history',
+          rationale: 'Cannot resolve. This patch should drop with WARN at the resolver layer because no entity by that name exists.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger, result } = await runStage({})
+
+    const deletes = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('DELETE FROM facts'),
+    )
+    expect(deletes).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'coherence_pass', kind: 'delete_fact_by_name' }),
+      expect.any(String),
+    )
+    expect(result.finalizedEvents.filter((e) => e.type === 'fact-removed')).toHaveLength(0)
+  })
+
+  it('delete_fact_by_name persists DB delete but suppresses SSE on non-known tier', async () => {
+    // For 100% branch coverage on the shouldEmitEntityEvent gate.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'delete_fact_by_name',
+          entity_name: 'Old Eredil',
+          fact_topic: 'history',
+          rationale: 'Same as the happy-path test but with non-known tier — DB still deletes, SSE suppressed.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({
+      accessLevels: { [ENTITY_A]: 'secret' },  // non-known tier
+    })
+
+    const deletes = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('DELETE FROM facts'),
+    )
+    expect(deletes).toHaveLength(1)  // DB DELETE still happens
+    expect(result.finalizedEvents.filter((e) => e.type === 'fact-removed')).toHaveLength(0)  // SSE suppressed
+  })
 })

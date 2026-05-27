@@ -466,6 +466,30 @@ async function applyAddFact(
   }
 }
 
+async function applyDeleteFact(
+  client: PoolClient,
+  patch: Extract<CoherencePatch, { kind: 'delete_fact_by_name' }>,
+  factId: string,
+  entityId: string,
+  ctx: ApplyContext,
+  synthKeyByEntityId: SynthKeyMap,
+): Promise<ApplyResult> {
+  await facts.deleteById(client, factId)
+  if (!shouldEmitEntityEvent(ctx, entityId)) return { events: [] }
+  const entitySynthKey = synthKeyByEntityId[entityId]
+  /* c8 ignore start — defense-in-depth: entity synthKey map is empty in
+   * world-gen-processor today (MYT-52-followup); this branch fires
+   * unconditionally in prod until that wiring lands. */
+  if (entitySynthKey === undefined) {
+    warnUnknown(ctx, patch.kind, 'entityId', entityId)
+    return { events: [] }
+  }
+  /* c8 ignore stop */
+  return {
+    events: [{ type: 'fact-removed', entitySynthKey, factId }],
+  }
+}
+
 // Apply one patch against the in-flight transaction. Returns 0..N event
 // payloads (queued for post-COMMIT publish by the outer scope). Patches
 // whose name-based identifiers don't resolve against the per-pass
@@ -624,13 +648,23 @@ async function applyPatch(
       }
       return applyAddFact(client, patch, res.entityId, ctx, synthKeyByEntityId)
     }
-    /* c8 ignore start */
     case 'delete_fact_by_name': {
-      // Apply wiring lands in T19 (myth-imxg.19); until then, drop with WARN.
-      ctx.logger.warn({ stage: ctx.stage, kind: patch.kind }, 'coherence_pass: delete_fact_by_name not yet wired (T19); skipping')
-      return { events: [] }
+      const res = resolveFact(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            entity_name: patch.entity_name,
+            fact_topic: patch.fact_topic,
+          },
+          'coherence_pass: delete_fact patch references unknown entity+topic; skipping',
+        )
+        return { events: [] }
+      }
+      return applyDeleteFact(client, patch, res.factId, res.entityId, ctx, synthKeyByEntityId)
     }
-    /* c8 ignore stop */
   }
 }
 
