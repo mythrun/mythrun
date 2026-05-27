@@ -866,6 +866,124 @@ describe('runCoherencePassStage', () => {
     )
   })
 
+  // myth-imxg T17 — add_relationship_by_name apply path.
+  //
+  // T11 added resolveAddRelationship; T17 wires the dispatcher arm to insert
+  // a new relationship row + emit edge-added. Duplicate-triple guard at the
+  // apply layer prevents near-duplicates from over-emission.
+
+  it('add_relationship_by_name inserts a row + emits edge-added', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'add_relationship_by_name',
+          source_name: 'Old Eredil',
+          target_name: 'Mara',
+          relationship: 'home_of',
+          description: 'Mara was born and raised in Old Eredil.',
+          rationale: 'Prose explicitly says Mara grew up here; relation was missed at stage 4.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({ bypassAccessFilter: true })
+
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(1)
+    const insertParams = inserts[0]?.[1] as unknown[]
+    expect(insertParams[1]).toBe(ENTITY_A)  // source
+    expect(insertParams[2]).toBe(ENTITY_B)  // target
+
+    const added = eventsOfType(result.finalizedEvents, 'edge-added')
+    expect(added).toHaveLength(1)
+    expect(added[0]?.relationship).toBe('home_of')
+  })
+
+  it('add_relationship_by_name drops with WARN when source name unresolvable', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'add_relationship_by_name',
+          source_name: 'Nobody',
+          target_name: 'Mara',
+          relationship: 'home_of',
+          description: 'This relationship cannot land; source does not exist.',
+          rationale: 'The model thought Nobody existed but no entity by that name.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger, result } = await runStage({})
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'coherence_pass', kind: 'add_relationship_by_name' }),
+      expect.any(String),
+    )
+    expect(result.finalizedEvents.filter((e) => e.type === 'edge-added')).toHaveLength(0)
+  })
+
+  it('add_relationship_by_name drops with WARN when (source, target, type) already exists', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        // ENTITY_A → ENTITY_B with type 'rivalry' is REL_R in the fixture.
+        patches: [{
+          kind: 'add_relationship_by_name',
+          source_name: 'Old Eredil',
+          target_name: 'Mara',
+          relationship: 'rivalry',
+          description: 'Duplicate of an existing relationship.',
+          rationale: 'The model emitted an add for a triple that already exists.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger } = await runStage({})
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'would_be_duplicate' }),
+      expect.any(String),
+    )
+  })
+
+  it('add_relationship_by_name persists the DB row but suppresses edge-added when an endpoint is non-known', async () => {
+    // ENTITY_B → 'discoverable' tier; without bypassAccessFilter the
+    // SSE edge-added must be suppressed but the INSERT must still land.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'add_relationship_by_name',
+          source_name: 'Old Eredil',
+          target_name: 'Mara',
+          relationship: 'home_of',
+          description: 'Mara was born and raised in Old Eredil.',
+          rationale: 'Prose says she grew up here; relation missed at stage 4.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({
+      accessLevels: { [ENTITY_B]: 'discoverable' },
+    })
+
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(1)
+    expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(0)
+  })
+
   it('uses synthKeyByRelationshipId from inventory when emitting edge-removed (myth-p4sz)', async () => {
     mockGenerateText.mockResolvedValueOnce({
       output: {

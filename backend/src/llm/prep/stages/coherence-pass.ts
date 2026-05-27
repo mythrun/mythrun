@@ -66,6 +66,8 @@ import {
 } from '../world-dump.js'
 import {
   buildResolutionContext,
+  normalizeName,
+  resolveAddRelationship,
   resolveFact,
   resolveProseTarget,
   resolveRename,
@@ -351,6 +353,61 @@ async function applyDeleteRelationship(
   }
 }
 
+async function applyAddRelationship(
+  client: PoolClient,
+  patch: Extract<CoherencePatch, { kind: 'add_relationship_by_name' }>,
+  sourceEntityId: string,
+  targetEntityId: string,
+  ctx: ApplyContext,
+): Promise<ApplyResult> {
+  // §10 duplicate-triple guard: if the exact (src, tgt, type) already
+  // exists, drop with WARN — avoids near-duplicates from over-emission.
+  /* c8 ignore start — `?? ''` fallbacks: the resolver only returns
+   * `resolved` when both endpoint UUIDs exist in inv.entitiesById, so
+   * `.name` is always defined. Defense-in-depth against a future bug
+   * where the resolver and inv get out of sync. */
+  const srcName = normalizeName(ctx.inv.entitiesById.get(sourceEntityId)?.name ?? '')
+  const tgtName = normalizeName(ctx.inv.entitiesById.get(targetEntityId)?.name ?? '')
+  /* c8 ignore stop */
+  const existingByType = ctx.resolver.relIdByTriple
+    .get(srcName)
+    ?.get(tgtName)
+    ?.get(patch.relationship)
+  if (existingByType !== undefined && existingByType.length > 0) {
+    ctx.logger.warn(
+      {
+        stage: ctx.stage,
+        kind: patch.kind,
+        reason: 'would_be_duplicate',
+        source: patch.source_name,
+        target: patch.target_name,
+        relationship: patch.relationship,
+      },
+      'coherence_pass: add_relationship triple already exists; skipping',
+    )
+    return { events: [] }
+  }
+
+  const newId = uuidv7()
+  const newSynthKey = `coherence_pass/edges/${newId}`
+  await client.query(
+    `INSERT INTO relationships
+       (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [newId, sourceEntityId, targetEntityId, patch.relationship, patch.description, newSynthKey],
+  )
+  if (!shouldEmitEdgeEvent(ctx, sourceEntityId, targetEntityId)) return { events: [] }
+  return {
+    events: [{
+      type: 'edge-added',
+      synthKey: newSynthKey,
+      from: sourceEntityId,
+      to: targetEntityId,
+      relationship: patch.relationship,
+    }],
+  }
+}
+
 // Apply one patch against the in-flight transaction. Returns 0..N event
 // payloads (queued for post-COMMIT publish by the outer scope). Patches
 // whose name-based identifiers don't resolve against the per-pass
@@ -476,13 +533,23 @@ async function applyPatch(
       }
       return applyDeleteRelationship(client, patch, res.relationshipId, ctx)
     }
-    /* c8 ignore start */
     case 'add_relationship_by_name': {
-      // Apply wiring lands in T17 (myth-imxg.17); until then, drop with WARN.
-      ctx.logger.warn({ stage: ctx.stage, kind: patch.kind }, 'coherence_pass: add_relationship_by_name not yet wired (T17); skipping')
-      return { events: [] }
+      const res = resolveAddRelationship(ctx.resolver, patch)
+      if (res.kind === 'dropped') {
+        ctx.logger.warn(
+          {
+            stage: ctx.stage,
+            kind: patch.kind,
+            reason: res.reason,
+            source: patch.source_name,
+            target: patch.target_name,
+          },
+          'coherence_pass: add_relationship patch endpoint unresolvable; skipping',
+        )
+        return { events: [] }
+      }
+      return applyAddRelationship(client, patch, res.sourceEntityId, res.targetEntityId, ctx)
     }
-    /* c8 ignore stop */
     /* c8 ignore start */
     case 'add_fact_by_name': {
       // Apply wiring lands in T18 (myth-imxg.18); until then, drop with WARN.
