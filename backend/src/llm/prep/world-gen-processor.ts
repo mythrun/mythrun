@@ -795,11 +795,15 @@ async function dispatchStage(
     })
     return wrapLegacyStage(cost)
   }
-  // Exhaustive: stage is narrowed to 'coherence_pass' here. synthKeyByEntityId
-  // is empty for the initial wiring; stage 7 events fall back to entity_id on
-  // the wire when the map is empty. Tracker MYT-52-followup can re-derive the
-  // map from prior-stage finalized events once the dev tool's live-events
-  // inspector surfaces a need for synthKey-prefixed events here.
+  // Exhaustive: stage is narrowed to 'coherence_pass' here.
+  //
+  // synthKeyByEntityId is the ENTITY-side wire map; still empty at the
+  // processor boundary pending MYT-52-followup that re-derives it from
+  // prior-stage finalized events. The RELATIONSHIP-side wire map is no
+  // longer empty: stage 7 reads `synthKey` per row from the inventory load
+  // (migration 020 persists the column at insert time in stages 4/4b),
+  // so myth-p4sz's edge-removed events now surface correctly without
+  // needing this entity-side map to be populated.
   return runCoherencePassStage(client, {
     logger: deps.logger,
     worldId: ctx.world.id,
