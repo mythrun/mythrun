@@ -243,6 +243,7 @@ describe('runEntityRelationshipsStage', () => {
       readonly targetEntityId: string
       readonly relationshipType: string
       readonly description: string
+      readonly synthKey: string
     }[]
     expect(insertedRows).toHaveLength(5)
     expect(insertedRows[0]).toEqual({
@@ -250,7 +251,19 @@ describe('runEntityRelationshipsStage', () => {
       targetEntityId: E2,
       relationshipType: 'controls',
       description: 'Coast under brotherhood rule',
+      // myth-imxg.4: insert-time synth_key carries the same wire identity
+      // the post-commit `finalized` event uses, so stage 7 can address the
+      // row by the same string the wire feed established at stage 4.
+      synthKey: 'entity_relationships/relationships/0',
     })
+    // synth_key shape: one per accepted row, indexed by LLM emit order.
+    expect(insertedRows.map((r) => r.synthKey)).toEqual([
+      'entity_relationships/relationships/0',
+      'entity_relationships/relationships/1',
+      'entity_relationships/relationships/2',
+      'entity_relationships/relationships/3',
+      'entity_relationships/relationships/4',
+    ])
 
     // 4000/1M * 3 + 1200/1M * 15 = 0.012 + 0.018 = 0.030
     expect(result.costUsd).toBeCloseTo(0.03, 4)
@@ -752,6 +765,8 @@ describe('runEntityRelationshipsStage', () => {
       targetEntityId: E2,
       relationshipType: 'rival_of',
       description: 'Iron Coast rivals the brotherhood',
+      // myth-imxg.4: real→real row is at LLM-stream index 0 in this tree.
+      synthKey: 'entity_relationships/relationships/0',
     })
 
     // Pending state column UPDATE on worlds — find the call.

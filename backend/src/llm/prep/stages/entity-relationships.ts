@@ -456,6 +456,11 @@ export async function runEntityRelationshipsStage(
       targetEntityId: a.targetEntityId,
       relationshipType: a.relationshipType,
       description: a.description,
+      // myth-imxg.4: persist the same wire-format identity the streaming
+      // extractor's `edge-added` events + this stage's post-commit
+      // `finalized` events use (line ~496 below). Keeps stages 4 / 4b / 7
+      // addressing the same row by a single stable string.
+      synthKey: `entity_relationships/relationships/${String(a.sourceIndex)}`,
     })),
   )
   await persistStragglers(client, validatedTree, args.worldId, nameResolutionCtx)
