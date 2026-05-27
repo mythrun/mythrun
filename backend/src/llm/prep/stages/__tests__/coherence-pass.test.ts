@@ -733,6 +733,139 @@ describe('runCoherencePassStage', () => {
     expect(prompt).toContain('[access_level: secret]')
   })
 
+  // myth-imxg T16 — fix_relationship_by_name endpoint rewriting.
+  //
+  // T7 extended the schema to accept newSource / newTarget (string entity
+  // names) so the LLM can move an edge to different endpoints. T16 wires
+  // the apply path: when newSource/newTarget are present, the dispatcher
+  // resolves them and applyFixRelationship inserts the replacement edge
+  // with the new endpoint(s). Unresolvable endpoints drop the patch
+  // entirely (with WARN), since a fix that can't land on real entities
+  // shouldn't fall back to the original endpoint silently.
+
+  it('fix_relationship with newSource rewrites the source endpoint', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'fix_relationship_by_name',
+          source_name: 'Mara',
+          target_name: 'The Wharf',
+          current_type: 'employed_by',
+          newSource: 'Old Eredil',
+          rationale: 'Description correctly says the village employs the wharf, not Mara.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({ bypassAccessFilter: true })
+
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(1)
+    const insertParams = inserts[0]?.[1] as unknown[]
+    expect(insertParams[1]).toBe(ENTITY_A)  // source_entity_id is now ENTITY_A (Old Eredil)
+    expect(insertParams[2]).toBe(ENTITY_C)  // target preserved (The Wharf)
+
+    const removed = eventsOfType(result.finalizedEvents, 'edge-removed')
+    const added = eventsOfType(result.finalizedEvents, 'edge-added')
+    expect(removed).toHaveLength(1)
+    expect(added).toHaveLength(1)
+    expect(added[0]?.from).toBe(ENTITY_A)
+    expect(added[0]?.to).toBe(ENTITY_C)
+  })
+
+  it('fix_relationship with newTarget rewrites the target endpoint', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'fix_relationship_by_name',
+          source_name: 'Mara',
+          target_name: 'The Wharf',
+          current_type: 'employed_by',
+          newTarget: 'Old Eredil',
+          rationale: 'Wrong target — relationship should land on Old Eredil.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, result } = await runStage({ bypassAccessFilter: true })
+
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(1)
+    const insertParams = inserts[0]?.[1] as unknown[]
+    expect(insertParams[1]).toBe(ENTITY_B)  // source preserved (Mara)
+    expect(insertParams[2]).toBe(ENTITY_A)  // target is now ENTITY_A (Old Eredil)
+
+    const added = eventsOfType(result.finalizedEvents, 'edge-added')
+    expect(added).toHaveLength(1)
+    expect(added[0]?.from).toBe(ENTITY_B)
+    expect(added[0]?.to).toBe(ENTITY_A)
+  })
+
+  it('fix_relationship drops with WARN when newSource is unresolvable', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'fix_relationship_by_name',
+          source_name: 'Mara',
+          target_name: 'The Wharf',
+          current_type: 'employed_by',
+          newSource: 'Nobody Such',
+          rationale: 'Trying to move the edge to an entity that does not exist.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger, result } = await runStage({ bypassAccessFilter: true })
+
+    expect(result.finalizedEvents.filter((e) => e.type === 'edge-removed' || e.type === 'edge-added')).toHaveLength(0)
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'coherence_pass', kind: 'fix_relationship_by_name' }),
+      expect.stringMatching(/newSource|new_source|unresolvable/i),
+    )
+  })
+
+  it('fix_relationship drops with WARN when newTarget is unresolvable', async () => {
+    // Symmetric coverage for the newTarget arm of the dispatcher — the
+    // newSource test above only exercises the newSource branch; without
+    // this one the newTarget warn+drop block is uncovered.
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        patches: [{
+          kind: 'fix_relationship_by_name',
+          source_name: 'Mara',
+          target_name: 'The Wharf',
+          current_type: 'employed_by',
+          newTarget: 'Nobody Such',
+          rationale: 'Trying to move the edge target to an entity that does not exist.',
+        }],
+      },
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    } as unknown as Awaited<ReturnType<typeof generateText>>)
+
+    const { client, logger, result } = await runStage({ bypassAccessFilter: true })
+
+    expect(result.finalizedEvents.filter((e) => e.type === 'edge-removed' || e.type === 'edge-added')).toHaveLength(0)
+    const inserts = client.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('INSERT INTO relationships'),
+    )
+    expect(inserts).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'coherence_pass', kind: 'fix_relationship_by_name' }),
+      expect.stringMatching(/newTarget|new_target|unresolvable/i),
+    )
+  })
+
   it('uses synthKeyByRelationshipId from inventory when emitting edge-removed (myth-p4sz)', async () => {
     mockGenerateText.mockResolvedValueOnce({
       output: {

@@ -245,6 +245,8 @@ async function applyFixRelationship(
   client: PoolClient,
   patch: Extract<CoherencePatch, { kind: 'fix_relationship_by_name' }>,
   relationshipId: string,
+  newSourceEntityId: string | undefined,
+  newTargetEntityId: string | undefined,
   ctx: ApplyContext,
 ): Promise<ApplyResult> {
   // The resolver guarantees the relationshipId exists in inventory.
@@ -260,26 +262,37 @@ async function applyFixRelationship(
   // Per §3.6: fix_relationship emits edge-removed + edge-added on a NEW
   // synthKey (the edge entity is logically replaced). DB writes happen
   // unconditionally — myth-exac T16 only gates the SSE emit.
+  //
+  // myth-imxg T16: the patch may also rewrite ONE OR BOTH endpoints via
+  // newSource / newTarget. The dispatcher resolves those entity names to
+  // UUIDs and passes them in; we fall back to the existing endpoints when
+  // they're undefined. The new row also carries its own synthKey
+  // (`coherence_pass/edges/<newId>`) so subsequent passes that read the
+  // relationships table see the same value the SSE consumer received.
   await relationships.deleteById(client, relationshipId)
+  const finalSourceId = newSourceEntityId ?? existing.sourceEntityId
+  const finalTargetId = newTargetEntityId ?? existing.targetEntityId
   const newRelationshipType = patch.newType ?? existing.relationshipType
   const newDescription = patch.newDescription ?? existing.description
   const newId = uuidv7()
+  const newSynthKey = `coherence_pass/edges/${newId}`
   await client.query(
     `INSERT INTO relationships
-       (id, source_entity_id, target_entity_id, relationship_type, description)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [newId, existing.sourceEntityId, existing.targetEntityId, newRelationshipType, newDescription],
+       (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [newId, finalSourceId, finalTargetId, newRelationshipType, newDescription, newSynthKey],
   )
-  // myth-exac T16: SSE event only when BOTH endpoints are known-tier
-  // (or bypass on). When either side isn't known the FT client wouldn't
-  // have that endpoint in its snapshot, so dropping the edge there is
-  // intentional — the inspector reads the underlying DB if it needs to
-  // surface the repair to the slow thinker.
-  if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
-    return { events: [] }
-  }
+  // myth-exac T16: SSE event only when BOTH old endpoints AND new
+  // endpoints are known-tier (or bypass on). Asymmetric cases (e.g. old
+  // known, new not, or vice versa) suppress BOTH edge-removed and
+  // edge-added — the FE can't render an edge whose endpoint isn't in
+  // its snapshot, and we don't want the consumer to see a removal
+  // without the matching addition (or vice versa).
+  const oldVisible = shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)
+  const newVisible = shouldEmitEdgeEvent(ctx, finalSourceId, finalTargetId)
+  if (!oldVisible || !newVisible) return { events: [] }
+
   const oldSynthKey = ctx.synthKeyByRelationshipId[relationshipId]
-  const newSynthKey = `coherence_pass/edges/${newId}`
   const events: PipelineEvent[] = []
   if (oldSynthKey !== undefined) {
     events.push({ type: 'edge-removed', synthKey: oldSynthKey, reason: 'coherence_deleted' })
@@ -295,8 +308,8 @@ async function applyFixRelationship(
   events.push({
     type: 'edge-added',
     synthKey: newSynthKey,
-    from: existing.sourceEntityId,
-    to: existing.targetEntityId,
+    from: finalSourceId,
+    to: finalTargetId,
     relationship: newRelationshipType,
   })
   return { events }
@@ -414,7 +427,36 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyFixRelationship(client, patch, res.relationshipId, ctx)
+      // myth-imxg T16: endpoint-rewrite support. T7's schema accepts
+      // newSource / newTarget (string entity names); we resolve them
+      // here against the per-pass inventory. An unresolvable endpoint
+      // drops the patch entirely — falling back to the original endpoint
+      // would silently misapply the LLM's intent.
+      let newSourceEntityId: string | undefined
+      if (patch.newSource !== undefined) {
+        const r = resolveProseTarget(ctx.resolver, { entity_name: patch.newSource })
+        if (r.kind === 'dropped') {
+          ctx.logger.warn(
+            { stage: ctx.stage, kind: patch.kind, reason: r.reason, newSource: patch.newSource },
+            'coherence_pass: fix_relationship newSource unresolvable; dropping patch entirely',
+          )
+          return { events: [] }
+        }
+        newSourceEntityId = r.entityId
+      }
+      let newTargetEntityId: string | undefined
+      if (patch.newTarget !== undefined) {
+        const r = resolveProseTarget(ctx.resolver, { entity_name: patch.newTarget })
+        if (r.kind === 'dropped') {
+          ctx.logger.warn(
+            { stage: ctx.stage, kind: patch.kind, reason: r.reason, newTarget: patch.newTarget },
+            'coherence_pass: fix_relationship newTarget unresolvable; dropping patch entirely',
+          )
+          return { events: [] }
+        }
+        newTargetEntityId = r.entityId
+      }
+      return applyFixRelationship(client, patch, res.relationshipId, newSourceEntityId, newTargetEntityId, ctx)
     }
     case 'delete_relationship_by_name': {
       const res = resolveDeleteRelationship(ctx.resolver, patch)
