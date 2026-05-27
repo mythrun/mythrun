@@ -157,6 +157,23 @@ export type SseLiveEvent =
       description?: string
     }
   | { type: 'edge-removed'; synthKey: string; reason: string }
+  | {
+      type: 'fact-added'
+      entitySynthKey: string
+      factId: string
+      topic: string
+      content: string
+      accessLevel: 'known' | 'discoverable' | 'secret'
+    }
+  | { type: 'fact-removed'; entitySynthKey: string; factId: string }
+  | {
+      type: 'fact-updated'
+      entitySynthKey: string
+      factId: string
+      topic: string
+      content: string
+      accessLevel: 'known' | 'discoverable' | 'secret'
+    }
 
 export interface SseClosePayload {
   readonly reason?: string

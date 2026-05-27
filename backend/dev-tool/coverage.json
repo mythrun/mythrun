@@ -33,6 +33,9 @@
     "entity-removed",
     "edge-added",
     "edge-removed",
+    "fact-added",
+    "fact-removed",
+    "fact-updated",
     "finalized"
   ],
   "jobs": ["world-gen", "character-creation", "character-integration"],

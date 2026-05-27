@@ -81,6 +81,27 @@ export type LiveEvent =
       description?: string
     }
   | { type: 'edge-removed'; synthKey: string; reason: string }
+  // myth-imxg: per-fact wire events. Mirror of pipeline-events.ts fact-*
+  // arms. entitySynthKey points back at the owning entity's synthKey
+  // (same map entity-updated uses); factId is the row's UUID. Inventory
+  // reducer ignores these — fact rendering lives in the wire-log drawer.
+  | {
+      type: 'fact-added'
+      entitySynthKey: string
+      factId: string
+      topic: string
+      content: string
+      accessLevel: 'known' | 'discoverable' | 'secret'
+    }
+  | { type: 'fact-removed'; entitySynthKey: string; factId: string }
+  | {
+      type: 'fact-updated'
+      entitySynthKey: string
+      factId: string
+      topic: string
+      content: string
+      accessLevel: 'known' | 'discoverable' | 'secret'
+    }
   | { type: 'finalized'; synthKey: string; entityId: string }
 
 /** Synthetic placeholder card emitted at the position of the oldest event
@@ -120,6 +141,9 @@ export const KNOWN_EVENT_TYPES = [
   'entity-removed',
   'edge-added',
   'edge-removed',
+  'fact-added',
+  'fact-removed',
+  'fact-updated',
   'finalized',
 ] as const
 
@@ -475,6 +499,21 @@ export function compactLine(event: LiveEvent): CompactLine {
       return {
         primary: `edge-removed    ${event.synthKey}`,
         detail: `reason: ${event.reason}`,
+      }
+    case 'fact-added':
+      return {
+        primary: `fact-added      ${event.entitySynthKey}  [${event.topic}]`,
+        detail: `content: ${truncateString(event.content)}`,
+      }
+    case 'fact-removed':
+      return {
+        primary: `fact-removed    ${event.entitySynthKey}  ${event.factId}`,
+        detail: '',
+      }
+    case 'fact-updated':
+      return {
+        primary: `fact-updated    ${event.entitySynthKey}  [${event.topic}]`,
+        detail: `content: ${truncateString(event.content)}`,
       }
     case 'finalized':
       return {

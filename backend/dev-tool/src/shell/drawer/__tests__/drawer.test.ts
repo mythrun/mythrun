@@ -184,6 +184,108 @@ describe('drawer.mountDrawer', () => {
     handle.unmount()
   })
 
+  // myth-imxg T13: per-fact wire events render with topic + content snippet.
+  // Symmetric with edge-added: the drawer's <summary> shows the relationship-
+  // class identifier (topic) + a truncated content fragment so an operator
+  // can scan facts at a glance without expanding the JSON.
+  it('renders fact-added events with topic + content fragment', () => {
+    const parent = withDom()
+    const buffer: DrawerEvent[] = [
+      {
+        campaignId: 'c01234567',
+        type: 'fact-added',
+        data: {
+          type: 'fact-added',
+          entitySynthKey: 'world_and_factions/npcs/3',
+          factId: '019e6047-aaaa-bbbb-cccc-dddddddddddd',
+          topic: 'duties',
+          content: 'Walks the cloister at dawn, lighting the altar candles.',
+          accessLevel: 'known',
+        },
+        receivedAt: 0,
+      },
+    ]
+    const handle = mountDrawer(parent, {
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: {
+        push: () => undefined,
+        items: () => buffer,
+        size: () => buffer.length,
+        clear: () => undefined,
+      },
+    })
+    const text = handle.root.textContent
+    expect(text).toContain('+ fact')
+    expect(text).toContain('duties')
+    expect(text).toContain('Walks the cloister')
+    handle.unmount()
+  })
+
+  it('renders fact-removed events with the factId', () => {
+    const parent = withDom()
+    const buffer: DrawerEvent[] = [
+      {
+        campaignId: 'c01234567',
+        type: 'fact-removed',
+        data: {
+          type: 'fact-removed',
+          entitySynthKey: 'world_and_factions/npcs/3',
+          factId: '019e6047-aaaa-bbbb-cccc-dddddddddddd',
+        },
+        receivedAt: 0,
+      },
+    ]
+    const handle = mountDrawer(parent, {
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: {
+        push: () => undefined,
+        items: () => buffer,
+        size: () => buffer.length,
+        clear: () => undefined,
+      },
+    })
+    const text = handle.root.textContent
+    expect(text).toContain('− fact')
+    expect(text).toContain('019e6047')
+    handle.unmount()
+  })
+
+  it('renders fact-updated events with the new content fragment', () => {
+    const parent = withDom()
+    const buffer: DrawerEvent[] = [
+      {
+        campaignId: 'c01234567',
+        type: 'fact-updated',
+        data: {
+          type: 'fact-updated',
+          entitySynthKey: 'world_and_factions/npcs/3',
+          factId: '019e6047-aaaa-bbbb-cccc-dddddddddddd',
+          topic: 'duties',
+          content: 'Walks the cloister at dusk, snuffing the altar candles.',
+          accessLevel: 'known',
+        },
+        receivedAt: 0,
+      },
+    ]
+    const handle = mountDrawer(parent, {
+      subscriptions: emptySubscriptions,
+      bus: emptyBus,
+      buffer: {
+        push: () => undefined,
+        items: () => buffer,
+        size: () => buffer.length,
+        clear: () => undefined,
+      },
+    })
+    const text = handle.root.textContent
+    expect(text).toContain('~ fact')
+    expect(text).toContain('duties')
+    expect(text).toContain('Walks the cloister')
+    handle.unmount()
+  })
+
   it('opening a row renders the full JSON payload (lazy via <details>)', () => {
     const parent = withDom()
     const buffer: DrawerEvent[] = [

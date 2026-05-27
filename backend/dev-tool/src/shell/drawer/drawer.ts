@@ -50,6 +50,13 @@ function fmtDuration(ms: unknown): string {
   return `${s.toFixed(1)}s`
 }
 
+/** Truncate a content blob to ~40 chars + ellipsis for the inline fact
+ *  summary. Full content remains one click away in the JSON disclosure. */
+function shortContent(v: unknown): string {
+  if (typeof v !== 'string') return String(v)
+  return v.length > 40 ? `${v.slice(0, 40)}…` : v
+}
+
 /**
  * Produce a one-line summary of the most useful fields for a given event
  * type. Returns null when no inline summary is available (the row will
@@ -112,6 +119,24 @@ function summarize(e: DrawerEvent): string | null {
       const key = typeof d.synthKey === 'string' ? d.synthKey : '?'
       const reason = typeof d.reason === 'string' ? d.reason : '?'
       return `${key} · ${reason}`
+    }
+    // myth-imxg: per-fact wire events. Glyphs (+ / − / ~) signal the
+    // add/remove/update flavor at a glance; topic identifies the
+    // semantic slot; content snippet shows the new prose. fact-removed
+    // has no content — just the factId so the operator can grep for it.
+    case 'fact-added': {
+      const topic = typeof d.topic === 'string' ? d.topic : '?'
+      const content = shortContent(d.content)
+      return `+ fact [${topic}] ${content}`
+    }
+    case 'fact-removed': {
+      const id = shortId(d.factId)
+      return `− fact ${id}`
+    }
+    case 'fact-updated': {
+      const topic = typeof d.topic === 'string' ? d.topic : '?'
+      const content = shortContent(d.content)
+      return `~ fact [${topic}] ${content}`
     }
     case 'finalized': {
       // synthKey is `stage/path/index`; entity id resolves a placeholder.
