@@ -236,8 +236,9 @@
 
 <p>
   Teardown is leave-on-failure, clean-on-success. PASS cascade-deletes every campaign, world, and
-  credit-ledger entry the run created (sanity-checking the DB hostname contains
-  <code>staging</code> before any DELETE); FAIL prints the campaign + world IDs and exits non-zero
+  credit-ledger entry the run created (sanity-checking <code>DB_NAME</code> contains
+  <code>staging</code> before any DELETE &mdash; the staging RDS hostname is anonymized, the
+  database name is the env signal); FAIL prints the campaign + world IDs and exits non-zero
   for forensic inspection. The smoke does NOT seed credits at runtime &mdash; that's the
   bootstrap-db's <code>--seed-smoke-credits</code> mode, run once after first auth materializes the
   users in the application DB.

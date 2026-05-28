@@ -9,7 +9,7 @@
 <!-- source: backend/scripts/smoke/staging.sh -->
 <!-- source: backend/scripts/smoke/prep-pipeline.ts -->
 <!-- source: package.json -->
-<!-- source-hash: sha256:a6168551fdeb3383f18dbfdf6a1463d08085a1e15b8a529316a7b8b4649daf14 -->
+<!-- source-hash: sha256:b6409bb88b61d7e6a21cae5298159e445ebe8666515df536401dc1bf35a0abcc -->
 <!-- last-ticket: MYT-55 -->
 
 <h1>Smoke testing</h1>
@@ -222,8 +222,9 @@
 
 <p>
   Teardown is leave-on-failure, clean-on-success. PASS cascade-deletes every campaign, world, and
-  credit-ledger entry the run created (sanity-checking the DB hostname contains
-  <code>staging</code> before any DELETE); FAIL prints the campaign + world IDs and exits non-zero
+  credit-ledger entry the run created (sanity-checking <code>DB_NAME</code> contains
+  <code>staging</code> before any DELETE &mdash; the staging RDS hostname is anonymized, the
+  database name is the env signal); FAIL prints the campaign + world IDs and exits non-zero
   for forensic inspection. The smoke does NOT seed credits at runtime &mdash; that's the
   bootstrap-db's <code>--seed-smoke-credits</code> mode, run once after first auth materializes the
   users in the application DB.
