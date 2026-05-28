@@ -333,9 +333,9 @@
   Back-pressure handling protects the 768&nbsp;MB Fargate heap. <code>raw.write()</code> returns
   <code>false</code> when the kernel send buffer is full; the sink arms a 5-second timer and waits
   for the <code>'drain'</code> event. If drain fires, the timer clears. If it doesn't, the sink
-  closes with <code>back-pressure</code> and detaches. Once MYT-52's entity-event flood ships, a
-  slow client on a busy campaign without this gate would buffer megabytes per second; the gate
-  bounds exposure at one in-flight write plus the drain window.
+  closes with <code>back-pressure</code> and detaches. MYT-52's entity-event flood and myth-imxg's
+  per-fact events shipped on top of this gate, so a slow client on a busy campaign now sees the
+  bound at one in-flight write plus the drain window rather than buffering megabytes per second.
 </p>
 
 <p>
@@ -518,12 +518,14 @@
 </p>
 
 <p>
-  The worker side of the contract is out of scope for MYT-50 and lands in MYT-49 (BullMQ shell +
-  <code>wrapStream</code> middleware) and MYT-51+ (real worldgen and character-creation processors
-  that publish events after COMMIT). The parent spec
+  The worker side of the contract landed across MYT-49 (BullMQ shell +
+  <code>wrapStream</code> middleware), MYT-51 (world-gen processor + lifecycle events), MYT-52
+  (streaming entity / edge events after COMMIT), MYT-53 (per-player character-creation processor),
+  MYT-54 (campaign-scoped character integration), and myth-imxg (per-fact events from the coherence
+  pass). All sixteen arms in <code>PIPELINE_SSE_EVENTS</code> now have producers. The parent spec
   <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> §8 and §9 — both amended on
-  2026-05-12 to consolidate around the campaign-scoped surface — are the contract these issues
-  share.
+  2026-05-12 to consolidate around the campaign-scoped surface — are the contract these tickets
+  shared.
 </p>
 
 <h2>Out of scope</h2>

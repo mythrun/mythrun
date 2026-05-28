@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:9b72e930ceba2115ba67e09c1b46a57683dfbe84a9689b39389986e121194ae0 -->
+<!-- source-hash: sha256:ce2b0c6bd20a23eaaed743fa385af9dc89599508e444d53d1cc85188fdd0d0e1 -->
 <!-- last-ticket: MYT-49 -->
 
 <h1>Backend</h1>
@@ -341,8 +341,9 @@
   <code>127.0.0.1:3001</code> that the ECS container <code>healthCheck</code> probes. Graceful
   shutdown drains the workers within a <code>100s</code> deadline (under the task's 120s
   <code>stopTimeout</code>) and falls back to a forced close that marks any in-flight jobs as
-  stalled for BullMQ to re-deliver. Phase 0 ships stub processors that log and complete; real
-  prep-stage logic lands in MYT-51 onward.
+  stalled for BullMQ to re-deliver. Phase 0 shipped stub processors that log and complete; the real
+  prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events),
+  MYT-53 (per-player character creation), and MYT-54 (campaign-scoped character integration).
 </p>
 
 <h2>The env loader accepts two shapes</h2>

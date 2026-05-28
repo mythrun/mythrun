@@ -46,10 +46,13 @@
   image build pipeline are versioned Terraform + GitHub Actions; nothing is ad-hoc.
 </p>
 
-<h2 id="the-four-script-modes">The four script modes</h2>
+<h2 id="the-script-modes">The script modes</h2>
 
 <p>
   Always run <code>--verify</code> first. Its single-token output tells you which mode to run next.
+  The five modes the verify table maps to cover the bootstrap-and-rotation surface;
+  <code>--seed-smoke-credits</code> sits alongside as a staging-only credit grant that's orthogonal
+  to <code>--verify</code>'s output.
 </p>
 
 <table class="wiki-table">
@@ -91,8 +94,33 @@
         <code>public</code> (Postgres 15+ default ACL). Idempotent.
       </td>
     </tr>
+    <tr>
+      <td>n/a (staging-only operator action, not a verify state)</td>
+      <td><code>bootstrap_db_run_task_seed_smoke_credits</code></td>
+      <td>
+        Grants 1,000,000 each of <code>world_gen</code> + <code>session</code> credits to the four
+        MYT-55 smoke users so the prep-pipeline smoke has a credit pool to draw from. Idempotent
+        (deterministic <code>source_id</code> per <code>(user, credit_type)</code>). Requires the
+        smoke users' <code>users</code> rows to already exist (first
+        <code>POST /api/users/register</code> from the smoke materializes them). Production output
+        is empty string &mdash; only wired when the
+        <a href="../infra/smoke-testing.html">smoke-testing</a> Cognito surface is in scope.
+      </td>
+    </tr>
   </tbody>
 </table>
+
+<aside class="wiki-rationale">
+  <strong>Why smoke-credit seeding lives in bootstrap-db, not a new task family</strong> &mdash;
+  bootstrap-db already has the in-VPC SG shape, the RDS connection path, the idempotency
+  conventions, and the paste-ready-command output discipline. Folding the seed mode in as one more
+  script branch reuses every piece. The cost is two staging-only inputs on the module (<code
+    >cognito_user_pool_id</code
+  >
+  + <code>smoke_user_emails</code>) and an ARN-pinned <code>cognito-idp:AdminGetUser</code> grant
+  guarded by a <code>count = local.smoke_seeding_enabled ? 1 : 0</code>; production gets an empty
+  map and zero Cognito-related surface on the task role.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Why the schema-grant step is separate from the DB+user grant</strong> &mdash; Postgres
@@ -319,7 +347,7 @@ aws logs tail /ecs/mythrun-staging-bootstrap-db \
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#why-a-one-shot-ecs-task">Why a one-shot ECS task</a></li><li style="padding-left:0"><a href="#the-four-script-modes">The four script modes</a></li><li style="padding-left:0"><a href="#first-time-setup-runbook">First-time setup runbook</a></li><li style="padding-left:0"><a href="#failure-modes">Failure modes</a></li><li style="padding-left:0"><a href="#recovery-from-a-half-applied-secret-only">Recovery from a half-applied --secret-only</a></li><li style="padding-left:0"><a href="#if-verify-itself-errored">If --verify itself errored</a></li><li style="padding-left:0"><a href="#updating-the-script">Updating the script</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#why-a-one-shot-ecs-task">Why a one-shot ECS task</a></li><li style="padding-left:0"><a href="#the-script-modes">The script modes</a></li><li style="padding-left:0"><a href="#first-time-setup-runbook">First-time setup runbook</a></li><li style="padding-left:0"><a href="#failure-modes">Failure modes</a></li><li style="padding-left:0"><a href="#recovery-from-a-half-applied-secret-only">Recovery from a half-applied --secret-only</a></li><li style="padding-left:0"><a href="#if-verify-itself-errored">If --verify itself errored</a></li><li style="padding-left:0"><a href="#updating-the-script">Updating the script</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

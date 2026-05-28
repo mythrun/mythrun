@@ -1,9 +1,10 @@
 <!-- source: backend/src/llm/ -->
 <!-- source: backend/src/config/env.ts -->
+<!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:8a074ae3ac93caad435126adc0fec181e0c0d325cad00b284c43c3efd127aeb8 -->
-<!-- last-ticket: myth-tt2g -->
+<!-- source-hash: sha256:658ab9622d63aae79b0e309cb39090a1a371ae73f7f8339571c098d51c50a7cc -->
+<!-- last-ticket: MYT-55 -->
 
 <h1>LLM client</h1>
 
@@ -245,6 +246,119 @@
   calls without inferring from finishReason. The unified <code>LogBindings</code> shape is declared
   in <code>middleware.ts</code> so a typo on a new callsite is a TS compile error rather than a
   silently-malformed log entry.
+</p>
+
+<h2 id="concurrency-and-rate-limits">Concurrency and rate-limit ceilings</h2>
+
+<p>
+  Two independent ceilings shape what the LLM client can drive at peak. The first is our
+  self-imposed BullMQ worker concurrency caps, declared in
+  <code>backend/src/worker/bullmq-config.ts</code>: <code>CONCURRENCY_WORLD_GEN = 3</code> +
+  <code>CONCURRENCY_CAMPAIGN_SETUP = 5</code> = 8 in-flight Anthropic streams at full saturation.
+  The second is Anthropic's per-account ceiling on our API key &mdash; Tier 2 at the time of
+  writing, ~50 requests/minute and ~800k tokens/minute on the input side. The two ceilings exist for
+  different reasons (ours protects the data plane and the bill; theirs protects their fleet), and we
+  sit comfortably under the lower one with substantial headroom.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Ceiling</th>
+      <th>Value today</th>
+      <th>Owner</th>
+      <th>What it protects</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>BullMQ <code>world-gen</code> concurrency</td>
+      <td><code>3</code></td>
+      <td><code>worker/bullmq-config.ts</code></td>
+      <td>Opus-heavy world-creation streams; each holds a pg client + Vercel SDK stream buffer.</td>
+    </tr>
+    <tr>
+      <td>BullMQ <code>campaign-setup</code> concurrency</td>
+      <td><code>5</code></td>
+      <td><code>worker/bullmq-config.ts</code></td>
+      <td>Per-player character-creation jobs; Sonnet-weight, lighter per-slot.</td>
+    </tr>
+    <tr>
+      <td>Peak concurrent Anthropic streams</td>
+      <td><code>8</code></td>
+      <td>derived</td>
+      <td>Both queues saturated simultaneously.</td>
+    </tr>
+    <tr>
+      <td>Anthropic Tier 2 RPM</td>
+      <td>~50 requests/min</td>
+      <td>Anthropic console</td>
+      <td>Their per-account fairness ceiling.</td>
+    </tr>
+    <tr>
+      <td>Anthropic Tier 2 TPM (input)</td>
+      <td>~800k tokens/min</td>
+      <td>Anthropic console</td>
+      <td>Their per-account fairness ceiling.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  The cap of 8 is not arbitrary; it's the sum of a small constraint stack. Each in-flight job holds
+  a Postgres client from a pool sized around 10, leaving headroom for the health probe and the
+  worker's own SELECTs. Each Anthropic streaming call buffers JSON repair state in the Vercel AI
+  SDK, which competes for the 2 GB the worker task is sized at. Node is single-threaded for parse +
+  repair, so raising concurrency past the CPU's ability to interleave parse work degrades total
+  throughput. The cap also functions as a passive billing-burst rate-limiter &mdash; one buggy LLM
+  loop can drain credits an order of magnitude faster than the cap allows. Finally, higher
+  concurrency drives more atomic-claim contention on
+  <code>pipeline_runs</code> (see <a href="./worker.html">Worker</a>) and rollback storms are always
+  worse than waiting in a queue.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why we don't just raise the cap to match Anthropic Tier 2</strong> &mdash; the ceiling
+  isn't the bottleneck at launch traffic shape. Prep work (world generation, character creation) is
+  bursty-but-rare &mdash; a single launch-day campaign creation touches each queue for a few minutes
+  and goes idle. The ratio of long-tail idle time to active time means a higher cap would only
+  matter during a synchronized creation spike, and the surrounding constraints (pg pool, task
+  memory, billing safety) bind first anyway. When live-play traffic shape replaces prep-traffic
+  shape, the calculus changes; until then, the budget headroom is the win.
+</aside>
+
+<p>
+  Scaling levers, in order of preference. Horizontal: run more ECS worker tasks (the BullMQ workers
+  are stateless; <code>desiredCount</code> + <code>maxCapacity</code> sit on the
+  <a href="../infra/serving.html">serving module</a> ready to be increased). Each task adds a full
+  <code>3 + 5</code> = 8 slots at the same per-slot footprint, and the underlying pg + Redis fleet
+  has plenty of headroom for &gt;1 task. Vertical: raise the per-queue concurrency caps in
+  <code>bullmq-config.ts</code>, increase the pg pool max, and re-size the ECS task's
+  <code>cpu</code>/<code>memory</code> &mdash; this is harder to undo and binds the resource ratio
+  tighter than the horizontal lever.
+</p>
+
+<p>
+  Three trigger signals would warrant raising the caps (any one is enough to start the
+  conversation): pg connection-pool utilization above 80% during a sustained peak; worker queue
+  depth above 50 for more than five minutes; observed <code>LlmRateLimitedError</code> spikes in
+  production that aren't traceable to a runaway loop. None of these are tripping today &mdash; the
+  cap is set conservatively against a future where they might.
+</p>
+
+<p>
+  The prep-pipeline smoke is the running proof point. The
+  <a href="../infra/smoke-testing.html">smoke-testing</a> page covers the operator surface; the
+  short version is that
+  <code
+    >aws ecs run-task --cluster mythrun --task-definition mythrun-staging-smoke-prep-pipeline
+    ...</code
+  >
+  drives three concurrent owner-creates-campaign flows with three players each &mdash; saturating
+  both queues. Absence of <code>LlmRateLimitedError</code> entries during the run, combined with
+  completion inside the 10-minute wall-clock budget and total cost under $5, is the running
+  verification that the ceiling-stack survives a real burst. A green smoke is the artifact that
+  justifies leaving the caps where they are; a red one with 429s is the trigger to revisit.
 </p>
 
 <h2>The error taxonomy</h2>

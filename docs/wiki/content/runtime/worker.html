@@ -18,9 +18,10 @@
   The async-execution half of the backend. A second ECS Fargate service running
   <code>node dist/worker.js</code> with two BullMQ Workers — <code>world-gen</code> (concurrency 3)
   and <code>campaign-setup</code> (concurrency 5) — both consuming from <code>redisBatch</code>.
-  Phase 0 ships stub processors that log job receipt and mark complete; the prep-stage logic lands
-  in MYT-51 onward. The shape locks in now so adding a real stage is a coverage edit, not a
-  service-topology change.
+  Phase 0 shipped stub processors that log job receipt and mark complete; the real prep-stage
+  processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
+  (per-player character creation), and MYT-54 (campaign-scoped character integration). The shape
+  locked in at Phase 0 so each later stage was a coverage edit, not a service-topology change.
 </p>
 
 <!-- @diagram: runtime/worker -->
@@ -67,8 +68,9 @@
   <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis client configured for
   BullMQ; immediately <code>ping()</code>'d so a misconfigured URL surfaces at startup rather than
   first-job time. <code>createRedisClient(env.redisRealtimeUrl)</code> opens the second Redis (the
-  realtime side, reserved for <code>PUBLISH</code> from MYT-52's streaming entity events; unused at
-  Phase 0). <code>createPgPool(env.databaseUrl, { max: 4 })</code> with
+  realtime side, used by MYT-52's streaming entity / edge <code>PUBLISH</code> path and myth-imxg's
+  per-fact events &mdash; both feed the <a href="./pipeline-status.html">pipeline status</a> SSE
+  bridge). <code>createPgPool(env.databaseUrl, { max: 4 })</code> with
   <code>SELECT 1</code> follows. Only once every dependency is up does
   <code>startHealthServer</code> bind Fastify on <code>127.0.0.1:3001</code> — the order matters
   because that bind is what flips the task from starting to healthy at the ECS level.
@@ -323,7 +325,11 @@
     </tr>
     <tr>
       <td><code>backend/src/worker/stub-processor.ts</code></td>
-      <td>Phase 0 processor: logs job receipt and resolves. Replaced stage-by-stage in MYT-51+.</td>
+      <td>
+        Phase 0 processor: logs job receipt and resolves. Retained as the fallback /
+        unrecognized-job-kind path; the live world-gen and character-creation queues now route to
+        the real handlers shipped across MYT-51 / MYT-52 / MYT-53 / MYT-54.
+      </td>
     </tr>
     <tr>
       <td><code>backend/src/worker/health-server.ts</code></td>

@@ -1,9 +1,19 @@
 <h1>Data</h1>
-<p class="lead">Schemas, repositories, Postgres, Redis, BullMQ.</p>
+<p class="lead">Schemas, repositories, Postgres, and the operator-facing bootstrap path.</p>
 <p>
-  Three pages in this section so far:
-  <a href="./schema.html">Schema</a> — the initial 35-table Postgres shape;
-  <a href="./migrations.html">Migrations</a> — the runner that applies it; and
+  Four pages in this section:
+  <a href="./schema.html">Schema</a> — the Postgres shape (full table inventory in the
+  <a href="../reference/schema.html">schema reference</a>);
+  <a href="./migrations.html">Migrations</a> — the runner that applies it;
   <a href="./repository.html">Repository layer</a> — the closure-factory seam every read and write
-  flows through. Redis and BullMQ pages will land as those layers ship.
+  flows through; and <a href="./bootstrap-database.html">Bootstrap database</a> — the one-shot ECS
+  task family that creates per-env databases, rotates app passwords, and (staging only) seeds
+  smoke-user credits.
+</p>
+<p>
+  Redis and BullMQ are documented on adjacent pages where their stories actually live: ElastiCache
+  provisioning sits on <a href="../infra/data.html">Infra / Data plane</a>; the BullMQ worker shell
+  and its two queues sit on <a href="../runtime/worker.html">Runtime / Worker</a>; the realtime
+  channel format and SSE bridge sit on
+  <a href="../runtime/pipeline-status.html">Runtime / Pipeline status</a>.
 </p>

@@ -628,8 +628,9 @@
   <code>127.0.0.1:3001</code> that the ECS container <code>healthCheck</code> probes. Graceful
   shutdown drains the workers within a <code>100s</code> deadline (under the task's 120s
   <code>stopTimeout</code>) and falls back to a forced close that marks any in-flight jobs as
-  stalled for BullMQ to re-deliver. Phase 0 ships stub processors that log and complete; real
-  prep-stage logic lands in MYT-51 onward.
+  stalled for BullMQ to re-deliver. Phase 0 shipped stub processors that log and complete; the real
+  prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events),
+  MYT-53 (per-player character creation), and MYT-54 (campaign-scoped character integration).
 </p>
 
 <h2 id="the-env-loader-accepts-two-shapes">The env loader accepts two shapes</h2>

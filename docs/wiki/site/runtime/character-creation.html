@@ -39,7 +39,7 @@
     >location_selection</code
   >
   → <code>character_concept</code> → <code>character_sheet</code>) and ends with a populated
-  <code>characters</code> row plus the structured <code>concept_output</code> JSONB blob the MYT-54
+  <code>characters</code> row plus the structured <code>concept_output</code> JSONB blob the
   <a href="./character-integration.html">character integration</a> pass consumes. The status panel
   and live-events feed render per-player progress via the existing campaign-scoped channel.
   Materializing the PC as an <code>entities</code> row, writing PC↔world facts and relationships,
@@ -53,11 +53,11 @@
   Character creation is phase 4 of the campaign lifecycle. Phase 2 (<a href="./world-gen.html"
     >world generation</a
   >) and phase 3 (wiki read via <code>GET /api/campaigns/:campaignId/world-snapshot</code>) ship
-  today. Phase 5 (<a href="./character-integration.html">cross-PC integration</a>) ships as MYT-54;
-  phase 1 (pre-world-gen lobby retrofit) is a separate bead. MYT-53 owns the middle two steps —
-  owner picks situation, members submit characters and the per-player pipeline auto-fires on submit
-  — plus the three-stage worker pipeline that turns those submissions into characters ready for the
-  MYT-54 integration pass.
+  today. Phase 5 (<a href="./character-integration.html">cross-PC integration</a>) shipped in
+  MYT-54; phase 1 (pre-world-gen lobby retrofit) is a separate bead. MYT-53 owns the middle two
+  steps — owner picks situation, members submit characters and the per-player pipeline auto-fires on
+  submit — plus the three-stage worker pipeline that turns those submissions into characters ready
+  for the campaign-scoped integration pass.
 </p>
 
 <pre><code>                    ┌──────────────────────────────────────────────────┐
