@@ -1241,11 +1241,11 @@
         <code>worlds.entity_consolidation_pending</code> for stage 4b
       </td>
       <td>
-        <code>edge-added</code> per relationship as the LLM-emitted
-        <code>from_name</code>, <code>to_name</code>, and <code>relationship</code> (free-text
-        verb-phrase predicate) close together. The server resolves names to UUIDs at publish
-        time; phantom-declared endpoints get server-minted <code>new-NNN</code> synthetic IDs.
-        No <code>finalized</code> for edges (edges have no client-visible synth-to-real-id mapping).
+        <code>edge-added</code> per relationship as the LLM-emitted <code>from_name</code>,
+        <code>to_name</code>, and <code>relationship</code> (free-text verb-phrase predicate) close
+        together. The server resolves names to UUIDs at publish time; phantom-declared endpoints get
+        server-minted <code>new-NNN</code> synthetic IDs. No <code>finalized</code> for edges (edges
+        have no client-visible synth-to-real-id mapping).
       </td>
     </tr>
     <tr>
@@ -1291,22 +1291,30 @@
       <td>Sonnet</td>
       <td>non-streaming</td>
       <td>
-        patch-driven, all patches identified by NAME (resolved server-side to UUIDs):
-        <code>fix_fact_by_name</code> updates <code>facts.content</code>,
+        patch-driven, all patches identified by NAME (resolved server-side to UUIDs). Eight kinds in
+        three categories.
+        <strong>Fix:</strong> <code>fix_fact_by_name</code> updates <code>facts.content</code>,
         <code>fix_prose_by_name</code> updates <code>prose_kernels</code>,
-        <code>fix_relationship_by_name</code> is a DELETE + INSERT on <code>relationships</code>,
-        <code>rename_entity_by_name</code> updates <code>entities.name</code>,
-        <code>delete_relationship_by_name</code> DELETEs. Rename patches apply LAST so other
-        patches in the same batch resolve against the pre-rename context.
-        <strong>No new entities, ever</strong> — coherence never creates rows it didn't see.
+        <code>fix_relationship_by_name</code> is a DELETE + INSERT on
+        <code>relationships</code> (any of <code>newSource</code> / <code>newTarget</code> /
+        <code>newType</code> / <code>newDescription</code>),
+        <code>rename_entity_by_name</code> updates <code>entities.name</code>. <strong>Add:</strong>
+        <code>add_relationship_by_name</code> and <code>add_fact_by_name</code> INSERT a row whose
+        two endpoints / owning entity already exist in the inventory; duplicate-triple and
+        topic-collision guards drop no-op INSERTs with WARN. <strong>Delete:</strong>
+        <code>delete_relationship_by_name</code> and <code>delete_fact_by_name</code> remove a row.
+        Rename patches apply LAST so other patches in the same batch resolve against the pre-rename
+        context. <strong>No new entities, ever</strong> — coherence still can't create entity rows.
       </td>
       <td>
         post-COMMIT: <code>entity-updated</code> per <code>fix_prose_by_name</code> /
-        <code>rename_entity_by_name</code>; <code>edge-removed</code> + <code>edge-added</code>
-        for <code>fix_relationship_by_name</code>; <code>edge-removed</code> for
-        <code>delete_relationship_by_name</code>. Plus the optional cap-fire
-        <code>{ type: 'phase', phase: 'complete' }</code> when stage 7 sees
-        <code>capExhausted</code> on entry.
+        <code>rename_entity_by_name</code>; <code>edge-removed</code> + <code>edge-added</code> for
+        <code>fix_relationship_by_name</code>; <code>edge-added</code> for
+        <code>add_relationship_by_name</code>; <code>edge-removed</code> for
+        <code>delete_relationship_by_name</code>; <code>fact-added</code> /
+        <code>fact-updated</code> / <code>fact-removed</code> for the corresponding fact patches.
+        Plus the optional cap-fire <code>{ type: 'phase', phase: 'complete' }</code> when stage 7
+        sees <code>capExhausted</code> on entry.
       </td>
     </tr>
   </tbody>
@@ -1471,21 +1479,20 @@
 <h3 id="stage-4-s-name-resolver">Stage 4's name resolver</h3>
 
 <p>
-  <code>entity_relationships</code> is name-based on both sides of the LLM interface, like the
-  other world-gen stages. The handler loads the full world inventory via
+  <code>entity_relationships</code> is name-based on both sides of the LLM interface, like the other
+  world-gen stages. The handler loads the full world inventory via
   <code>loadWorldInventory</code> at stage start, builds a
   <code>NameResolutionContext</code> (normalized-name → entityId Maps plus fact and
   relationship-triple indexes), and renders the inventory as <code>- ${name} [${kind}]</code>
   lines in the prompt. The LLM emits relationships referencing entities by
-  <code>from_name</code> + <code>to_name</code>; the server resolves names to UUIDs before
-  INSERT.
+  <code>from_name</code> + <code>to_name</code>; the server resolves names to UUIDs before INSERT.
 </p>
 
 <p>
   Unresolvable names — typos, hallucinated names, names the LLM emitted but never declared as
-  phantoms — are dropped with a structured WARN. The dropped relationship doesn't reach the
-  DB; the world ends up with fewer relationships than the LLM intended, but every surviving
-  row is verifiably consistent. Phantom-declared endpoints (entities the LLM names in
+  phantoms — are dropped with a structured WARN. The dropped relationship doesn't reach the DB; the
+  world ends up with fewer relationships than the LLM intended, but every surviving row is
+  verifiably consistent. Phantom-declared endpoints (entities the LLM names in
   <code>new_entity_declarations</code> for stage 4b to materialize) are routed to
   <code>worlds.entity_consolidation_pending</code> with server-minted <code>new-NNN</code>
   synthetic IDs that survive across stages.
@@ -1645,39 +1652,112 @@
 <p>
   Stage 7 (<code>coherence_pass</code>) is non-streaming Sonnet plus a mechanical apply path. The
   Sonnet call reads a compact dump of the world (entities, prose, facts, relationships) and returns
-  a list of discriminated-union patches:
+  a list of discriminated-union patches. All patches identify their targets by NAME — the apply step
+  resolves each name against an inventory loaded once at stage entry, so the LLM never sees a UUID.
+  Patches fall into three categories: fixes, adds, and deletes.
 </p>
+
+<p><strong>Fix patches</strong> update an existing row in place. Five kinds:</p>
 
 <ul>
   <li>
-    <code>fix_fact { fact_id, new_content }</code> — UPDATE one <code>facts.content</code> by id.
+    <code>fix_fact_by_name { entity_name, fact_topic, new_content }</code> — UPDATE one
+    <code>facts.content</code>; emits <code>fact-updated</code>.
   </li>
   <li>
-    <code>fix_prose { entity_id, new_content }</code> — UPDATE one entity's
+    <code>fix_prose_by_name { entity_name, new_content }</code> — UPDATE one entity's
     <code>prose_kernels.content</code>; emits <code>entity-updated</code>.
   </li>
   <li>
-    <code>fix_relationship { relationship_id, new_type, new_description }</code> — DELETE the
-    existing row, INSERT a replacement with the new fields. Emits <code>edge-removed</code> +
-    <code>edge-added</code>.
+    <code
+      >fix_relationship_by_name { source_name, target_name, current_type, newSource?, newTarget?,
+      newType?, newDescription? }</code
+    >
+    — DELETE the row identified by the <code>current_*</code> triple and INSERT a replacement, with
+    any combination of the four <code>new*</code> fields overriding the old values. A Zod
+    <code>.refine()</code> rejects an empty patch at parse time. When endpoint changes resolve
+    cleanly and both old and new endpoints are <code>known</code>-tier, emits
+    <code>edge-removed</code> + <code>edge-added</code>; if either side is unresolvable the entire
+    patch drops with WARN.
   </li>
   <li>
-    <code>rename_entity { entity_id, new_name }</code> — UPDATE <code>entities.name</code>; emits
-    <code>entity-updated { patch: { name } }</code>.
-  </li>
-  <li>
-    <code>delete_relationship { relationship_id }</code> — DELETE one row; emits
-    <code>edge-removed</code>.
+    <code>rename_entity_by_name { current_name, new_name }</code> — UPDATE
+    <code>entities.name</code>; emits <code>entity-updated { patch: { name } }</code>. Renames apply
+    LAST in the batch so other patches resolve against the pre-rename inventory.
   </li>
 </ul>
 
 <p>
+  <strong>Add patches</strong> INSERT new rows for relationships or facts the prose implies but
+  stage 4's structured output missed. Two kinds:
+</p>
+
+<ul>
+  <li>
+    <code>add_relationship_by_name { source_name, target_name, relationship, description }</code> —
+    resolve both endpoints against the inventory, INSERT a fresh <code>relationships</code> row with
+    a new UUIDv7 and a coherence-minted synthKey, emit <code>edge-added</code>. A duplicate-triple
+    guard inspects <code>relIdByTriple</code> before INSERT; if the exact
+    <code>(source, target, type)</code> already exists, the patch drops with a structured
+    <code>would_be_duplicate</code> WARN. Tier-gate fires only when both endpoints are
+    <code>known</code>-tier.
+  </li>
+  <li>
+    <code>add_fact_by_name { entity_name, topic, content, access_level }</code> — INSERT a new
+    <code>facts</code> row with a model-picked access level. A topic-collision guard checks the
+    entity's existing facts for the same topic; if present, the patch drops with
+    <code>would_be_duplicate_topic</code>. Emits <code>fact-added</code> when the chosen tier
+    surfaces on the wire.
+  </li>
+</ul>
+
+<p>
+  <strong>Delete patches</strong> remove a row whose content is contradicted by the prose and cannot
+  be salvaged by a fix. Two kinds:
+</p>
+
+<ul>
+  <li>
+    <code>delete_relationship_by_name { source_name, target_name, relationship }</code> — DELETE one
+    <code>relationships</code> row; emits <code>edge-removed</code>.
+  </li>
+  <li>
+    <code>delete_fact_by_name { entity_name, fact_topic, rationale }</code> — DELETE one
+    <code>facts</code> row; emits <code>fact-removed</code>. The patch carries a 60-character
+    <code>rationale</code> floor (vs. 20 for the other patches) — deletes are irreversible, so the
+    model must spell out why the fact is unfixable rather than just contradicted.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Why add patches got the legs and entity-add didn't</strong> — coherence runs after stage
+  4b's phantom-entity resolution, so by the time stage 7 reads the inventory, every entity the world
+  contains already exists. Adding a relationship or fact to an existing entity heals a
+  structured-output gap (stage 4 dropped a triple the prose implied) without expanding the world's
+  entity set. Lifting that to <code>add_entity_by_name</code> would invite world-expansion drift
+  that retroactive policing can't catch; phantom declarations from stage 4 remain the only
+  sanctioned path for adding entities.
+</aside>
+
+<p>
   There is no <code>drop_entity</code> patch type. Coherence never deletes entities — that would
   invalidate any prose, fact, or relationship the client has already seen referencing that entity.
-  If coherence references a UUID that doesn't exist (an LLM hallucination), the patch is WARN-logged
-  and skipped silently; other patches in the same batch still apply. The world isn't broken, the LLM
-  was just imprecise.
+  If a name doesn't resolve (an LLM hallucination, or an entity that doesn't exist), the patch is
+  WARN-logged and skipped silently; other patches in the same batch still apply. The world isn't
+  broken, the LLM was just imprecise.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Relationship synthKeys are persisted, not recomputed</strong> — stages 4 and 4b write each
+  new relationship's wire-format <code>synthKey</code> to
+  <code>relationships.synth_key</code> (migration 020) at INSERT time, matching the string the
+  streaming extractor emits on the <code>edge-added</code> event. Stage 7 loads those synthKeys into
+  <code>ApplyContext.synthKeyByRelationshipId</code> from the inventory and uses the map to emit
+  <code>edge-removed</code> events on <code>fix_relationship_by_name</code> /
+  <code>delete_relationship_by_name</code> patches. The pre-myth-p4sz code looked up relationship
+  UUIDs in an entity-keyed map and always missed, silently suppressing the wire events; persisting
+  the synthKey is what made the lookup honest.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Cap-fire at stage 7 marks the world complete, not failed</strong> — stages 1–6 produce
@@ -1798,9 +1878,11 @@
 <p>
   The processor and its stage handlers publish to
   <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code>, the channel format the
-  <a href="./pipeline-status.html">pipeline status</a> surface listens on. Thirteen event arms are
-  declared in <code>PIPELINE_SSE_EVENTS</code> — six lifecycle arms plus seven entity / edge arms.
-  Every arm is now rendered by the dev tool's live-events panel; the contract has zero exempt
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. Sixteen event arms are
+  declared in <code>PIPELINE_SSE_EVENTS</code> — six lifecycle arms, seven entity / edge arms, and
+  three per-fact arms (<code>fact-added</code>, <code>fact-removed</code>,
+  <code>fact-updated</code>) added under myth-imxg to mirror the entity / edge add-remove-update
+  shape. Every arm is now rendered by the dev tool's live-events panel; the contract has zero exempt
   entries.
 </p>
 
@@ -1886,7 +1968,8 @@
         be <code>new-NNN</code> placeholder strings when stage 4 deferred a phantom for stage 4b).
         Stage 4b publishes one edge-added per resolved placeholder relationship — with endpoints
         already mapped to real UUIDs. Stage 7 post-COMMIT for
-        <code>fix_relationship</code> replacements. Edges only emit when both endpoints are
+        <code>fix_relationship_by_name</code> replacements and
+        <code>add_relationship_by_name</code> INSERTs. Edges only emit when both endpoints are
         known-tier entities in the world's tier map (or bypass is on).
       </td>
       <td>Streaming extractor (stage 4); stage 4b; stage 7</td>
@@ -1894,8 +1977,37 @@
     <tr>
       <td><code>edge-removed</code></td>
       <td>
-        Stage 7 post-COMMIT for <code>fix_relationship</code> (paired with edge-added) and
-        <code>delete_relationship</code>.
+        Stage 7 post-COMMIT for <code>fix_relationship_by_name</code> (paired with edge-added) and
+        <code>delete_relationship_by_name</code>. Looked up via the
+        <code>synthKeyByRelationshipId</code> map populated from inventory's persisted
+        <code>synth_key</code> column (migration 020).
+      </td>
+      <td>Stage 7</td>
+    </tr>
+    <tr>
+      <td><code>fact-added</code></td>
+      <td>
+        Stage 7 post-COMMIT for <code>add_fact_by_name</code>. Carries the owning entity's
+        <code>entitySynthKey</code> plus <code>factId</code>, <code>topic</code>,
+        <code>content</code>, <code>accessLevel</code>. Tier-gated on the fact's access level.
+      </td>
+      <td>Stage 7</td>
+    </tr>
+    <tr>
+      <td><code>fact-removed</code></td>
+      <td>
+        Stage 7 post-COMMIT for <code>delete_fact_by_name</code>. Carries
+        <code>entitySynthKey</code> + <code>factId</code> only; the row's prior content stays in the
+        client's last-seen state until it elects to refetch.
+      </td>
+      <td>Stage 7</td>
+    </tr>
+    <tr>
+      <td><code>fact-updated</code></td>
+      <td>
+        Stage 7 post-COMMIT for <code>fix_fact_by_name</code>. Same shape as
+        <code>fact-added</code> — replaces the prior fact row of the same id at the wire-level
+        consumer.
       </td>
       <td>Stage 7</td>
     </tr>
@@ -2184,8 +2296,9 @@
 <p>
   The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in
   <code>PIPELINE_ROUTES</code>, <code>PIPELINE_SSE_EVENTS</code>, and
-  <code>PIPELINE_JOBS</code> must either be driven by a panel or carry a typed exempt reason. With
-  MYT-52 landed, the exempt list is empty — the wire-log drawer renders all thirteen event arms.
+  <code>PIPELINE_JOBS</code> must either be driven by a panel or carry a typed exempt reason. The
+  exempt list is empty — the wire-log drawer renders all sixteen event arms (the three
+  <code>fact-*</code> arms landed under myth-imxg alongside the coherence-pass full vocabulary).
   Adding a new pipeline route or job is a four-file change in a single PR — contract, handler,
   dev-tool panel, coverage entry — and <code>pnpm dev-tool:check</code> red-CI's the merge
   otherwise.
@@ -2373,13 +2486,14 @@
 <p>
   The processor and its handlers publish JSON event payloads on
   <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> — the channel format the
-  <a href="./pipeline-status.html">pipeline status</a> surface listens on. All thirteen arms in
-  <code>PIPELINE_SSE_EVENTS</code> are now in use: the six lifecycle arms from MYT-50 plus the seven
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. All sixteen arms in
+  <code>PIPELINE_SSE_EVENTS</code> are now in use: the six lifecycle arms from MYT-50, the seven
   entity / edge arms wired by MYT-52 (<code>stage-reset</code>, <code>entity-added</code>,
   <code>entity-updated</code>, <code>entity-removed</code>, <code>edge-added</code>,
-  <code>edge-removed</code>, <code>finalized</code>). The SSE bridge is type-blind — every JSON
-  payload published on a campaign channel is forwarded to attached sinks unchanged. The
-  <a href="./dev-tool.html">dev tool's wire-log drawer</a> renders every arm.
+  <code>edge-removed</code>, <code>finalized</code>), and the three per-fact arms from myth-imxg
+  (<code>fact-added</code>, <code>fact-removed</code>, <code>fact-updated</code>). The SSE bridge is
+  type-blind — every JSON payload published on a campaign channel is forwarded to attached sinks
+  unchanged. The <a href="./dev-tool.html">dev tool's wire-log drawer</a> renders every arm.
 </p>
 
 <h2 id="out-of-scope">Out of scope</h2>

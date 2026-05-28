@@ -1270,10 +1270,16 @@
   lands in a clean slate. The schema has no <code>UNIQUE(source, target, type)</code> constraint by
   intent — application code owns idempotency at stage-start time, not at row-insert time.
   <code>updateById</code> + <code>deleteById</code> are the coherence pass's
-  <code>fix_relationship</code> (modelled as DELETE + INSERT, not in-place UPDATE) and
-  <code>delete_relationship</code> paths. The DELETE + INSERT shape is deliberate: it produces a
-  clean <code>edge-removed</code> + <code>edge-added</code>
-  event pair on the wire, matching the contract's "every relationship change is observable" rule.
+  <code>fix_relationship_by_name</code> (modelled as DELETE + INSERT, not in-place UPDATE) and
+  <code>delete_relationship_by_name</code> paths. The DELETE + INSERT shape is deliberate: it
+  produces a clean <code>edge-removed</code> + <code>edge-added</code> event pair on the wire,
+  matching the contract's "every relationship change is observable" rule.
+  <code>InsertRelationshipInput</code> requires <code>synthKey: string</code> (myth-p4sz, migration
+  020) — stages 4, 4b, and 7 mint the wire-format synthKey at INSERT time and the row carries it
+  back through <code>listByWorld</code> for stage 7's <code>synthKeyByRelationshipId</code> lookup
+  map. The previous code recomputed the entity-side synthKey for relationship rows and silently
+  missed every <code>edge-removed</code> event; persisting the column is what made stage 7's wire
+  events honest.
 </p>
 
 <p>

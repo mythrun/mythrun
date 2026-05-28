@@ -254,13 +254,13 @@
   MYT-49 / MYT-51 / MYT-52) is what publishes events to Redis; this page documents how those events
   reach attached clients. The contract files
   <code>backend/src/contract/pipeline-routes.ts</code> and <code>pipeline-events.ts</code> declare
-  the surface — two routes, thirteen event types. With MYT-52 landed all thirteen arms have
-  producers (six lifecycle from the processor, seven entity / edge from the streaming extractor +
-  the post-COMMIT <code>finalizedEvents</code> pipe) AND a consumer in the
+  the surface — two routes, sixteen event types. All sixteen arms have producers (six lifecycle from
+  the processor, seven entity / edge from the streaming extractor + the post-COMMIT
+  <code>finalizedEvents</code> pipe, three per-fact arms from coherence pass) AND a consumer in the
   <a href="./dev-tool.html">dev tool's wire-log drawer</a>. The bridge itself is type-blind: every
   JSON payload published on a campaign channel is forwarded to attached sinks unchanged. The WORLD /
-  Status panel renders the snapshot's phase + stages list; the drawer renders all thirteen event
-  arms as wire-data rows in chronological order.
+  Status panel renders the snapshot's phase + stages list; the drawer renders all sixteen event arms
+  as wire-data rows in chronological order.
 </p>
 
 <h2 id="the-two-endpoints">The two endpoints</h2>
@@ -811,10 +811,12 @@
     <tr>
       <td><code>backend/src/contract/pipeline-events.ts</code></td>
       <td>
-        Thirteen event-type strings (six lifecycle + seven entity / edge) plus the typed
-        <code>PipelineEvent</code> discriminated union. Entity events carry a
+        Sixteen event-type strings (six lifecycle + seven entity / edge + three per-fact) plus the
+        typed <code>PipelineEvent</code> discriminated union. Entity / edge events carry a
         <code>synthKey</code> of the form <code>${stage}/${arrayPath}/${index}</code>;
-        <code>finalized</code> binds it to the real <code>entityId</code> post-COMMIT.
+        <code>finalized</code> binds it to the real <code>entityId</code> post-COMMIT. The
+        <code>fact-*</code> events carry an <code>entitySynthKey</code> (the owning entity's
+        synthKey, used for FE-side routing) plus the row's <code>factId</code>.
       </td>
     </tr>
     <tr>

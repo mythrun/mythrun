@@ -929,7 +929,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="relationships" id="schema-table-relationships">
   <summary>
     <span class="schema-table-name">relationships</span>
-    <span class="schema-table-meta">6 columns · 2 indexes · 0 CHECKs · 16 FKs</span>
+    <span class="schema-table-meta">7 columns · 2 indexes · 0 CHECKs · 16 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -974,6 +974,13 @@ END)</code></li>
         <td><code>timestamptz</code></td>
         <td>NO</td>
         <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="synth_key">
+        <td><code>synth_key</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
         <td>—</td>
       </tr>
     </tbody>
