@@ -113,12 +113,13 @@ function loadDbUrl(): string {
   const user = requireEnv('DB_USER')
   const password = requireEnv('DB_PASSWORD')
   const name = requireEnv('DB_NAME')
-  // Belt-and-suspenders: refuse if hostname doesn't include 'staging'. The
-  // ECS task-def only injects staging DB_HOST today; this guard catches the
-  // hypothetical reconfiguration that points at prod.
-  if (!host.includes('staging')) {
-    log('error', 'db_hostname_sanity_failed', { host })
-    throw new Error(`DB_HOST '${host}' does not contain 'staging' — refusing to proceed`)
+  // Belt-and-suspenders: refuse if DB_NAME doesn't include 'staging'. The
+  // staging RDS hostname is environment-anonymized (`mythrun.<id>.rds...`),
+  // but the database name is `mythrun_staging`. Catches the hypothetical
+  // reconfiguration that points at prod (db name `mythrun_prod`).
+  if (!name.includes('staging')) {
+    log('error', 'db_name_sanity_failed', { name })
+    throw new Error(`DB_NAME '${name}' does not contain 'staging' — refusing to proceed`)
   }
   return `postgres://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${name}?sslmode=require`
 }
