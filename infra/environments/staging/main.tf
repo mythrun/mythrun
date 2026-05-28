@@ -62,6 +62,12 @@ resource "aws_secretsmanager_secret" "bootstrap_secrets" {
 
 data "aws_caller_identity" "current" {}
 
+# ======== AWS Region (for smoke task env-var injection) ========
+# Added MYT-55: the smoke task family injects AWS_REGION + awslogs-region
+# from this data source rather than hardcoding "us-east-1" — keeps the
+# resource region-portable for the eventual production composition.
+data "aws_region" "current" {}
+
 # ======== Serving Module (per-env ECS services, task defs, IAM, ALB target) ========
 # Reads all shared-workspace outputs via data.terraform_remote_state.shared
 # (the data source already exists at line 3 of this file).
@@ -173,6 +179,212 @@ module "bootstrap_db" {
   rds_master_secret_arn       = data.terraform_remote_state.shared.outputs.rds_master_user_secret_arn
   rds_password_secret_arn     = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn
   migrate_password_secret_arn = module.serving.migrate_db_credentials_secret_arn
+}
+
+# ======== Smoke Prep-Pipeline Task Family (MYT-55) ========
+# Provisions the one-shot ECS task family `mythrun-staging-smoke-prep-pipeline`
+# for running the prep-pipeline end-to-end smoke (backend/scripts/smoke/prep-pipeline.ts)
+# from inside the staging VPC. Mirrors the bootstrap-db pattern (separate
+# task-execution role + separate task role + dedicated log group + dedicated
+# task definition) but uses the backend image (which carries tsx + the smoke
+# script source) rather than a purpose-built shell+psql image.
+#
+# Reused from existing infra (no duplication):
+#   - SG egress shape: module.bootstrap_db.security_group_id (already permits
+#     443 to AWS APIs via NAT + 5432 to RDS — exactly what the smoke needs).
+#   - Backend ECR repo: shared workspace's ecr_repository_url (same image the
+#     api + worker services consume; carries the smoke script under /app/backend).
+#
+# Operator invocation: see output `smoke_prep_pipeline_run_task_command`.
+
+resource "aws_cloudwatch_log_group" "smoke_prep_pipeline" {
+  name              = "/ecs/mythrun-${var.environment}-smoke-prep-pipeline"
+  retention_in_days = 14
+
+  tags = { Name = "mythrun-${var.environment}-smoke-prep-pipeline" }
+}
+
+# Task-execution role: pulls the backend image from ECR + ships container
+# logs + reads the `secrets` array (DB_PASSWORD) at container start. Same
+# managed-policy + explicit-per-ARN-secret pattern as modules/serving.
+data "aws_iam_policy_document" "smoke_prep_pipeline_task_execution_trust" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "smoke_prep_pipeline_task_execution" {
+  name               = "mythrun-${var.environment}-smoke-prep-pipeline-exec"
+  assume_role_policy = data.aws_iam_policy_document.smoke_prep_pipeline_task_execution_trust.json
+
+  tags = { Name = "mythrun-${var.environment}-smoke-prep-pipeline-exec" }
+}
+
+# AWS-managed baseline: ECR pull + CloudWatch Logs write.
+resource "aws_iam_role_policy_attachment" "smoke_prep_pipeline_task_execution_managed" {
+  role       = aws_iam_role.smoke_prep_pipeline_task_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# Per-ARN GetSecretValue for the secrets pulled into the container env at
+# start time. The smoke task carries one `secrets` entry today (DB_PASSWORD
+# from rds-password); extend this list if the secrets array grows.
+data "aws_iam_policy_document" "smoke_prep_pipeline_task_execution_secrets" {
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn]
+  }
+}
+
+resource "aws_iam_role_policy" "smoke_prep_pipeline_task_execution_secrets" {
+  name   = "secrets-access"
+  role   = aws_iam_role.smoke_prep_pipeline_task_execution.id
+  policy = data.aws_iam_policy_document.smoke_prep_pipeline_task_execution_secrets.json
+}
+
+# Task role: assumed by the smoke script's AWS SDK calls in-container. The
+# script fetches the 4 Cognito-credential secrets (one per user) via the
+# Secrets Manager SDK, then exchanges them for Cognito access tokens via
+# InitiateAuth (USER_AUTH flow, which is account-public and requires no IAM
+# grant). Scope is ARN-pinned to the 4 smoke-user secrets.
+resource "aws_iam_role" "smoke_prep_pipeline_task_role" {
+  name = "mythrun-${var.environment}-smoke-prep-pipeline-task"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = { Name = "mythrun-${var.environment}-smoke-prep-pipeline-task" }
+}
+
+resource "aws_iam_role_policy" "smoke_prep_pipeline_task_role_policy" {
+  name = "smoke-credentials-access"
+  role = aws_iam_role.smoke_prep_pipeline_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = values(module.auth.smoke_test_credentials_secret_arns)
+    }]
+  })
+}
+
+# ECS task definition. cpu=1024 / memory=2048 per pivot spec §4.2 (1 vCPU /
+# 2 GB — sized for 8 in-flight Anthropic streams + 3 concurrent campaigns).
+#
+# Image: backend ECR repo, same `:placeholder` tag mechanism as the api +
+# worker services (CI flip swaps in the real git-SHA tag at deploy time;
+# task-def revision is registered with the placeholder, services point at
+# the real revision after CI runs). The smoke is invoked manually via
+# `aws ecs run-task`, not via a service — but it still benefits from the
+# same image-tag rotation flow when the backend rebuilds.
+#
+# Network: run-task --network-configuration supplies subnets + SG at
+# invocation time. The output `smoke_prep_pipeline_run_task_command`
+# composes a paste-ready command that pins both. The SG reuses the bootstrap
+# module's SG (egress 443 to AWS APIs + 5432 to RDS — exactly the smoke's
+# network needs: Cognito + Secrets Manager + the staging API + Postgres).
+#
+# create_before_destroy keeps the family pointing at a valid revision
+# through in-place arg changes — same lifecycle pattern as bootstrap-db
+# and the serving task defs (MYT-28 / MYT-30 history).
+resource "aws_ecs_task_definition" "smoke_prep_pipeline" {
+  family                   = "mythrun-${var.environment}-smoke-prep-pipeline"
+  cpu                      = "1024"
+  memory                   = "2048"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+
+  execution_role_arn = aws_iam_role.smoke_prep_pipeline_task_execution.arn
+  task_role_arn      = aws_iam_role.smoke_prep_pipeline_task_role.arn
+
+  container_definitions = jsonencode([{
+    name             = "smoke"
+    image            = "${data.terraform_remote_state.shared.outputs.ecr_repository_url}:placeholder"
+    essential        = true
+    command          = ["tsx", "scripts/smoke/prep-pipeline.ts"]
+    workingDirectory = "/app/backend"
+
+    environment = [
+      { name = "AWS_REGION", value = data.aws_region.current.region },
+      { name = "API_BASE", value = "https://${var.environment}-api.mythrun.com" },
+      { name = "COGNITO_USER_POOL_ID", value = module.auth.user_pool_id },
+      # Smoke script reads COGNITO_CLIENT_ID; the auth module's output is
+      # named app_client_id. Inject under the script's expected key.
+      { name = "COGNITO_CLIENT_ID", value = module.auth.app_client_id },
+      # Per-user Cognito-credential secret names (T1 provisioned these via
+      # the auth module's for_each over local.smoke_test_users — names are
+      # deterministic from the env + user-key, so inlining them here is
+      # safe and avoids a needless output round-trip).
+      { name = "SMOKE_OWNER_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-owner-credentials" },
+      { name = "SMOKE_PLAYER_1_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_1-credentials" },
+      { name = "SMOKE_PLAYER_2_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_2-credentials" },
+      { name = "SMOKE_PLAYER_3_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_3-credentials" },
+      { name = "SMOKE_WALL_CLOCK_BUDGET_MS", value = "600000" },
+      { name = "SMOKE_COST_CAP_USD", value = "5.00" },
+      # DB connection inputs. The smoke composes DATABASE_URL at startup
+      # from these (T8' wires this in the script); pattern parallels the
+      # serving module's common_env / common_secrets split.
+      { name = "DB_HOST", value = data.terraform_remote_state.shared.outputs.rds_endpoint },
+      { name = "DB_PORT", value = tostring(data.terraform_remote_state.shared.outputs.rds_port) },
+      { name = "DB_USER", value = "mythrun_${var.environment}" },
+      { name = "DB_NAME", value = "mythrun_${var.environment}" },
+    ]
+
+    secrets = [
+      # rds-password is a plain-string secret (no JSON wrapper) — see
+      # local.common_secrets in modules/serving/main.tf for the established
+      # read-as-is pattern. The smoke script composes DATABASE_URL from
+      # DB_HOST + DB_PORT + DB_USER + DB_NAME + DB_PASSWORD at startup.
+      { name = "DB_PASSWORD", valueFrom = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn },
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.smoke_prep_pipeline.name
+        awslogs-region        = data.aws_region.current.region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
+  }])
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = { Name = "mythrun-${var.environment}-smoke-prep-pipeline" }
+}
+
+# Paste-ready run-task command. Subnets come from the shared workspace's
+# private_subnet_ids; SG reuses the bootstrap module's SG (egress shape
+# matches). assignPublicIp=DISABLED — task runs in private subnets and
+# reaches AWS APIs over the NAT gateway, same as the API + worker services.
+#
+# Operator invocation:
+#   aws_cmd=$(terraform output -raw smoke_prep_pipeline_run_task_command)
+#   eval "$aws_cmd"
+#   aws logs tail /ecs/mythrun-staging-smoke-prep-pipeline --follow
+output "smoke_prep_pipeline_run_task_command" {
+  description = "Paste-ready: aws ecs run-task command to invoke the prep-pipeline smoke against staging. Invoke via `eval` (single-quote wrapping around --network-configuration requires shell re-parse). Tail logs via: aws logs tail /ecs/mythrun-staging-smoke-prep-pipeline --follow"
+  value = format(
+    "aws ecs run-task --cluster %s --task-definition %s --launch-type FARGATE --network-configuration 'awsvpcConfiguration={subnets=[%s],securityGroups=[%s],assignPublicIp=DISABLED}'",
+    data.terraform_remote_state.shared.outputs.ecs_cluster_name,
+    aws_ecs_task_definition.smoke_prep_pipeline.family,
+    join(",", data.terraform_remote_state.shared.outputs.private_subnet_ids),
+    module.bootstrap_db.security_group_id,
+  )
 }
 
 # ======== GitHub Actions IAM Role (staging-scoped) ========
