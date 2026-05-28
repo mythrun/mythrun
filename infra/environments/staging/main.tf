@@ -143,8 +143,9 @@ module "auth" {
   callback_urls = ["http://localhost:5173/auth/callback"]
   logout_urls   = ["http://localhost:5173"]
 
-  # Native Cognito test user for staging smoke testing. Generated password
-  # lives in Secrets Manager at mythrun/staging/smoke-test-credentials.
+  # Four native Cognito test users for staging smoke testing (one owner +
+  # three players, per MYT-55). Generated passwords live in Secrets Manager
+  # at mythrun/staging/smoke-test-{owner,player_1,player_2,player_3}-credentials.
   # Production composition leaves this at the default (false).
   smoke_test_user_enabled = true
 }

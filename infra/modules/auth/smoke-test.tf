@@ -1,21 +1,27 @@
 # infra/modules/auth/smoke-test.tf
 #
-# Native Cognito test user for staging smoke testing. Provisioned alongside
+# Native Cognito test users for staging smoke testing. Provisioned alongside
 # the federated (Google / Discord) flow and gated by var.smoke_test_user_enabled
-# so production never carries a test user.
+# so production never carries test users.
 #
-# Why this exists rather than a throwaway user provisioned at smoke time:
+# Why this exists rather than throwaway users provisioned at smoke time:
 # pre-provisioning means the smoke script has zero AWS write operations; it
 # just authenticates and exercises the API. That keeps the script's IAM
 # footprint small and makes the smoke runnable from any role with read-only
 # access to the secret + the API.
 #
-# Why a native user (not federated): we don't have Mythrun-controlled Google
+# Why native users (not federated): we don't have Mythrun-controlled Google
 # or Discord test accounts. Native Cognito users let us own the credential
 # end-to-end. The user pool's `username_attributes = ["email"]` means the
-# username must be a valid email shape; smoke-test@mythrun.com works fine
-# even though no mailbox actually exists at that address (email_verified is
-# set to true at provisioning time so Cognito doesn't try to validate).
+# username must be a valid email shape; the example.com addresses below work
+# fine even though no mailbox actually exists at those addresses
+# (email_verified is set to true at provisioning time so Cognito doesn't try
+# to validate).
+#
+# Why four users: MYT-55 multiplayer prep pipeline hardening needs an owner
+# plus three players for end-to-end smoke. One user-per-key in the for_each
+# map keeps each credential in its own Secrets Manager entry so the smoke
+# script can fetch them independently.
 #
 # Implementation note: the hashicorp/aws Terraform provider does not have
 # an `aws_cognito_user_pool_user` resource — Cognito user CRUD lives in the
@@ -24,8 +30,19 @@
 # The script is idempotent (admin-create-user errors with UsernameExistsException
 # if the user already exists; we swallow that and proceed to set-password).
 
+locals {
+  # When smoke_test_user_enabled = false (production), the map is empty and
+  # for_each over it produces zero resources — preserving the production gate.
+  smoke_test_users = var.smoke_test_user_enabled ? {
+    owner    = "mythrun-staging-smoke-owner@example.com"
+    player_1 = "mythrun-staging-smoke-player-1@example.com"
+    player_2 = "mythrun-staging-smoke-player-2@example.com"
+    player_3 = "mythrun-staging-smoke-player-3@example.com"
+  } : {}
+}
+
 resource "random_password" "smoke_test" {
-  count            = var.smoke_test_user_enabled ? 1 : 0
+  for_each         = local.smoke_test_users
   length           = 32
   special          = true
   override_special = "!@#$%^&*-_=+"
@@ -42,23 +59,19 @@ resource "random_password" "smoke_test" {
 }
 
 resource "aws_secretsmanager_secret" "smoke_test_credentials" {
-  count                   = var.smoke_test_user_enabled ? 1 : 0
-  name                    = "mythrun/${var.environment}/smoke-test-credentials"
+  for_each                = local.smoke_test_users
+  name                    = "mythrun/${var.environment}/smoke-test-${each.key}-credentials"
   description             = "Native Cognito test-user credentials for staging smoke testing. JSON-encoded {username, password}."
   recovery_window_in_days = 0
-  tags                    = { Name = "mythrun-${var.environment}-smoke-test-credentials" }
-}
-
-locals {
-  smoke_test_username = "smoke-test@mythrun.com"
+  tags                    = { Name = "mythrun-${var.environment}-smoke-test-${each.key}-credentials" }
 }
 
 resource "aws_secretsmanager_secret_version" "smoke_test_credentials" {
-  count     = var.smoke_test_user_enabled ? 1 : 0
-  secret_id = aws_secretsmanager_secret.smoke_test_credentials[0].id
+  for_each  = local.smoke_test_users
+  secret_id = aws_secretsmanager_secret.smoke_test_credentials[each.key].id
   secret_string = jsonencode({
-    username = local.smoke_test_username
-    password = random_password.smoke_test[0].result
+    username = each.value
+    password = random_password.smoke_test[each.key].result
   })
 }
 
@@ -67,12 +80,12 @@ resource "aws_secretsmanager_secret_version" "smoke_test_credentials" {
 # succeeds whether the user was just created or already existed. Triggers
 # rerun on password rotation OR username change.
 resource "null_resource" "smoke_test_user" {
-  count = var.smoke_test_user_enabled ? 1 : 0
+  for_each = local.smoke_test_users
 
   triggers = {
     user_pool_id = aws_cognito_user_pool.main.id
-    username     = local.smoke_test_username
-    password_sha = sha256(random_password.smoke_test[0].result)
+    username     = each.value
+    password_sha = sha256(random_password.smoke_test[each.key].result)
   }
 
   provisioner "local-exec" {
@@ -80,14 +93,14 @@ resource "null_resource" "smoke_test_user" {
       set -euo pipefail
       aws cognito-idp admin-create-user \
         --user-pool-id ${aws_cognito_user_pool.main.id} \
-        --username '${local.smoke_test_username}' \
-        --user-attributes Name=email,Value='${local.smoke_test_username}' Name=email_verified,Value=true \
+        --username '${each.value}' \
+        --user-attributes Name=email,Value='${each.value}' Name=email_verified,Value=true \
         --message-action SUPPRESS \
         --region ${data.aws_region.current.region} 2>&1 | grep -v UsernameExistsException || true
       aws cognito-idp admin-set-user-password \
         --user-pool-id ${aws_cognito_user_pool.main.id} \
-        --username '${local.smoke_test_username}' \
-        --password '${random_password.smoke_test[0].result}' \
+        --username '${each.value}' \
+        --password '${random_password.smoke_test[each.key].result}' \
         --permanent \
         --region ${data.aws_region.current.region}
     EOT
@@ -98,7 +111,7 @@ resource "null_resource" "smoke_test_user" {
   # cascade, but if we ever destroy just the smoke-test resources without
   # deleting the pool, the user lingers).
   provisioner "local-exec" {
-    when = destroy
+    when    = destroy
     command = <<-EOT
       aws cognito-idp admin-delete-user \
         --user-pool-id ${self.triggers.user_pool_id} \

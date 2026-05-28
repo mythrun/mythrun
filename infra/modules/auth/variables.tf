@@ -37,7 +37,7 @@ variable "logout_urls" {
 }
 
 variable "smoke_test_user_enabled" {
-  description = "Provisions a native Cognito test user (smoke-test@mythrun.com) plus a Secrets Manager entry holding its credentials. Staging-only — production composition leaves this at the default. See infra/modules/auth/smoke-test.tf."
+  description = "Provisions four native Cognito test users (one owner + three players, at mythrun-staging-smoke-{owner,player_1,player_2,player_3}@example.com) plus per-user Secrets Manager entries holding their credentials. Staging-only — production composition leaves this at the default. See infra/modules/auth/smoke-test.tf."
   type        = bool
   default     = false
 }

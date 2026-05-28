@@ -17,7 +17,7 @@
 #
 # Environment: AWS credentials must be configured for an IAM role with
 # read access to:
-#   - secretsmanager:GetSecretValue on mythrun/staging/smoke-test-credentials
+#   - secretsmanager:GetSecretValue on mythrun/staging/smoke-test-owner-credentials
 #   - cognito-idp:InitiateAuth + RespondToAuthChallenge (no special perms; the
 #     User Pool client is public — anyone with the credentials and client ID
 #     can authenticate)
@@ -28,7 +28,7 @@ set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 USER_POOL_ID="${COGNITO_USER_POOL_ID:-us-east-1_5gDAtYzjV}"
 CLIENT_ID="${COGNITO_CLIENT_ID:-l7u6cnoev0cv9d5vei76ko5tj}"
-SECRET_ID="${SMOKE_CREDS_SECRET_ID:-mythrun/staging/smoke-test-credentials}"
+SECRET_ID="${SMOKE_CREDS_SECRET_ID:-mythrun/staging/smoke-test-owner-credentials}"
 API_BASE="${API_BASE:-https://staging-api.mythrun.com}"
 
 OFFENSIVE_USERNAME="${OFFENSIVE_USERNAME:-fucknugget}"
