@@ -16,6 +16,9 @@
 //
 // Pattern reference: backend/scripts/smoke/entity-consolidation-flow.ts.
 
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
+import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider'
+
 // ---------------------------------------------------------------------------
 // Config — env-driven, no defaults that point at production
 // ---------------------------------------------------------------------------
@@ -93,22 +96,84 @@ function log(level: 'info' | 'warn' | 'error', event: string, payload: Record<st
 }
 
 // ---------------------------------------------------------------------------
+// Cognito auth — fetch creds from Secrets Manager, exchange for access token
+// ---------------------------------------------------------------------------
+
+interface CognitoCreds {
+  readonly username: string
+  readonly password: string
+}
+
+interface AuthedUser {
+  readonly secretId: string
+  readonly username: string
+  readonly accessToken: string
+}
+
+async function fetchCreds(sm: SecretsManagerClient, secretId: string): Promise<CognitoCreds> {
+  const res = await sm.send(new GetSecretValueCommand({ SecretId: secretId }))
+  if (!res.SecretString) {
+    throw new Error(`Secret ${secretId} has no SecretString`)
+  }
+  const parsed = JSON.parse(res.SecretString) as { username: string; password: string }
+  return { username: parsed.username, password: parsed.password }
+}
+
+async function authUser(
+  cog: CognitoIdentityProviderClient,
+  cfg: SmokeConfig,
+  creds: CognitoCreds,
+): Promise<string> {
+  const res = await cog.send(new InitiateAuthCommand({
+    ClientId: cfg.cognitoClientId,
+    AuthFlow: 'USER_AUTH',
+    AuthParameters: {
+      USERNAME: creds.username,
+      PASSWORD: creds.password,
+      PREFERRED_CHALLENGE: 'PASSWORD',
+    },
+  }))
+  const token = res.AuthenticationResult?.AccessToken
+  if (!token) {
+    throw new Error(`Auth for ${creds.username} returned no AccessToken (challenge: ${res.ChallengeName ?? 'none'})`)
+  }
+  return token
+}
+
+async function authAll(cfg: SmokeConfig): Promise<{ owner: AuthedUser; players: readonly [AuthedUser, AuthedUser, AuthedUser] }> {
+  const sm = new SecretsManagerClient({ region: cfg.awsRegion })
+  const cog = new CognitoIdentityProviderClient({ region: cfg.awsRegion })
+  log('info', 'auth_started', { region: cfg.awsRegion })
+  const all = await Promise.all(
+    [cfg.ownerSecretId, ...cfg.playerSecretIds].map(async (secretId) => {
+      const creds = await fetchCreds(sm, secretId)
+      const accessToken = await authUser(cog, cfg, creds)
+      log('info', 'authed', { secretId, username: creds.username })
+      return { secretId, username: creds.username, accessToken }
+    }),
+  )
+  const [owner, p1, p2, p3] = all
+  if (!owner || !p1 || !p2 || !p3) throw new Error('authAll: expected 4 users')
+  return { owner, players: [p1, p2, p3] as const }
+}
+
+// ---------------------------------------------------------------------------
 // Main — sections filled in by subsequent tasks
 // ---------------------------------------------------------------------------
 
-// Skeleton-only. Tasks 5+ make this genuinely async (auth + DB +
-// per-campaign drive) — declared async here so the import-time top-level
-// promise wiring at the bottom of the file already matches the eventual
-// shape.
-// eslint-disable-next-line @typescript-eslint/require-await
 async function main(): Promise<void> {
   const cfg = loadConfig()
   const startedAtMs = Date.now()
   log('info', 'phase', { phase: 'started', wallClockBudgetMs: cfg.wallClockBudgetMs, startedAtMs })
 
-  // Tasks 5–11 add: auth, credits, run3Campaigns, verifyAssertions, teardown.
+  const { owner, players } = await authAll(cfg)
+  log('info', 'phase', { phase: 'authed', userCount: 1 + players.length })
 
-  log('info', 'phase', { phase: 'todo', note: 'main body lands in subsequent tasks' })
+  // Tasks 6–11 add: credits, run3Campaigns, verifyAssertions, teardown.
+  // Suppress unused-warnings on owner+players until T6 consumes them:
+  void owner
+  void players
+
   process.exit(0)
 }
 
