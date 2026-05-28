@@ -42,13 +42,34 @@ PASS deletes all 3 campaigns + worlds + ledger entries created by the run; FAIL 
 
 **Not chosen:** always-clean (no post-mortem inspection), always-leave (DB accumulates cruft).
 
-### 2.5 Manual-only, CI-ready output
+### 2.5 Run inside the VPC via ECS Fargate task family
 
-`pnpm smoke:prep-pipeline` is hand-run. Script produces structured JSON output lines + deterministic exit code so a future ticket can wire it to a nightly cron with zero rewrite. Defers cron/paging decisions to post-launch.
+Staging RDS is `publicly_accessible = false` (correctly). The smoke runs inside the staging VPC as a Fargate task family — mirroring the existing `mythrun-staging-bootstrap-db` pattern. This is the same primitive that future cron + post-deploy-gate use; building it as a task family first means those future surfaces are 15-line Terraform additions, not rewrites.
 
-**Not chosen:** nightly cron (premature ops surface; existing memory note says smokes are ad-hoc, not infra), on-deploy gate (too heavy for now).
+Task family `mythrun-staging-smoke-prep-pipeline`:
+- Uses the existing backend Docker image (no separate build).
+- Container command: `tsx scripts/smoke/prep-pipeline.ts`.
+- Task role IAM scoped to read the 4 smoke-user Cognito secrets + RDS connection (via security group + read of `rds-password`).
+- Logs to CloudWatch at `/ecs/mythrun-staging-smoke-prep-pipeline`.
+- `DATABASE_URL` injected via task definition env (no Secrets Manager fetch from inside the script for the DB URL).
+- Terraform output prints the pre-canned `aws ecs run-task --cluster mythrun --task-definition ... --launch-type FARGATE --network-configuration ...` command, exactly the pattern the bootstrap-db task family uses (`bootstrap_db_run_task_default` output).
 
-### 2.6 Peak concurrency is 8, not 25
+**Not chosen:** external developer-machine script + public-RDS (security regression; rejected — production posture stays). Smoke-as-Lambda (15-min cap, cold-start, wrong shape for 5–10 min workload). New API admin-grant endpoint (adds attack surface for a one-shot setup problem).
+
+Invocation surfaces this task family unlocks (out of scope for THIS ticket but free with the family):
+- **Manual today:** `aws ecs run-task ...` + `aws logs tail`.
+- **Future cron:** `aws_scheduler_schedule` EventBridge resource (~15 lines) pointing at the same task family.
+- **Future deploy gate:** GitHub Actions step calls `aws ecs run-task ...` post-deploy and polls task status.
+
+### 2.6 Credit pre-seed via one-shot ECS task (bootstrap-db extension)
+
+The smoke users need `world_gen` credits to create campaigns (1 credit per campaign creation per `backend/src/routes/campaigns.ts`). Trial registration grants only 1 `session` credit per user.
+
+The smoke does NOT seed credits at runtime. A separate **one-shot ECS task** — extension of the existing `mythrun-staging-bootstrap-db` family with a new `--seed-smoke-credits` command flag — pre-seeds 1,000,000 `world_gen` + 1,000,000 `session` credits per smoke user (source_type='admin', source_id=a deterministic UUID per smoke-user-and-type for idempotency). Operator runs it once after Cognito users land; smoke runs draw from the pool. At 1 credit per campaign, the seed survives ~333,000 smoke runs — effectively forever.
+
+**Not chosen:** runtime credit seeding (recursive blocker — would need DB access from outside VPC), admin-grant API endpoint (new attack surface for a setup problem), high-frequency re-seed cron (overengineering for a slow-consume workload).
+
+### 2.7 Peak concurrency is 8, not 25
 
 The original MYT-55 spec text claimed "~25 in-flight Anthropic streams during a multi-campaign creation burst" without grounding. Walking through the actual code:
 
@@ -67,23 +88,38 @@ The 25 number was either aspirational pre-implementation math, double-counted fa
 backend/scripts/smoke/prep-pipeline.ts
 ```
 
-Wired in `backend/package.json`:
+The script lives in the existing backend codebase so it can import `repo/*` modules (entities, relationships, facts, etc.) directly — no raw SQL needed for stats collection or teardown.
+
+Wired in `backend/package.json` for local-developer iteration only:
 
 ```json
 "smoke:prep-pipeline": "tsx --env-file=.env.smoke scripts/smoke/prep-pipeline.ts"
 ```
 
-Reads from `.env.smoke` (or env vars set by CI) for AWS region + Secrets Manager IDs. No production credentials in the script.
+The `.env.smoke.example` shape stays useful for documentation; at runtime, the **ECS task injects env directly via task definition** — `DATABASE_URL`, `API_BASE`, `COGNITO_*`, `AWS_REGION`, and the 4 `SMOKE_*_SECRET_ID` values. The script doesn't read `.env.smoke` at runtime inside the task.
+
+**Operator invocation:**
+
+```bash
+aws ecs run-task \
+  --cluster mythrun \
+  --task-definition mythrun-staging-smoke-prep-pipeline \
+  --launch-type FARGATE \
+  --network-configuration '<from-terraform-output>'
+aws logs tail /ecs/mythrun-staging-smoke-prep-pipeline --follow
+```
+
+The exact command is printed by Terraform as an output (mirrors `bootstrap_db_run_task_default`).
 
 ### 3.2 Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  Phase 1: Auth + seed                                          │
+│  Phase 1: Auth                                                 │
 │  - Read 4 Cognito creds from Secrets Manager                   │
 │  - USER_AUTH Cognito flow per user → 4 access tokens           │
-│  - Direct ledger INSERT: grant each user world_gen + session   │
-│    credits (sufficient for the smoke; well below per-user cap) │
+│  (Credits already pre-seeded via separate one-shot task —      │
+│   see §2.6. Smoke does NOT seed credits at runtime.)           │
 └────────────────────────────────┬───────────────────────────────┘
                                  │
        ┌─────────────────────────┴─────────────────────────┐
@@ -99,10 +135,13 @@ Reads from `.env.smoke` (or env vars set by CI) for AWS region + Secrets Manager
                                  │
                                  ▼
 ┌────────────────────────────────────────────────────────────────┐
-│  Phase 3: Verify                                               │
+│  Phase 3: Verify (in-VPC = direct DB + repo modules)           │
 │  - 3 assertion layers (see §3.4)                               │
-│  - On FAIL: print IDs + failed assertion + exit non-zero        │
-│  - On PASS: cascade-delete all created state + exit zero       │
+│  - Sanity-check DB hostname contains "staging" before any      │
+│    DELETE (belt-and-suspenders against accidental prod hit).   │
+│  - On FAIL: print IDs + failed assertion + exit non-zero       │
+│  - On PASS: cascade-delete all created state via repo modules  │
+│    + exit zero                                                 │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -196,20 +235,48 @@ mythrun-staging-smoke-player-1    → mythrun-staging-smoke-player-1@example.com
 
 Passwords: random 32-char per user, stored in Secrets Manager, never logged.
 
-### 4.2 IAM
+### 4.2 ECS task family for the in-VPC smoke
 
-The smoke script's caller (Miklos's local AWS CLI session, or a future CI role) needs `secretsmanager:GetSecretValue` on the four secret ARNs. The existing IAM policy that covers the one smoke-test-credentials secret extends naturally.
+New Terraform in `infra/environments/staging/main.tf` (or a sibling module):
 
-### 4.3 Credit seeding
+- **`aws_ecs_task_definition.smoke_prep_pipeline`** — same backend image already in ECR. Container command: `tsx scripts/smoke/prep-pipeline.ts`. Memory + CPU sized like the worker task (1 vCPU / 2 GB). Env injected directly: `DATABASE_URL` (read from Terraform via the existing migrate-credentials secret reference), `API_BASE=https://staging-api.mythrun.com`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `AWS_REGION`, the 4 `SMOKE_*_SECRET_ID` values, `SMOKE_WALL_CLOCK_BUDGET_MS=600000`, `SMOKE_COST_CAP_USD=5.00`. The DB URL is constructed in Terraform from the existing RDS endpoint + `mythrun/staging/rds-password` secret value (not fetched from Secrets Manager at runtime — the task already has it in env).
+- **Task role IAM** — scoped to `secretsmanager:GetSecretValue` on the 4 smoke-user secret ARNs + connect to the staging RDS security group. No write access to `iam:`, no other Secrets Manager. Uses the existing task execution role for image pull + log writes.
+- **CloudWatch log group** `/ecs/mythrun-staging-smoke-prep-pipeline` with 14-day retention.
+- **Network configuration** — staging VPC, private subnets, the existing worker-or-migrate security group (whichever has DB ingress).
+- **Terraform output** `smoke_prep_pipeline_run_task_command` — the pre-canned `aws ecs run-task --cluster mythrun --task-definition mythrun-staging-smoke-prep-pipeline --launch-type FARGATE --network-configuration ...` command. Operator copies + pastes.
 
-The smoke script connects to **staging Postgres** via the read/write credentials in Secrets Manager (`mythrun/staging/db/app`) and inserts ledger rows directly:
+Pattern reference: `infra/environments/staging/main.tf` already has the `bootstrap_db_run_task_default`/`_verify`/`_reset_password`/etc. outputs for the migration runner task family. Smoke task family mirrors this exactly.
+
+### 4.3 IAM for the local-developer invocation surface
+
+The local `pnpm smoke:prep-pipeline` invocation surface (developer machine) is preserved for iteration but won't connect to staging DB end-to-end without a future bastion / SSM tunnel. Today, local iteration covers everything UP TO the DB-touch steps (auth + API requests against `https://staging-api.mythrun.com`); the DB-touch portion only works inside the ECS task. The script detects "no DB reachable" and skips the in-DB assertions + teardown with a clear log line so a developer can still iterate on the auth + API portions locally.
+
+### 4.4 Credit pre-seed via one-shot ECS task
+
+Extend the existing `mythrun-staging-bootstrap-db` task family with a new `--seed-smoke-credits` command flag. The implementation runs the SQL:
 
 ```sql
-INSERT INTO credit_ledger (user_id, kind, amount_minor, source_type, ...)
-  VALUES ($1, 'admin_grant', 10000, 'admin', ...)
+-- Inserts 1,000,000 each of world_gen + session credits per smoke user,
+-- one row per (user, credit_type), source_type='admin', source_id derived
+-- deterministically from (user_id, credit_type) so re-runs are idempotent
+-- (ON CONFLICT DO NOTHING via a partial unique index on source_id where
+-- source_type='admin').
+INSERT INTO credit_ledger (id, user_id, credit_type, amount, source_type, source_id)
+SELECT uuidv7(), u.id, ct.kind, 1000000, 'admin',
+       uuid_generate_v5('00000000-0000-0000-0000-000000000000'::uuid,
+                        u.id::text || ':' || ct.kind)
+  FROM users u, (VALUES ('world_gen'), ('session')) AS ct(kind)
+ WHERE u.cognito_sub IN (
+   <four sub UUIDs from Cognito list-users, looked up at script time>
+ )
+ON CONFLICT DO NOTHING;
 ```
 
-Each smoke user receives enough credits to cover the worst-case smoke run cost (initial 10,000 minor units = $100, well above the ~$5 actual spend per smoke). Credit grants are deleted in the PASS-path teardown.
+The script (server-side in the bootstrap task) reads the four Cognito subs from the `users` table (matching by `cognito_sub` after the smoke users have logged in once — they're materialized in the users table at first auth). 1M credits × 1 credit per campaign = 1M campaigns of headroom. Effectively forever.
+
+Operator runs the pre-seed task ONCE after Phase A's Cognito user creation + after each smoke user has been materialized via first-login (which the smoke does anyway on first run). Re-running is idempotent (ON CONFLICT).
+
+Terraform output `bootstrap_db_run_task_seed_smoke_credits` prints the command.
 
 ## 5. Rate-limit wiki content
 
@@ -263,7 +330,7 @@ Source-hash invariant: the source files those wiki pages declare in `<!-- source
 
 - **Dev-tool env switcher (local↔staging).** Decided 2026-05-28 — dev tool stays local-only. Staging verification is the curl-based smoke in this spec + the existing `staging.sh` Cognito-auth pattern.
 - **Production smoke + paging.** This is staging-only. Production smoke + alerting + paging is a separate post-launch concern.
-- **CI scheduling.** Script is CI-ready (structured output, deterministic exit code) but not wired to a cron. Future ticket can land that with no script rewrite.
+- **EventBridge cron + GitHub Actions deploy gate.** The ECS task family this ticket lands is the primitive that BOTH cron and deploy-gate would use. Future tickets wire each in ~15 lines of Terraform / one workflow step. Out of scope here; the artifact unlocks both.
 - **Raising the worker concurrency caps.** The 3 + 5 caps are appropriate for launch traffic; raising them would require coordinated pg pool + task sizing changes documented in §5 but out of scope for this ticket.
 - **Load testing beyond 3 campaigns.** The smoke saturates worker caps and that's the meaningful gate. Sustained load testing (hours of traffic) is a separate concern.
 - **Wiki sweeps on pages outside the 6 named in §6.** The audit identified the drift scope; other pages may have minor drift but are out of scope.
@@ -276,5 +343,7 @@ None at spec-writing time. Decisions captured:
 - 4 dedicated Cognito users via Terraform (vs bootstrap-and-teardown or single-user-serialized).
 - 3 hand-curated concepts (vs 1-replicated or random library).
 - Leave-on-failure, clean-on-success teardown (vs always-clean or always-leave).
-- Manual-only invocation, CI-ready output (vs nightly cron or on-deploy gate).
+- Run inside the VPC via ECS Fargate task family (vs external dev-machine — rejected because staging RDS is correctly private).
+- Pre-seed credits via one-shot ECS task with 1M-grant idempotent SQL (vs runtime seeding or new admin-grant API).
+- Manual invocation today, primitive unlocks cron + deploy-gate without rewrite.
 - Peak concurrency documented as 8, not 25 (corrects the original MYT-55 framing).
