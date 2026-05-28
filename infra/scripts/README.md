@@ -46,6 +46,7 @@ Scope the task role tightly. Revoke after use.
 - default — create whatever is missing. Idempotent.
 - `--user-only` — DB exists but user doesn't. Create user + password.
 - `--secret-only` / `--reset-password` — rotate the app user password. Aliases; use `--secret-only` when the stored secret is absent, `--reset-password` when it's known-wrong.
+- `--seed-smoke-credits` — grant 1,000,000 credits each (`world_gen` + `session`) to the four MYT-55 staging smoke users. Idempotent (WHERE NOT EXISTS guard on a deterministic source_id hash). Requires `COGNITO_USER_POOL_ID` + `SMOKE_USER_EMAIL_{OWNER,PLAYER_1,PLAYER_2,PLAYER_3}` env vars plus `cognito-idp:AdminGetUser` IAM (resolves email → cognito_sub at runtime). The smoke users' `users` rows must already exist (the smoke materializes them on first `POST /api/users/register`). Staging-only.
 
 ### Recovery from partial failures
 

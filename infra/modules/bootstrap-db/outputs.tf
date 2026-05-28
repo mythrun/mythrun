@@ -42,11 +42,12 @@ locals {
   )
 
   _modes = {
-    verify         = ["--env", var.environment, "--verify"]
-    secret_only    = ["--env", var.environment, "--secret-only"]
-    reset_password = ["--env", var.environment, "--reset-password"]
-    user_only      = ["--env", var.environment, "--user-only"]
-    default        = ["--env", var.environment]
+    verify              = ["--env", var.environment, "--verify"]
+    secret_only         = ["--env", var.environment, "--secret-only"]
+    reset_password      = ["--env", var.environment, "--reset-password"]
+    user_only           = ["--env", var.environment, "--user-only"]
+    default             = ["--env", var.environment]
+    seed_smoke_credits  = ["--env", var.environment, "--seed-smoke-credits"]
   }
 
   _run_task_template = "aws ecs run-task --cluster %s --task-definition %s --launch-type FARGATE --network-configuration '%s' --overrides %s"
@@ -105,4 +106,20 @@ output "run_task_default" {
     format("'%s'", jsonencode({ containerOverrides = [{ name = "bootstrap", command = local._modes.default }] })),
   )
   description = "Default mode: create DB + user + secret. Use when --verify prints MISSING. Invoke via `eval`."
+}
+
+# MYT-55: seed 1M credits each of world_gen + session for the four staging
+# smoke users. Idempotent (WHERE NOT EXISTS guard on a deterministic
+# source_id hash). Empty string when the feature is gated off (production —
+# var.cognito_user_pool_id == "") so consumers can reference the output
+# unconditionally; they just get "" when seeding isn't wired in this env.
+output "run_task_seed_smoke_credits" {
+  value = local.smoke_seeding_enabled ? format(
+    local._run_task_template,
+    var.ecs_cluster_name,
+    aws_ecs_task_definition.bootstrap.family,
+    local._network_config,
+    format("'%s'", jsonencode({ containerOverrides = [{ name = "bootstrap", command = local._modes.seed_smoke_credits }] })),
+  ) : ""
+  description = "Paste-ready: grant 1M world_gen + 1M session credits to the four MYT-55 smoke users. Idempotent (re-runs are no-ops). Requires the smoke users' `users` rows to already exist (the smoke materializes them on first POST /api/users/register). Empty string when staging-only smoke seeding isn't wired in this env. Invoke via `eval`."
 }

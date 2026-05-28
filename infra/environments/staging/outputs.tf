@@ -93,3 +93,8 @@ output "bootstrap_db_run_task_default" {
   value       = module.bootstrap_db.run_task_default
   description = "Paste-ready: full bootstrap (create DB + user + secret). Invoke via `eval`."
 }
+
+output "bootstrap_db_run_task_seed_smoke_credits" {
+  value       = module.bootstrap_db.run_task_seed_smoke_credits
+  description = "Paste-ready (MYT-55): grant 1M world_gen + 1M session credits to the four staging smoke users. Idempotent — re-runs are no-ops. Requires the smoke users' `users` rows to already exist (smoke materializes them on first POST /api/users/register). Invoke via `eval`."
+}

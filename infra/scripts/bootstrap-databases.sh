@@ -6,7 +6,7 @@
 # RDS is not publicly accessible.
 #
 # Usage:
-#   bootstrap-databases.sh --env staging [--verify | --user-only | --secret-only | --reset-password | --migrate-user-only | --reset-migrate-password]
+#   bootstrap-databases.sh --env staging [--verify | --user-only | --secret-only | --reset-password | --migrate-user-only | --reset-migrate-password | --seed-smoke-credits]
 #
 # Modes:
 #   (default)         Create database + user + password secret. Idempotent.
@@ -22,6 +22,15 @@
 #                     schema public (Postgres 15+ default ACL). Idempotent.
 #   --migrate-user-only          Provision/refresh the migrate user only.
 #   --reset-migrate-password     Rotate the migrate user's password + secret value.
+#   --seed-smoke-credits         Grant 1,000,000 each of world_gen + session credits
+#                                to the four MYT-55 smoke users. Idempotent (WHERE
+#                                NOT EXISTS guard keyed off (user_id, credit_type,
+#                                source_type='admin')). Requires the smoke users'
+#                                rows to already exist in the application DB (the
+#                                smoke's first POST /api/users/register materializes
+#                                them) AND the bootstrap-db task to carry
+#                                COGNITO_USER_POOL_ID + SMOKE_USER_EMAIL_* env vars
+#                                + cognito-idp:AdminGetUser IAM. Staging-only.
 #
 # Required env vars (injected via ECS task role):
 #   AWS_REGION                us-east-1
@@ -57,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --grant-only)     set_mode "grant-only"; shift ;;
     --migrate-user-only)     set_mode "migrate-user-only"; shift ;;
     --reset-migrate-password) set_mode "reset-migrate-password"; RESET_MIGRATE_PW=1; shift ;;
+    --seed-smoke-credits) set_mode "seed-smoke-credits"; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -273,6 +283,134 @@ SQL
   echo "Provisioned $migrate_user → $migrate_secret_id (JSON shape)"
 }
 
+# Seed smoke-test user credits (MYT-55). Grants 1,000,000 each of `world_gen`
+# and `session` credits, source_type='admin', to the four staging smoke users
+# (mythrun-staging-smoke-{owner,player_1,player_2,player_3}@example.com).
+#
+# Lookup is by cognito_sub: the smoke users are created in Cognito via
+# admin-create-user (infra/modules/auth/smoke-test.tf), which assigns each a
+# stable sub at first creation. Their application-side `users` row is created
+# on first POST /api/users/register, which writes that sub into
+# users.cognito_sub. The username chosen at registration is NOT deterministic
+# from this task's perspective (the smoke script picks it), and the email
+# column was dropped in migration 005 — so cognito_sub is the only stable
+# join key we can resolve at seed time.
+#
+# We resolve the four subs at runtime via `aws cognito-idp admin-get-user`
+# against COGNITO_USER_POOL_ID. The bootstrap-db task carries the four
+# SMOKE_USER_EMAIL_* env vars (deterministic strings) + AdminGetUser IAM on
+# the staging user pool.
+#
+# Idempotency: WHERE NOT EXISTS on a deterministic source_id hash
+# (md5(user_id || ':' || credit_type)). Re-runs are no-ops. We could not use
+# ON CONFLICT — credit_ledger has no unique index on (user_id, credit_type,
+# source_type='admin'), and adding one would couple this dev-tool to
+# production schema for no win.
+#
+# Connects to the application DB (mythrun_${ENV}), not the maintenance
+# postgres DB, because credit_ledger lives there. The master user has full
+# access to any DB on the cluster, so no extra grants are needed.
+seed_smoke_credits() {
+  if [[ -z "${COGNITO_USER_POOL_ID:-}" ]]; then
+    echo "ERROR: --seed-smoke-credits requires COGNITO_USER_POOL_ID env var" >&2
+    return 1
+  fi
+
+  local emails=(
+    "${SMOKE_USER_EMAIL_OWNER:-}"
+    "${SMOKE_USER_EMAIL_PLAYER_1:-}"
+    "${SMOKE_USER_EMAIL_PLAYER_2:-}"
+    "${SMOKE_USER_EMAIL_PLAYER_3:-}"
+  )
+  for e in "${emails[@]}"; do
+    if [[ -z "$e" ]]; then
+      echo "ERROR: --seed-smoke-credits requires SMOKE_USER_EMAIL_{OWNER,PLAYER_1,PLAYER_2,PLAYER_3} env vars" >&2
+      return 1
+    fi
+  done
+
+  # Resolve email → cognito_sub via AdminGetUser. The `sub` attribute is the
+  # primary stable identifier for a Cognito user and matches users.cognito_sub
+  # in Postgres.
+  local subs=()
+  for e in "${emails[@]}"; do
+    local sub
+    sub=$(aws cognito-idp admin-get-user \
+      --user-pool-id "$COGNITO_USER_POOL_ID" \
+      --username "$e" \
+      --region "$AWS_REGION" \
+      --query 'UserAttributes[?Name==`sub`].Value | [0]' \
+      --output text 2>/dev/null || true)
+    if [[ -z "$sub" || "$sub" == "None" ]]; then
+      echo "ERROR: could not resolve cognito_sub for $e (admin-get-user returned empty)" >&2
+      return 1
+    fi
+    subs+=("$sub")
+  done
+
+  # Build a comma-separated quoted list for the SQL IN clause. The values
+  # are Cognito-assigned UUIDs (safe characters); we still single-quote them
+  # in the SQL literal.
+  local sub_list=""
+  local first=1
+  for s in "${subs[@]}"; do
+    if [[ $first -eq 1 ]]; then
+      sub_list="'$s'"
+      first=0
+    else
+      sub_list="$sub_list, '$s'"
+    fi
+  done
+
+  echo "Resolved ${#subs[@]} cognito_subs for smoke users; seeding credits in $DB_NAME..."
+
+  # Connect to the application DB (NOT the maintenance postgres DB). Master
+  # user has full access; no separate app credentials needed.
+  #
+  # WHERE NOT EXISTS keys off the deterministic source_id hash so re-runs
+  # are no-ops. source_type='admin' (added by migration 012); both FK columns
+  # NULL (required by credit_ledger_source_link_chk for admin grants).
+  psql --host="$RDS_HOST" --port="$RDS_PORT" --username="$MASTER_USER" \
+    --dbname="$DB_NAME" --no-password -v ON_ERROR_STOP=1 <<SQL
+WITH smoke_users AS (
+  SELECT id FROM users WHERE cognito_sub IN ($sub_list)
+)
+INSERT INTO credit_ledger
+  (id, user_id, credit_type, amount, source_type,
+   source_id, expires_at, source_purchase_id, source_billing_history_id)
+SELECT
+  gen_random_uuid(),
+  su.id,
+  ct.kind,
+  1000000,
+  'admin',
+  md5(su.id::text || ':' || ct.kind)::uuid,
+  NULL,
+  NULL,
+  NULL
+FROM smoke_users su, (VALUES ('world_gen'), ('session')) AS ct(kind)
+WHERE NOT EXISTS (
+  SELECT 1 FROM credit_ledger cl
+  WHERE cl.source_id = md5(su.id::text || ':' || ct.kind)::uuid
+    AND cl.source_type = 'admin'
+);
+
+-- Report what's now on the ledger for the smoke users so the operator can
+-- eyeball the result without a second query.
+SELECT u.cognito_sub,
+       cl.credit_type,
+       SUM(cl.amount) AS total
+  FROM users u
+  JOIN credit_ledger cl ON cl.user_id = u.id
+ WHERE u.cognito_sub IN ($sub_list)
+   AND cl.source_type = 'admin'
+ GROUP BY u.cognito_sub, cl.credit_type
+ ORDER BY u.cognito_sub, cl.credit_type;
+SQL
+
+  echo "Smoke credits seeded (1M each of world_gen + session per smoke user; re-runs are no-ops)."
+}
+
 # --- dispatch by mode ---
 case "$MODE" in
   verify)
@@ -301,5 +439,8 @@ case "$MODE" in
     ;;
   reset-migrate-password)
     provision_migrate_user
+    ;;
+  seed-smoke-credits)
+    seed_smoke_credits
     ;;
 esac

@@ -1,5 +1,34 @@
 # infra/modules/bootstrap-db/main.tf
 
+# ======== Data sources for ARN composition ========
+# Cognito user pool ARNs aren't carried on the resource (the AWS API treats
+# them as constructable from pool ID + region + account). We resolve account
+# + region from data sources so the IAM grant for AdminGetUser pins the pool
+# correctly. Both are zero-cost lookups.
+
+data "aws_region" "current" {}
+
+data "aws_caller_identity" "current" {}
+
+locals {
+  smoke_seeding_enabled = var.cognito_user_pool_id != ""
+
+  cognito_user_pool_arn = local.smoke_seeding_enabled ? (
+    "arn:aws:cognito-idp:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:userpool/${var.cognito_user_pool_id}"
+  ) : ""
+
+  # Compose the SMOKE_USER_EMAIL_* env vars from the map. Keys are upper-cased
+  # to match the bash script's env var convention. Empty when the feature is
+  # off — `concat` with an empty list is a no-op so the env block stays
+  # well-formed in either composition.
+  smoke_email_env_vars = local.smoke_seeding_enabled ? [
+    for k, v in var.smoke_user_emails : {
+      name  = "SMOKE_USER_EMAIL_${upper(k)}"
+      value = v
+    }
+  ] : []
+}
+
 # ======== Security group: bootstrap → AWS APIs + RDS ========
 # Egress-only by intent. Pulls the master secret + writes the app secret
 # over Secrets Manager (HTTPS to AWS API endpoints) and connects to RDS
@@ -144,6 +173,28 @@ resource "aws_iam_role_policy" "task" {
   policy = data.aws_iam_policy_document.task.json
 }
 
+# Conditional grant: cognito-idp:AdminGetUser on the staging user pool. Only
+# attached when `cognito_user_pool_id` is set (MYT-55 staging only). Lets
+# the `--seed-smoke-credits` script mode resolve smoke-user emails → cognito
+# subs at runtime. ARN-pinned to the single user pool — no wildcards.
+data "aws_iam_policy_document" "task_cognito" {
+  count = local.smoke_seeding_enabled ? 1 : 0
+
+  statement {
+    sid       = "AdminGetUserForSmokeSeed"
+    actions   = ["cognito-idp:AdminGetUser"]
+    resources = [local.cognito_user_pool_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "task_cognito" {
+  count = local.smoke_seeding_enabled ? 1 : 0
+
+  name   = "bootstrap-db-cognito-admin-get-user"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task_cognito[0].json
+}
+
 # ======== ECS task definition ========
 
 resource "aws_ecs_task_definition" "bootstrap" {
@@ -167,16 +218,27 @@ resource "aws_ecs_task_definition" "bootstrap" {
     # `mythrun/${ENV}/rds-password`; injecting it as an env var would be
     # ignored. The IAM policy on the task role ARN-pins the same secret
     # name → ARN that the script resolves to.
-    environment = [
-      { name = "AWS_REGION", value = "us-east-1" },
-      { name = "RDS_MASTER_SECRET_ARN", value = var.rds_master_secret_arn },
-      # The AWS-managed RDS master secret only carries username+password.
-      # Host+port come from the shared workspace's RDS data outputs. The
-      # script prefers env-supplied values over the JSON secret's host/port
-      # (which don't exist on AWS-managed secrets).
-      { name = "RDS_HOST", value = var.rds_host },
-      { name = "RDS_PORT", value = tostring(var.rds_port) },
-    ]
+    #
+    # The COGNITO_USER_POOL_ID + SMOKE_USER_EMAIL_* block at the tail is
+    # conditional (concat with an empty list when smoke seeding is off, so
+    # production task defs don't carry the smoke knobs at all). Only the
+    # --seed-smoke-credits mode reads them.
+    environment = concat(
+      [
+        { name = "AWS_REGION", value = "us-east-1" },
+        { name = "RDS_MASTER_SECRET_ARN", value = var.rds_master_secret_arn },
+        # The AWS-managed RDS master secret only carries username+password.
+        # Host+port come from the shared workspace's RDS data outputs. The
+        # script prefers env-supplied values over the JSON secret's host/port
+        # (which don't exist on AWS-managed secrets).
+        { name = "RDS_HOST", value = var.rds_host },
+        { name = "RDS_PORT", value = tostring(var.rds_port) },
+      ],
+      local.smoke_seeding_enabled ? [
+        { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
+      ] : [],
+      local.smoke_email_env_vars,
+    )
 
     logConfiguration = {
       logDriver = "awslogs"

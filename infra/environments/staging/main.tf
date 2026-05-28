@@ -179,6 +179,22 @@ module "bootstrap_db" {
   rds_master_secret_arn       = data.terraform_remote_state.shared.outputs.rds_master_user_secret_arn
   rds_password_secret_arn     = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn
   migrate_password_secret_arn = module.serving.migrate_db_credentials_secret_arn
+
+  # MYT-55: wire the --seed-smoke-credits mode. Carries COGNITO_USER_POOL_ID
+  # + SMOKE_USER_EMAIL_* env vars + cognito-idp:AdminGetUser IAM into the
+  # bootstrap-db task so the seed mode can resolve email → cognito_sub at
+  # runtime. Production composition omits these args (defaults are "" / {})
+  # so no Cognito surface is bound to the bootstrap role outside staging.
+  # Email values mirror local.smoke_test_users in infra/modules/auth/smoke-test.tf
+  # — same env + role suffix yields the same email, so duplicating them here
+  # is safe and avoids reaching across module boundaries for a 4-entry map.
+  cognito_user_pool_id = module.auth.user_pool_id
+  smoke_user_emails = {
+    owner    = "mythrun-${var.environment}-smoke-owner@example.com"
+    player_1 = "mythrun-${var.environment}-smoke-player-1@example.com"
+    player_2 = "mythrun-${var.environment}-smoke-player-2@example.com"
+    player_3 = "mythrun-${var.environment}-smoke-player-3@example.com"
+  }
 }
 
 # ======== Smoke Prep-Pipeline Task Family (MYT-55) ========

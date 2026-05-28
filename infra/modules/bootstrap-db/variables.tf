@@ -69,3 +69,24 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+# ---- MYT-55 smoke-credits seeding (staging-only) ----
+# When `cognito_user_pool_id` is set (non-empty), the bootstrap task gains:
+#   - COGNITO_USER_POOL_ID + SMOKE_USER_EMAIL_* env vars
+#   - cognito-idp:AdminGetUser IAM scoped to the user pool ARN
+# This wires up the `--seed-smoke-credits` script mode (resolves email → sub
+# at runtime, then INSERTs admin grants). Empty string disables the wiring
+# entirely — production must pass "" so no Cognito surface gets bound to the
+# bootstrap role.
+
+variable "cognito_user_pool_id" {
+  description = "Cognito User Pool ID to bind for --seed-smoke-credits. Empty string disables the wiring (env vars + IAM grant) entirely. Staging passes module.auth.user_pool_id; production passes \"\"."
+  type        = string
+  default     = ""
+}
+
+variable "smoke_user_emails" {
+  description = "Map keyed by role (owner | player_1 | player_2 | player_3) of the smoke users' Cognito usernames (email-shape). Empty map disables the SMOKE_USER_EMAIL_* env vars. Only meaningful when cognito_user_pool_id is set."
+  type        = map(string)
+  default     = {}
+}
