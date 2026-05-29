@@ -6,7 +6,7 @@
 <!-- source: infra/modules/bootstrap-db/outputs.tf -->
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/environments/staging/outputs.tf -->
-<!-- source-hash: sha256:c8ce06d5f1cefd18a0cb3a926aa6402812fa88e521f7f78af87c9c940dbf9998 -->
+<!-- source-hash: sha256:b1971d1f47ecadec73720116df07e24cd009c09bfc2a2a058f36e772b7e67bb6 -->
 <!-- last-ticket: MYT-55 -->
 
 <h1>Bootstrap Database</h1>
@@ -88,6 +88,20 @@
         <code>POST /api/users/register</code> from the smoke materializes them). Production output
         is empty string &mdash; only wired when the
         <a href="../infra/smoke-testing.html">smoke-testing</a> Cognito surface is in scope.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>OK</code> but API 500s with <code>permission denied for table X</code>
+      </td>
+      <td><code>--grant-app-privileges</code> override</td>
+      <td>
+        Migrations run as <code>mythrun_&lt;env&gt;_migrate</code>; <code>CREATE TABLE</code> yields a
+        migrate-owned table; the app user has no ACL on it. This mode grants the app user
+        (<code>DB_USER</code>) <code>ALL</code> on every existing public-schema table/sequence/
+        function, plus <code>ALTER DEFAULT PRIVILEGES FOR ROLE &lt;migrate&gt;</code> so future
+        migrate-created objects auto-grant at creation time. Idempotent. Run once per env after
+        introducing the migrate user; re-run after schema-role topology changes.
       </td>
     </tr>
   </tbody>

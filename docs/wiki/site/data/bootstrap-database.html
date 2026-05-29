@@ -107,6 +107,20 @@
         <a href="../infra/smoke-testing.html">smoke-testing</a> Cognito surface is in scope.
       </td>
     </tr>
+    <tr>
+      <td>
+        <code>OK</code> but API 500s with <code>permission denied for table X</code>
+      </td>
+      <td><code>--grant-app-privileges</code> override</td>
+      <td>
+        Migrations run as <code>mythrun_&lt;env&gt;_migrate</code>; <code>CREATE TABLE</code> yields a
+        migrate-owned table; the app user has no ACL on it. This mode grants the app user
+        (<code>DB_USER</code>) <code>ALL</code> on every existing public-schema table/sequence/
+        function, plus <code>ALTER DEFAULT PRIVILEGES FOR ROLE &lt;migrate&gt;</code> so future
+        migrate-created objects auto-grant at creation time. Idempotent. Run once per env after
+        introducing the migrate user; re-run after schema-role topology changes.
+      </td>
+    </tr>
   </tbody>
 </table>
 
