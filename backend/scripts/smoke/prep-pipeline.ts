@@ -687,6 +687,55 @@ async function teardown(pool: Pool, results: readonly CampaignRunResult[]): Prom
 }
 
 // ---------------------------------------------------------------------------
+// Pre-run state reset — clear any campaigns owned by smoke users
+// ---------------------------------------------------------------------------
+
+async function resetStaleCampaigns(
+  cfg: SmokeConfig,
+  pool: Pool,
+  users: readonly AuthedUser[],
+): Promise<void> {
+  // Look up user_ids via /api/users/me — avoids hand-decoding JWTs to
+  // get cognito_sub. Each authed user's GET /me returns its own row.
+  const userIds = await Promise.all(
+    users.map(async (u) => {
+      const res = await fetch(`${cfg.apiBase}/api/users/me`, {
+        headers: { Authorization: `Bearer ${u.accessToken}` },
+      })
+      if (!res.ok) {
+        throw new Error(`resetStaleCampaigns: GET /me for ${u.username} returned ${String(res.status)}`)
+      }
+      const body = (await res.json()) as { id: string }
+      return body.id
+    }),
+  )
+  const client = await pool.connect()
+  try {
+    const inflight = await client.query<{ id: string; created_by: string; world_id: string }>(
+      `SELECT id, created_by, world_id FROM campaigns WHERE created_by = ANY($1)`,
+      [userIds],
+    )
+    if (inflight.rowCount === 0) {
+      log('info', 'state_reset_noop', { reason: 'no smoke-user campaigns present' })
+      return
+    }
+    const campaignIds = inflight.rows.map((r) => r.id)
+    const worldIds = inflight.rows.map((r) => r.world_id)
+    log('info', 'state_reset_starting', { campaignCount: inflight.rowCount, campaignIds })
+    await client.query('BEGIN')
+    await client.query(`DELETE FROM worlds WHERE id = ANY($1)`, [worldIds])
+    await client.query(`DELETE FROM pipeline_runs WHERE campaign_id = ANY($1)`, [campaignIds])
+    await client.query('COMMIT')
+    log('info', 'state_reset_complete', { campaignCount: inflight.rowCount })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -707,6 +756,16 @@ async function main(): Promise<void> {
   log('info', 'phase', { phase: 'users_materialized' })
 
   const pool = new Pool({ connectionString: dbUrl, max: 4 })
+
+  // Reset state: delete any in-flight smoke-user-owned campaigns left
+  // behind by a prior FAIL. Per-owner concurrency gate (returns 409
+  // concurrent_generation_in_progress) blocks a new POST /api/campaigns
+  // until the previous one completes — so without this, a single failed
+  // smoke run blocks every subsequent one. Forensics live in CloudWatch
+  // logs (full campaign IDs + diagnostics from the FAIL run); the DB
+  // reflects the CURRENT run only.
+  await resetStaleCampaigns(cfg, pool, [owner, ...players])
+  log('info', 'phase', { phase: 'state_reset' })
   let pass = false
   let results: readonly CampaignRunResult[] = []
 
