@@ -623,6 +623,25 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     }
   }
 
+  # MYT-55 T10': iam:PassRole for the smoke prep-pipeline task / exec
+  # roles. The deploy workflow's deploy-staging-smoke-task-def job
+  # registers a new task-def revision after every code build; that call
+  # to ecs:RegisterTaskDefinition requires PassRole on whatever roles
+  # the new revision references. Same ECS-only condition as the api +
+  # worker PassRole statements above.
+  statement {
+    actions = ["iam:PassRole"]
+    resources = [
+      aws_iam_role.smoke_prep_pipeline_task_execution.arn,
+      aws_iam_role.smoke_prep_pipeline_task_role.arn,
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
   # CloudWatch log reads for the migrate workflow's "tail + surface" step.
   # Scoped to the migrate log group only.
   statement {
