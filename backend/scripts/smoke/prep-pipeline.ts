@@ -25,8 +25,9 @@
 
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
 import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider'
-import { Pool } from 'pg'
+import { type Pool } from 'pg'
 import { createHash } from 'node:crypto'
+import { createPgPool } from '../../src/db/postgres.js'
 import { entities } from '../../src/repo/entities.js'
 import { relationships } from '../../src/repo/relationships.js'
 import { facts } from '../../src/repo/facts.js'
@@ -755,7 +756,7 @@ async function main(): Promise<void> {
   await materializeUserRows(cfg, [owner, ...players])
   log('info', 'phase', { phase: 'users_materialized' })
 
-  const pool = new Pool({ connectionString: dbUrl, max: 4 })
+  const pool = createPgPool(dbUrl, { max: 4 })
 
   // Reset state: delete any in-flight smoke-user-owned campaigns left
   // behind by a prior FAIL. Per-owner concurrency gate (returns 409
