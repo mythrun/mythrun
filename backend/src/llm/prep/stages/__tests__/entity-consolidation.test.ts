@@ -333,7 +333,11 @@ describe('runEntityConsolidationStage', () => {
     // The cleared shape is empty arrays.
     expect(clearSql).toMatch(/\[\s*\]/)
 
-    // Idempotency wipe ran BEFORE the LLM call.
+    // MYT-55: idempotency wipe now runs AFTER the LLM call (inside the
+    // post-LLM persist transaction) so the LLM call doesn't hold a
+    // BEGIN-open connection that RDS kills via
+    // idle_in_transaction_session_timeout. The wipe still happens atomically
+    // with the re-inserts via withTransaction — the FK cascade is preserved.
     const ghostWipeIdx = client.query.mock.calls.findIndex((call) => {
       const sql = call[0] as string
       return (
@@ -344,7 +348,7 @@ describe('runEntityConsolidationStage', () => {
     expect(ghostWipeIdx).toBeGreaterThanOrEqual(0)
     const wipeOrder = client.query.mock.invocationCallOrder[ghostWipeIdx]
     const llmOrder = vi.mocked(ai.generateText).mock.invocationCallOrder[0]
-    expect(wipeOrder).toBeLessThan(llmOrder ?? Number.MAX_SAFE_INTEGER)
+    expect(wipeOrder).toBeGreaterThan(llmOrder ?? 0)
 
     // Cost accounting: 500/1M * 3 + 800/1M * 15 = 0.0015 + 0.012 = 0.0135
     expect(result.costUsd).toBeCloseTo(0.0135, 6)

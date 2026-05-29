@@ -18,6 +18,7 @@
 // and matches the test pattern from T3/T4/T5.
 
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -107,22 +108,23 @@ export async function runRandomTablesStage(
   // Idempotency: delete prior rows for this world before re-inserting.
   // Matches the §3 "idempotent persisters" rule — retried stages start
   // from a clean slate for their persistence scope.
-  await client.query(`DELETE FROM random_tables WHERE world_id = $1`, [args.worldId])
-
-  for (const table of result.output.tables) {
-    const tableId = uuidv7()
-    await client.query(
-      `INSERT INTO random_tables (id, world_id, name, category) VALUES ($1, $2, $3, $4)`,
-      [tableId, args.worldId, table.name, table.category],
-    )
-    for (const entry of table.entries) {
+  await withTransaction(client, async () => {
+    await client.query(`DELETE FROM random_tables WHERE world_id = $1`, [args.worldId])
+    for (const table of result.output.tables) {
+      const tableId = uuidv7()
       await client.query(
-        `INSERT INTO random_table_entries (id, table_id, roll_min, roll_max, content)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [uuidv7(), tableId, entry.roll_min, entry.roll_max, entry.content],
+        `INSERT INTO random_tables (id, world_id, name, category) VALUES ($1, $2, $3, $4)`,
+        [tableId, args.worldId, table.name, table.category],
       )
+      for (const entry of table.entries) {
+        await client.query(
+          `INSERT INTO random_table_entries (id, table_id, roll_min, roll_max, content)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [uuidv7(), tableId, entry.roll_min, entry.roll_max, entry.content],
+        )
+      }
     }
-  }
+  })
 
   return {
     costUsd: computeCostUsd({

@@ -23,6 +23,7 @@
 //   7. Clear worlds.entity_consolidation_pending to empty arrays.
 
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import type { Redis } from 'ioredis'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -142,16 +143,11 @@ export async function runEntityConsolidationStage(
     }
   }
 
-  // 3. Idempotency wipe — clear any prior stage-4b ghosts so a retry starts
-  // from a known-empty surface. CASCADE FKs on entities → facts / prose_kernels
-  // / relationships handle the dependent rows.
-  await client.query(
-    `DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'`,
-    [args.worldId],
-  )
-
-  // 4. Assemble prompt context. The LLM operates on REAL UUIDs from the
+  // 3. Assemble prompt context. The LLM operates on REAL UUIDs from the
   // entity inventory + the placeholder IDs from pending declarations.
+  // (Idempotency wipe of prior stage-4b ghosts is folded into the
+  // post-LLM transaction below so the BEGIN doesn't wrap the LLM call —
+  // see backend/src/db/transaction.ts on why.)
   const inventory = await entities.listByWorld(client, args.worldId)
   const inventoryBlock = inventory
     .map((e) => `- ${e.id}  [${e.entityType}]  ${e.name}`)
@@ -218,116 +214,134 @@ export async function runEntityConsolidationStage(
     )
   }
 
-  // 7. Persist surviving ghosts. UUIDv7 per ghost gives time-ordered IDs;
-  // we cache the placeholder→UUID mapping so step 8 can resolve pending
-  // relationships.
-  const channel = `${args.keyPrefix}pipeline:campaign:${args.campaignId}`
-  const placeholderToUuid = new Map<string, string>()
-  for (const [i, ghost] of surviving.entries()) {
-    const ghostId = uuidv7()
-    placeholderToUuid.set(ghost.placeholder_id, ghostId)
-    await entities.insert(client, {
-      id: ghostId,
-      worldId: args.worldId,
-      entityType: ghost.entity_type,
-      name: ghost.name,
-      accessLevel: ghost.access_level,
-      createdIn: 'stage:entity_consolidation',
-    })
-    await proseKernels.insert(client, { entityId: ghostId, content: ghost.prose })
-    await facts.insertMany(
-      client,
-      ghost.facts.map((f) => ({
-        entityId: ghostId,
-        topic: f.topic,
-        content: f.content,
-        accessLevel: f.access_level,
-      })),
-    )
-    if (ghost.entity_type === 'location' && ghost.parent_location_id !== null) {
-      await entityHierarchy.insert(client, {
-        parentEntityId: ghost.parent_location_id,
-        childEntityId: ghostId,
-      })
-    }
-    // myth-pfke P5.2: per-ghost `entity-added` event carrying the
-    // `placeholderId` so any client-buffered placeholder-endpoint edges
-    // (emitted earlier by stage 4 via streaming-extractor) can now
-    // resolve against the real ghost UUID.
-    await args.redisRealtime.publish(
-      channel,
-      JSON.stringify({
-        type: 'entity-added',
-        synthKey: `entity_consolidation/ghosts/${String(i)}`,
-        entityKind: ghost.entity_type,
-        name: ghost.name,
-        placeholderId: ghost.placeholder_id,
-      }),
-    )
-  }
-
-  // 8. Resolve pending placeholder-touching relationships using the
-  // placeholder→UUID map. Drop any whose placeholder side didn't survive
-  // reconciliation (e.g. the LLM omitted that declaration). Real-UUID
-  // endpoints pass through unchanged.
-  const resolveEndpoint = (id: string): string | undefined => {
-    return isPlaceholder(id) ? placeholderToUuid.get(id) : id
-  }
+  // 7-9. Persist everything atomically. Order within the transaction:
+  //   a) idempotency wipe of prior stage-4b ghosts (cascade-clears facts /
+  //      prose_kernels / relationships via FK)
+  //   b) insert surviving ghosts + their prose / facts / hierarchy
+  //   c) resolve placeholder relationships and insert them
+  //   d) clear entity_consolidation_pending
+  // Redis publishes happen AFTER commit so consumers don't see references
+  // to data that hasn't materialized.
   interface ResolvedRel {
     readonly sourceEntityId: string
     readonly targetEntityId: string
     readonly relationshipType: string
     readonly description: string
   }
-  const resolvedRels: ResolvedRel[] = []
-  for (const r of pending.relationships) {
-    const source = resolveEndpoint(r.from)
-    const target = resolveEndpoint(r.to)
-    if (source === undefined || target === undefined) continue
-    resolvedRels.push({
-      sourceEntityId: source,
-      targetEntityId: target,
-      relationshipType: r.relationship,
-      description: r.description,
-    })
+  interface GhostPublish {
+    readonly index: number
+    readonly entityType: string
+    readonly name: string
+    readonly placeholderId: string
   }
-  if (resolvedRels.length > 0) {
-    // myth-imxg.5: stamp each row with the same synth_key the post-INSERT
-    // `edge-added` event publishes below. The `i` index here MUST match the
-    // `i` used by the event-emission loop — they're keyed off the same
-    // resolvedRels array, in the same order — so stage 7 can later address
-    // these rows on the wire by their established identity.
-    const resolvedRelsWithKeys = resolvedRels.map((rel, i) => ({
-      ...rel,
-      synthKey: `entity_consolidation/relationships/${String(i)}`,
-    }))
-    await relationships.insertMany(client, resolvedRelsWithKeys)
-    // myth-pfke P5.2: per-resolved-relationship `edge-added` event.
-    // Endpoints are REAL UUIDs at this point (resolved via
-    // placeholderToUuid above); the FE buffered-edges UX only needs to
-    // handle placeholder-endpoint edges from stage 4 (entity_relationships),
-    // not these.
-    for (const [i, rel] of resolvedRels.entries()) {
-      await args.redisRealtime.publish(
-        channel,
-        JSON.stringify({
-          type: 'edge-added',
-          synthKey: `entity_consolidation/relationships/${String(i)}`,
-          from: rel.sourceEntityId,
-          to: rel.targetEntityId,
-          relationship: rel.relationshipType,
-        }),
+  const placeholderToUuid = new Map<string, string>()
+  const ghostPublishes: GhostPublish[] = []
+  const persistedRels: ResolvedRel[] = []
+  await withTransaction(client, async () => {
+    // (a) wipe
+    await client.query(
+      `DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'`,
+      [args.worldId],
+    )
+    // (b) ghosts
+    for (const [i, ghost] of surviving.entries()) {
+      const ghostId = uuidv7()
+      placeholderToUuid.set(ghost.placeholder_id, ghostId)
+      await entities.insert(client, {
+        id: ghostId,
+        worldId: args.worldId,
+        entityType: ghost.entity_type,
+        name: ghost.name,
+        accessLevel: ghost.access_level,
+        createdIn: 'stage:entity_consolidation',
+      })
+      await proseKernels.insert(client, { entityId: ghostId, content: ghost.prose })
+      await facts.insertMany(
+        client,
+        ghost.facts.map((f) => ({
+          entityId: ghostId,
+          topic: f.topic,
+          content: f.content,
+          accessLevel: f.access_level,
+        })),
       )
+      if (ghost.entity_type === 'location' && ghost.parent_location_id !== null) {
+        await entityHierarchy.insert(client, {
+          parentEntityId: ghost.parent_location_id,
+          childEntityId: ghostId,
+        })
+      }
+      ghostPublishes.push({
+        index: i,
+        entityType: ghost.entity_type,
+        name: ghost.name,
+        placeholderId: ghost.placeholder_id,
+      })
     }
+    // (c) placeholder-touching relationships
+    const resolveEndpoint = (id: string): string | undefined => {
+      return isPlaceholder(id) ? placeholderToUuid.get(id) : id
+    }
+    for (const r of pending.relationships) {
+      const source = resolveEndpoint(r.from)
+      const target = resolveEndpoint(r.to)
+      if (source === undefined || target === undefined) continue
+      persistedRels.push({
+        sourceEntityId: source,
+        targetEntityId: target,
+        relationshipType: r.relationship,
+        description: r.description,
+      })
+    }
+    if (persistedRels.length > 0) {
+      // myth-imxg.5: stamp each row with the same synth_key the post-COMMIT
+      // `edge-added` event publishes below. The `i` index here MUST match
+      // the `i` used by the event-emission loop — same array, same order —
+      // so stage 7 can later address these rows on the wire by their
+      // established identity.
+      const withKeys = persistedRels.map((rel, i) => ({
+        ...rel,
+        synthKey: `entity_consolidation/relationships/${String(i)}`,
+      }))
+      await relationships.insertMany(client, withKeys)
+    }
+    // (d) clear pending
+    await client.query(
+      `UPDATE worlds SET entity_consolidation_pending = '{"declarations": [], "relationships": []}'::jsonb WHERE id = $1`,
+      [args.worldId],
+    )
+  })
+  // Post-COMMIT publishes — myth-pfke P5.2 buffered-edge resolution. Each
+  // ghost gets an `entity-added` event carrying its placeholderId so
+  // client-buffered placeholder-endpoint edges (emitted earlier by stage 4
+  // via the streaming extractor) can now resolve against the real ghost
+  // UUID. Each persisted relationship gets an `edge-added`. Endpoints are
+  // REAL UUIDs at this point.
+  const channel = `${args.keyPrefix}pipeline:campaign:${args.campaignId}`
+  for (const g of ghostPublishes) {
+    await args.redisRealtime.publish(
+      channel,
+      JSON.stringify({
+        type: 'entity-added',
+        synthKey: `entity_consolidation/ghosts/${String(g.index)}`,
+        entityKind: g.entityType,
+        name: g.name,
+        placeholderId: g.placeholderId,
+      }),
+    )
   }
-
-  // 9. Clear the pending-state column. Stage 4b is the only consumer of
-  // this column; emptying it after a successful run means a subsequent
-  // stage-4 retry sees a clean slate even before the stage-4 wipe runs.
-  await client.query(
-    `UPDATE worlds SET entity_consolidation_pending = '{"declarations": [], "relationships": []}'::jsonb WHERE id = $1`,
-    [args.worldId],
-  )
+  for (const [i, rel] of persistedRels.entries()) {
+    await args.redisRealtime.publish(
+      channel,
+      JSON.stringify({
+        type: 'edge-added',
+        synthKey: `entity_consolidation/relationships/${String(i)}`,
+        from: rel.sourceEntityId,
+        to: rel.targetEntityId,
+        relationship: rel.relationshipType,
+      }),
+    )
+  }
 
   /* c8 ignore start — `?? 0` defensive: Anthropic populates usage on every
    * generateObject call; the optional-chain narrowing is defense-in-depth. */

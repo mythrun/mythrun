@@ -73,22 +73,26 @@ describe('runRandomTablesStage', () => {
     const client = makeClient()
     const result = await runRandomTablesStage(client as never, baseArgs)
 
-    // 1 DELETE + 2 random_tables INSERTs + 40 random_table_entries INSERTs = 43
-    expect(client.query).toHaveBeenCalledTimes(43)
+    // MYT-55: writes wrapped in BEGIN/COMMIT via withTransaction.
+    // BEGIN + 1 DELETE + 2 random_tables INSERTs + 40 random_table_entries
+    // INSERTs + COMMIT = 45
+    expect(client.query).toHaveBeenCalledTimes(45)
+    expect(client.query.mock.calls[0]?.[0]).toBe('BEGIN')
+    expect(client.query.mock.calls[44]?.[0]).toBe('COMMIT')
 
-    const [deleteSql, deleteParams] = client.query.mock.calls[0] as [string, unknown[]]
+    const [deleteSql, deleteParams] = client.query.mock.calls[1] as [string, unknown[]]
     expect(deleteSql).toContain('DELETE FROM random_tables WHERE world_id')
     expect(deleteParams[0]).toBe('wld-1')
 
-    // First table insert (call index 1):
-    const [firstTableSql, firstTableParams] = client.query.mock.calls[1] as [string, unknown[]]
+    // First table insert (call index 2 now — BEGIN consumed index 0):
+    const [firstTableSql, firstTableParams] = client.query.mock.calls[2] as [string, unknown[]]
     expect(firstTableSql).toContain('INSERT INTO random_tables')
     expect(firstTableParams[1]).toBe('wld-1')
     expect(firstTableParams[2]).toBe('Regional NPC Quirks of the Salted Reach')
     expect(firstTableParams[3]).toBe('regional_npc_quirks')
 
-    // First entry insert (call index 2):
-    const [firstEntrySql, firstEntryParams] = client.query.mock.calls[2] as [string, unknown[]]
+    // First entry insert (call index 3):
+    const [firstEntrySql, firstEntryParams] = client.query.mock.calls[3] as [string, unknown[]]
     expect(firstEntrySql).toContain('INSERT INTO random_table_entries')
     // table_id at $2 equals the first random_tables insert's $1 (uuidv7)
     expect(firstEntryParams[1]).toBe(firstTableParams[0])

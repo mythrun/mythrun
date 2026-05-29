@@ -83,11 +83,13 @@ describe('runVocabularyIntakeStage', () => {
       ARGS,
     )
 
-    // Persistence: single UPDATE call to worlds.vocabulary_registry with
-    // the model-output augmented with source + access_level on each entry,
-    // and an empty adjacent_franchises array stamped by the handler.
-    expect(client.query).toHaveBeenCalledTimes(1)
-    const [sql, params] = client.query.mock.calls[0] as [string, unknown[]]
+    // Persistence: single UPDATE call to worlds.vocabulary_registry,
+    // wrapped in BEGIN/COMMIT by withTransaction (MYT-55) — total 3 calls:
+    // BEGIN, UPDATE, COMMIT.
+    expect(client.query).toHaveBeenCalledTimes(3)
+    expect(client.query.mock.calls[0]?.[0]).toBe('BEGIN')
+    expect(client.query.mock.calls[2]?.[0]).toBe('COMMIT')
+    const [sql, params] = client.query.mock.calls[1] as [string, unknown[]]
     expect(sql).toMatch(/UPDATE worlds.*SET vocabulary_registry/i)
     const payload = JSON.parse(params[1] as string) as {
       adjacent_franchises: string[]
@@ -124,7 +126,8 @@ describe('runVocabularyIntakeStage', () => {
       ARGS,
     )
 
-    const [, params] = client.query.mock.calls[0] as [string, unknown[]]
+    // MYT-55: writes are wrapped in BEGIN/COMMIT; UPDATE is at index 1.
+    const [, params] = client.query.mock.calls[1] as [string, unknown[]]
     const payload = JSON.parse(params[1] as string) as {
       entries: unknown[]
       adjacent_franchises: unknown[]

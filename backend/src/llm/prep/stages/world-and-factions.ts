@@ -28,6 +28,7 @@
 // pipeline_runs.cost_usd.
 
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import type { Redis } from 'ioredis'
 import type { Job } from 'bullmq'
 import { readFileSync } from 'node:fs'
@@ -240,11 +241,11 @@ export async function runWorldAndFactionsStage(
     outputTokens: opusOutputTokens,
   })
 
-  const finalized = await persistTree(
-    client,
-    args.world.id,
-    validatedTree,
-    args.bypassAccessFilter,
+  // Persist in a short transaction. The LLM stream + repair chain are
+  // already done; this scope is just the entity + UPDATE worlds writes.
+  // See backend/src/db/transaction.ts on why BEGIN doesn't wrap the LLM.
+  const finalized = await withTransaction(client, () =>
+    persistTree(client, args.world.id, validatedTree, args.bypassAccessFilter),
   )
 
   const finalizedEvents: readonly PipelineEvent[] = finalized.map((f) => ({

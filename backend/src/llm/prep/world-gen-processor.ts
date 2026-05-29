@@ -608,11 +608,15 @@ async function runStage(
   job: Job<WorldGenJobPayload>,
   stage: WorldGenStage,
 ): Promise<StageDispatchResult> {
+  // No outer BEGIN/COMMIT — each stage handler manages its own
+  // transaction around just the persist phase. The LLM call runs OUTSIDE
+  // any transaction so the connection isn't "idle in a transaction" while
+  // the model streams (MYT-55: staging RDS sets
+  // idle_in_transaction_session_timeout=60000ms; LLM calls regularly
+  // exceed that and were FATALly killing the connection mid-stream).
   const client = await deps.pool.connect()
   try {
-    await client.query('BEGIN')
     const result = await dispatchStage(client, ctx, stage, deps, campaignId, job)
-    await client.query('COMMIT')
     // Publish post-COMMIT events accumulated by the handler: `finalized`
     // entries for newly-persisted entities, `entity-updated` patches for
     // parent-cleared locations, per-patch events for coherence_pass, and
@@ -628,16 +632,10 @@ async function runStage(
     /* c8 ignore stop */
     return result
   } catch (err) {
-    /* c8 ignore start — best-effort ROLLBACK + stage-reset publish on
-     * a handler throw. The ROLLBACK may itself throw if the connection
-     * is already broken; swallow to preserve the original error context.
-     * stage-reset signals consumers that any mid-flight entity-added /
-     * entity-updated events for this stage are now invalidated. */
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // ignore
-    }
+    /* c8 ignore start — stage-reset signals consumers that any mid-flight
+     * entity-added / entity-updated events for this stage are now
+     * invalidated. Per-handler tx ensures any partial persist is already
+     * rolled back by the time we arrive here. */
     await publishEvent(deps, campaignId, { type: 'stage-reset', stage })
     /* c8 ignore stop */
     throw err

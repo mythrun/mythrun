@@ -42,6 +42,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import type pino from 'pino'
 import { generateObject } from '../../ai.js'
 import { SONNET } from '../../models.js'
@@ -794,21 +795,24 @@ export async function runCoherencePassStage(
     else otherPatches.push(p)
   }
 
-  // Apply every patch on the caller-owned transaction. Renames run
-  // LAST so prose/fact/relationship patches resolve against the pre-
-  // rename context. Unknown-name skips are logged + dropped without
-  // aborting. Each successful patch contributes 0..N event payloads
-  // that the outer scope publishes after its own COMMIT.
+  // Apply every patch inside a short transaction (LLM is already done).
+  // Renames run LAST so prose/fact/relationship patches resolve against
+  // the pre-rename context. Unknown-name skips are logged + dropped
+  // without aborting. Each successful patch contributes 0..N event
+  // payloads that the outer scope publishes after the transaction COMMITs.
+  // See backend/src/db/transaction.ts on why BEGIN doesn't wrap the LLM.
   const finalizedEvents: PipelineEvent[] = []
-  for (const patch of [...otherPatches, ...renamePatches]) {
-    const { events } = await applyPatch(
-      client,
-      patch,
-      applyCtx,
-      args.synthKeyByEntityId,
-    )
-    finalizedEvents.push(...events)
-  }
+  await withTransaction(client, async () => {
+    for (const patch of [...otherPatches, ...renamePatches]) {
+      const { events } = await applyPatch(
+        client,
+        patch,
+        applyCtx,
+        args.synthKeyByEntityId,
+      )
+      finalizedEvents.push(...events)
+    }
+  })
 
   /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always
    * populates inputTokens/outputTokens on the final usage emission;

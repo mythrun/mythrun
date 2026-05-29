@@ -9,6 +9,7 @@
 // aggregated cost.
 
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -92,9 +93,12 @@ export async function runVocabularyIntakeStage(
     adjacent_franchises: [],
   }
 
-  await client.query(
-    `UPDATE worlds SET vocabulary_registry = $2::jsonb WHERE id = $1`,
-    [args.worldId, JSON.stringify(registry)],
+  // Persist in a short transaction — see backend/src/db/transaction.ts.
+  await withTransaction(client, () =>
+    client.query(
+      `UPDATE worlds SET vocabulary_registry = $2::jsonb WHERE id = $1`,
+      [args.worldId, JSON.stringify(registry)],
+    ),
   )
 
   // LanguageModelUsage exposes token fields as `number | undefined`

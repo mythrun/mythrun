@@ -46,6 +46,7 @@
 // (optional) Sonnet repair, returned as part of StageDispatchResult.
 
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import type { Redis } from 'ioredis'
 import type { Job } from 'bullmq'
 import { readFileSync } from 'node:fs'
@@ -371,11 +372,9 @@ export async function runLocationsAndNpcsStage(
     outputTokens: opusOutputTokens,
   })
 
-  const finalizedEvents = await persistAndCollectEvents(
-    client,
-    args.world.id,
-    validatedTree,
-    args.bypassAccessFilter,
+  // Persist in a short transaction — see backend/src/db/transaction.ts.
+  const finalizedEvents = await withTransaction(client, () =>
+    persistAndCollectEvents(client, args.world.id, validatedTree, args.bypassAccessFilter),
   )
 
   return {

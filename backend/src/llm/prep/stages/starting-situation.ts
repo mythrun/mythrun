@@ -10,6 +10,7 @@
 // starting-situation only references existing world state.
 
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -118,11 +119,6 @@ export async function runStartingSituationStage(
     }
   }
 
-  await client.query(`UPDATE worlds SET starting_situations = $2 WHERE id = $1`, [
-    args.worldId,
-    JSON.stringify(result.output),
-  ])
-
   const entries = resolved.map((r, index) => ({
     index,
     title: r.title,
@@ -130,10 +126,16 @@ export async function runStartingSituationStage(
     locationName: r.locationName,
     prose: r.prose,
   }))
-  await client.query(`UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`, [
-    args.worldId,
-    JSON.stringify(entries),
-  ])
+  await withTransaction(client, async () => {
+    await client.query(`UPDATE worlds SET starting_situations = $2 WHERE id = $1`, [
+      args.worldId,
+      JSON.stringify(result.output),
+    ])
+    await client.query(`UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`, [
+      args.worldId,
+      JSON.stringify(entries),
+    ])
+  })
 
   return {
     costUsd: computeCostUsd({ inputTokens, outputTokens }),

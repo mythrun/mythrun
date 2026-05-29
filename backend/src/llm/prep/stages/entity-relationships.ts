@@ -23,6 +23,7 @@
 // stage 3's links always win (design §D9: "stage 3 wins" on collisions).
 
 import type { PoolClient } from 'pg'
+import { withTransaction } from '../../../db/transaction.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -348,18 +349,6 @@ export async function runEntityRelationshipsStage(
     inventory.map((e) => [e.id, e.accessLevel]),
   )
 
-  // 2. Idempotency wipe — clear any prior stage-4 output before re-writing.
-  await relationships.deleteByWorld(client, args.worldId)
-
-  // myth-tt2g: stage 4 retry must also cascade-clear prior stage-4b
-  // ghosts. Otherwise a stage-4 retry leaves orphan ghosts whose
-  // declarations the new stage-4 attempt may not match. Stage 4 + 4b
-  // are a single retry unit from the durability standpoint.
-  await client.query(
-    `DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'`,
-    [args.worldId],
-  )
-
   // 3. Stream the relationships via Sonnet + streamObject. The wrapper
   // (myth-t1qz) drives the Haiku→Sonnet repair chain inside
   // `await stream.object` on LlmStructuredOutputError.
@@ -449,35 +438,49 @@ export async function runEntityRelationshipsStage(
   // stragglers against existing entity_hierarchy rows; stage 3 wins).
   // myth-exac T15: insertMany returns the generated UUIDv7 ids in row
   // order so we can emit a `finalized` event per tier-passing edge.
-  const relationshipIds = await relationships.insertMany(
-    client,
-    accepted.map((a) => ({
-      sourceEntityId: a.sourceEntityId,
-      targetEntityId: a.targetEntityId,
-      relationshipType: a.relationshipType,
-      description: a.description,
-      // myth-imxg.4: persist the same wire-format identity the streaming
-      // extractor's `edge-added` events + this stage's post-commit
-      // `finalized` events use (line ~496 below). Keeps stages 4 / 4b / 7
-      // addressing the same row by a single stable string.
-      synthKey: `entity_relationships/relationships/${String(a.sourceIndex)}`,
-    })),
-  )
-  await persistStragglers(client, validatedTree, args.worldId, nameResolutionCtx)
-
-  // 6b. Persist phantom declarations + placeholder relationships to the
-  // pending-state column for stage 4b to consume (myth-pfke P3.3). Always
-  // write — stage 4b reads a known shape regardless of declaration count.
-  await client.query(
-    `UPDATE worlds SET entity_consolidation_pending = $1::jsonb WHERE id = $2`,
-    [
-      JSON.stringify({
-        declarations: partitioned.validDeclarations,
-        relationships: partitioned.placeholderRelationships,
-      }),
-      args.worldId,
-    ],
-  )
+  // Idempotency wipes happen here too — kept atomic with the re-inserts
+  // so a partial failure doesn't leave the world inconsistent. Order:
+  //   a) deleteByWorld on prior stage-4 relationships
+  //   b) cascade-clear prior stage-4b ghosts (myth-tt2g)
+  //   c) insert new relationships
+  //   d) persist hierarchy stragglers
+  //   e) write entity_consolidation_pending for stage 4b
+  // The LLM call already completed above; this scope is writes only
+  // (see backend/src/db/transaction.ts on why BEGIN/COMMIT doesn't wrap
+  // the stream).
+  const relationshipIds = await withTransaction(client, async () => {
+    await relationships.deleteByWorld(client, args.worldId)
+    await client.query(
+      `DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'`,
+      [args.worldId],
+    )
+    const ids = await relationships.insertMany(
+      client,
+      accepted.map((a) => ({
+        sourceEntityId: a.sourceEntityId,
+        targetEntityId: a.targetEntityId,
+        relationshipType: a.relationshipType,
+        description: a.description,
+        // myth-imxg.4: persist the same wire-format identity the streaming
+        // extractor's `edge-added` events + this stage's post-commit
+        // `finalized` events use (line ~496 below). Keeps stages 4 / 4b / 7
+        // addressing the same row by a single stable string.
+        synthKey: `entity_relationships/relationships/${String(a.sourceIndex)}`,
+      })),
+    )
+    await persistStragglers(client, validatedTree, args.worldId, nameResolutionCtx)
+    await client.query(
+      `UPDATE worlds SET entity_consolidation_pending = $1::jsonb WHERE id = $2`,
+      [
+        JSON.stringify({
+          declarations: partitioned.validDeclarations,
+          relationships: partitioned.placeholderRelationships,
+        }),
+        args.worldId,
+      ],
+    )
+    return ids
+  })
 
   // myth-exac T15: tier-gate `finalized` events for relationships. The DB
   // insert above is unaffected — every accepted (non-hallucinated) row

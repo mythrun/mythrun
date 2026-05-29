@@ -67,18 +67,23 @@ describe('runConceptIntakeStage', () => {
 
     // myth-4lhr: concept_intake now issues TWO updates — worlds first
     // (the existing path), then campaigns (the new name propagation so
-    // campaigns.name stops being 'Untitled').
-    expect(client.query).toHaveBeenCalledTimes(2)
-    const [worldsSql, worldsParams] = client.query.mock.calls[0] as [string, unknown[]]
+    // campaigns.name stops being 'Untitled'). MYT-55: the writes are
+    // wrapped in BEGIN/COMMIT (via withTransaction) so the LLM call
+    // doesn't trip RDS idle_in_transaction_session_timeout; total
+    // client.query count is 4 = BEGIN + 2 UPDATEs + COMMIT.
+    expect(client.query).toHaveBeenCalledTimes(4)
+    expect(client.query.mock.calls[0]?.[0]).toBe('BEGIN')
+    const [worldsSql, worldsParams] = client.query.mock.calls[1] as [string, unknown[]]
     expect(worldsSql).toContain('UPDATE worlds SET')
     expect(worldsSql).toContain('name = $2')
     expect(worldsParams[0]).toBe('wld-1')
     expect(worldsParams[1]).toBe('Aelmoor')
     expect(worldsParams[2]).toBe(DRAFT.tone)
-    const [campSql, campParams] = client.query.mock.calls[1] as [string, unknown[]]
+    const [campSql, campParams] = client.query.mock.calls[2] as [string, unknown[]]
     expect(campSql).toContain('UPDATE campaigns SET name')
     expect(campSql).toContain("name = 'Untitled'")
     expect(campParams).toEqual(['wld-1', 'Aelmoor'])
+    expect(client.query.mock.calls[3]?.[0]).toBe('COMMIT')
 
     // (800+200)/1M * 3 + (600+100)/1M * 15 = 0.003 + 0.0105 = 0.0135
     expect(result.costUsd).toBeCloseTo(0.0135, 4)
