@@ -44,10 +44,15 @@ describe('logAndNormalizeMiddleware', () => {
     })
 
     expect(out).toBe(successResult)
-    expect(infoSpy).toHaveBeenCalledOnce()
-    const firstCall = infoSpy.mock.calls[0]
-    assert(firstCall !== undefined, 'expected info call')
-    const [obj, msg] = firstCall
+    // myth-4omh: middleware now emits llm.call.started before doGenerate
+    // (visibility into hung calls). Expect 2 info logs: started + call.
+    expect(infoSpy).toHaveBeenCalledTimes(2)
+    const startedCall = infoSpy.mock.calls[0]
+    assert(startedCall !== undefined, 'expected started log')
+    expect(startedCall[0]).toMatchObject({ event: 'llm.call.started', model: 'claude-haiku-4-5-test', mode: 'generate' })
+    const completionCall = infoSpy.mock.calls[1]
+    assert(completionCall !== undefined, 'expected completion log')
+    const [obj, msg] = completionCall
     expect(obj).toMatchObject({
       event: 'llm.call',
       model: 'claude-haiku-4-5-test',
@@ -111,9 +116,21 @@ describe('logAndNormalizeMiddleware', () => {
       model: stubModel,
     })
 
-    const firstCall = infoSpy.mock.calls[0]
-    assert(firstCall !== undefined, 'expected info call')
-    const [obj] = firstCall
-    expect(obj).toMatchObject({ sessionId: 'sess-1', userId: 'user-9' })
+    // myth-4omh: started log is calls[0], call (completion) is calls[1].
+    // Both should carry the threaded context (sessionId + userId).
+    const startedCall = infoSpy.mock.calls[0]
+    assert(startedCall !== undefined, 'expected started log')
+    expect(startedCall[0]).toMatchObject({
+      event: 'llm.call.started',
+      sessionId: 'sess-1',
+      userId: 'user-9',
+    })
+    const completionCall = infoSpy.mock.calls[1]
+    assert(completionCall !== undefined, 'expected completion log')
+    expect(completionCall[0]).toMatchObject({
+      event: 'llm.call',
+      sessionId: 'sess-1',
+      userId: 'user-9',
+    })
   })
 })

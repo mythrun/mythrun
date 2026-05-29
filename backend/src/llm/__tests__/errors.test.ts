@@ -216,7 +216,11 @@ describe('content-filter mapping (LlmContentFilteredError)', () => {
 
     await expect(drainStream(out.stream)).rejects.toBeInstanceOf(LlmContentFilteredError)
     expect(errorSpy).toHaveBeenCalledOnce()
-    expect(infoSpy).not.toHaveBeenCalled()
+    // myth-4omh: started log fires before doStream; completion log does NOT
+    // fire because content-filter is a terminal error. infoSpy should only
+    // see the started event.
+    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'llm.call.started' })
     expect(errorSpy.mock.calls[0]?.[0]).toMatchObject({
       event: 'llm.error',
       mode: 'stream',

@@ -386,9 +386,29 @@ async function runOneCampaign(
   // world_and_factions ~150s, locations_and_npcs ~235s, entity_relationships
   // ~180s, others 30-90s each. 7 stages + repair-chain headroom = ~20min
   // worst case per world; pad to 25.
+  //
+  // myth-4omh: 'failed' isn't necessarily terminal — non-terminal LLM
+  // errors flip world.status='failed' transiently, and BullMQ retries
+  // after backoff. The retry's atomicClaimStage flips the row back to
+  // 'running'. To distinguish "world failed; nothing retrying" from
+  // "world failed; BullMQ will retry imminently", require 'failed' to
+  // persist across two consecutive polls (~20s gap) before treating it
+  // as terminal. Previously the smoke aborted on first sight of 'failed'.
+  let firstFailedAt: number | null = null
+  const FAILED_GRACE_MS = 30_000
   const polled = await pollFor(
     () => apiGet<{ world: { id: string; status: string } }>(ownerApi, `/api/campaigns/${campaignId}`),
-    (val) => val.world.status === 'complete' || val.world.status === 'failed',
+    (val) => {
+      if (val.world.status === 'complete') return true
+      if (val.world.status === 'failed') {
+        firstFailedAt = firstFailedAt ?? Date.now()
+        return Date.now() - firstFailedAt > FAILED_GRACE_MS
+      }
+      // Transitioned back to 'generating' (BullMQ retry kicked in) —
+      // reset the grace clock so a future 'failed' starts fresh.
+      firstFailedAt = null
+      return false
+    },
     { timeoutMs: 25 * 60_000, intervalMs: 10_000, label: `world-gen for ${concept.name}` },
   )
   if (polled.world.status !== 'complete') {

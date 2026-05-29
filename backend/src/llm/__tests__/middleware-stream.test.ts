@@ -88,9 +88,12 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
 
     const parts = await drainStream(out.stream)
     expect(parts.length).toBeGreaterThanOrEqual(3)
-    expect(infoSpy).toHaveBeenCalledOnce()
+    // myth-4omh: started log fires before doStream; completion log fires
+    // after the stream settles. infoSpy.calls[0]=started, [1]=completion.
+    expect(infoSpy).toHaveBeenCalledTimes(2)
     expect(errorSpy).not.toHaveBeenCalled()
-    const [obj, msg] = infoSpy.mock.calls[0] ?? []
+    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'llm.call.started' })
+    const [obj, msg] = infoSpy.mock.calls[1] ?? []
     expect(obj).toMatchObject({
       event: 'llm.call',
       model: 'claude-sonnet-test',
@@ -120,9 +123,9 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     })
 
     await drainStream(out.stream)
-    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy).toHaveBeenCalledTimes(2)
     expect(errorSpy).not.toHaveBeenCalled()
-    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({
+    expect(infoSpy.mock.calls[1]?.[0]).toMatchObject({
       event: 'llm.call',
       finishReason: 'error',
       inputTokens: 20,
@@ -155,7 +158,11 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
 
     await expect(drainStream(out.stream)).rejects.toBeInstanceOf(LlmRateLimitedError)
     expect(errorSpy).toHaveBeenCalledOnce()
-    expect(infoSpy).not.toHaveBeenCalled()
+    // myth-4omh: wrapStream now emits llm.call.started before doStream,
+    // so on stream errors infoSpy is called once for the started event
+    // (no completion log fires).
+    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'llm.call.started' })
     expect(errorSpy.mock.calls[0]?.[0]).toMatchObject({
       event: 'llm.error',
       mode: 'stream',
@@ -177,7 +184,11 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
 
     await expect(drainStream(out.stream)).rejects.toBeInstanceOf(LlmStructuredOutputError)
     expect(errorSpy).toHaveBeenCalledOnce()
-    expect(infoSpy).not.toHaveBeenCalled()
+    // myth-4omh: wrapStream now emits llm.call.started before doStream,
+    // so on stream errors infoSpy is called once for the started event
+    // (no completion log fires).
+    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'llm.call.started' })
     expect(errorSpy.mock.calls[0]?.[0]).toMatchObject({
       event: 'llm.error',
       reason: 'truncated',
@@ -216,7 +227,11 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(errorSpy).toHaveBeenCalledOnce()
-    expect(infoSpy).not.toHaveBeenCalled()
+    // myth-4omh: wrapStream now emits llm.call.started before doStream,
+    // so on stream errors infoSpy is called once for the started event
+    // (no completion log fires).
+    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'llm.call.started' })
     expect(errorSpy.mock.calls[0]?.[0]).toMatchObject({
       event: 'llm.error',
       reason: 'cancelled',
@@ -248,7 +263,11 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     ).rejects.toBeInstanceOf(LlmAuthError)
 
     expect(errorSpy).toHaveBeenCalledOnce()
-    expect(infoSpy).not.toHaveBeenCalled()
+    // myth-4omh: wrapStream now emits llm.call.started before doStream,
+    // so on stream errors infoSpy is called once for the started event
+    // (no completion log fires).
+    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'llm.call.started' })
   })
 
   it('case 7 — Context threading: worldId + stage threaded into log line', async () => {
@@ -264,12 +283,19 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     })
     await drainStream(out.stream)
 
-    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy).toHaveBeenCalledTimes(2)
+    // Context must be threaded into BOTH the started and completion logs.
     expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({
+      event: 'llm.call.started',
       worldId: 'w1',
       stage: 'world_and_factions',
     })
-    const obj = infoSpy.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(infoSpy.mock.calls[1]?.[0]).toMatchObject({
+      event: 'llm.call',
+      worldId: 'w1',
+      stage: 'world_and_factions',
+    })
+    const obj = infoSpy.mock.calls[1]?.[0] as Record<string, unknown>
     expect(obj.sessionId).toBeUndefined()
     expect(obj.userId).toBeUndefined()
     expect(obj.campaignId).toBeUndefined()
@@ -306,8 +332,8 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     })
     await drainStream(out.stream)
 
-    expect(infoSpy).toHaveBeenCalledOnce()
-    const obj = infoSpy.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(infoSpy).toHaveBeenCalledTimes(2)
+    const obj = infoSpy.mock.calls[1]?.[0] as Record<string, unknown>
     expect(obj.inputTokens).toBeUndefined()
     expect(obj.outputTokens).toBeUndefined()
     expect(obj.totalTokens).toBeUndefined()
@@ -343,7 +369,11 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
 
     await expect(drainStream(out.stream)).rejects.toThrow('read failed')
     expect(errorSpy).toHaveBeenCalledOnce()
-    expect(infoSpy).not.toHaveBeenCalled()
+    // myth-4omh: wrapStream now emits llm.call.started before doStream,
+    // so on stream errors infoSpy is called once for the started event
+    // (no completion log fires).
+    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'llm.call.started' })
     expect(errorSpy.mock.calls[0]?.[0]).toMatchObject({
       event: 'llm.error',
       mode: 'stream',
@@ -404,8 +434,14 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     })
 
     expect(out.usage.inputTokens.total).toBe(5)
-    expect(infoSpy).toHaveBeenCalledOnce()
+    expect(infoSpy).toHaveBeenCalledTimes(2)
     expect(infoSpy.mock.calls[0]?.[0]).toMatchObject({
+      event: 'llm.call.started',
+      worldId: 'w1',
+      userId: 'u1',
+      stage: 'concept_intake',
+    })
+    expect(infoSpy.mock.calls[1]?.[0]).toMatchObject({
       event: 'llm.call',
       worldId: 'w1',
       userId: 'u1',

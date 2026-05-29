@@ -209,6 +209,16 @@ export function logAndNormalizeMiddleware(modelId: string): LanguageModelV3Middl
     wrapGenerate: async ({ doGenerate, params }) => {
       const start = Date.now()
       const ctx = extractMythrunContext(params)
+      // myth-4omh: log call.started BEFORE doGenerate so in-flight hangs
+      // are observable in CloudWatch. Previously only llm.call (success)
+      // and llm.error (terminal) fired — a hung call with no timeout
+      // emitted nothing for the whole hang window. This complements the
+      // ai.ts AbortSignal timeout: even with a 5-min budget, we want to
+      // see the call started immediately.
+      logger.info(
+        { event: 'llm.call.started', model: modelId, mode: 'generate', ...ctx },
+        'llm call started',
+      )
       let result: Awaited<ReturnType<typeof doGenerate>>
       try {
         result = await doGenerate()
@@ -267,6 +277,15 @@ export function logAndNormalizeMiddleware(modelId: string): LanguageModelV3Middl
     wrapStream: async ({ doStream, params }) => {
       const start = Date.now()
       const ctx = extractMythrunContext(params)
+      // myth-4omh: same rationale as wrapGenerate's call.started — log
+      // BEFORE doStream so in-flight streams are observable. Stream
+      // stalls are particularly easy to miss: the upstream connection
+      // may stay open with zero data flowing for minutes before the
+      // AbortSignal cancellation fires.
+      logger.info(
+        { event: 'llm.call.started', model: modelId, mode: 'stream', ...ctx },
+        'llm stream started',
+      )
 
       let upstream: LanguageModelV3StreamResult
       try {

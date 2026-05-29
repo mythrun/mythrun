@@ -125,6 +125,17 @@ export interface GenerateObjectOpts<T> {
   readonly providerOptions?: unknown
   readonly schemaName?: string
   readonly repairStrategy?: RepairStrategy
+  /**
+   * Wall-clock budget for the underlying Anthropic call (including SDK
+   * retries inside maxRetries). myth-4omh root-caused a ~20-min silent
+   * hang in concept_intake when an Anthropic socket stalled with no
+   * timeout configured. AbortSignal fires after this; the SDK
+   * surfaces it via DOMException name='AbortError', which the error
+   * mapper translates to LlmTimeoutError (terminal=false → BullMQ
+   * retries). Callers SHOULD set this; the default 5 min prevents
+   * indefinite hangs but is too generous for most stages.
+   */
+  readonly timeoutMs?: number
 }
 
 export interface GenerateObjectResult<T> {
@@ -143,6 +154,9 @@ export interface StreamObjectOpts<T> {
   readonly providerOptions?: unknown
   readonly schemaName?: string
   readonly repairStrategy?: RepairStrategy
+  /** myth-4omh: see GenerateObjectOpts.timeoutMs. Streaming stages should
+   *  budget for the full stream, not just first-byte. */
+  readonly timeoutMs?: number
 }
 
 export interface GenerateTextOpts {
@@ -152,6 +166,8 @@ export interface GenerateTextOpts {
   readonly temperature?: number
   readonly maxRetries?: number
   readonly providerOptions?: unknown
+  /** myth-4omh: see GenerateObjectOpts.timeoutMs. */
+  readonly timeoutMs?: number
 }
 
 export interface GenerateTextResult {
@@ -459,6 +475,33 @@ function attachDiagnostic(err: Error, diagnostic: LlmCallDiagnostic): void {
   ;(err as { diagnostic?: LlmCallDiagnostic }).diagnostic = diagnostic
 }
 
+// myth-4omh: wall-clock guard for SDK calls. Default 8 min — covers the
+// slowest observed legitimate call (locations_and_npcs Opus stream at ~5
+// min including SDK retries) with ~2x headroom, while still bounding the
+// silent-hang case (observed: ~22 min). Callers SHOULD pass a tighter
+// timeoutMs matched to the stage budget; e.g. a Haiku one-shot wants 60s,
+// a Sonnet generateObject wants 3 min.
+const DEFAULT_LLM_TIMEOUT_MS = 8 * 60 * 1000
+
+function createTimeoutSignal(timeoutMs: number | undefined): {
+  readonly signal: AbortSignal
+  readonly cancel: () => void
+} {
+  const ms = timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS
+  const ac = new AbortController()
+  const timer = setTimeout(() => {
+    // The Vercel SDK turns this into a DOMException(name='AbortError')
+    // which the error mapper translates to LlmTimeoutError (terminal=false).
+    ac.abort()
+  }, ms)
+  return {
+    signal: ac.signal,
+    cancel: () => {
+      clearTimeout(timer)
+    },
+  }
+}
+
 /**
  * Schema-validated `generateText` replacement. Returns the SDK output, the
  * SDK usage, and a `repairAttempted` flag indicating whether the fallback
@@ -479,11 +522,13 @@ export async function generateObject<T>(
     providerOptions: opts.providerOptions,
   }
 
+  const timeout = createTimeoutSignal(opts.timeoutMs)
   try {
     const result = await sdkGenerateText({
       model: opts.model,
       output: Output.object<T>({ schema: opts.schema }),
       prompt: opts.prompt,
+      abortSignal: timeout.signal,
       ...(opts.system !== undefined ? { system: opts.system } : {}),
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
@@ -525,6 +570,11 @@ export async function generateObject<T>(
     logRepair(ctx, attempt, 'warn')
     attachDiagnostic(mapped, buildDiagnostic(ctx, attempt))
     throw mapped
+    /* c8 ignore next 3 — finally cleanup; v8 branch tracking reports the
+     * implicit suppress/rethrow split as one uncovered branch even when
+     * both control-flow paths are exercised by tests. */
+  } finally {
+    timeout.cancel()
   }
 }
 
@@ -551,11 +601,16 @@ export function streamObject<T>(
     providerOptions: opts.providerOptions,
   }
 
+  // myth-4omh: streaming stages run for several minutes; the timeout
+  // covers the whole stream, not just first-byte. The signal is captured
+  // in a closure for the wrapped-object Promise to cancel after settle.
+  const timeout = createTimeoutSignal(opts.timeoutMs)
   // eslint-disable-next-line @typescript-eslint/no-deprecated -- wrapper is the only sanctioned caller of streamObject; design §4.1 mandates it for streaming stages.
   const sdkResult = sdkStreamObject({
     model: opts.model,
     schema: opts.schema,
     prompt: opts.prompt,
+    abortSignal: timeout.signal,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
     ...(opts.providerOptions !== undefined
@@ -569,8 +624,14 @@ export function streamObject<T>(
   })
 
   const wrappedObject: Promise<T> = sdkResult.object.then(
-    (val) => val as T,
+    (val) => {
+      // Stream settled successfully; cancel the timer so it doesn't fire
+      // during downstream consumption (e.g. the repair-chain handlers).
+      timeout.cancel()
+      return val
+    },
     async (err: unknown) => {
+      timeout.cancel()
       // myth-2lmc: the Vercel AI SDK throws `AI_NoObjectGeneratedError`
       // when the streamed JSON fails the post-stream Zod check. That
       // error class is in the `ai` package and isn't an instance of our
@@ -619,20 +680,33 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
   // (no current production call passes both `system` and no Output.object).
   // Kept for API symmetry with generateObject; both ternary arms wrapped.
   /* c8 ignore start */
-  const result = await sdkGenerateText({
-    model: opts.model,
-    prompt: opts.prompt,
-    ...(opts.system !== undefined ? { system: opts.system } : {}),
-    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-    ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
-    ...(opts.providerOptions !== undefined
-      ? {
-          providerOptions: opts.providerOptions as NonNullable<
-            Parameters<typeof sdkGenerateText>[0]['providerOptions']
-          >,
-        }
-      : {}),
-  })
-  return { text: result.text, usage: result.usage }
+  const timeout = createTimeoutSignal(opts.timeoutMs)
+  try {
+    const result = await sdkGenerateText({
+      model: opts.model,
+      prompt: opts.prompt,
+      abortSignal: timeout.signal,
+      ...(opts.system !== undefined ? { system: opts.system } : {}),
+      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+      ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+      ...(opts.providerOptions !== undefined
+        ? {
+            providerOptions: opts.providerOptions as NonNullable<
+              Parameters<typeof sdkGenerateText>[0]['providerOptions']
+            >,
+          }
+        : {}),
+    })
+    return { text: result.text, usage: result.usage }
+  } catch (err) {
+    // myth-4omh: route raw SDK errors through the Mythrun mapper so callers
+    // get LlmTimeoutError on AbortSignal-fired timeouts (and the other
+    // typed errors on rate limit / auth / etc). generateObject already
+    // does this via its repair-chain catch arm; generateText was a plain
+    // passthrough.
+    throw mapToMythrunError(err)
+  } finally {
+    timeout.cancel()
+  }
   /* c8 ignore stop */
 }
