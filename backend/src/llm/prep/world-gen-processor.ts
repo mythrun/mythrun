@@ -766,15 +766,33 @@ async function dispatchStage(
     })
   }
   if (stage === 'starting_situation') {
+    // MYT-57: load the real locations/NPCs/factions summaries from the
+    // entities written by stages 2 & 3.
+    //
+    // The previous '(stage not implemented yet)' placeholder was a MYT-51
+    // launch artifact that outlived MYT-52's streaming-stages landing. It
+    // didn't break worlds with low naming ambiguity because the in-stage
+    // constrained-name retry (see stages/starting-situation.ts) caught most
+    // cases. But it consistently broke worlds where the concept's thematic
+    // anchor lives in non-location entities — haunted-carnival's "The
+    // Wonder-Workers" / "Card-Reader" / "Beast-Handler" sit in NPC + faction
+    // buckets, leaving the LLM thematically pulled toward names not in the
+    // location list. Mixed signals: "## Locations\n(stage not implemented
+    // yet)" + "IMPORTANT: choose from [20 locations]" — the LLM honoured the
+    // header more than the trailing constraint.
+    //
+    // Populating the actual summaries removes the mixed signal AND saves the
+    // wasteful first call that hallucinated names on every world.
+    const stage6Inputs = await loadStartingSituationInputs(client, ctx.world.id)
     const cost = await runStartingSituationStage(client, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',
       themes: ctx.world.themes ?? '',
       keyTensions: ctx.world.keyTensions ?? '',
-      locationsSummary: '(stage not implemented yet)',
-      npcsSummary: '(stage not implemented yet)',
-      factionsSummary: '(stage not implemented yet)',
+      locationsSummary: stage6Inputs.locationsSummary,
+      npcsSummary: stage6Inputs.npcsSummary,
+      factionsSummary: stage6Inputs.factionsSummary,
       canonicalNames: '',
       vocabularyRegistry: ctx.world.vocabularyRegistry,
     })
@@ -831,6 +849,43 @@ interface Stage3Inputs {
 /* c8 ignore start — reached only when stage 3 dispatcher arm fires, which
  * currently requires the wave-4 streamObject mock to succeed. T16's E2E
  * smoke exercises this with real stage-2 output landed. */
+// MYT-57: starting_situation needs the actual locations/NPCs/factions the
+// previous stages wrote. Returns one "- Name: prose" line per entity per
+// kind; empty buckets render as "(none)" so the prompt's section headers
+// stay grammatically intact when a world is sparse.
+//
+// Exported for direct unit testing — the dispatcher arm uses the loader
+// indirectly, but a focused fixture is the cleanest way to lock in the
+// shape (real names + prose, not the (stage not implemented yet) placeholder).
+export interface StartingSituationInputs {
+  readonly locationsSummary: string
+  readonly npcsSummary: string
+  readonly factionsSummary: string
+}
+export async function loadStartingSituationInputs(
+  client: PoolClient,
+  worldId: string,
+): Promise<StartingSituationInputs> {
+  const rows = await client.query<{ name: string; entity_type: string; prose: string | null }>(
+    `SELECT e.name, e.entity_type, pk.content AS prose
+       FROM entities e
+       LEFT JOIN prose_kernels pk ON pk.entity_id = e.id
+      WHERE e.world_id = $1 AND e.entity_type IN ('location', 'npc', 'faction')
+      ORDER BY e.entity_type, e.created_at`,
+    [worldId],
+  )
+  const render = (kind: string): string => {
+    const filtered = rows.rows.filter((r) => r.entity_type === kind)
+    if (filtered.length === 0) return '(none)'
+    return filtered.map((r) => `- ${r.name}: ${r.prose ?? ''}`).join('\n')
+  }
+  return {
+    locationsSummary: render('location'),
+    npcsSummary: render('npc'),
+    factionsSummary: render('faction'),
+  }
+}
+
 async function loadStage3Inputs(client: PoolClient, worldId: string): Promise<Stage3Inputs> {
   const overviewRow = await client.query<{ world_overview: string | null }>(
     `SELECT world_overview FROM worlds WHERE id = $1`,
