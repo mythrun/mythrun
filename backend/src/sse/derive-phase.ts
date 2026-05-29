@@ -18,7 +18,7 @@ export type PipelinePhase =
 
 export interface CampaignRow {
   readonly id: string
-  readonly status: 'setup' | 'active' | 'archived'
+  readonly status: 'setup' | 'active' | 'archived' | 'failed'
   readonly world_id: string
 }
 
@@ -155,6 +155,11 @@ function computePhase(input: {
 
   // Active campaign overrides everything.
   if (campaign.status === 'active') return 'complete'
+
+  // Failed campaign — explicit terminal state set by the character-integration
+  // processor (MYT-56) when its repair chain exhausts. Surfaces here so the
+  // bare GET /api/campaigns row, the SSE phase, and the smoke all agree.
+  if (campaign.status === 'failed') return 'failed'
 
   // Empty: nothing has started.
   if (worldgen.length === 0 && charcreation.length === 0 && postcreation.length === 0) {

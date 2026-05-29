@@ -98,8 +98,8 @@ function toModerationStatus(v: string): 'unreviewed' | 'approved' | 'flagged' | 
   return v
 }
 
-function toCampaignStatus(v: string): 'setup' | 'active' | 'archived' {
-  if (v !== 'setup' && v !== 'active' && v !== 'archived') {
+function toCampaignStatus(v: string): 'setup' | 'active' | 'archived' | 'failed' {
+  if (v !== 'setup' && v !== 'active' && v !== 'archived' && v !== 'failed') {
     throw new Error(`unexpected campaign status value from DB: ${v}`)
   }
   return v

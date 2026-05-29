@@ -462,7 +462,9 @@ async function runOneCampaign(
   await apiPost(ownerApi, `/api/campaigns/${campaignId}/finalize-character-creation`, {})
   log('info', 'finalize_triggered', { concept: concept.name, campaignId })
 
-  // 8. Wait for campaign.status='active' (post-integration barrier).
+  // 8. Wait for campaign.status='active' (post-integration barrier) or
+  //    'failed' (MYT-56: terminal integration failure flips status to
+  //    'failed' so clients can distinguish "still running" from "stuck").
   const finalState = await pollFor(
     () => apiGet<{ campaign: { status: string } }>(ownerApi, `/api/campaigns/${campaignId}`),
     (val) => val.campaign.status === 'active' || val.campaign.status === 'failed',

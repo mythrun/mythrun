@@ -127,7 +127,7 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'campaigns',
-    check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))`,
+    check_clause: `CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text, 'failed'::text])))`,
   },
   {
     table_name: 'character_concepts',
@@ -676,6 +676,7 @@ describe('schema-parity (integration)', () => {
       '018_character_integration.sql',
       '019_starting_situation_titles.sql',
       '020_relationships_synth_key.sql',
+      '021_campaigns_failed_status.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

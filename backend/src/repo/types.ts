@@ -108,7 +108,7 @@ export interface Campaign {
   readonly sourceWorldId: string | null
   readonly createdBy: string
   readonly name: string
-  readonly status: 'setup' | 'active' | 'archived'
+  readonly status: 'setup' | 'active' | 'archived' | 'failed'
   readonly language: string
   readonly createdAt: Date
   readonly updatedAt: Date
@@ -119,13 +119,13 @@ export interface CreateCampaignInput {
   readonly createdBy: string
   readonly name: string
   readonly sourceWorldId?: string | null
-  readonly status?: 'setup' | 'active' | 'archived'
+  readonly status?: 'setup' | 'active' | 'archived' | 'failed'
   readonly language?: string
 }
 
 export interface CampaignUpdate {
   readonly name?: string
-  readonly status?: 'setup' | 'active' | 'archived'
+  readonly status?: 'setup' | 'active' | 'archived' | 'failed'
   readonly language?: string
 }
 

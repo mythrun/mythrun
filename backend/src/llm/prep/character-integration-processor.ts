@@ -25,6 +25,7 @@
 import type { Job } from 'bullmq'
 import type { Pool } from 'pg'
 import { isTerminalError } from '../errors.js'
+import { logger } from '../logger.js'
 import { atomicClaimStage } from './world-gen-processor.js'
 import { runCharacterIntegrationStage } from './stages/character-integration.js'
 
@@ -52,18 +53,32 @@ export async function processCharacterIntegrationJob(
 ): Promise<void> {
   const { campaignId, ownerUserId } = job.data
 
+  logger.info(
+    { event: 'character_integration.job_received', campaignId, ownerUserId },
+    'character-integration job received',
+  )
+
   const claim = await atomicClaimStage(deps.pool, {
     kind: 'campaign',
     campaignId,
     stage: STAGE,
   })
   // Idempotent re-entry: BullMQ retried but the row is already done.
-  if (claim === 'completed') return
+  if (claim === 'completed') {
+    logger.info(
+      { event: 'character_integration.idempotent_skip', campaignId },
+      'character-integration already completed; no-op',
+    )
+    return
+  }
   // 'lost-race' arm only triggers when two workers race on the same
   // (campaign, stage); concurrency 5 makes this possible if a duplicate
   // job is enqueued. Return cleanly — the winner will publish completion.
-  /* c8 ignore next */
-  if (claim === 'lost-race') return
+  /* c8 ignore next 4 */
+  if (claim === 'lost-race') {
+    logger.info({ event: 'character_integration.lost_race', campaignId }, 'lost claim race')
+    return
+  }
 
   try {
     const result = await runCharacterIntegrationStage(deps.pool, {
@@ -81,6 +96,14 @@ export async function processCharacterIntegrationJob(
       stage: STAGE,
       costUsd: result.llmCostUsd,
     })
+    logger.info(
+      {
+        event: 'character_integration.completed',
+        campaignId,
+        costUsd: result.llmCostUsd,
+      },
+      'character-integration completed',
+    )
   } catch (err) {
     const terminal = isTerminalError(err)
     // Non-Error throw branch defense; the handler throws Error subclasses
@@ -93,12 +116,33 @@ export async function processCharacterIntegrationJob(
         WHERE campaign_id = $2 AND stage = $3 AND user_id IS NULL`,
       [message, campaignId, STAGE],
     )
+    // MYT-56: on TERMINAL failure (no point retrying), flip campaigns.status
+    // to 'failed' so the bare GET /api/campaigns row + the SSE-derived phase
+    // both surface the terminal state. Without this, the campaign would sit
+    // in 'setup' indefinitely with no observable terminal state. On
+    // NON-terminal failure we leave the campaign at 'setup' — BullMQ will
+    // retry with backoff and a later attempt may succeed.
+    if (terminal) {
+      await deps.pool.query(
+        `UPDATE campaigns SET status = 'failed', updated_at = now() WHERE id = $1`,
+        [campaignId],
+      )
+    }
     await deps.publishEvent(campaignId, {
       type: 'stage-failed',
       stage: STAGE,
       message,
       terminal,
     })
+    logger.warn(
+      {
+        event: 'character_integration.failed',
+        campaignId,
+        terminal,
+        err: message,
+      },
+      `character-integration ${terminal ? 'terminally ' : ''}failed`,
+    )
     // Non-terminal → BullMQ retries with backoff; terminal → return cleanly
     // so BullMQ marks the job 'completed' (retrying wouldn't help).
     if (!terminal) throw err
