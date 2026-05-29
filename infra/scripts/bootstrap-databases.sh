@@ -31,6 +31,11 @@
 #                                them) AND the bootstrap-db task to carry
 #                                COGNITO_USER_POOL_ID + SMOKE_USER_EMAIL_* env vars
 #                                + cognito-idp:AdminGetUser IAM. Staging-only.
+#   --grant-app-privileges       Grant the app user (DB_USER) full privileges on
+#                                every public-schema table/sequence/function plus
+#                                ALTER DEFAULT PRIVILEGES so future migrate-created
+#                                objects auto-flow. Idempotent. Run once per env;
+#                                re-run after introducing a new role pattern.
 #
 # Required env vars (injected via ECS task role):
 #   AWS_REGION                us-east-1
@@ -67,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --migrate-user-only)     set_mode "migrate-user-only"; shift ;;
     --reset-migrate-password) set_mode "reset-migrate-password"; RESET_MIGRATE_PW=1; shift ;;
     --seed-smoke-credits) set_mode "seed-smoke-credits"; shift ;;
+    --grant-app-privileges) set_mode "grant-app-privileges"; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -411,6 +417,47 @@ SQL
   echo "Smoke credits seeded (1M each of world_gen + session per smoke user; re-runs are no-ops)."
 }
 
+# Grants the app user (DB_USER) full privileges on every public-schema
+# object owned by the migrate user, and sets ALTER DEFAULT PRIVILEGES so
+# objects created by the migrate user in the future are auto-granted to
+# the app user.
+#
+# Without this, tables introduced by recent migrations (CREATE TABLE runs
+# as migrate; the table is owned by migrate; app has no ACL) are not
+# readable by the API — observed as `permission denied for table X`
+# (SQLSTATE 42501). Older tables were created before the migrate user
+# existed (back when migrations ran as the master role), so they have
+# the broader ACL by construction. This mode catches up the post-migrate
+# tables AND makes future tables auto-flow.
+#
+# Idempotent: re-running emits no-op GRANTs.
+grant_app_privileges() {
+  local migrate_user="mythrun_${ENV}_migrate"
+  echo "Granting $DB_USER full privileges on all public-schema objects in $DB_NAME (catchup + future-default)..."
+  psql --host="$RDS_HOST" --port="$RDS_PORT" --username="$MASTER_USER" \
+    --dbname="$DB_NAME" --no-password -v ON_ERROR_STOP=1 <<SQL
+-- Catchup: every table, sequence, and function currently in the public
+-- schema becomes fully accessible to the app user. ON ALL is the
+-- catalog-snapshot form; objects created after this command are NOT
+-- covered (that's what ALTER DEFAULT PRIVILEGES below handles).
+GRANT ALL ON ALL TABLES IN SCHEMA public TO $DB_USER;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO $DB_USER;
+
+-- Future: objects the migrate user creates in the public schema from
+-- this point onward auto-grant to the app user at creation time. Must
+-- be issued FOR ROLE <migrate>: ALTER DEFAULT PRIVILEGES sets the rule
+-- per the creating role, not the owner of the database.
+ALTER DEFAULT PRIVILEGES FOR ROLE $migrate_user IN SCHEMA public
+  GRANT ALL ON TABLES TO $DB_USER;
+ALTER DEFAULT PRIVILEGES FOR ROLE $migrate_user IN SCHEMA public
+  GRANT ALL ON SEQUENCES TO $DB_USER;
+ALTER DEFAULT PRIVILEGES FOR ROLE $migrate_user IN SCHEMA public
+  GRANT ALL ON FUNCTIONS TO $DB_USER;
+SQL
+  echo "Granted $DB_USER full privileges + future-default privileges (idempotent)."
+}
+
 # --- dispatch by mode ---
 case "$MODE" in
   verify)
@@ -442,5 +489,8 @@ case "$MODE" in
     ;;
   seed-smoke-credits)
     seed_smoke_credits
+    ;;
+  grant-app-privileges)
+    grant_app_privileges
     ;;
 esac
