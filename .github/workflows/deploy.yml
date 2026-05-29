@@ -378,3 +378,52 @@ jobs:
           done
           echo "::error::Worker deployment did not reach COMPLETED within 2 min"
           exit 1
+
+  # MYT-55 T10': rotate the smoke task definition alongside api/worker.
+  # The smoke family has no ECS service — it's invoked via `aws ecs
+  # run-task` from operator + post-deploy gates — so we register a new
+  # revision and stop. The next run-task call picks up `:latest`
+  # implicitly. Runs in parallel with deploy-staging-worker; no shared
+  # concurrency group with api/worker.
+  deploy-staging-smoke-task-def:
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    concurrency:
+      group: deploy-mythrun-staging-smoke-task-def
+      cancel-in-progress: false
+    env:
+      TASK_DEF_FAMILY: mythrun-staging-smoke-prep-pipeline
+      CONTAINER_NAME: smoke
+    steps:
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch current smoke task definition
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition \
+            --task-definition "${{ env.TASK_DEF_FAMILY }}" \
+            --query 'taskDefinition' \
+            > task-def.json
+
+      - name: Render smoke task definition with digest image
+        id: taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@6853cfae8c3a7d978fbf68b5a55453395541dfbb # v1.8.5
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image }}
+
+      - name: Register new smoke task definition revision
+        run: |
+          set -euo pipefail
+          REV=$(aws ecs register-task-definition \
+            --cli-input-json "file://${{ steps.taskdef.outputs.task-definition }}" \
+            --query 'taskDefinition.revision' \
+            --output text)
+          echo "Registered ${TASK_DEF_FAMILY} revision: $REV"
