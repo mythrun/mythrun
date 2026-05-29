@@ -484,6 +484,25 @@ debug_campaign_state() {
 \echo '== campaigns =='
 SELECT id, status, world_id, created_at, updated_at FROM campaigns WHERE id = :'cid';
 \echo
+\echo '== world =='
+SELECT id, name, status, LEFT(concept,80) AS concept_head
+  FROM worlds WHERE id = (SELECT world_id FROM campaigns WHERE id = :'cid');
+\echo
+\echo '== entities by type (world-scoped) =='
+SELECT entity_type, COUNT(*) AS n
+  FROM entities WHERE world_id = (SELECT world_id FROM campaigns WHERE id = :'cid')
+ GROUP BY entity_type ORDER BY entity_type;
+\echo
+\echo '== entities — locations only =='
+SELECT name FROM entities
+ WHERE world_id = (SELECT world_id FROM campaigns WHERE id = :'cid')
+   AND entity_type = 'location' ORDER BY created_at;
+\echo
+\echo '== entities — non-locations (npcs + factions) =='
+SELECT entity_type, name FROM entities
+ WHERE world_id = (SELECT world_id FROM campaigns WHERE id = :'cid')
+   AND entity_type IN ('npc', 'faction') ORDER BY entity_type, created_at;
+\echo
 \echo '== pipeline_runs =='
 SELECT campaign_id, world_id, stage, status,
        LEFT(COALESCE(error,''),120) AS error,
