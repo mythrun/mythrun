@@ -94,7 +94,7 @@ jobs:
         # Reference vars.AWS_ACCOUNT_ID inline — do NOT hoist to job-level env:.
         # Load-bearing: pnpm install above runs BEFORE OIDC assume so npm
         # lifecycle scripts cannot exfiltrate AWS creds.
-        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        uses: aws-actions/configure-aws-credentials@99214aa6889fcddfa57764031d71add364327e59 # v6.1.3
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: ${{ env.AWS_REGION }}
@@ -172,7 +172,7 @@ jobs:
       API_HOSTNAME: staging-api.mythrun.com
     steps:
       - name: Assume AWS role via OIDC
-        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        uses: aws-actions/configure-aws-credentials@99214aa6889fcddfa57764031d71add364327e59 # v6.1.3
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: ${{ env.AWS_REGION }}
@@ -305,7 +305,7 @@ jobs:
       CONTAINER_NAME: worker
     steps:
       - name: Assume AWS role via OIDC
-        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        uses: aws-actions/configure-aws-credentials@99214aa6889fcddfa57764031d71add364327e59 # v6.1.3
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: ${{ env.AWS_REGION }}
@@ -398,7 +398,7 @@ jobs:
       CONTAINER_NAME: smoke
     steps:
       - name: Assume AWS role via OIDC
-        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        uses: aws-actions/configure-aws-credentials@99214aa6889fcddfa57764031d71add364327e59 # v6.1.3
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
           aws-region: ${{ env.AWS_REGION }}
