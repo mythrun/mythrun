@@ -9,7 +9,7 @@
 <!-- source: backend/scripts/smoke/staging.sh -->
 <!-- source: backend/scripts/smoke/prep-pipeline.ts -->
 <!-- source: package.json -->
-<!-- source-hash: sha256:b33ff69e533c2aea546e372fbe7c78823ab21b8c2cc0e9338a0ec7ce68825ce1 -->
+<!-- source-hash: sha256:7c7dd316df52274051d8452950d651487e7e6c1ddef16fbc8e92ba94b4db1441 -->
 <!-- last-ticket: MYT-55 -->
 
 <h1>Smoke testing</h1>
@@ -225,7 +225,12 @@
   credit-ledger entry the run created (sanity-checking <code>DB_NAME</code> contains
   <code>staging</code> before any DELETE &mdash; the staging RDS hostname is anonymized, the
   database name is the env signal); FAIL prints the campaign + world IDs and exits non-zero
-  for forensic inspection. The smoke does NOT seed credits at runtime &mdash; that's the
+  for forensic inspection. The smoke also runs a <strong>pre-run state reset</strong> at startup
+  (after auth + user-materialize, before campaign creation) that DELETEs any campaigns currently
+  owned by the four smoke users &mdash; otherwise the per-owner concurrency gate 409s every retry
+  after a FAIL. Forensics from prior runs live in CloudWatch logs (full campaign IDs and
+  assertion diagnostics from the FAIL summary), so the audit trail is preserved without the DB
+  carrying state across runs. The smoke does NOT seed credits at runtime &mdash; that's the
   bootstrap-db's <code>--seed-smoke-credits</code> mode, run once after first auth materializes the
   users in the application DB.
 </p>
