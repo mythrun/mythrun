@@ -46,6 +46,18 @@ describe('derivePhase', () => {
     expect(result.cumulativeCostUsd).toBe(0)
   })
 
+  it('returns failed when campaigns.status=failed (MYT-56 terminal integration failure)', () => {
+    // The character-integration processor's terminal-failure arm sets
+    // campaigns.status='failed' so the derived phase agrees with the
+    // bare GET response. computePhase short-circuits on the column value.
+    const result = derivePhase({
+      campaign: { ...baseCampaign, status: 'failed' },
+      world: { ...baseWorld, status: 'complete' },
+      runs: [run({ stage: 'character_integration', status: 'failed', completed_at: null })],
+    })
+    expect(result.phase).toBe('failed')
+  })
+
   it('returns world_gen when a worldgen stage is running', () => {
     const result = derivePhase({
       campaign: baseCampaign,
