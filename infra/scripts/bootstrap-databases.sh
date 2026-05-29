@@ -73,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --reset-migrate-password) set_mode "reset-migrate-password"; RESET_MIGRATE_PW=1; shift ;;
     --seed-smoke-credits) set_mode "seed-smoke-credits"; shift ;;
     --grant-app-privileges) set_mode "grant-app-privileges"; shift ;;
+    --debug-campaign-state) set_mode "debug-campaign-state"; DEBUG_CAMPAIGN_ID="$2"; shift 2 ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -465,6 +466,48 @@ SQL
   echo "Granted $DB_USER full privileges + future-default privileges (idempotent)."
 }
 
+# Diagnostic-only mode for triaging stuck campaign-integration jobs (MYT-56).
+# Prints campaigns / pipeline_runs / character_concepts rows for the given
+# campaign_id. Read-only; useful for understanding where a stuck campaign is
+# in the pipeline without granting CLI psql access to the operator.
+#
+# Required env: DEBUG_CAMPAIGN_ID (passed in by --debug-campaign-state <uuid>).
+debug_campaign_state() {
+  if [[ -z "${DEBUG_CAMPAIGN_ID:-}" ]]; then
+    echo "ERROR: --debug-campaign-state requires a campaign UUID argument" >&2
+    exit 2
+  fi
+  echo "Debugging campaign $DEBUG_CAMPAIGN_ID in $DB_NAME..."
+  psql --host="$RDS_HOST" --port="$RDS_PORT" --username="$MASTER_USER" \
+    --dbname="$DB_NAME" --no-password -v ON_ERROR_STOP=1 \
+    --set=cid="$DEBUG_CAMPAIGN_ID" <<'SQL'
+\echo '== campaigns =='
+SELECT id, status, world_id, created_at, updated_at FROM campaigns WHERE id = :'cid';
+\echo
+\echo '== pipeline_runs =='
+SELECT campaign_id, world_id, stage, status,
+       LEFT(COALESCE(error,''),120) AS error,
+       started_at, completed_at
+  FROM pipeline_runs
+ WHERE campaign_id = :'cid' OR world_id = (SELECT world_id FROM campaigns WHERE id = :'cid')
+ ORDER BY started_at;
+\echo
+\echo '== character_concepts =='
+SELECT campaign_id, user_id, status, LEFT(COALESCE(error,''),80) AS error, updated_at
+  FROM character_concepts
+ WHERE campaign_id = :'cid';
+\echo
+\echo '== campaign_characters =='
+SELECT campaign_id, user_id, character_id FROM campaign_characters WHERE campaign_id = :'cid';
+\echo
+\echo '== characters (joined via campaign_characters) =='
+SELECT c.id, c.entity_id, c.name, c.class, c.level
+  FROM characters c
+  JOIN campaign_characters cc ON cc.character_id = c.id
+ WHERE cc.campaign_id = :'cid';
+SQL
+}
+
 # --- dispatch by mode ---
 case "$MODE" in
   verify)
@@ -499,5 +542,8 @@ case "$MODE" in
     ;;
   grant-app-privileges)
     grant_app_privileges
+    ;;
+  debug-campaign-state)
+    debug_campaign_state
     ;;
 esac
