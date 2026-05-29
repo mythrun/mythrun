@@ -28,7 +28,12 @@ vi.mock('../redis/client.js', () => ({
   }),
 }))
 
-const pgQueryMock = vi.fn(() => Promise.resolve({ rows: [{ '?column?': 1 }] }))
+// readCostCap + readCharacterCreationCostCap (called at boot) issue
+// `SELECT value FROM settings WHERE key = '...'`. Both expect a `value`
+// column parseable as a positive number. The startup probe issues
+// `SELECT 1` which returns the same {value:'10'} row — harmless;
+// pg returns whatever columns the SELECT names without complaining.
+const pgQueryMock = vi.fn(() => Promise.resolve({ rows: [{ value: '10' }] }))
 const pgEndMock = vi.fn(() => Promise.resolve())
 
 vi.mock('../db/postgres.js', () => ({
