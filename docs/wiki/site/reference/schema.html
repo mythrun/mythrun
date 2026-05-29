@@ -1652,7 +1652,7 @@ END)</code></li>
   <ul class="schema-list">
     <li><code>CHECK (((pre_integration_notes IS NULL) OR (length(pre_integration_notes) &lt;= 4000)))</code></li>
     <li><code>CHECK (((starting_situation_index IS NULL) OR ((starting_situation_index &gt;= 0) AND (starting_situation_index &lt;= 2))))</code></li>
-    <li><code>CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text])))</code></li>
+    <li><code>CHECK ((status = ANY (ARRAY['setup'::text, 'active'::text, 'archived'::text, 'failed'::text])))</code></li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="character_concepts" id="schema-table-character_concepts">
