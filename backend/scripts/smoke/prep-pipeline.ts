@@ -706,8 +706,8 @@ async function resetStaleCampaigns(
       if (!res.ok) {
         throw new Error(`resetStaleCampaigns: GET /me for ${u.username} returned ${String(res.status)}`)
       }
-      const body = (await res.json()) as { id: string }
-      return body.id
+      const body = (await res.json()) as { user: { id: string } }
+      return body.user.id
     }),
   )
   const client = await pool.connect()
