@@ -381,11 +381,15 @@ async function runOneCampaign(
   const campaignId = created.campaignId
   log('info', 'campaign_created', { concept: concept.name, campaignId })
 
-  // 2. Wait for world-gen to reach world.status='complete'.
+  // 2. Wait for world-gen to reach world.status='complete'. Budget is
+  // generous — observed stage timings against real Opus:
+  // world_and_factions ~150s, locations_and_npcs ~235s, entity_relationships
+  // ~180s, others 30-90s each. 7 stages + repair-chain headroom = ~20min
+  // worst case per world; pad to 25.
   const polled = await pollFor(
     () => apiGet<{ world: { id: string; status: string } }>(ownerApi, `/api/campaigns/${campaignId}`),
     (val) => val.world.status === 'complete' || val.world.status === 'failed',
-    { timeoutMs: 8 * 60_000, intervalMs: 5_000, label: `world-gen for ${concept.name}` },
+    { timeoutMs: 25 * 60_000, intervalMs: 10_000, label: `world-gen for ${concept.name}` },
   )
   if (polled.world.status !== 'complete') {
     throw new Error(`campaign ${campaignId} world status = ${polled.world.status}`)
@@ -438,7 +442,7 @@ async function runOneCampaign(
     }>(ownerApi, `/api/campaigns/${campaignId}/character-creation-progress`),
     (val) => val.missing.length === 0 && val.concepts.length === 3 &&
       val.concepts.every((c) => c.status === 'completed' || c.status === 'failed'),
-    { timeoutMs: 6 * 60_000, intervalMs: 5_000, label: `character-creation for ${concept.name}` },
+    { timeoutMs: 15 * 60_000, intervalMs: 10_000, label: `character-creation for ${concept.name}` },
   )
 
   // 7. Owner triggers finalize (integration + flip to active).
@@ -449,7 +453,7 @@ async function runOneCampaign(
   const finalState = await pollFor(
     () => apiGet<{ campaign: { status: string } }>(ownerApi, `/api/campaigns/${campaignId}`),
     (val) => val.campaign.status === 'active' || val.campaign.status === 'failed',
-    { timeoutMs: 6 * 60_000, intervalMs: 5_000, label: `campaign active for ${concept.name}` },
+    { timeoutMs: 10 * 60_000, intervalMs: 10_000, label: `campaign active for ${concept.name}` },
   )
   if (finalState.campaign.status !== 'active') {
     throw new Error(`campaign ${campaignId} final status = ${finalState.campaign.status}`)

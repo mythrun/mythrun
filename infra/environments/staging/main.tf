@@ -329,8 +329,12 @@ resource "aws_ecs_task_definition" "smoke_prep_pipeline" {
     name             = "smoke"
     image            = "${data.terraform_remote_state.shared.outputs.ecr_repository_url}:placeholder"
     essential        = true
-    command          = ["tsx", "scripts/smoke/prep-pipeline.ts"]
-    workingDirectory = "/app/backend"
+    # The production runtime image places the pnpm-deployed payload at
+    # /app (Dockerfile WORKDIR), so scripts/smoke and node_modules sit at
+    # /app/scripts and /app/node_modules. Invoke tsx via its node_modules
+    # bin entry (PATH for the mythrun user does not include it).
+    command          = ["node_modules/.bin/tsx", "scripts/smoke/prep-pipeline.ts"]
+    workingDirectory = "/app"
 
     environment = [
       { name = "AWS_REGION", value = data.aws_region.current.region },
@@ -347,7 +351,12 @@ resource "aws_ecs_task_definition" "smoke_prep_pipeline" {
       { name = "SMOKE_PLAYER_1_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_1-credentials" },
       { name = "SMOKE_PLAYER_2_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_2-credentials" },
       { name = "SMOKE_PLAYER_3_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_3-credentials" },
-      { name = "SMOKE_WALL_CLOCK_BUDGET_MS", value = "600000" },
+      # 35 min wall-clock — observed real-LLM stage timings: each Opus
+      # stream is 150-235s, 7 world-gen stages + character-creation +
+      # post-creation integration. Three campaigns burst-concurrent share
+      # 3-worker concurrency so the wall clock is dominated by the slowest
+      # campaign's full pipeline. 35min absorbs that + repair-chain headroom.
+      { name = "SMOKE_WALL_CLOCK_BUDGET_MS", value = "2100000" },
       { name = "SMOKE_COST_CAP_USD", value = "5.00" },
       # DB connection inputs. The smoke composes DATABASE_URL at startup
       # from these (T8' wires this in the script); pattern parallels the
