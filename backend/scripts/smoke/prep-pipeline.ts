@@ -415,23 +415,36 @@ async function runOneCampaign(
   await apiPost(ownerApi, `/api/campaigns/${campaignId}/starting-situation`, { index: 0 })
   log('info', 'starting_situation_chosen', { concept: concept.name, campaignId, index: 0 })
 
-  // 5. Each player submits their character concept. The MYT-53 route is
-  //    submit + flip + enqueue in one transaction — the 200 response
-  //    implies the per-player BullMQ job is on the queue.
+  // 5. Every member — owner + 3 players — submits a character concept.
+  //    The owner is a campaign member too: campaigns have 4 members
+  //    after invites land, and the character-creation-progress endpoint
+  //    reports `missing` for any member who hasn't submitted (MYT-53).
+  //    The smoke initially iterated `players` only (3 submissions), which
+  //    left the owner in `missing` and the poll timed out. Submit for
+  //    all 4 members.
+  //
+  //    The MYT-53 route is submit + flip + enqueue in one transaction —
+  //    the 200 response implies the per-player BullMQ job is on the queue.
   //
   //    conceptText / situationGroundingText both have a 20-char minimum
   //    (Zod + DB CHECK constraint). The strings here are smoke-test
   //    plausible (not eval-quality), well past the 20-char floor.
-  await Promise.all(players.map(async (player, i) => {
-    const playerApi: ApiClient = { token: player.accessToken, base: cfg.apiBase }
-    await apiPost(playerApi, `/api/campaigns/${campaignId}/characters`, {
-      conceptText: `A traveling stranger drawn into the ${concept.name} world by a personal debt they cannot yet name. Player ${String(i + 1)}'s arc.`,
-      situationGroundingText: `Arrived at the starting situation looking for work, a meal, and somewhere quiet to sleep. Player ${String(i + 1)}.`,
+  const allMembers: readonly AuthedUser[] = [owner, ...players]
+  await Promise.all(allMembers.map(async (member, i) => {
+    const memberApi: ApiClient = { token: member.accessToken, base: cfg.apiBase }
+    await apiPost(memberApi, `/api/campaigns/${campaignId}/characters`, {
+      conceptText: `A traveling stranger drawn into the ${concept.name} world by a personal debt they cannot yet name. Member ${String(i + 1)}'s arc.`,
+      situationGroundingText: `Arrived at the starting situation looking for work, a meal, and somewhere quiet to sleep. Member ${String(i + 1)}.`,
     })
-    log('info', 'player_concept_submitted', { concept: concept.name, campaignId, playerIndex: i })
+    log('info', 'member_concept_submitted', {
+      concept: concept.name,
+      campaignId,
+      memberIndex: i,
+      role: i === 0 ? 'owner' : 'player',
+    })
   }))
 
-  // 6. Wait for ALL 3 character concepts to reach status='completed'.
+  // 6. Wait for ALL 4 character concepts to reach status='completed'.
   //    The character-creation-progress endpoint enumerates each member's
   //    concept status; we wait until every one is terminal.
   await pollFor(
@@ -440,7 +453,7 @@ async function runOneCampaign(
       concepts: readonly { status: string }[]
       missing: readonly unknown[]
     }>(ownerApi, `/api/campaigns/${campaignId}/character-creation-progress`),
-    (val) => val.missing.length === 0 && val.concepts.length === 3 &&
+    (val) => val.missing.length === 0 && val.concepts.length === 4 &&
       val.concepts.every((c) => c.status === 'completed' || c.status === 'failed'),
     { timeoutMs: 15 * 60_000, intervalMs: 10_000, label: `character-creation for ${concept.name}` },
   )
