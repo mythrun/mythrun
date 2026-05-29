@@ -11,9 +11,14 @@ import {
   QUEUE_CAMPAIGN_SETUP,
   QUEUE_WORLD_GEN,
 } from './worker/bullmq-config.js'
-import { makeStubProcessor } from './worker/stub-processor.js'
 import { startHealthServer } from './worker/health-server.js'
 import { logger } from './llm/logger.js'
+import { readCostCap, readCharacterCreationCostCap } from './llm/prep/cost-cap.js'
+import { createWorldGenProcessor } from './llm/prep/world-gen-processor.js'
+import {
+  createCharacterCreationProcessor,
+  type CharacterCreationJobPayload,
+} from './llm/prep/character-creation-processor.js'
 import {
   createCharacterIntegrationProcessor,
   type CharacterIntegrationJobPayload,
@@ -43,32 +48,51 @@ export async function main(): Promise<void> {
   const pg = createPgPool(env.databaseUrl, { max: WORKER_PG_POOL_SIZE })
   await waitFor({ label: 'Postgres', probe: () => pg.query('SELECT 1') })
 
-  // Register BullMQ Workers. World-gen still routes through the stub at
-  // boot — MYT-51/52 own its real processor wiring. campaign-setup is now
-  // a router: 'character-integration' jobs hit the MYT-54 T11 processor;
-  // everything else (including MYT-53's 'character-creation' until that
-  // wiring lands) falls through to the stub so unrelated payloads still
-  // succeed.
-  const stubProcessor = makeStubProcessor(logger)
-  const worldGenWorker = new BullmqWorker(QUEUE_WORLD_GEN, stubProcessor, {
-    connection: redisBatch,
-    concurrency: CONCURRENCY_WORLD_GEN,
-  })
+  // Cost caps come from the settings table — pulled at boot so the worker
+  // operates on the same values the API uses (server.ts:readCostCapsAtBoot).
+  // The cap is enforced per-stage inside the processors; a change to the
+  // settings row requires a worker restart, matching the API's lifecycle.
+  const [worldGenCostCapUsd, characterCreationCostCapUsd] = await Promise.all([
+    readCostCap(pg),
+    readCharacterCreationCostCap(pg),
+  ])
 
+  // Shared publishEvent: pipeline:campaign:{campaignId} is the single SSE
+  // channel for all worker-emitted events (MYT-50 architecture). All three
+  // processors publish into the same channel so the API's SSE subscriber
+  // sees one ordered stream per campaign.
+  const publishEvent = async (campaignId: string, event: Record<string, unknown>): Promise<void> => {
+    const channel = `${env.redisKeyPrefix}pipeline:campaign:${campaignId}`
+    await redisRealtime.publish(channel, JSON.stringify(event))
+  }
+
+  // World-gen — real processor wired here. MYT-51 landed the non-streaming
+  // stages, MYT-52 the streaming stages + coherence pass. The API container
+  // (server.ts:buildWorldGenWorker) wires the same processor; both compete
+  // for jobs on the same QUEUE_WORLD_GEN. The smoke surfaced that this
+  // worker.ts entrypoint was never updated alongside server.ts.
+  const worldGenWorker = new BullmqWorker(
+    QUEUE_WORLD_GEN,
+    createWorldGenProcessor({
+      pool: pg,
+      redisRealtime,
+      redisKeyPrefix: env.redisKeyPrefix,
+      logger,
+      costCapUsd: worldGenCostCapUsd,
+    }),
+    { connection: redisBatch, concurrency: CONCURRENCY_WORLD_GEN },
+  )
+
+  // Campaign-setup is a router on job.name (MYT-54 T20 fix). Both arms get
+  // the real processor — no stub fallthrough.
+  const characterCreationProcessor = createCharacterCreationProcessor({
+    pool: pg,
+    costCapUsd: characterCreationCostCapUsd,
+    publishEvent,
+  })
   const integrationProcessor = createCharacterIntegrationProcessor({
     pool: pg,
-    // MYT-54 T11 placeholder publishEvent: the real Redis PUBLISH wiring
-    // depends on MYT-53's character-creation processor sharing the same
-    // SSE channel (`pipeline:campaign:${campaignId}`). Drop in the real
-    // helper once that lands; logging here keeps boot-time events visible
-    // in the worker stdout without coupling to the realtime client shape.
-    publishEvent: (campaignId, event) => {
-      logger.info(
-        { event: 'worker.integration.publish_event', campaignId, payload: event },
-        'character-integration event (placeholder publish)',
-      )
-      return Promise.resolve()
-    },
+    publishEvent,
   })
 
   const campaignSetupRouter = async (job: Job): Promise<void> => {
@@ -76,7 +100,7 @@ export async function main(): Promise<void> {
       await integrationProcessor(job as Job<CharacterIntegrationJobPayload>)
       return
     }
-    await stubProcessor(job)
+    await characterCreationProcessor(job as Job<CharacterCreationJobPayload>)
   }
 
   const campaignSetupWorker = new BullmqWorker(QUEUE_CAMPAIGN_SETUP, campaignSetupRouter, {
