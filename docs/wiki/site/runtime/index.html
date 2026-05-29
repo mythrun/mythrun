@@ -628,9 +628,10 @@
   <code>127.0.0.1:3001</code> that the ECS container <code>healthCheck</code> probes. Graceful
   shutdown drains the workers within a <code>100s</code> deadline (under the task's 120s
   <code>stopTimeout</code>) and falls back to a forced close that marks any in-flight jobs as
-  stalled for BullMQ to re-deliver. Phase 0 shipped stub processors that log and complete; the real
-  prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events),
-  MYT-53 (per-player character creation), and MYT-54 (campaign-scoped character integration).
+  stalled for BullMQ to re-deliver. Phase 0 shipped stub processors that logged and completed; the
+  real prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge
+  events), MYT-53 (per-player character creation), and MYT-54 (campaign-scoped character
+  integration). The dedicated worker container caught up to the API container's wiring in MYT-55.
 </p>
 
 <h2 id="the-env-loader-accepts-two-shapes">The env loader accepts two shapes</h2>
@@ -1189,13 +1190,11 @@
     </tr>
     <tr>
       <td>
-        <code>src/worker/bullmq-config.ts</code>, <code>src/worker/stub-processor.ts</code>,
-        <code>src/worker/health-server.ts</code>
+        <code>src/worker/bullmq-config.ts</code>, <code>src/worker/health-server.ts</code>
       </td>
       <td>
-        Queue identifiers + concurrency caps; Phase 0 no-op processor; Fastify
-        <code>/health</code> server probing pg + both Redis + each worker's <code>isRunning()</code>
-        state.
+        Queue identifiers + concurrency caps; Fastify <code>/health</code> server probing pg + both
+        Redis + each worker's <code>isRunning()</code> state.
       </td>
     </tr>
     <tr>

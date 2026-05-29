@@ -1,6 +1,5 @@
 <!-- source: backend/src/worker.ts -->
 <!-- source: backend/src/worker/bullmq-config.ts -->
-<!-- source: backend/src/worker/stub-processor.ts -->
 <!-- source: backend/src/worker/health-server.ts -->
 <!-- source: backend/src/redis/bullmq-client.ts -->
 <!-- source: backend/src/llm/middleware.ts -->
@@ -9,7 +8,7 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
 <!-- source: docs/specs/2026-04-10-infrastructure-devops.md -->
-<!-- source-hash: sha256:79e807ae9a00066dd29ce456756fc369bdf7e6778ec3eb96e0e89d294316d0b7 -->
+<!-- source-hash: sha256:536299b5e0693c4aa3410f512a0940cad060135cb957d0dce903a1493aea6104 -->
 <!-- last-ticket: MYT-49 -->
 
 <h1>Worker</h1>
@@ -18,10 +17,12 @@
   The async-execution half of the backend. A second ECS Fargate service running
   <code>node dist/worker.js</code> with two BullMQ Workers — <code>world-gen</code> (concurrency 3)
   and <code>campaign-setup</code> (concurrency 5) — both consuming from <code>redisBatch</code>.
-  Phase 0 shipped stub processors that log job receipt and mark complete; the real prep-stage
+  Phase 0 shipped stub processors that logged job receipt and marked complete. The real prep-stage
   processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
   (per-player character creation), and MYT-54 (campaign-scoped character integration). The shape
-  locked in at Phase 0 so each later stage was a coverage edit, not a service-topology change.
+  locked in at Phase 0 so each later stage was a coverage edit, not a service-topology change. The
+  stub-processor file was retired in MYT-55 once the dedicated worker container caught up to the
+  same wiring the API container already used.
 </p>
 
 <!-- @diagram: runtime/worker -->
@@ -321,14 +322,6 @@
       <td>
         <code>QUEUE_WORLD_GEN</code>, <code>QUEUE_CAMPAIGN_SETUP</code>,
         <code>CONCURRENCY_WORLD_GEN = 3</code>, <code>CONCURRENCY_CAMPAIGN_SETUP = 5</code>.
-      </td>
-    </tr>
-    <tr>
-      <td><code>backend/src/worker/stub-processor.ts</code></td>
-      <td>
-        Phase 0 processor: logs job receipt and resolves. Retained as the fallback /
-        unrecognized-job-kind path; the live world-gen and character-creation queues now route to
-        the real handlers shipped across MYT-51 / MYT-52 / MYT-53 / MYT-54.
       </td>
     </tr>
     <tr>
