@@ -26,6 +26,7 @@
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
 import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider'
 import { Pool } from 'pg'
+import { createHash } from 'node:crypto'
 import { entities } from '../../src/repo/entities.js'
 import { relationships } from '../../src/repo/relationships.js'
 import { facts } from '../../src/repo/facts.js'
@@ -293,16 +294,14 @@ async function pollFor<T>(
 // ---------------------------------------------------------------------------
 
 function deriveUsernameFromCognito(cognitoUsername: string): string {
-  // Cognito usernames may include hyphens or be email-shaped. The
-  // /api/users/register username regex is /^[a-zA-Z0-9](?:[a-zA-Z0-9_]{1,18}[a-zA-Z0-9])?$/
-  // (3..20 chars). Strip non-alphanumeric, prefix with `s` (smoke) so a
-  // leading digit can't break the regex's first-char anchor, then truncate.
-  const cleaned = cognitoUsername.replace(/[^a-zA-Z0-9]/g, '').slice(0, 18)
-  // Ensure minimum length of 3 by padding with deterministic 'x's. The
-  // username is only ever visible to the smoke user (not real players);
-  // we just need something the route accepts.
-  const padded = cleaned.length >= 2 ? cleaned : `${cleaned}xx`
-  return `s${padded}`.slice(0, 20)
+  // Hash-based so emails sharing a long prefix (e.g.,
+  // mythrun-staging-smoke-{owner,player-1,player-2,player-3}@example.com)
+  // collapse to the same alphanumeric prefix when truncated. SHA-256 hex
+  // gives [0-9a-f] which fits the register-route regex
+  // /^[a-zA-Z0-9](?:[a-zA-Z0-9_]{1,18}[a-zA-Z0-9])?$/ (3..20 chars). Prefix
+  // with `s` (smoke) so a leading digit can't break the first-char anchor.
+  const hash = createHash('sha256').update(cognitoUsername).digest('hex')
+  return `s${hash.slice(0, 19)}`
 }
 
 async function materializeUserRows(cfg: SmokeConfig, users: readonly AuthedUser[]): Promise<void> {
