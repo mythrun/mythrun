@@ -444,16 +444,23 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO $DB_USER;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
 GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO $DB_USER;
 
+-- ALTER DEFAULT PRIVILEGES FOR ROLE <X> requires the executor to be a
+-- member of role X (RDS master is not a true SUPERUSER and can't bypass
+-- this). Grant membership in the migrate role just long enough to set
+-- the defaults, then drop it. Idempotent — re-grant + re-revoke are
+-- no-ops if the cycle already ran.
+GRANT $migrate_user TO $MASTER_USER;
+
 -- Future: objects the migrate user creates in the public schema from
--- this point onward auto-grant to the app user at creation time. Must
--- be issued FOR ROLE <migrate>: ALTER DEFAULT PRIVILEGES sets the rule
--- per the creating role, not the owner of the database.
+-- this point onward auto-grant to the app user at creation time.
 ALTER DEFAULT PRIVILEGES FOR ROLE $migrate_user IN SCHEMA public
   GRANT ALL ON TABLES TO $DB_USER;
 ALTER DEFAULT PRIVILEGES FOR ROLE $migrate_user IN SCHEMA public
   GRANT ALL ON SEQUENCES TO $DB_USER;
 ALTER DEFAULT PRIVILEGES FOR ROLE $migrate_user IN SCHEMA public
   GRANT ALL ON FUNCTIONS TO $DB_USER;
+
+REVOKE $migrate_user FROM $MASTER_USER;
 SQL
   echo "Granted $DB_USER full privileges + future-default privileges (idempotent)."
 }
