@@ -1,4 +1,12 @@
 import { type Pool, type PoolClient } from 'pg'
+// Self-namespace import so `creditsNs.grantInTx` invokes the standalone
+// `grantInTx` THROUGH the module's exported binding rather than the lexical
+// local. ESM rewrites a bare `grantInTx(...)` intra-module call to the local
+// function, which `vi.spyOn(creditsModule, 'grantInTx')` cannot intercept;
+// routing through `creditsModule.grantInTx` makes the single grant seam
+// spyable for the register-atomicity test (onboarding-trial.test.ts) without
+// changing runtime semantics — `creditsModule.grantInTx === grantInTx`.
+import * as creditsModule from './credits.js'
 import { uuidv5 } from './uuidv5.js'
 import { uuidv7 } from './uuidv7.js'
 import { toCreditEntry, type CreditEntryDbRow } from './mappers.js'
@@ -195,6 +203,21 @@ export interface NewClawbackRow {
 }
 
 /**
+ * Originating-grant row shape returned by `loadGrantsBySourcePurchase` /
+ * `loadGrantsBySourceBillingHistory` and consumed by `insertClawbackDoNothing`.
+ * The `id` is the source_id used as the recordClawback idempotency key
+ * (round-8 Persepolis C2 / Petra I5 — the `uniq_credit_ledger_debit_idempotency`
+ * partial unique index keys on (user_id, credit_type, source_id) WHERE
+ * source_type='debit').
+ */
+export interface OriginGrantRow {
+  readonly id: string
+  readonly user_id: string
+  readonly credit_type: 'session' | 'world_gen'
+  readonly amount: number
+}
+
+/**
  * Composable `credits` binder — methods that run over an arbitrary ClientLike
  * (pool OR an in-flight tx client), so they serve `repo.credits.X` and
  * `tx.credits.X`. SQL unchanged.
@@ -317,7 +340,7 @@ export function creditsNs(c: ClientLike) {
      * no-op). This makes the helper composable with the §5.3 webhook
      * discipline of "lock the user row first, then call grantInTx".
      */
-    grantInTx: (input: GrantInput): Promise<CreditEntry> => grantInTx(c, input),
+    grantInTx: (input: GrantInput): Promise<CreditEntry> => creditsModule.grantInTx(c, input),
 
     /**
      * Insert a negative-polarity debit row representing a refund clawback,
@@ -379,6 +402,70 @@ export function creditsNs(c: ClientLike) {
         )
       }
       return toCreditEntry(existingRow)
+    },
+
+    /**
+     * Load the originating `source_type='purchase'` grant rows for an
+     * à-la-carte purchase (per migration 007's credit_ledger_source_link_chk:
+     * those rows carry source_purchase_id NOT NULL). Composable — runs over the
+     * caller's tx client; the §5.4.5 refund handler claws each of these back.
+     * SQL verbatim from `loadAlaCarteGrants`.
+     */
+    loadGrantsBySourcePurchase: async (
+      purchaseId: string,
+    ): Promise<readonly OriginGrantRow[]> => {
+      const result = await c.query<OriginGrantRow>(
+        `SELECT id, user_id, credit_type, amount
+           FROM credit_ledger
+           WHERE source_purchase_id = $1
+             AND source_type = 'purchase'`,
+        [purchaseId],
+      )
+      return result.rows
+    },
+
+    /**
+     * Load the originating `source_type='subscription'` grant rows for a
+     * subscription invoice (per migration 007: those rows carry
+     * source_billing_history_id NOT NULL). Composable — runs over the caller's
+     * tx client; the §5.4.5 refund handler claws each of these back. SQL
+     * verbatim from `loadSubscriptionGrants`.
+     */
+    loadGrantsBySourceBillingHistory: async (
+      billingHistoryId: string,
+    ): Promise<readonly OriginGrantRow[]> => {
+      const result = await c.query<OriginGrantRow>(
+        `SELECT id, user_id, credit_type, amount
+           FROM credit_ledger
+           WHERE source_billing_history_id = $1
+             AND source_type = 'subscription'`,
+        [billingHistoryId],
+      )
+      return result.rows
+    },
+
+    /**
+     * Insert a negative-polarity clawback debit row, idempotent via
+     * `ON CONFLICT (user_id, credit_type, source_id) WHERE source_type='debit'
+     * DO NOTHING`. No RETURNING — fire-and-forget per-grant clawback used by the
+     * §5.4.5 refund handler. DISTINCT from `recordClawback` (which returns the
+     * canonical CreditEntry via a follow-up SELECT): the refund path writes
+     * many rows and reads none back, so the bare DO NOTHING shape is the
+     * verbatim form. The clawback amount is `-Math.abs(grant.amount)` and the
+     * idempotency key is the originating grant row's id. SQL verbatim from
+     * `insertClawbackRow`.
+     */
+    insertClawbackDoNothing: async (grant: OriginGrantRow): Promise<void> => {
+      const id = uuidv7()
+      await c.query(
+        `INSERT INTO credit_ledger
+           (id, user_id, credit_type, amount, source_type, source_id,
+            expires_at, source_purchase_id, source_billing_history_id)
+         VALUES ($1, $2, $3, $4, 'debit', $5, NULL, NULL, NULL)
+         ON CONFLICT (user_id, credit_type, source_id) WHERE source_type = 'debit'
+         DO NOTHING`,
+        [id, grant.user_id, grant.credit_type, -Math.abs(grant.amount), grant.id],
+      )
     },
 
     listEntries: async (userId: string, opts: ListEntriesOpts = {}): Promise<CreditEntry[]> => {

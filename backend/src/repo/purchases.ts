@@ -55,6 +55,30 @@ export function purchasesNs(c: ClientLike) {
       return result.rows
     },
 
+    /**
+     * Re-fetch purchase rows by id under FOR UPDATE, ORDER BY id ASC, and
+     * return only those still in status='completed'. Composable — runs over the
+     * caller's tx client; the §5.4.5 refund handler uses this for the
+     * lock-order-sensitive re-read (round-7 Persepolis C5) between the
+     * lock-free resolve and the locked clawback. The `ORDER BY id ASC` is
+     * load-bearing for cross-handler deadlock avoidance (consistent lock
+     * acquisition order). SQL verbatim from `refetchPurchasesUnderLock`.
+     */
+    refetchCompletedForUpdate: async (
+      ids: readonly string[],
+    ): Promise<readonly PurchaseRow[]> => {
+      const result = await c.query<PurchaseRow>(
+        `SELECT id, user_id, stripe_payment_intent_id, lookup_key, quantity,
+                amount_cents, currency, status, created_at
+           FROM purchases
+           WHERE id = ANY($1::uuid[])
+           ORDER BY id ASC
+           FOR UPDATE`,
+        [ids],
+      )
+      return result.rows.filter((r) => r.status === 'completed')
+    },
+
     markRefunded: async (id: string): Promise<{ rowsAffected: number }> => {
       const result = await c.query(
         `UPDATE purchases SET status = 'refunded' WHERE id = $1 AND status = 'completed'`,

@@ -12,12 +12,30 @@ export class LookupTimeoutError extends Error {
   }
 }
 
+/** Shared INSERT body for `create` (explicit-client) + `createInTx`
+ *  (closure-bound). SQL verbatim — one source of truth for the users INSERT. */
+async function insertUserRow(client: ClientLike, input: CreateUserInput): Promise<User> {
+  const id = uuidv7()
+  const result = await client.query<UserDbRow>(
+    `INSERT INTO users (id, cognito_sub, username, display_name)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+    [id, input.cognitoSub, input.username, input.displayName],
+  )
+  const row = result.rows[0]
+  if (!row) throw new Error('users.create: INSERT returned no row')
+  return toUser(row)
+}
+
 // Composable binder — each method captures the ClientLike `c` so the body
 // serves `repo.users.X` and `tx.users.X`. SQL unchanged.
 //
-// `create` keeps its explicit `tx` first-param: handleRegister and the repo
-// tests pass a PoolClient (or the pool) from a hand-managed tx, and dropping
-// the param is a later migration step (see the design's Migration note).
+// `create` keeps its explicit `tx` first-param: the repo tests + a number of
+// non-billing fixtures pass a PoolClient (or the pool), and dropping the param
+// is a later migration step (see the design's Migration note). The Cluster-B
+// register migration composes the closure-bound `createInTx` (one-arg) instead
+// — same INSERT body over the captured client, no client threaded at the call
+// site. Both bottom out in `insertUserRow`.
 //
 // `getByCognitoSubWithTimeout` is NOT here — it owns its own pool.connect() +
 // BEGIN/COMMIT + SET LOCAL discipline, so it cannot be closure-bound to an
@@ -25,18 +43,14 @@ export class LookupTimeoutError extends Error {
 // `selfManagingUsers(pool)` (and folded into the back-compat factory below).
 export function usersNs(c: ClientLike) {
   return {
-    create: async (tx: ClientLike, input: CreateUserInput): Promise<User> => {
-      const id = uuidv7()
-      const result = await tx.query<UserDbRow>(
-        `INSERT INTO users (id, cognito_sub, username, display_name)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *`,
-        [id, input.cognitoSub, input.username, input.displayName],
-      )
-      const row = result.rows[0]
-      if (!row) throw new Error('users.create: INSERT returned no row')
-      return toUser(row)
-    },
+    create: (tx: ClientLike, input: CreateUserInput): Promise<User> => insertUserRow(tx, input),
+
+    /**
+     * Closure-bound INSERT over the captured client. Identical SQL to `create`;
+     * the Cluster-B register transaction calls `tx.users.createInTx(input)`
+     * inside `repo.transaction` (no raw client to thread). SQL verbatim.
+     */
+    createInTx: (input: CreateUserInput): Promise<User> => insertUserRow(c, input),
 
     getById: async (id: string): Promise<User | null> => {
       const result = await c.query<UserDbRow>('SELECT * FROM users WHERE id = $1', [id])
@@ -50,6 +64,66 @@ export function usersNs(c: ClientLike) {
       ])
       const row = result.rows[0]
       return row ? toUser(row) : null
+    },
+
+    /**
+     * Anchor-lock a users row by id and return its `id` + `stripe_customer_id`.
+     * Composable — runs over the captured tx client; the FOR UPDATE lock is
+     * held until the transaction COMMITs/ROLLBACKs. Returns `null` when no row
+     * matches. SQL verbatim from the §5.4.1 checkout handler's orphan/customer-
+     * cross-check read. Returns the raw column shape (NOT a `User`) because the
+     * caller cross-checks `stripe_customer_id` against the Stripe payload.
+     */
+    getForUpdateById: async (
+      id: string,
+    ): Promise<{ id: string; stripe_customer_id: string | null } | null> => {
+      const result = await c.query<{ id: string; stripe_customer_id: string | null }>(
+        'SELECT id, stripe_customer_id FROM users WHERE id = $1 FOR UPDATE',
+        [id],
+      )
+      return result.rows[0] ?? null
+    },
+
+    /**
+     * Anchor-lock a users row by id (FOR UPDATE); returns `{ id }` or `null`.
+     * Composable — the lock is held until the caller's tx settles. SQL verbatim
+     * from the §5.4 webhook handlers' `resolveUser` metadata.userId fallback +
+     * the refund handler's `lockUserRow`. Re-entrant on the same xid (Postgres
+     * tuple-lock re-entrancy), matching the §5.3 "lock the user row first"
+     * discipline.
+     */
+    lockById: async (id: string): Promise<{ id: string } | null> => {
+      const result = await c.query<{ id: string }>(
+        'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+        [id],
+      )
+      return result.rows[0] ?? null
+    },
+
+    /**
+     * Anchor-lock a users row by `stripe_customer_id` (FOR UPDATE); returns
+     * `{ id }` or `null`. Composable — the lock is held until the caller's tx
+     * settles. SQL verbatim from the §5.4 webhook handlers' `resolveUser`
+     * primary (customer→user) lookup.
+     */
+    lockByStripeCustomerId: async (
+      stripe_customer_id: string,
+    ): Promise<{ id: string } | null> => {
+      const result = await c.query<{ id: string }>(
+        'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
+        [stripe_customer_id],
+      )
+      return result.rows[0] ?? null
+    },
+
+    /**
+     * Flip `free_trial_used = true` for a user. Composable — runs over the
+     * captured tx client; the register transaction composes it alongside
+     * `create` + `grantInTx` so all three writes commit or roll back together.
+     * SQL verbatim from `handleRegister`.
+     */
+    setFreeTrialUsed: async (id: string): Promise<void> => {
+      await c.query('UPDATE users SET free_trial_used = true WHERE id = $1', [id])
     },
 
     getByUsername: async (username: string): Promise<User | null> => {

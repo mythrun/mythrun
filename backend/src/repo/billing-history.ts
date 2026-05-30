@@ -342,6 +342,33 @@ export function billingHistoryNs(c: ClientLike) {
     },
 
     /**
+     * Re-fetch a billing_history row by id under FOR UPDATE; return it when
+     * still status='completed', `null` when a concurrent refund already flipped
+     * it. Composable — runs over the caller's tx client; the §5.4.5 refund
+     * handler uses this for the locked re-read (round-7 Persepolis C5) of the
+     * subscription invoice row between the lock-free resolve and the locked
+     * clawback. SQL verbatim from `refetchBillingHistoryUnderLock`.
+     */
+    refetchForUpdate: async (id: string): Promise<BillingHistoryRow | null> => {
+      const result = await c.query<BillingHistoryRow>(
+        `SELECT id, user_id, kind, source_id_stripe, stripe_payment_intent_id,
+                lookup_key, amount_cents, currency, status, expires_at,
+                occurred_at, created_at
+           FROM billing_history
+           WHERE id = $1
+           FOR UPDATE`,
+        [id],
+      )
+      const row = result.rows[0]
+      /* c8 ignore start — `!row` arm is unreachable: refetchForUpdate is
+       * called with an id resolved in the same tx; the row exists. The
+       * `: null` arm fires only on a concurrent refund's status flip. */
+      if (!row) return null
+      return row.status === 'completed' ? row : null
+      /* c8 ignore stop */
+    },
+
+    /**
      * Flip status to 'refunded'. Idempotent: the WHERE status='completed' gate
      * makes a re-run of the same id a no-op (returns rowsAffected=0). Used by
      * §5.4.5 refund handler after the negative credit_ledger entry lands.
