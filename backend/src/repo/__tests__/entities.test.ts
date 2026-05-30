@@ -201,4 +201,52 @@ describe('entities repo', () => {
     // The consolidation-stage entity is gone; the other-stage entity remains.
     expect(remaining.rows.some((r) => r.id === consolId)).toBe(false)
   })
+
+  // ── data-layer unification: coherence rename + world-gen input loaders ────
+
+  it('updateName renames an entity (coherence-pass apply-patch)', async () => {
+    const id = uuidv7()
+    await entities.insert(pool, {
+      id, worldId, entityType: 'npc', name: 'Mara', accessLevel: 'known', createdIn: 'stage:test',
+    })
+    await repo.entities.updateName({ id, name: 'Mara Salt-Hand' })
+    const row = await pool.query<{ name: string }>(`SELECT name FROM entities WHERE id = $1`, [id])
+    expect(row.rows[0]?.name).toBe('Mara Salt-Hand')
+  })
+
+  it('listProseByTypeForStartingSituation returns location/npc/faction rows with prose, ordered', async () => {
+    const locId = uuidv7()
+    const npcId = uuidv7()
+    const facId = uuidv7()
+    const itemId = uuidv7()
+    await entities.insert(pool, { id: locId, worldId, entityType: 'location', name: 'Wharf', accessLevel: 'known', createdIn: 'stage:test' })
+    await entities.insert(pool, { id: npcId, worldId, entityType: 'npc', name: 'Mara', accessLevel: 'known', createdIn: 'stage:test' })
+    await entities.insert(pool, { id: facId, worldId, entityType: 'faction', name: 'Salt Guild', accessLevel: 'known', createdIn: 'stage:test' })
+    // Items must be EXCLUDED by the entity_type filter.
+    await entities.insert(pool, { id: itemId, worldId, entityType: 'item', name: 'Lantern', accessLevel: 'known', createdIn: 'stage:test' })
+    await pool.query(`INSERT INTO prose_kernels (id, entity_id, content) VALUES ($1, $2, 'A salt-eaten wharf.')`, [uuidv7(), locId])
+    // npcId deliberately has NO prose kernel → prose null (LEFT JOIN).
+
+    const rows = await repo.entities.listProseByTypeForStartingSituation(worldId)
+    const byType = new Map(rows.map((r) => [r.entity_type, r]))
+    expect(rows).toHaveLength(3) // item excluded
+    expect(byType.get('location')?.prose).toBe('A salt-eaten wharf.')
+    expect(byType.get('npc')?.prose).toBeNull()
+    expect(byType.get('faction')?.name).toBe('Salt Guild')
+  })
+
+  it('listProseByTypeForStage3 returns only location + faction rows with prose', async () => {
+    const locId = uuidv7()
+    const facId = uuidv7()
+    await entities.insert(pool, { id: locId, worldId, entityType: 'location', name: 'Wharf', accessLevel: 'known', createdIn: 'stage:test' })
+    await entities.insert(pool, { id: facId, worldId, entityType: 'faction', name: 'Salt Guild', accessLevel: 'known', createdIn: 'stage:test' })
+    // npc must be EXCLUDED (stage 3 only reads location + faction).
+    await entities.insert(pool, { id: uuidv7(), worldId, entityType: 'npc', name: 'Mara', accessLevel: 'known', createdIn: 'stage:test' })
+    await pool.query(`INSERT INTO prose_kernels (id, entity_id, content) VALUES ($1, $2, 'A salt-eaten wharf.')`, [uuidv7(), locId])
+
+    const rows = await repo.entities.listProseByTypeForStage3(worldId)
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.entity_type).sort()).toEqual(['faction', 'location'])
+    expect(rows.find((r) => r.entity_type === 'location')?.prose).toBe('A salt-eaten wharf.')
+  })
 })

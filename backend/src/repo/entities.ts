@@ -50,6 +50,14 @@ interface EntityRow {
   readonly access_level: AccessLevel
 }
 
+/** Row shape for the world-gen input loaders (entity name + type + its
+ *  prose-kernel content). `prose` is null when the entity has no kernel yet. */
+export interface EntityProseRow {
+  readonly name: string
+  readonly entity_type: string
+  readonly prose: string | null
+}
+
 function toEntity(row: EntityRow): Entity {
   return {
     id: row.id,
@@ -139,6 +147,50 @@ export function entitiesNs(c: ClientLike) {
         worldId,
         createdIn,
       ])
+    },
+    /**
+     * Rename an entity (coherence-pass apply-patch). SQL verbatim from
+     * `stages/coherence-pass.ts` `applyRenameEntity`: `UPDATE entities SET name
+     * = $1 WHERE id = $2`. Composes inside the coherence-pass repo.transaction.
+     */
+    updateName: async (input: { id: string; name: string }): Promise<void> => {
+      await c.query(`UPDATE entities SET name = $1 WHERE id = $2`, [input.name, input.id])
+    },
+    /**
+     * starting-situation (stage 6) input read: every location / npc / faction
+     * entity for a world with its prose-kernel content, ordered by type then
+     * creation. SQL verbatim from the processor's `loadStartingSituationInputs`.
+     * Runs on the pool OUTSIDE the persist tx exactly as the prior inline read
+     * did. The caller renders the "- name: prose" bullets per kind.
+     */
+    listProseByTypeForStartingSituation: async (
+      worldId: string,
+    ): Promise<readonly EntityProseRow[]> => {
+      const result = await c.query<EntityProseRow>(
+        `SELECT e.name, e.entity_type, pk.content AS prose
+           FROM entities e
+           LEFT JOIN prose_kernels pk ON pk.entity_id = e.id
+          WHERE e.world_id = $1 AND e.entity_type IN ('location', 'npc', 'faction')
+          ORDER BY e.entity_type, e.created_at`,
+        [worldId],
+      )
+      return result.rows
+    },
+    /**
+     * stage-3 (locations_and_npcs) input read: location + faction entities for a
+     * world with prose, ordered by creation. SQL verbatim from the processor's
+     * `loadStage3Inputs`. Runs on the pool OUTSIDE the persist tx.
+     */
+    listProseByTypeForStage3: async (worldId: string): Promise<readonly EntityProseRow[]> => {
+      const result = await c.query<EntityProseRow>(
+        `SELECT e.name, e.entity_type, pk.content AS prose
+           FROM entities e
+           LEFT JOIN prose_kernels pk ON pk.entity_id = e.id
+          WHERE e.world_id = $1 AND e.entity_type IN ('location', 'faction')
+          ORDER BY e.created_at`,
+        [worldId],
+      )
+      return result.rows
     },
   }
 }

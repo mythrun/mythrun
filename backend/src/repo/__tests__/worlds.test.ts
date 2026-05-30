@@ -389,5 +389,54 @@ describe('worlds repo (integration)', () => {
       )
       expect(row.rows[0]?.starting_situation_entries).toEqual(entries)
     })
+
+    // ── world-gen processor status writers (data-layer unification) ──────────
+
+    it('markComplete flips status to complete (no updated_at touch, no RETURNING)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.markComplete(id)
+      const row = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [id])
+      expect(row.rows[0]?.status).toBe('complete')
+    })
+
+    it('markFailed flips status to failed', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.markFailed(id)
+      const row = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [id])
+      expect(row.rows[0]?.status).toBe('failed')
+    })
+
+    it('resetFailedToGenerating flips a failed world back to generating (guarded)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.markFailed(id)
+      await worlds.resetFailedToGenerating(id)
+      const row = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [id])
+      expect(row.rows[0]?.status).toBe('generating')
+    })
+
+    it('resetFailedToGenerating is a no-op when status is not failed (AND status guard)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.markComplete(id) // status='complete' — the guard rejects the reset
+      await worlds.resetFailedToGenerating(id)
+      const row = await pool.query<{ status: string }>(`SELECT status FROM worlds WHERE id = $1`, [id])
+      expect(row.rows[0]?.status).toBe('complete') // unchanged
+    })
+
+    it('getWorldOverview returns the overview, or "" when null', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      expect(await worlds.getWorldOverview(id)).toBe('') // fresh world: null → ''
+      await worlds.setWorldOverview(id, 'A drowned coast under twilight.')
+      expect(await worlds.getWorldOverview(id)).toBe('A drowned coast under twilight.')
+    })
+
+    it('getWorldOverview returns "" for an unknown world', async () => {
+      const worlds = createWorldsRepo(pool)
+      expect(await worlds.getWorldOverview('019dccef-0000-7000-8000-000000000000')).toBe('')
+    })
   })
 })

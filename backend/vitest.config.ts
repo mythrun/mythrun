@@ -67,6 +67,10 @@ const SERIAL_FILES = [
   // sequential. (myth- data-layer refactor; reference_parallel_worktree_db_collision.)
   'src/llm/prep/__tests__/cost-cap.test.ts',
   'src/llm/prep/__tests__/world-gen-processor.test.ts',
+  // coherence-pass.test.ts seeds + lowers the SAME global settings row
+  // (world_gen_cost_cap_usd) for the cap-fire test — serialize with the other
+  // settings-mutating files. (data-layer refactor.)
+  'src/llm/prep/stages/__tests__/coherence-pass.test.ts',
   // world-snapshot-view.test.ts does a heavy multi-table seed + read; under
   // peak 6-fork DB contention its real work occasionally exceeds the 5s test
   // timeout (passes deterministically in isolation). Serializing removes it

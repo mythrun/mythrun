@@ -15,6 +15,26 @@ import type {
 } from './types.js'
 import type { ClientLike } from './_types.js'
 
+// Raw row shape of the world-gen context JOIN (campaigns ⋈ worlds). The
+// world-gen processor maps this into its CampaignContext (parsing the jsonb
+// vocabulary_registry). Homed on `repo.campaigns` per the design's
+// "campaigns ⋈ worlds context loaders stay composite methods on repo.campaigns".
+export interface WorldGenContextRow {
+  readonly campaign_id: string
+  readonly world_id: string
+  readonly created_by: string
+  readonly name: string
+  readonly concept: string
+  readonly tone: string | null
+  readonly themes: string | null
+  readonly era: string | null
+  readonly key_tensions: string | null
+  readonly geography_summary: string | null
+  readonly political_summary: string | null
+  readonly dev_bypass_access_filter: boolean
+  readonly vocabulary_registry: unknown
+}
+
 // Composable binder: each method captures the ClientLike `c` (pool OR an
 // in-flight tx client) so the same body serves `repo.campaigns.X` and
 // `tx.campaigns.X`. The body is the method dictionary, not a complex
@@ -95,6 +115,25 @@ export function campaignsNs(c: ClientLike) {
       const result = await c.query<CampaignDbRow>('SELECT * FROM campaigns WHERE id = $1', [id])
       const row = result.rows[0]
       return row ? toCampaign(row) : null
+    },
+
+    /**
+     * World-gen job context: the campaign + its world's prep columns, joined.
+     * Returns null when the campaign (or its world) is absent. SQL verbatim
+     * from the world-gen processor's `loadCampaignContext`. The caller maps the
+     * raw row into its CampaignContext (parsing the jsonb vocabulary_registry).
+     */
+    loadWorldGenContext: async (campaignId: string): Promise<WorldGenContextRow | null> => {
+      const result = await c.query<WorldGenContextRow>(
+        `SELECT c.id AS campaign_id, w.id AS world_id, w.created_by, w.name, w.concept,
+                w.tone, w.themes, w.era, w.key_tensions, w.geography_summary,
+                w.political_summary, w.dev_bypass_access_filter, w.vocabulary_registry
+           FROM campaigns c
+           JOIN worlds w ON w.id = c.world_id
+          WHERE c.id = $1`,
+        [campaignId],
+      )
+      return result.rows[0] ?? null
     },
 
     /**

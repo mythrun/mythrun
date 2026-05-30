@@ -11,11 +11,74 @@
 import type { Pool } from 'pg'
 import type { ClientLike } from './_types.js'
 import type { PipelineRunRow } from '../sse/derive-phase.js'
+import { uuidv7 } from './uuidv7.js'
 
 export interface FailedRunRow {
   readonly stage: string
   readonly error: string | null
 }
+
+// Sentinel user_id the unique index folds user_id=NULL onto. Held here as a
+// local constant; interpolated into the ON CONFLICT projection (it's a fixed
+// literal, never user input). Mirrors the value the world-gen processor used
+// inline before unification.
+const SENTINEL_USER_UUID = '00000000-0000-0000-0000-000000000000'
+
+// Result of an atomic stage claim:
+//   - 'claimed'   — we inserted a fresh row, or coerced a pending/failed/
+//                   stuck-running row into 'running'; the caller runs the stage.
+//   - 'completed' — the row already finished; the caller skips (idempotent).
+//   - 'lost-race' — another worker holds a recent 'running' row; the caller skips.
+export type ClaimResult = 'claimed' | 'completed' | 'lost-race'
+
+// Discriminated union over the three atomic-claim shapes pipeline_runs
+// supports (myth-tuok T6 / MYT-54 T6):
+//   - 'world'         — world-gen stages, keyed on (world_id, stage) with
+//                       user_id NULL.
+//   - 'campaign-user' — per-player character-creation stages, keyed on
+//                       (campaign_id, stage, user_id).
+//   - 'campaign'      — campaign-scoped character-integration, keyed on
+//                       (campaign_id, stage) with user_id NULL.
+// The unique index on (COALESCE(world_id, campaign_id), stage,
+// COALESCE(user_id, sentinel)) folds all three into one composite key.
+export type ClaimRequest =
+  | { kind: 'world'; worldId: string; stage: string }
+  | { kind: 'campaign-user'; campaignId: string; userId: string; stage: string }
+  | { kind: 'campaign'; campaignId: string; stage: string }
+
+// Discriminated union for the stage-completion writers (markStageCompleted).
+// The token-presence invariant lives in the union, not loose optionals:
+//   - 'world' / 'campaign-user' carry inputTokens/outputTokens (the cost_usd +
+//     token-count completion the world-gen / character-creation stages write).
+//   - 'campaign' structurally OMITS them — the character-integration completion
+//     writes only cost_usd + completed_at, never the token columns or error=NULL.
+export type StageCompletedRequest =
+  | {
+      kind: 'world'
+      worldId: string
+      stage: string
+      costUsd: number
+      inputTokens: number
+      outputTokens: number
+    }
+  | {
+      kind: 'campaign-user'
+      campaignId: string
+      userId: string
+      stage: string
+      costUsd: number
+      inputTokens: number
+      outputTokens: number
+    }
+  | { kind: 'campaign'; campaignId: string; stage: string; costUsd: number }
+
+// Discriminated union for the stage-failure writers (markStageFailed). All
+// three variants write the same `status='failed', completed_at=now(), error`
+// shape; only the WHERE keying differs.
+export type StageFailedRequest =
+  | { kind: 'world'; worldId: string; stage: string; error: string }
+  | { kind: 'campaign-user'; campaignId: string; userId: string; stage: string; error: string }
+  | { kind: 'campaign'; campaignId: string; stage: string; error: string }
 
 export interface PipelineRunsRepo {
   /**
@@ -48,6 +111,35 @@ export interface PipelineRunsRepo {
    * from it (Hydra-Imp1, Phoenix-Imp4).
    */
   readonly insertSeedRow: (input: { id: string; worldId: string }) => Promise<void>
+  /**
+   * Atomic stage claim — INSERT a fresh 'running' row, or coerce an existing
+   * pending/failed/stuck-running row into 'running' via ON CONFLICT. Returns
+   * 'claimed' / 'completed' / 'lost-race' (see ClaimResult). Dispatches on the
+   * ClaimRequest discriminant; the three variants' SQL is byte-identical to the
+   * world-gen processor's prior claimWorldStage / claimCampaignUserStage /
+   * claimCampaignStage. Pool-bound by design — the recovery/claim bookkeeping
+   * must survive a stage-tx rollback (NOT run inside a stage's repo.transaction).
+   */
+  readonly claimStage: (req: ClaimRequest) => Promise<ClaimResult>
+  /**
+   * Mark a claimed stage 'completed'. The token-presence invariant is in the
+   * discriminated union: 'world' / 'campaign-user' write cost_usd + token
+   * counts + clear error; 'campaign' writes only cost_usd + completed_at. SQL
+   * byte-identical to the prior inline completion writers. Pool-bound.
+   */
+  readonly markStageCompleted: (req: StageCompletedRequest) => Promise<void>
+  /**
+   * Mark a claimed stage 'failed' with a sanitized error string. SQL
+   * byte-identical to the prior inline failure writers. Pool-bound (a
+   * failed-status write must persist even when the stage tx rolled back).
+   */
+  readonly markStageFailed: (req: StageFailedRequest) => Promise<void>
+  /**
+   * Sum cost_usd across a world's completed world-gen stages (user_id IS NULL,
+   * status='completed'). Returns a JS number via the ::float8 cast. SQL verbatim
+   * from cost-cap.ts's sumCompletedStageCosts.
+   */
+  readonly sumCostForWorld: (worldId: string) => Promise<number>
 }
 
 interface PipelineRunRowRaw {
@@ -100,11 +192,194 @@ const STAGE_COMPLETED_QUERY = `
    LIMIT 1
 `
 
+// myth-tuok T6 / MYT-54 T6 / data-layer unification: the three atomic-claim
+// shapes. Each mirrors the others' structure (insert/ON CONFLICT → existing-row
+// inspection → stuck-reset) and differs only in keying. SQL is byte-identical to
+// the world-gen processor's prior claimWorldStage / claimCampaignUserStage /
+// claimCampaignStage helpers (only `pool.query` → `c.query`). The ON CONFLICT
+// WHERE filters on the EXISTING row's status; an empty RETURNING means the row is
+// 'completed' or another worker holds a recent 'running'.
+
+async function claimWorldStage(
+  c: ClientLike,
+  newId: string,
+  worldId: string,
+  stage: string,
+): Promise<ClaimResult> {
+  const insertResult = await c.query<{ id: string }>(
+    `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
+     VALUES ($1, $2, $3, 'running', now(), NULL)
+     ON CONFLICT (
+       COALESCE(world_id, campaign_id),
+       stage,
+       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
+     )
+     DO UPDATE SET status = 'running', started_at = now(),
+                   error = NULL, completed_at = NULL
+       WHERE pipeline_runs.status IN ('pending', 'failed')
+     RETURNING id`,
+    [newId, worldId, stage],
+  )
+  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
+
+  const existing = await c.query<{ status: string; started_at: Date | null }>(
+    `SELECT status, started_at FROM pipeline_runs
+      WHERE world_id = $1 AND stage = $2 AND user_id IS NULL`,
+    [worldId, stage],
+  )
+  const row = existing.rows[0]
+  /* c8 ignore start — `row === undefined` and `row.status !== 'running'`
+   * defensive arms: the SELECT was triggered by an ON CONFLICT in the
+   * preceding INSERT, so the row is guaranteed to exist and to be in one of
+   * the three valid statuses. These arms protect against a race-condition
+   * delete between INSERT-conflict and SELECT. */
+  if (row === undefined) return 'lost-race'
+  if (row.status === 'completed') return 'completed'
+  if (row.status !== 'running') return 'lost-race'
+  /* c8 ignore stop */
+
+  const stuckReset = await c.query<{ id: string }>(
+    `UPDATE pipeline_runs
+        SET status = 'running', started_at = now(), error = NULL
+      WHERE world_id = $1 AND stage = $2 AND user_id IS NULL
+        AND status = 'running'
+        AND started_at < now() - INTERVAL '5 minutes'
+      RETURNING id`,
+    [worldId, stage],
+  )
+  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
+  /* c8 ignore next — fall-through 'lost-race' when the stuck-reset matched no
+   * row (running but not yet stuck). Tested via the stuck-reset reclaim path
+   * which DOES match; the not-stuck early-return is covered by the
+   * row.status==='running' guard above. */
+  return 'lost-race'
+}
+
+async function claimCampaignUserStage(
+  c: ClientLike,
+  newId: string,
+  campaignId: string,
+  userId: string,
+  stage: string,
+): Promise<ClaimResult> {
+  const insertResult = await c.query<{ id: string }>(
+    `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+     VALUES ($1, $2, $3, 'running', now(), $4)
+     ON CONFLICT (
+       COALESCE(world_id, campaign_id),
+       stage,
+       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
+     )
+     DO UPDATE SET status = 'running', started_at = now(),
+                   error = NULL, completed_at = NULL
+       WHERE pipeline_runs.status IN ('pending', 'failed')
+     RETURNING id`,
+    [newId, campaignId, stage, userId],
+  )
+  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
+
+  const existing = await c.query<{ status: string; started_at: Date | null }>(
+    `SELECT status, started_at FROM pipeline_runs
+      WHERE campaign_id = $1 AND stage = $2 AND user_id = $3`,
+    [campaignId, stage, userId],
+  )
+  const row = existing.rows[0]
+  /* c8 ignore start — defensive arms mirror the world-level path: the SELECT
+   * was triggered by an ON CONFLICT, so the row is guaranteed to exist in one
+   * of the three valid statuses. */
+  if (row === undefined) return 'lost-race'
+  if (row.status === 'completed') return 'completed'
+  if (row.status !== 'running') return 'lost-race'
+  /* c8 ignore stop */
+
+  const stuckReset = await c.query<{ id: string }>(
+    `UPDATE pipeline_runs
+        SET status = 'running', started_at = now(), error = NULL
+      WHERE campaign_id = $1 AND stage = $2 AND user_id = $3
+        AND status = 'running'
+        AND started_at < now() - INTERVAL '5 minutes'
+      RETURNING id`,
+    [campaignId, stage, userId],
+  )
+  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
+  return 'lost-race'
+}
+
+async function claimCampaignStage(
+  c: ClientLike,
+  newId: string,
+  campaignId: string,
+  stage: string,
+): Promise<ClaimResult> {
+  const insertResult = await c.query<{ id: string }>(
+    `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+     VALUES ($1, $2, $3, 'running', now(), NULL)
+     ON CONFLICT (
+       COALESCE(world_id, campaign_id),
+       stage,
+       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
+     )
+     DO UPDATE SET status = 'running', started_at = now(),
+                   error = NULL, completed_at = NULL
+       WHERE pipeline_runs.status IN ('pending', 'failed')
+     RETURNING id`,
+    [newId, campaignId, stage],
+  )
+  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
+
+  const existing = await c.query<{ status: string; started_at: Date | null }>(
+    `SELECT status, started_at FROM pipeline_runs
+      WHERE campaign_id = $1 AND stage = $2 AND user_id IS NULL`,
+    [campaignId, stage],
+  )
+  const row = existing.rows[0]
+  /* c8 ignore start — defensive arms mirror the world-level path: the SELECT
+   * was triggered by an ON CONFLICT, so the row is guaranteed to exist in one
+   * of the three valid statuses. */
+  if (row === undefined) return 'lost-race'
+  if (row.status === 'completed') return 'completed'
+  if (row.status !== 'running') return 'lost-race'
+  /* c8 ignore stop */
+
+  /* c8 ignore start — stuck-reset path mirrors the per-player claim. The
+   * deterministic coverage applies to the (still-running, not-stuck)
+   * early-return path inside the guards above; aging started_at by 5+ minutes
+   * for the campaign shape is exercised via the world/campaign-user reset
+   * tests that share this identical SQL. */
+  const stuckReset = await c.query<{ id: string }>(
+    `UPDATE pipeline_runs
+        SET status = 'running', started_at = now(), error = NULL
+      WHERE campaign_id = $1 AND stage = $2 AND user_id IS NULL
+        AND status = 'running'
+        AND started_at < now() - INTERVAL '5 minutes'
+      RETURNING id`,
+    [campaignId, stage],
+  )
+  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
+  return 'lost-race'
+} /* c8 ignore stop */
+
+const SUM_COST_FOR_WORLD_QUERY = `
+  SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total
+  FROM pipeline_runs
+  WHERE world_id = $1
+    AND user_id IS NULL
+    AND status = 'completed'
+`
+
 // Composable binder: every method is a single statement over a ClientLike
 // (pool OR an in-flight tx client) — no `pool.connect()`, no advisory lock —
 // so all three are transaction-bindable. pipelineRuns participates in
 // Cluster A's transaction; its composable writers MUST be tx-bindable.
 // Mirrors the worlds.ts `worldsNs` pattern.
+//
+// NOTE: claimStage / markStageCompleted / markStageFailed are pool-bound at
+// the call site BY DESIGN (the world-gen processor's recovery bookkeeping must
+// survive a stage-tx rollback). They are composable (single-statement) so they
+// CAN bind on a tx client, but the processor never composes them inside a
+// repo.transaction — see the data-layer-repo-unification design's
+// "Intentionally pool-bound writes".
+// eslint-disable-next-line max-lines-per-function
 export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
   return {
     async listLatestForCampaign(campaignId: string): Promise<readonly PipelineRunRow[]> {
@@ -127,6 +402,82 @@ export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
          VALUES ($1, $2, 'concept_intake', 'pending', NULL, NULL)`,
         [input.id, input.worldId],
       )
+    },
+    async claimStage(req: ClaimRequest): Promise<ClaimResult> {
+      const id = uuidv7()
+      if (req.kind === 'world') {
+        return claimWorldStage(c, id, req.worldId, req.stage)
+      }
+      if (req.kind === 'campaign-user') {
+        return claimCampaignUserStage(c, id, req.campaignId, req.userId, req.stage)
+      }
+      return claimCampaignStage(c, id, req.campaignId, req.stage)
+    },
+    async markStageCompleted(req: StageCompletedRequest): Promise<void> {
+      if (req.kind === 'world') {
+        await c.query(
+          `UPDATE pipeline_runs
+              SET status = 'completed', completed_at = now(),
+                  cost_usd = $3, input_tokens = $4, output_tokens = $5, error = NULL
+            WHERE world_id = $1 AND stage = $2 AND user_id IS NULL`,
+          [req.worldId, req.stage, req.costUsd, req.inputTokens, req.outputTokens],
+        )
+        return
+      }
+      if (req.kind === 'campaign-user') {
+        await c.query(
+          `UPDATE pipeline_runs
+              SET status = 'completed', completed_at = now(),
+                  cost_usd = $3, input_tokens = $4, output_tokens = $5, error = NULL
+            WHERE campaign_id = $1 AND stage = $2 AND user_id = $6`,
+          [req.campaignId, req.stage, req.costUsd, req.inputTokens, req.outputTokens, req.userId],
+        )
+        return
+      }
+      // 'campaign' — character-integration completion: cost_usd + completed_at
+      // only, no token columns, no error=NULL. SQL byte-identical to
+      // character-integration-processor.ts.
+      await c.query(
+        `UPDATE pipeline_runs
+            SET status = 'completed', cost_usd = $1, completed_at = now()
+          WHERE campaign_id = $2 AND stage = $3 AND user_id IS NULL`,
+        [req.costUsd, req.campaignId, req.stage],
+      )
+    },
+    async markStageFailed(req: StageFailedRequest): Promise<void> {
+      if (req.kind === 'world') {
+        await c.query(
+          `UPDATE pipeline_runs
+              SET status = 'failed', completed_at = now(), error = $3
+            WHERE world_id = $1 AND stage = $2 AND user_id IS NULL`,
+          [req.worldId, req.stage, req.error],
+        )
+        return
+      }
+      if (req.kind === 'campaign-user') {
+        await c.query(
+          `UPDATE pipeline_runs
+              SET status = 'failed', completed_at = now(), error = $3
+            WHERE campaign_id = $1 AND stage = $2 AND user_id = $4`,
+          [req.campaignId, req.stage, req.error, req.userId],
+        )
+        return
+      }
+      // 'campaign' — character-integration failure. SQL byte-identical to
+      // character-integration-processor.ts.
+      await c.query(
+        `UPDATE pipeline_runs
+            SET status = 'failed', error = $1, completed_at = now()
+          WHERE campaign_id = $2 AND stage = $3 AND user_id IS NULL`,
+        [req.error, req.campaignId, req.stage],
+      )
+    },
+    async sumCostForWorld(worldId: string): Promise<number> {
+      const result = await c.query<{ total: number }>(SUM_COST_FOR_WORLD_QUERY, [worldId])
+      /* c8 ignore start — `?? 0` falsy arm: COALESCE(SUM(...), 0) always returns
+       * one row; kept for TS optional-chain narrowing without a non-null assert. */
+      return result.rows[0]?.total ?? 0
+      /* c8 ignore stop */
     },
   }
 }

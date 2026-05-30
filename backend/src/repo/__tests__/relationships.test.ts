@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { entities } from '../entities.js'
-import { relationships } from '../relationships.js'
+import { relationships, relationshipsNs } from '../relationships.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
 
@@ -57,6 +57,20 @@ describe('relationships repo', () => {
       [entA],
     )
     expect(rows.rows[0]).toEqual({ relationship_type: 'controls', description: 'A controls B.' })
+  })
+
+  // data-layer unification: caller-supplied-id single insert (coherence
+  // fix_relationship / add_relationship mint newId + synth_key together).
+  it('insertOne inserts a single relationship with a caller-supplied id + synthKey', async () => {
+    const relId = uuidv7()
+    await relationshipsNs(pool).insertOne({
+      id: relId, sourceEntityId: entA, targetEntityId: entB,
+      relationshipType: 'home_of', description: 'A is home of B.', synthKey: 'coherence_pass/edges/x',
+    })
+    const row = await pool.query<{ id: string; relationship_type: string; synth_key: string }>(
+      `SELECT id, relationship_type, synth_key FROM relationships WHERE id = $1`, [relId],
+    )
+    expect(row.rows[0]).toEqual({ id: relId, relationship_type: 'home_of', synth_key: 'coherence_pass/edges/x' })
   })
 
   it('insertMany with empty array is a no-op', async () => {

@@ -111,6 +111,35 @@ export function relationshipsNs(c: ClientLike) {
       )
       return ids
     },
+    /**
+     * Insert a single relationship row with a CALLER-SUPPLIED id + synthKey
+     * (coherence-pass mints `newId` + `coherence_pass/edges/<newId>` so the
+     * SSE edge-added event and the persisted synth_key column agree). Distinct
+     * from `insertMany`, which generates ids internally. SQL verbatim from
+     * `stages/coherence-pass.ts` `applyFixRelationship` / `applyAddRelationship`.
+     */
+    insertOne: async (input: {
+      id: string
+      sourceEntityId: string
+      targetEntityId: string
+      relationshipType: string
+      description: string
+      synthKey: string
+    }): Promise<void> => {
+      await c.query(
+        `INSERT INTO relationships
+           (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          input.id,
+          input.sourceEntityId,
+          input.targetEntityId,
+          input.relationshipType,
+          input.description,
+          input.synthKey,
+        ],
+      )
+    },
     listByWorld: async (worldId: string): Promise<Relationship[]> => {
       const result = await c.query<RelationshipListByWorldDbRow>(
         `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description, r.synth_key

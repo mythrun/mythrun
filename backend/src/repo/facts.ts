@@ -88,6 +88,27 @@ export function factsNs(c: ClientLike) {
         params,
       )
     },
+    /**
+     * Insert a single fact row with a CALLER-SUPPLIED id (coherence-pass mints
+     * `newId` so its fact-added SSE event references the same id). narrative_status
+     * is baked in as the canonical 'undelivered' literal; source defaults via the
+     * column. SQL verbatim from `stages/coherence-pass.ts` `applyAddFact` — note
+     * the column order (id, entity_id, topic, content, access_level,
+     * narrative_status) differs from `insertMany`'s, preserved exactly here.
+     */
+    insertOne: async (input: {
+      id: string
+      entityId: string
+      topic: string
+      content: string
+      accessLevel: AccessLevel
+    }): Promise<void> => {
+      await c.query(
+        `INSERT INTO facts (id, entity_id, topic, content, access_level, narrative_status)
+         VALUES ($1, $2, $3, $4, $5, 'undelivered')`,
+        [input.id, input.entityId, input.topic, input.content, input.accessLevel],
+      )
+    },
     updateContentById: async (factId: string, patch: { content: string }): Promise<number> => {
       const result = await c.query(
         `UPDATE facts SET content = $1, updated_at = now() WHERE id = $2`,

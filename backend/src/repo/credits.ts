@@ -288,6 +288,26 @@ export function creditsNs(c: ClientLike) {
     },
 
     /**
+     * Insert the cost-cap refund row (+1 world_gen, source_type
+     * 'cost_cap_refund', both FK columns + expires_at NULL). Composable — runs
+     * over the captured client; the cost-cap refund path composes it inside its
+     * repo.transaction alongside `worlds.markFailed`. SQL verbatim from
+     * `cost-cap.ts`'s `issueCostCapRefund`. The id is caller-supplied (a uuidv7)
+     * to match the prior inline statement. Migration 011's polarity +
+     * source-link CHECKs require amount > 0 and both FK columns NULL — encoded
+     * in the fixed-literal SQL.
+     */
+    insertCostCapRefund: async (input: { id: string; userId: string }): Promise<void> => {
+      await c.query(
+        `INSERT INTO credit_ledger
+           (id, user_id, credit_type, amount, source_type,
+            source_purchase_id, source_billing_history_id)
+         VALUES ($1, $2, 'world_gen', 1, 'cost_cap_refund', NULL, NULL)`,
+        [input.id, input.userId],
+      )
+    },
+
+    /**
      * Insert a positive-amount credit_ledger row inside an existing
      * caller-managed transaction. Same validation + user-row FOR UPDATE +
      * INSERT as `grant`, but does NOT open its own connection or BEGIN.

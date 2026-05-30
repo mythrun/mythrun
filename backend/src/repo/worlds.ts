@@ -251,6 +251,62 @@ export function worldsNs(c: ClientLike) {
       return toWorld(row)
     },
 
+    // ── World-gen processor status writers (pool-bound at the call site) ──────
+    //
+    // These three are the world-gen processor's recovery/completion bookkeeping.
+    // SQL is byte-identical to the prior inline statements — deliberately NOT
+    // routed through `updateStatus` above, which stamps `updated_at = now()` +
+    // does a `RETURNING *` not-found throw. The processor wants exactly the
+    // status-only UPDATE it had (no updated_at touch, no throw on 0 rows — the
+    // guarded `AND status = ...` arms are no-ops by design when the guard fails).
+    // They run on `deps.pool` OUTSIDE any stage transaction so a failed-status
+    // write survives a stage-tx rollback (see the design's "Intentionally
+    // pool-bound writes").
+
+    /**
+     * Mark a world complete. SQL verbatim from the processor's
+     * `markWorldComplete`: `UPDATE worlds SET status = 'complete' WHERE id = $1`.
+     */
+    markComplete: async (id: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET status = 'complete' WHERE id = $1`, [id])
+    },
+
+    /**
+     * Eagerly flip a world to 'failed' on a stage error. SQL verbatim from the
+     * processor's `handleStageError` / `markStageCappedAndRefund` (issued via
+     * cost-cap's refund tx in that path): `UPDATE worlds SET status = 'failed'
+     * WHERE id = $1`.
+     */
+    markFailed: async (id: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [id])
+    },
+
+    /**
+     * BullMQ retry recovery: reset a world the prior attempt flipped to 'failed'
+     * back to 'generating' so the retry runs in the correct state. The
+     * `AND status = 'failed'` guard makes first-attempt invocation a no-op. SQL
+     * verbatim from the processor's top-of-job reset.
+     */
+    resetFailedToGenerating: async (id: string): Promise<void> => {
+      await c.query(
+        `UPDATE worlds SET status = 'generating' WHERE id = $1 AND status = 'failed'`,
+        [id],
+      )
+    },
+
+    /**
+     * stage-3 (locations_and_npcs) input read: the world's overview prose.
+     * Returns '' when the column is null / the world is unknown, matching the
+     * processor's prior `?? ''` default. SQL verbatim from `loadStage3Inputs`.
+     */
+    getWorldOverview: async (id: string): Promise<string> => {
+      const result = await c.query<{ world_overview: string | null }>(
+        `SELECT world_overview FROM worlds WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0]?.world_overview ?? ''
+    },
+
     incrementForkCount: async (id: string): Promise<World> => {
       const result = await c.query<WorldDbRow>(
         `UPDATE worlds SET fork_count = fork_count + 1, updated_at = now() WHERE id = $1 RETURNING *`,

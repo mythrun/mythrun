@@ -87,6 +87,39 @@ describe('campaigns repo (integration)', () => {
     expect(found?.id).toBe(c.id)
   })
 
+  it('loadWorldGenContext returns the campaign + world prep columns (JOIN)', async () => {
+    await cleanupTestScope(pool, scope)
+    const users = createUsersRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const campaigns = createCampaignsRepo(pool)
+    const owner = await users.create(pool, baseUserInput)
+    const world = await worlds.create({
+      createdBy: owner.id, name: scope.worldName(0), concept: 'a concept',
+      tone: 'misted', themes: 'guardianship', era: 'lantern-age', keyTensions: 'spirits chafe',
+      geographySummary: 'drowned coast', politicalSummary: 'fractured guilds',
+    })
+    const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name: scope.campaignName(0) })
+
+    const ctx = await campaigns.loadWorldGenContext(c.id)
+    expect(ctx).not.toBeNull()
+    expect(ctx?.campaign_id).toBe(c.id)
+    expect(ctx?.world_id).toBe(world.id)
+    expect(ctx?.created_by).toBe(owner.id)
+    expect(ctx?.concept).toBe('a concept')
+    expect(ctx?.tone).toBe('misted')
+    expect(ctx?.themes).toBe('guardianship')
+    expect(ctx?.era).toBe('lantern-age')
+    expect(ctx?.key_tensions).toBe('spirits chafe')
+    expect(ctx?.geography_summary).toBe('drowned coast')
+    expect(ctx?.political_summary).toBe('fractured guilds')
+    expect(ctx?.dev_bypass_access_filter).toBe(false)
+  })
+
+  it('loadWorldGenContext returns null for an unknown campaign', async () => {
+    const campaigns = createCampaignsRepo(pool)
+    expect(await campaigns.loadWorldGenContext('019dccef-0000-7000-8000-000000000000')).toBeNull()
+  })
+
   it('update with empty patch is a no-op (covers all-undefined ?? null branches)', async () => {
     await cleanupTestScope(pool, scope)
     const users = createUsersRepo(pool)

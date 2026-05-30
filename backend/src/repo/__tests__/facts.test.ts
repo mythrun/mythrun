@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { entities } from '../entities.js'
-import { facts } from '../facts.js'
+import { facts, factsNs } from '../facts.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
 
@@ -85,6 +85,33 @@ describe('facts repo', () => {
       `SELECT content FROM facts WHERE id = $1`, [factId],
     )
     expect(updated.rows[0]?.content).toBe('corrected')
+  })
+
+  it('deleteById removes a single fact row (back-compat shim)', async () => {
+    await facts.insertMany(pool, [{ entityId, topic: 'history', accessLevel: 'known', content: 'x' }])
+    const row = await pool.query<{ id: string }>(`SELECT id FROM facts WHERE entity_id = $1`, [entityId])
+    const factId = row.rows[0]?.id
+    if (factId === undefined) throw new Error('expected fact row to exist')
+    const affected = await facts.deleteById(pool, factId)
+    expect(affected).toBe(1)
+    const after = await pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM facts WHERE id = $1`, [factId])
+    expect(after.rows[0]?.n).toBe('0')
+  })
+
+  // data-layer unification: caller-supplied-id single insert (coherence add_fact).
+  it('insertOne inserts a fact with a caller-supplied id + canonical undelivered status', async () => {
+    const factId = uuidv7()
+    await factsNs(pool).insertOne({
+      id: factId, entityId, topic: 'governance', content: 'Run by the harbor council.', accessLevel: 'known',
+    })
+    const row = await pool.query<{ id: string; topic: string; content: string; access_level: string; narrative_status: string }>(
+      `SELECT id, topic, content, access_level, narrative_status FROM facts WHERE id = $1`,
+      [factId],
+    )
+    expect(row.rows[0]).toEqual({
+      id: factId, topic: 'governance', content: 'Run by the harbor council.',
+      access_level: 'known', narrative_status: 'undelivered',
+    })
   })
 
   describe('listByEntities (myth-exac)', () => {
