@@ -36,25 +36,12 @@ import type { EntityHierarchyRow } from './entity-hierarchy.js'
 import { entityHierarchy } from './entity-hierarchy.js'
 import type { StatBlockRow } from './stat-blocks.js'
 import { statBlocks } from './stat-blocks.js'
-import {
-  VocabularyRegistrySchema,
-  type VocabularyRegistry,
-} from '../llm/schemas/vocabulary-registry.js'
+import { worldsNs, type WorldSummary } from './worlds.js'
 
-// Allowlist projection of the worlds table. Plot-bearing columns
-// (key_tensions, political_summary, starting_situations,
-// follow_up_questions, world_overview, geography_summary) are
-// intentionally excluded — they're prep-time artifacts the
-// Fast-Thinker must never see.
-export interface WorldSummary {
-  readonly id: string
-  readonly name: string
-  readonly concept: string
-  readonly tone: string | null
-  readonly themes: string | null
-  readonly era: string | null
-  readonly vocabularyRegistry: VocabularyRegistry
-}
+// The allowlist projection (the WorldSummary type + its column list) is
+// single-sourced in worlds.ts (`getSnapshotSummary`). Re-exported here for
+// back-compat — `WorldSummary` was historically declared in this module.
+export type { WorldSummary } from './worlds.js'
 
 export interface WorldSnapshot {
   readonly world: WorldSummary
@@ -64,16 +51,6 @@ export interface WorldSnapshot {
   readonly proseKernels: readonly ProseKernelRow[]
   readonly entityHierarchy: readonly EntityHierarchyRow[]
   readonly statBlocks: readonly StatBlockRow[]
-}
-
-interface WorldSummaryDbRow {
-  readonly id: string
-  readonly name: string
-  readonly concept: string
-  readonly tone: string | null
-  readonly themes: string | null
-  readonly era: string | null
-  readonly vocabulary_registry: unknown
 }
 
 interface EntityStatBlockRefRow {
@@ -89,37 +66,26 @@ async function fetch(
     ? ['known', 'discoverable', 'secret']
     : ['known']
 
-  // 1. World allowlist projection. Build the WorldSummary explicitly so
-  //    no plot-bearing column ever lands on the wire shape — even if
-  //    the worlds table grows new columns later.
-  const worldResult = await client.query<WorldSummaryDbRow>(
-    `SELECT id, name, concept, tone, themes, era, vocabulary_registry
-       FROM worlds WHERE id = $1`,
-    [worldId],
-  )
-  const worldRow = worldResult.rows[0]
-  if (worldRow === undefined) {
+  // 1. World allowlist projection — single-sourced in
+  //    worlds.getSnapshotSummary, the enforced-ignorance gate. No
+  //    plot-bearing column ever lands on the wire shape, even if the worlds
+  //    table grows new columns later.
+  const summary = await worldsNs(client).getSnapshotSummary(worldId)
+  if (summary === null) {
     throw new Error(`world-snapshot-view: world ${worldId} not found`)
   }
-  // jsonb arrives as already-parsed JSON; the migration's column default
-  // + CHECK constraint guarantee top-level shape. .parse narrows to the
-  // VocabularyRegistry type. Entries are tier-filtered against the same
+  // getSnapshotSummary returns the full registry; the snapshot view applies
+  // the per-tier filter on top. Entries are tier-filtered against the same
   // accessLevels list used for entities/facts; adjacent_franchises is
   // metadata (not player-secret content) and always surfaces.
-  const fullRegistry = VocabularyRegistrySchema.parse(worldRow.vocabulary_registry)
-  const filteredEntries = fullRegistry.entries.filter((e) =>
+  const filteredEntries = summary.vocabularyRegistry.entries.filter((e) =>
     accessLevels.includes(e.access_level),
   )
   const world: WorldSummary = {
-    id: worldRow.id,
-    name: worldRow.name,
-    concept: worldRow.concept,
-    tone: worldRow.tone,
-    themes: worldRow.themes,
-    era: worldRow.era,
+    ...summary,
     vocabularyRegistry: {
       entries: filteredEntries,
-      adjacent_franchises: fullRegistry.adjacent_franchises,
+      adjacent_franchises: summary.vocabularyRegistry.adjacent_franchises,
     },
   }
 

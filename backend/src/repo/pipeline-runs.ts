@@ -39,6 +39,15 @@ export interface PipelineRunsRepo {
    * relevant to snapshot readiness.
    */
   readonly isStageCompleted: (worldId: string, stage: string) => Promise<boolean>
+  /**
+   * Cluster-A create-tx footprint: insert the concept_intake seed row
+   * (status='pending', started_at NULL, user_id NULL). Composable — runs over
+   * the captured client (pool OR an in-flight tx client). A missed enqueue
+   * (Redis blip between COMMIT and queue.add) presents as `world_gen_failed`
+   * via derivePhase instead of `not_started`, so the resume route can recover
+   * from it (Hydra-Imp1, Phoenix-Imp4).
+   */
+  readonly insertSeedRow: (input: { id: string; worldId: string }) => Promise<void>
 }
 
 interface PipelineRunRowRaw {
@@ -109,6 +118,15 @@ export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
     async isStageCompleted(worldId: string, stage: string): Promise<boolean> {
       const result = await c.query(STAGE_COMPLETED_QUERY, [worldId, stage])
       return result.rows.length > 0
+    },
+    async insertSeedRow(input: { id: string; worldId: string }): Promise<void> {
+      // SQL verbatim from executeCreateTransaction
+      // (backend/src/routes/campaigns.ts).
+      await c.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
+         VALUES ($1, $2, 'concept_intake', 'pending', NULL, NULL)`,
+        [input.id, input.worldId],
+      )
     },
   }
 }

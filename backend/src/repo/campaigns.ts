@@ -47,6 +47,50 @@ export function campaignsNs(c: ClientLike) {
       return toCampaign(row)
     },
 
+    /**
+     * Cluster-A create-tx footprint: insert a campaign row in 'setup' status
+     * with name 'Untitled'. Composable — runs over the captured client. SQL
+     * verbatim from `executeCreateTransaction` (backend/src/routes/campaigns.ts):
+     * `INSERT INTO campaigns (id, world_id, created_by, name, status) VALUES
+     * ($1, $2, $3, 'Untitled', 'setup')`. Distinct from `create` (which
+     * COALESCEs status/language and carries source_world_id) — this is the
+     * fixed-literal create-side shape.
+     */
+    insertSetup: async (input: {
+      id: string
+      worldId: string
+      createdBy: string
+      name?: string
+    }): Promise<void> => {
+      await c.query(
+        `INSERT INTO campaigns (id, world_id, created_by, name, status)
+         VALUES ($1, $2, $3, $4, 'setup')`,
+        [input.id, input.worldId, input.createdBy, input.name ?? 'Untitled'],
+      )
+    },
+
+    /**
+     * Cluster-A create-tx footprint: insert the owner membership row.
+     * Composable — runs over the captured client. SQL verbatim from
+     * `executeCreateTransaction`: `INSERT INTO campaign_members (id,
+     * campaign_id, user_id, role, invite_accepted) VALUES ($1, $2, $3, 'owner',
+     * true)`. Distinct from `addMember` — that one parameterizes role +
+     * invite_accepted and carries ON CONFLICT DO NOTHING + a RETURNING/SELECT
+     * round-trip; the create site writes the owner row with fixed literals and
+     * no conflict handling.
+     */
+    insertOwnerMember: async (input: {
+      id: string
+      campaignId: string
+      userId: string
+    }): Promise<void> => {
+      await c.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'owner', true)`,
+        [input.id, input.campaignId, input.userId],
+      )
+    },
+
     getById: async (id: string): Promise<Campaign | null> => {
       const result = await c.query<CampaignDbRow>('SELECT * FROM campaigns WHERE id = $1', [id])
       const row = result.rows[0]

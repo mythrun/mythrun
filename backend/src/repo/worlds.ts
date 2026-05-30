@@ -3,6 +3,54 @@ import { uuidv7 } from './uuidv7.js'
 import { type CreateWorldInput, type World, type WorldUpdate } from './types.js'
 import { toWorld, type WorldDbRow } from './mappers.js'
 import type { ClientLike } from './_types.js'
+import {
+  VocabularyRegistrySchema,
+  type VocabularyRegistry,
+} from '../llm/schemas/vocabulary-registry.js'
+
+// Allowlist projection of the worlds table — the enforced-ignorance wire-shape
+// gate. Plot-bearing columns (key_tensions, political_summary, world_overview,
+// geography_summary, starting_situations, follow_up_questions) are
+// intentionally excluded: they're prep-time artifacts the Fast-Thinker must
+// never see. `getSnapshotSummary` returns this type; `getById` (full row,
+// prep/Slow-Thinker tier) returns `World`. Re-pointing a player-facing read at
+// `getById` is a compile error, not a silent leak — that is the boundary.
+//
+// Lives here (not in world-snapshot-view.ts) so the allowlist column list has
+// exactly one home: getSnapshotSummary. The composite read view
+// (worldSnapshotView.fetch) composes getSnapshotSummary and re-exports this
+// type for back-compat.
+export interface WorldSummary {
+  readonly id: string
+  readonly name: string
+  readonly concept: string
+  readonly tone: string | null
+  readonly themes: string | null
+  readonly era: string | null
+  readonly vocabularyRegistry: VocabularyRegistry
+}
+
+// Raw row shape of the allowlist SELECT — snake_case columns straight from pg.
+interface WorldSummaryDbRow {
+  readonly id: string
+  readonly name: string
+  readonly concept: string
+  readonly tone: string | null
+  readonly themes: string | null
+  readonly era: string | null
+  readonly vocabulary_registry: unknown
+}
+
+// Input for the Cluster-A "create world (generating)" insert. The id is
+// supplied by the caller (executeCreateTransaction generates a uuidv7 per
+// row); `name` defaults to 'Untitled' exactly as the inline site does.
+export interface InsertGeneratingInput {
+  readonly id: string
+  readonly createdBy: string
+  readonly name?: string
+  readonly concept: string
+  readonly devBypassAccessFilter: boolean
+}
 
 // Composable binder: every method captures the ClientLike `c` (pool OR an
 // in-flight tx client) so the same body serves `repo.worlds.X` (pool-bound)
@@ -53,10 +101,73 @@ export function worldsNs(c: ClientLike) {
       return toWorld(row)
     },
 
+    /**
+     * Cluster-A create-tx footprint: insert a freshly-generating world row.
+     * Composable — runs over the captured client (pool OR an in-flight tx
+     * client). SQL verbatim from `executeCreateTransaction`
+     * (backend/src/routes/campaigns.ts): `INSERT INTO worlds (id, created_by,
+     * name, concept, status, dev_bypass_access_filter) VALUES ($1, $2,
+     * 'Untitled', $3, 'generating', $4)`. `name` defaults to 'Untitled'.
+     */
+    insertGenerating: async (input: InsertGeneratingInput): Promise<void> => {
+      await c.query(
+        `INSERT INTO worlds (id, created_by, name, concept, status, dev_bypass_access_filter)
+         VALUES ($1, $2, $3, $4, 'generating', $5)`,
+        [
+          input.id,
+          input.createdBy,
+          input.name ?? 'Untitled',
+          input.concept,
+          input.devBypassAccessFilter,
+        ],
+      )
+    },
+
+    /**
+     * Full row, including the plot-bearing columns — prep/Slow-Thinker tier
+     * ONLY. Player-facing reads use `getSnapshotSummary` (the enforced-
+     * ignorance allowlist). Do NOT satisfy a Fast-Thinker world read with
+     * this method — it re-exposes plot fields. (CLAUDE.md Non-Negotiable
+     * Principle: enforced ignorance is a hard boundary.)
+     */
     getById: async (id: string): Promise<World | null> => {
       const result = await c.query<WorldDbRow>('SELECT * FROM worlds WHERE id = $1', [id])
       const row = result.rows[0]
       return row ? toWorld(row) : null
+    },
+
+    /**
+     * Enforced-ignorance allowlist projection — the single-sourced home of the
+     * world column list the Fast-Thinker is allowed to see. Returns
+     * `WorldSummary`, a type that structurally cannot hold the plot columns
+     * (key_tensions, political_summary, world_overview, geography_summary,
+     * starting_situations, follow_up_questions). The vocabulary registry is
+     * returned in full here; tier-filtering of its entries is the composite
+     * read view's concern (`worldSnapshotView.fetch`).
+     *
+     * Returns null when the world id is unknown — the composite view turns
+     * that into its "not found" error so this stays a pure read.
+     */
+    getSnapshotSummary: async (id: string): Promise<WorldSummary | null> => {
+      const result = await c.query<WorldSummaryDbRow>(
+        `SELECT id, name, concept, tone, themes, era, vocabulary_registry
+           FROM worlds WHERE id = $1`,
+        [id],
+      )
+      const row = result.rows[0]
+      if (row === undefined) return null
+      // jsonb arrives already-parsed; the migration's column default + CHECK
+      // guarantee top-level shape. .parse narrows to VocabularyRegistry.
+      const registry = VocabularyRegistrySchema.parse(row.vocabulary_registry)
+      return {
+        id: row.id,
+        name: row.name,
+        concept: row.concept,
+        tone: row.tone,
+        themes: row.themes,
+        era: row.era,
+        vocabularyRegistry: registry,
+      }
     },
 
     /**

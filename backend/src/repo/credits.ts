@@ -207,7 +207,12 @@ export interface NewClawbackRow {
  *
  * `grantInTx` and `recordClawback` are composable: they take/use the bound
  * client and compose inside a caller's transaction.
+ *
+ * The disable below is justified: this is a method dictionary, not a complex
+ * algorithm; mirrors worldsNs/campaignsNs (the namespace pattern is load-bearing
+ * for repo-layer grep-ability).
  */
+// eslint-disable-next-line max-lines-per-function
 export function creditsNs(c: ClientLike) {
   return {
     balance: async (userId: string, type: CreditType): Promise<number> => {
@@ -244,6 +249,42 @@ export function creditsNs(c: ClientLike) {
         [userId],
       )
       return Number(result.rows[0]?.balance ?? 0)
+    },
+
+    /**
+     * Acquire the per-user create-serialization advisory xact lock. Composable
+     * — runs over the captured tx client; the lock is held until the
+     * transaction COMMITs/ROLLBACKs. `hashtextextended` produces a stable
+     * bigint from the uuid text, sidestepping pg's lack of a direct uuid→bigint
+     * cast. SQL verbatim from `executeCreateTransaction`
+     * (backend/src/routes/campaigns.ts).
+     */
+    acquireUserCreditLock: async (userId: string): Promise<void> => {
+      await c.query(`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, [userId])
+    },
+
+    /**
+     * Cluster-A create-tx footprint: insert the world-gen DEBIT row (-1
+     * world_gen). DISTINCT from `grantInTx` (which rejects source_type='debit')
+     * — this is the create-side debit. SQL verbatim from
+     * `executeCreateTransaction`: source_id = worldId so migration 004's
+     * `credit_ledger_debit_has_source_chk` is satisfied; both FK columns
+     * (source_purchase_id / source_billing_history_id) and expires_at are NULL
+     * per migration 007's debit branch. Composable — runs over the captured
+     * client.
+     */
+    insertWorldGenDebit: async (input: {
+      id: string
+      userId: string
+      worldId: string
+    }): Promise<void> => {
+      await c.query(
+        `INSERT INTO credit_ledger
+           (id, user_id, credit_type, amount, source_type, source_id,
+            expires_at, source_purchase_id, source_billing_history_id)
+         VALUES ($1, $2, 'world_gen', -1, 'debit', $3, NULL, NULL, NULL)`,
+        [input.id, input.userId, input.worldId],
+      )
     },
 
     /**
