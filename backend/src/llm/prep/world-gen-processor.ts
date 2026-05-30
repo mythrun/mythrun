@@ -30,7 +30,7 @@
 // pipeline_runs.error or the stage-failed Redis event payload.
 
 import type { Job } from 'bullmq'
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type pino from 'pino'
 import { z } from 'zod'
@@ -47,8 +47,11 @@ import { runEntityConsolidationStage } from './stages/entity-consolidation.js'
 import { runCoherencePassStage } from './stages/coherence-pass.js'
 import { StageNotImplementedError } from './stages/stage-not-implemented.js'
 import { isTerminalError } from '../errors.js'
-import { uuidv7 } from '../../repo/uuidv7.js'
 import { createRepo, type Repo } from '../../repo/index.js'
+import { entitiesNs, type EntityProseRow } from '../../repo/entities.js'
+import { worldsNs } from '../../repo/worlds.js'
+import type { ClientLike } from '../../repo/_types.js'
+import type { ClaimRequest, ClaimResult } from '../../repo/pipeline-runs.js'
 import type { PipelineEvent } from '../../contract/pipeline-events.js'
 import {
   VocabularyRegistrySchema,
@@ -68,8 +71,6 @@ const SEED_TABLES_PLACEHOLDER =
   '  - Speaks in proverbs.\n' +
   '  - Always travels with a working animal.\n' +
   '  - Carries a token from someone they failed.'
-
-const SENTINEL_USER_UUID = '00000000-0000-0000-0000-000000000000'
 
 export const WORLD_GEN_STAGES = [
   'concept_intake',
@@ -143,30 +144,22 @@ export interface StageDispatchResult extends StageCost {
   readonly capExhausted: boolean
 }
 
-type ClaimResult = 'claimed' | 'completed' | 'lost-race'
-
-// myth-tuok T6: discriminated union over the two atomic-claim shapes the
-// pipeline_runs table supports. World-level claims (concept_intake →
-// coherence_pass) key on (world_id, stage) with user_id NULL; per-player
-// claims (character creation, T11) key on (campaign_id, stage, user_id).
-// The unique index on COALESCE(world_id, campaign_id), stage,
-// COALESCE(user_id, sentinel) handles both shapes in one composite key.
-export type ClaimRequest =
-  | { kind: 'world'; worldId: string; stage: string }
-  | { kind: 'campaign-user'; campaignId: string; userId: string; stage: string }
-  // MYT-54 T6: campaign-scoped claim with user_id=NULL. Mirrors the
-  // world-gen shape (also user_id=NULL) but keys on campaign_id rather
-  // than world_id. Used by the character-integration worker (one row per
-  // (campaign, stage), no per-user fan-out). The unique index on
-  // (COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel))
-  // already enforces uniqueness for this shape — no new index needed.
-  | { kind: 'campaign'; campaignId: string; stage: string }
+// myth-tuok T6 / data-layer unification: ClaimRequest / ClaimResult now live in
+// `repo/pipeline-runs.ts` (the home of the atomic-claim SQL). Re-exported here so
+// the character-creation / character-integration processors (which import
+// `atomicClaimStage` + the union from this module) keep their import path.
+export type { ClaimRequest, ClaimResult } from '../../repo/pipeline-runs.js'
 
 export function createWorldGenProcessor(
   deps: WorldGenDeps,
 ): (job: Job<WorldGenJobPayload>) => Promise<void> {
   return async function processWorldGen(job: Job<WorldGenJobPayload>): Promise<void> {
     const { campaignId } = job.data
+    // Single pool-bound repo for the job's recovery/claim/completion bookkeeping.
+    // These run on the pool OUTSIDE any stage transaction by design (a
+    // failed-status write must survive a stage-tx rollback) — see the
+    // data-layer-repo-unification design's "Intentionally pool-bound writes".
+    const repo = createRepo(deps.pool)
     const ctx = await loadCampaignContext(deps.pool, campaignId)
     /* c8 ignore start — `ctx === null` arm: BullMQ dispatched the job
      * from a campaign row that no longer exists. Defense-in-depth for
@@ -194,10 +187,7 @@ export function createWorldGenProcessor(
         // 'generating' here so the retry runs in the correct state and the
         // concurrent-generation guard remains accurate. First-attempt invocation
         // is a no-op (status is already 'generating' from campaign create).
-        await deps.pool.query(
-          `UPDATE worlds SET status = 'generating' WHERE id = $1 AND status = 'failed'`,
-          [ctx.world.id],
-        )
+        await repo.worlds.resetFailedToGenerating(ctx.world.id)
 
         await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_gen' })
 
@@ -208,7 +198,7 @@ export function createWorldGenProcessor(
         const capUsd = deps.costCapUsd
 
         for (const stage of WORLD_GEN_STAGES) {
-          const claim = await atomicClaimStage(deps.pool, {
+          const claim = await repo.pipelineRuns.claimStage({
             kind: 'world',
             worldId: ctx.world.id,
             stage,
@@ -247,7 +237,14 @@ export function createWorldGenProcessor(
           try {
             const refreshed = await refreshContext(deps.pool, ctx, stage)
             const result = await runStage(deps, refreshed, campaignId, job, stage)
-            await markStageCompleted(deps.pool, refreshed.world.id, stage, result)
+            await repo.pipelineRuns.markStageCompleted({
+              kind: 'world',
+              worldId: refreshed.world.id,
+              stage,
+              costUsd: result.costUsd,
+              inputTokens: result.inputTokens,
+              outputTokens: result.outputTokens,
+            })
             await publishEvent(deps, campaignId, {
               type: 'stage-completed',
               stage,
@@ -282,14 +279,14 @@ export function createWorldGenProcessor(
              * stage 7's own unit tests, not exercised in the processor
              * tests yet. */
             if (result.capExhausted) {
-              await markWorldComplete(deps.pool, refreshed.world.id)
+              await repo.worlds.markComplete(refreshed.world.id)
               return
             }
             /* c8 ignore stop */
 
             const cumulative = await sumCompletedStageCosts(deps.pool, refreshed.world.id)
             if (cumulative > capUsd) {
-              await markStageCappedAndRefund(deps, refreshed, stage, cumulative, capUsd)
+              await markStageCappedAndRefund(deps, repo, refreshed, stage, cumulative, capUsd)
               return
             }
             await publishEvent(deps, campaignId, {
@@ -303,7 +300,7 @@ export function createWorldGenProcessor(
              * brace + for-loop end-iteration that aren't reachable by
              * either test path. */
           } catch (err) {
-            const handled = await handleStageError(deps, ctx, stage, err)
+            const handled = await handleStageError(deps, repo, ctx, stage, err)
             if (handled === 'stop') return
             throw err
           }
@@ -313,7 +310,7 @@ export function createWorldGenProcessor(
         /* c8 ignore start — markWorldComplete + world_ready emit: reached
          * only after ALL world-gen stages complete; current tests halt at
          * stage 2 with `stage_not_implemented`. */
-        await markWorldComplete(deps.pool, ctx.world.id)
+        await repo.worlds.markComplete(ctx.world.id)
         await publishEvent(deps, campaignId, { type: 'phase', phase: 'world_ready' })
         /* c8 ignore stop */
       },
@@ -325,34 +322,14 @@ async function loadCampaignContext(
   pool: Pool,
   campaignId: string,
 ): Promise<CampaignContext | null> {
-  const result = await pool.query<{
-    campaign_id: string
-    world_id: string
-    created_by: string
-    name: string
-    concept: string
-    tone: string | null
-    themes: string | null
-    era: string | null
-    key_tensions: string | null
-    geography_summary: string | null
-    political_summary: string | null
-    dev_bypass_access_filter: boolean
-    vocabulary_registry: unknown
-  }>(
-    `SELECT c.id AS campaign_id, w.id AS world_id, w.created_by, w.name, w.concept,
-            w.tone, w.themes, w.era, w.key_tensions, w.geography_summary,
-            w.political_summary, w.dev_bypass_access_filter, w.vocabulary_registry
-       FROM campaigns c
-       JOIN worlds w ON w.id = c.world_id
-      WHERE c.id = $1`,
-    [campaignId],
-  )
-  const row = result.rows[0]
-  /* c8 ignore start — `row === undefined` arm: SELECT with the campaign+
-   * world JOIN returns 0 rows only when the campaign was deleted; tests
-   * always seed a campaign. Defensive null-return. */
-  if (row === undefined) return null
+  // SQL homed in repo.campaigns.loadWorldGenContext (the campaigns ⋈ worlds
+  // context loader). The row → CampaignContext mapping (incl. the defensive
+  // vocabulary_registry .parse) stays here.
+  const row = await createRepo(pool).campaigns.loadWorldGenContext(campaignId)
+  /* c8 ignore start — `row === null` arm: the campaign+world JOIN returns 0
+   * rows only when the campaign was deleted; tests always seed a campaign.
+   * Defensive null-return. */
+  if (row === null) return null
   /* c8 ignore stop */
   return {
     campaign: { id: row.campaign_id, worldId: row.world_id },
@@ -393,214 +370,18 @@ async function refreshContext(
   /* c8 ignore stop */
 }
 
-// myth-tuok T6: thin dispatcher over the world-level and per-player claim
-// paths. The two paths share the same ON CONFLICT / stuck-reset shape but
-// key on different columns (world_id+IS-NULL-user vs. campaign_id+user_id),
-// so they're separated into dedicated helpers rather than parameterized
-// inside a single body. T11 (character-creation processor) calls this via
-// `{kind: 'campaign-user', ...}` to claim per-player rows on the same
-// pipeline_runs table.
+// Back-compat shim over `repo.pipelineRuns.claimStage`. The atomic-claim SQL
+// (all three ClaimRequest variants) now lives in `repo/pipeline-runs.ts`; this
+// thin wrapper keeps the `(pool, req)` signature the character-creation
+// (T11, {kind:'campaign-user'}) and character-integration ({kind:'campaign'})
+// processors import from this module. Pool-bound by design — claim bookkeeping
+// must survive a stage-tx rollback (never composed inside a repo.transaction).
 export async function atomicClaimStage(
   pool: Pool,
   req: ClaimRequest,
 ): Promise<ClaimResult> {
-  const id = uuidv7()
-  if (req.kind === 'world') {
-    return claimWorldStage(pool, id, req.worldId, req.stage)
-  }
-  if (req.kind === 'campaign-user') {
-    return claimCampaignUserStage(pool, id, req.campaignId, req.userId, req.stage)
-  }
-  return claimCampaignStage(pool, id, req.campaignId, req.stage)
+  return createRepo(pool).pipelineRuns.claimStage(req)
 }
-
-async function claimWorldStage(
-  pool: Pool,
-  newId: string,
-  worldId: string,
-  stage: string,
-): Promise<ClaimResult> {
-  // Insert a new claim, or coerce a pending/failed row into 'running'. The
-  // ON CONFLICT WHERE clause filters by the EXISTING row's status — if the
-  // row is 'completed' or another worker has already flipped it to 'running'
-  // (and started_at is recent), the WHERE rejects and RETURNING is empty.
-  // The unique index keys on (COALESCE(world_id, campaign_id), stage,
-  // COALESCE(user_id, sentinel)); world-gen rows have user_id=NULL.
-  const insertResult = await pool.query<{ id: string }>(
-    `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
-     VALUES ($1, $2, $3, 'running', now(), NULL)
-     ON CONFLICT (
-       COALESCE(world_id, campaign_id),
-       stage,
-       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
-     )
-     DO UPDATE SET status = 'running', started_at = now(),
-                   error = NULL, completed_at = NULL
-       WHERE pipeline_runs.status IN ('pending', 'failed')
-     RETURNING id`,
-    [newId, worldId, stage],
-  )
-  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
-
-  // The conflict path didn't update — the existing row is either 'completed'
-  // or 'running'. If running and stuck (>5min), try to reset it atomically.
-  const existing = await pool.query<{ status: string; started_at: Date | null }>(
-    `SELECT status, started_at FROM pipeline_runs
-      WHERE world_id = $1 AND stage = $2 AND user_id IS NULL`,
-    [worldId, stage],
-  )
-  const row = existing.rows[0]
-  /* c8 ignore start — `row === undefined` and `row.status !== 'running'`
-   * defensive arms: the SELECT was triggered by an ON CONFLICT in the
-   * preceding INSERT, so the row is guaranteed to exist and to be in
-   * one of the three valid statuses. These arms protect against a
-   * race-condition delete between INSERT-conflict and SELECT. */
-  if (row === undefined) return 'lost-race'
-  if (row.status === 'completed') return 'completed'
-  if (row.status !== 'running') return 'lost-race'
-  /* c8 ignore stop */
-
-  const stuckReset = await pool.query<{ id: string }>(
-    `UPDATE pipeline_runs
-        SET status = 'running', started_at = now(), error = NULL
-      WHERE world_id = $1 AND stage = $2 AND user_id IS NULL
-        AND status = 'running'
-        AND started_at < now() - INTERVAL '5 minutes'
-      RETURNING id`,
-    [worldId, stage],
-  )
-  /* c8 ignore start — `stuckReset.rowCount` defensive arms + fall-
-   * through 'lost-race': tests stage rows so the stuck-reset query
-   * either claims (rowCount > 0) or the row is no longer matched. */
-  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
-  return 'lost-race'
-}
-/* c8 ignore stop */
-
-// myth-tuok T6: per-player claim path for character-creation (T11) and
-// future per-user pipeline stages. Keyed on campaign_id + user_id; mirrors
-// the world-level path's structure (insert/ON CONFLICT → existing-row
-// inspection → stuck-reset). The shared unique index on
-// COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel)
-// guarantees one row per (campaign, stage, user).
-async function claimCampaignUserStage(
-  pool: Pool,
-  newId: string,
-  campaignId: string,
-  userId: string,
-  stage: string,
-): Promise<ClaimResult> {
-  const insertResult = await pool.query<{ id: string }>(
-    `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
-     VALUES ($1, $2, $3, 'running', now(), $4)
-     ON CONFLICT (
-       COALESCE(world_id, campaign_id),
-       stage,
-       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
-     )
-     DO UPDATE SET status = 'running', started_at = now(),
-                   error = NULL, completed_at = NULL
-       WHERE pipeline_runs.status IN ('pending', 'failed')
-     RETURNING id`,
-    [newId, campaignId, stage, userId],
-  )
-  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
-
-  const existing = await pool.query<{ status: string; started_at: Date | null }>(
-    `SELECT status, started_at FROM pipeline_runs
-      WHERE campaign_id = $1 AND stage = $2 AND user_id = $3`,
-    [campaignId, stage, userId],
-  )
-  const row = existing.rows[0]
-  /* c8 ignore start — defensive arms mirror the world-level path: the
-   * SELECT was triggered by an ON CONFLICT in the preceding INSERT, so
-   * the row is guaranteed to exist and to be in one of the three valid
-   * statuses. */
-  if (row === undefined) return 'lost-race'
-  if (row.status === 'completed') return 'completed'
-  if (row.status !== 'running') return 'lost-race'
-  /* c8 ignore stop */
-
-  const stuckReset = await pool.query<{ id: string }>(
-    `UPDATE pipeline_runs
-        SET status = 'running', started_at = now(), error = NULL
-      WHERE campaign_id = $1 AND stage = $2 AND user_id = $3
-        AND status = 'running'
-        AND started_at < now() - INTERVAL '5 minutes'
-      RETURNING id`,
-    [campaignId, stage, userId],
-  )
-  /* c8 ignore start — mirrors world-level stuck-reset: tests stage rows
-   * so the query either claims (rowCount > 0) or the row is no longer
-   * matched. */
-  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
-  return 'lost-race'
-  /* c8 ignore stop */
-}
-
-// MYT-54 T6: campaign-scoped claim path for the character-integration
-// worker. Keyed on campaign_id with user_id IS NULL — one row per
-// (campaign, stage). Mirrors the per-player path's structure exactly
-// (insert/ON CONFLICT → existing-row inspection → stuck-reset); only
-// the keying differs (campaign_id, no user_id). The shared unique
-// index on COALESCE(world_id, campaign_id), stage, COALESCE(user_id,
-// sentinel) folds user_id=NULL to the sentinel, so the ON CONFLICT
-// projection matches the per-row uniqueness guarantee.
-async function claimCampaignStage(
-  pool: Pool,
-  newId: string,
-  campaignId: string,
-  stage: string,
-): Promise<ClaimResult> {
-  const insertResult = await pool.query<{ id: string }>(
-    `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
-     VALUES ($1, $2, $3, 'running', now(), NULL)
-     ON CONFLICT (
-       COALESCE(world_id, campaign_id),
-       stage,
-       COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
-     )
-     DO UPDATE SET status = 'running', started_at = now(),
-                   error = NULL, completed_at = NULL
-       WHERE pipeline_runs.status IN ('pending', 'failed')
-     RETURNING id`,
-    [newId, campaignId, stage],
-  )
-  if (insertResult.rowCount !== null && insertResult.rowCount > 0) return 'claimed'
-
-  const existing = await pool.query<{ status: string; started_at: Date | null }>(
-    `SELECT status, started_at FROM pipeline_runs
-      WHERE campaign_id = $1 AND stage = $2 AND user_id IS NULL`,
-    [campaignId, stage],
-  )
-  const row = existing.rows[0]
-  /* c8 ignore start — defensive arms mirror the world-level path: the
-   * SELECT was triggered by an ON CONFLICT in the preceding INSERT, so
-   * the row is guaranteed to exist and to be in one of the three valid
-   * statuses. */
-  if (row === undefined) return 'lost-race'
-  if (row.status === 'completed') return 'completed'
-  if (row.status !== 'running') return 'lost-race'
-  /* c8 ignore stop */
-
-  /* c8 ignore start — stuck-reset path mirrors per-player claim. Tests
-   * exercise the happy-path (existing running row, no stuck reset needed)
-   * — covering this branch requires manually aging started_at by 5+
-   * minutes, which the test harness does not do. The deterministic
-   * coverage applies to the (still-running, not-stuck) early-return path
-   * inside the c8-ignored guards above. */
-  const stuckReset = await pool.query<{ id: string }>(
-    `UPDATE pipeline_runs
-        SET status = 'running', started_at = now(), error = NULL
-      WHERE campaign_id = $1 AND stage = $2 AND user_id IS NULL
-        AND status = 'running'
-        AND started_at < now() - INTERVAL '5 minutes'
-      RETURNING id`,
-    [campaignId, stage],
-  )
-  if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
-  return 'lost-race'
-} /* c8 ignore stop */
 
 async function runStage(
   deps: WorldGenDeps,
@@ -609,20 +390,15 @@ async function runStage(
   job: Job<WorldGenJobPayload>,
   stage: WorldGenStage,
 ): Promise<StageDispatchResult> {
-  // No outer BEGIN/COMMIT — each stage handler owns its own persist
-  // transaction via `repo.transaction` (which acquires + releases its own
-  // connection per the foundation), so the LLM call runs OUTSIDE any
-  // transaction and the connection isn't "idle in a transaction" while the
-  // model streams (MYT-55).
-  //
-  // A pooled `client` is still acquired here for: (a) the not-yet-migrated
-  // coherence_pass stage (still takes a PoolClient), and (b) the pre-stage
-  // read loaders (loadStage3Inputs / loadStartingSituationInputs), which run
-  // pool reads OUTSIDE any transaction.
+  // No outer BEGIN/COMMIT, no acquired client — every stage handler owns its
+  // own persist transaction via `repo.transaction` (which acquires + releases
+  // its own connection), so the LLM call runs OUTSIDE any transaction
+  // (MYT-55). The pre-stage read loaders (loadStage3Inputs /
+  // loadStartingSituationInputs) and coherence_pass's reads run on the
+  // pool-bound repo / pool, also outside any transaction.
   const repo = createRepo(deps.pool)
-  const client = await deps.pool.connect()
   try {
-    const result = await dispatchStage(client, repo, ctx, stage, deps, campaignId, job)
+    const result = await dispatchStage(repo, ctx, stage, deps, campaignId, job)
     // Publish post-COMMIT events accumulated by the handler: `finalized`
     // entries for newly-persisted entities, `entity-updated` patches for
     // parent-cleared locations, per-patch events for coherence_pass, and
@@ -645,9 +421,6 @@ async function runStage(
     await publishEvent(deps, campaignId, { type: 'stage-reset', stage })
     /* c8 ignore stop */
     throw err
-    /* c8 ignore next — v8 finally-boundary quirk; both paths tested. */
-  } finally {
-    client.release()
   }
 }
 
@@ -660,7 +433,6 @@ function wrapLegacyStage(cost: StageCost): StageDispatchResult {
 }
 
 async function dispatchStage(
-  client: PoolClient,
   repo: Repo,
   ctx: CampaignContext,
   stage: WorldGenStage,
@@ -721,7 +493,7 @@ async function dispatchStage(
     })
   }
   if (stage === 'locations_and_npcs') {
-    const stage3Inputs = await loadStage3Inputs(client, ctx.world.id)
+    const stage3Inputs = await loadStage3Inputs(deps.pool, ctx.world.id)
     return runLocationsAndNpcsStage(repo, {
       world: {
         id: ctx.world.id,
@@ -790,7 +562,7 @@ async function dispatchStage(
     //
     // Populating the actual summaries removes the mixed signal AND saves the
     // wasteful first call that hallucinated names on every world.
-    const stage6Inputs = await loadStartingSituationInputs(client, ctx.world.id)
+    const stage6Inputs = await loadStartingSituationInputs(deps.pool, ctx.world.id)
     const cost = await runStartingSituationStage(repo, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
@@ -827,7 +599,7 @@ async function dispatchStage(
   // (migration 020 persists the column at insert time in stages 4/4b),
   // so myth-p4sz's edge-removed events now surface correctly without
   // needing this entity-side map to be populated.
-  return runCoherencePassStage(client, {
+  return runCoherencePassStage(repo, {
     logger: deps.logger,
     worldId: ctx.world.id,
     vocabularyRegistry: ctx.world.vocabularyRegistry,
@@ -870,19 +642,14 @@ export interface StartingSituationInputs {
   readonly factionsSummary: string
 }
 export async function loadStartingSituationInputs(
-  client: PoolClient,
+  client: ClientLike,
   worldId: string,
 ): Promise<StartingSituationInputs> {
-  const rows = await client.query<{ name: string; entity_type: string; prose: string | null }>(
-    `SELECT e.name, e.entity_type, pk.content AS prose
-       FROM entities e
-       LEFT JOIN prose_kernels pk ON pk.entity_id = e.id
-      WHERE e.world_id = $1 AND e.entity_type IN ('location', 'npc', 'faction')
-      ORDER BY e.entity_type, e.created_at`,
-    [worldId],
-  )
+  // SQL homed in repo.entities.listProseByTypeForStartingSituation (verbatim).
+  // The "- name: prose" / "(none)" render stays here.
+  const rows = await entitiesNs(client).listProseByTypeForStartingSituation(worldId)
   const render = (kind: string): string => {
-    const filtered = rows.rows.filter((r) => r.entity_type === kind)
+    const filtered = rows.filter((r) => r.entity_type === kind)
     if (filtered.length === 0) return '(none)'
     return filtered.map((r) => `- ${r.name}: ${r.prose ?? ''}`).join('\n')
   }
@@ -893,22 +660,14 @@ export async function loadStartingSituationInputs(
   }
 }
 
-async function loadStage3Inputs(client: PoolClient, worldId: string): Promise<Stage3Inputs> {
-  const overviewRow = await client.query<{ world_overview: string | null }>(
-    `SELECT world_overview FROM worlds WHERE id = $1`,
-    [worldId],
-  )
-  const worldOverview = overviewRow.rows[0]?.world_overview ?? ''
-  const entityRows = await client.query<{ name: string; entity_type: string; prose: string | null }>(
-    `SELECT e.name, e.entity_type, pk.content AS prose
-       FROM entities e
-       LEFT JOIN prose_kernels pk ON pk.entity_id = e.id
-      WHERE e.world_id = $1 AND e.entity_type IN ('location', 'faction')
-      ORDER BY e.created_at`,
-    [worldId],
-  )
-  const regions = entityRows.rows.filter((r) => r.entity_type === 'location')
-  const factions = entityRows.rows.filter((r) => r.entity_type === 'faction')
+async function loadStage3Inputs(client: ClientLike, worldId: string): Promise<Stage3Inputs> {
+  // SQL homed in repo.worlds.getWorldOverview + repo.entities.listProseByTypeForStage3
+  // (both verbatim). The summary render stays here.
+  const worldOverview = await worldsNs(client).getWorldOverview(worldId)
+  const entityRows: readonly EntityProseRow[] =
+    await entitiesNs(client).listProseByTypeForStage3(worldId)
+  const regions = entityRows.filter((r) => r.entity_type === 'location')
+  const factions = entityRows.filter((r) => r.entity_type === 'faction')
   const regionsSummary = regions
     .map((r) => `- ${r.name}: ${r.prose ?? ''}`)
     .join('\n')
@@ -919,46 +678,9 @@ async function loadStage3Inputs(client: PoolClient, worldId: string): Promise<St
 }
 /* c8 ignore stop */
 
-async function markStageCompleted(
-  pool: Pool,
-  worldId: string,
-  stage: WorldGenStage,
-  cost: StageCost,
-): Promise<void> {
-  await pool.query(
-    `UPDATE pipeline_runs
-        SET status = 'completed', completed_at = now(),
-            cost_usd = $3, input_tokens = $4, output_tokens = $5, error = NULL
-      WHERE world_id = $1 AND stage = $2 AND user_id IS NULL`,
-    [worldId, stage, cost.costUsd, cost.inputTokens, cost.outputTokens],
-  )
-}
-
-async function markStageFailed(
-  pool: Pool,
-  worldId: string,
-  stage: WorldGenStage,
-  errorJson: string,
-): Promise<void> {
-  await pool.query(
-    `UPDATE pipeline_runs
-        SET status = 'failed', completed_at = now(), error = $3
-      WHERE world_id = $1 AND stage = $2 AND user_id IS NULL`,
-    [worldId, stage, errorJson],
-  )
-}
-
-/* c8 ignore start — markWorldComplete fires only when ALL world-gen
- * stages complete; the current test fixtures halt at stage 2 with
- * `stage_not_implemented`. Reachable once MYT-52+ lands the missing
- * stages. */
-async function markWorldComplete(pool: Pool, worldId: string): Promise<void> {
-  await pool.query(`UPDATE worlds SET status = 'complete' WHERE id = $1`, [worldId])
-}
-/* c8 ignore stop */
-
 async function markStageCappedAndRefund(
   deps: WorldGenDeps,
+  repo: Repo,
   ctx: CampaignContext,
   stage: WorldGenStage,
   cumulativeUsd: number,
@@ -968,7 +690,12 @@ async function markStageCappedAndRefund(
     code: 'world_gen_cost_cap_exceeded',
     message: `cumulative ${cumulativeUsd.toFixed(6)} USD exceeds cap ${capUsd.toFixed(6)} USD`,
   })
-  await markStageFailed(deps.pool, ctx.world.id, stage, errorJson)
+  await repo.pipelineRuns.markStageFailed({
+    kind: 'world',
+    worldId: ctx.world.id,
+    stage,
+    error: errorJson,
+  })
   await issueCostCapRefund(deps.pool, {
     userId: ctx.world.createdBy,
     worldId: ctx.world.id,
@@ -985,6 +712,7 @@ async function markStageCappedAndRefund(
 
 async function handleStageError(
   deps: WorldGenDeps,
+  repo: Repo,
   ctx: CampaignContext,
   stage: WorldGenStage,
   err: unknown,
@@ -1016,7 +744,12 @@ async function handleStageError(
     },
     'stage failed with diagnostic detail',
   )
-  await markStageFailed(deps.pool, ctx.world.id, stage, errorJson)
+  await repo.pipelineRuns.markStageFailed({
+    kind: 'world',
+    worldId: ctx.world.id,
+    stage,
+    error: errorJson,
+  })
   await publishEvent(deps, ctx.campaign.id, {
     type: 'stage-failed',
     stage,
@@ -1035,7 +768,7 @@ async function handleStageError(
   //
   // Saved 2026-05-15 after campaign 019e2d99-…-af07ada8ea7a's concept_intake
   // failure left world.status='generating' indefinitely.
-  await deps.pool.query(`UPDATE worlds SET status = 'failed' WHERE id = $1`, [ctx.world.id])
+  await repo.worlds.markFailed(ctx.world.id)
   await publishEvent(deps, ctx.campaign.id, { type: 'phase', phase: 'world_gen_failed' })
   return terminal ? 'stop' : 'rethrow'
 }

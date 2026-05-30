@@ -8,22 +8,21 @@
 // before any client writes; the apply path is purely mechanical (no LLM
 // nondeterminism after the model returns).
 //
-// Unified dispatch contract (T13 wiring): the handler does NOT manage its
-// own transaction and does NOT publish events directly. The outer scope
-// (runStage in world-gen-processor.ts) owns the transaction lifecycle:
-//   - On unrecoverable error: this handler throws; outer ROLLBACKs.
-//   - On success: this handler returns finalized events in
-//     `finalizedEvents`; outer COMMITs and publishes those events.
+// Dispatch contract (data-layer unification): the handler receives the
+// pool-bound `repo`, NOT a mid-transaction PoolClient. It owns the standard
+// migrated-stage shape — cost-cap reads + inventory load + the generateObject
+// LLM call run OUTSIDE any transaction; the apply-patch writes run inside a
+// single `repo.transaction`. The handler does NOT publish events directly:
+//   - On unrecoverable error: this handler throws; repo.transaction ROLLBACKs
+//     and the throw propagates to the outer scope (which publishes stage-reset).
+//   - On success: this handler returns finalized events in `finalizedEvents`;
+//     the outer scope publishes them after the tx COMMITs.
 //
-// LLM-before-BEGIN trade-off (§D5 intent): the original design had the
-// LLM call complete BEFORE the txn opened so a slow model call wouldn't
-// hold a DB connection in a transaction. The unified contract opens the
-// txn in the outer scope before dispatching to this handler, so the LLM
-// call now runs UNDER the outer txn (Option B in the T12 refactor brief).
-// This is a deliberate trade against §D5's "LLM not under txn" intent in
-// exchange for a uniform per-stage contract. The controller may revisit
-// (Option A: per-stage flag that defers BEGIN for stage 7) if connection
-// hold time during stage 7 becomes a real operational concern.
+// §D5 "LLM never under a tx" intent (MYT-55): this restores it. The T12
+// unified-PoolClient contract had the LLM call run under an outer BEGIN; the
+// repo.transaction primitive makes that structurally impossible — the slow
+// generateObject call physically cannot sit inside the callback under the
+// compute-then-repo.transaction(writes) shape.
 //
 // Cap-fire exception (§D5): unlike stages 1-6 where cap-fire means refund
 // + world_gen_failed, cap-fire at stage 7 means the world is functionally
@@ -41,8 +40,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import { type Repo, type TxRepo, expectCommitted } from '../../../repo/index.js'
 import type pino from 'pino'
 import { generateObject } from '../../ai.js'
 import { SONNET } from '../../models.js'
@@ -51,17 +49,13 @@ import {
   type CoherenceOutput,
   type CoherencePatch,
 } from '../../schemas/coherence-output.js'
-import { proseKernels } from '../../../repo/prose-kernels.js'
-import { facts } from '../../../repo/facts.js'
-import { relationships } from '../../../repo/relationships.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
-import { readCostCap, sumCompletedStageCosts } from '../cost-cap.js'
+import { parseCostCapValue } from '../cost-cap.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 import { renderWorldDump, type WorldInventory } from '../world-dump.js'
-import { worldInventoryNs } from '../../../repo/world-inventory.js'
 import {
   buildResolutionContext,
   normalizeName,
@@ -173,14 +167,14 @@ function warnUnknown(
 /* c8 ignore stop */
 
 async function applyFixFact(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'fix_fact_by_name' }>,
   factId: string,
   entityId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
-  await facts.updateContentById(client, factId, { content: patch.new_content })
+  await tx.facts.updateContentById(factId, { content: patch.new_content })
   // fix_fact emits a `fact-updated` SSE event (myth-imxg §6). The FE
   // applies the patch to its prior fact row identified by factId.
   if (!shouldEmitEntityEvent(ctx, entityId)) return { events: [] }
@@ -213,14 +207,14 @@ async function applyFixFact(
 }
 
 async function applyFixProse(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'fix_prose_by_name' }>,
   entityId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
   // DB write happens unconditionally — coherence repairs every tier.
-  await proseKernels.updateByEntityId(client, entityId, { content: patch.new_prose })
+  await tx.proseKernels.updateByEntityId(entityId, { content: patch.new_prose })
   // myth-exac T16: SSE event only when target is known-tier (or bypass).
   if (!shouldEmitEntityEvent(ctx, entityId)) {
     return { events: [] }
@@ -242,17 +236,14 @@ async function applyFixProse(
 }
 
 async function applyRenameEntity(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'rename_entity_by_name' }>,
   entityId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
   // DB write happens unconditionally — coherence repairs every tier.
-  await client.query(`UPDATE entities SET name = $1 WHERE id = $2`, [
-    patch.new_name,
-    entityId,
-  ])
+  await tx.entities.updateName({ id: entityId, name: patch.new_name })
   // myth-exac T16: SSE event only when target is known-tier (or bypass).
   if (!shouldEmitEntityEvent(ctx, entityId)) {
     return { events: [] }
@@ -270,7 +261,7 @@ async function applyRenameEntity(
 }
 
 async function applyFixRelationship(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'fix_relationship_by_name' }>,
   relationshipId: string,
   newSourceEntityId: string | undefined,
@@ -297,19 +288,21 @@ async function applyFixRelationship(
   // they're undefined. The new row also carries its own synthKey
   // (`coherence_pass/edges/<newId>`) so subsequent passes that read the
   // relationships table see the same value the SSE consumer received.
-  await relationships.deleteById(client, relationshipId)
+  await tx.relationships.deleteById(relationshipId)
   const finalSourceId = newSourceEntityId ?? existing.sourceEntityId
   const finalTargetId = newTargetEntityId ?? existing.targetEntityId
   const newRelationshipType = patch.newType ?? existing.relationshipType
   const newDescription = patch.newDescription ?? existing.description
   const newId = uuidv7()
   const newSynthKey = `coherence_pass/edges/${newId}`
-  await client.query(
-    `INSERT INTO relationships
-       (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [newId, finalSourceId, finalTargetId, newRelationshipType, newDescription, newSynthKey],
-  )
+  await tx.relationships.insertOne({
+    id: newId,
+    sourceEntityId: finalSourceId,
+    targetEntityId: finalTargetId,
+    relationshipType: newRelationshipType,
+    description: newDescription,
+    synthKey: newSynthKey,
+  })
   // myth-exac T16: SSE event only when BOTH old endpoints AND new
   // endpoints are known-tier (or bypass on). Asymmetric cases (e.g. old
   // known, new not, or vice versa) suppress BOTH edge-removed and
@@ -344,7 +337,7 @@ async function applyFixRelationship(
 }
 
 async function applyDeleteRelationship(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'delete_relationship_by_name' }>,
   relationshipId: string,
   ctx: ApplyContext,
@@ -357,7 +350,7 @@ async function applyDeleteRelationship(
   }
   /* c8 ignore stop */
   // DB write happens unconditionally — coherence repairs every tier.
-  await relationships.deleteById(client, relationshipId)
+  await tx.relationships.deleteById(relationshipId)
   // myth-exac T16: SSE event only when BOTH endpoints are known-tier
   // (or bypass on).
   if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
@@ -380,7 +373,7 @@ async function applyDeleteRelationship(
 }
 
 async function applyAddRelationship(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'add_relationship_by_name' }>,
   sourceEntityId: string,
   targetEntityId: string,
@@ -416,12 +409,14 @@ async function applyAddRelationship(
 
   const newId = uuidv7()
   const newSynthKey = `coherence_pass/edges/${newId}`
-  await client.query(
-    `INSERT INTO relationships
-       (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [newId, sourceEntityId, targetEntityId, patch.relationship, patch.description, newSynthKey],
-  )
+  await tx.relationships.insertOne({
+    id: newId,
+    sourceEntityId,
+    targetEntityId,
+    relationshipType: patch.relationship,
+    description: patch.description,
+    synthKey: newSynthKey,
+  })
   if (!shouldEmitEdgeEvent(ctx, sourceEntityId, targetEntityId)) return { events: [] }
   return {
     events: [{
@@ -435,7 +430,7 @@ async function applyAddRelationship(
 }
 
 async function applyAddFact(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'add_fact_by_name' }>,
   entityId: string,
   ctx: ApplyContext,
@@ -465,11 +460,13 @@ async function applyAddFact(
   }
 
   const newId = uuidv7()
-  await client.query(
-    `INSERT INTO facts (id, entity_id, topic, content, access_level, narrative_status)
-     VALUES ($1, $2, $3, $4, $5, 'undelivered')`,
-    [newId, entityId, patch.topic, patch.content, patch.access_level],
-  )
+  await tx.facts.insertOne({
+    id: newId,
+    entityId,
+    topic: patch.topic,
+    content: patch.content,
+    accessLevel: patch.access_level,
+  })
   if (!shouldEmitEntityEvent(ctx, entityId)) return { events: [] }
   const entitySynthKey = synthKeyByEntityId[entityId]
   /* c8 ignore start — defense-in-depth: entity synthKey map is empty in
@@ -493,14 +490,14 @@ async function applyAddFact(
 }
 
 async function applyDeleteFact(
-  client: PoolClient,
+  tx: TxRepo,
   patch: Extract<CoherencePatch, { kind: 'delete_fact_by_name' }>,
   factId: string,
   entityId: string,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
 ): Promise<ApplyResult> {
-  await facts.deleteById(client, factId)
+  await tx.facts.deleteById(factId)
   if (!shouldEmitEntityEvent(ctx, entityId)) return { events: [] }
   const entitySynthKey = synthKeyByEntityId[entityId]
   /* c8 ignore start — defense-in-depth: entity synthKey map is empty in
@@ -521,7 +518,7 @@ async function applyDeleteFact(
 // whose name-based identifiers don't resolve against the per-pass
 // inventory snapshot are silently skipped + logged at WARN per §3.6.
 async function applyPatch(
-  client: PoolClient,
+  tx: TxRepo,
   patch: CoherencePatch,
   ctx: ApplyContext,
   synthKeyByEntityId: SynthKeyMap,
@@ -542,7 +539,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyFixFact(client, patch, res.factId, res.entityId, ctx, synthKeyByEntityId)
+      return applyFixFact(tx, patch, res.factId, res.entityId, ctx, synthKeyByEntityId)
     }
     case 'fix_prose_by_name': {
       const res = resolveProseTarget(ctx.resolver, patch)
@@ -558,7 +555,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyFixProse(client, patch, res.entityId, ctx, synthKeyByEntityId)
+      return applyFixProse(tx, patch, res.entityId, ctx, synthKeyByEntityId)
     }
     case 'rename_entity_by_name': {
       const res = resolveRename(ctx.resolver, patch)
@@ -574,7 +571,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyRenameEntity(client, patch, res.entityId, ctx, synthKeyByEntityId)
+      return applyRenameEntity(tx, patch, res.entityId, ctx, synthKeyByEntityId)
     }
     case 'fix_relationship_by_name': {
       const res = resolveFixRelationship(ctx.resolver, patch)
@@ -621,7 +618,7 @@ async function applyPatch(
         }
         newTargetEntityId = r.entityId
       }
-      return applyFixRelationship(client, patch, res.relationshipId, newSourceEntityId, newTargetEntityId, ctx)
+      return applyFixRelationship(tx, patch, res.relationshipId, newSourceEntityId, newTargetEntityId, ctx)
     }
     case 'delete_relationship_by_name': {
       const res = resolveDeleteRelationship(ctx.resolver, patch)
@@ -639,7 +636,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyDeleteRelationship(client, patch, res.relationshipId, ctx)
+      return applyDeleteRelationship(tx, patch, res.relationshipId, ctx)
     }
     case 'add_relationship_by_name': {
       const res = resolveAddRelationship(ctx.resolver, patch)
@@ -656,7 +653,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyAddRelationship(client, patch, res.sourceEntityId, res.targetEntityId, ctx)
+      return applyAddRelationship(tx, patch, res.sourceEntityId, res.targetEntityId, ctx)
     }
     case 'add_fact_by_name': {
       const res = resolveProseTarget(ctx.resolver, patch)
@@ -672,7 +669,7 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyAddFact(client, patch, res.entityId, ctx, synthKeyByEntityId)
+      return applyAddFact(tx, patch, res.entityId, ctx, synthKeyByEntityId)
     }
     case 'delete_fact_by_name': {
       const res = resolveFact(ctx.resolver, patch)
@@ -689,16 +686,17 @@ async function applyPatch(
         )
         return { events: [] }
       }
-      return applyDeleteFact(client, patch, res.factId, res.entityId, ctx, synthKeyByEntityId)
+      return applyDeleteFact(tx, patch, res.factId, res.entityId, ctx, synthKeyByEntityId)
     }
   }
 }
 
 /**
- * Run stage 7 — coherence pass.
- *
- * The caller (runStage in world-gen-processor.ts) opens a client and has
- * already issued BEGIN before invoking this handler. The handler:
+ * Run stage 7 — coherence pass. Standard migrated-stage shape (data-layer
+ * unification): reads + the generateObject LLM call run OUTSIDE any
+ * transaction on the pool-bound `repo`; the apply-patch writes run inside a
+ * single `repo.transaction`. This restores §D5's "LLM never under a tx"
+ * intent (MYT-55) that the T12 unified-PoolClient contract had traded away.
  *
  *   1. Pre-stage cap check: if cumulative cost from stages 1-6 already
  *      exceeds the cap, return `{ capExhausted: true, finalizedEvents:
@@ -706,20 +704,23 @@ async function applyPatch(
  *      outer scope marks worlds.status='complete' and publishes the
  *      phase event after COMMIT (§D5 exception).
  *
- *   2. Happy path: load full world state on the client → LLM call →
- *      validate output → apply each patch on the client (unknown IDs
- *      logged + skipped) → return the per-patch events in
+ *   2. Happy path: load full world state (pool read) → LLM call (outside tx)
+ *      → validate output → apply each patch inside repo.transaction (unknown
+ *      IDs logged + skipped) → return the per-patch events in
  *      `finalizedEvents` for the outer scope to publish post-COMMIT.
- *
- * Note: the LLM call runs UNDER the outer transaction (Option B in the
- * T12 refactor). See the file header for the §D5 trade-off rationale.
  */
 export async function runCoherencePassStage(
-  client: PoolClient,
+  repo: Repo,
   args: CoherencePassArgs,
 ): Promise<StageDispatchResult> {
-  const capUsd = await readCostCap(client)
-  const completedCostUsd = await sumCompletedStageCosts(client, args.worldId)
+  // Cap reads run on the pool surface OUTSIDE any tx. The cap-parse + sum SQL
+  // are homed in repo.settings.getValue + repo.pipelineRuns.sumCostForWorld
+  // (the cost-cap module's readCostCap/sumCompletedStageCosts bottom out here).
+  const capUsd = parseCostCapValue(
+    'world_gen_cost_cap_usd',
+    await repo.settings.getValue('world_gen_cost_cap_usd'),
+  )
+  const completedCostUsd = await repo.pipelineRuns.sumCostForWorld(args.worldId)
   if (completedCostUsd > capUsd) {
     // §D5 cap-fire exception: world is functionally complete; coherence
     // is best-effort polish. Skip the LLM, do NOT refund. The outer
@@ -743,7 +744,8 @@ export async function runCoherencePassStage(
     }
   }
 
-  const inventory = await worldInventoryNs(client).load(args.worldId)
+  // Inventory load is a pool read OUTSIDE the tx (composite multi-table read).
+  const inventory = await repo.worldInventory.load(args.worldId)
 
   const worldDump = renderWorldDump(inventory)
   const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', worldDump).replace(
@@ -792,24 +794,22 @@ export async function runCoherencePassStage(
     else otherPatches.push(p)
   }
 
-  // Apply every patch inside a short transaction (LLM is already done).
-  // Renames run LAST so prose/fact/relationship patches resolve against
-  // the pre-rename context. Unknown-name skips are logged + dropped
-  // without aborting. Each successful patch contributes 0..N event
-  // payloads that the outer scope publishes after the transaction COMMITs.
-  // See backend/src/db/transaction.ts on why BEGIN doesn't wrap the LLM.
-  const finalizedEvents: PipelineEvent[] = []
-  await withTransaction(client, async () => {
-    for (const patch of [...otherPatches, ...renamePatches]) {
-      const { events } = await applyPatch(
-        client,
-        patch,
-        applyCtx,
-        args.synthKeyByEntityId,
-      )
-      finalizedEvents.push(...events)
-    }
-  })
+  // Apply every patch inside a short repo.transaction (LLM is already done —
+  // MYT-55-safe). Renames run LAST so prose/fact/relationship patches resolve
+  // against the pre-rename context. Unknown-name skips are logged + dropped
+  // without aborting. Each successful patch contributes 0..N event payloads
+  // that the outer scope publishes after the transaction COMMITs. The callback
+  // throws (never returns the ROLLBACK sentinel), so expectCommitted narrows.
+  const finalizedEvents: PipelineEvent[] = expectCommitted(
+    await repo.transaction(async (tx) => {
+      const events: PipelineEvent[] = []
+      for (const patch of [...otherPatches, ...renamePatches]) {
+        const result = await applyPatch(tx, patch, applyCtx, args.synthKeyByEntityId)
+        events.push(...result.events)
+      }
+      return events
+    }),
+  )
 
   /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always
    * populates inputTokens/outputTokens on the final usage emission;
