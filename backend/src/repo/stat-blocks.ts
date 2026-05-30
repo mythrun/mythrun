@@ -69,35 +69,35 @@ function toStatBlockRow(r: StatBlockDbRow): StatBlockRow {
   }
 }
 
-// myth-exac: snapshot-view read path. Returns stat blocks for the given
-// IDs. Empty IDs list short-circuits to [] without a DB round-trip
-// (covers the snapshot's "no known-tier entities reference stat blocks"
-// case).
-async function listByIds(
-  client: ClientLike,
-  ids: readonly string[],
-): Promise<readonly StatBlockRow[]> {
-  if (ids.length === 0) return []
-  const result = await client.query<StatBlockDbRow>(
-    `SELECT id, name, cr, armor_class, hit_points, hit_dice, speed,
+/** Composable binder over a single ClientLike. Holds the canonical SQL so
+ *  `repo.statBlocks.X` and `tx.statBlocks.X` share one body. */
+export function statBlocksNs(c: ClientLike) {
+  return {
+    // myth-exac: snapshot-view read path. Returns stat blocks for the given
+    // IDs. Empty IDs list short-circuits to [] without a DB round-trip
+    // (covers the snapshot's "no known-tier entities reference stat blocks"
+    // case).
+    listByIds: async (ids: readonly string[]): Promise<readonly StatBlockRow[]> => {
+      if (ids.length === 0) return []
+      const result = await c.query<StatBlockDbRow>(
+        `SELECT id, name, cr, armor_class, hit_points, hit_dice, speed,
             str, dex, con, int, wis, cha, skills, senses, languages,
             created_at
        FROM stat_blocks
       WHERE id = ANY($1)
       ORDER BY id`,
-    [ids],
-  )
-  return result.rows.map(toStatBlockRow)
-}
-
-export const statBlocks = { listByIds } as const
-
-/** Composable binder over a single ClientLike. Delegates to the bare-named
- *  `statBlocks` object so `repo.statBlocks.X` and `tx.statBlocks.X` share one
- *  body. */
-export function statBlocksNs(c: ClientLike) {
-  return {
-    listByIds: (ids: readonly string[]): Promise<readonly StatBlockRow[]> =>
-      statBlocks.listByIds(c, ids),
+        [ids],
+      )
+      return result.rows.map(toStatBlockRow)
+    },
   }
 }
+
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `statBlocksNs` binder. Direct importers
+ *  (`statBlocks.listByIds(client, ids)`) keep working; new code goes through
+ *  `repo.statBlocks`. */
+export const statBlocks = {
+  listByIds: (client: ClientLike, ids: readonly string[]): Promise<readonly StatBlockRow[]> =>
+    statBlocksNs(client).listByIds(ids),
+} as const

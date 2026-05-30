@@ -61,7 +61,9 @@ export interface MarkCanceledPayload {
 }
 
 /**
- * Repository for the `user_subscriptions` table.
+ * Composable binder over a single ClientLike. Holds the canonical SQL for the
+ * `user_subscriptions` table so `repo.userSubscriptions.X` and
+ * `tx.userSubscriptions.X` share one body.
  *
  * Three methods, all required to run inside a caller-managed transaction:
  *   - `upsertFromStripe`: idempotent INSERT/UPDATE with strict-`>` stale-event filter.
@@ -69,24 +71,25 @@ export interface MarkCanceledPayload {
  *     `cancel_at_period_end` value (user-clicked vs Stripe-initiated distinction).
  *   - `getActiveForUser`: single-active-sub-per-user query for the balance + portal endpoints.
  */
-export const userSubscriptions = {
-  /**
-   * Upsert a subscription row from a Stripe event.
-   *
-   * Single statement: `INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE`
-   * with a `WHERE excluded.stripe_event_created_at > user_subscriptions.stripe_event_created_at`
-   * predicate (STRICT `>`, NOT `>=`, per spec round-3 fix §5.4.3 / Camembert I1 /
-   * Stilton + Roquefort M5 round 3). Stale or same-second events are rejected as
-   * a no-op UPDATE, which means the RETURNING clause yields zero rows in that
-   * case. We then run a follow-up SELECT to return the canonical row state — the
-   * existing row if rejected, the new row if applied. Caller (the webhook
-   * handler) treats both as success; the row is what matters.
-   *
-   * Atomic against concurrent deliveries: handles checkout.session.completed
-   * racing customer.subscription.created racing customer.subscription.updated.
-   */
-  async upsertFromStripe(tx: ClientLike, row: UpsertFromStripeRow): Promise<UserSubscriptionRow> {
-    await tx.query(
+export function userSubscriptionsNs(c: ClientLike) {
+  return {
+    /**
+     * Upsert a subscription row from a Stripe event.
+     *
+     * Single statement: `INSERT ... ON CONFLICT (stripe_subscription_id) DO UPDATE`
+     * with a `WHERE excluded.stripe_event_created_at > user_subscriptions.stripe_event_created_at`
+     * predicate (STRICT `>`, NOT `>=`, per spec round-3 fix §5.4.3 / Camembert I1 /
+     * Stilton + Roquefort M5 round 3). Stale or same-second events are rejected as
+     * a no-op UPDATE, which means the RETURNING clause yields zero rows in that
+     * case. We then run a follow-up SELECT to return the canonical row state — the
+     * existing row if rejected, the new row if applied. Caller (the webhook
+     * handler) treats both as success; the row is what matters.
+     *
+     * Atomic against concurrent deliveries: handles checkout.session.completed
+     * racing customer.subscription.created racing customer.subscription.updated.
+     */
+    upsertFromStripe: async (row: UpsertFromStripeRow): Promise<UserSubscriptionRow> => {
+      await c.query(
       `INSERT INTO user_subscriptions (
          id, user_id, stripe_subscription_id, tier_lookup_key, status,
          current_period_start, current_period_end,
@@ -132,7 +135,7 @@ export const userSubscriptions = {
         row.stripe_event_created_at,
       ],
     )
-    const got = await tx.query<UserSubscriptionRow>(
+    const got = await c.query<UserSubscriptionRow>(
       `SELECT id, user_id, stripe_subscription_id, tier_lookup_key, status,
               current_period_start, current_period_end,
               cancel_at_period_end, cancel_at, cancellation_details,
@@ -154,67 +157,66 @@ export const userSubscriptions = {
     }
     /* c8 ignore stop */
     return found
-  },
+    },
 
-  /**
-   * Mark a subscription canceled.
-   *
-   * Behavior contract (spec §7.2 + round-2 Kraken C3 / Stilton M4 round 3):
-   *   - Sets `status='canceled'`.
-   *   - PRESERVES `cancel_at_period_end` from the payload — `true` for the
-   *     user-clicked-Cancel-At-Period-End path, `false` for Stripe-initiated
-   *     dunning cancellation. Collapsing this to a single value would erase
-   *     the distinction needed for analytics + audit feed.
-   *   - Converts `cancel_at` (Stripe Unix seconds, `number | null`) to TIMESTAMPTZ
-   *     via `to_timestamp($N)`. Per round-5 type-correctness fix: spec prose said
-   *     `string | null`, Stripe payload is `number | null`; we use the actual type.
-   *   - Writes `cancellation_details` as JSONB.
-   *
-   * Returns the number of rows updated (0 or 1). Zero means no row matched
-   * the `stripe_subscription_id` — Stripe-side test event, deleted user, or
-   * deletion-before-creation race. Logging + response shaping is the caller's
-   * responsibility; the repo just surfaces the count. Per spec §5.4.4 line 667.
-   */
-  async markCanceled(
-    tx: ClientLike,
-    stripe_subscription_id: string,
-    payload: MarkCanceledPayload,
-  ): Promise<number> {
-    const result = await tx.query(
-      `UPDATE user_subscriptions
+    /**
+     * Mark a subscription canceled.
+     *
+     * Behavior contract (spec §7.2 + round-2 Kraken C3 / Stilton M4 round 3):
+     *   - Sets `status='canceled'`.
+     *   - PRESERVES `cancel_at_period_end` from the payload — `true` for the
+     *     user-clicked-Cancel-At-Period-End path, `false` for Stripe-initiated
+     *     dunning cancellation. Collapsing this to a single value would erase
+     *     the distinction needed for analytics + audit feed.
+     *   - Converts `cancel_at` (Stripe Unix seconds, `number | null`) to TIMESTAMPTZ
+     *     via `to_timestamp($N)`. Per round-5 type-correctness fix: spec prose said
+     *     `string | null`, Stripe payload is `number | null`; we use the actual type.
+     *   - Writes `cancellation_details` as JSONB.
+     *
+     * Returns the number of rows updated (0 or 1). Zero means no row matched
+     * the `stripe_subscription_id` — Stripe-side test event, deleted user, or
+     * deletion-before-creation race. Logging + response shaping is the caller's
+     * responsibility; the repo just surfaces the count. Per spec §5.4.4 line 667.
+     */
+    markCanceled: async (
+      stripe_subscription_id: string,
+      payload: MarkCanceledPayload,
+    ): Promise<number> => {
+      const result = await c.query(
+        `UPDATE user_subscriptions
           SET status               = 'canceled',
               cancel_at_period_end = $2,
               cancel_at            = CASE WHEN $3::BIGINT IS NULL THEN NULL ELSE to_timestamp($3::BIGINT)::TIMESTAMPTZ END,
               cancellation_details = $4::JSONB,
               updated_at           = now()
         WHERE stripe_subscription_id = $1`,
-      [
-        stripe_subscription_id,
-        payload.cancel_at_period_end,
-        payload.cancel_at,
-        /* c8 ignore next — same as upsert path: `JSON.stringify` arm
-         * isn't reached for the deleted-without-cancellation-details
-         * fixture used by the integration test. */
-        payload.cancellation_details === null ? null : JSON.stringify(payload.cancellation_details),
-      ],
-    )
-    /* c8 ignore start — `?? 0` fallback: pg's QueryResult always sets
-     * rowCount on UPDATE. Kept for TS. */
-    return result.rowCount ?? 0
-    /* c8 ignore stop */
-  },
+        [
+          stripe_subscription_id,
+          payload.cancel_at_period_end,
+          payload.cancel_at,
+          /* c8 ignore next — same as upsert path: `JSON.stringify` arm
+           * isn't reached for the deleted-without-cancellation-details
+           * fixture used by the integration test. */
+          payload.cancellation_details === null ? null : JSON.stringify(payload.cancellation_details),
+        ],
+      )
+      /* c8 ignore start — `?? 0` fallback: pg's QueryResult always sets
+       * rowCount on UPDATE. Kept for TS. */
+      return result.rowCount ?? 0
+      /* c8 ignore stop */
+    },
 
-  /**
-   * Return the user's single active subscription, or `null` if there is none.
-   *
-   * "Active" excludes `canceled`, `incomplete_expired`, and `paused` per spec
-   * §7.2. Mythrun's Customer Portal allowlist enforces one-active-sub-per-user
-   * upstream, but `LIMIT 1` is belt-and-suspenders. Used by the §9 balance +
-   * subscription endpoints.
-   */
-  async getActiveForUser(tx: ClientLike, user_id: string): Promise<UserSubscriptionRow | null> {
-    const result = await tx.query<UserSubscriptionRow>(
-      `SELECT id, user_id, stripe_subscription_id, tier_lookup_key, status,
+    /**
+     * Return the user's single active subscription, or `null` if there is none.
+     *
+     * "Active" excludes `canceled`, `incomplete_expired`, and `paused` per spec
+     * §7.2. Mythrun's Customer Portal allowlist enforces one-active-sub-per-user
+     * upstream, but `LIMIT 1` is belt-and-suspenders. Used by the §9 balance +
+     * subscription endpoints.
+     */
+    getActiveForUser: async (user_id: string): Promise<UserSubscriptionRow | null> => {
+      const result = await c.query<UserSubscriptionRow>(
+        `SELECT id, user_id, stripe_subscription_id, tier_lookup_key, status,
               current_period_start, current_period_end,
               cancel_at_period_end, cancel_at, cancellation_details,
               stripe_event_created_at, created_at, updated_at
@@ -223,24 +225,25 @@ export const userSubscriptions = {
            AND status NOT IN ('canceled', 'incomplete_expired', 'paused')
          ORDER BY created_at DESC
          LIMIT 1`,
-      [user_id],
-    )
-    return result.rows[0] ?? null
-  },
+        [user_id],
+      )
+      return result.rows[0] ?? null
+    },
+  }
 }
 
-/** Composable binder over a single ClientLike. Delegates to the bare-named
- *  `userSubscriptions` object so `repo.userSubscriptions.X` and
- *  `tx.userSubscriptions.X` share one body. */
-export function userSubscriptionsNs(c: ClientLike) {
-  return {
-    upsertFromStripe: (row: UpsertFromStripeRow): Promise<UserSubscriptionRow> =>
-      userSubscriptions.upsertFromStripe(c, row),
-    markCanceled: (
-      stripe_subscription_id: string,
-      payload: MarkCanceledPayload,
-    ): Promise<number> => userSubscriptions.markCanceled(c, stripe_subscription_id, payload),
-    getActiveForUser: (user_id: string): Promise<UserSubscriptionRow | null> =>
-      userSubscriptions.getActiveForUser(c, user_id),
-  }
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `userSubscriptionsNs` binder. Direct importers
+ *  (`userSubscriptions.upsertFromStripe(tx, row)`) keep working; new code goes
+ *  through `repo.userSubscriptions`. */
+export const userSubscriptions = {
+  upsertFromStripe: (tx: ClientLike, row: UpsertFromStripeRow): Promise<UserSubscriptionRow> =>
+    userSubscriptionsNs(tx).upsertFromStripe(row),
+  markCanceled: (
+    tx: ClientLike,
+    stripe_subscription_id: string,
+    payload: MarkCanceledPayload,
+  ): Promise<number> => userSubscriptionsNs(tx).markCanceled(stripe_subscription_id, payload),
+  getActiveForUser: (tx: ClientLike, user_id: string): Promise<UserSubscriptionRow | null> =>
+    userSubscriptionsNs(tx).getActiveForUser(user_id),
 }

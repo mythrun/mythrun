@@ -60,70 +60,68 @@ function toEntity(row: EntityRow): Entity {
   }
 }
 
-async function insert(client: ClientLike, input: InsertEntityInput): Promise<void> {
-  await client.query(
-    `INSERT INTO entities (id, world_id, entity_type, name, access_level, stat_block_id, created_in)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [
-      input.id,
-      input.worldId,
-      input.entityType,
-      input.name,
-      input.accessLevel,
-      input.statBlockId ?? null,
-      input.createdIn,
-    ],
-  )
-}
-
-async function findByWorldAndName(
-  client: ClientLike,
-  worldId: string,
-  name: string,
-): Promise<Entity | null> {
-  const result = await client.query<EntityRow>(
-    `SELECT id, world_id, entity_type, name, access_level
-       FROM entities WHERE world_id = $1 AND name = $2 LIMIT 1`,
-    [worldId, name],
-  )
-  return result.rows[0] ? toEntity(result.rows[0]) : null
-}
-
-async function listByWorld(
-  client: ClientLike,
-  worldId: string,
-  opts?: { readonly accessLevels?: readonly AccessLevel[] },
-): Promise<Entity[]> {
-  const accessLevels = opts?.accessLevels
-  if (accessLevels) {
-    const result = await client.query<EntityRow>(
-      `SELECT id, world_id, entity_type, name, access_level
-         FROM entities WHERE world_id = $1 AND access_level = ANY($2)`,
-      [worldId, accessLevels],
-    )
-    return result.rows.map(toEntity)
-  }
-  const result = await client.query<EntityRow>(
-    `SELECT id, world_id, entity_type, name, access_level
-       FROM entities WHERE world_id = $1`,
-    [worldId],
-  )
-  return result.rows.map(toEntity)
-}
-
-export const entities = { insert, findByWorldAndName, listByWorld } as const
-
-/** Composable binder: captures `c` (pool OR in-flight tx client) and delegates
- *  to the bare-named `entities` object so `repo.entities.X` and `tx.entities.X`
- *  share one implementation. Mirrors the worlds.ts `worldsNs` pattern. */
+/** Composable binder: captures `c` (pool OR in-flight tx client) and holds the
+ *  canonical SQL so `repo.entities.X` and `tx.entities.X` share one
+ *  implementation. Mirrors the worlds.ts `worldsNs` pattern. */
 export function entitiesNs(c: ClientLike) {
   return {
-    insert: (input: InsertEntityInput): Promise<void> => entities.insert(c, input),
-    findByWorldAndName: (worldId: string, name: string): Promise<Entity | null> =>
-      entities.findByWorldAndName(c, worldId, name),
-    listByWorld: (
+    insert: async (input: InsertEntityInput): Promise<void> => {
+      await c.query(
+        `INSERT INTO entities (id, world_id, entity_type, name, access_level, stat_block_id, created_in)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          input.id,
+          input.worldId,
+          input.entityType,
+          input.name,
+          input.accessLevel,
+          input.statBlockId ?? null,
+          input.createdIn,
+        ],
+      )
+    },
+    findByWorldAndName: async (worldId: string, name: string): Promise<Entity | null> => {
+      const result = await c.query<EntityRow>(
+        `SELECT id, world_id, entity_type, name, access_level
+       FROM entities WHERE world_id = $1 AND name = $2 LIMIT 1`,
+        [worldId, name],
+      )
+      return result.rows[0] ? toEntity(result.rows[0]) : null
+    },
+    listByWorld: async (
       worldId: string,
       opts?: { readonly accessLevels?: readonly AccessLevel[] },
-    ): Promise<Entity[]> => entities.listByWorld(c, worldId, opts),
+    ): Promise<Entity[]> => {
+      const accessLevels = opts?.accessLevels
+      if (accessLevels) {
+        const result = await c.query<EntityRow>(
+          `SELECT id, world_id, entity_type, name, access_level
+         FROM entities WHERE world_id = $1 AND access_level = ANY($2)`,
+          [worldId, accessLevels],
+        )
+        return result.rows.map(toEntity)
+      }
+      const result = await c.query<EntityRow>(
+        `SELECT id, world_id, entity_type, name, access_level
+       FROM entities WHERE world_id = $1`,
+        [worldId],
+      )
+      return result.rows.map(toEntity)
+    },
   }
 }
+
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `entitiesNs` binder. Direct importers (`entities.insert(client,
+ *  input)`) keep working; new code goes through `repo.entities`. */
+export const entities = {
+  insert: (client: ClientLike, input: InsertEntityInput): Promise<void> =>
+    entitiesNs(client).insert(input),
+  findByWorldAndName: (client: ClientLike, worldId: string, name: string): Promise<Entity | null> =>
+    entitiesNs(client).findByWorldAndName(worldId, name),
+  listByWorld: (
+    client: ClientLike,
+    worldId: string,
+    opts?: { readonly accessLevels?: readonly AccessLevel[] },
+  ): Promise<Entity[]> => entitiesNs(client).listByWorld(worldId, opts),
+} as const

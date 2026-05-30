@@ -40,55 +40,55 @@ function toProseKernelRow(r: ProseKernelDbRow): ProseKernelRow {
   }
 }
 
-async function insert(client: ClientLike, input: InsertProseKernelInput): Promise<void> {
-  await client.query(
-    `INSERT INTO prose_kernels (id, entity_id, content) VALUES ($1, $2, $3)`,
-    [uuidv7(), input.entityId, input.content],
-  )
-}
-
-async function updateByEntityId(
-  client: ClientLike,
-  entityId: string,
-  patch: { content: string },
-): Promise<number> {
-  const result = await client.query(
-    `UPDATE prose_kernels SET content = $1, updated_at = now() WHERE entity_id = $2`,
-    [patch.content, entityId],
-  )
-  /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
-  return result.rowCount ?? 0
-}
-
-// myth-exac T06: snapshot-view primary read path. Returns prose kernels
-// for the given entity IDs. Empty input short-circuits to [] (matches
-// facts.listByEntities).
-async function listByEntities(
-  client: ClientLike,
-  entityIds: readonly string[],
-): Promise<readonly ProseKernelRow[]> {
-  if (entityIds.length === 0) return []
-  const result = await client.query<ProseKernelDbRow>(
-    `SELECT id, entity_id, content, created_at, updated_at
+/** Composable binder over a single ClientLike. Holds the canonical SQL so
+ *  `repo.proseKernels.X` and `tx.proseKernels.X` share one body. */
+export function proseKernelsNs(c: ClientLike) {
+  return {
+    insert: async (input: InsertProseKernelInput): Promise<void> => {
+      await c.query(
+        `INSERT INTO prose_kernels (id, entity_id, content) VALUES ($1, $2, $3)`,
+        [uuidv7(), input.entityId, input.content],
+      )
+    },
+    updateByEntityId: async (entityId: string, patch: { content: string }): Promise<number> => {
+      const result = await c.query(
+        `UPDATE prose_kernels SET content = $1, updated_at = now() WHERE entity_id = $2`,
+        [patch.content, entityId],
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return result.rowCount ?? 0
+    },
+    // myth-exac T06: snapshot-view primary read path. Returns prose kernels
+    // for the given entity IDs. Empty input short-circuits to [] (matches
+    // facts.listByEntities).
+    listByEntities: async (entityIds: readonly string[]): Promise<readonly ProseKernelRow[]> => {
+      if (entityIds.length === 0) return []
+      const result = await c.query<ProseKernelDbRow>(
+        `SELECT id, entity_id, content, created_at, updated_at
        FROM prose_kernels
       WHERE entity_id = ANY($1)
       ORDER BY entity_id`,
-    [entityIds],
-  )
-  return result.rows.map(toProseKernelRow)
-}
-
-export const proseKernels = { insert, updateByEntityId, listByEntities } as const
-
-/** Composable binder over a single ClientLike. Delegates to the bare-named
- *  `proseKernels` object so `repo.proseKernels.X` and `tx.proseKernels.X`
- *  share one body. */
-export function proseKernelsNs(c: ClientLike) {
-  return {
-    insert: (input: InsertProseKernelInput): Promise<void> => proseKernels.insert(c, input),
-    updateByEntityId: (entityId: string, patch: { content: string }): Promise<number> =>
-      proseKernels.updateByEntityId(c, entityId, patch),
-    listByEntities: (entityIds: readonly string[]): Promise<readonly ProseKernelRow[]> =>
-      proseKernels.listByEntities(c, entityIds),
+        [entityIds],
+      )
+      return result.rows.map(toProseKernelRow)
+    },
   }
 }
+
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `proseKernelsNs` binder. Direct importers
+ *  (`proseKernels.insert(client, input)`) keep working; new code goes through
+ *  `repo.proseKernels`. */
+export const proseKernels = {
+  insert: (client: ClientLike, input: InsertProseKernelInput): Promise<void> =>
+    proseKernelsNs(client).insert(input),
+  updateByEntityId: (
+    client: ClientLike,
+    entityId: string,
+    patch: { content: string },
+  ): Promise<number> => proseKernelsNs(client).updateByEntityId(entityId, patch),
+  listByEntities: (
+    client: ClientLike,
+    entityIds: readonly string[],
+  ): Promise<readonly ProseKernelRow[]> => proseKernelsNs(client).listByEntities(entityIds),
+} as const

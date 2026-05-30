@@ -39,45 +39,6 @@ export interface FactRow {
   readonly updatedAt: Date
 }
 
-async function insertMany(client: ClientLike, rows: readonly InsertFactInput[]): Promise<void> {
-  if (rows.length === 0) return
-
-  // Build parameterized multi-row INSERT. Each row contributes 5
-  // placeholders ($1..$5, $6..$10, etc.). narrative_status is baked in
-  // as the constant 'undelivered'; source defaults via the column.
-  const values: string[] = []
-  const params: unknown[] = []
-  let p = 1
-  for (const row of rows) {
-    values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, 'undelivered')`)
-    params.push(uuidv7(), row.entityId, row.topic, row.accessLevel, row.content)
-  }
-  await client.query(
-    `INSERT INTO facts (id, entity_id, topic, access_level, content, narrative_status)
-     VALUES ${values.join(', ')}`,
-    params,
-  )
-}
-
-async function updateContentById(
-  client: ClientLike,
-  factId: string,
-  patch: { content: string },
-): Promise<number> {
-  const result = await client.query(
-    `UPDATE facts SET content = $1, updated_at = now() WHERE id = $2`,
-    [patch.content, factId],
-  )
-  /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
-  return result.rowCount ?? 0
-}
-
-async function deleteById(client: ClientLike, id: string): Promise<number> {
-  const result = await client.query(`DELETE FROM facts WHERE id = $1`, [id])
-  /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on DELETE. */
-  return result.rowCount ?? 0
-}
-
 interface FactDbRow {
   readonly id: string
   readonly entity_id: string
@@ -104,40 +65,80 @@ function toFactRow(r: FactDbRow): FactRow {
   }
 }
 
-// myth-exac: snapshot-view primary read path. Returns facts for the
-// given entity IDs filtered by access tier. Empty entity ID list
-// short-circuits to [] without a round-trip (covers the snapshot's
-// "world has no entities yet" case).
-async function listByEntities(
-  client: ClientLike,
-  entityIds: readonly string[],
-  opts: { readonly accessLevels: readonly AccessLevel[] },
-): Promise<readonly FactRow[]> {
-  if (entityIds.length === 0) return []
-  const result = await client.query<FactDbRow>(
-    `SELECT id, entity_id, topic, access_level, narrative_status, content,
+/** Composable binder over a single ClientLike. Holds the canonical SQL so
+ *  `repo.facts.X` and `tx.facts.X` share one body. */
+export function factsNs(c: ClientLike) {
+  return {
+    insertMany: async (rows: readonly InsertFactInput[]): Promise<void> => {
+      if (rows.length === 0) return
+
+      // Build parameterized multi-row INSERT. Each row contributes 5
+      // placeholders ($1..$5, $6..$10, etc.). narrative_status is baked in
+      // as the constant 'undelivered'; source defaults via the column.
+      const values: string[] = []
+      const params: unknown[] = []
+      let p = 1
+      for (const row of rows) {
+        values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, 'undelivered')`)
+        params.push(uuidv7(), row.entityId, row.topic, row.accessLevel, row.content)
+      }
+      await c.query(
+        `INSERT INTO facts (id, entity_id, topic, access_level, content, narrative_status)
+     VALUES ${values.join(', ')}`,
+        params,
+      )
+    },
+    updateContentById: async (factId: string, patch: { content: string }): Promise<number> => {
+      const result = await c.query(
+        `UPDATE facts SET content = $1, updated_at = now() WHERE id = $2`,
+        [patch.content, factId],
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return result.rowCount ?? 0
+    },
+    deleteById: async (id: string): Promise<number> => {
+      const result = await c.query(`DELETE FROM facts WHERE id = $1`, [id])
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on DELETE. */
+      return result.rowCount ?? 0
+    },
+    // myth-exac: snapshot-view primary read path. Returns facts for the
+    // given entity IDs filtered by access tier. Empty entity ID list
+    // short-circuits to [] without a round-trip (covers the snapshot's
+    // "world has no entities yet" case).
+    listByEntities: async (
+      entityIds: readonly string[],
+      opts: { readonly accessLevels: readonly AccessLevel[] },
+    ): Promise<readonly FactRow[]> => {
+      if (entityIds.length === 0) return []
+      const result = await c.query<FactDbRow>(
+        `SELECT id, entity_id, topic, access_level, narrative_status, content,
             source, created_at, updated_at
        FROM facts
       WHERE entity_id = ANY($1) AND access_level = ANY($2)
       ORDER BY entity_id, id`,
-    [entityIds, opts.accessLevels],
-  )
-  return result.rows.map(toFactRow)
-}
-
-export const facts = { insertMany, updateContentById, deleteById, listByEntities } as const
-
-/** Composable binder over a single ClientLike. Delegates to the bare-named
- *  `facts` object so `repo.facts.X` and `tx.facts.X` share one body. */
-export function factsNs(c: ClientLike) {
-  return {
-    insertMany: (rows: readonly InsertFactInput[]): Promise<void> => facts.insertMany(c, rows),
-    updateContentById: (factId: string, patch: { content: string }): Promise<number> =>
-      facts.updateContentById(c, factId, patch),
-    deleteById: (id: string): Promise<number> => facts.deleteById(c, id),
-    listByEntities: (
-      entityIds: readonly string[],
-      opts: { readonly accessLevels: readonly AccessLevel[] },
-    ): Promise<readonly FactRow[]> => facts.listByEntities(c, entityIds, opts),
+        [entityIds, opts.accessLevels],
+      )
+      return result.rows.map(toFactRow)
+    },
   }
 }
+
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `factsNs` binder. Direct importers (`facts.insertMany(client,
+ *  rows)`) keep working; new code goes through `repo.facts`. */
+export const facts = {
+  insertMany: (client: ClientLike, rows: readonly InsertFactInput[]): Promise<void> =>
+    factsNs(client).insertMany(rows),
+  updateContentById: (
+    client: ClientLike,
+    factId: string,
+    patch: { content: string },
+  ): Promise<number> => factsNs(client).updateContentById(factId, patch),
+  deleteById: (client: ClientLike, id: string): Promise<number> =>
+    factsNs(client).deleteById(id),
+  listByEntities: (
+    client: ClientLike,
+    entityIds: readonly string[],
+    opts: { readonly accessLevels: readonly AccessLevel[] },
+  ): Promise<readonly FactRow[]> => factsNs(client).listByEntities(entityIds, opts),
+} as const

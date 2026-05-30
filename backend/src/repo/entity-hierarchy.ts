@@ -32,41 +32,41 @@ function toEntityHierarchyRow(r: EntityHierarchyDbRow): EntityHierarchyRow {
   }
 }
 
-async function insert(client: ClientLike, input: InsertHierarchyInput): Promise<void> {
-  await client.query(
-    `INSERT INTO entity_hierarchy (id, parent_entity_id, child_entity_id) VALUES ($1, $2, $3)`,
-    [uuidv7(), input.parentEntityId, input.childEntityId],
-  )
-}
-
-// myth-exac T06: snapshot-view primary read path. Hierarchy is scoped
-// to a world via JOIN to entities (the table has no world_id column).
-// Filters on the parent's world; child must be in the same world by
-// the design's invariants, so the parent-side filter is sufficient.
-async function listForWorld(
-  client: ClientLike,
-  worldId: string,
-): Promise<readonly EntityHierarchyRow[]> {
-  const result = await client.query<EntityHierarchyDbRow>(
-    `SELECT eh.id, eh.parent_entity_id, eh.child_entity_id
+/** Composable binder over a single ClientLike. Holds the canonical SQL so
+ *  `repo.entityHierarchy.X` and `tx.entityHierarchy.X` share one body. */
+export function entityHierarchyNs(c: ClientLike) {
+  return {
+    insert: async (input: InsertHierarchyInput): Promise<void> => {
+      await c.query(
+        `INSERT INTO entity_hierarchy (id, parent_entity_id, child_entity_id) VALUES ($1, $2, $3)`,
+        [uuidv7(), input.parentEntityId, input.childEntityId],
+      )
+    },
+    // myth-exac T06: snapshot-view primary read path. Hierarchy is scoped
+    // to a world via JOIN to entities (the table has no world_id column).
+    // Filters on the parent's world; child must be in the same world by
+    // the design's invariants, so the parent-side filter is sufficient.
+    listForWorld: async (worldId: string): Promise<readonly EntityHierarchyRow[]> => {
+      const result = await c.query<EntityHierarchyDbRow>(
+        `SELECT eh.id, eh.parent_entity_id, eh.child_entity_id
        FROM entity_hierarchy eh
        JOIN entities pe ON pe.id = eh.parent_entity_id
       WHERE pe.world_id = $1
       ORDER BY eh.id`,
-    [worldId],
-  )
-  return result.rows.map(toEntityHierarchyRow)
-}
-
-export const entityHierarchy = { insert, listForWorld } as const
-
-/** Composable binder over a single ClientLike. Delegates to the bare-named
- *  `entityHierarchy` object so `repo.entityHierarchy.X` and
- *  `tx.entityHierarchy.X` share one body. */
-export function entityHierarchyNs(c: ClientLike) {
-  return {
-    insert: (input: InsertHierarchyInput): Promise<void> => entityHierarchy.insert(c, input),
-    listForWorld: (worldId: string): Promise<readonly EntityHierarchyRow[]> =>
-      entityHierarchy.listForWorld(c, worldId),
+        [worldId],
+      )
+      return result.rows.map(toEntityHierarchyRow)
+    },
   }
 }
+
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `entityHierarchyNs` binder. Direct importers
+ *  (`entityHierarchy.insert(client, input)`) keep working; new code goes
+ *  through `repo.entityHierarchy`. */
+export const entityHierarchy = {
+  insert: (client: ClientLike, input: InsertHierarchyInput): Promise<void> =>
+    entityHierarchyNs(client).insert(input),
+  listForWorld: (client: ClientLike, worldId: string): Promise<readonly EntityHierarchyRow[]> =>
+    entityHierarchyNs(client).listForWorld(worldId),
+} as const

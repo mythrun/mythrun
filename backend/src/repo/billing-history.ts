@@ -212,168 +212,178 @@ async function appendDoUpdateCoalesce(
  * compose append + credits.grantInTx + stripe_events.markCommitted inside a
  * single BEGIN/COMMIT.
  */
-export const billingHistory = {
-  /**
-   * Insert a billing_history row.
-   *
-   * Three modes via `opts.onConflict`:
-   *   - default: plain INSERT, throws 23505 on conflict.
-   *   - 'do_nothing': swallows conflict, returns canonical row via follow-up SELECT.
-   *   - 'do_update_coalesce': race-symmetric upsert (first non-null wins on
-   *     expires_at, lookup_key, stripe_payment_intent_id).
-   *
-   * RETURNING * is used in the default and do_update_coalesce paths since
-   * those always yield exactly one row. The do_nothing path requires a
-   * follow-up SELECT because ON CONFLICT DO NOTHING returns NO rows on
-   * conflict (silently skipped insert).
-   */
-  async append(
-    tx: ClientLike,
-    row: NewBillingHistoryRow,
-    opts: AppendOpts = {},
-  ): Promise<BillingHistoryRow> {
-    if (opts.onConflict === 'do_nothing') return appendDoNothing(tx, row)
-    if (opts.onConflict === 'do_update_coalesce') return appendDoUpdateCoalesce(tx, row)
-    return appendPlain(tx, row)
-  },
+/**
+ * Composable binder over a single ClientLike. Holds the canonical SQL for the
+ * `billing_history` table so `repo.billingHistory.X` and `tx.billingHistory.X`
+ * share one body. The append-conflict helpers (`appendPlain`,
+ * `appendDoNothing`, `appendDoUpdateCoalesce`) remain module-private and are
+ * dispatched from `append` based on `opts.onConflict`.
+ */
+export function billingHistoryNs(c: ClientLike) {
+  return {
+    /**
+     * Insert a billing_history row.
+     *
+     * Three modes via `opts.onConflict`:
+     *   - default: plain INSERT, throws 23505 on conflict.
+     *   - 'do_nothing': swallows conflict, returns canonical row via follow-up SELECT.
+     *   - 'do_update_coalesce': race-symmetric upsert (first non-null wins on
+     *     expires_at, lookup_key, stripe_payment_intent_id).
+     *
+     * RETURNING * is used in the default and do_update_coalesce paths since
+     * those always yield exactly one row. The do_nothing path requires a
+     * follow-up SELECT because ON CONFLICT DO NOTHING returns NO rows on
+     * conflict (silently skipped insert).
+     */
+    append: (row: NewBillingHistoryRow, opts: AppendOpts = {}): Promise<BillingHistoryRow> => {
+      if (opts.onConflict === 'do_nothing') return appendDoNothing(c, row)
+      if (opts.onConflict === 'do_update_coalesce') return appendDoUpdateCoalesce(c, row)
+      return appendPlain(c, row)
+    },
 
-  /**
-   * Single-row lookup by source_id_stripe. The composite UNIQUE on
-   * (kind, source_id_stripe) and the disjoint pi_/in_/re_ prefixes mean
-   * source_id_stripe alone is in practice unique; LIMIT 1 is belt-and-suspenders.
-   * Caller may filter by kind on the result if needed.
-   */
-  async findBySourceStripeId(
-    tx: ClientLike,
-    source_id_stripe: string,
-  ): Promise<BillingHistoryRow | null> {
-    const result = await tx.query<BillingHistoryRow>(
-      `SELECT ${COLUMN_LIST} FROM billing_history WHERE source_id_stripe = $1 LIMIT 1`,
-      [source_id_stripe],
-    )
-    return result.rows[0] ?? null
-  },
+    /**
+     * Single-row lookup by source_id_stripe. The composite UNIQUE on
+     * (kind, source_id_stripe) and the disjoint pi_/in_/re_ prefixes mean
+     * source_id_stripe alone is in practice unique; LIMIT 1 is belt-and-suspenders.
+     * Caller may filter by kind on the result if needed.
+     */
+    findBySourceStripeId: async (
+      source_id_stripe: string,
+    ): Promise<BillingHistoryRow | null> => {
+      const result = await c.query<BillingHistoryRow>(
+        `SELECT ${COLUMN_LIST} FROM billing_history WHERE source_id_stripe = $1 LIMIT 1`,
+        [source_id_stripe],
+      )
+      return result.rows[0] ?? null
+    },
 
-  /**
-   * Resolve PaymentIntent → invoice billing_history row. Drives §5.4.5's
-   * refund subscription-routing path: when refund.created arrives with a
-   * payment_intent, look up the kind='invoice' row that originated from
-   * that PI to find the related subscription. Uses the partial index
-   * `idx_billing_history_invoice_pi WHERE kind='invoice' AND
-   * stripe_payment_intent_id IS NOT NULL`.
-   *
-   * Returns null when no kind='invoice' row references the PI (e.g., refund
-   * is for a kind='purchase' à-la-carte purchase, which has its PI on the
-   * `purchases` table, not on a billing_history row).
-   */
-  async findInvoiceByPaymentIntent(
-    tx: ClientLike,
-    payment_intent_id: string,
-  ): Promise<BillingHistoryRow | null> {
-    const result = await tx.query<BillingHistoryRow>(
-      `SELECT ${COLUMN_LIST}
+    /**
+     * Resolve PaymentIntent → invoice billing_history row. Drives §5.4.5's
+     * refund subscription-routing path: when refund.created arrives with a
+     * payment_intent, look up the kind='invoice' row that originated from
+     * that PI to find the related subscription. Uses the partial index
+     * `idx_billing_history_invoice_pi WHERE kind='invoice' AND
+     * stripe_payment_intent_id IS NOT NULL`.
+     *
+     * Returns null when no kind='invoice' row references the PI (e.g., refund
+     * is for a kind='purchase' à-la-carte purchase, which has its PI on the
+     * `purchases` table, not on a billing_history row).
+     */
+    findInvoiceByPaymentIntent: async (
+      payment_intent_id: string,
+    ): Promise<BillingHistoryRow | null> => {
+      const result = await c.query<BillingHistoryRow>(
+        `SELECT ${COLUMN_LIST}
          FROM billing_history
         WHERE stripe_payment_intent_id = $1
           AND kind = 'invoice'
         LIMIT 1`,
-      [payment_intent_id],
-    )
-    return result.rows[0] ?? null
-  },
+        [payment_intent_id],
+      )
+      return result.rows[0] ?? null
+    },
 
-  /**
-   * Cursor-paginated user feed for /api/billing/history.
-   *
-   * Sort is `(occurred_at DESC, id DESC)` — id breaks ties when two events
-   * land at the same Stripe-second timestamp. Cursor encodes the last seen
-   * row's `(occurred_at, id)`; we fetch `limit + 1` rows to detect whether
-   * a next page exists. If we got `limit + 1`, page = first `limit` rows
-   * and nextCursor = the LAST returned row's `(occurred_at, id)`. If we got
-   * `<= limit`, nextCursor = null.
-   *
-   * The lexicographic row-comparison `(occurred_at, id) < (cursor.t, cursor.i)`
-   * is what makes the tie-break correct: when occurred_at values are equal,
-   * the comparison falls through to id, so consecutive pages don't repeat
-   * or skip rows even when many rows share the same timestamp.
-   */
-  async listByUser(
-    tx: ClientLike,
-    user_id: string,
-    opts: ListByUserOpts,
-  ): Promise<{ readonly rows: readonly BillingHistoryRow[]; readonly nextCursor: string | null }> {
-    const cursorT = opts.cursor?.t ?? null
-    const cursorI = opts.cursor?.i ?? null
-    // Fetch limit + 1 to peek past the page boundary. If we get exactly
-    // limit + 1 rows back, there is at least one more page; we trim to
-    // `limit` and emit nextCursor from the last kept row.
-    const result = await tx.query<BillingHistoryRow>(
-      `SELECT ${COLUMN_LIST}
+    /**
+     * Cursor-paginated user feed for /api/billing/history.
+     *
+     * Sort is `(occurred_at DESC, id DESC)` — id breaks ties when two events
+     * land at the same Stripe-second timestamp. Cursor encodes the last seen
+     * row's `(occurred_at, id)`; we fetch `limit + 1` rows to detect whether
+     * a next page exists. If we got `limit + 1`, page = first `limit` rows
+     * and nextCursor = the LAST returned row's `(occurred_at, id)`. If we got
+     * `<= limit`, nextCursor = null.
+     *
+     * The lexicographic row-comparison `(occurred_at, id) < (cursor.t, cursor.i)`
+     * is what makes the tie-break correct: when occurred_at values are equal,
+     * the comparison falls through to id, so consecutive pages don't repeat
+     * or skip rows even when many rows share the same timestamp.
+     */
+    listByUser: async (
+      user_id: string,
+      opts: ListByUserOpts,
+    ): Promise<{ readonly rows: readonly BillingHistoryRow[]; readonly nextCursor: string | null }> => {
+      const cursorT = opts.cursor?.t ?? null
+      const cursorI = opts.cursor?.i ?? null
+      // Fetch limit + 1 to peek past the page boundary. If we get exactly
+      // limit + 1 rows back, there is at least one more page; we trim to
+      // `limit` and emit nextCursor from the last kept row.
+      const result = await c.query<BillingHistoryRow>(
+        `SELECT ${COLUMN_LIST}
          FROM billing_history
         WHERE user_id = $1
           AND ($2::timestamptz IS NULL OR (occurred_at, id) < ($2::timestamptz, $3::uuid))
         ORDER BY occurred_at DESC, id DESC
         LIMIT $4`,
-      [user_id, cursorT, cursorI, opts.limit + 1],
-    )
-    const fetched = result.rows
-    if (fetched.length <= opts.limit) {
-      return { rows: fetched, nextCursor: null }
-    }
-    const page = fetched.slice(0, opts.limit)
-    const lastKept = page[page.length - 1]
-    /* c8 ignore start — Unreachable when opts.limit > 0 (we already
-     * returned above when fetched.length <= opts.limit, so page has at
-     * least 1 row). Guard for type-narrowing. */
-    if (lastKept === undefined) {
-      return { rows: page, nextCursor: null }
-    }
-    /* c8 ignore stop */
-    // Encode the cursor as a JSON string of { t, i }. The route layer
-    // (Task 28) is responsible for base64url-encoding the wire form per
-    // spec §11; the repo returns the JSON payload so the boundary is clean
-    // and tests can inspect the cursor without dragging encoding logic in.
-    // We return the inner shape directly here (caller pulls `t` and `i`).
-    const nextCursor = JSON.stringify({
-      t: lastKept.occurred_at.toISOString(),
-      i: lastKept.id,
-    })
-    return { rows: page, nextCursor }
-  },
+        [user_id, cursorT, cursorI, opts.limit + 1],
+      )
+      const fetched = result.rows
+      if (fetched.length <= opts.limit) {
+        return { rows: fetched, nextCursor: null }
+      }
+      const page = fetched.slice(0, opts.limit)
+      const lastKept = page[page.length - 1]
+      /* c8 ignore start — Unreachable when opts.limit > 0 (we already
+       * returned above when fetched.length <= opts.limit, so page has at
+       * least 1 row). Guard for type-narrowing. */
+      if (lastKept === undefined) {
+        return { rows: page, nextCursor: null }
+      }
+      /* c8 ignore stop */
+      // Encode the cursor as a JSON string of { t, i }. The route layer
+      // (Task 28) is responsible for base64url-encoding the wire form per
+      // spec §11; the repo returns the JSON payload so the boundary is clean
+      // and tests can inspect the cursor without dragging encoding logic in.
+      // We return the inner shape directly here (caller pulls `t` and `i`).
+      const nextCursor = JSON.stringify({
+        t: lastKept.occurred_at.toISOString(),
+        i: lastKept.id,
+      })
+      return { rows: page, nextCursor }
+    },
 
-  /**
-   * Flip status to 'refunded'. Idempotent: the WHERE status='completed' gate
-   * makes a re-run of the same id a no-op (returns rowsAffected=0). Used by
-   * §5.4.5 refund handler after the negative credit_ledger entry lands.
-   */
-  async markRefunded(tx: ClientLike, id: string): Promise<{ readonly rowsAffected: number }> {
-    const result = await tx.query(
-      `UPDATE billing_history SET status = 'refunded' WHERE id = $1 AND status = 'completed'`,
-      [id],
-    )
-    /* c8 ignore start — `?? 0` falsy arm: pg's QueryResult always
-     * sets rowCount on UPDATE. Kept for TS narrowing. */
-    return { rowsAffected: result.rowCount ?? 0 }
-    /* c8 ignore stop */
-  },
+    /**
+     * Flip status to 'refunded'. Idempotent: the WHERE status='completed' gate
+     * makes a re-run of the same id a no-op (returns rowsAffected=0). Used by
+     * §5.4.5 refund handler after the negative credit_ledger entry lands.
+     */
+    markRefunded: async (id: string): Promise<{ readonly rowsAffected: number }> => {
+      const result = await c.query(
+        `UPDATE billing_history SET status = 'refunded' WHERE id = $1 AND status = 'completed'`,
+        [id],
+      )
+      /* c8 ignore start — `?? 0` falsy arm: pg's QueryResult always
+       * sets rowCount on UPDATE. Kept for TS narrowing. */
+      return { rowsAffected: result.rowCount ?? 0 }
+      /* c8 ignore stop */
+    },
+  }
 }
 
-/** Composable binder over a single ClientLike. Delegates to the bare-named
- *  `billingHistory` object so `repo.billingHistory.X` and
- *  `tx.billingHistory.X` share one body. */
-export function billingHistoryNs(c: ClientLike) {
-  return {
-    append: (row: NewBillingHistoryRow, opts: AppendOpts = {}): Promise<BillingHistoryRow> =>
-      billingHistory.append(c, row, opts),
-    findBySourceStripeId: (source_id_stripe: string): Promise<BillingHistoryRow | null> =>
-      billingHistory.findBySourceStripeId(c, source_id_stripe),
-    findInvoiceByPaymentIntent: (payment_intent_id: string): Promise<BillingHistoryRow | null> =>
-      billingHistory.findInvoiceByPaymentIntent(c, payment_intent_id),
-    listByUser: (
-      user_id: string,
-      opts: ListByUserOpts,
-    ): Promise<{ readonly rows: readonly BillingHistoryRow[]; readonly nextCursor: string | null }> =>
-      billingHistory.listByUser(c, user_id, opts),
-    markRefunded: (id: string): Promise<{ readonly rowsAffected: number }> =>
-      billingHistory.markRefunded(c, id),
-  }
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `billingHistoryNs` binder. Direct importers
+ *  (`billingHistory.append(tx, row)`) keep working; new code goes through
+ *  `repo.billingHistory`. */
+export const billingHistory = {
+  append: (
+    tx: ClientLike,
+    row: NewBillingHistoryRow,
+    opts: AppendOpts = {},
+  ): Promise<BillingHistoryRow> => billingHistoryNs(tx).append(row, opts),
+  findBySourceStripeId: (
+    tx: ClientLike,
+    source_id_stripe: string,
+  ): Promise<BillingHistoryRow | null> => billingHistoryNs(tx).findBySourceStripeId(source_id_stripe),
+  findInvoiceByPaymentIntent: (
+    tx: ClientLike,
+    payment_intent_id: string,
+  ): Promise<BillingHistoryRow | null> =>
+    billingHistoryNs(tx).findInvoiceByPaymentIntent(payment_intent_id),
+  listByUser: (
+    tx: ClientLike,
+    user_id: string,
+    opts: ListByUserOpts,
+  ): Promise<{ readonly rows: readonly BillingHistoryRow[]; readonly nextCursor: string | null }> =>
+    billingHistoryNs(tx).listByUser(user_id, opts),
+  markRefunded: (tx: ClientLike, id: string): Promise<{ readonly rowsAffected: number }> =>
+    billingHistoryNs(tx).markRefunded(id),
 }

@@ -85,120 +85,119 @@ function toRelationshipRow(row: RelationshipDbRow): RelationshipRow {
   }
 }
 
-// Returns the generated UUIDv7 ids in input order. Stage 4 (entity_relationships)
-// uses these ids to emit `finalized` events for relationships whose endpoints
-// pass the tier filter (myth-exac T15).
-async function insertMany(client: ClientLike, rows: readonly InsertRelationshipInput[]): Promise<readonly string[]> {
-  if (rows.length === 0) return []
-  const values: string[] = []
-  const params: unknown[] = []
-  const ids: string[] = []
-  let p = 1
-  for (const row of rows) {
-    const id = uuidv7()
-    ids.push(id)
-    values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)})`)
-    params.push(id, row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description, row.synthKey)
-  }
-  await client.query(
-    `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
+/** Composable binder over a single ClientLike. Holds the canonical SQL so
+ *  `repo.relationships.X` and `tx.relationships.X` share one body. */
+export function relationshipsNs(c: ClientLike) {
+  return {
+    // Returns the generated UUIDv7 ids in input order. Stage 4 (entity_relationships)
+    // uses these ids to emit `finalized` events for relationships whose endpoints
+    // pass the tier filter (myth-exac T15).
+    insertMany: async (rows: readonly InsertRelationshipInput[]): Promise<readonly string[]> => {
+      if (rows.length === 0) return []
+      const values: string[] = []
+      const params: unknown[] = []
+      const ids: string[] = []
+      let p = 1
+      for (const row of rows) {
+        const id = uuidv7()
+        ids.push(id)
+        values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)})`)
+        params.push(id, row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description, row.synthKey)
+      }
+      await c.query(
+        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
      VALUES ${values.join(', ')}`,
-    params,
-  )
-  return ids
-}
-
-async function listByWorld(client: ClientLike, worldId: string): Promise<Relationship[]> {
-  const result = await client.query<RelationshipListByWorldDbRow>(
-    `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description, r.synth_key
+        params,
+      )
+      return ids
+    },
+    listByWorld: async (worldId: string): Promise<Relationship[]> => {
+      const result = await c.query<RelationshipListByWorldDbRow>(
+        `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description, r.synth_key
        FROM relationships r
        JOIN entities e ON e.id = r.source_entity_id
        WHERE e.world_id = $1`,
-    [worldId],
-  )
-  return result.rows.map(toRelationship)
-}
-
-// myth-exac T06: snapshot-view primary read path. Returns relationships
-// where BOTH endpoints are in entityIds — i.e. the relationship is
-// internal to the snapshot's filtered entity set. Empty input short-
-// circuits to [] (matches the facts.listByEntities pattern).
-async function listAmong(
-  client: ClientLike,
-  entityIds: readonly string[],
-): Promise<readonly RelationshipRow[]> {
-  if (entityIds.length === 0) return []
-  const result = await client.query<RelationshipDbRow>(
-    `SELECT id, source_entity_id, target_entity_id, relationship_type,
+        [worldId],
+      )
+      return result.rows.map(toRelationship)
+    },
+    // myth-exac T06: snapshot-view primary read path. Returns relationships
+    // where BOTH endpoints are in entityIds — i.e. the relationship is
+    // internal to the snapshot's filtered entity set. Empty input short-
+    // circuits to [] (matches the facts.listByEntities pattern).
+    listAmong: async (entityIds: readonly string[]): Promise<readonly RelationshipRow[]> => {
+      if (entityIds.length === 0) return []
+      const result = await c.query<RelationshipDbRow>(
+        `SELECT id, source_entity_id, target_entity_id, relationship_type,
             description, created_at, synth_key
        FROM relationships
       WHERE source_entity_id = ANY($1) AND target_entity_id = ANY($1)
       ORDER BY id`,
-    [entityIds],
-  )
-  return result.rows.map(toRelationshipRow)
-}
-
-async function deleteByWorld(client: ClientLike, worldId: string): Promise<void> {
-  await client.query(
-    `DELETE FROM relationships
+        [entityIds],
+      )
+      return result.rows.map(toRelationshipRow)
+    },
+    deleteByWorld: async (worldId: string): Promise<void> => {
+      await c.query(
+        `DELETE FROM relationships
        WHERE source_entity_id IN (SELECT id FROM entities WHERE world_id = $1)`,
-    [worldId],
-  )
-}
-
-async function updateById(
-  client: ClientLike,
-  id: string,
-  patch: { relationshipType?: string; description?: string },
-): Promise<number> {
-  const sets: string[] = []
-  const params: unknown[] = []
-  let p = 1
-  if (patch.relationshipType !== undefined) {
-    sets.push(`relationship_type = $${String(p++)}`)
-    params.push(patch.relationshipType)
-  }
-  if (patch.description !== undefined) {
-    sets.push(`description = $${String(p++)}`)
-    params.push(patch.description)
-  }
-  if (sets.length === 0) return 0
-  params.push(id)
-  const result = await client.query(
-    `UPDATE relationships SET ${sets.join(', ')} WHERE id = $${String(p)}`,
-    params,
-  )
-  /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
-  return result.rowCount ?? 0
-}
-
-async function deleteById(client: ClientLike, id: string): Promise<number> {
-  const result = await client.query(`DELETE FROM relationships WHERE id = $1`, [id])
-  /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on DELETE. */
-  return result.rowCount ?? 0
-}
-
-export const relationships = {
-  insertMany, listByWorld, listAmong, deleteByWorld, updateById, deleteById,
-} as const
-
-/** Composable binder over a single ClientLike. Delegates to the bare-named
- *  `relationships` object so `repo.relationships.X` and `tx.relationships.X`
- *  share one body. */
-export function relationshipsNs(c: ClientLike) {
-  return {
-    insertMany: (rows: readonly InsertRelationshipInput[]): Promise<readonly string[]> =>
-      relationships.insertMany(c, rows),
-    listByWorld: (worldId: string): Promise<Relationship[]> =>
-      relationships.listByWorld(c, worldId),
-    listAmong: (entityIds: readonly string[]): Promise<readonly RelationshipRow[]> =>
-      relationships.listAmong(c, entityIds),
-    deleteByWorld: (worldId: string): Promise<void> => relationships.deleteByWorld(c, worldId),
-    updateById: (
+        [worldId],
+      )
+    },
+    updateById: async (
       id: string,
       patch: { relationshipType?: string; description?: string },
-    ): Promise<number> => relationships.updateById(c, id, patch),
-    deleteById: (id: string): Promise<number> => relationships.deleteById(c, id),
+    ): Promise<number> => {
+      const sets: string[] = []
+      const params: unknown[] = []
+      let p = 1
+      if (patch.relationshipType !== undefined) {
+        sets.push(`relationship_type = $${String(p++)}`)
+        params.push(patch.relationshipType)
+      }
+      if (patch.description !== undefined) {
+        sets.push(`description = $${String(p++)}`)
+        params.push(patch.description)
+      }
+      if (sets.length === 0) return 0
+      params.push(id)
+      const result = await c.query(
+        `UPDATE relationships SET ${sets.join(', ')} WHERE id = $${String(p)}`,
+        params,
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return result.rowCount ?? 0
+    },
+    deleteById: async (id: string): Promise<number> => {
+      const result = await c.query(`DELETE FROM relationships WHERE id = $1`, [id])
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on DELETE. */
+      return result.rowCount ?? 0
+    },
   }
 }
+
+/** Back-compat shim: explicit-client const-object surface that delegates to the
+ *  canonical `relationshipsNs` binder. Direct importers
+ *  (`relationships.insertMany(client, rows)`) keep working; new code goes
+ *  through `repo.relationships`. */
+export const relationships = {
+  insertMany: (
+    client: ClientLike,
+    rows: readonly InsertRelationshipInput[],
+  ): Promise<readonly string[]> => relationshipsNs(client).insertMany(rows),
+  listByWorld: (client: ClientLike, worldId: string): Promise<Relationship[]> =>
+    relationshipsNs(client).listByWorld(worldId),
+  listAmong: (
+    client: ClientLike,
+    entityIds: readonly string[],
+  ): Promise<readonly RelationshipRow[]> => relationshipsNs(client).listAmong(entityIds),
+  deleteByWorld: (client: ClientLike, worldId: string): Promise<void> =>
+    relationshipsNs(client).deleteByWorld(worldId),
+  updateById: (
+    client: ClientLike,
+    id: string,
+    patch: { relationshipType?: string; description?: string },
+  ): Promise<number> => relationshipsNs(client).updateById(id, patch),
+  deleteById: (client: ClientLike, id: string): Promise<number> =>
+    relationshipsNs(client).deleteById(id),
+} as const
