@@ -51,7 +51,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:bc5c5c653c1883fa1f9d07465948139b9ff484c6201dc31a57ad863f46184481 -->
+<!-- source-hash: sha256:edef648bc99740d27e2f34bc2af1f6c0f40e68c4caa3a921d61a38c4b563f173 -->
 <!-- last-ticket: myth-imxg -->
 
 <h1>World gen</h1>
@@ -75,10 +75,11 @@
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still running, and
   stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage handler returns a
   unified <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the
-  outer scope owns BEGIN/COMMIT and publishes the finalized events only after COMMIT. A cost-cap
-  circuit breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage;
-  over-cap refunds the credit and marks the world failed — except at stage 7, where cap-fire marks
-  the world COMPLETE (coherence is best-effort polish).
+  handler commits its writes inside a <code>repo.transaction</code> and
+  <code>runStage</code> publishes the finalized events only after that COMMIT. A cost-cap circuit
+  breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; over-cap
+  refunds the credit and marks the world failed — except at stage 7, where cap-fire marks the world
+  COMPLETE (coherence is best-effort polish).
 </p>
 
 <!-- @diagram: runtime/world-gen -->
@@ -462,12 +463,19 @@
     affected means another worker raced and won the reset; this worker bails.
   </li>
   <li>
-    <strong>runStage wraps the handler in BEGIN/COMMIT.</strong> The outer scope acquires a
-    <code>PoolClient</code>, runs <code>BEGIN</code>, dispatches to the per-stage handler, and on
-    success COMMITs and publishes every event in the handler's returned
-    <code>finalizedEvents</code> array. On handler throw it runs <code>ROLLBACK</code> and publishes
-    <code>stage-reset</code> — the signal that any mid-flight <code>entity-added</code> /
-    <code>entity-updated</code> events for this stage are invalidated.
+    <strong
+      >runStage dispatches to the handler; the handler owns its own persist transaction.</strong
+    >
+    <code>runStage</code> acquires no client and runs no <code>BEGIN</code> — it dispatches to the
+    per-stage handler, which does its LLM work outside any transaction and then commits its writes
+    inside a single <code>repo.transaction(tx =&gt; …)</code> (the
+    <a href="../data/repository.html">repository layer</a>'s atomic-write primitive). On success
+    <code>runStage</code> publishes every event in the handler's returned
+    <code>finalizedEvents</code> array — after the handler's transaction has already COMMITted. On
+    handler throw it publishes <code>stage-reset</code> — the signal that any mid-flight
+    <code>entity-added</code> / <code>entity-updated</code> events for this stage are invalidated;
+    the handler's <code>repo.transaction</code> has already ROLLBACKed any partial writes by the
+    time the throw reaches <code>runStage</code>.
   </li>
   <li>
     <strong>Cost-cap check.</strong> After the COMMIT, <code>sumCompletedStageCosts</code> reads
@@ -499,10 +507,11 @@
   the failure mode operator-visible at startup (the process crashes instead of silently leaking
   jobs) and removes the per-stage DB round-trip. The trade-off: an operator editing
   <code>settings.world_gen_cost_cap_usd</code> needs a worker restart for the change to take effect.
-  <em>Coherence-pass</em> (stage 6) still reads the cap directly from its own
-  <code>PoolClient</code> because it runs under the stage's outer transaction; the per-stage
-  decision there is whether the world is already at-or-over-cap and should skip the polish pass, not
-  whether to fire the circuit breaker.
+  <em>Coherence-pass</em> (stage 6) still reads the cap directly through the pool-bound repo
+  <em>before</em> opening its persist transaction — its read loaders and cost-cap peek run outside
+  any transaction (the LLM-never-under-a-tx rule), and only the patch writes land inside the
+  handler's <code>repo.transaction</code>. The per-stage decision there is whether the world is
+  already at-or-over-cap and should skip the polish pass, not whether to fire the circuit breaker.
 </aside>
 
 <h3>The unified stage-handler contract</h3>
@@ -510,16 +519,32 @@
 <p>
   Every wave-4 handler — <code>world_and_factions</code>, <code>locations_and_npcs</code>,
   <code>entity_relationships</code>, <code>coherence_pass</code> — takes
-  <code>(client: PoolClient, args)</code> and returns
+  <code>(repo: Repo, args)</code> and returns
   <code
     >StageDispatchResult { costUsd, inputTokens, outputTokens, finalizedEvents, capExhausted }</code
-  >. The contract is what lets <code>runStage</code> own the transaction lifecycle from outside the
-  handler: handlers don't BEGIN, they don't COMMIT, they don't ROLLBACK, and they don't publish
-  post-COMMIT events. They write to the passed client and accumulate finalized events;
-  <code>runStage</code> publishes those events only after its COMMIT has landed, so a ROLLBACK on a
-  partially-streamed stage can't leave the client with a <code>finalized</code> event pointing at an
-  <code>entity_id</code> that doesn't exist.
+  >. Each handler does its LLM work first, outside any transaction, then commits its writes inside a
+  single <code>repo.transaction(tx =&gt; …)</code> — the
+  <a href="../data/repository.html">repository layer</a>'s atomic-write primitive, which acquires
+  and releases its own connection and runs the <code>BEGIN</code>/<code>COMMIT</code> around the
+  callback. The handler does not publish post-COMMIT events directly; it accumulates them in
+  <code>finalizedEvents</code> and returns them, and <code>runStage</code> publishes them only after
+  the handler's transaction has COMMITted — so a ROLLBACK on a partially-streamed stage can't leave
+  the client with a <code>finalized</code> event pointing at an <code>entity_id</code> that doesn't
+  exist.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Per-handler <code>repo.transaction</code>, not a runStage-owned outer tx</strong> — an
+  earlier shape had <code>runStage</code> acquire a <code>PoolClient</code>, run <code>BEGIN</code>,
+  pass the client into the handler, and own the <code>COMMIT</code>/<code>ROLLBACK</code>. That put
+  the slow LLM call at risk of running inside the open transaction. The
+  <a href="../data/repository.html">repository layer</a>'s <code>repo.transaction</code> primitive
+  makes the right shape structural: the handler computes (LLM, reads) first, then calls
+  <code>repo.transaction</code> with the writes alone, so the model call provably never holds a
+  transaction open. The observable contract — finalized events fire only after the persist COMMIT, a
+  throw discards partial writes — is unchanged; only the owner of the BEGIN/COMMIT moved from
+  <code>runStage</code> into each handler.
+</aside>
 
 <aside class="wiki-rationale">
   <strong
@@ -818,7 +843,8 @@
   Stage 3 (<code>locations_and_npcs</code>) is the one streaming stage with a non-trivial
   persistence shape, because location entries have an optional
   <code>parent_location: string | null</code> field naming their parent — and the LLM names parents
-  by string, not by ID. The handler runs three passes against the caller's transaction:
+  by string, not by ID. The handler runs three passes inside its own
+  <code>repo.transaction</code> (<code>tx</code>):
 </p>
 
 <ol>
@@ -861,7 +887,7 @@
 <p>
   <code>entity_relationships</code> is name-based on both sides of the LLM interface, like the other
   world-gen stages. The handler loads the full world inventory via
-  <code>loadWorldInventory</code> at stage start, builds a
+  <code>repo.worldInventory.load</code> at stage start, builds a
   <code>NameResolutionContext</code> (normalized-name → entityId Maps plus fact and
   relationship-triple indexes), and renders the inventory as <code>- ${name} [${kind}]</code>
   lines in the prompt. The LLM emits relationships referencing entities by
@@ -1006,8 +1032,9 @@
   it. The chain is fixed: Haiku first, Sonnet if Haiku fails. Each repair call sends the broken tree
   plus a serialized list of the Zod errors to the model with the prompt template at
   <code>backend/src/llm/prompts/prep/repair.txt</code>, structured against the same schema. If
-  Sonnet also fails, the stage throws and the outer scope ROLLBACKs + publishes
-  <code>stage-reset</code>; BullMQ's <code>attempts: 2</code> picks up one more try.
+  Sonnet also fails, the stage throws; the handler's <code>repo.transaction</code> ROLLBACKs and
+  <code>runStage</code> publishes <code>stage-reset</code>; BullMQ's <code>attempts: 2</code> picks
+  up one more try.
 </p>
 
 <aside class="wiki-rationale">
@@ -1161,8 +1188,9 @@
   silently degraded to "no cap"). The world-gen worker no longer calls this on the per-job path —
   <code>server.ts</code> calls it once at boot via <code>readCostCapsAtBoot</code> and threads the
   number into <code>WorldGenDeps.costCapUsd</code>; only the coherence-pass stage still reads at
-  call time, under its outer transaction. <code>sumCompletedStageCosts(pool, worldId)</code> sums
-  <code>cost_usd</code> from <code>pipeline_runs</code> where <code>status = 'completed'</code> and
+  call time, on the pool-bound repo before it opens its persist transaction.
+  <code>sumCompletedStageCosts(pool, worldId)</code> sums <code>cost_usd</code> from
+  <code>pipeline_runs</code> where <code>status = 'completed'</code> and
   <code>user_id IS NULL</code> — running / failed rows don't count toward the cap.
   <code>issueCostCapRefund(pool, { userId, worldId })</code> runs a transaction that flips
   <code>worlds.status = 'failed'</code> and inserts a <code>credit_ledger</code> row with

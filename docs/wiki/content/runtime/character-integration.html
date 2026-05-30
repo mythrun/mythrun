@@ -6,7 +6,7 @@
 <!-- source: backend/src/routes/campaign-characters.ts -->
 <!-- source: backend/migrations/018_character_integration.sql -->
 <!-- source: docs/superpowers/specs/2026-05-23-myt-54-character-integration-design.md -->
-<!-- source-hash: sha256:1c0d9a7f1e9d5fc3c50e6f2c3bb355675488c09b25c4a38efe5a0e12010625ff -->
+<!-- source-hash: sha256:b4ba1a24019840be602f90a6c5c38e48e38ff571f240519c153c67bd952c4fe4 -->
 <!-- last-ticket: MYT-54 -->
 
 <h1>Character integration</h1>
@@ -61,9 +61,10 @@
   The worker side of the diagram is one BullMQ job that walks one Opus call against one schema. The
   handler loads the party (every <code>character_concepts</code> row joined with its character sheet
   and the user's display name), loads the campaign's pre-integration notes and starting situation
-  prose, and loads the world inventory via the shared <code>world-dump.ts</code> module. Those four
-  inputs render into a single prompt: every PC's identity and sheet alongside every existing world
-  entity's UUID, name, prose kernel, facts, and outgoing relationships. Opus returns one
+  prose, and loads the world inventory through <code>repo.worldInventory.load</code>, rendered for
+  the prompt by the shared <code>world-dump.ts</code> module. Those four inputs render into a single
+  prompt: every PC's identity and sheet alongside every existing world entity's UUID, name, prose
+  kernel, facts, and outgoing relationships. Opus returns one
   <code>IntegrationResult</code> covering every PC at once.
 </p>
 

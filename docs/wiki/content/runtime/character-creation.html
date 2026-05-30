@@ -18,7 +18,7 @@
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md -->
-<!-- source-hash: sha256:ca304406adc44962ee90cee017294905272a42e21e8e78514d33e038bb99ae35 -->
+<!-- source-hash: sha256:d306a6c6a9d30c3bbb76ba8613a17997f423efa52ad25c9547887a0c143a02fd -->
 <!-- last-ticket: MYT-54 -->
 
 <h1>Character creation</h1>
@@ -277,17 +277,19 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 <h2>The three stages</h2>
 
 <p>
-  The processor in <code>backend/src/llm/prep/character-creation-processor.ts</code> parallels
-  <code>world-gen-processor.ts</code>: the outer scope owns BEGIN / COMMIT / ROLLBACK and publishes
-  finalized events post-COMMIT; the stage handlers write to the passed client and accumulate events.
-  The atomic-claim helper from world-gen is parameterised on an optional <code>userId</code>, so
-  character-creation rows in <code>pipeline_runs</code> are keyed on
-  <code>(world_id, stage, user_id)</code> rather than <code>(world_id, stage, NULL)</code> — N
-  players run N concurrent rows per stage without colliding. Per-player failure does not abort other
-  parallel jobs. The fourth stage (<code>character_integration</code>) sketched in earlier drafts
-  was retired in MYT-54 — its job moved to the
-  <a href="./character-integration.html">campaign-scoped single-pass</a> the owner triggers when
-  every player's row reaches <code>completed</code>.
+  The processor in <code>backend/src/llm/prep/character-creation-processor.ts</code> mirrors the
+  <a href="./world-gen.html">world-gen processor</a>'s outer loop: it claims each stage atomically,
+  runs the LLM call outside any transaction, and marks the row completed or failed on the pool. Each
+  stage handler owns its own persist transaction — the <code>character_sheet</code> stage opens one
+  client and runs the whole sheet (character row + four satellite tables) under a single
+  BEGIN/COMMIT, rolling back on any constraint failure. The atomic-claim helper from world-gen is
+  parameterised on an optional <code>userId</code>, so character-creation rows in
+  <code>pipeline_runs</code> are keyed on <code>(world_id, stage, user_id)</code> rather than
+  <code>(world_id, stage, NULL)</code> — N players run N concurrent rows per stage without
+  colliding. Per-player failure does not abort other parallel jobs. The fourth stage
+  (<code>character_integration</code>) sketched in earlier drafts was retired in MYT-54 — its job
+  moved to the <a href="./character-integration.html">campaign-scoped single-pass</a> the owner
+  triggers when every player's row reaches <code>completed</code>.
 </p>
 
 <table>

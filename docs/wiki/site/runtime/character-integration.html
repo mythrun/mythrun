@@ -548,9 +548,10 @@
   The worker side of the diagram is one BullMQ job that walks one Opus call against one schema. The
   handler loads the party (every <code>character_concepts</code> row joined with its character sheet
   and the user's display name), loads the campaign's pre-integration notes and starting situation
-  prose, and loads the world inventory via the shared <code>world-dump.ts</code> module. Those four
-  inputs render into a single prompt: every PC's identity and sheet alongside every existing world
-  entity's UUID, name, prose kernel, facts, and outgoing relationships. Opus returns one
+  prose, and loads the world inventory through <code>repo.worldInventory.load</code>, rendered for
+  the prompt by the shared <code>world-dump.ts</code> module. Those four inputs render into a single
+  prompt: every PC's identity and sheet alongside every existing world entity's UUID, name, prose
+  kernel, facts, and outgoing relationships. Opus returns one
   <code>IntegrationResult</code> covering every PC at once.
 </p>
 

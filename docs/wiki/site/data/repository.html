@@ -564,16 +564,19 @@
 
 <p>
   <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
-  takes a <code>pg.Pool</code> and returns roughly nineteen namespaces — one per table cluster
+  takes a <code>pg.Pool</code> and returns the table-cluster namespaces — one per cluster
   (<code>users</code>, <code>worlds</code>, <code>campaigns</code>, <code>sessions</code>,
   <code>credits</code>, <code>invites</code>, <code>characters</code>,
   <code>characterConcepts</code>) plus the former standalone Tier-2 modules (<code>entities</code>,
   <code>facts</code>, <code>proseKernels</code>, <code>relationships</code>,
   <code>entityHierarchy</code>, <code>statBlocks</code>, <code>purchases</code>,
   <code>userSubscriptions</code>, <code>stripeEvents</code>, <code>billingHistory</code>,
-  <code>pipelineRuns</code>) — and a <code>transaction</code> method. The return type is exported as
-  <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
-  <code>AppDeps</code> carries it alongside <code>pg</code>, the two Redis clients, and the derived
+  <code>pipelineRuns</code>) and the world-gen support namespaces the prep pipeline added
+  (<code>randomTables</code>, <code>settings</code>, and <code>worldInventory</code> — the last a
+  composite multi-table read that replaced the former <code>repo.pool</code> escape hatch) — and a
+  <code>transaction</code> method. The return type is exported as <code>type Repo</code>; the
+  <a href="../runtime/index.html">backend runtime</a>'s <code>AppDeps</code> carries it alongside
+  <code>pg</code>, the two Redis clients, and the derived
   <code>redisKeyPrefix</code>
   (<code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>) every Redis-keyed subsystem prepends to its keys;
   <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
@@ -749,12 +752,15 @@
   (<code>entities</code>, <code>facts</code>, <code>proseKernels</code>, <code>relationships</code>,
   <code>entityHierarchy</code>, <code>statBlocks</code>, <code>purchases</code>,
   <code>userSubscriptions</code>, <code>stripeEvents</code>, <code>billingHistory</code>,
-  <code>pipelineRuns</code>) the
+  <code>pipelineRuns</code>), plus the world-gen support namespaces the prep pipeline's migration
+  off raw SQL added (<code>randomTables</code> for the stage-5 table writer,
+  <code>settings</code> for the cost-cap policy reads, and <code>worldInventory</code> for the
+  composite world-dump read). The
   <a href="../auth-billing/billing-webhook.html">webhook handlers</a>,
   <a href="../auth-billing/billing-routes.html">billing routes</a>, and
-  <a href="../runtime/world-gen.html">world-gen worker</a> consume. The namespaces still unfilled by
-  any consumer are tracked as beads under the <code>repo-deferred</code> label and ship batched with
-  their consumers.
+  <a href="../runtime/world-gen.html">world-gen worker</a> consume them. The namespaces still
+  unfilled by any consumer are tracked as beads under the <code>repo-deferred</code> label and ship
+  batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">
@@ -1311,10 +1317,10 @@
   <code>relationships</code>, and <code>entityHierarchy</code>. Like every namespace they're now
   authored as <code>ClientLike</code> binders, so they're bound on the pool surface by
   <code>createRepo</code> and equally over an in-flight transaction client. The stages exercise the
-  transaction-client binding: the <a href="../runtime/world-gen.html">world-gen worker</a>'s
-  <code>runStage</code> wraps each stage handler in a single transaction and passes that client
-  straight into every repo call — INSERT, UPDATE, DELETE, all on the same connection. A handler
-  throw cascades to a single ROLLBACK that unwinds all the stage's writes atomically.
+  transaction-client binding: each <a href="../runtime/world-gen.html">world-gen</a> stage handler
+  does its LLM work first, then opens a single <code>repo.transaction(tx =&gt; …)</code> and runs
+  every write through that <code>tx</code> — INSERT, UPDATE, DELETE, all on the same connection. A
+  handler throw cascades to a single ROLLBACK that unwinds all the stage's writes atomically.
 </p>
 
 <aside class="wiki-rationale">
@@ -1642,8 +1648,15 @@
         <code>getById</code> (full row, prep/ST tier),
         <code>getSnapshotSummary</code> (enforced-ignorance allowlist → <code>WorldSummary</code>),
         <code>getDemo</code>, <code>listByUser</code>, <code>update</code>,
-        <code>updateStatus</code>, <code>incrementForkCount</code>; <code>WorldSummary</code> type;
-        <code>createWorldsRepo(pool)</code> back-compat factory.
+        <code>updateStatus</code>, <code>incrementForkCount</code>; plus the world-gen stage writers
+        the prep pipeline composes inside its per-stage <code>repo.transaction</code> (<code
+          >markComplete</code
+        >
+        / <code>markFailed</code> / <code>resetFailedToGenerating</code>, <code>applyConcept</code>,
+        <code>setVocabularyRegistry</code>, <code>setWorldOverview</code>, the
+        <code>entity_consolidation_pending</code> get/set/clear trio, and the starting-situation
+        setters); <code>WorldSummary</code> type; <code>createWorldsRepo(pool)</code> back-compat
+        factory.
       </td>
     </tr>
     <tr>
@@ -1652,7 +1665,9 @@
         <code>campaignsNs(c)</code> binder — <code>create</code>, <code>getById</code>,
         <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>;
         membership: <code>addMember</code>, <code>getMembership</code>, <code>getOwner</code>,
-        <code>listMembers</code>; <code>createCampaignsRepo(pool)</code> back-compat factory.
+        <code>listMembers</code>; the world-create-tx binders <code>insertSetup</code> +
+        <code>insertOwnerMember</code> (composed inside the create <code>repo.transaction</code>);
+        <code>createCampaignsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
     <tr>
@@ -1696,13 +1711,16 @@
       <td><code>src/repo/credits.ts</code></td>
       <td>
         <code>creditsNs(c)</code> binder — <code>balance</code>, <code>getWorldGenBalance</code>,
-        <code>listEntries</code>, and the composable <code>grantInTx(tx, input)</code> (paid-grant
-        trial-burn) + <code>recordClawback(tx, input)</code> for webhook tx composition;
-        <code>selfManagingCredits(pool, opts?)</code> — <code>grant</code>,
-        <code>atomicDebit</code> (returns <code>{entry, consumedSourceType}</code>),
-        <code>tryDebitForSession</code> (typed insufficient-credits result) (each own connection +
-        user-row lock, pool-only); <code>createCreditsRepo(pool, opts?)</code> back-compat factory.
-        Lock and statement timeouts overridable via <code>opts</code> for tests.
+        <code>listEntries</code>, the composable <code>grantInTx(tx, input)</code> (paid-grant
+        trial-burn) + <code>recordClawback(tx, input)</code> for webhook tx composition, and the
+        world-create-tx binders <code>acquireUserCreditLock</code> (the
+        <code>pg_advisory_xact_lock</code> per-user serialization) +
+        <code>insertWorldGenDebit</code>; <code>selfManagingCredits(pool, opts?)</code> —
+        <code>grant</code>, <code>atomicDebit</code> (returns
+        <code>{entry, consumedSourceType}</code>), <code>tryDebitForSession</code> (typed
+        insufficient-credits result) (each own connection + user-row lock, pool-only);
+        <code>createCreditsRepo(pool, opts?)</code> back-compat factory. Lock and statement timeouts
+        overridable via <code>opts</code> for tests.
       </td>
     </tr>
     <tr>
@@ -1801,7 +1819,40 @@
       <td>
         <code>pipelineRunsNs(c)</code> — <code>listLatestForCampaign</code>,
         <code>getLatestFailedForWorld</code>, <code>isStageCompleted</code>,
-        <code>insertSeedRow</code>; <code>createPipelineRunsRepo(pool)</code> back-compat factory.
+        <code>insertSeedRow</code>; plus the prep-pipeline claim/completion bookkeeping
+        <code>claimStage</code> (the atomic INSERT-or-coerce, dispatched on a world / campaign-user
+        / campaign <code>ClaimRequest</code>), <code>markStageCompleted</code>,
+        <code>markStageFailed</code>, and <code>sumCostForWorld</code> (the cost-cap sum) — the last
+        four pool-bound by design so the bookkeeping survives a stage-tx rollback;
+        <code>createPipelineRunsRepo(pool)</code> back-compat factory.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/random-tables.ts</code></td>
+      <td>
+        <code>randomTablesNs(c)</code> — <code>deleteByWorld</code> (per-world idempotency wipe),
+        <code>insertTable</code> (returns the generated UUIDv7 id), <code>insertEntries</code>; the
+        stage-5 (<code>random_tables</code>) writer composes the wipe + inserts inside one
+        <code>repo.transaction</code>. <code>createRandomTablesRepo(pool)</code> back-compat
+        factory.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/settings.ts</code></td>
+      <td>
+        <code>settingsNs(c)</code> — <code>getValue(key)</code> (singleton key/value policy read;
+        returns <code>null</code> on a missing row). The cost-cap module's two cap reads go through
+        it. <code>createSettingsRepo(pool)</code> back-compat factory.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/world-inventory.ts</code></td>
+      <td>
+        <code>worldInventoryNs(c)</code> — <code>load(worldId)</code>, the composite multi-table
+        read (entities + prose kernels + facts + relationships into in-memory Maps) the world dump
+        renders into prep prompts. Moved verbatim from <code>world-dump.ts</code>'s former
+        <code>loadWorldInventory</code>; homing it behind the repo boundary is what let the
+        <code>repo.pool</code> escape hatch be removed.
       </td>
     </tr>
     <tr>
@@ -1854,8 +1905,10 @@
       <td>
         <code>TxOpts</code> (per-call isolation / lock / statement-timeout knobs),
         <code>beginPrelude(opts)</code> (the <code>BEGIN; SET LOCAL …</code> batch
-        <code>runTransaction</code> emits), and the older <code>withTransaction(client, fn)</code>
-        helper the world-gen stages still call.
+        <code>runTransaction</code> emits), and the legacy
+        <code>withTransaction(client, fn)</code> helper. The world-gen stages migrated off it onto
+        <code>repo.transaction</code>; it now has no production callers (only its own unit test) and
+        is on the list to retire at teardown.
       </td>
     </tr>
     <tr>
