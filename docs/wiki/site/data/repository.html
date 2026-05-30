@@ -29,9 +29,11 @@
 <h1>Repository layer</h1>
 
 <p class="lead">
-  The single seam every read and write to Postgres flows through. A closure-based factory returns
-  one namespace object per table cluster; callers say <code>repo.users.create(...)</code>, never
-  <code>pool.query(...)</code> directly.
+  The single seam every read and write to Postgres flows through. Each table cluster is authored
+  once as a binder closure over a <code>ClientLike</code>; <code>createRepo(pool)</code> binds the
+  pool for plain reads and single-statement writes, and <code>repo.transaction(tx =&gt; …)</code>
+  binds an in-flight transaction client for multi-table atomic work. Callers say
+  <code>repo.users.create(...)</code>, never <code>pool.query(...)</code> directly.
 </p>
 
 <figure class="wiki-diagram">
@@ -562,65 +564,197 @@
 
 <p>
   <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
-  takes a <code>pg.Pool</code> and returns
-  <code>{ users, worlds, campaigns, sessions, credits, invites, characters }</code> — one namespace
-  per top-level table cluster. Each namespace is built by a sibling factory
-  (<code>createUsersRepo(pool)</code>, <code>createWorldsRepo(pool)</code>, …) that closes over the
-  pool and exposes the typed methods for that table. The return type is exported as
+  takes a <code>pg.Pool</code> and returns roughly nineteen namespaces — one per table cluster
+  (<code>users</code>, <code>worlds</code>, <code>campaigns</code>, <code>sessions</code>,
+  <code>credits</code>, <code>invites</code>, <code>characters</code>,
+  <code>characterConcepts</code>) plus the former standalone Tier-2 modules (<code>entities</code>,
+  <code>facts</code>, <code>proseKernels</code>, <code>relationships</code>,
+  <code>entityHierarchy</code>, <code>statBlocks</code>, <code>purchases</code>,
+  <code>userSubscriptions</code>, <code>stripeEvents</code>, <code>billingHistory</code>,
+  <code>pipelineRuns</code>) — and a <code>transaction</code> method. The return type is exported as
   <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
   <code>AppDeps</code> carries it alongside <code>pg</code>, the two Redis clients, and the derived
-  <code>redisKeyPrefix</code> (<code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>) every Redis-keyed
-  subsystem prepends to its keys; <code>server.ts</code> threads <code>createRepo(pgRef)</code> into
-  <code>buildApp</code> on both boot paths. A second class of namespaces — the four billing-table
-  modules (<code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>,
-  <code>billingHistory</code>) — exports plain object literals whose methods take a
-  <code>ClientLike</code> the caller has already opened. Those namespaces don't bind to a pool; they
-  operate inside a transaction the
-  <a href="../auth-billing/billing-webhook.html">webhook dispatcher</a> already owns.
+  <code>redisKeyPrefix</code>
+  (<code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>) every Redis-keyed subsystem prepends to its keys;
+  <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
+  boot paths.
+</p>
+
+<h2 id="one-method-body-two-bindings-the-clientlike-binder">One method body, two bindings: the <code>ClientLike</code> binder</h2>
+
+<p>
+  Each namespace is authored once as a binder closure — <code>worldsNs(c: ClientLike)</code>,
+  <code>creditsNs(c)</code>, and so on, one per <code>backend/src/repo/*.ts</code> file — that
+  captures a <code>ClientLike</code> and returns the typed methods for its table. The method bodies
+  call <code>c.query(...)</code>; they never see whether <code>c</code> is a pool or a single
+  connection. The binding happens in two places. <code>createRepo(pool)</code> runs every binder
+  over the <code>pg.Pool</code>, producing the default surface: each method acquires-and-releases a
+  pooled connection per call, the right shape for plain reads and single-statement writes.
+  <code>repo.transaction</code> runs the same binders over an in-flight transaction client (its
+  <code>TxRepo</code> shape), so the same method bodies write inside one BEGIN/COMMIT.
 </p>
 
 <aside class="wiki-rationale">
-  <strong><code>ClientLike</code>, not <code>Pool</code>, on the billing namespaces</strong> — the
-  webhook dispatcher opens one transaction per event and runs every handler's writes inside it. If
-  the billing namespaces took a <code>Pool</code> like the original six do, they'd open their own
-  connection per query and write outside the dispatcher's tx — which would defeat both the
-  idempotency guarantee (the <code>stripe_events</code> insert wouldn't be in the same transaction
-  as the handler's writes) and the timeout discipline (the dispatcher's <code>SET LOCAL</code>s
-  wouldn't apply). <code>ClientLike</code> is the structural subset of
-  <code>pg.PoolClient</code> the namespaces actually use; the dispatcher passes its own client in.
+  <strong>One binder, not two factories</strong> — the alternative was a pool-bound factory and a
+  parallel tx-bound factory per table, the SQL duplicated between them. Binding the
+  <em>same</em> closure over a <code>ClientLike</code> (the structural subset of
+  <code>pg.PoolClient</code> both <code>Pool</code> and <code>PoolClient</code> satisfy) means the
+  SQL, parameter binding, and snake-to-camel mapping live exactly once.
+  <code>createRepo</code> picks the pool; <code>repo.transaction</code>
+  picks the connection; the method body is indifferent.
+</aside>
+
+<h2 id="repo-transaction-the-multi-table-atomic-write-primitive"><code>repo.transaction</code>: the multi-table atomic-write primitive</h2>
+
+<p>
+  <code>repo.transaction(async (tx) =&gt; { … }, opts?)</code> (in
+  <code>backend/src/repo/_client.ts</code>) is the one sanctioned way to write across several tables
+  atomically. It acquires a pooled connection, issues a <code>BEGIN</code> with a per-call
+  <code>SET LOCAL</code> prelude, binds the namespaces over that connection as <code>tx</code>, runs
+  the callback, then COMMITs and releases. The callback writes only — every read it needs to make a
+  decision happens through the same <code>tx</code>. Whatever it returns is handed back to the
+  caller <em>after</em> the COMMIT, so post-commit side-effects (a BullMQ enqueue, an SSE publish)
+  fire on the committed value rather than inside the open transaction. Returning the
+  <code>ROLLBACK</code> sentinel discards the transaction as a clean no-op — no thrown error, no
+  webhook retry — for the idempotent-discard paths (a Stripe duplicate redelivery, an unknown event
+  type). A throw rolls back and propagates.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Slow I/O stays OUTSIDE the callback</strong> — MYT-55's staging smoke crashed the
+  world-gen worker when an LLM call ran inside a held transaction: RDS sets
+  <code>idle_in_transaction_session_timeout = 60s</code>, so any model call exceeding it triggered
+  <code>FATAL: terminating connection due to idle-in-transaction timeout</code> mid-stream. The
+  contract is that callers do the slow work (LLM, Stripe) <em>before</em> calling
+  <code>repo.transaction</code>; the callback holds writes and nothing else. The same incident is
+  why the return-value-after-commit shape exists (MYT-56): a <code>queue.add</code> inside the
+  callback could enqueue work referencing a row the COMMIT then failed to persist.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>Closure factory, not a class</strong> — namespaces are bags of pure functions over a
-  shared pool. A class adds <code>this</code> binding hazards (a route handler that destructures
-  <code>const { create } = repo.users</code> and calls <code>create(input)</code> would lose
-  <code>this</code>) and gives nothing back: there's no inheritance story, no protected state, no
-  per-instance overrides. A closure is the smaller shape that solves the same problem.
+  <strong>Per-call <code>SET LOCAL</code>, not a baked-in default</strong> — the audit found
+  isolation and timeout knobs varying by site (register, billing webhook, world-create each differ).
+  <code>opts</code> carries <code>isolation</code> (default <code>'read committed'</code>, always
+  pinned explicitly so a pool-config drift can't silently change the contract),
+  <code>lockTimeoutMs</code>, and <code>statementTimeoutMs</code>; unset timeouts inherit the server
+  default. The prelude is emitted as one multi-statement string so the <code>SET LOCAL</code>s land
+  in the same transaction as the <code>BEGIN</code> — a <code>SET LOCAL</code> with no active
+  transaction is a silent no-op. The captured <code>tx</code> handle is fenced after the transaction
+  settles: touching it post-commit throws rather than corrupting the recycled pooled connection.
 </aside>
 
+<h2 id="two-idioms-composable-binders-vs-self-managing-methods">Two idioms: composable binders vs. self-managing methods</h2>
+
 <p>
-  The CLAUDE.md mandate is concrete:
+  Most methods are <em>composable</em>: they run over whatever <code>ClientLike</code> they were
+  bound to, so they appear on both the pool surface and inside <code>repo.transaction</code>'s
+  <code>tx</code>. A few methods own their connection and lock discipline outright and are NOT
+  composable — they're added only on the pool surface by <code>createRepo</code>, never on
+  <code>TxRepo</code>. These are <code>credits.atomicDebit</code> / <code>grant</code> /
+  <code>tryDebitForSession</code>, <code>invites.create</code> / <code>acceptInvite</code>,
+  <code>users.getByCognitoSubWithTimeout</code>, and the lock-order-sensitive refund path. Each
+  opens its own connection, runs its own <code>BEGIN</code> + bespoke <code>SET LOCAL</code>s, takes
+  its row lock, and commits — a self-contained transaction the caller doesn't compose.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Self-managing methods can't go inside <code>tx</code></strong> — because they live only on
+  the pool surface, <code>TxRepo = ReturnType&lt;typeof bindTx&gt;</code> mechanically excludes
+  them: calling <code>tx.credits.atomicDebit</code> is a <em>compile error</em>, not a silent
+  second-connection write that escapes the caller's transaction. The one composable exception is
+  <code>credits.grantInTx(tx, input)</code> — it deliberately takes a caller's client so the
+  <a href="../auth-billing/billing-webhook.html">webhook dispatcher</a> can run the
+  <code>stripe_events</code> idempotency check, the audit-row write, and the credit grant under one
+  COMMIT. The pool-bound <code>grant</code> is the right shape for one-off route-handler grants; the
+  composable <code>grantInTx</code> is the right shape for a caller who already owns the
+  transaction.
+</aside>
+
+<h2 id="the-enforced-ignorance-split-getsnapshotsummary-vs-getbyid">The enforced-ignorance split: <code>getSnapshotSummary</code> vs. <code>getById</code></h2>
+
+<p>
+  <code>worlds.getSnapshotSummary(id)</code> is the single-sourced home of the world-column
+  allowlist the Fast Thinker is allowed to see. It SELECTs only
+  <code>id, name, concept, tone, themes, era, vocabulary_registry</code> and returns a
+  <code>WorldSummary</code> — a type that structurally cannot hold the plot-bearing columns
+  (<code>key_tensions</code>, <code>political_summary</code>, <code>world_overview</code>,
+  <code>geography_summary</code>, <code>starting_situations</code>,
+  <code>follow_up_questions</code>). <code>worlds.getById</code> returns the full
+  <code>World</code> row, plot columns included, and is the prep / Slow-Thinker tier read. The
+  composite
+  <a href="../runtime/world-gen.html">world-snapshot view</a> (<code>worldSnapshotView.fetch</code>)
+  composes <code>getSnapshotSummary</code> rather than re-deriving its own projection.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The allowlist has exactly one home</strong> — enforced ignorance is a hard boundary
+  (CLAUDE.md Non-Negotiable Principle), and a hard boundary needs one definition, not a column list
+  copied into every player-facing read. Pointing a Fast-Thinker world read at
+  <code>getById</code> re-exposes the plot fields, so the split makes that a type error rather than
+  a silent leak: a player-facing caller takes <code>WorldSummary</code>, which can't carry the plot
+  columns at all. The allowlist SELECT lives in <code>worlds.ts</code> beside
+  <code>getSnapshotSummary</code>; the snapshot view re-exports the <code>WorldSummary</code> type
+  for back-compat but does not own the projection.
+</aside>
+
+<h2 id="the-claude-md-mandate-and-the-no-raw-db-access-lint-rule">The CLAUDE.md mandate and the <code>no-raw-db-access</code> lint rule</h2>
+
+<p>
+  The mandate is concrete:
   <em
     >every TS file outside <code>backend/src/repo/</code> that reads or writes the database calls
     <code>repo.&lt;namespace&gt;.&lt;method&gt;</code></em
-  >. No raw <code>pool.query(...)</code> in route handlers, services, or workers. The repo layer is
-  what makes that mandate enforceable — there's one place to grep for SQL changes, one place where
-  parameter binding is audited, one place where the <code>updated_at = now()</code> bump is
-  guaranteed on every UPDATE.
+  >, and multi-table atomic work goes through <code>repo.transaction</code>. No raw
+  <code>pool.query(...)</code>, no hand-managed <code>BEGIN</code>/<code>COMMIT</code> in route
+  handlers, services, or workers. The repo layer is what makes that enforceable — one place to grep
+  for SQL changes, one place where parameter binding is audited, one place where the
+  <code>updated_at = now()</code> bump is guaranteed on every UPDATE.
 </p>
 
-<h2 id="namespace-boundaries-11-today-14-deferred">Namespace boundaries: 11 today, 14 deferred</h2>
+<p>
+  The lint half is the custom rule <code>mythrun/no-raw-db-access</code>
+  (<code>backend/eslint-rules/no-raw-db-access.cjs</code>), registered under the
+  <code>mythrun</code> plugin in the repo-root <code>eslint.config.js</code>. It bans, outside an
+  allowlisted set of files (the repo/db layer plus the boot entrypoints that legitimately own a
+  pool): raw <code>.query</code> / <code>.connect</code> calls, destructured or aliased forms of
+  them, value-importing <code>pg</code> (type-only imports compile away and are fine), bare
+  <code>BEGIN</code> / <code>COMMIT</code> / <code>ROLLBACK</code> / <code>SET LOCAL</code> string
+  literals, a SQL-string pass-through helper that would launder raw access through the allowlist,
+  and a <code>queue.add</code> / <code>.publish</code> / <code>.emit</code> side-effect lexically
+  inside a <code>repo.transaction</code> callback (the MYT-56 shape).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Currently <code>'warn'</code> — the migration is in progress</strong> — the binder, the
+  <code>repo.transaction</code> primitive, and the lint rule all ship now, but the consumers are NOT
+  yet migrated: route and worker handlers still hold inline SQL at a few dozen sites. Flipping the
+  rule to <code>'error'</code> today would red-build the whole backend. So it sits at
+  <code>'warn'</code> while the inline-SQL sites are converted to <code>repo.X</code> /
+  <code>repo.transaction</code> one cluster at a time; it flips to <code>'error'</code> at teardown,
+  once the last raw site is gone. A tripwire, not a wall — the rule matches the literal shapes that
+  caused the MYT-55/56 incidents, not full dataflow; the documented residual evasions are listed in
+  the rule's own header.
+</aside>
+
+<h2 id="namespace-boundaries-shipped-vs-deferred">Namespace boundaries: shipped vs. deferred</h2>
 
 <p>
-  Spec §5 of the Backend Core architecture lists 25 namespaces. This layer ships
-  <strong>eleven</strong>: seven pool-bound namespaces (<code>users</code>, <code>worlds</code>,
-  <code>campaigns</code>, <code>sessions</code>, <code>credits</code>, <code>invites</code>,
-  <code>characters</code>) plus four transaction-scoped billing namespaces
-  (<code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>,
-  <code>billingHistory</code>) the
-  <a href="../auth-billing/billing-webhook.html">webhook handlers</a> and
-  <a href="../auth-billing/billing-routes.html">billing routes</a> consume. The remaining 14 are
-  tracked as beads under the <code>repo-deferred</code> label and ship batched with their consumers.
+  Spec §5 of the Backend Core architecture lists 25 namespaces. The layer ships the ones with a live
+  consumer and defers the rest. The unification folded what used to be two separate kinds —
+  pool-bound table-cluster factories and standalone transaction-scoped Tier-2 modules — into one
+  binder shape, so <code>createRepo</code> now exposes them all on a single surface:
+  <code>users</code>, <code>worlds</code>, <code>campaigns</code>, <code>sessions</code>,
+  <code>credits</code>, <code>invites</code>, <code>characters</code>,
+  <code>characterConcepts</code>, plus the world-content and billing namespaces
+  (<code>entities</code>, <code>facts</code>, <code>proseKernels</code>, <code>relationships</code>,
+  <code>entityHierarchy</code>, <code>statBlocks</code>, <code>purchases</code>,
+  <code>userSubscriptions</code>, <code>stripeEvents</code>, <code>billingHistory</code>,
+  <code>pipelineRuns</code>) the
+  <a href="../auth-billing/billing-webhook.html">webhook handlers</a>,
+  <a href="../auth-billing/billing-routes.html">billing routes</a>, and
+  <a href="../runtime/world-gen.html">world-gen worker</a> consume. The namespaces still unfilled by
+  any consumer are tracked as beads under the <code>repo-deferred</code> label and ship batched with
+  their consumers.
 </p>
 
 <aside class="wiki-rationale">
@@ -1172,15 +1306,15 @@
 <h2 id="the-world-content-namespaces-streaming-stages-share-a-caller-owned-transaction">The world-content namespaces: streaming stages share a caller-owned transaction</h2>
 
 <p>
-  MYT-52's streaming pipeline added four more transaction-scoped namespaces consumed by the prep
-  worker's wave-2/3/4 stage handlers: <code>entities</code>, <code>proseKernels</code>,
-  <code>facts</code>, <code>relationships</code>, and <code>entityHierarchy</code>. They follow the
-  same <code>ClientLike</code> shape the billing namespaces use — exported as plain object literals
-  whose methods take a client argument the caller has already opened. The
-  <a href="../runtime/world-gen.html">world-gen worker</a>'s <code>runStage</code> wraps each stage
-  handler in <code>BEGIN/COMMIT</code> on a <code>PoolClient</code> and passes that client straight
-  into every repo call — INSERT, UPDATE, DELETE, all on the same transaction. A handler throw
-  cascades to a single ROLLBACK that unwinds all the stage's writes atomically.
+  MYT-52's streaming pipeline added five more namespaces consumed by the prep worker's wave-2/3/4
+  stage handlers: <code>entities</code>, <code>proseKernels</code>, <code>facts</code>,
+  <code>relationships</code>, and <code>entityHierarchy</code>. Like every namespace they're now
+  authored as <code>ClientLike</code> binders, so they're bound on the pool surface by
+  <code>createRepo</code> and equally over an in-flight transaction client. The stages exercise the
+  transaction-client binding: the <a href="../runtime/world-gen.html">world-gen worker</a>'s
+  <code>runStage</code> wraps each stage handler in a single transaction and passes that client
+  straight into every repo call — INSERT, UPDATE, DELETE, all on the same connection. A handler
+  throw cascades to a single ROLLBACK that unwinds all the stage's writes atomically.
 </p>
 
 <aside class="wiki-rationale">
@@ -1304,18 +1438,19 @@
   asymmetric error handling reflects that.
 </aside>
 
-<h2 id="the-four-billing-namespaces-transaction-scoped-no-pool-binding">The four billing namespaces: transaction-scoped, no pool binding</h2>
+<h2 id="the-four-billing-namespaces-tx-composed-by-the-webhook-pool-bound-by-the-routes">The four billing namespaces: tx-composed by the webhook, pool-bound by the routes</h2>
 
 <p>
   <code>stripeEvents</code>, <code>purchases</code>, <code>userSubscriptions</code>, and
-  <code>billingHistory</code> are exported as plain object literals, not closure-built factories.
-  Their methods take a <code>ClientLike</code> as the first argument: the
+  <code>billingHistory</code> are <code>ClientLike</code> binders like the rest. They serve both
+  bindings without changing shape: the
   <a href="../auth-billing/billing-webhook.html">webhook dispatcher</a> opens one transaction per
-  event and threads its <code>PoolClient</code> through every handler call inside it. Two of them
-  (<code>userSubscriptions</code> and <code>billingHistory</code>) are also called from the
-  pool-bound <a href="../auth-billing/billing-routes.html">billing routes</a>; for that consumer the
-  route passes a <code>Pool</code> directly (Pool's <code>query</code> shape is a structural
-  superset of PoolClient's, so the same method signature works for both).
+  event and threads its connection through every handler's writes, while
+  <code>userSubscriptions</code> and <code>billingHistory</code> are also read from the
+  <a href="../auth-billing/billing-routes.html">billing routes</a> through the pool-bound
+  <code>repo</code> surface. Because the methods bind a <code>ClientLike</code> rather than reaching
+  for a captured pool, the same method body answers a pooled route read and a webhook-tx write
+  unchanged.
 </p>
 
 <p>
@@ -1418,10 +1553,11 @@
   >'s <code>AppDeps</code> carries the <code>repo</code> alongside <code>pg</code>; the
   <a href="../auth-billing/billing-routes.html">billing routes</a> and the
   <a href="../auth-billing/onboarding.html">onboarding routes</a> consume it as the seam for all
-  data access. The four billing namespaces are also imported directly by the
-  <a href="../auth-billing/billing-webhook.html">webhook handlers</a> (transaction-scoped consumers
-  don't need a pool binding). The <a href="./schema.html">schema</a> is what the repo's queries are
-  typed against — every <code>XxxDbRow</code> matches a table the migration files define.
+  data access. The <a href="../auth-billing/billing-webhook.html">webhook handlers</a> consume the
+  billing namespaces through <code>repo.transaction</code> (and the composable
+  <code>grantInTx</code> / <code>recordClawback</code>), composing every event's writes under one
+  COMMIT. The <a href="./schema.html">schema</a> is what the repo's queries are typed against —
+  every <code>XxxDbRow</code> matches a table the migration files define.
 </p>
 
 <h2 id="appendix-source-layout">Appendix: source layout</h2>
@@ -1436,7 +1572,23 @@
   <tbody>
     <tr>
       <td><code>src/repo/index.ts</code></td>
-      <td><code>createRepo(pool)</code>, <code>type Repo</code>.</td>
+      <td>
+        <code>createRepo(pool)</code> (binds every namespace over the pool + adds the self-managing
+        methods + <code>transaction</code>), <code>type Repo</code>, <code>type TxRepo</code> (<code
+          >ReturnType&lt;typeof bindTx&gt;</code
+        >
+        — the tx-composable surface, excludes self-managing methods), <code>ROLLBACK</code> /
+        <code>type RollbackSignal</code> re-export.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/_client.ts</code></td>
+      <td>
+        <code>runTransaction(pool, bind, fn, opts)</code> — the engine behind
+        <code>repo.transaction</code>: connect → BEGIN+prelude → run callback over the bound tx
+        surface → COMMIT / ROLLBACK / no-op-discard → fence + release.
+        <code>ROLLBACK</code> sentinel, <code>makeSettlingClient</code> use-after-settle guard.
+      </td>
     </tr>
     <tr>
       <td><code>src/repo/uuidv7.ts</code></td>
@@ -1474,9 +1626,11 @@
     <tr>
       <td><code>src/repo/users.ts</code></td>
       <td>
-        <code>createUsersRepo(pool)</code> — <code>create</code>, <code>getById</code>,
-        <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>,
-        <code>getByUsername</code>, <code>update</code>; <code>LookupTimeoutError</code>; standalone
+        <code>usersNs(c)</code> binder — <code>create</code>, <code>getById</code>,
+        <code>getByCognitoSub</code>, <code>getByUsername</code>, <code>update</code>;
+        <code>selfManagingUsers(pool)</code> — <code>getByCognitoSubWithTimeout</code> (own tx +
+        statement timeout, pool-only); <code>createUsersRepo(pool)</code> back-compat factory
+        (binder ∪ self-managing); <code>LookupTimeoutError</code>; standalone
         <code>findOrCreateStripeCustomer</code> three-phase helper +
         <code>StripeCustomersClient</code> structural interface.
       </td>
@@ -1484,26 +1638,31 @@
     <tr>
       <td><code>src/repo/worlds.ts</code></td>
       <td>
-        <code>createWorldsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>worldsNs(c)</code> binder — <code>create</code>, <code>insertGenerating</code>,
+        <code>getById</code> (full row, prep/ST tier),
+        <code>getSnapshotSummary</code> (enforced-ignorance allowlist → <code>WorldSummary</code>),
         <code>getDemo</code>, <code>listByUser</code>, <code>update</code>,
-        <code>updateStatus</code>, <code>incrementForkCount</code>.
+        <code>updateStatus</code>, <code>incrementForkCount</code>; <code>WorldSummary</code> type;
+        <code>createWorldsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/campaigns.ts</code></td>
       <td>
-        <code>createCampaignsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>campaignsNs(c)</code> binder — <code>create</code>, <code>getById</code>,
         <code>listByUser</code> (JOIN <code>campaign_members</code>), <code>update</code>;
         membership: <code>addMember</code>, <code>getMembership</code>, <code>getOwner</code>,
-        <code>listMembers</code>.
+        <code>listMembers</code>; <code>createCampaignsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
     <tr>
       <td><code>src/repo/invites.ts</code></td>
       <td>
-        <code>createInvitesRepo(pool, opts?)</code> — <code>create</code>, <code>getByCode</code>,
-        <code>getCodePreview</code>, <code>listForCampaign</code>, <code>revoke</code>,
-        <code>acceptInvite</code> (load-bearing transaction). Lock and statement timeouts
+        <code>invitesNs(c)</code> binder — <code>getByCode</code>, <code>getCodePreview</code>,
+        <code>listForCampaign</code>, <code>revoke</code>;
+        <code>selfManagingInvites(pool, opts?)</code> — <code>create</code> +
+        <code>acceptInvite</code> (own connection, lock-order-sensitive transactions, pool-only);
+        <code>createInvitesRepo(pool, opts?)</code> back-compat factory. Lock and statement timeouts
         overridable via <code>opts</code>.
       </td>
     </tr>
@@ -1521,9 +1680,10 @@
     <tr>
       <td><code>src/repo/sessions.ts</code></td>
       <td>
-        <code>createSessionsRepo(pool)</code> — <code>create</code>, <code>getById</code>,
+        <code>sessionsNs(c)</code> binder — <code>create</code>, <code>getById</code>,
         <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>,
-        <code>recordUsage</code>, <code>budgetSummary</code>.
+        <code>recordUsage</code>, <code>budgetSummary</code>; <code>createSessionsRepo(pool)</code>
+        back-compat factory.
       </td>
     </tr>
     <tr>
@@ -1535,12 +1695,14 @@
     <tr>
       <td><code>src/repo/credits.ts</code></td>
       <td>
-        <code>createCreditsRepo(pool, opts?)</code> — <code>balance</code>, <code>grant</code>,
+        <code>creditsNs(c)</code> binder — <code>balance</code>, <code>getWorldGenBalance</code>,
+        <code>listEntries</code>, and the composable <code>grantInTx(tx, input)</code> (paid-grant
+        trial-burn) + <code>recordClawback(tx, input)</code> for webhook tx composition;
+        <code>selfManagingCredits(pool, opts?)</code> — <code>grant</code>,
         <code>atomicDebit</code> (returns <code>{entry, consumedSourceType}</code>),
-        <code>tryDebitForSession</code> (typed insufficient-credits result),
-        <code>recordClawback</code>, <code>listEntries</code>; standalone
-        <code>grantInTx(tx, input)</code> with paid-grant trial-burn for webhook composition. Lock
-        and statement timeouts overridable via <code>opts</code> for tests.
+        <code>tryDebitForSession</code> (typed insufficient-credits result) (each own connection +
+        user-row lock, pool-only); <code>createCreditsRepo(pool, opts?)</code> back-compat factory.
+        Lock and statement timeouts overridable via <code>opts</code> for tests.
       </td>
     </tr>
     <tr>
@@ -1581,9 +1743,11 @@
     <tr>
       <td><code>src/repo/_types.ts</code></td>
       <td>
-        <code>ClientLike</code> — structural subset of <code>pg.PoolClient</code> that the billing
-        namespaces and standalone tx helpers operate against. Pool's <code>query</code>
-        also satisfies this shape, so methods can be called from either.
+        <code>ClientLike</code> — structural subset of <code>pg.PoolClient</code> every namespace
+        binder (<code>xNs(c)</code>) captures. Both <code>pg.Pool</code> (via
+        <code>createRepo</code>) and an in-flight <code>PoolClient</code> (via
+        <code>repo.transaction</code>) satisfy it, so a method body is bound either way without
+        change.
       </td>
     </tr>
     <tr>
@@ -1620,8 +1784,24 @@
     <tr>
       <td><code>src/repo/entity-hierarchy.ts</code></td>
       <td>
-        <code>entityHierarchy.insert</code>. Caller pre-filters against the table's
-        <code>UNIQUE(child_entity_id)</code> — repo does NOT do <code>ON CONFLICT</code>.
+        <code>entityHierarchyNs(c)</code> — <code>insert</code>, <code>listForWorld</code>. Caller
+        pre-filters against the table's <code>UNIQUE(child_entity_id)</code> — repo does NOT do
+        <code>ON CONFLICT</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/stat-blocks.ts</code></td>
+      <td>
+        <code>statBlocksNs(c)</code> — <code>listByIds</code>;
+        <code>statBlocks</code> object-literal back-compat shim.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/pipeline-runs.ts</code></td>
+      <td>
+        <code>pipelineRunsNs(c)</code> — <code>listLatestForCampaign</code>,
+        <code>getLatestFailedForWorld</code>, <code>isStageCompleted</code>,
+        <code>insertSeedRow</code>; <code>createPipelineRunsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
     <tr>
@@ -1669,18 +1849,41 @@
         <code>backend/src/__tests__/CONVENTIONS.md</code>.
       </td>
     </tr>
+    <tr>
+      <td><code>src/db/transaction.ts</code></td>
+      <td>
+        <code>TxOpts</code> (per-call isolation / lock / statement-timeout knobs),
+        <code>beginPrelude(opts)</code> (the <code>BEGIN; SET LOCAL …</code> batch
+        <code>runTransaction</code> emits), and the older <code>withTransaction(client, fn)</code>
+        helper the world-gen stages still call.
+      </td>
+    </tr>
+    <tr>
+      <td><code>eslint-rules/no-raw-db-access.cjs</code></td>
+      <td>
+        The <code>mythrun/no-raw-db-access</code> rule — bans raw <code>.query</code> /
+        <code>.connect</code>, <code>pg</code> value-imports, bare tx-control literals, SQL
+        pass-through laundering, and in-tx side-effects outside the repo/db allowlist. Registered in
+        the repo-root <code>eslint.config.js</code> at <code>'warn'</code> during the in-progress
+        migration; flips to <code>'error'</code> at teardown.
+      </td>
+    </tr>
   </tbody>
 </table>
 
 <h2 id="source">Source</h2>
 
-<p><code>backend/src/repo/</code>, <code>backend/src/app-deps.ts</code>.</p>
+<p>
+  <code>backend/src/repo/</code>, <code>backend/src/app-deps.ts</code>; transaction mechanics in
+  <code>backend/src/db/transaction.ts</code>; the lint half in
+  <code>backend/eslint-rules/no-raw-db-access.cjs</code>.
+</p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#namespace-boundaries-11-today-14-deferred">Namespace boundaries: 11 today, 14 deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:12px"><a href="#recordusage-budgetsummary">recordUsage and budgetSummary</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#the-world-content-namespaces-streaming-stages-share-a-caller-owned-transaction">The world-content namespaces: streaming stages share a caller-owned transaction</a></li><li style="padding-left:0"><a href="#the-four-billing-namespaces-transaction-scoped-no-pool-binding">The four billing namespaces: transaction-scoped, no pool binding</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#one-method-body-two-bindings-the-clientlike-binder">One method body, two bindings: the ClientLike binder</a></li><li style="padding-left:0"><a href="#repo-transaction-the-multi-table-atomic-write-primitive">repo.transaction: the multi-table atomic-write primitive</a></li><li style="padding-left:0"><a href="#two-idioms-composable-binders-vs-self-managing-methods">Two idioms: composable binders vs. self-managing methods</a></li><li style="padding-left:0"><a href="#the-enforced-ignorance-split-getsnapshotsummary-vs-getbyid">The enforced-ignorance split: getSnapshotSummary vs. getById</a></li><li style="padding-left:0"><a href="#the-claude-md-mandate-and-the-no-raw-db-access-lint-rule">The CLAUDE.md mandate and the no-raw-db-access lint rule</a></li><li style="padding-left:0"><a href="#namespace-boundaries-shipped-vs-deferred">Namespace boundaries: shipped vs. deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:12px"><a href="#recordusage-budgetsummary">recordUsage and budgetSummary</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#the-world-content-namespaces-streaming-stages-share-a-caller-owned-transaction">The world-content namespaces: streaming stages share a caller-owned transaction</a></li><li style="padding-left:0"><a href="#the-four-billing-namespaces-tx-composed-by-the-webhook-pool-bound-by-the-routes">The four billing namespaces: tx-composed by the webhook, pool-bound by the routes</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
