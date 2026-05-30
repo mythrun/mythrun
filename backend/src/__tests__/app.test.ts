@@ -6,21 +6,29 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 // to exercise the 403 username_required path. Default true so existing
 // tests that just want a working onboarded user keep working.
 let usersRepoOnboarded = true
+// getByCognitoSubWithTimeout is the self-managing users method requireOnboarded
+// calls; the rest of the users surface is unused by these buildApp smoke tests.
+// The real createRepo (imported below) composes usersNs ∪ selfManagingUsers, so
+// the mock must expose all three named exports index.ts now imports.
+const stubOnboardedLookup = () =>
+  Promise.resolve(
+    usersRepoOnboarded
+      ? {
+          id: 'stub-user-id',
+          cognitoSub: 'bypass:dev-1',
+          username: 'bypass',
+          displayName: 'Bypass',
+          suspendedAt: null,
+        }
+      : null,
+  )
 vi.mock('../repo/users.js', () => ({
+  usersNs: () => ({}),
+  selfManagingUsers: () => ({
+    getByCognitoSubWithTimeout: vi.fn().mockImplementation(stubOnboardedLookup),
+  }),
   createUsersRepo: () => ({
-    getByCognitoSubWithTimeout: vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        usersRepoOnboarded
-          ? {
-              id: 'stub-user-id',
-              cognitoSub: 'bypass:dev-1',
-              username: 'bypass',
-              displayName: 'Bypass',
-              suspendedAt: null,
-            }
-          : null,
-      ),
-    ),
+    getByCognitoSubWithTimeout: vi.fn().mockImplementation(stubOnboardedLookup),
   }),
 }))
 

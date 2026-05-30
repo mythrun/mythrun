@@ -9,6 +9,7 @@
 
 import type { Pool, PoolClient } from 'pg'
 import { uuidv7 } from './uuidv7.js'
+import type { ClientLike } from './_types.js'
 
 export interface CharacterConcept {
   readonly id: string
@@ -59,13 +60,22 @@ function toConcept(row: DbRow): CharacterConcept {
   }
 }
 
-// Namespace factory mirrors the repo-layer convention (see campaigns.ts,
-// characters.ts). The body is a method dictionary.
-export function createCharacterConceptsRepo(pool: Pool) {
+// Composable binder mirrors the repo-layer convention (see campaignsNs,
+// charactersNs). The body is a method dictionary; each method captures the
+// ClientLike `c` so it serves `repo.characterConcepts.X` and
+// `tx.characterConcepts.X`. SQL unchanged — only `pool.query` → `c.query`.
+//
+// `flipSubmittedToProcessing` keeps its explicit `client` first-param: its
+// existing callers (POST /characters, the per-player flip) pass a PoolClient
+// from a hand-managed tx, and the unification's explicit-client-param drop is
+// a later migration step (see the design's Migration note). Holding the param
+// here preserves the byte-for-byte caller contract.
+// eslint-disable-next-line max-lines-per-function
+export function characterConceptsNs(c: ClientLike) {
   return {
     upsert: async (input: UpsertInput): Promise<CharacterConcept> => {
       const id = uuidv7()
-      const result = await pool.query<DbRow>(
+      const result = await c.query<DbRow>(
         `INSERT INTO character_concepts (
            id, campaign_id, user_id, concept_text,
            situation_grounding_text, guided_choices, status
@@ -103,7 +113,7 @@ export function createCharacterConceptsRepo(pool: Pool) {
       campaignId: string,
       userId: string,
     ): Promise<CharacterConcept | null> => {
-      const result = await pool.query<DbRow>(
+      const result = await c.query<DbRow>(
         `SELECT * FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
         [campaignId, userId],
       )
@@ -114,7 +124,7 @@ export function createCharacterConceptsRepo(pool: Pool) {
     listSubmittedByCampaign: async (
       campaignId: string,
     ): Promise<readonly CharacterConcept[]> => {
-      const result = await pool.query<DbRow>(
+      const result = await c.query<DbRow>(
         `SELECT * FROM character_concepts
          WHERE campaign_id = $1 AND status = 'submitted'
          ORDER BY submitted_at`,
@@ -124,7 +134,7 @@ export function createCharacterConceptsRepo(pool: Pool) {
     },
 
     markProcessing: async (campaignId: string, userId: string): Promise<void> => {
-      await pool.query(
+      await c.query(
         `UPDATE character_concepts
          SET status = 'processing', updated_at = now()
          WHERE campaign_id = $1 AND user_id = $2 AND status = 'submitted'`,
@@ -133,7 +143,7 @@ export function createCharacterConceptsRepo(pool: Pool) {
     },
 
     markCompleted: async (campaignId: string, userId: string): Promise<void> => {
-      await pool.query(
+      await c.query(
         `UPDATE character_concepts
          SET status = 'completed', error = NULL, updated_at = now()
          WHERE campaign_id = $1 AND user_id = $2`,
@@ -146,7 +156,7 @@ export function createCharacterConceptsRepo(pool: Pool) {
       userId: string,
       error: Record<string, unknown>,
     ): Promise<void> => {
-      await pool.query(
+      await c.query(
         `UPDATE character_concepts
          SET status = 'failed', error = $3::jsonb, updated_at = now()
          WHERE campaign_id = $1 AND user_id = $2`,
@@ -178,5 +188,9 @@ export function createCharacterConceptsRepo(pool: Pool) {
     },
   }
 }
+
+/** Back-compat factory — pool-bound `characterConcepts` surface. Identical
+ *  shape to the pre-unification `createCharacterConceptsRepo`. */
+export const createCharacterConceptsRepo = (pool: Pool) => characterConceptsNs(pool)
 
 export type CharacterConceptsRepo = ReturnType<typeof createCharacterConceptsRepo>

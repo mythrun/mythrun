@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { type Pool, type PoolClient } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import { toCampaignInvite, type CampaignInviteDbRow } from './mappers.js'
+import type { ClientLike } from './_types.js'
 import type { CampaignInvite, CampaignInvitePreview, CreateInviteInput } from './types.js'
 import {
   ACCEPT_LOCK_TIMEOUT_MS,
@@ -44,9 +45,95 @@ export interface InvitesRepoOpts {
   readonly statementTimeoutMs?: number
 }
 
-// Namespace factory — see createCampaignsRepo for the pattern rationale.
+/**
+ * Composable `invites` binder — the pure reads + the single-statement `revoke`
+ * write, over an arbitrary ClientLike, so they serve `repo.invites.X` and
+ * `tx.invites.X`. SQL unchanged.
+ *
+ * `create` and `acceptInvite` are NOT here: they own their own connection +
+ * the lock-order-sensitive multi-row sequence (campaigns → invites → members)
+ * + per-call SET LOCAL, so they're self-managing (see selfManagingInvites) and
+ * excluded from TxRepo. A free-form callback could reorder those locks and
+ * reintroduce deadlocks.
+ */
+export function invitesNs(c: ClientLike) {
+  return {
+    getByCode: async (code: string): Promise<CampaignInvite | null> => {
+      const result = await c.query<CampaignInviteDbRow>(
+        `SELECT * FROM campaign_invites WHERE invite_code = $1`,
+        [code],
+      )
+      const row = result.rows[0]
+      return row ? toCampaignInvite(row, false) : null
+    },
+
+    getCodePreview: async (code: string): Promise<CampaignInvitePreview | null> => {
+      const result = await c.query<{
+        campaign_name: string
+        owner_username: string
+        owner_display_name: string
+        expires_at: Date | null
+      }>(
+        `SELECT c.name AS campaign_name,
+                u.username AS owner_username,
+                u.display_name AS owner_display_name,
+                ci.expires_at
+           FROM campaign_invites ci
+           JOIN campaigns c ON c.id = ci.campaign_id
+           JOIN users u ON u.id = ci.created_by
+          WHERE ci.invite_code = $1
+            AND u.suspended_at IS NULL
+          LIMIT 1`,
+        [code],
+      )
+      const row = result.rows[0]
+      if (!row) return null
+      const valid = row.expires_at === null || row.expires_at > new Date()
+      return {
+        campaignName: row.campaign_name,
+        ownerUsername: row.owner_username,
+        ownerDisplayName: row.owner_display_name,
+        valid,
+      }
+    },
+
+    listForCampaign: async (campaignId: string): Promise<CampaignInvite[]> => {
+      const result = await c.query<CampaignInviteDbRow>(
+        `SELECT * FROM campaign_invites
+          WHERE campaign_id = $1
+            AND (expires_at IS NULL OR expires_at > now())
+          ORDER BY created_at ASC`,
+        [campaignId],
+      )
+      return result.rows.map((r, i) => toCampaignInvite(r, i === 0))
+    },
+
+    revoke: async (
+      inviteCode: string,
+      campaignId: string,
+    ): Promise<{ revoked: true } | { notFoundOrWrongCampaign: true }> => {
+      const result = await c.query(
+        `UPDATE campaign_invites
+            SET expires_at = now()
+          WHERE invite_code = $1 AND campaign_id = $2`,
+        [inviteCode, campaignId],
+      )
+      if (result.rowCount === 1) return { revoked: true }
+      return { notFoundOrWrongCampaign: true }
+    },
+  }
+}
+
+/**
+ * Self-managing `invites` methods bound to the pool. `create` and
+ * `acceptInvite` each own their own connection + the lock-order-sensitive
+ * multi-row FOR UPDATE sequence (campaigns → invites → members) + the three
+ * `SET LOCAL` timeouts, and map pg timeout errors to InviteTimeoutError. The
+ * lock order is load-bearing for deadlock avoidance, so these stay
+ * self-managing and out of TxRepo (see the design's "Two idioms").
+ */
 // eslint-disable-next-line max-lines-per-function
-export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
+export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
   const lockMs = opts.lockTimeoutMs ?? ACCEPT_LOCK_TIMEOUT_MS
   const stmtMs = opts.statementTimeoutMs ?? ACCEPT_STATEMENT_TIMEOUT_MS
 
@@ -149,70 +236,6 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
         /* c8 ignore stop */
         client.release()
       }
-    },
-
-    getByCode: async (code: string): Promise<CampaignInvite | null> => {
-      const result = await pool.query<CampaignInviteDbRow>(
-        `SELECT * FROM campaign_invites WHERE invite_code = $1`,
-        [code],
-      )
-      const row = result.rows[0]
-      return row ? toCampaignInvite(row, false) : null
-    },
-
-    getCodePreview: async (code: string): Promise<CampaignInvitePreview | null> => {
-      const result = await pool.query<{
-        campaign_name: string
-        owner_username: string
-        owner_display_name: string
-        expires_at: Date | null
-      }>(
-        `SELECT c.name AS campaign_name,
-                u.username AS owner_username,
-                u.display_name AS owner_display_name,
-                ci.expires_at
-           FROM campaign_invites ci
-           JOIN campaigns c ON c.id = ci.campaign_id
-           JOIN users u ON u.id = ci.created_by
-          WHERE ci.invite_code = $1
-            AND u.suspended_at IS NULL
-          LIMIT 1`,
-        [code],
-      )
-      const row = result.rows[0]
-      if (!row) return null
-      const valid = row.expires_at === null || row.expires_at > new Date()
-      return {
-        campaignName: row.campaign_name,
-        ownerUsername: row.owner_username,
-        ownerDisplayName: row.owner_display_name,
-        valid,
-      }
-    },
-
-    listForCampaign: async (campaignId: string): Promise<CampaignInvite[]> => {
-      const result = await pool.query<CampaignInviteDbRow>(
-        `SELECT * FROM campaign_invites
-          WHERE campaign_id = $1
-            AND (expires_at IS NULL OR expires_at > now())
-          ORDER BY created_at ASC`,
-        [campaignId],
-      )
-      return result.rows.map((r, i) => toCampaignInvite(r, i === 0))
-    },
-
-    revoke: async (
-      inviteCode: string,
-      campaignId: string,
-    ): Promise<{ revoked: true } | { notFoundOrWrongCampaign: true }> => {
-      const result = await pool.query(
-        `UPDATE campaign_invites
-            SET expires_at = now()
-          WHERE invite_code = $1 AND campaign_id = $2`,
-        [inviteCode, campaignId],
-      )
-      if (result.rowCount === 1) return { revoked: true }
-      return { notFoundOrWrongCampaign: true }
     },
 
     // Transaction script: BEGIN → lock invite row → validate state →
@@ -360,3 +383,12 @@ export function createInvitesRepo(pool: Pool, opts: InvitesRepoOpts = {}) {
     },
   }
 }
+
+/** Back-compat factory — pool-bound `invites` surface, identical shape to the
+ *  pre-unification `createInvitesRepo` (composable reads/revoke ∪ self-managing
+ *  create/acceptInvite). The `opts` (lock/statement timeouts) flow to the
+ *  self-managing methods. */
+export const createInvitesRepo = (pool: Pool, opts: InvitesRepoOpts = {}) => ({
+  ...invitesNs(pool),
+  ...selfManagingInvites(pool, opts),
+})

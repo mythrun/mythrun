@@ -26,9 +26,10 @@ import {
 } from '../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 
-// Mock the invites repo factory. The routes plugin calls createRepo()
-// which composes createInvitesRepo() internally; we mock the inner
-// factory so the route's `ctx.repo.invites.*` calls go through our stub.
+// Mock the invites binders. createRepo() composes `repo.invites` from
+// invitesNs(c) (composable reads/revoke) ∪ selfManagingInvites(pool)
+// (create/acceptInvite), so we mock both so the route's `ctx.repo.invites.*`
+// calls go through our stubs and the typed-error catch-arms run.
 const stubCreate = vi.fn()
 const stubAcceptInvite = vi.fn()
 const stubGetCodePreview = vi.fn()
@@ -41,12 +42,14 @@ vi.mock('../../repo/invites.js', async () => {
   )
   return {
     ...actual,
-    createInvitesRepo: () => ({
-      create: stubCreate,
-      acceptInvite: stubAcceptInvite,
+    invitesNs: () => ({
       getCodePreview: stubGetCodePreview,
       listForCampaign: stubListForCampaign,
       revoke: stubRevoke,
+    }),
+    selfManagingInvites: () => ({
+      create: stubCreate,
+      acceptInvite: stubAcceptInvite,
     }),
   }
 })

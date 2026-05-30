@@ -9,7 +9,14 @@ import {
   UserAlreadyHasCharacterInCampaignError,
 } from './characters-errors.js'
 
-export function createCharactersRepo(pool: Pool) {
+// Composable binder — each method captures the ClientLike `c` so the body
+// serves `repo.characters.X` and `tx.characters.X`. SQL unchanged.
+//
+// `create` keeps its explicit `tx` first-param: its callers (POST /characters,
+// the repo tests) pass a PoolClient from a hand-managed tx, and dropping the
+// param is a later migration step (see the design's Migration note). Holding
+// it preserves the byte-for-byte caller contract.
+export function charactersNs(c: ClientLike) {
   return {
     create: async (tx: ClientLike, input: CreateCharacterInput): Promise<Character> => {
       const id = uuidv7()
@@ -53,7 +60,7 @@ export function createCharactersRepo(pool: Pool) {
     ): Promise<void> => {
       const id = uuidv7()
       try {
-        await pool.query(
+        await c.query(
           `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
            VALUES ($1, $2, $3, $4)`,
           [id, campaignId, characterId, userId],
@@ -75,7 +82,7 @@ export function createCharactersRepo(pool: Pool) {
     },
 
     listForCampaign: async (campaignId: string): Promise<readonly Character[]> => {
-      const result = await pool.query<CharacterDbRow>(
+      const result = await c.query<CharacterDbRow>(
         `SELECT c.*
          FROM characters c
          JOIN campaign_characters cc ON cc.character_id = c.id
@@ -90,7 +97,7 @@ export function createCharactersRepo(pool: Pool) {
       userId: string,
       campaignId: string,
     ): Promise<Character | null> => {
-      const result = await pool.query<CharacterDbRow>(
+      const result = await c.query<CharacterDbRow>(
         `SELECT c.*
          FROM characters c
          JOIN campaign_characters cc ON cc.character_id = c.id
@@ -103,3 +110,7 @@ export function createCharactersRepo(pool: Pool) {
     },
   }
 }
+
+/** Back-compat factory — pool-bound `characters` surface. Identical shape to
+ *  the pre-unification `createCharactersRepo`. */
+export const createCharactersRepo = (pool: Pool) => charactersNs(pool)

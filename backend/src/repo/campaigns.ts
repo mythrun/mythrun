@@ -13,17 +13,19 @@ import type {
   CampaignUpdate,
   CreateCampaignInput,
 } from './types.js'
+import type { ClientLike } from './_types.js'
 
-// Namespace factory: the body is the method dictionary, not a complex
-// algorithm. Splitting it into top-level helpers would lose the `pool`
-// closure and force a per-call argument; the namespace pattern is
-// load-bearing for the repo layer's grep-ability.
+// Composable binder: each method captures the ClientLike `c` (pool OR an
+// in-flight tx client) so the same body serves `repo.campaigns.X` and
+// `tx.campaigns.X`. The body is the method dictionary, not a complex
+// algorithm; the namespace pattern is load-bearing for the repo layer's
+// grep-ability. SQL unchanged — only `pool.query` → `c.query`.
 // eslint-disable-next-line max-lines-per-function
-export function createCampaignsRepo(pool: Pool) {
+export function campaignsNs(c: ClientLike) {
   return {
     create: async (input: CreateCampaignInput): Promise<Campaign> => {
       const id = uuidv7()
-      const result = await pool.query<CampaignDbRow>(
+      const result = await c.query<CampaignDbRow>(
         `INSERT INTO campaigns (id, world_id, source_world_id, created_by, name, status, language)
          VALUES (
             $1, $2, $3, $4, $5,
@@ -46,13 +48,13 @@ export function createCampaignsRepo(pool: Pool) {
     },
 
     getById: async (id: string): Promise<Campaign | null> => {
-      const result = await pool.query<CampaignDbRow>('SELECT * FROM campaigns WHERE id = $1', [id])
+      const result = await c.query<CampaignDbRow>('SELECT * FROM campaigns WHERE id = $1', [id])
       const row = result.rows[0]
       return row ? toCampaign(row) : null
     },
 
     listByUser: async (userId: string): Promise<Campaign[]> => {
-      const result = await pool.query<CampaignDbRow>(
+      const result = await c.query<CampaignDbRow>(
         `SELECT c.* FROM campaigns c
             JOIN campaign_members cm ON cm.campaign_id = c.id
           WHERE cm.user_id = $1 AND cm.invite_accepted = true
@@ -63,7 +65,7 @@ export function createCampaignsRepo(pool: Pool) {
     },
 
     update: async (id: string, patch: CampaignUpdate): Promise<Campaign> => {
-      const result = await pool.query<CampaignDbRow>(
+      const result = await c.query<CampaignDbRow>(
         `UPDATE campaigns
             SET name       = COALESCE($2, name),
                 status     = COALESCE($3, status),
@@ -85,7 +87,7 @@ export function createCampaignsRepo(pool: Pool) {
       inviteAccepted?: boolean
     }): Promise<CampaignMember> => {
       const id = uuidv7()
-      const inserted = await pool.query<CampaignMemberDbRow>(
+      const inserted = await c.query<CampaignMemberDbRow>(
         `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (campaign_id, user_id) DO NOTHING
@@ -96,7 +98,7 @@ export function createCampaignsRepo(pool: Pool) {
       if (inserted.rowCount === 1 && insertedRow !== undefined) {
         return toCampaignMember(insertedRow)
       }
-      const existing = await pool.query<CampaignMemberDbRow>(
+      const existing = await c.query<CampaignMemberDbRow>(
         `SELECT * FROM campaign_members WHERE campaign_id = $1 AND user_id = $2`,
         [input.campaignId, input.userId],
       )
@@ -106,7 +108,7 @@ export function createCampaignsRepo(pool: Pool) {
     },
 
     getMembership: async (campaignId: string, userId: string): Promise<CampaignMember | null> => {
-      const result = await pool.query<CampaignMemberDbRow>(
+      const result = await c.query<CampaignMemberDbRow>(
         `SELECT * FROM campaign_members WHERE campaign_id = $1 AND user_id = $2`,
         [campaignId, userId],
       )
@@ -115,7 +117,7 @@ export function createCampaignsRepo(pool: Pool) {
     },
 
     getOwner: async (campaignId: string): Promise<CampaignMember | null> => {
-      const result = await pool.query<CampaignMemberDbRow>(
+      const result = await c.query<CampaignMemberDbRow>(
         `SELECT * FROM campaign_members WHERE campaign_id = $1 AND role = 'owner'`,
         [campaignId],
       )
@@ -135,7 +137,7 @@ export function createCampaignsRepo(pool: Pool) {
         joinedAt: Date
       }[]
     > => {
-      const result = await pool.query<{
+      const result = await c.query<{
         user_id: string
         role: string
         username: string
@@ -161,3 +163,7 @@ export function createCampaignsRepo(pool: Pool) {
     },
   }
 }
+
+/** Back-compat factory — pool-bound `campaigns` surface. Identical shape to
+ *  the pre-unification `createCampaignsRepo`. */
+export const createCampaignsRepo = (pool: Pool) => campaignsNs(pool)

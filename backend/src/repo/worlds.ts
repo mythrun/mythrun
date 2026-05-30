@@ -2,14 +2,19 @@ import { type Pool } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import { type CreateWorldInput, type World, type WorldUpdate } from './types.js'
 import { toWorld, type WorldDbRow } from './mappers.js'
+import type { ClientLike } from './_types.js'
 
-// Namespace factory — see createCampaignsRepo for the pattern rationale.
+// Composable binder: every method captures the ClientLike `c` (pool OR an
+// in-flight tx client) so the same body serves `repo.worlds.X` (pool-bound)
+// and `tx.worlds.X` (tx-bound). SQL is unchanged from the prior pool-bound
+// factory — only `pool.query` → `c.query`. See the data-layer-repo-unification
+// design ("Internal mechanism: closure-bound namespaces").
 // eslint-disable-next-line max-lines-per-function
-export function createWorldsRepo(pool: Pool) {
+export function worldsNs(c: ClientLike) {
   return {
     create: async (input: CreateWorldInput): Promise<World> => {
       const id = uuidv7()
-      const result = await pool.query<WorldDbRow>(
+      const result = await c.query<WorldDbRow>(
         `INSERT INTO worlds (
             id, created_by, source_world_id, name, concept,
             tone, themes, geography_summary, political_summary, era,
@@ -49,7 +54,7 @@ export function createWorldsRepo(pool: Pool) {
     },
 
     getById: async (id: string): Promise<World | null> => {
-      const result = await pool.query<WorldDbRow>('SELECT * FROM worlds WHERE id = $1', [id])
+      const result = await c.query<WorldDbRow>('SELECT * FROM worlds WHERE id = $1', [id])
       const row = result.rows[0]
       return row ? toWorld(row) : null
     },
@@ -64,7 +69,7 @@ export function createWorldsRepo(pool: Pool) {
      * Spec: docs/superpowers/specs/2026-05-08-myt-43-billing-metering-design.md §9
      */
     getDemo: async (): Promise<World | null> => {
-      const result = await pool.query<WorldDbRow>(
+      const result = await c.query<WorldDbRow>(
         `SELECT * FROM worlds WHERE is_demo = true LIMIT 1`,
       )
       const row = result.rows[0]
@@ -72,7 +77,7 @@ export function createWorldsRepo(pool: Pool) {
     },
 
     listByUser: async (userId: string): Promise<World[]> => {
-      const result = await pool.query<WorldDbRow>(
+      const result = await c.query<WorldDbRow>(
         `SELECT * FROM worlds WHERE created_by = $1 ORDER BY created_at DESC`,
         [userId],
       )
@@ -80,7 +85,7 @@ export function createWorldsRepo(pool: Pool) {
     },
 
     update: async (id: string, patch: WorldUpdate): Promise<World> => {
-      const result = await pool.query<WorldDbRow>(
+      const result = await c.query<WorldDbRow>(
         `UPDATE worlds
             SET name                 = COALESCE($2, name),
                 concept              = COALESCE($3, concept),
@@ -126,7 +131,7 @@ export function createWorldsRepo(pool: Pool) {
       id: string,
       status: 'generating' | 'complete' | 'failed',
     ): Promise<World> => {
-      const result = await pool.query<WorldDbRow>(
+      const result = await c.query<WorldDbRow>(
         `UPDATE worlds SET status = $2, updated_at = now() WHERE id = $1 RETURNING *`,
         [id, status],
       )
@@ -136,7 +141,7 @@ export function createWorldsRepo(pool: Pool) {
     },
 
     incrementForkCount: async (id: string): Promise<World> => {
-      const result = await pool.query<WorldDbRow>(
+      const result = await c.query<WorldDbRow>(
         `UPDATE worlds SET fork_count = fork_count + 1, updated_at = now() WHERE id = $1 RETURNING *`,
         [id],
       )
@@ -146,3 +151,8 @@ export function createWorldsRepo(pool: Pool) {
     },
   }
 }
+
+/** Back-compat factory — pool-bound `worlds` surface. Identical shape to the
+ *  pre-unification `createWorldsRepo`. Direct importers keep working; new code
+ *  goes through `repo.worlds`. */
+export const createWorldsRepo = (pool: Pool) => worldsNs(pool)

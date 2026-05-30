@@ -194,9 +194,165 @@ export interface NewClawbackRow {
   readonly sourceId: string // originating grant row's UUID
 }
 
-// Namespace factory — see createCampaignsRepo for the pattern rationale.
+/**
+ * Composable `credits` binder — methods that run over an arbitrary ClientLike
+ * (pool OR an in-flight tx client), so they serve `repo.credits.X` and
+ * `tx.credits.X`. SQL unchanged.
+ *
+ * The connection-owning self-managing methods (`atomicDebit`, `grant`,
+ * `tryDebitForSession`) live in `selfManagingCredits(pool, opts)` — they each
+ * own their own pool.connect() + advisory-anchor lock + per-call SET LOCAL
+ * recipe, so they can't be closure-bound to a tx client and are excluded from
+ * TxRepo.
+ *
+ * `grantInTx` and `recordClawback` are composable: they take/use the bound
+ * client and compose inside a caller's transaction.
+ */
+export function creditsNs(c: ClientLike) {
+  return {
+    balance: async (userId: string, type: CreditType): Promise<number> => {
+      const result = await c.query<{ balance: string }>(
+        `SELECT COALESCE(SUM(amount), 0)::text AS balance
+           FROM credit_ledger
+          WHERE user_id = $1
+            AND credit_type = $2
+            AND (expires_at IS NULL OR expires_at > now())`,
+        [userId, type],
+      )
+      const row = result.rows[0]
+      /* c8 ignore start — `!row` arm is unreachable: COALESCE(SUM(...), 0)
+       * always returns one row even on an empty set. */
+      if (!row) return 0
+      /* c8 ignore stop */
+      return Number(row.balance)
+    },
+
+    /**
+     * `world_gen`-pinned balance read — identical SQL to `balance(userId,
+     * 'world_gen')`, exposed under its spec name so a caller can express the
+     * intent (and so `tx.credits.getWorldGenBalance` reads under an advisory
+     * lock with the exact same query as the un-locked pool peek). Composable:
+     * the pool peek and the under-lock re-read share one body, no opts.client.
+     */
+    getWorldGenBalance: async (userId: string): Promise<number> => {
+      const result = await c.query<{ balance: string }>(
+        `SELECT COALESCE(SUM(amount), 0)::text AS balance
+             FROM credit_ledger
+            WHERE user_id = $1
+              AND credit_type = 'world_gen'
+              AND (expires_at IS NULL OR expires_at > now())`,
+        [userId],
+      )
+      return Number(result.rows[0]?.balance ?? 0)
+    },
+
+    /**
+     * Insert a positive-amount credit_ledger row inside an existing
+     * caller-managed transaction. Same validation + user-row FOR UPDATE +
+     * INSERT as `grant`, but does NOT open its own connection or BEGIN.
+     *
+     * The user-row anchor lock is safe even when the caller already holds
+     * it (Postgres tuple-lock re-entrancy — same xid re-acquiring is a
+     * no-op). This makes the helper composable with the §5.3 webhook
+     * discipline of "lock the user row first, then call grantInTx".
+     */
+    grantInTx: (input: GrantInput): Promise<CreditEntry> => grantInTx(c, input),
+
+    /**
+     * Insert a negative-polarity debit row representing a refund clawback,
+     * inside an existing caller-managed transaction. The ONLY entrypoint
+     * besides `atomicDebit` allowed to write a `source_type='debit'` row.
+     *
+     * Idempotency: ON CONFLICT (user_id, credit_type, source_id) WHERE
+     * source_type='debit' DO NOTHING — same shape as migration 004's
+     * `uniq_credit_ledger_debit_idempotency` partial unique index. If a
+     * prior delivery wrote some clawback rows then rolled back, the next
+     * delivery's `recordClawback` calls cleanly skip rows already written.
+     * On conflict we follow up with a SELECT to return the canonical row
+     * (consistent with `repo.billingHistory.append`'s `do_nothing` path).
+     */
+    recordClawback: async (tx: ClientLike, input: NewClawbackRow): Promise<CreditEntry> => {
+      if (input.amount >= 0) {
+        throw new Error('recordClawback: amount must be negative')
+      }
+      if (!input.sourceId || input.sourceId.length === 0) {
+        throw new Error('recordClawback: sourceId required (originating grant UUID)')
+      }
+
+      const id = uuidv7()
+      // Note: `granted_at` is intentionally omitted — the column has a
+      // DEFAULT now() (see migration 001). The spec stub listed `created_at`
+      // but credit_ledger uses `granted_at` for that role; relying on the
+      // default is the simplest correct shape.
+      const result = await tx.query<CreditEntryDbRow>(
+        `INSERT INTO credit_ledger
+           (id, user_id, credit_type, amount, source_type, source_id,
+            expires_at, source_purchase_id, source_billing_history_id)
+         VALUES ($1, $2, $3, $4, 'debit', $5, NULL, NULL, NULL)
+         ON CONFLICT (user_id, credit_type, source_id) WHERE source_type = 'debit'
+         DO NOTHING
+         RETURNING *`,
+        [id, input.userId, input.creditType, input.amount, input.sourceId],
+      )
+      const inserted = result.rows[0]
+      if (inserted) return toCreditEntry(inserted)
+
+      // Conflict path: ON CONFLICT DO NOTHING returns no rows. Follow up
+      // with a SELECT to return the canonical row written by the prior
+      // (committed) call.
+      const existing = await tx.query<CreditEntryDbRow>(
+        `SELECT * FROM credit_ledger
+          WHERE user_id = $1 AND credit_type = $2
+            AND source_id = $3 AND source_type = 'debit'`,
+        [input.userId, input.creditType, input.sourceId],
+      )
+      const existingRow = existing.rows[0]
+      if (!existingRow) {
+        // Defensive: the partial unique index covers exactly this shape, so
+        // a missing row after a conflict implies the prior writer's row was
+        // deleted between INSERT and SELECT. credit_ledger has no DELETE
+        // path in product code; surface as a hard error.
+        throw new Error(
+          `recordClawback: row missing after ON CONFLICT for user=${input.userId} ` +
+            `creditType=${input.creditType} sourceId=${input.sourceId}`,
+        )
+      }
+      return toCreditEntry(existingRow)
+    },
+
+    listEntries: async (userId: string, opts: ListEntriesOpts = {}): Promise<CreditEntry[]> => {
+      const limit = opts.limit === null ? null : (opts.limit ?? DEFAULT_LIST_LIMIT)
+      const params: unknown[] = [userId]
+      let typeClause = ''
+      if (opts.type) {
+        params.push(opts.type)
+        typeClause = ` AND credit_type = $${String(params.length)}`
+      }
+      let limitClause = ''
+      if (limit !== null) {
+        params.push(limit)
+        limitClause = ` LIMIT $${String(params.length)}`
+      }
+      const result = await c.query<CreditEntryDbRow>(
+        `SELECT * FROM credit_ledger
+          WHERE user_id = $1${typeClause}
+          ORDER BY granted_at DESC, id DESC${limitClause}`,
+        params,
+      )
+      return result.rows.map(toCreditEntry)
+    },
+  }
+}
+
+/**
+ * Self-managing `credits` methods bound to the pool. Each owns its own
+ * connection + advisory-anchor lock (users-row FOR UPDATE) + the three
+ * `SET LOCAL` timeouts, and maps pg timeout errors to typed errors. They
+ * cannot be closure-bound to a tx client (they'd open a second connection)
+ * and are bound ONLY on the pool surface, excluded from TxRepo.
+ */
 // eslint-disable-next-line max-lines-per-function
-export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
+export function selfManagingCredits(pool: Pool, opts: CreditsRepoOpts = {}) {
   const lockTimeoutMs = opts.debitLockTimeoutMs ?? DEBIT_LOCK_TIMEOUT_MS
   const stmtTimeoutMs = opts.debitStatementTimeoutMs ?? DEBIT_STATEMENT_TIMEOUT_MS
 
@@ -338,35 +494,6 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
   }
 
   return {
-    balance: async (userId: string, type: CreditType): Promise<number> => {
-      const result = await pool.query<{ balance: string }>(
-        `SELECT COALESCE(SUM(amount), 0)::text AS balance
-           FROM credit_ledger
-          WHERE user_id = $1
-            AND credit_type = $2
-            AND (expires_at IS NULL OR expires_at > now())`,
-        [userId, type],
-      )
-      const row = result.rows[0]
-      /* c8 ignore start — `!row` arm is unreachable: COALESCE(SUM(...), 0)
-       * always returns one row even on an empty set. */
-      if (!row) return 0
-      /* c8 ignore stop */
-      return Number(row.balance)
-    },
-
-    /**
-     * Insert a positive-amount credit_ledger row inside an existing
-     * caller-managed transaction. Same validation + user-row FOR UPDATE +
-     * INSERT as `grant`, but does NOT open its own connection or BEGIN.
-     *
-     * The user-row anchor lock is safe even when the caller already holds
-     * it (Postgres tuple-lock re-entrancy — same xid re-acquiring is a
-     * no-op). This makes the helper composable with the §5.3 webhook
-     * discipline of "lock the user row first, then call grantInTx".
-     */
-    grantInTx,
-
     grant: async (input: GrantInput): Promise<CreditEntry> => {
       const client = await pool.connect()
       let inTransaction = false
@@ -394,68 +521,6 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
         /* c8 ignore stop */
         client.release()
       }
-    },
-
-    /**
-     * Insert a negative-polarity debit row representing a refund clawback,
-     * inside an existing caller-managed transaction. The ONLY entrypoint
-     * besides `atomicDebit` allowed to write a `source_type='debit'` row.
-     *
-     * Idempotency: ON CONFLICT (user_id, credit_type, source_id) WHERE
-     * source_type='debit' DO NOTHING — same shape as migration 004's
-     * `uniq_credit_ledger_debit_idempotency` partial unique index. If a
-     * prior delivery wrote some clawback rows then rolled back, the next
-     * delivery's `recordClawback` calls cleanly skip rows already written.
-     * On conflict we follow up with a SELECT to return the canonical row
-     * (consistent with `repo.billingHistory.append`'s `do_nothing` path).
-     */
-    recordClawback: async (tx: ClientLike, input: NewClawbackRow): Promise<CreditEntry> => {
-      if (input.amount >= 0) {
-        throw new Error('recordClawback: amount must be negative')
-      }
-      if (!input.sourceId || input.sourceId.length === 0) {
-        throw new Error('recordClawback: sourceId required (originating grant UUID)')
-      }
-
-      const id = uuidv7()
-      // Note: `granted_at` is intentionally omitted — the column has a
-      // DEFAULT now() (see migration 001). The spec stub listed `created_at`
-      // but credit_ledger uses `granted_at` for that role; relying on the
-      // default is the simplest correct shape.
-      const result = await tx.query<CreditEntryDbRow>(
-        `INSERT INTO credit_ledger
-           (id, user_id, credit_type, amount, source_type, source_id,
-            expires_at, source_purchase_id, source_billing_history_id)
-         VALUES ($1, $2, $3, $4, 'debit', $5, NULL, NULL, NULL)
-         ON CONFLICT (user_id, credit_type, source_id) WHERE source_type = 'debit'
-         DO NOTHING
-         RETURNING *`,
-        [id, input.userId, input.creditType, input.amount, input.sourceId],
-      )
-      const inserted = result.rows[0]
-      if (inserted) return toCreditEntry(inserted)
-
-      // Conflict path: ON CONFLICT DO NOTHING returns no rows. Follow up
-      // with a SELECT to return the canonical row written by the prior
-      // (committed) call.
-      const existing = await tx.query<CreditEntryDbRow>(
-        `SELECT * FROM credit_ledger
-          WHERE user_id = $1 AND credit_type = $2
-            AND source_id = $3 AND source_type = 'debit'`,
-        [input.userId, input.creditType, input.sourceId],
-      )
-      const existingRow = existing.rows[0]
-      if (!existingRow) {
-        // Defensive: the partial unique index covers exactly this shape, so
-        // a missing row after a conflict implies the prior writer's row was
-        // deleted between INSERT and SELECT. credit_ledger has no DELETE
-        // path in product code; surface as a hard error.
-        throw new Error(
-          `recordClawback: row missing after ON CONFLICT for user=${input.userId} ` +
-            `creditType=${input.creditType} sourceId=${input.sourceId}`,
-        )
-      }
-      return toCreditEntry(existingRow)
     },
 
     atomicDebit,
@@ -489,29 +554,23 @@ export function createCreditsRepo(pool: Pool, opts: CreditsRepoOpts = {}) {
         throw err
       }
     },
-
-    listEntries: async (userId: string, opts: ListEntriesOpts = {}): Promise<CreditEntry[]> => {
-      const limit = opts.limit === null ? null : (opts.limit ?? DEFAULT_LIST_LIMIT)
-      const params: unknown[] = [userId]
-      let typeClause = ''
-      if (opts.type) {
-        params.push(opts.type)
-        typeClause = ` AND credit_type = $${String(params.length)}`
-      }
-      let limitClause = ''
-      if (limit !== null) {
-        params.push(limit)
-        limitClause = ` LIMIT $${String(params.length)}`
-      }
-      const result = await pool.query<CreditEntryDbRow>(
-        `SELECT * FROM credit_ledger
-          WHERE user_id = $1${typeClause}
-          ORDER BY granted_at DESC, id DESC${limitClause}`,
-        params,
-      )
-      return result.rows.map(toCreditEntry)
-    },
   }
 }
+
+/** Back-compat factory — pool-bound `credits` surface, identical shape to the
+ *  pre-unification `createCreditsRepo` (composable methods ∪ self-managing
+ *  atomicDebit/grant/tryDebitForSession). The `opts` (debit lock/statement
+ *  timeouts) flow to the self-managing methods.
+ *
+ *  `grantInTx` is overridden with the standalone two-arg `(tx, input)` form
+ *  to preserve the pre-unification caller contract (direct importers and the
+ *  repo tests pass an explicit client). The composable binder's one-arg
+ *  `tx.credits.grantInTx(input)` captures the client instead — both bottom out
+ *  in the same standalone body. */
+export const createCreditsRepo = (pool: Pool, opts: CreditsRepoOpts = {}) => ({
+  ...creditsNs(pool),
+  ...selfManagingCredits(pool, opts),
+  grantInTx,
+})
 
 export type CreditsRepo = ReturnType<typeof createCreditsRepo>

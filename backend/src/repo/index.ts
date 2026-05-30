@@ -1,61 +1,58 @@
 import { type Pool } from 'pg'
-import { createUsersRepo } from './users.js'
-import { createWorldsRepo } from './worlds.js'
-import { createCampaignsRepo } from './campaigns.js'
-import { createSessionsRepo } from './sessions.js'
-import { createCreditsRepo, grantInTx } from './credits.js'
-import { createInvitesRepo } from './invites.js'
-import { createCharactersRepo } from './characters.js'
-import { createCharacterConceptsRepo } from './character-concepts.js'
+import { usersNs, selfManagingUsers } from './users.js'
+import { worldsNs } from './worlds.js'
+import { campaignsNs } from './campaigns.js'
+import { sessionsNs } from './sessions.js'
+import { creditsNs, selfManagingCredits } from './credits.js'
+import { invitesNs, selfManagingInvites } from './invites.js'
+import { charactersNs } from './characters.js'
+import { characterConceptsNs } from './character-concepts.js'
 import type { ClientLike } from './_types.js'
-import type { GrantInput } from './types.js'
 import { runTransaction, type RollbackSignal } from './_client.js'
 import { type TxOpts } from '../db/transaction.js'
 
-// TEMPORARY bindTx — EXPANDED IN T2.
-//
-// The full closure binder (worlds/campaigns/credits/characters/… every
-// composable namespace, each method bound over the in-flight ClientLike)
-// arrives in the next task. This minimal version binds only the one
-// namespace the Task-1 transaction-mechanics tests need: `credits`, with
-// `getWorldGenBalance` (the pool-peek / tx-locked-reread read — identical
-// SQL to repo.credits.balance(userId, 'world_gen')) and `grantInTx`
-// (delegates to the existing standalone composable). T2 replaces this whole
-// function with the real binder.
+/**
+ * Closure-bind every transaction-composable namespace over a single
+ * ClientLike. `createRepo(pool)` binds the pool (the default reads + single-
+ * statement-write surface); `repo.transaction` binds the in-flight tx client
+ * (`runTransaction(pool, bindTx, …)`). One method body, two bindings, zero
+ * per-method duplication.
+ *
+ * Only composable namespaces appear here. The connection-owning self-managing
+ * methods (`credits.atomicDebit`/`grant`/`tryDebitForSession`,
+ * `invites.create`/`acceptInvite`, `users.getByCognitoSubWithTimeout`) are
+ * added ONLY on the pool surface by `createRepo` — so `TxRepo =
+ * ReturnType<typeof bindTx>` mechanically excludes them. Calling
+ * `tx.credits.atomicDebit` is a compile error, not a silent second-connection
+ * write. (See the data-layer-repo-unification design, "Two idioms".)
+ */
 function bindTx(c: ClientLike) {
   return {
-    credits: {
-      getWorldGenBalance: async (userId: string): Promise<number> => {
-        const result = await c.query<{ balance: string }>(
-          `SELECT COALESCE(SUM(amount), 0)::text AS balance
-             FROM credit_ledger
-            WHERE user_id = $1
-              AND credit_type = 'world_gen'
-              AND (expires_at IS NULL OR expires_at > now())`,
-          [userId],
-        )
-        return Number(result.rows[0]?.balance ?? 0)
-      },
-      grantInTx: (input: GrantInput) => grantInTx(c, input),
-    },
+    users: usersNs(c),
+    worlds: worldsNs(c),
+    campaigns: campaignsNs(c),
+    sessions: sessionsNs(c),
+    credits: creditsNs(c),
+    invites: invitesNs(c),
+    characters: charactersNs(c),
+    characterConcepts: characterConceptsNs(c),
   }
 }
 
 /** Transaction-composable namespace surface bound to the in-flight tx client.
- *  Naturally lacks `.transaction` (added at the top level) and the
- *  self-managing methods (added only on the pool surface). T2 widens this. */
+ *  Naturally lacks `.transaction` (added at the top level by createRepo) and
+ *  the self-managing methods (added only on the pool surface). */
 export type TxRepo = ReturnType<typeof bindTx>
 
 export function createRepo(pool: Pool) {
+  const base = bindTx(pool)
   return {
-    users: createUsersRepo(pool),
-    worlds: createWorldsRepo(pool),
-    campaigns: createCampaignsRepo(pool),
-    sessions: createSessionsRepo(pool),
-    credits: createCreditsRepo(pool),
-    invites: createInvitesRepo(pool),
-    characters: createCharactersRepo(pool),
-    characterConcepts: createCharacterConceptsRepo(pool),
+    ...base,
+    // Pool surface = composable ∪ self-managing for the namespaces that own
+    // their own connection/lock discipline.
+    credits: { ...base.credits, ...selfManagingCredits(pool) },
+    invites: { ...base.invites, ...selfManagingInvites(pool) },
+    users: { ...base.users, ...selfManagingUsers(pool) },
     transaction: <T>(
       fn: (tx: TxRepo) => Promise<T | RollbackSignal>,
       opts?: TxOpts,

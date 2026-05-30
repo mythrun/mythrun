@@ -12,7 +12,18 @@ export class LookupTimeoutError extends Error {
   }
 }
 
-export function createUsersRepo(pool: Pool) {
+// Composable binder — each method captures the ClientLike `c` so the body
+// serves `repo.users.X` and `tx.users.X`. SQL unchanged.
+//
+// `create` keeps its explicit `tx` first-param: handleRegister and the repo
+// tests pass a PoolClient (or the pool) from a hand-managed tx, and dropping
+// the param is a later migration step (see the design's Migration note).
+//
+// `getByCognitoSubWithTimeout` is NOT here — it owns its own pool.connect() +
+// BEGIN/COMMIT + SET LOCAL discipline, so it cannot be closure-bound to an
+// arbitrary ClientLike. It's bound only on the pool surface by
+// `selfManagingUsers(pool)` (and folded into the back-compat factory below).
+export function usersNs(c: ClientLike) {
   return {
     create: async (tx: ClientLike, input: CreateUserInput): Promise<User> => {
       const id = uuidv7()
@@ -28,19 +39,64 @@ export function createUsersRepo(pool: Pool) {
     },
 
     getById: async (id: string): Promise<User | null> => {
-      const result = await pool.query<UserDbRow>('SELECT * FROM users WHERE id = $1', [id])
+      const result = await c.query<UserDbRow>('SELECT * FROM users WHERE id = $1', [id])
       const row = result.rows[0]
       return row ? toUser(row) : null
     },
 
     getByCognitoSub: async (sub: string): Promise<User | null> => {
-      const result = await pool.query<UserDbRow>('SELECT * FROM users WHERE cognito_sub = $1', [
+      const result = await c.query<UserDbRow>('SELECT * FROM users WHERE cognito_sub = $1', [
         sub,
       ])
       const row = result.rows[0]
       return row ? toUser(row) : null
     },
 
+    getByUsername: async (username: string): Promise<User | null> => {
+      // Case-insensitive: matches the UNIQUE LOWER(username) index from migration 005.
+      const result = await c.query<UserDbRow>(
+        'SELECT * FROM users WHERE LOWER(username) = LOWER($1)',
+        [username],
+      )
+      const row = result.rows[0]
+      return row ? toUser(row) : null
+    },
+
+    update: async (id: string, patch: UserUpdate): Promise<User> => {
+      const result = await c.query<UserDbRow>(
+        `UPDATE users
+            SET username           = COALESCE($2, username),
+                display_name       = COALESCE($3, display_name),
+                stripe_customer_id = COALESCE($4, stripe_customer_id),
+                free_trial_used    = COALESCE($5, free_trial_used),
+                updated_at         = now()
+          WHERE id = $1
+          RETURNING *`,
+        [
+          id,
+          patch.username ?? null,
+          patch.displayName ?? null,
+          patch.stripeCustomerId ?? null,
+          patch.freeTrialUsed ?? null,
+        ],
+      )
+      const row = result.rows[0]
+      if (!row) throw new Error(`users.update: no user with id ${id}`)
+      return toUser(row)
+    },
+  }
+}
+
+/**
+ * Self-managing `users` methods bound to the pool. `getByCognitoSubWithTimeout`
+ * owns its own connection + BEGIN/COMMIT + SET LOCAL statement_timeout so the
+ * timeout actually applies (SET LOCAL outside a tx is a no-op). It can't be
+ * closure-bound to an arbitrary ClientLike — bound ONLY on the pool surface
+ * and excluded from TxRepo (calling it inside a tx would open a second
+ * connection, defeating the caller's transaction).
+ */
+export function selfManagingUsers(pool: Pool) {
+  return {
     getByCognitoSubWithTimeout: async (
       sub: string,
       statementTimeoutMs: number,
@@ -83,41 +139,16 @@ export function createUsersRepo(pool: Pool) {
         client.release()
       }
     },
-
-    getByUsername: async (username: string): Promise<User | null> => {
-      // Case-insensitive: matches the UNIQUE LOWER(username) index from migration 005.
-      const result = await pool.query<UserDbRow>(
-        'SELECT * FROM users WHERE LOWER(username) = LOWER($1)',
-        [username],
-      )
-      const row = result.rows[0]
-      return row ? toUser(row) : null
-    },
-
-    update: async (id: string, patch: UserUpdate): Promise<User> => {
-      const result = await pool.query<UserDbRow>(
-        `UPDATE users
-            SET username           = COALESCE($2, username),
-                display_name       = COALESCE($3, display_name),
-                stripe_customer_id = COALESCE($4, stripe_customer_id),
-                free_trial_used    = COALESCE($5, free_trial_used),
-                updated_at         = now()
-          WHERE id = $1
-          RETURNING *`,
-        [
-          id,
-          patch.username ?? null,
-          patch.displayName ?? null,
-          patch.stripeCustomerId ?? null,
-          patch.freeTrialUsed ?? null,
-        ],
-      )
-      const row = result.rows[0]
-      if (!row) throw new Error(`users.update: no user with id ${id}`)
-      return toUser(row)
-    },
   }
 }
+
+/** Back-compat factory — pool-bound `users` surface, identical shape to the
+ *  pre-unification `createUsersRepo` (composable methods ∪ the self-managing
+ *  `getByCognitoSubWithTimeout`). */
+export const createUsersRepo = (pool: Pool) => ({
+  ...usersNs(pool),
+  ...selfManagingUsers(pool),
+})
 
 /**
  * Narrowed shape of the Stripe customers resource consumed by

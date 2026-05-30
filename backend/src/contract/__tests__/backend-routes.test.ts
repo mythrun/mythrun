@@ -12,16 +12,21 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 
-vi.mock('../../repo/users.js', () => ({
-  createUsersRepo: () => ({
-    getByCognitoSubWithTimeout: vi.fn().mockResolvedValue({
-      id: 'stub-user-id',
-      cognitoSub: 'bypass:dev-1',
-      username: 'bypass',
-      displayName: 'Bypass',
-      suspendedAt: null,
-    }),
+// createRepo (transitively imported via buildApp) composes usersNs ∪
+// selfManagingUsers, so the mock must expose all three named exports.
+const stubOnboarded = () => ({
+  getByCognitoSubWithTimeout: vi.fn().mockResolvedValue({
+    id: 'stub-user-id',
+    cognitoSub: 'bypass:dev-1',
+    username: 'bypass',
+    displayName: 'Bypass',
+    suspendedAt: null,
   }),
+})
+vi.mock('../../repo/users.js', () => ({
+  usersNs: () => ({}),
+  selfManagingUsers: () => stubOnboarded(),
+  createUsersRepo: () => stubOnboarded(),
 }))
 
 import IoredisMock from 'ioredis-mock'

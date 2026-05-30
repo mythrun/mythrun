@@ -9,14 +9,17 @@ import {
 } from './types.js'
 import { toSession, toSessionUsage, type SessionDbRow, type SessionUsageDbRow } from './mappers.js'
 import { SessionNotFoundError } from './sessions-errors.js'
+import type { ClientLike } from './_types.js'
 
-// Namespace factory — see createCampaignsRepo for the pattern rationale.
+// Composable binder — see campaignsNs for the pattern rationale. Each method
+// captures the ClientLike `c` so the body serves `repo.sessions.X` and
+// `tx.sessions.X`. SQL unchanged — only `pool.query` → `c.query`.
 // eslint-disable-next-line max-lines-per-function
-export function createSessionsRepo(pool: Pool) {
+export function sessionsNs(c: ClientLike) {
   return {
     create: async (input: CreateSessionInput): Promise<Session> => {
       const id = uuidv7()
-      const result = await pool.query<SessionDbRow>(
+      const result = await c.query<SessionDbRow>(
         `INSERT INTO sessions (id, campaign_id, session_number, status)
          VALUES ($1, $2, $3, COALESCE($4, 'active'))
          RETURNING *`,
@@ -28,7 +31,7 @@ export function createSessionsRepo(pool: Pool) {
     },
 
     getById: async (id: string): Promise<Session | null> => {
-      const result = await pool.query<SessionDbRow>('SELECT * FROM sessions WHERE id = $1', [id])
+      const result = await c.query<SessionDbRow>('SELECT * FROM sessions WHERE id = $1', [id])
       const row = result.rows[0]
       return row ? toSession(row) : null
     },
@@ -37,7 +40,7 @@ export function createSessionsRepo(pool: Pool) {
       // The partial-unique index idx_sessions_one_active guarantees at most
       // one active session per campaign. LIMIT 1 makes the contract self-
       // documenting at the SQL site.
-      const result = await pool.query<SessionDbRow>(
+      const result = await c.query<SessionDbRow>(
         `SELECT * FROM sessions WHERE campaign_id = $1 AND status = 'active' LIMIT 1`,
         [campaignId],
       )
@@ -46,7 +49,7 @@ export function createSessionsRepo(pool: Pool) {
     },
 
     listByCampaign: async (campaignId: string): Promise<Session[]> => {
-      const result = await pool.query<SessionDbRow>(
+      const result = await c.query<SessionDbRow>(
         `SELECT * FROM sessions WHERE campaign_id = $1 ORDER BY started_at DESC`,
         [campaignId],
       )
@@ -75,7 +78,7 @@ export function createSessionsRepo(pool: Pool) {
       deltas: UsageDeltas,
     ): Promise<SessionUsage> => {
       const cost = computeCostUsd(model, deltas)
-      const result = await pool.query<SessionUsageDbRow>(
+      const result = await c.query<SessionUsageDbRow>(
         `INSERT INTO session_usage
            (id, session_id, campaign_id, user_id,
             input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
@@ -115,7 +118,7 @@ export function createSessionsRepo(pool: Pool) {
      * return value to compute wrap-up signals inline. See design §1.
      */
     budgetSummary: async (sessionId: string): Promise<SessionUsage | null> => {
-      const result = await pool.query<SessionUsageDbRow>(
+      const result = await c.query<SessionUsageDbRow>(
         `SELECT * FROM session_usage WHERE session_id = $1`,
         [sessionId],
       )
@@ -126,7 +129,7 @@ export function createSessionsRepo(pool: Pool) {
     update: async (id: string, patch: SessionUpdate): Promise<Session> => {
       // sessions table has no updated_at column (only started_at + ended_at),
       // so this UPDATE doesn't include `updated_at = now()`.
-      const result = await pool.query<SessionDbRow>(
+      const result = await c.query<SessionDbRow>(
         `UPDATE sessions
             SET status              = COALESCE($2, status),
                 ended_at            = COALESCE($3, ended_at),
@@ -150,3 +153,7 @@ export function createSessionsRepo(pool: Pool) {
     },
   }
 }
+
+/** Back-compat factory — pool-bound `sessions` surface. Identical shape to the
+ *  pre-unification `createSessionsRepo`. */
+export const createSessionsRepo = (pool: Pool) => sessionsNs(pool)
