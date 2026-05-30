@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const noStripePriceMutations = require('./backend/eslint-rules/no-stripe-price-mutations.cjs')
 const noStripeSubscriptionPriceMutation = require('./backend/eslint-rules/no-stripe-subscription-price-mutation.cjs')
+const noRawDbAccess = require('./backend/eslint-rules/no-raw-db-access.cjs')
 
 export default tseslint.config(
   {
@@ -32,6 +33,7 @@ export default tseslint.config(
         rules: {
           'no-stripe-price-mutations': noStripePriceMutations,
           'no-stripe-subscription-price-mutation': noStripeSubscriptionPriceMutation,
+          'no-raw-db-access': noRawDbAccess,
         },
       },
     },
@@ -68,6 +70,14 @@ export default tseslint.config(
       '@typescript-eslint/no-non-null-assertion': 'error',
       'mythrun/no-stripe-price-mutations': 'error',
       'mythrun/no-stripe-subscription-price-mutation': 'error',
+      // Data-layer repository unification: ban raw DB access outside the
+      // repo/db layer. Starts as 'warn' during migration (the many
+      // un-migrated raw-SQL sites are warnings, not errors — `pnpm lint`
+      // carries no --max-warnings 0, so the warn phase stays green) and
+      // flips per-directory to 'error' as clusters migrate, then globally
+      // in teardown. The allowlist lives INSIDE the rule (reads
+      // context.filename), so no per-file ESLint override is needed.
+      'mythrun/no-raw-db-access': 'warn',
       // myth-t1qz: direct 'ai' SDK imports are banned across the repo.
       // The canonical entry point is `backend/src/llm/ai.ts` — its
       // `generateObject` / `streamObject` wrap the SDK with repair-fallback
