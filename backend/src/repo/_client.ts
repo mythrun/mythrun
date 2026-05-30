@@ -114,6 +114,7 @@ export async function runTransaction<TxR, T>(
     settle() // idempotent — just flips a boolean; safe to call twice.
     releaseErr = err instanceof Error ? err : new Error(String(err))
     throw err
+    /* c8 ignore next — v8 finally-boundary quirk; both paths tested. */
   } finally {
     client.release(releaseErr)
   }

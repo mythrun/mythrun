@@ -5,8 +5,8 @@
 // These exercise the real BEGIN/COMMIT/ROLLBACK + SET LOCAL prelude against
 // Postgres — the prelude ordering (SET LOCAL must follow BEGIN) and the
 // use-after-settle guard can only be verified against a live connection.
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import type { Pool } from 'pg'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+import type { Pool, PoolClient } from 'pg'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createRepo, ROLLBACK, type TxRepo } from '../index.js'
 import { runTransaction } from '../_client.js'
@@ -160,6 +160,67 @@ describe('repo.transaction mechanics (integration)', () => {
       if (settings === ROLLBACK) throw new Error('unreachable')
       expect(settings.lockTimeout).toBe('1234ms')
       expect(settings.isolation).toBe('repeatable read')
+    })
+  })
+
+  // Unit-level: the secondary-ROLLBACK-throw swallow + release(err) destroy path
+  // can't be triggered against real Postgres (a ROLLBACK doesn't fail on
+  // demand), so we drive runTransaction with a mocked pool whose ROLLBACK
+  // rejects — mirroring db/__tests__/transaction.test.ts.
+  describe('runTransaction (unit — mocked pool)', () => {
+    const emptyResult = (): { rows: unknown[]; rowCount: number } => ({ rows: [], rowCount: 0 })
+
+    it('swallows a secondary ROLLBACK error, surfaces the original throw, and destroys the client', async () => {
+      const query = vi.fn((sql: string) =>
+        sql.startsWith('ROLLBACK')
+          ? Promise.reject(new Error('pg_connection_broken'))
+          : Promise.resolve(emptyResult()),
+      )
+      const release = vi.fn()
+      const client = { query, release } as unknown as PoolClient
+      const fakePool = { connect: () => Promise.resolve(client) } as unknown as Pool
+      const boom = new Error('boom')
+
+      await expect(
+        runTransaction(fakePool, (c: ClientLike) => c, () => Promise.reject(boom), undefined),
+      ).rejects.toBe(boom)
+
+      // BEGIN prelude ran, then ROLLBACK (which rejected and was swallowed).
+      expect(query.mock.calls[0]?.[0]).toMatch(/^BEGIN/)
+      expect(query.mock.calls[1]?.[0]).toBe('ROLLBACK')
+      // The dirty connection is destroyed via release(err), not plain-released.
+      expect(release).toHaveBeenCalledTimes(1)
+      expect(release.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+    })
+
+    it('destroys the client when COMMIT itself fails, surfacing the original value', async () => {
+      // The callback succeeds, but COMMIT rejects — the serialization/deadlock-
+      // at-commit scenario (real under repeatable-read/serializable) the
+      // release(err) destroy exists for. This reaches the outer catch WITHOUT
+      // the inner fn-catch. A non-Error rejection additionally exercises the
+      // new Error(String) wrap (release() needs an Error to destroy with),
+      // while the original value still surfaces to the caller.
+      const query = vi.fn<(sql: string) => Promise<unknown>>((sql) =>
+        sql.startsWith('COMMIT')
+          ? // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- deliberate non-Error to exercise the defensive new Error(String) wrap
+            Promise.reject('commit-broke')
+          : Promise.resolve(emptyResult()),
+      )
+      const release = vi.fn<(err?: Error | boolean) => void>()
+      const client = { query, release } as unknown as PoolClient
+      const fakePool = { connect: () => Promise.resolve(client) } as unknown as Pool
+
+      await expect(
+        runTransaction(fakePool, (c: ClientLike) => c, () => Promise.resolve('ok'), undefined),
+      ).rejects.toBe('commit-broke')
+
+      // BEGIN prelude, then COMMIT (which rejected). No ROLLBACK — the failure
+      // was at commit time, not inside the callback.
+      expect(query.mock.calls[0]?.[0]).toMatch(/^BEGIN/)
+      expect(query.mock.calls[1]?.[0]).toBe('COMMIT')
+      const releaseArg = release.mock.calls[0]?.[0]
+      expect(releaseArg).toBeInstanceOf(Error)
+      if (releaseArg instanceof Error) expect(releaseArg.message).toBe('commit-broke')
     })
   })
 })
