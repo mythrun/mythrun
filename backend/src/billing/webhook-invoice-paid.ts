@@ -38,10 +38,7 @@
 
 import type { Stripe } from 'stripe'
 import type { FastifyBaseLogger } from 'fastify'
-import type { ClientLike } from '../repo/_types.js'
-import { billingHistory } from '../repo/billing-history.js'
-import { userSubscriptions } from '../repo/user-subscriptions.js'
-import { grantInTx } from '../repo/credits.js'
+import type { TxRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { getSkuCache } from './sku-cache.js'
 import { LOOKUP_KEYS, type LookupKey } from './lookup-keys.js'
@@ -181,7 +178,7 @@ interface ResolvedUser {
  * landed for an unresolvable customer).
  */
 async function resolveUser(
-  client: ClientLike,
+  tx: TxRepo,
   invoice: Stripe.Invoice,
   subscription: Stripe.Subscription | null,
 ): Promise<ResolvedUser | null> {
@@ -190,12 +187,8 @@ async function resolveUser(
   const customer = typeof invoice.customer === 'string' ? invoice.customer : null
   /* c8 ignore stop */
   if (customer !== null) {
-    const byCustomer = await client.query<{ id: string }>(
-      'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
-      [customer],
-    )
-    const found = byCustomer.rows[0]
-    if (found) return { id: found.id }
+    const byCustomer = await tx.users.lockByStripeCustomerId(customer)
+    if (byCustomer) return { id: byCustomer.id }
   }
   /* c8 ignore start — fallback path is defensive: every Mythrun-issued
    * checkout flow seeds users.stripe_customer_id via webhook-customer.ts
@@ -206,12 +199,8 @@ async function resolveUser(
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
     return null
   }
-  const byUserId = await client.query<{ id: string }>(
-    'SELECT id FROM users WHERE id = $1 FOR UPDATE',
-    [fallbackUserId],
-  )
-  const found = byUserId.rows[0]
-  return found ? { id: found.id } : null
+  const byUserId = await tx.users.lockById(fallbackUserId)
+  return byUserId ? { id: byUserId.id } : null
   /* c8 ignore stop */
 }
 
@@ -338,7 +327,7 @@ function tierPeriodLengthMs(periodStartSec: number, periodEndSec: number): numbe
  * Append a billing_history row for an invoice that lands credits (cycle / create).
  */
 async function appendCycleOrCreateBillingHistory(
-  client: ClientLike,
+  tx: TxRepo,
   userId: string,
   invoice: Stripe.Invoice,
   invoiceId: string,
@@ -347,7 +336,7 @@ async function appendCycleOrCreateBillingHistory(
   tierLookupKey: string,
   periodEndSec: number,
 ): Promise<string> {
-  const row = await billingHistory.append(client, {
+  const row = await tx.billingHistory.append({
     id: uuidv7(),
     user_id: userId,
     kind: 'invoice',
@@ -381,7 +370,7 @@ function lookupKeySpec(key: string): { sessionsGranted: number; worldsGranted: n
 }
 
 async function grantTierCredits(
-  client: ClientLike,
+  tx: TxRepo,
   userId: string,
   tierLookupKey: string,
   billingHistoryRowId: string,
@@ -390,7 +379,7 @@ async function grantTierCredits(
   const spec = lookupKeySpec(tierLookupKey)
   const expiresAt = new Date(periodEndSec * 1000)
   if (spec.sessionsGranted > 0) {
-    await grantInTx(client, {
+    await tx.credits.grantInTx({
       userId,
       creditType: 'session',
       amount: spec.sessionsGranted,
@@ -402,7 +391,7 @@ async function grantTierCredits(
     })
   }
   if (spec.worldsGranted > 0) {
-    await grantInTx(client, {
+    await tx.credits.grantInTx({
       userId,
       creditType: 'world_gen',
       amount: spec.worldsGranted,
@@ -427,7 +416,7 @@ async function handleCycleOrCreate(
   paymentIntentId: string | null,
   subscription: Stripe.Subscription,
   userId: string,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
   ids: InvoiceLogIds,
 ): Promise<HandlerResult> {
@@ -459,7 +448,7 @@ async function handleCycleOrCreate(
 
   // billing_history → credits (Petra I5 round 5: FK on credit_ledger.source_billing_history_id).
   const historyRowId = await appendCycleOrCreateBillingHistory(
-    client,
+    tx,
     userId,
     invoice,
     invoiceId,
@@ -468,7 +457,7 @@ async function handleCycleOrCreate(
     fields.tierLookupKey,
     fields.periodEnd,
   )
-  await grantTierCredits(client, userId, fields.tierLookupKey, historyRowId, fields.periodEnd)
+  await grantTierCredits(tx, userId, fields.tierLookupKey, historyRowId, fields.periodEnd)
   return 'ok'
 }
 
@@ -540,7 +529,7 @@ async function handleSubscriptionUpdate(
   paymentIntentId: string | null,
   subscription: Stripe.Subscription,
   userId: string,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
   ids: InvoiceLogIds,
 ): Promise<HandlerResult> {
@@ -551,8 +540,7 @@ async function handleSubscriptionUpdate(
    * c8-ignored above. */
   if (!prep.ok) return 'validation_failed'
   /* c8 ignore stop */
-  await billingHistory.append(
-    client,
+  await tx.billingHistory.append(
     {
       id: uuidv7(),
       user_id: userId,
@@ -583,7 +571,7 @@ async function handleAuditOnly(
   invoiceId: string,
   paymentIntentId: string | null,
   userId: string,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
   ids: InvoiceLogIds,
   reason: 'unhandled_billing_reason' | 'zero_or_negative_amount',
@@ -601,8 +589,7 @@ async function handleAuditOnly(
   // an unrelated event for the same source_id_stripe (extremely unlikely
   // for `kind='invoice'` rows from non-cycle/create/update branches, but
   // costs nothing to be race-symmetric).
-  await billingHistory.append(
-    client,
+  await tx.billingHistory.append(
     {
       id: uuidv7(),
       user_id: userId,
@@ -634,7 +621,7 @@ async function handleSubscriptionCreate(
   paymentIntentId: string | null,
   subscription: Stripe.Subscription,
   userId: string,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
   ids: InvoiceLogIds,
 ): Promise<HandlerResult> {
@@ -649,7 +636,7 @@ async function handleSubscriptionCreate(
     return 'validation_failed'
   }
   /* c8 ignore stop */
-  await userSubscriptions.upsertFromStripe(client, {
+  await tx.userSubscriptions.upsertFromStripe({
     id: uuidv7(),
     user_id: userId,
     stripe_subscription_id: subscription.id,
@@ -669,7 +656,7 @@ async function handleSubscriptionCreate(
     paymentIntentId,
     subscription,
     userId,
-    client,
+    tx,
     log,
     ids,
   )
@@ -681,13 +668,13 @@ async function handleSubscriptionCreate(
  * commit + return 'ok' from the dispatcher's perspective).
  */
 async function resolveUserOrLogOrphan(
-  client: ClientLike,
+  tx: TxRepo,
   invoice: Stripe.Invoice,
   subscription: Stripe.Subscription,
   log: FastifyBaseLogger,
   ids: InvoiceLogIds,
 ): Promise<string | null> {
-  const user = await resolveUser(client, invoice, subscription)
+  const user = await resolveUser(tx, invoice, subscription)
   if (user) return user.id
   /* c8 ignore start — orphan path: every Mythrun-issued sub seeds
    * users.stripe_customer_id before invoice.paid lands; orphans are a
@@ -715,7 +702,7 @@ async function resolveUserOrLogOrphan(
 export async function handleInvoicePaid(
   event: Stripe.Event,
   prefetch: unknown,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   const { subscription } = asInvoicePaidPrefetch(prefetch)
@@ -729,7 +716,7 @@ export async function handleInvoicePaid(
   }
 
   const invoiceId = invoice.id
-  const userId = await resolveUserOrLogOrphan(client, invoice, subscription, log, ids)
+  const userId = await resolveUserOrLogOrphan(tx, invoice, subscription, log, ids)
   if (userId === null) return 'ok'
 
   const paymentIntentId = readPrimaryPaymentIntent(invoice)
@@ -744,7 +731,7 @@ export async function handleInvoicePaid(
       invoiceId,
       paymentIntentId,
       userId,
-      client,
+      tx,
       log,
       ids,
       'zero_or_negative_amount',
@@ -760,7 +747,7 @@ export async function handleInvoicePaid(
       paymentIntentId,
       subscription,
       userId,
-      client,
+      tx,
       log,
       ids,
     )
@@ -773,7 +760,7 @@ export async function handleInvoicePaid(
       paymentIntentId,
       subscription,
       userId,
-      client,
+      tx,
       log,
       ids,
     )
@@ -786,7 +773,7 @@ export async function handleInvoicePaid(
       paymentIntentId,
       subscription,
       userId,
-      client,
+      tx,
       log,
       ids,
     )
@@ -799,7 +786,7 @@ export async function handleInvoicePaid(
     invoiceId,
     paymentIntentId,
     userId,
-    client,
+    tx,
     log,
     ids,
     'unhandled_billing_reason',

@@ -43,10 +43,7 @@
 
 import type { Stripe } from 'stripe'
 import type { FastifyBaseLogger } from 'fastify'
-import type { ClientLike } from '../repo/_types.js'
-import { billingHistory } from '../repo/billing-history.js'
-import { userSubscriptions } from '../repo/user-subscriptions.js'
-import { grantInTx } from '../repo/credits.js'
+import type { TxRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { getSkuCache } from './sku-cache.js'
 import { LOOKUP_KEYS, type LookupKey } from './lookup-keys.js'
@@ -140,7 +137,7 @@ function pendingUpdateLogIds(
  * customer) and returns 'ok'.
  */
 async function resolveUser(
-  client: ClientLike,
+  tx: TxRepo,
   subscription: Stripe.Subscription,
 ): Promise<{ readonly id: string } | null> {
   /* c8 ignore start — non-string customer arm: Stripe always sends a
@@ -149,12 +146,8 @@ async function resolveUser(
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
   /* c8 ignore stop */
   if (customer.length > 0) {
-    const byCustomer = await client.query<{ id: string }>(
-      'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
-      [customer],
-    )
-    const found = byCustomer.rows[0]
-    if (found) return { id: found.id }
+    const byCustomer = await tx.users.lockByStripeCustomerId(customer)
+    if (byCustomer) return { id: byCustomer.id }
   }
   /* c8 ignore start — fallback path: every Mythrun-issued subscription
    * seeds users.stripe_customer_id before this event lands. The
@@ -163,12 +156,8 @@ async function resolveUser(
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
     return null
   }
-  const byUserId = await client.query<{ id: string }>(
-    'SELECT id FROM users WHERE id = $1 FOR UPDATE',
-    [fallbackUserId],
-  )
-  const found = byUserId.rows[0]
-  return found ? { id: found.id } : null
+  const byUserId = await tx.users.lockById(fallbackUserId)
+  return byUserId ? { id: byUserId.id } : null
   /* c8 ignore stop */
 }
 
@@ -460,7 +449,7 @@ function readSubscriptionFields(subscription: Stripe.Subscription): Subscription
 export async function handlePendingUpdateApplied(
   event: Stripe.Event,
   prefetch: unknown,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   const { invoice } = asPendingUpdateAppliedPrefetch(prefetch)
@@ -469,7 +458,7 @@ export async function handlePendingUpdateApplied(
 
   // 1. Resolve user (anchor lock per §5.3 — must happen before further
   //    DB writes). On total miss, page billing.upgrade_orphan + 'ok'.
-  const user = await resolveUser(client, subscription)
+  const user = await resolveUser(tx, subscription)
   if (!user) {
     log.error(ids, 'billing.upgrade_orphan')
     return 'ok'
@@ -514,7 +503,7 @@ export async function handlePendingUpdateApplied(
   // 7. upsertFromStripe — idempotent against a prior
   //    `customer.subscription.updated` having already written the NEW tier
   //    (strict-`>` filter on stripe_event_created_at).
-  await userSubscriptions.upsertFromStripe(client, {
+  await tx.userSubscriptions.upsertFromStripe({
     id: uuidv7(),
     user_id: user.id,
     stripe_subscription_id: subscription.id,
@@ -534,8 +523,7 @@ export async function handlePendingUpdateApplied(
   //    the canonical values, the second fills NULLs.
   const expiresAt = expiresAtPlusOneMonth(fields.periodEnd)
   const paymentIntentId = readPrimaryPaymentIntent(invoice)
-  const historyRow = await billingHistory.append(
-    client,
+  const historyRow = await tx.billingHistory.append(
     {
       id: uuidv7(),
       user_id: user.id,
@@ -559,7 +547,7 @@ export async function handlePendingUpdateApplied(
   const sessionsDelta = newSpec.sessionsGranted - oldSpec.sessionsGranted
   const worldsDelta = newSpec.worldsGranted - oldSpec.worldsGranted
   if (sessionsDelta > 0) {
-    await grantInTx(client, {
+    await tx.credits.grantInTx({
       userId: user.id,
       creditType: 'session',
       amount: sessionsDelta,
@@ -571,7 +559,7 @@ export async function handlePendingUpdateApplied(
     })
   }
   if (worldsDelta > 0) {
-    await grantInTx(client, {
+    await tx.credits.grantInTx({
       userId: user.id,
       creditType: 'world_gen',
       amount: worldsDelta,

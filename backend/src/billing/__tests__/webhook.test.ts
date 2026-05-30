@@ -22,12 +22,15 @@ import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import {
   dispatchEvent,
+  DISPATCH_TX_OPTS,
   HANDLERS,
   PREFETCHERS,
   type EventHandler,
   type KnownStripeEventType,
   type PrefetchFn,
 } from '../webhook.js'
+import { runTransaction } from '../../repo/_client.js'
+import type { ClientLike } from '../../repo/_types.js'
 import {
   setSkuCache,
   _resetSkuCacheForTests,
@@ -300,39 +303,40 @@ describe('billing.webhook.dispatchEvent', () => {
   })
 
   it('SET LOCAL triple is applied (transaction_isolation, lock_timeout, statement_timeout)', async () => {
-    const event = makeEvent()
-    const { log } = makeLogger()
-    // Captured per-setting via an array push so TypeScript's flow analysis
-    // doesn't narrow the post-handler value to `never` (a `let x = null`
-    // mutated only inside a nested closure trips the
-    // `no-unnecessary-condition` rule).
-    const captured: { isolation: string; lock: string; statement: string }[] = []
-    const handler: EventHandler = async (_event, _prefetch, client) => {
-      const iso = await client.query<{ current_setting: string }>(
-        "SELECT current_setting('transaction_isolation') AS current_setting",
-      )
-      const lock = await client.query<{ current_setting: string }>(
-        "SELECT current_setting('lock_timeout') AS current_setting",
-      )
-      const stmt = await client.query<{ current_setting: string }>(
-        "SELECT current_setting('statement_timeout') AS current_setting",
-      )
-      captured.push({
-        isolation: iso.rows[0]?.current_setting ?? '',
-        lock: lock.rows[0]?.current_setting ?? '',
-        statement: stmt.rows[0]?.current_setting ?? '',
-      })
-      return 'ok'
-    }
-    await withHandlerOverride('checkout.session.completed', handler, async () => {
-      await dispatchEvent(event, makeStripe(), pool, log)
+    // dispatchEvent runs its Phase-2 tx through `repo.transaction(fn,
+    // DISPATCH_TX_OPTS)`. The opts dispatchEvent uses ARE the billing recipe
+    // (isolation 'read committed', lock 1s, statement 5s) — assert that first.
+    expect(DISPATCH_TX_OPTS).toEqual({
+      isolation: 'read committed',
+      lockTimeoutMs: 1000,
+      statementTimeoutMs: 5000,
     })
-    expect(captured).toHaveLength(1)
-    const c = captured[0]
-    if (!c) throw new Error('handler did not run')
-    expect(c.isolation).toBe('read committed')
-    expect(c.lock).toBe('1s')
-    expect(c.statement).toBe('5s')
+
+    // Then prove that recipe, applied via the SAME engine `repo.transaction`
+    // uses (`runTransaction`), yields the expected `current_setting` values
+    // INSIDE the callback. (The handler signature is now TxRepo — no `.query`
+    // — so we read the live settings through runTransaction with a SHOW-bind,
+    // mirroring the repo.transaction primitive's own SET LOCAL test.)
+    const showBind = (c: ClientLike) => ({
+      show: async (name: string): Promise<string> => {
+        const res = await c.query<Record<string, string>>(`SHOW ${name}`)
+        return Object.values(res.rows[0] ?? {})[0] ?? ''
+      },
+    })
+    const settings = await runTransaction(
+      pool,
+      showBind,
+      async (tx) => ({
+        isolation: await tx.show('transaction_isolation'),
+        lock: await tx.show('lock_timeout'),
+        statement: await tx.show('statement_timeout'),
+      }),
+      DISPATCH_TX_OPTS,
+    )
+    if (typeof settings === 'symbol') throw new Error('unreachable: callback returned ROLLBACK')
+    expect(settings.isolation).toBe('read committed')
+    expect(settings.lock).toBe('1s')
+    expect(settings.statement).toBe('5s')
   })
 })
 

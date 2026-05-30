@@ -20,10 +20,8 @@
 
 import type { Stripe } from 'stripe'
 import type { FastifyBaseLogger } from 'fastify'
-import type { ClientLike } from '../repo/_types.js'
-import { purchases, type NewPurchaseRow } from '../repo/purchases.js'
-import { billingHistory } from '../repo/billing-history.js'
-import { grantInTx } from '../repo/credits.js'
+import type { TxRepo } from '../repo/index.js'
+import { type NewPurchaseRow } from '../repo/purchases.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { getSkuCache, type SkuInternalEntry } from './sku-cache.js'
 import { LOOKUP_KEYS, type LookupKey, type LookupKeySpec } from './lookup-keys.js'
@@ -97,13 +95,13 @@ function resolvePaymentLine(
 }
 
 async function grantCreditsForLine(
-  client: ClientLike,
+  tx: TxRepo,
   userId: string,
   resolution: PaymentLineResolution,
   purchaseRowId: string,
 ): Promise<void> {
   if (resolution.spec.sessionsGranted > 0) {
-    await grantInTx(client, {
+    await tx.credits.grantInTx({
       userId,
       creditType: 'session',
       amount: resolution.spec.sessionsGranted * resolution.quantity,
@@ -115,7 +113,7 @@ async function grantCreditsForLine(
     })
   }
   if (resolution.spec.worldsGranted > 0) {
-    await grantInTx(client, {
+    await tx.credits.grantInTx({
       userId,
       creditType: 'world_gen',
       amount: resolution.spec.worldsGranted * resolution.quantity,
@@ -136,7 +134,7 @@ export async function handleCheckoutCompletedPayment(
   event: Stripe.Event,
   session: Stripe.Checkout.Session,
   userId: string,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   const ids = { event_id: event.id, session_id: session.id }
@@ -216,7 +214,7 @@ export async function handleCheckoutCompletedPayment(
     amount_cents: r.amountTotal,
     currency: r.currency,
   }))
-  await purchases.insertMany(client, purchaseRows)
+  await tx.purchases.insertMany(purchaseRows)
 
   // 6. Append billing_history (one row, kind='purchase', lookup_key=NULL).
   //    Currency uses session.currency (cart-level), not per-line. à-la-carte
@@ -229,7 +227,7 @@ export async function handleCheckoutCompletedPayment(
    * defense-in-depth default. */
   const sessionCurrency = session.currency ?? resolved[0]?.currency ?? 'usd'
   /* c8 ignore stop */
-  await billingHistory.append(client, {
+  await tx.billingHistory.append({
     id: uuidv7(),
     user_id: userId,
     kind: 'purchase',
@@ -257,7 +255,7 @@ export async function handleCheckoutCompletedPayment(
       throw new Error('handleCheckoutCompletedPayment: resolved/purchaseRow length mismatch')
     }
     /* c8 ignore stop */
-    await grantCreditsForLine(client, userId, r, purchaseRow.id)
+    await grantCreditsForLine(tx, userId, r, purchaseRow.id)
   }
 
   return 'ok'

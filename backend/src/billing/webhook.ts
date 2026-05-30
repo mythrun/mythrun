@@ -39,9 +39,7 @@
 import type { Stripe } from 'stripe'
 import type { Pool } from 'pg'
 import type { FastifyBaseLogger } from 'fastify'
-import type { ClientLike } from '../repo/_types.js'
-import { stripeEvents } from '../repo/stripe-events.js'
-import { userSubscriptions } from '../repo/user-subscriptions.js'
+import { createRepo, ROLLBACK, type TxRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from './stripe-client.js'
 import { handleCheckoutCompletedPayment } from './webhook-checkout-payment.js'
@@ -72,7 +70,7 @@ export type KnownStripeEventType =
 export type EventHandler = (
   event: Stripe.Event,
   prefetch: unknown,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ) => Promise<HandlerResult>
 
@@ -125,36 +123,34 @@ function lookupPrefetcher(eventType: string): PrefetchFn | undefined {
 }
 
 /**
- * Open a short tx, record the stripe_events row, COMMIT. Used by the
+ * Per-call SET LOCAL knobs for the dispatch tx + the record-only tx. The
+ * three SET LOCALs are load-bearing per Petra C1 round 5 (matches MYT-40's
+ * atomicDebit recipe): isolation 'read committed', lock_timeout 1s,
+ * statement_timeout 5s. Passed to `repo.transaction` as TxOpts (it emits the
+ * `SET LOCAL` statements inside the BEGIN scope — see db/transaction.ts:
+ * beginPrelude), preserving the exact prior hand-managed recipe.
+ */
+export const DISPATCH_TX_OPTS = {
+  isolation: 'read committed',
+  lockTimeoutMs: 1000,
+  statementTimeoutMs: 5000,
+} as const
+
+type DispatchRepo = ReturnType<typeof createRepo>
+
+/**
+ * Record the stripe_events row in its own short tx, COMMIT. Used by the
  * api-version-mismatch path to ack the event so Stripe stops retrying.
  * Identical timeout discipline to the main dispatch tx — a slow holder
- * on the row index can't pin the PoolClient.
+ * on the row index can't pin the PoolClient. `repo.transaction` owns the
+ * connect/BEGIN/SET LOCAL/COMMIT/release recipe; this just supplies the
+ * single write + the opts.
  */
-async function recordEventOnlyTx(pool: Pool, event: Stripe.Event): Promise<void> {
-  const client = await pool.connect()
-  try {
-    await client.query(
-      "BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'",
-    )
-    await stripeEvents.recordOrSkip(client, event.id, event.type)
-    await client.query('COMMIT')
-    /* c8 ignore start — recordOrSkip is an UPSERT-like INSERT
-       ON CONFLICT DO NOTHING; only fatal pg states (disconnected
-       client, broken protocol) reach this catch. Tests cover the happy
-       + skip paths against a real DB; this is the disaster-recovery
-       arm. */
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // Connection dead; pool will recycle. Swallow so the original
-      // error propagates to the caller.
-    }
-    throw err
-  } finally {
-    /* c8 ignore stop */
-    client.release()
-  }
+async function recordEventOnlyTx(repo: DispatchRepo, event: Stripe.Event): Promise<void> {
+  await repo.transaction(
+    (tx) => tx.stripeEvents.recordOrSkip(event.id, event.type),
+    DISPATCH_TX_OPTS,
+  )
 }
 
 export async function dispatchEvent(
@@ -163,6 +159,7 @@ export async function dispatchEvent(
   pool: Pool,
   log: FastifyBaseLogger,
 ): Promise<void> {
+  const repo = createRepo(pool)
   // 1. API-version gate (fail-closed). Typed field access against the
   //    wrong version is silent corruption per spec §3.1 notes 6/7/8 and
   //    §5.3 round-5 fixes.
@@ -178,7 +175,7 @@ export async function dispatchEvent(
     // Best-effort ack so Stripe stops retrying. If even this fails (DB
     // outage), the throw bubbles up to the route handler, which returns
     // 5xx and Stripe redelivers — the safe behavior in that case.
-    await recordEventOnlyTx(pool, event)
+    await recordEventOnlyTx(repo, event)
     return
   }
 
@@ -192,52 +189,59 @@ export async function dispatchEvent(
   const prefetcher = lookupPrefetcher(event.type)
   const prefetch = prefetcher ? await prefetcher(event, stripe) : undefined
 
-  // 3. Phase 2: dispatch tx with full timeout discipline.
-  const client = await pool.connect()
-  try {
-    await client.query(
-      "BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'",
-    )
+  // 3. Phase 2: dispatch tx with full timeout discipline. `repo.transaction`
+  //    owns connect → BEGIN (+ SET LOCAL prelude) → COMMIT/ROLLBACK → release.
+  //    The callback encodes the three terminal outcomes the contract requires:
+  //      - duplicate redelivery → return `ROLLBACK` (the no-op-discard
+  //        sentinel: rolls back, surfaces NO error, so Stripe stops retrying);
+  //      - unknown event type   → COMMIT the stripe_events row (clean return);
+  //      - handler ran          → COMMIT, return the handler's HandlerResult so
+  //        the post-commit `validation_failed` log fires off the return value;
+  //      - handler throws       → propagates out of the callback →
+  //        repo.transaction ROLLBACKs + rethrows (drives Stripe redelivery).
+  const result = await repo.transaction((tx) => dispatchInTx(event, prefetch, tx, log), DISPATCH_TX_OPTS)
 
-    const inserted = await stripeEvents.recordOrSkip(client, event.id, event.type)
-    if (inserted === 'duplicate') {
-      await client.query('ROLLBACK')
-      return
-    }
-
-    const handler = lookupHandler(event.type)
-    if (!handler) {
-      // Unknown event type: COMMIT the stripe_events row (acknowledges
-      // the delivery so Stripe stops retrying) and exit cleanly.
-      log.info({ event_type: event.type, event_id: event.id }, 'stripe_webhook_unknown_type')
-      await client.query('COMMIT')
-      return
-    }
-
-    const result = await handler(event, prefetch, client, log)
-    await client.query('COMMIT')
-
-    if (result === 'validation_failed') {
-      // Handler is contractually required to have written nothing else
-      // when returning the sentinel (spec §5.3 line 487, §13 regression
-      // test). Logging at error level so paging-grade alarms can fire
-      // on the pattern.
-      log.error({ event_id: event.id }, 'billing.handler_validation_failed_committed')
-    }
-  } catch (err) {
-    /* c8 ignore start — same double-failure swallow as the
-       recordOrSkip handler above; unreachable on a healthy pg client. */
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // Connection dead; pool will recycle. Swallow so the original
-      // error propagates.
-    }
-    /* c8 ignore stop */
-    throw err
-  } finally {
-    client.release()
+  if (result !== ROLLBACK && result === 'validation_failed') {
+    // Handler is contractually required to have written nothing else when
+    // returning the sentinel (spec §5.3 line 487, §13 regression test).
+    // Logging at error level — AFTER the COMMIT — so paging-grade alarms can
+    // fire on the pattern. The stripe_events row IS committed; only the
+    // downstream writes were skipped.
+    log.error({ event_id: event.id }, 'billing.handler_validation_failed_committed')
   }
+}
+
+/**
+ * The body of the Phase-2 dispatch transaction. Runs entirely on the in-flight
+ * tx client (`tx`). Returns:
+ *   - `ROLLBACK` for a duplicate redelivery (no-op discard, no error);
+ *   - `'ok'` for an unknown event type (COMMIT the stripe_events row);
+ *   - the handler's `HandlerResult` ('ok' / 'validation_failed') otherwise
+ *     (COMMIT; the caller logs on 'validation_failed' after commit).
+ * A handler throw propagates out, rolling back the whole tx.
+ */
+async function dispatchInTx(
+  event: Stripe.Event,
+  prefetch: unknown,
+  tx: TxRepo,
+  log: FastifyBaseLogger,
+): Promise<HandlerResult | typeof ROLLBACK> {
+  const inserted = await tx.stripeEvents.recordOrSkip(event.id, event.type)
+  if (inserted === 'duplicate') {
+    // Idempotent discard: ROLLBACK with no error surfaced (Stripe stops
+    // retrying without a needless 5xx).
+    return ROLLBACK
+  }
+
+  const handler = lookupHandler(event.type)
+  if (!handler) {
+    // Unknown event type: COMMIT the stripe_events row (acknowledges the
+    // delivery so Stripe stops retrying) and exit cleanly.
+    log.info({ event_type: event.type, event_id: event.id }, 'stripe_webhook_unknown_type')
+    return 'ok'
+  }
+
+  return await handler(event, prefetch, tx, log)
 }
 
 // ─── checkout.session.completed (Task 17, MYT-42 §5.4.1) ────────────────────
@@ -357,7 +361,7 @@ function checkoutLogIds(event: Stripe.Event, session: Stripe.Checkout.Session): 
 async function handleCheckoutCompleted(
   event: Stripe.Event,
   prefetch: unknown,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   const { session, subscription } = asCheckoutPrefetch(prefetch)
@@ -373,11 +377,7 @@ async function handleCheckoutCompleted(
     log.error(ids, 'billing.checkout_orphan')
     return 'ok'
   }
-  const userRow = await client.query<{ id: string; stripe_customer_id: string | null }>(
-    'SELECT id, stripe_customer_id FROM users WHERE id = $1 FOR UPDATE',
-    [ids.metadata_user_id],
-  )
-  const user = userRow.rows[0]
+  const user = await tx.users.getForUpdateById(ids.metadata_user_id)
   if (!user) {
     log.error(ids, 'billing.checkout_orphan')
     return 'ok'
@@ -402,12 +402,12 @@ async function handleCheckoutCompleted(
       session,
       subscription,
       user.id,
-      client,
+      tx,
       log,
     )
   }
   if (session.mode === 'payment') {
-    return await handleCheckoutCompletedPayment(event, session, user.id, client, log)
+    return await handleCheckoutCompletedPayment(event, session, user.id, tx, log)
   }
   // 'setup' mode (or anything else dahlia might add): nothing to do.
   log.info(
@@ -430,7 +430,7 @@ async function handleCheckoutCompletedSubscription(
   session: Stripe.Checkout.Session,
   subscription: Stripe.Subscription | null,
   userId: string,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   // Multi-line subscription guard (per Persepolis C4 round 7 multi-line
@@ -491,7 +491,7 @@ async function handleCheckoutCompletedSubscription(
     return 'validation_failed'
   }
 
-  await userSubscriptions.upsertFromStripe(client, {
+  await tx.userSubscriptions.upsertFromStripe({
     id: uuidv7(),
     user_id: userId,
     stripe_subscription_id: subscription.id,

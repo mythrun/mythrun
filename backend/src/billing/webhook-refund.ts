@@ -29,9 +29,8 @@
 
 import type { Stripe } from 'stripe'
 import type { FastifyBaseLogger } from 'fastify'
-import type { ClientLike } from '../repo/_types.js'
-import { billingHistory, type BillingHistoryRow } from '../repo/billing-history.js'
-import { purchases, type PurchaseRow } from '../repo/purchases.js'
+import type { TxRepo } from '../repo/index.js'
+import { type PurchaseRow } from '../repo/purchases.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import type { HandlerResult } from './webhook-types.js'
 
@@ -208,14 +207,14 @@ type ResolutionResult =
  * Step 1 (lock-free): resolve originating Mythrun entity. Returns the
  * discriminated result the caller branches on.
  */
-async function resolveOrigin(client: ClientLike, refund: Stripe.Refund): Promise<ResolutionResult> {
+async function resolveOrigin(tx: TxRepo, refund: Stripe.Refund): Promise<ResolutionResult> {
   const paymentIntentId = readPaymentIntentId(refund)
   if (paymentIntentId === null) return { kind: 'unknown_origin' }
 
   // À-la-carte path first (§5.4.5 line 688). Purchases are returned ORDER BY
   // id ASC so concurrent clawback transactions acquire row locks in a
   // consistent order — defends against cross-handler deadlocks.
-  const allPurchases = await purchases.getByPaymentIntent(client, paymentIntentId)
+  const allPurchases = await tx.purchases.getByPaymentIntent(paymentIntentId)
   if (allPurchases.length > 0) {
     const completed = allPurchases.filter((r) => r.status === 'completed')
     if (completed.length > 0) {
@@ -235,7 +234,7 @@ async function resolveOrigin(client: ClientLike, refund: Stripe.Refund): Promise
 
   // Subscription path (§5.4.5 line 689; round-8 Carthage C1 — DB-side
   // resolution via the partial index `idx_billing_history_invoice_pi`).
-  const invoiceRow = await billingHistory.findInvoiceByPaymentIntent(client, paymentIntentId)
+  const invoiceRow = await tx.billingHistory.findInvoiceByPaymentIntent(paymentIntentId)
   if (invoiceRow !== null) {
     /* c8 ignore start — subscription billing_history `already_refunded`
      * arm: tested for the à-la-carte path; subscription replays are a
@@ -256,159 +255,24 @@ async function resolveOrigin(client: ClientLike, refund: Stripe.Refund): Promise
 }
 
 /**
- * Acquire the user-row anchor lock (§5.3 discipline, applied late per
- * Manchego I2 round 3). Re-entrant on the same xid; safe to call when the
- * caller already holds the lock.
- */
-async function lockUserRow(client: ClientLike, userId: string): Promise<void> {
-  await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
-}
-
-/**
- * Re-fetch à-la-carte purchases under FOR UPDATE on the matched ids (round-7
- * Persepolis C5 / step 4). Returns the rows still in status='completed';
- * an empty result indicates a concurrent refund flipped them during the
- * lock-free window between resolveOrigin and lockUserRow.
- */
-async function refetchPurchasesUnderLock(
-  client: ClientLike,
-  rows: readonly PurchaseRow[],
-): Promise<readonly PurchaseRow[]> {
-  const ids = rows.map((r) => r.id)
-  /* c8 ignore start — `ids.length === 0` is unreachable: the caller
-   * only invokes this with a non-empty rows array (refund path always
-   * resolves at least one purchase). */
-  if (ids.length === 0) return []
-  /* c8 ignore stop */
-  const result = await client.query<PurchaseRow>(
-    `SELECT id, user_id, stripe_payment_intent_id, lookup_key, quantity,
-            amount_cents, currency, status, created_at
-       FROM purchases
-       WHERE id = ANY($1::uuid[])
-       ORDER BY id ASC
-       FOR UPDATE`,
-    [ids],
-  )
-  return result.rows.filter((r) => r.status === 'completed')
-}
-
-/**
- * Re-fetch the subscription billing_history row under FOR UPDATE. Returns
- * the row when status is still 'completed', null when a concurrent refund
- * already flipped it.
- */
-async function refetchBillingHistoryUnderLock(
-  client: ClientLike,
-  id: string,
-): Promise<BillingHistoryRow | null> {
-  const result = await client.query<BillingHistoryRow>(
-    `SELECT id, user_id, kind, source_id_stripe, stripe_payment_intent_id,
-            lookup_key, amount_cents, currency, status, expires_at,
-            occurred_at, created_at
-       FROM billing_history
-       WHERE id = $1
-       FOR UPDATE`,
-    [id],
-  )
-  const row = result.rows[0]
-  /* c8 ignore start — `!row` arm is unreachable: refetchBillingHistory
-   * is called with an id resolved in the same tx; the row exists.
-   * The `: null` arm fires only on a concurrent refund's status flip. */
-  if (!row) return null
-  return row.status === 'completed' ? row : null
-  /* c8 ignore stop */
-}
-
-/**
- * Originating-grant row shape used to compute the clawback. The `id` is the
- * source_id we use as the recordClawback idempotency key (round-8 Persepolis
- * C2 / Petra I5 — the `uniq_credit_ledger_debit_idempotency` partial unique
- * index keys on (user_id, credit_type, source_id) WHERE source_type='debit').
- */
-interface OriginGrantRow {
-  readonly id: string
-  readonly user_id: string
-  readonly credit_type: 'session' | 'world_gen'
-  readonly amount: number
-}
-
-/**
- * Pull originating grant rows for an à-la-carte purchase. Per migration 007's
- * credit_ledger_source_link_chk: source_type='purchase' rows have
- * source_purchase_id NOT NULL; these are the rows we claw back.
- */
-async function loadAlaCarteGrants(
-  client: ClientLike,
-  purchaseId: string,
-): Promise<readonly OriginGrantRow[]> {
-  const result = await client.query<OriginGrantRow>(
-    `SELECT id, user_id, credit_type, amount
-       FROM credit_ledger
-       WHERE source_purchase_id = $1
-         AND source_type = 'purchase'`,
-    [purchaseId],
-  )
-  return result.rows
-}
-
-/**
- * Pull originating grant rows for a subscription invoice. Per migration 007:
- * source_type='subscription' rows carry source_billing_history_id NOT NULL.
- */
-async function loadSubscriptionGrants(
-  client: ClientLike,
-  billingHistoryId: string,
-): Promise<readonly OriginGrantRow[]> {
-  const result = await client.query<OriginGrantRow>(
-    `SELECT id, user_id, credit_type, amount
-       FROM credit_ledger
-       WHERE source_billing_history_id = $1
-         AND source_type = 'subscription'`,
-    [billingHistoryId],
-  )
-  return result.rows
-}
-
-/**
- * Insert a clawback debit row. Mirrors `recordClawback` from
- * `repo/credits.ts` — same ON CONFLICT shape. Inlined here because the
- * exported `recordClawback` is a method on the closure-bound repo
- * (`createCreditsRepo`), and we don't have a pool-bound repo at this layer;
- * we have a `ClientLike` from the dispatcher's tx. The exported standalone
- * `grantInTx` helper takes ClientLike, but no equivalent for clawbacks
- * exists today, so this module owns the SQL.
- *
- * The per-row INSERT is intentional: a multi-line cart's clawback has 2-6
- * rows in practice; one round-trip per row is the simplest correct shape
- * and still finishes well within the dispatcher's 5s statement timeout.
- */
-async function insertClawbackRow(client: ClientLike, row: OriginGrantRow): Promise<void> {
-  const id = uuidv7()
-  await client.query(
-    `INSERT INTO credit_ledger
-       (id, user_id, credit_type, amount, source_type, source_id,
-        expires_at, source_purchase_id, source_billing_history_id)
-     VALUES ($1, $2, $3, $4, 'debit', $5, NULL, NULL, NULL)
-     ON CONFLICT (user_id, credit_type, source_id) WHERE source_type = 'debit'
-     DO NOTHING`,
-    [id, row.user_id, row.credit_type, -Math.abs(row.amount), row.id],
-  )
-}
-
-/**
  * Step 3 + step 4 (à-la-carte): for each completed purchase row, write
  * clawback rows for every originating grant + flip status='refunded'. The
  * caller has already acquired the user-row lock and re-fetched the rows
  * under FOR UPDATE.
+ *
+ * `tx.credits.loadGrantsBySourcePurchase` + `tx.credits.insertClawbackDoNothing`
+ * hold the verbatim SQL that previously lived inline here (loadAlaCarteGrants +
+ * insertClawbackRow); the lock-order-sensitive sequence (one purchase row at a
+ * time, in the ORDER BY id ASC order from the locked re-fetch) is unchanged.
  */
 async function applyAlaCarteClawbacks(
-  client: ClientLike,
+  tx: TxRepo,
   rows: readonly PurchaseRow[],
 ): Promise<void> {
   for (const row of rows) {
-    const grants = await loadAlaCarteGrants(client, row.id)
-    for (const g of grants) await insertClawbackRow(client, g)
-    await purchases.markRefunded(client, row.id)
+    const grants = await tx.credits.loadGrantsBySourcePurchase(row.id)
+    for (const g of grants) await tx.credits.insertClawbackDoNothing(g)
+    await tx.purchases.markRefunded(row.id)
   }
 }
 
@@ -417,12 +281,12 @@ async function applyAlaCarteClawbacks(
  * billing_history row's status='refunded'.
  */
 async function applySubscriptionClawback(
-  client: ClientLike,
+  tx: TxRepo,
   billingHistoryId: string,
 ): Promise<void> {
-  const grants = await loadSubscriptionGrants(client, billingHistoryId)
-  for (const g of grants) await insertClawbackRow(client, g)
-  await billingHistory.markRefunded(client, billingHistoryId)
+  const grants = await tx.credits.loadGrantsBySourceBillingHistory(billingHistoryId)
+  for (const g of grants) await tx.credits.insertClawbackDoNothing(g)
+  await tx.billingHistory.markRefunded(billingHistoryId)
 }
 
 /**
@@ -431,12 +295,11 @@ async function applySubscriptionClawback(
  * `re_*`) doesn't 23505 on the (kind, source_id_stripe) UNIQUE.
  */
 async function appendRefundHistoryRow(
-  client: ClientLike,
+  tx: TxRepo,
   userId: string,
   refund: Stripe.Refund,
 ): Promise<void> {
-  await billingHistory.append(
-    client,
+  await tx.billingHistory.append(
     {
       id: uuidv7(),
       user_id: userId,
@@ -460,7 +323,7 @@ async function appendRefundHistoryRow(
 export async function handleRefundEvent(
   event: Stripe.Event,
   prefetch: unknown,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   const { charge } = asRefundPrefetch(prefetch)
@@ -474,7 +337,7 @@ export async function handleRefundEvent(
   if (!partialRefundCheckAllowsProceed(charge, refund, log, ids)) return 'ok'
 
   // Step 1: resolve originating entity.
-  const resolution = await resolveOrigin(client, refund)
+  const resolution = await resolveOrigin(tx, refund)
   if (resolution.kind === 'unknown_origin') {
     log.info(ids, 'billing.refund_unknown_origin')
     return 'ok'
@@ -497,11 +360,16 @@ export async function handleRefundEvent(
     /* c8 ignore stop */
   }
 
-  // Step 2: anchor-lock + re-fetch under lock.
-  await lockUserRow(client, resolution.userId)
+  // Step 2: anchor-lock + re-fetch under lock. The lock order
+  // (users → purchases ORDER BY id ASC → billing_history) is load-bearing
+  // for cross-handler deadlock avoidance and is preserved verbatim: lockById
+  // first, then the ordered refetch binder.
+  await tx.users.lockById(resolution.userId)
 
   if (resolution.kind === 'alacarte') {
-    const stillCompleted = await refetchPurchasesUnderLock(client, resolution.rows)
+    const stillCompleted = await tx.purchases.refetchCompletedForUpdate(
+      resolution.rows.map((r) => r.id),
+    )
     /* c8 ignore start — `stillCompleted.length === 0` is the race-loss
      * arm: a concurrent refund handler flipped the rows to 'refunded'
      * between our unlocked resolve and the locked re-fetch. Integration
@@ -512,14 +380,14 @@ export async function handleRefundEvent(
     }
     /* c8 ignore stop */
     // Step 3 + 4: clawbacks + markRefunded per row.
-    await applyAlaCarteClawbacks(client, stillCompleted)
+    await applyAlaCarteClawbacks(tx, stillCompleted)
     // Step 5: refund self-row.
-    await appendRefundHistoryRow(client, resolution.userId, refund)
+    await appendRefundHistoryRow(tx, resolution.userId, refund)
     return 'ok'
   }
 
   // resolution.kind === 'subscription'
-  const stillCompleted = await refetchBillingHistoryUnderLock(client, resolution.billingHistoryId)
+  const stillCompleted = await tx.billingHistory.refetchForUpdate(resolution.billingHistoryId)
   /* c8 ignore start — same race-loss arm as the alacarte branch above;
    * defense-in-depth for a concurrent refund flipping status during
    * the lock window. */
@@ -528,7 +396,7 @@ export async function handleRefundEvent(
     return 'ok'
   }
   /* c8 ignore stop */
-  await applySubscriptionClawback(client, resolution.billingHistoryId)
-  await appendRefundHistoryRow(client, resolution.userId, refund)
+  await applySubscriptionClawback(tx, resolution.billingHistoryId)
+  await appendRefundHistoryRow(tx, resolution.userId, refund)
   return 'ok'
 }

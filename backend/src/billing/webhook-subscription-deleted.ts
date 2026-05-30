@@ -33,8 +33,7 @@
 
 import type { Stripe } from 'stripe'
 import type { FastifyBaseLogger } from 'fastify'
-import type { ClientLike } from '../repo/_types.js'
-import { userSubscriptions } from '../repo/user-subscriptions.js'
+import type { TxRepo } from '../repo/index.js'
 import type { HandlerResult } from './webhook-types.js'
 
 interface SubscriptionDeletedLogIds {
@@ -75,7 +74,7 @@ function deletedLogIds(
  * upsert handler.
  */
 async function resolveUser(
-  client: ClientLike,
+  tx: TxRepo,
   subscription: Stripe.Subscription,
 ): Promise<{ readonly id: string } | null> {
   /* c8 ignore start — non-string customer arm + customer.length === 0
@@ -86,12 +85,8 @@ async function resolveUser(
   const customer =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
   if (customer.length > 0) {
-    const byCustomer = await client.query<{ id: string }>(
-      'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
-      [customer],
-    )
-    const found = byCustomer.rows[0]
-    if (found) return { id: found.id }
+    const byCustomer = await tx.users.lockByStripeCustomerId(customer)
+    if (byCustomer) return { id: byCustomer.id }
   }
   /* c8 ignore stop */
   /* c8 ignore start — fallback + total-miss path: every Mythrun-issued
@@ -101,12 +96,8 @@ async function resolveUser(
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
     return null
   }
-  const byUserId = await client.query<{ id: string }>(
-    'SELECT id FROM users WHERE id = $1 FOR UPDATE',
-    [fallbackUserId],
-  )
-  const found = byUserId.rows[0]
-  return found ? { id: found.id } : null
+  const byUserId = await tx.users.lockById(fallbackUserId)
+  return byUserId ? { id: byUserId.id } : null
   /* c8 ignore stop */
 }
 
@@ -129,14 +120,14 @@ async function resolveUser(
 export async function handleSubscriptionDeleted(
   event: Stripe.Event,
   _prefetch: unknown,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   const subscription = event.data.object as Stripe.Subscription
   const ids = deletedLogIds(event, subscription)
 
   // 1. Resolve user (FOR UPDATE anchor lock per §5.3).
-  const user = await resolveUser(client, subscription)
+  const user = await resolveUser(tx, subscription)
   /* c8 ignore start — unknown_customer path: every Mythrun-issued
    * subscription is tied to a known users row; this is a defense-in-
    * depth paging arm for Stripe-side test events / split-brain. */
@@ -149,7 +140,7 @@ export async function handleSubscriptionDeleted(
   // 2. Mark canceled — preserves cancel_at_period_end as-is per Kraken C3
   //    round 2. The user row anchor lock was already acquired in step 1, so
   //    the §5.3 anchor-lock-first discipline is satisfied.
-  const rowsUpdated = await userSubscriptions.markCanceled(client, subscription.id, {
+  const rowsUpdated = await tx.userSubscriptions.markCanceled(subscription.id, {
     cancel_at_period_end: subscription.cancel_at_period_end,
     cancel_at: subscription.cancel_at,
     cancellation_details: subscription.cancellation_details,

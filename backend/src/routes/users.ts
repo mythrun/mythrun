@@ -13,8 +13,7 @@
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
-import { createUsersRepo } from '../repo/users.js'
-import { grantInTx } from '../repo/credits.js'
+import { createRepo, type Repo } from '../repo/index.js'
 import { classifyProfanity } from '../llm/profanity.js'
 
 // 3-20 chars; alphanumeric + underscore; no leading/trailing underscore.
@@ -109,13 +108,13 @@ async function validateRegisterInput(body: unknown): Promise<ValidateRegisterRes
 interface UniqueViolationCtx {
   readonly sub: string
   readonly username: string
-  readonly users: ReturnType<typeof createUsersRepo>
+  readonly repo: Repo
 }
 
 type UniqueViolationResolution =
   | {
       readonly code: 'already_onboarded_same'
-      readonly user: Awaited<ReturnType<ReturnType<typeof createUsersRepo>['getByCognitoSub']>>
+      readonly user: Awaited<ReturnType<Repo['users']['getByCognitoSub']>>
     }
   | {
       readonly code: 'already_onboarded_different' | 'username_taken' | 'inconsistent_state'
@@ -141,9 +140,12 @@ async function handleRegisterUniqueViolation(
   /* c8 ignore stop */
 
   if (constraint === 'users_cognito_sub_key') {
-    // Re-fetch via the pool (NOT the released client) — the tx is rolled
-    // back and the client is about to be released by the route's finally.
-    const existing = await ctx.users.getByCognitoSub(ctx.sub)
+    // Re-fetch via the POOL-bound repo (NEVER a captured tx) — the tx has
+    // already settled (rolled back) and its client has been released back to
+    // the pool. `repo.users.getByCognitoSub` runs on the pool, the only safe
+    // surface for post-tx recovery (data-layer unification design, "tx handle
+    // lifetime is exactly the callback").
+    const existing = await ctx.repo.users.getByCognitoSub(ctx.sub)
     /* c8 ignore start — `!existing` is the inconsistent-state arm: the
      * UNIQUE violation fired, but the re-fetch found no row. That can
      * happen only if the user was deleted between the INSERT and the
@@ -196,8 +198,7 @@ async function handleRegisterUniqueViolation(
 /* c8 ignore stop */
 
 interface RegisterCtx {
-  readonly pool: Pool
-  readonly users: ReturnType<typeof createUsersRepo>
+  readonly repo: Repo
 }
 
 // Handler: POST /api/users/register. Extracted as a top-level function
@@ -224,37 +225,44 @@ async function handleRegister(
   // trial credit, flip free_trial_used. All three writes must succeed
   // or none — otherwise we get an "onboarded user without trial credit"
   // wedge state that the existing-user short-circuit can never recover
-  // from on re-registration.
+  // from on re-registration. `repo.transaction` owns the
+  // connect/BEGIN/SET LOCAL/COMMIT/ROLLBACK/release recipe (the prior
+  // hand-managed `BEGIN; SET LOCAL …; COMMIT` is replaced by the same opts).
   //
   // The classifyProfanity calls in validateRegisterInput MUST stay outside
   // this tx (per Sphinx I2 round 2) — they are 200–800ms LLM calls and
   // holding a PoolClient open across them is a DoS amplifier on `max=10`.
-  const client = await ctx.pool.connect()
-  let inTransaction = false
+  // They already ran above; the tx callback holds ONLY the three writes.
   try {
-    await client.query(
-      "BEGIN; SET LOCAL transaction_isolation = 'read committed'; SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s'",
+    const user = await ctx.repo.transaction(
+      async (tx) => {
+        const created = await tx.users.createInTx({
+          cognitoSub: sub,
+          username: username.trim(),
+          displayName: displayName.trim(),
+        })
+        await tx.credits.grantInTx({
+          userId: created.id,
+          creditType: 'session',
+          amount: 1,
+          sourceType: 'trial',
+          sourceId: null,
+          expiresAt: null,
+          sourcePurchaseId: null,
+          sourceBillingHistoryId: null,
+        })
+        await tx.users.setFreeTrialUsed(created.id)
+        return created
+      },
+      { isolation: 'read committed', lockTimeoutMs: 1000, statementTimeoutMs: 5000 },
     )
-    inTransaction = true
-
-    const user = await ctx.users.create(client, {
-      cognitoSub: sub,
-      username: username.trim(),
-      displayName: displayName.trim(),
-    })
-    await grantInTx(client, {
-      userId: user.id,
-      creditType: 'session',
-      amount: 1,
-      sourceType: 'trial',
-      sourceId: null,
-      expiresAt: null,
-      sourcePurchaseId: null,
-      sourceBillingHistoryId: null,
-    })
-    await client.query('UPDATE users SET free_trial_used = true WHERE id = $1', [user.id])
-    await client.query('COMMIT')
-    inTransaction = false
+    /* c8 ignore start — the callback never returns ROLLBACK (it throws on
+     * the conflict path instead), so `user` is always the value; the
+     * narrowing is for TS, never exercised at runtime. */
+    if (typeof user === 'symbol') {
+      throw new Error('unreachable: register transaction does not return ROLLBACK')
+    }
+    /* c8 ignore stop */
 
     // Stitch the post-COMMIT free_trial_used into the response shape so
     // the body reflects state-at-end-of-tx. Re-reading is wasted I/O —
@@ -265,38 +273,29 @@ async function handleRegister(
       .code(201)
       .send({ user: userResponse, created: true })
   } catch (err) {
-    if (inTransaction) {
-      try {
-        await client.query('ROLLBACK')
-      /* c8 ignore start — same swallow-the-rollback-failure pattern
-         as elsewhere; reachable only when the pg client is in a
-         torn-down state. */
-      } catch {
-        // Connection may already be in failed state; pool will recycle.
-      }
-      /* c8 ignore stop */
-    }
+    // repo.transaction has already rolled back + released the client. The
+    // 23505 recovery re-fetch runs on the POOL-bound repo (ctx.repo.users),
+    // never a captured tx — its client is gone.
     const conflict = await handleRegisterUniqueViolation(err, {
       sub,
       username: username.trim(),
-      users: ctx.users,
+      repo: ctx.repo,
     })
-    if (conflict) {
-      if (conflict.code === 'already_onboarded_same') {
-        return await reply
-          .header('Content-Location', '/api/users/me')
-          .code(200)
-          .send({ user: conflict.user, created: false })
-      }
-      return await reply.code(conflict.status).send(conflict.body)
+    /* c8 ignore start — `!conflict` re-throw: reachable only for a
+     * non-23505 error from the tx (every error test stages a 23505 conflict).
+     * Defense-in-depth — no test stages a non-conflict tx failure. */
+    if (!conflict) {
+      throw err
     }
-    /* c8 ignore start — fall-through `throw err` + finally-boundary
-     * v8 quirk; both completion paths are exercised. Same as repo/users.ts. */
-    throw err
-  } finally {
-    client.release()
+    /* c8 ignore stop */
+    if (conflict.code === 'already_onboarded_same') {
+      return await reply
+        .header('Content-Location', '/api/users/me')
+        .code(200)
+        .send({ user: conflict.user, created: false })
+    }
+    return await reply.code(conflict.status).send(conflict.body)
   }
-  /* c8 ignore stop */
 }
 
 // FastifyPluginAsync requires an async function shape; the body has no
@@ -304,7 +303,7 @@ async function handleRegister(
 // disabled here per existing precedent in auth/bypass-plugin.ts.
 // eslint-disable-next-line @typescript-eslint/require-await
 export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
-  const users = createUsersRepo(opts.pool)
+  const repo = createRepo(opts.pool)
 
   app.post(
     '/api/users/register',
@@ -323,7 +322,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         },
       },
     },
-    (request, reply) => handleRegister(request, reply, { pool: opts.pool, users }),
+    (request, reply) => handleRegister(request, reply, { repo }),
   )
 
   app.get(
@@ -352,7 +351,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         })
       }
 
-      const existing = await users.getByUsername(username)
+      const existing = await repo.users.getByUsername(username)
       if (existing) {
         return reply.send({ available: false, reason: 'taken' })
       }
@@ -365,7 +364,7 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     if (!request.user) {
       return reply.code(401).send({ code: 'unauthenticated' })
     }
-    const user = await users.getByCognitoSub(request.user.sub)
+    const user = await repo.users.getByCognitoSub(request.user.sub)
     if (!user) {
       return reply.code(403).send({ code: 'username_required' })
     }

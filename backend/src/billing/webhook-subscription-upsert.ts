@@ -44,8 +44,7 @@
 
 import type { Stripe } from 'stripe'
 import type { FastifyBaseLogger } from 'fastify'
-import type { ClientLike } from '../repo/_types.js'
-import { userSubscriptions } from '../repo/user-subscriptions.js'
+import type { TxRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import type { HandlerResult } from './webhook-types.js'
 
@@ -91,7 +90,7 @@ interface ResolvedUser {
  * dispatcher COMMITs the `stripe_events` row and Stripe stops retrying.
  */
 async function resolveUser(
-  client: ClientLike,
+  tx: TxRepo,
   subscription: Stripe.Subscription,
 ): Promise<ResolvedUser | null> {
   /* c8 ignore start — non-string customer arm: Stripe always sends a
@@ -100,12 +99,8 @@ async function resolveUser(
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
   /* c8 ignore stop */
   if (customer.length > 0) {
-    const byCustomer = await client.query<{ id: string }>(
-      'SELECT id FROM users WHERE stripe_customer_id = $1 FOR UPDATE',
-      [customer],
-    )
-    const found = byCustomer.rows[0]
-    if (found) return { id: found.id }
+    const byCustomer = await tx.users.lockByStripeCustomerId(customer)
+    if (byCustomer) return { id: byCustomer.id }
   }
   /* c8 ignore start — fallback path: every Mythrun-issued subscription
    * seeds users.stripe_customer_id before .created lands. */
@@ -113,12 +108,8 @@ async function resolveUser(
   if (typeof fallbackUserId !== 'string' || fallbackUserId.length === 0) {
     return null
   }
-  const byUserId = await client.query<{ id: string }>(
-    'SELECT id FROM users WHERE id = $1 FOR UPDATE',
-    [fallbackUserId],
-  )
-  const found = byUserId.rows[0]
-  return found ? { id: found.id } : null
+  const byUserId = await tx.users.lockById(fallbackUserId)
+  return byUserId ? { id: byUserId.id } : null
   /* c8 ignore stop */
 }
 
@@ -144,14 +135,14 @@ async function resolveUser(
 export async function handleSubscriptionUpsert(
   event: Stripe.Event,
   _prefetch: unknown,
-  client: ClientLike,
+  tx: TxRepo,
   log: FastifyBaseLogger,
 ): Promise<HandlerResult> {
   const subscription = event.data.object as Stripe.Subscription
   const ids = subscriptionLogIds(event, subscription)
 
   // 1. Resolve user (FOR UPDATE anchor lock per §5.3).
-  const user = await resolveUser(client, subscription)
+  const user = await resolveUser(tx, subscription)
   /* c8 ignore start — unknown_customer path: every Mythrun-issued
    * subscription is tied to a known users row. */
   if (!user) {
@@ -212,7 +203,7 @@ export async function handleSubscriptionUpsert(
   /* c8 ignore stop */
 
   // 4. Upsert (idempotent + race-tolerant via the repo's strict-`>` filter).
-  await userSubscriptions.upsertFromStripe(client, {
+  await tx.userSubscriptions.upsertFromStripe({
     id: uuidv7(),
     user_id: user.id,
     stripe_subscription_id: subscription.id,

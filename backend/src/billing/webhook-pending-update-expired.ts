@@ -25,7 +25,7 @@ import type { EventHandler } from './webhook.js'
  * route re-runs cleanly.
  */
 // eslint-disable-next-line @typescript-eslint/require-await
-export const handlePendingUpdateExpired: EventHandler = async (event, _prefetch, _client, log) => {
+export const handlePendingUpdateExpired: EventHandler = async (event, _prefetch, _tx, log) => {
   const sub = event.data.object as Stripe.Subscription
 
   /* c8 ignore start — defensive narrowing of the Stripe Subscription
