@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { Pool } from 'pg'
 import { uuidv7 } from '../uuidv7.js'
 import { createPipelineRunsRepo } from '../pipeline-runs.js'
@@ -14,9 +14,11 @@ describe('pipeline-runs repo', () => {
     await pool.end()
   })
 
-  beforeEach(async () => {
-    await pool.query('DELETE FROM pipeline_runs')
-  })
+  // No blanket `DELETE FROM pipeline_runs` here: every test below inserts its
+  // own campaign/world/user with fresh uuidv7 ids and queries scope strictly by
+  // those ids, so a test only ever reads its own rows. A global DELETE was
+  // redundant for this file and raced scoped pipeline_runs rows in other
+  // parallel-fork test files (myth-ehvj). Schema bootstrap is globalSetup's job.
 
   async function insertCampaign(): Promise<{
     campaignId: string
