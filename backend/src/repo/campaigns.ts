@@ -97,6 +97,20 @@ export function campaignsNs(c: ClientLike) {
       return row ? toCampaign(row) : null
     },
 
+    /**
+     * concept-intake (stage 1) name propagation. Sets the campaign owning
+     * `worldId` to the LLM-synthesized name, but ONLY while it still carries
+     * the create-time 'Untitled' placeholder (so a user's PATCH rename isn't
+     * clobbered). Composable — runs over the captured client. SQL verbatim
+     * from `stages/concept-intake.ts` (myth-4lhr).
+     */
+    setNameFromUntitled: async (worldId: string, name: string): Promise<void> => {
+      await c.query(
+        `UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'`,
+        [worldId, name],
+      )
+    },
+
     listByUser: async (userId: string): Promise<Campaign[]> => {
       const result = await c.query<CampaignDbRow>(
         `SELECT c.* FROM campaigns c

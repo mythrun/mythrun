@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { entities } from '../entities.js'
-import { entityHierarchy } from '../entity-hierarchy.js'
+import { entityHierarchy, entityHierarchyNs } from '../entity-hierarchy.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
 
@@ -13,6 +13,7 @@ describe('entityHierarchy repo', () => {
   let pool: Pool
   let parentId: string
   let childId: string
+  let worldId: string
   let scope: TestScope
 
   beforeAll(async () => {
@@ -32,7 +33,7 @@ describe('entityHierarchy repo', () => {
     // seeded dev users + system user keep existing across tests.
     await cleanupTestScope(pool, scope)
     const userId = uuidv7()
-    const worldId = uuidv7()
+    worldId = uuidv7()
     parentId = uuidv7()
     childId = uuidv7()
     await pool.query(
@@ -135,6 +136,52 @@ describe('entityHierarchy repo', () => {
       if (!ownWorldRow) throw new Error('parent entity world_id lookup failed')
       const rows = await entityHierarchy.listForWorld(pool, ownWorldRow.world_id)
       expect(rows).toEqual([])
+    })
+  })
+
+  describe('listExistingChildIds', () => {
+    // Stage-4 straggler pre-filter (design §D9 "stage 3 wins"): returns the
+    // subset of supplied childIds that already have a hierarchy row AND whose
+    // child belongs to the given world. The beforeEach already seeds parentId
+    // + childId entities in `worldId`.
+    it('returns child ids that already have a hierarchy row in the world', async () => {
+      // childId already gets a hierarchy row; a second world-local child does not.
+      await entityHierarchy.insert(pool, { parentEntityId: parentId, childEntityId: childId })
+      const unlinkedChild = uuidv7()
+      await entities.insert(pool, {
+        id: unlinkedChild, worldId, entityType: 'location', name: 'Unlinked', accessLevel: 'known', createdIn: 'stage:test',
+      })
+
+      const existing = await entityHierarchyNs(pool).listExistingChildIds(
+        [childId, unlinkedChild],
+        worldId,
+      )
+      expect(existing).toEqual([childId])
+    })
+
+    it('excludes a linked child that belongs to a different world', async () => {
+      // childId has a hierarchy row in `worldId`. Query it against a SIBLING
+      // world id → the world-scope sub-select drops it.
+      await entityHierarchy.insert(pool, { parentEntityId: parentId, childEntityId: childId })
+
+      const otherUserId = uuidv7()
+      const otherWorldId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [otherUserId, scope.userSub(1), scope.displayName(1), scope.username(1)],
+      )
+      await pool.query(
+        `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
+        [otherWorldId, otherUserId, scope.worldName(1)],
+      )
+
+      const existing = await entityHierarchyNs(pool).listExistingChildIds([childId], otherWorldId)
+      expect(existing).toEqual([])
+    })
+
+    it('returns [] when no supplied child has a hierarchy row', async () => {
+      const existing = await entityHierarchyNs(pool).listExistingChildIds([childId], worldId)
+      expect(existing).toEqual([])
     })
   })
 })

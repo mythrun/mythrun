@@ -42,6 +42,25 @@ export function entityHierarchyNs(c: ClientLike) {
         [uuidv7(), input.parentEntityId, input.childEntityId],
       )
     },
+    /**
+     * stage-4 (entity_relationships) straggler pre-filter. Returns the subset
+     * of `childIds` that already have a hierarchy row whose child belongs to
+     * `worldId` — design §D9 "stage 3 wins" on collisions. SQL verbatim from
+     * `stages/entity-relationships.ts` `persistStragglers`; runs inside the
+     * stage's transaction so it sees the same-tx writes.
+     */
+    listExistingChildIds: async (
+      childIds: readonly string[],
+      worldId: string,
+    ): Promise<readonly string[]> => {
+      const result = await c.query<{ child_entity_id: string }>(
+        `SELECT child_entity_id FROM entity_hierarchy
+           WHERE child_entity_id = ANY($1::uuid[])
+             AND child_entity_id IN (SELECT id FROM entities WHERE world_id = $2)`,
+        [childIds, worldId],
+      )
+      return result.rows.map((r) => r.child_entity_id)
+    },
     // myth-exac T06: snapshot-view primary read path. Hierarchy is scoped
     // to a world via JOIN to entities (the table has no world_id column).
     // Filters on the parent's world; child must be in the same world by

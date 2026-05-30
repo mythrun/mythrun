@@ -260,6 +260,140 @@ export function worldsNs(c: ClientLike) {
       if (!row) throw new Error(`worlds.incrementForkCount: no world with id ${id}`)
       return toWorld(row)
     },
+
+    // ── World-gen stage persist writers ─────────────────────────────────────
+    //
+    // Focused single-purpose column writers homing the targeted UPDATEs the
+    // world-gen stages used to issue inline against their own PoolClient. SQL
+    // is byte-identical to the prior stage-local statements — only the
+    // `client.query` → `c.query` relocation. These deliberately do NOT route
+    // through the COALESCE-multi-column `update` above: that one stamps
+    // `updated_at = now()` + does a `RETURNING *` not-found throw, which would
+    // change the stages' observable behavior. Each stage gets exactly the
+    // statement it had. (See the data-layer-repo-unification design, "Out of
+    // scope: any change to query behavior".)
+
+    /**
+     * concept-intake (stage 1) persist. Writes the LLM-synthesized concept
+     * columns. SQL verbatim from `stages/concept-intake.ts`.
+     */
+    applyConcept: async (
+      id: string,
+      draft: {
+        name: string
+        tone: string
+        themes: string
+        geographySummary: string
+        politicalSummary: string
+        era: string
+        keyTensions: string
+        followUpQuestions: string
+      },
+    ): Promise<void> => {
+      await c.query(
+        `UPDATE worlds SET
+           name = $2, tone = $3, themes = $4, geography_summary = $5,
+           political_summary = $6, era = $7, key_tensions = $8, follow_up_questions = $9
+         WHERE id = $1`,
+        [
+          id,
+          draft.name,
+          draft.tone,
+          draft.themes,
+          draft.geographySummary,
+          draft.politicalSummary,
+          draft.era,
+          draft.keyTensions,
+          draft.followUpQuestions,
+        ],
+      )
+    },
+
+    /**
+     * vocabulary-intake (stage 1.5) persist. SQL verbatim from
+     * `stages/vocabulary-intake.ts`. `registryJson` is the caller-serialized
+     * JSON string (the column is jsonb; the cast lives in the SQL).
+     */
+    setVocabularyRegistry: async (id: string, registryJson: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET vocabulary_registry = $2::jsonb WHERE id = $1`, [
+        id,
+        registryJson,
+      ])
+    },
+
+    /**
+     * world-and-factions (stage 2) persist. SQL verbatim from
+     * `stages/world-and-factions.ts` `persistTree` — this one DOES set
+     * `updated_at = now()` exactly as the stage did.
+     */
+    setWorldOverview: async (id: string, worldOverview: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET world_overview = $1, updated_at = now() WHERE id = $2`, [
+        worldOverview,
+        id,
+      ])
+    },
+
+    /**
+     * entity-relationships (stage 4) persist. Buffers the phantom-endpoint
+     * declarations + relationships for stage 4b. SQL verbatim from
+     * `stages/entity-relationships.ts`. `pendingJson` is the caller-serialized
+     * JSON string.
+     */
+    setEntityConsolidationPending: async (id: string, pendingJson: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET entity_consolidation_pending = $1::jsonb WHERE id = $2`, [
+        pendingJson,
+        id,
+      ])
+    },
+
+    /**
+     * entity-consolidation (stage 4b) read: the pending phantom buffer stage 4
+     * wrote. Returns the raw jsonb value (node-postgres hands back a parsed
+     * object) or null when the column is null / the world is unknown. SQL
+     * verbatim from `stages/entity-consolidation.ts`. Caller applies its
+     * EMPTY_PENDING default. Runs on the pool OUTSIDE the persist tx, exactly
+     * as the prior inline read did.
+     */
+    getEntityConsolidationPending: async <T = unknown>(id: string): Promise<T | null> => {
+      const result = await c.query<{ entity_consolidation_pending: T | null }>(
+        `SELECT entity_consolidation_pending FROM worlds WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0]?.entity_consolidation_pending ?? null
+    },
+
+    /**
+     * entity-consolidation (stage 4b) persist. Clears the pending buffer back
+     * to empty arrays. SQL verbatim from `stages/entity-consolidation.ts` —
+     * the empty-arrays literal is part of the statement (no parameter).
+     */
+    clearEntityConsolidationPending: async (id: string): Promise<void> => {
+      await c.query(
+        `UPDATE worlds SET entity_consolidation_pending = '{"declarations": [], "relationships": []}'::jsonb WHERE id = $1`,
+        [id],
+      )
+    },
+
+    /**
+     * starting-situation (stage 6) persist — the picker-facing prose blob.
+     * SQL verbatim from `stages/starting-situation.ts`. `situationsJson` is
+     * the caller-serialized JSON string (the column is TEXT — schema 001).
+     */
+    setStartingSituations: async (id: string, situationsJson: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET starting_situations = $2 WHERE id = $1`, [id, situationsJson])
+    },
+
+    /**
+     * starting-situation (stage 6) persist — the resolved entries (index →
+     * location entity). SQL verbatim from `stages/starting-situation.ts`.
+     * `entriesJson` is the caller-serialized JSON string.
+     */
+    setStartingSituationEntries: async (id: string, entriesJson: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`, [
+        id,
+        entriesJson,
+      ])
+    },
   }
 }
 

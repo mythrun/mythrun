@@ -3,6 +3,7 @@ import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { entities } from '../entities.js'
+import { createRepo, type Repo } from '../index.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
 
@@ -10,6 +11,7 @@ const databaseUrl = process.env.DATABASE_URL ?? ''
 
 describe('entities repo', () => {
   let pool: Pool
+  let repo: Repo
   let userId: string
   let worldId: string
   let scope: TestScope
@@ -17,6 +19,7 @@ describe('entities repo', () => {
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
+    repo = createRepo(pool)
     scope = makeTestScope('entities')
   })
   afterAll(async () => {
@@ -155,5 +158,47 @@ describe('entities repo', () => {
       [id],
     )
     expect(row.rows[0]?.created_in).toBe('stage:test')
+  })
+
+  // Stage-6 starting-situation name-resolution read. Returns location entities
+  // (id + name only), excluding non-location types.
+  it('listLocationsByWorld returns only location entities (id + name)', async () => {
+    const locId = uuidv7()
+    await entities.insert(pool, {
+      id: locId, worldId, entityType: 'location', name: 'The Drowned Quarter', accessLevel: 'known', createdIn: 'stage:test',
+    })
+    // Non-location entities must be excluded.
+    await entities.insert(pool, {
+      id: uuidv7(), worldId, entityType: 'npc', name: 'Mother Ehren', accessLevel: 'known', createdIn: 'stage:test',
+    })
+    await entities.insert(pool, {
+      id: uuidv7(), worldId, entityType: 'faction', name: 'Salt Guild', accessLevel: 'known', createdIn: 'stage:test',
+    })
+
+    const locations = await repo.entities.listLocationsByWorld(worldId)
+    expect(locations).toEqual([{ id: locId, name: 'The Drowned Quarter' }])
+  })
+
+  // Stage-4 / stage-4b idempotency wipe: delete every entity a given stage
+  // created for a world, scoped by both world_id and created_in.
+  it('deleteByWorldAndCreatedIn removes only rows matching world + created_in', async () => {
+    const consolId = uuidv7()
+    const otherStageId = uuidv7()
+    await entities.insert(pool, {
+      id: consolId, worldId, entityType: 'npc', name: 'Ghost A', accessLevel: 'known', createdIn: 'stage:entity_consolidation',
+    })
+    await entities.insert(pool, {
+      id: otherStageId, worldId, entityType: 'npc', name: 'Keep B', accessLevel: 'known', createdIn: 'stage:locations_and_npcs',
+    })
+
+    await repo.entities.deleteByWorldAndCreatedIn(worldId, 'stage:entity_consolidation')
+
+    const remaining = await pool.query<{ id: string }>(
+      `SELECT id FROM entities WHERE world_id = $1 ORDER BY id`,
+      [worldId],
+    )
+    expect(remaining.rows.map((r) => r.id)).toEqual([otherStageId].sort())
+    // The consolidation-stage entity is gone; the other-stage entity remains.
+    expect(remaining.rows.some((r) => r.id === consolId)).toBe(false)
   })
 })

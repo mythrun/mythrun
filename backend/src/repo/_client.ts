@@ -26,6 +26,24 @@ import type { ClientLike } from './_types.js'
 export const ROLLBACK = Symbol('repo.ROLLBACK')
 export type RollbackSignal = typeof ROLLBACK
 
+/**
+ * Narrow a `repo.transaction` result to its committed value for callbacks
+ * that never return the ROLLBACK sentinel (they throw on the failure path
+ * instead). The world-gen stage persisters are all this shape: the callback
+ * either completes its writes (→ value) or throws (→ ROLLBACK + propagate),
+ * never returns the sentinel. Centralizes the otherwise-repeated
+ * `typeof result === 'symbol'` guard the keystone site inlines.
+ */
+export function expectCommitted<T>(result: T | RollbackSignal): T {
+  /* c8 ignore start — unreachable: callers only pass results from callbacks
+   * that throw rather than return ROLLBACK; the guard exists for TS. */
+  if (result === ROLLBACK) {
+    throw new Error('unreachable: transaction callback returned ROLLBACK unexpectedly')
+  }
+  /* c8 ignore stop */
+  return result
+}
+
 const SETTLED_MESSAGE =
   'tx repo used after the transaction settled — post-tx recovery/branch ' +
   'logic must use the pool-bound repo.X, never a captured tx.'

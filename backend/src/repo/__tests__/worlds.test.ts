@@ -247,4 +247,147 @@ describe('worlds repo (integration)', () => {
       expect(result.isDemo).toBe(true)
     })
   })
+
+  // ── World-gen stage persist writers ─────────────────────────────────────
+  // Focused single-purpose column writers the world-gen stages call inside
+  // their persist transactions. Each test seeds a world then round-trips the
+  // exact column the writer touches. SQL is byte-identical to the prior
+  // stage-local statements (data-layer-repo-unification).
+  describe('world-gen stage writers', () => {
+    async function seedWorld(): Promise<string> {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+      return w.id
+    }
+
+    it('applyConcept writes the concept-intake columns (stage 1)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.applyConcept(id, {
+        name: 'Aelmoor',
+        tone: 'misted, melancholy',
+        themes: 'guardianship, secrets',
+        geographySummary: 'drowned coast',
+        politicalSummary: 'fractured guilds',
+        era: 'twilight age',
+        keyTensions: 'spirits chafe in lanterns',
+        followUpQuestions: 'what binds the lanterns?',
+      })
+      const row = await pool.query<{
+        name: string; tone: string; themes: string; geography_summary: string
+        political_summary: string; era: string; key_tensions: string; follow_up_questions: string
+      }>(
+        `SELECT name, tone, themes, geography_summary, political_summary, era,
+                key_tensions, follow_up_questions FROM worlds WHERE id = $1`,
+        [id],
+      )
+      expect(row.rows[0]).toEqual({
+        name: 'Aelmoor',
+        tone: 'misted, melancholy',
+        themes: 'guardianship, secrets',
+        geography_summary: 'drowned coast',
+        political_summary: 'fractured guilds',
+        era: 'twilight age',
+        key_tensions: 'spirits chafe in lanterns',
+        follow_up_questions: 'what binds the lanterns?',
+      })
+    })
+
+    it('setVocabularyRegistry writes the registry jsonb (stage 1.5)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      const registry = {
+        entries: [
+          { term: 'the unwitched', definition: 'non-magical people', avoids: 'muggle', source: 'stage_1_5', access_level: 'known' },
+        ],
+        adjacent_franchises: ['Harry Potter'],
+      }
+      await worlds.setVocabularyRegistry(id, JSON.stringify(registry))
+      const row = await pool.query<{ vocabulary_registry: unknown }>(
+        `SELECT vocabulary_registry FROM worlds WHERE id = $1`,
+        [id],
+      )
+      expect(row.rows[0]?.vocabulary_registry).toEqual(registry)
+    })
+
+    it('setWorldOverview writes the overview + bumps updated_at (stage 2)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      const before = await pool.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM worlds WHERE id = $1`, [id],
+      )
+      await new Promise((r) => setTimeout(r, 5))
+      await worlds.setWorldOverview(id, 'A sweeping overview of the drowned coast.')
+      const row = await pool.query<{ world_overview: string; updated_at: Date }>(
+        `SELECT world_overview, updated_at FROM worlds WHERE id = $1`, [id],
+      )
+      expect(row.rows[0]?.world_overview).toBe('A sweeping overview of the drowned coast.')
+      const beforeAt = before.rows[0]?.updated_at
+      const afterAt = row.rows[0]?.updated_at
+      if (!beforeAt || !afterAt) throw new Error('updated_at lookup failed')
+      expect(afterAt.getTime()).toBeGreaterThan(beforeAt.getTime())
+    })
+
+    it('setEntityConsolidationPending then getEntityConsolidationPending round-trips the buffer (stage 4 ↔ 4b)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      const pending = {
+        declarations: [{ placeholderId: 'new-001', name: 'The Ironjaw', entityType: 'faction' }],
+        relationships: [{ from: 'new-001', to: 'ent-x', relationship: 'rival_of', description: 'd' }],
+      }
+      await worlds.setEntityConsolidationPending(id, JSON.stringify(pending))
+      const got = await worlds.getEntityConsolidationPending(id)
+      expect(got).toEqual(pending)
+    })
+
+    it('getEntityConsolidationPending returns the empty-arrays default for a fresh world', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      // migration 017's column default is {"declarations": [], "relationships": []}.
+      const got = await worlds.getEntityConsolidationPending(id)
+      expect(got).toEqual({ declarations: [], relationships: [] })
+    })
+
+    it('getEntityConsolidationPending returns null for an unknown world', async () => {
+      const worlds = createWorldsRepo(pool)
+      const got = await worlds.getEntityConsolidationPending('019dccef-0000-7000-8000-000000000000')
+      expect(got).toBeNull()
+    })
+
+    it('clearEntityConsolidationPending resets the buffer to empty arrays (stage 4b)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.setEntityConsolidationPending(
+        id,
+        JSON.stringify({ declarations: [{ placeholderId: 'new-001', name: 'X', entityType: 'npc' }], relationships: [] }),
+      )
+      await worlds.clearEntityConsolidationPending(id)
+      const got = await worlds.getEntityConsolidationPending(id)
+      expect(got).toEqual({ declarations: [], relationships: [] })
+    })
+
+    it('setStartingSituations writes the picker prose blob (stage 6, TEXT column)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      const situationsJson = JSON.stringify([{ title: 'The Drowned Bell', prose: 'You wake to bells.' }])
+      await worlds.setStartingSituations(id, situationsJson)
+      const row = await pool.query<{ starting_situations: string }>(
+        `SELECT starting_situations FROM worlds WHERE id = $1`, [id],
+      )
+      expect(row.rows[0]?.starting_situations).toBe(situationsJson)
+    })
+
+    it('setStartingSituationEntries writes the resolved entries jsonb (stage 6)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      const entries = [{ index: 0, locationEntityId: '019dccef-0000-7000-8000-000000000abc' }]
+      await worlds.setStartingSituationEntries(id, JSON.stringify(entries))
+      const row = await pool.query<{ starting_situation_entries: unknown }>(
+        `SELECT starting_situation_entries FROM worlds WHERE id = $1`, [id],
+      )
+      expect(row.rows[0]?.starting_situation_entries).toEqual(entries)
+    })
+  })
 })

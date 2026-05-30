@@ -441,4 +441,40 @@ describe('campaigns repo (integration)', () => {
       expect(list.map((m) => m.userId)).toEqual([owner.id])
     })
   })
+
+  describe('setNameFromUntitled (stage 1 name propagation)', () => {
+    // concept-intake (stage 1) sets the campaign owning a world to the
+    // LLM-synthesized name, but ONLY while it still carries the create-time
+    // 'Untitled' placeholder — a user's PATCH rename must not be clobbered.
+    async function seedCampaign(name: string): Promise<{ worldId: string; campaignId: string }> {
+      await cleanupTestScope(pool, scope)
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const campaigns = createCampaignsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const world = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+      const c = await campaigns.create({ worldId: world.id, createdBy: owner.id, name })
+      return { worldId: world.id, campaignId: c.id }
+    }
+
+    it('renames the campaign when it still carries the Untitled placeholder', async () => {
+      const { worldId, campaignId } = await seedCampaign('Untitled')
+      const campaigns = createCampaignsRepo(pool)
+      await campaigns.setNameFromUntitled(worldId, 'Aelmoor')
+      const row = await pool.query<{ name: string }>(
+        `SELECT name FROM campaigns WHERE id = $1`, [campaignId],
+      )
+      expect(row.rows[0]?.name).toBe('Aelmoor')
+    })
+
+    it('does NOT clobber a campaign that was already renamed away from Untitled', async () => {
+      const { worldId, campaignId } = await seedCampaign(scope.campaignName(0))
+      const campaigns = createCampaignsRepo(pool)
+      await campaigns.setNameFromUntitled(worldId, 'Aelmoor')
+      const row = await pool.query<{ name: string }>(
+        `SELECT name FROM campaigns WHERE id = $1`, [campaignId],
+      )
+      expect(row.rows[0]?.name).toBe(scope.campaignName(0))
+    })
+  })
 })

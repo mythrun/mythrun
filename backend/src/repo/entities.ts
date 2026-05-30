@@ -108,12 +108,49 @@ export function entitiesNs(c: ClientLike) {
       )
       return result.rows.map(toEntity)
     },
+    /**
+     * starting-situation (stage 6) name-resolution read: location entities
+     * for a world, id + name only. SQL verbatim from the two inline reads in
+     * `stages/starting-situation.ts` (`resolveLocationEntries` selected
+     * `id, name`; `listLocationNames` selected `name` — this one covers both,
+     * the name-list caller maps `.name`). Runs on the pool (outside the
+     * persist tx) exactly as the prior reads did.
+     */
+    listLocationsByWorld: async (
+      worldId: string,
+    ): Promise<readonly { readonly id: string; readonly name: string }[]> => {
+      const result = await c.query<{ id: string; name: string }>(
+        `SELECT id, name FROM entities WHERE world_id = $1 AND entity_type = 'location'`,
+        [worldId],
+      )
+      return result.rows
+    },
+    /**
+     * Idempotency wipe used by the stage-4 (entity_relationships) and
+     * stage-4b (entity_consolidation) persisters: delete every entity a given
+     * stage created for a world so a retry starts from a clean slate. CASCADE
+     * FKs clear the rows' prose_kernels / facts / relationships. SQL verbatim
+     * from the two stages' inline `DELETE FROM entities WHERE world_id = $1 AND
+     * created_in = 'stage:entity_consolidation'` — the `created_in` value is
+     * now a parameter so the one method serves both call sites.
+     */
+    deleteByWorldAndCreatedIn: async (worldId: string, createdIn: string): Promise<void> => {
+      await c.query(`DELETE FROM entities WHERE world_id = $1 AND created_in = $2`, [
+        worldId,
+        createdIn,
+      ])
+    },
   }
 }
 
 /** Back-compat shim: explicit-client const-object surface that delegates to the
  *  canonical `entitiesNs` binder. Direct importers (`entities.insert(client,
- *  input)`) keep working; new code goes through `repo.entities`. */
+ *  input)`) keep working; new code goes through `repo.entities`.
+ *
+ *  Note: `deleteByWorldAndCreatedIn` and `listLocationsByWorld` are NOT
+ *  re-exported here — their only callers are the world-gen stages, which all
+ *  go through the `repo.entities` / `tx.entities` binder (the migration's
+ *  "all access through repo" goal). They live solely on `entitiesNs`. */
 export const entities = {
   insert: (client: ClientLike, input: InsertEntityInput): Promise<void> =>
     entitiesNs(client).insert(input),

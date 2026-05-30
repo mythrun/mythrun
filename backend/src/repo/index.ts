@@ -18,6 +18,8 @@ import { userSubscriptionsNs } from './user-subscriptions.js'
 import { stripeEventsNs } from './stripe-events.js'
 import { billingHistoryNs } from './billing-history.js'
 import { pipelineRunsNs } from './pipeline-runs.js'
+import { randomTablesNs } from './random-tables.js'
+import { worldInventoryNs } from './world-inventory.js'
 import type { ClientLike } from './_types.js'
 import { runTransaction, type RollbackSignal } from './_client.js'
 import { type TxOpts } from '../db/transaction.js'
@@ -61,6 +63,11 @@ function bindTx(c: ClientLike) {
     stripeEvents: stripeEventsNs(c),
     billingHistory: billingHistoryNs(c),
     pipelineRuns: pipelineRunsNs(c),
+    randomTables: randomTablesNs(c),
+    // Composite multi-table read (entities + prose + facts + relationships).
+    // Replaces the former `repo.pool` escape hatch used by world-dump's
+    // `loadWorldInventory`: a bespoke read now homed behind the repo boundary.
+    worldInventory: worldInventoryNs(c),
   }
 }
 
@@ -87,4 +94,4 @@ export function createRepo(pool: Pool) {
 
 export type Repo = ReturnType<typeof createRepo>
 
-export { ROLLBACK, type RollbackSignal } from './_client.js'
+export { ROLLBACK, type RollbackSignal, expectCommitted } from './_client.js'
