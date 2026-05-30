@@ -32,3 +32,37 @@ export async function withTransaction<T>(
     throw err
   }
 }
+
+/**
+ * Per-call SET LOCAL knobs for `repo.transaction`'s BEGIN prelude. The audit
+ * found these varying by site (register, billing webhook, world-create each
+ * differ), so they are passed per call rather than baked into the helper.
+ */
+export interface TxOpts {
+  isolation?: 'read committed' | 'repeatable read' | 'serializable'
+  lockTimeoutMs?: number
+  statementTimeoutMs?: number
+}
+
+/**
+ * Build the `BEGIN; SET LOCAL …` simple-query batch for a transaction.
+ *
+ * Emitted as ONE multi-statement string so the SET LOCALs land in the same
+ * transaction as the BEGIN — a `SET LOCAL` issued with no active transaction
+ * is a silent no-op, so ordering after BEGIN is load-bearing.
+ *
+ * `isolation` defaults to 'read committed' — every current site pins it
+ * explicitly; we never inherit the connection/RDS default. Unset timeout
+ * opts emit no statement (the connection keeps its server default).
+ */
+export function beginPrelude(opts?: TxOpts): string {
+  const isolation = opts?.isolation ?? 'read committed'
+  const parts = ['BEGIN', `SET LOCAL transaction_isolation = '${isolation}'`]
+  if (opts?.lockTimeoutMs !== undefined) {
+    parts.push(`SET LOCAL lock_timeout = '${String(opts.lockTimeoutMs)}ms'`)
+  }
+  if (opts?.statementTimeoutMs !== undefined) {
+    parts.push(`SET LOCAL statement_timeout = '${String(opts.statementTimeoutMs)}ms'`)
+  }
+  return parts.join(';\n') + ';'
+}
