@@ -22,8 +22,7 @@
 // misses. We pre-filter against the existing `entity_hierarchy` rows so
 // stage 3's links always win (design §D9: "stage 3 wins" on collisions).
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import { type Repo, type TxRepo, expectCommitted } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -44,13 +43,10 @@ import {
 } from '../../schemas/entity-relationships.js'
 import { runStreamingStage } from '../streaming-extractor.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
-import { relationships } from '../../../repo/relationships.js'
-import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
 import type { AccessLevel } from '../../../repo/facts.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
-import { loadWorldInventory } from '../world-dump.js'
 import {
   buildResolutionContext,
   resolveRelationship,
@@ -257,7 +253,7 @@ function partitionByNames(
 }
 
 async function persistStragglers(
-  client: PoolClient,
+  tx: TxRepo,
   tree: EntityRelationshipsOutput,
   worldId: string,
   ctx: NameResolutionContext,
@@ -300,13 +296,8 @@ async function persistStragglers(
 
   // Pre-filter against existing entity_hierarchy rows — stage 3 wins (design §D9).
   const childIds = resolved.map((s) => s.childEntityId)
-  const existing = await client.query<{ child_entity_id: string }>(
-    `SELECT child_entity_id FROM entity_hierarchy
-       WHERE child_entity_id = ANY($1::uuid[])
-         AND child_entity_id IN (SELECT id FROM entities WHERE world_id = $2)`,
-    [childIds, worldId],
-  )
-  const existingSet = new Set(existing.rows.map((r) => r.child_entity_id))
+  const existingChildIds = await tx.entityHierarchy.listExistingChildIds(childIds, worldId)
+  const existingSet = new Set(existingChildIds)
 
   for (const s of resolved) {
     if (existingSet.has(s.childEntityId)) {
@@ -321,7 +312,7 @@ async function persistStragglers(
       )
       continue
     }
-    await entityHierarchy.insert(client, {
+    await tx.entityHierarchy.insert({
       parentEntityId: s.parentEntityId,
       childEntityId: s.childEntityId,
     })
@@ -329,14 +320,16 @@ async function persistStragglers(
 }
 
 export async function runEntityRelationshipsStage(
-  client: PoolClient,
+  repo: Repo,
   args: EntityRelationshipsArgs,
 ): Promise<StageDispatchResult> {
   // 1. Load the FULL world inventory (entities + prose + facts + relationships).
   // The full shape is needed by buildResolutionContext + by the renderer.
   // myth-2ob3: stage 4 operates on entity NAMES (not UUIDs); the resolver
-  // maps names → UUIDs at persist time.
-  const fullInventory = await loadWorldInventory(client, args.worldId)
+  // maps names → UUIDs at persist time. This read runs on the pool OUTSIDE
+  // the persist tx (it precedes the LLM stream), exactly as before — the
+  // pool-bound `repo.worldInventory.load` is that outside-tx read.
+  const fullInventory = await repo.worldInventory.load(args.worldId)
   const inventory: readonly InventoryEntry[] = Array.from(fullInventory.entitiesById.values())
   const nameResolutionCtx = buildResolutionContext(fullInventory)
   const pendingDeclarations = new Map<string, { synthId: string; entityType: string }>()
@@ -448,39 +441,34 @@ export async function runEntityRelationshipsStage(
   // The LLM call already completed above; this scope is writes only
   // (see backend/src/db/transaction.ts on why BEGIN/COMMIT doesn't wrap
   // the stream).
-  const relationshipIds = await withTransaction(client, async () => {
-    await relationships.deleteByWorld(client, args.worldId)
-    await client.query(
-      `DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'`,
-      [args.worldId],
-    )
-    const ids = await relationships.insertMany(
-      client,
-      accepted.map((a) => ({
-        sourceEntityId: a.sourceEntityId,
-        targetEntityId: a.targetEntityId,
-        relationshipType: a.relationshipType,
-        description: a.description,
-        // myth-imxg.4: persist the same wire-format identity the streaming
-        // extractor's `edge-added` events + this stage's post-commit
-        // `finalized` events use (line ~496 below). Keeps stages 4 / 4b / 7
-        // addressing the same row by a single stable string.
-        synthKey: `entity_relationships/relationships/${String(a.sourceIndex)}`,
-      })),
-    )
-    await persistStragglers(client, validatedTree, args.worldId, nameResolutionCtx)
-    await client.query(
-      `UPDATE worlds SET entity_consolidation_pending = $1::jsonb WHERE id = $2`,
-      [
+  const relationshipIds = expectCommitted(
+    await repo.transaction(async (tx) => {
+      await tx.relationships.deleteByWorld(args.worldId)
+      await tx.entities.deleteByWorldAndCreatedIn(args.worldId, 'stage:entity_consolidation')
+      const ids = await tx.relationships.insertMany(
+        accepted.map((a) => ({
+          sourceEntityId: a.sourceEntityId,
+          targetEntityId: a.targetEntityId,
+          relationshipType: a.relationshipType,
+          description: a.description,
+          // myth-imxg.4: persist the same wire-format identity the streaming
+          // extractor's `edge-added` events + this stage's post-commit
+          // `finalized` events use (line ~496 below). Keeps stages 4 / 4b / 7
+          // addressing the same row by a single stable string.
+          synthKey: `entity_relationships/relationships/${String(a.sourceIndex)}`,
+        })),
+      )
+      await persistStragglers(tx, validatedTree, args.worldId, nameResolutionCtx)
+      await tx.worlds.setEntityConsolidationPending(
+        args.worldId,
         JSON.stringify({
           declarations: partitioned.validDeclarations,
           relationships: partitioned.placeholderRelationships,
         }),
-        args.worldId,
-      ],
-    )
-    return ids
-  })
+      )
+      return ids
+    }),
+  )
 
   // myth-exac T15: tier-gate `finalized` events for relationships. The DB
   // insert above is unaffected — every accepted (non-hallucinated) row

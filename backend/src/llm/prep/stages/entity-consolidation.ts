@@ -22,8 +22,7 @@
 //      persist via relationships.insertMany.
 //   7. Clear worlds.entity_consolidation_pending to empty arrays.
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import type { Repo } from '../../../repo/index.js'
 import type { Redis } from 'ioredis'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -37,11 +36,6 @@ import {
   type GhostEntity,
 } from '../../schemas/entity-consolidation.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
-import { entities } from '../../../repo/entities.js'
-import { relationships } from '../../../repo/relationships.js'
-import { facts } from '../../../repo/facts.js'
-import { proseKernels } from '../../../repo/prose-kernels.js'
-import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
@@ -122,15 +116,13 @@ function isPlaceholder(id: string): boolean {
 }
 
 export async function runEntityConsolidationStage(
-  client: PoolClient,
+  repo: Repo,
   args: EntityConsolidationArgs,
 ): Promise<StageDispatchResult> {
   // 1. Read pending state written by stage 4. JSONB is parsed by node-postgres.
-  const pendingRes = await client.query<{ entity_consolidation_pending: PendingState | null }>(
-    `SELECT entity_consolidation_pending FROM worlds WHERE id = $1`,
-    [args.worldId],
-  )
-  const pending = pendingRes.rows[0]?.entity_consolidation_pending ?? EMPTY_PENDING
+  // Pool-bound read OUTSIDE the persist tx (precedes the LLM call), as before.
+  const pending =
+    (await repo.worlds.getEntityConsolidationPending<PendingState>(args.worldId)) ?? EMPTY_PENDING
 
   // 2. Skip path: no phantoms declared by stage 4 → zero-cost early return.
   if (pending.declarations.length === 0) {
@@ -148,7 +140,8 @@ export async function runEntityConsolidationStage(
   // (Idempotency wipe of prior stage-4b ghosts is folded into the
   // post-LLM transaction below so the BEGIN doesn't wrap the LLM call —
   // see backend/src/db/transaction.ts on why.)
-  const inventory = await entities.listByWorld(client, args.worldId)
+  // Pool-bound read OUTSIDE the persist tx (precedes the LLM call), as before.
+  const inventory = await repo.entities.listByWorld(args.worldId)
   const inventoryBlock = inventory
     .map((e) => `- ${e.id}  [${e.entityType}]  ${e.name}`)
     .join('\n')
@@ -237,17 +230,17 @@ export async function runEntityConsolidationStage(
   const placeholderToUuid = new Map<string, string>()
   const ghostPublishes: GhostPublish[] = []
   const persistedRels: ResolvedRel[] = []
-  await withTransaction(client, async () => {
+  // Writes only (LLM done — MYT-55); SQL byte-identical, relocated into the
+  // entities/proseKernels/facts/entityHierarchy/relationships/worlds binders,
+  // composed over the tx client.
+  await repo.transaction(async (tx) => {
     // (a) wipe
-    await client.query(
-      `DELETE FROM entities WHERE world_id = $1 AND created_in = 'stage:entity_consolidation'`,
-      [args.worldId],
-    )
+    await tx.entities.deleteByWorldAndCreatedIn(args.worldId, 'stage:entity_consolidation')
     // (b) ghosts
     for (const [i, ghost] of surviving.entries()) {
       const ghostId = uuidv7()
       placeholderToUuid.set(ghost.placeholder_id, ghostId)
-      await entities.insert(client, {
+      await tx.entities.insert({
         id: ghostId,
         worldId: args.worldId,
         entityType: ghost.entity_type,
@@ -255,9 +248,8 @@ export async function runEntityConsolidationStage(
         accessLevel: ghost.access_level,
         createdIn: 'stage:entity_consolidation',
       })
-      await proseKernels.insert(client, { entityId: ghostId, content: ghost.prose })
-      await facts.insertMany(
-        client,
+      await tx.proseKernels.insert({ entityId: ghostId, content: ghost.prose })
+      await tx.facts.insertMany(
         ghost.facts.map((f) => ({
           entityId: ghostId,
           topic: f.topic,
@@ -266,7 +258,7 @@ export async function runEntityConsolidationStage(
         })),
       )
       if (ghost.entity_type === 'location' && ghost.parent_location_id !== null) {
-        await entityHierarchy.insert(client, {
+        await tx.entityHierarchy.insert({
           parentEntityId: ghost.parent_location_id,
           childEntityId: ghostId,
         })
@@ -303,13 +295,10 @@ export async function runEntityConsolidationStage(
         ...rel,
         synthKey: `entity_consolidation/relationships/${String(i)}`,
       }))
-      await relationships.insertMany(client, withKeys)
+      await tx.relationships.insertMany(withKeys)
     }
     // (d) clear pending
-    await client.query(
-      `UPDATE worlds SET entity_consolidation_pending = '{"declarations": [], "relationships": []}'::jsonb WHERE id = $1`,
-      [args.worldId],
-    )
+    await tx.worlds.clearEntityConsolidationPending(args.worldId)
   })
   // Post-COMMIT publishes — myth-pfke P5.2 buffered-edge resolution. Each
   // ghost gets an `entity-added` event carrying its placeholderId so

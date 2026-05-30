@@ -84,6 +84,31 @@ describe('buildResolutionContext', () => {
       ctx.relIdByTriple.get('Mother Ehren')?.get('The Drowned Quarter')?.get('leads'),
     ).toEqual(['rel-1'])
   })
+
+  it('skips facts whose entityId has no matching entity (orphan fact, line 60)', () => {
+    // A fact pointing at an entityId that isn't in entitiesById — e.g. the
+    // entity was filtered out of the inventory snapshot. buildResolutionContext
+    // must skip it rather than index a (undefined-name → topic) pair. The
+    // resolver-unit suite covers this branch that the entity-relationships
+    // real-flow test used to exercise pre-rewrite.
+    const inv: WorldInventory = {
+      entitiesById: new Map([
+        ['ent-1', { id: 'ent-1', name: 'Mother Ehren', entityType: 'npc', accessLevel: 'known' }],
+      ]),
+      proseByEntityId: new Map(),
+      factsById: new Map([
+        ['fact-real', { id: 'fact-real', entityId: 'ent-1', topic: 'role', content: 'Elder.', accessLevel: 'known' }],
+        // entityId 'ent-missing' is NOT in entitiesById → skipped at line 60.
+        ['fact-orphan', { id: 'fact-orphan', entityId: 'ent-missing', topic: 'history', content: 'Dangling.', accessLevel: 'known' }],
+      ]),
+      relationshipsById: new Map(),
+    }
+    const ctx = buildResolutionContext(inv)
+    // The real fact is indexed under its entity name.
+    expect(ctx.factIdByPair.get('Mother Ehren')?.get('role')).toEqual(['fact-real'])
+    // The orphan fact produced no entry (no undefined-keyed pair, no leak).
+    expect(ctx.factIdByPair.size).toBe(1)
+  })
 })
 
 const decls = new Map<string, { synthId: string; entityType: string }>([

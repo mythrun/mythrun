@@ -26,12 +26,13 @@
  * flags streamObject deprecated but design §D1 mandates it. */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import IoredisMock from 'ioredis-mock'
 import type { Job } from 'bullmq'
 import { guardTestDatabase } from '../../../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../../../repo/uuidv7.js'
 import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
+import { createRepo, type Repo } from '../../../../repo/index.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -280,29 +281,40 @@ function makeArgs(opts: {
   }
 }
 
-// Helper: acquire a client and BEGIN — the unified contract puts txn
-// lifecycle in the CALLER's hands. Always pair with `commit` or
-// `rollback` below.
-async function beginTxn(pool: Pool): Promise<PoolClient> {
-  const client = await pool.connect()
-  await client.query('BEGIN')
-  return client
+// Post data-layer-unification: the handler owns its persist transaction via
+// `repo.transaction` (own connection, BEGIN/COMMIT/ROLLBACK internal), so the
+// test scaffold just builds a pool-bound repo and invokes the handler. On a
+// thrown error the handler's own tx rolls back; no test-side ROLLBACK needed.
+function repoFor(pool: Pool): Repo {
+  return createRepo(pool)
 }
 
-async function commit(client: PoolClient): Promise<void> {
-  try {
-    await client.query('COMMIT')
-  } finally {
-    client.release()
-  }
-}
-
-async function rollback(client: PoolClient): Promise<void> {
-  try {
-    await client.query('ROLLBACK')
-  } finally {
-    client.release()
-  }
+// Failure-injecting repo for the write-failure test: wraps the pool so every
+// connection acquired by `repo.transaction` rejects on the entity_hierarchy
+// INSERT — mimicking a write failure during Pass 3 of the resolver. The
+// handler's own tx must ROLLBACK, leaving the stage-2 seeds intact.
+function repoFailingHierarchyInsert(pool: Pool): Repo {
+  const wrappedPool = new Proxy(pool, {
+    get(target, prop, receiver): unknown {
+      if (prop === 'connect') {
+        return async (): Promise<unknown> => {
+          const client = await target.connect()
+          const originalQuery = client.query.bind(client)
+          const patched = ((...args: unknown[]): unknown => {
+            const sql = args[0]
+            if (typeof sql === 'string' && /INSERT INTO entity_hierarchy/i.test(sql)) {
+              return Promise.reject(new Error('simulated write failure'))
+            }
+            return (originalQuery as (...a: unknown[]) => unknown)(...args)
+          }) as typeof client.query
+          ;(client as unknown as { query: typeof client.query }).query = patched
+          return client
+        }
+      }
+      return Reflect.get(target, prop, receiver) as unknown
+    },
+  })
+  return createRepo(wrappedPool)
 }
 
 describe('runLocationsAndNpcsStage', () => {
@@ -366,12 +378,10 @@ describe('runLocationsAndNpcsStage', () => {
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    const client = await beginTxn(pool)
-    const result = await runLocationsAndNpcsStage(
-      client,
+        const result = await runLocationsAndNpcsStage(
+      repoFor(pool),
       makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
     )
-    await commit(client)
 
     expect(result.costUsd).toBeGreaterThan(0)
     expect(result.capExhausted).toBe(false)
@@ -459,12 +469,10 @@ describe('runLocationsAndNpcsStage', () => {
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    const client = await beginTxn(pool)
-    const result = await runLocationsAndNpcsStage(
-      client,
+        const result = await runLocationsAndNpcsStage(
+      repoFor(pool),
       makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
     )
-    await commit(client)
 
     // No entity_hierarchy row for the typo'd location.
     const eh = await pool.query<{ count: string }>(
@@ -502,9 +510,7 @@ describe('runLocationsAndNpcsStage', () => {
 
     mockStreamObject.mockReturnValueOnce(makeStream(nestedFixture('Anul-dan')))
 
-    const client = await beginTxn(pool)
-    await runLocationsAndNpcsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) }))
-    await commit(client)
+        await runLocationsAndNpcsStage(repoFor(pool), makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) }))
 
     const eh = await pool.query<{ parent_id: string }>(
       `SELECT h.parent_entity_id AS parent_id
@@ -529,12 +535,10 @@ describe('runLocationsAndNpcsStage', () => {
       usage: { inputTokens: 1500, outputTokens: 800, totalTokens: 2300 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const client = await beginTxn(pool)
-    const result = await runLocationsAndNpcsStage(
-      client,
+        const result = await runLocationsAndNpcsStage(
+      repoFor(pool),
       makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) }),
     )
-    await commit(client)
 
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(1) // Haiku only
@@ -561,12 +565,10 @@ describe('runLocationsAndNpcsStage', () => {
       usage: { inputTokens: 1800, outputTokens: 900, totalTokens: 2700 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const client = await beginTxn(pool)
-    const result = await runLocationsAndNpcsStage(
-      client,
+        const result = await runLocationsAndNpcsStage(
+      repoFor(pool),
       makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) }),
     )
-    await commit(client)
 
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(2) // Haiku + Sonnet
@@ -596,14 +598,14 @@ describe('runLocationsAndNpcsStage', () => {
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    const client = await beginTxn(pool)
-    try {
-      await expect(
-        runLocationsAndNpcsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime })),
-      ).rejects.toThrow(/unparseable structured output/)
-    } finally {
-      await rollback(client)
-    }
+    // Repair exhaustion throws at `await result.object` — BEFORE the persist
+    // tx opens — so nothing is written; the handler's own tx never begins.
+    await expect(
+      runLocationsAndNpcsStage(
+        repoFor(pool),
+        makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
+      ),
+    ).rejects.toThrow(/unparseable structured output/)
 
     // Handler does NOT publish stage-reset under the unified contract;
     // that's now the caller's responsibility.
@@ -615,35 +617,25 @@ describe('runLocationsAndNpcsStage', () => {
     expect(stageResetPublished).toBe(false)
   })
 
-  it('persistence write-failure: throws; does NOT publish stage-reset; rollback (test-driven) leaves stage-2 seeds intact', async () => {
+  it('persistence write-failure: throws; does NOT publish stage-reset; handler tx rolls back leaving stage-2 seeds intact', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(nestedFixture('Eredil')))
 
-    // Patch the client's query method to fail on the first
-    // entity_hierarchy INSERT — that mimics a write failure during
-    // Pass 3 of the resolver.
-    const client = await beginTxn(pool)
-    const originalQuery = client.query.bind(client)
-    const patchedQuery = ((...args: unknown[]): unknown => {
-      const sql = args[0]
-      if (typeof sql === 'string' && /INSERT INTO entity_hierarchy/i.test(sql)) {
-        return Promise.reject(new Error('simulated write failure'))
-      }
-      return (originalQuery as (...a: unknown[]) => unknown)(...args)
-    }) as typeof client.query
-    ;(client as unknown as { query: typeof client.query }).query = patchedQuery
+    // Inject a write failure on the first entity_hierarchy INSERT (Pass 3 of
+    // the resolver) at the POOL level — the handler's own `repo.transaction`
+    // acquires its connection from this pool, so the patched client is the one
+    // it writes through. The handler's tx must ROLLBACK on the throw, leaving
+    // only the two stage-2 seeds.
+    const repo = repoFailingHierarchyInsert(pool)
 
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    try {
-      await expect(
-        runLocationsAndNpcsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime })),
-      ).rejects.toThrow(/simulated write failure/)
-    } finally {
-      // Restore the original query so ROLLBACK isn't itself blocked.
-      ;(client as unknown as { query: typeof client.query }).query = originalQuery
-      await rollback(client)
-    }
+    await expect(
+      runLocationsAndNpcsStage(
+        repo,
+        makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
+      ),
+    ).rejects.toThrow(/simulated write failure/)
 
     // Handler does NOT publish stage-reset under the unified contract.
     const stageResetPublished = publishSpy.mock.calls.some(([, payload]) => {
@@ -653,7 +645,7 @@ describe('runLocationsAndNpcsStage', () => {
     })
     expect(stageResetPublished).toBe(false)
 
-    // After our ROLLBACK only the two stage-2 seeds remain.
+    // After the handler's tx ROLLBACK only the two stage-2 seeds remain.
     const counts = await pool.query<{ ent: string }>(
       `SELECT count(*)::text AS ent FROM entities WHERE world_id = $1`,
       [worldId],
@@ -664,9 +656,8 @@ describe('runLocationsAndNpcsStage', () => {
   it('tier filter (bypassAccessFilter=false): persists all rows; finalizedEvents contains only `known` rows', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(mixedTierTree()))
 
-    const client = await beginTxn(pool)
-    const result = await runLocationsAndNpcsStage(
-      client,
+        const result = await runLocationsAndNpcsStage(
+      repoFor(pool),
       makeArgs({
         worldId,
         userId,
@@ -675,7 +666,6 @@ describe('runLocationsAndNpcsStage', () => {
         bypassAccessFilter: false,
       }),
     )
-    await commit(client)
 
     // DB insert always happens — 5 locations + 5 NPCs land regardless
     // of tier. Plus the 2 stage-2 seeds = 12.
@@ -725,9 +715,8 @@ describe('runLocationsAndNpcsStage', () => {
       adjacent_franchises: ['Harry Potter'],
     }
 
-    const client = await beginTxn(pool)
-    await runLocationsAndNpcsStage(
-      client,
+        await runLocationsAndNpcsStage(
+      repoFor(pool),
       makeArgs({
         worldId,
         userId,
@@ -736,7 +725,6 @@ describe('runLocationsAndNpcsStage', () => {
         vocabularyRegistry: registry,
       }),
     )
-    await commit(client)
 
     const captured = vi.mocked(streamObject).mock.calls[0]?.[0] as
       | { prompt: string }
@@ -750,9 +738,8 @@ describe('runLocationsAndNpcsStage', () => {
   it('tier filter (bypassAccessFilter=true): persists all rows; finalizedEvents contains every row regardless of tier', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(mixedTierTree()))
 
-    const client = await beginTxn(pool)
-    const result = await runLocationsAndNpcsStage(
-      client,
+        const result = await runLocationsAndNpcsStage(
+      repoFor(pool),
       makeArgs({
         worldId,
         userId,
@@ -761,7 +748,6 @@ describe('runLocationsAndNpcsStage', () => {
         bypassAccessFilter: true,
       }),
     )
-    await commit(client)
 
     const ent = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM entities WHERE world_id = $1`,

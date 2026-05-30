@@ -60,11 +60,8 @@ import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
-import {
-  loadWorldInventory,
-  renderWorldDump,
-  type WorldInventory,
-} from '../world-dump.js'
+import { renderWorldDump, type WorldInventory } from '../world-dump.js'
+import { worldInventoryNs } from '../../../repo/world-inventory.js'
 import {
   buildResolutionContext,
   normalizeName,
@@ -746,7 +743,7 @@ export async function runCoherencePassStage(
     }
   }
 
-  const inventory = await loadWorldInventory(client, args.worldId)
+  const inventory = await worldInventoryNs(client).load(args.worldId)
 
   const worldDump = renderWorldDump(inventory)
   const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', worldDump).replace(

@@ -1,108 +1,19 @@
 // backend/src/llm/prep/world-dump.ts
 //
-// Shared "world dump" rendering — single source of truth for what the
-// LLM sees when handed a full world (entities + facts + relationships
-// + prose kernels).
+// Shared "world dump" rendering — single source of truth for the textual
+// form the LLM sees when handed a full world (entities + facts +
+// relationships + prose kernels).
 //
-// Extracted from stages/coherence-pass.ts in MYT-54 T5 so the
-// character-integration worker can reuse the exact same inventory
-// shape + textual rendering. No behavior change vs. the inlined
-// originals: coherence-pass continues to import these.
-//
-// Two pieces:
-//   - loadWorldInventory: pulls entities (+access tier), prose kernels,
-//     facts, and relationships for one world into in-memory maps.
-//   - renderWorldDump: deterministic prose form with entity UUIDs the
-//     LLM can echo back.
+// The composite READ that builds the in-memory inventory moved to the repo
+// layer as `repo.worldInventory.load` (data-layer-repo-unification): a
+// bespoke multi-table read belongs behind the repo boundary, not as a free
+// function reaching for `repo.pool`. This file now owns only the deterministic
+// renderer; the `WorldInventory` type re-exports from the repo namespace so
+// existing `import { ... WorldInventory } from '../world-dump.js'` sites keep
+// resolving.
 
-import type { PoolClient } from 'pg'
-import { entities } from '../../repo/entities.js'
-import type { AccessLevel } from '../../repo/facts.js'
-import { relationships } from '../../repo/relationships.js'
-
-// In-memory inventory of a world's UUIDs at one point in time.
-// Used for (a) the world dump rendered into the prompt, (b) any
-// downstream consumer that needs to look up entities/facts/relationships
-// by id without re-querying.
-export interface WorldInventory {
-  readonly entitiesById: Map<
-    string,
-    { id: string; name: string; entityType: string; accessLevel: AccessLevel }
-  >
-  readonly proseByEntityId: Map<string, string>
-  readonly factsById: Map<string, { id: string; entityId: string; content: string; topic: string; accessLevel: string }>
-  readonly relationshipsById: Map<
-    string,
-    {
-      id: string
-      sourceEntityId: string
-      targetEntityId: string
-      relationshipType: string
-      description: string
-      // myth-imxg.3: persisted by stages 4/4b/7 (migration 020); stage 7
-      // reads it for edge-removed SSE events. Structurally propagated by
-      // loadWorldInventory's `new Map(relRows.map((r) => [r.id, r]))`.
-      synthKey: string
-    }
-  >
-}
-
-export async function loadWorldInventory(
-  client: PoolClient,
-  worldId: string,
-): Promise<WorldInventory> {
-  const entityRows = await entities.listByWorld(client, worldId)
-  const entitiesById = new Map(
-    entityRows.map((e) => [
-      e.id,
-      { id: e.id, name: e.name, entityType: e.entityType, accessLevel: e.accessLevel },
-    ]),
-  )
-
-  const proseResult = await client.query<{ entity_id: string; content: string }>(
-    `SELECT pk.entity_id, pk.content
-       FROM prose_kernels pk
-       JOIN entities e ON e.id = pk.entity_id
-      WHERE e.world_id = $1`,
-    [worldId],
-  )
-  const proseByEntityId = new Map<string, string>()
-  for (const row of proseResult.rows) {
-    proseByEntityId.set(row.entity_id, row.content)
-  }
-
-  const factResult = await client.query<{
-    id: string
-    entity_id: string
-    topic: string
-    access_level: string
-    content: string
-  }>(
-    `SELECT f.id, f.entity_id, f.topic, f.access_level, f.content
-       FROM facts f
-       JOIN entities e ON e.id = f.entity_id
-      WHERE e.world_id = $1`,
-    [worldId],
-  )
-  const factsById = new Map<
-    string,
-    { id: string; entityId: string; content: string; topic: string; accessLevel: string }
-  >()
-  for (const row of factResult.rows) {
-    factsById.set(row.id, {
-      id: row.id,
-      entityId: row.entity_id,
-      topic: row.topic,
-      accessLevel: row.access_level,
-      content: row.content,
-    })
-  }
-
-  const relRows = await relationships.listByWorld(client, worldId)
-  const relationshipsById = new Map(relRows.map((r) => [r.id, r]))
-
-  return { entitiesById, proseByEntityId, factsById, relationshipsById }
-}
+export type { WorldInventory } from '../../repo/world-inventory.js'
+import type { WorldInventory } from '../../repo/world-inventory.js'
 
 // Render the inventory into a deterministic textual block. The LLM gets
 // every entity's UUID + name + entity_type, then its prose kernel, then

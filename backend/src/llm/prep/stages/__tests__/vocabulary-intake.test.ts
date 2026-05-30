@@ -19,6 +19,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { runVocabularyIntakeStage } from '../vocabulary-intake.js'
 import * as ai from 'ai'
+import { makeFakeRepo } from './_helpers/fake-repo.js'
+import type { Repo } from '../../../../repo/index.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -27,12 +29,12 @@ vi.mock('ai', async () => {
 
 const mockGenerateText = vi.mocked(ai.generateText)
 
-interface QuerySpy {
-  query: ReturnType<typeof vi.fn>
-}
-
-function makeClient(): QuerySpy {
-  return { query: vi.fn().mockResolvedValue({ rows: [] }) }
+// The registry JSON the stage hands to repo.worlds.setVocabularyRegistry —
+// pulled from the binder call's second arg (the serialized payload).
+function persistedRegistry(repo: ReturnType<typeof makeFakeRepo>): unknown {
+  const call = repo.worlds.setVocabularyRegistry.mock.calls[0] as [string, string] | undefined
+  if (call === undefined) throw new Error('setVocabularyRegistry was not called')
+  return JSON.parse(call[1])
 }
 
 const ARGS = {
@@ -77,21 +79,16 @@ describe('runVocabularyIntakeStage', () => {
       usage: SONNET_USAGE,
     } as never)
 
-    const client = makeClient()
-    const result = await runVocabularyIntakeStage(
-      client as unknown as Parameters<typeof runVocabularyIntakeStage>[0],
-      ARGS,
-    )
+    const repo = makeFakeRepo()
+    const result = await runVocabularyIntakeStage(repo as unknown as Repo, ARGS)
 
-    // Persistence: single UPDATE call to worlds.vocabulary_registry,
-    // wrapped in BEGIN/COMMIT by withTransaction (MYT-55) — total 3 calls:
-    // BEGIN, UPDATE, COMMIT.
-    expect(client.query).toHaveBeenCalledTimes(3)
-    expect(client.query.mock.calls[0]?.[0]).toBe('BEGIN')
-    expect(client.query.mock.calls[2]?.[0]).toBe('COMMIT')
-    const [sql, params] = client.query.mock.calls[1] as [string, unknown[]]
-    expect(sql).toMatch(/UPDATE worlds.*SET vocabulary_registry/i)
-    const payload = JSON.parse(params[1] as string) as {
+    // Persistence: single repo.worlds.setVocabularyRegistry write inside one
+    // repo.transaction (the binder's SQL is covered by the worlds repo
+    // integration test). Assert the serialized registry payload it received.
+    expect(repo.transaction).toHaveBeenCalledTimes(1)
+    expect(repo.worlds.setVocabularyRegistry).toHaveBeenCalledTimes(1)
+    expect(repo.worlds.setVocabularyRegistry).toHaveBeenCalledWith('w1', expect.any(String))
+    const payload = persistedRegistry(repo) as {
       adjacent_franchises: string[]
       entries: { term: string; source: string; access_level: string }[]
     }
@@ -120,15 +117,10 @@ describe('runVocabularyIntakeStage', () => {
       usage: SONNET_USAGE,
     } as never)
 
-    const client = makeClient()
-    await runVocabularyIntakeStage(
-      client as unknown as Parameters<typeof runVocabularyIntakeStage>[0],
-      ARGS,
-    )
+    const repo = makeFakeRepo()
+    await runVocabularyIntakeStage(repo as unknown as Repo, ARGS)
 
-    // MYT-55: writes are wrapped in BEGIN/COMMIT; UPDATE is at index 1.
-    const [, params] = client.query.mock.calls[1] as [string, unknown[]]
-    const payload = JSON.parse(params[1] as string) as {
+    const payload = persistedRegistry(repo) as {
       entries: unknown[]
       adjacent_franchises: unknown[]
     }
@@ -139,13 +131,10 @@ describe('runVocabularyIntakeStage', () => {
   it('rethrows LLM call errors so retry classification fires', async () => {
     mockGenerateText.mockRejectedValueOnce(new Error('rate limit'))
 
-    const client = makeClient()
-    await expect(
-      runVocabularyIntakeStage(
-        client as unknown as Parameters<typeof runVocabularyIntakeStage>[0],
-        ARGS,
-      ),
-    ).rejects.toThrow(/rate limit/)
+    const repo = makeFakeRepo()
+    await expect(runVocabularyIntakeStage(repo as unknown as Repo, ARGS)).rejects.toThrow(
+      /rate limit/,
+    )
   })
 
   it('treats undefined usage tokens as 0 (cost = 0, both counters = 0)', async () => {
@@ -160,11 +149,8 @@ describe('runVocabularyIntakeStage', () => {
       usage: {},
     } as never)
 
-    const client = makeClient()
-    const result = await runVocabularyIntakeStage(
-      client as unknown as Parameters<typeof runVocabularyIntakeStage>[0],
-      ARGS,
-    )
+    const repo = makeFakeRepo()
+    const result = await runVocabularyIntakeStage(repo as unknown as Repo, ARGS)
 
     expect(result.costUsd).toBe(0)
     expect(result.inputTokens).toBe(0)
@@ -178,11 +164,8 @@ describe('runVocabularyIntakeStage', () => {
       usage: SONNET_USAGE,
     } as never)
 
-    const client = makeClient()
-    await runVocabularyIntakeStage(
-      client as unknown as Parameters<typeof runVocabularyIntakeStage>[0],
-      ARGS,
-    )
+    const repo = makeFakeRepo()
+    await runVocabularyIntakeStage(repo as unknown as Repo, ARGS)
 
     const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
     expect(callOpts.prompt).toContain('Veil & Chalk')

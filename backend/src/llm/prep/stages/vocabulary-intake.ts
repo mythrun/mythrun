@@ -8,8 +8,7 @@
 // returned entry, persists to worlds.vocabulary_registry, returns the
 // aggregated cost.
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import type { Repo } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -56,7 +55,7 @@ export interface StageCostResult {
 }
 
 export async function runVocabularyIntakeStage(
-  client: PoolClient,
+  repo: Repo,
   args: VocabularyIntakeArgs,
 ): Promise<StageCostResult> {
   const prompt = PROMPT_TEMPLATE
@@ -93,12 +92,10 @@ export async function runVocabularyIntakeStage(
     adjacent_franchises: [],
   }
 
-  // Persist in a short transaction — see backend/src/db/transaction.ts.
-  await withTransaction(client, () =>
-    client.query(
-      `UPDATE worlds SET vocabulary_registry = $2::jsonb WHERE id = $1`,
-      [args.worldId, JSON.stringify(registry)],
-    ),
+  // Persist in a short transaction (writes only — LLM call already done;
+  // MYT-55). SQL byte-identical, relocated into the worlds binder.
+  await repo.transaction((tx) =>
+    tx.worlds.setVocabularyRegistry(args.worldId, JSON.stringify(registry)),
   )
 
   // LanguageModelUsage exposes token fields as `number | undefined`

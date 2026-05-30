@@ -9,8 +9,7 @@
 // concern (mirroring a copyrighted work) is concept-intake's job;
 // starting-situation only references existing world state.
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import type { Repo } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -74,7 +73,7 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 }
 
 export async function runStartingSituationStage(
-  client: PoolClient,
+  repo: Repo,
   args: StartingSituationArgs,
 ): Promise<StageCostResult> {
   const prompt = renderPrompt(args)
@@ -92,12 +91,13 @@ export async function runStartingSituationStage(
   let inputTokens = result.usage.inputTokens ?? 0
   let outputTokens = result.usage.outputTokens ?? 0
 
-  let resolved = await resolveLocationEntries(client, args.worldId, result.output.location_hooks)
+  // Reads run on the pool (outside the persist tx), exactly as before.
+  let resolved = await resolveLocationEntries(repo, args.worldId, result.output.location_hooks)
   if (resolved === null) {
     // myth-xg6p T3: one constrained-names retry before surfacing as a
     // structural failure. The wrapper's repair pipeline only fires on
     // schema-shape errors; a name-miss is application-level and handled here.
-    const validNames = await listLocationNames(client, args.worldId)
+    const validNames = await listLocationNames(repo, args.worldId)
     const retryPrompt = `${prompt}\n\nIMPORTANT: choose location_name values EXACTLY from this list of existing locations: ${validNames.join(', ')}.`
     result = await generateObject({
       model: SONNET,
@@ -111,7 +111,7 @@ export async function runStartingSituationStage(
     /* c8 ignore next 2 */
     inputTokens += result.usage.inputTokens ?? 0
     outputTokens += result.usage.outputTokens ?? 0
-    resolved = await resolveLocationEntries(client, args.worldId, result.output.location_hooks)
+    resolved = await resolveLocationEntries(repo, args.worldId, result.output.location_hooks)
     if (resolved === null) {
       throw new LlmStructuredOutputError(
         'starting-situation: location_name values cannot be resolved to entities after one retry',
@@ -126,15 +126,12 @@ export async function runStartingSituationStage(
     locationName: r.locationName,
     prose: r.prose,
   }))
-  await withTransaction(client, async () => {
-    await client.query(`UPDATE worlds SET starting_situations = $2 WHERE id = $1`, [
-      args.worldId,
-      JSON.stringify(result.output),
-    ])
-    await client.query(`UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`, [
-      args.worldId,
-      JSON.stringify(entries),
-    ])
+  // Persist (writes only; LLM done — MYT-55). SQL byte-identical, relocated
+  // into the worlds binder. The two single-column UPDATEs stay distinct
+  // statements exactly as before (no merge into one COALESCE update).
+  await repo.transaction(async (tx) => {
+    await tx.worlds.setStartingSituations(args.worldId, JSON.stringify(result.output))
+    await tx.worlds.setStartingSituationEntries(args.worldId, JSON.stringify(entries))
   })
 
   return {
@@ -164,20 +161,17 @@ interface ResolvedEntry {
 }
 
 async function resolveLocationEntries(
-  client: PoolClient,
+  repo: Repo,
   worldId: string,
   hooks: readonly LocationHook[],
 ): Promise<readonly ResolvedEntry[] | null> {
-  const r = await client.query<{ id: string; name: string }>(
-    `SELECT id, name FROM entities WHERE world_id = $1 AND entity_type = 'location'`,
-    [worldId],
-  )
+  const rows = await repo.entities.listLocationsByWorld(worldId)
   // Map lower-cased name -> { id, name } so we can resolve the LLM's
   // case-insensitive match back to the canonical entity name (used for
   // entries[].locationName so the dev-tool surfaces what the seed row
   // actually stores, not a re-cased copy of the LLM's emission).
   const byLowerName = new Map<string, { id: string; name: string }>()
-  for (const row of r.rows) byLowerName.set(row.name.toLowerCase(), row)
+  for (const row of rows) byLowerName.set(row.name.toLowerCase(), row)
   const out: ResolvedEntry[] = []
   for (const hook of hooks) {
     const match = byLowerName.get(hook.location_name.toLowerCase())
@@ -192,13 +186,7 @@ async function resolveLocationEntries(
   return out
 }
 
-async function listLocationNames(
-  client: PoolClient,
-  worldId: string,
-): Promise<readonly string[]> {
-  const r = await client.query<{ name: string }>(
-    `SELECT name FROM entities WHERE world_id = $1 AND entity_type = 'location'`,
-    [worldId],
-  )
-  return r.rows.map((row) => row.name)
+async function listLocationNames(repo: Repo, worldId: string): Promise<readonly string[]> {
+  const rows = await repo.entities.listLocationsByWorld(worldId)
+  return rows.map((row) => row.name)
 }

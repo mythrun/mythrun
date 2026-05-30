@@ -27,8 +27,7 @@
 // StageDispatchResult the world-gen processor writes to
 // pipeline_runs.cost_usd.
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import { type Repo, type TxRepo, expectCommitted } from '../../../repo/index.js'
 import type { Redis } from 'ioredis'
 import type { Job } from 'bullmq'
 import { readFileSync } from 'node:fs'
@@ -42,9 +41,6 @@ import { streamObject } from '../../ai.js'
 import { OPUS } from '../../models.js'
 import { computeCostUsd } from '../../../billing/model-pricing.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
-import { entities } from '../../../repo/entities.js'
-import { proseKernels } from '../../../repo/prose-kernels.js'
-import { facts } from '../../../repo/facts.js'
 import { runStreamingStage } from '../streaming-extractor.js'
 import {
   WorldAndFactionsSchema,
@@ -87,7 +83,7 @@ interface FinalizedRow {
 }
 
 interface PersistEntityArgs {
-  readonly client: PoolClient
+  readonly tx: TxRepo
   readonly worldId: string
   readonly entityType: 'location' | 'faction'
   readonly source: readonly WorldAndFactionsTree['regions'][number][]
@@ -101,7 +97,7 @@ interface PersistEntityArgs {
 async function persistEntities(args: PersistEntityArgs): Promise<void> {
   for (const [i, item] of args.source.entries()) {
     const entityId = uuidv7()
-    await entities.insert(args.client, {
+    await args.tx.entities.insert({
       id: entityId,
       worldId: args.worldId,
       entityType: args.entityType,
@@ -112,9 +108,8 @@ async function persistEntities(args: PersistEntityArgs): Promise<void> {
       accessLevel: item.access_level,
       createdIn: 'stage:world_and_factions',
     })
-    await proseKernels.insert(args.client, { entityId, content: item.prose })
-    await facts.insertMany(
-      args.client,
+    await args.tx.proseKernels.insert({ entityId, content: item.prose })
+    await args.tx.facts.insertMany(
       item.facts.map((f) => ({
         entityId,
         topic: f.topic,
@@ -137,14 +132,14 @@ async function persistEntities(args: PersistEntityArgs): Promise<void> {
 }
 
 async function persistTree(
-  client: PoolClient,
+  tx: TxRepo,
   worldId: string,
   tree: WorldAndFactionsTree,
   bypassAccessFilter: boolean,
 ): Promise<readonly FinalizedRow[]> {
   const finalized: FinalizedRow[] = []
   await persistEntities({
-    client,
+    tx,
     worldId,
     entityType: 'location',
     source: tree.regions,
@@ -153,7 +148,7 @@ async function persistTree(
     bypassAccessFilter,
   })
   await persistEntities({
-    client,
+    tx,
     worldId,
     entityType: 'faction',
     source: tree.factions,
@@ -161,18 +156,15 @@ async function persistTree(
     out: finalized,
     bypassAccessFilter,
   })
-  // worlds repo is closure-style and can't accept this client; write
-  // the one column it needs via inline SQL on the active transaction
-  // (owned by the caller).
-  await client.query(
-    `UPDATE worlds SET world_overview = $1, updated_at = now() WHERE id = $2`,
-    [tree.world_overview, worldId],
-  )
+  // worlds.setWorldOverview carries the same single-column UPDATE the stage
+  // used to issue inline (SET world_overview = $1, updated_at = now()) — now
+  // homed in the worlds binder, composed inside this tx.
+  await tx.worlds.setWorldOverview(worldId, tree.world_overview)
   return finalized
 }
 
 export async function runWorldAndFactionsStage(
-  client: PoolClient,
+  repo: Repo,
   args: RunWorldAndFactionsArgs,
 ): Promise<StageDispatchResult> {
   const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.world.name)
@@ -242,10 +234,14 @@ export async function runWorldAndFactionsStage(
   })
 
   // Persist in a short transaction. The LLM stream + repair chain are
-  // already done; this scope is just the entity + UPDATE worlds writes.
-  // See backend/src/db/transaction.ts on why BEGIN doesn't wrap the LLM.
-  const finalized = await withTransaction(client, () =>
-    persistTree(client, args.world.id, validatedTree, args.bypassAccessFilter),
+  // already done; this scope is just the entity + UPDATE worlds writes
+  // (MYT-55: BEGIN never wraps the LLM). SQL byte-identical, relocated into
+  // the entities/proseKernels/facts/worlds binders, composed over the tx
+  // client.
+  const finalized = expectCommitted(
+    await repo.transaction((tx) =>
+      persistTree(tx, args.world.id, validatedTree, args.bypassAccessFilter),
+    ),
   )
 
   const finalizedEvents: readonly PipelineEvent[] = finalized.map((f) => ({

@@ -45,8 +45,7 @@
 // Cost is the sum of the streaming Opus call + (optional) Haiku repair +
 // (optional) Sonnet repair, returned as part of StageDispatchResult.
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import { type Repo, type TxRepo, expectCommitted } from '../../../repo/index.js'
 import type { Redis } from 'ioredis'
 import type { Job } from 'bullmq'
 import { readFileSync } from 'node:fs'
@@ -60,10 +59,6 @@ import { streamObject } from '../../ai.js'
 import { OPUS } from '../../models.js'
 import { computeCostUsd } from '../../../billing/model-pricing.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
-import { entities } from '../../../repo/entities.js'
-import { proseKernels } from '../../../repo/prose-kernels.js'
-import { facts } from '../../../repo/facts.js'
-import { entityHierarchy } from '../../../repo/entity-hierarchy.js'
 import { runStreamingStage } from '../streaming-extractor.js'
 import {
   LocationsAndNpcsSchema,
@@ -128,7 +123,7 @@ interface UnresolvedRef {
 // list of (synthKey, entityId) finalized rows plus a list of unresolved
 // parent_location references the pass-3 resolver will work through.
 async function persistLocations(
-  client: PoolClient,
+  tx: TxRepo,
   worldId: string,
   locations: readonly LocationEntry[],
   finalized: FinalizedRow[],
@@ -136,7 +131,7 @@ async function persistLocations(
 ): Promise<void> {
   for (const [i, loc] of locations.entries()) {
     const entityId = uuidv7()
-    await entities.insert(client, {
+    await tx.entities.insert({
       id: entityId,
       worldId,
       entityType: 'location',
@@ -144,9 +139,8 @@ async function persistLocations(
       accessLevel: loc.access_level,
       createdIn: 'stage:locations_and_npcs',
     })
-    await proseKernels.insert(client, { entityId, content: loc.prose })
-    await facts.insertMany(
-      client,
+    await tx.proseKernels.insert({ entityId, content: loc.prose })
+    await tx.facts.insertMany(
       loc.facts.map((f) => ({
         entityId,
         topic: f.topic,
@@ -166,14 +160,14 @@ async function persistLocations(
 // `home_location` is a narrative reference; never written to
 // entity_hierarchy per design §3.2.
 async function persistNpcs(
-  client: PoolClient,
+  tx: TxRepo,
   worldId: string,
   npcs: readonly NpcEntry[],
   finalized: FinalizedRow[],
 ): Promise<void> {
   for (const [i, npc] of npcs.entries()) {
     const entityId = uuidv7()
-    await entities.insert(client, {
+    await tx.entities.insert({
       id: entityId,
       worldId,
       entityType: 'npc',
@@ -181,9 +175,8 @@ async function persistNpcs(
       accessLevel: npc.access_level,
       createdIn: 'stage:locations_and_npcs',
     })
-    await proseKernels.insert(client, { entityId, content: npc.prose })
-    await facts.insertMany(
-      client,
+    await tx.proseKernels.insert({ entityId, content: npc.prose })
+    await tx.facts.insertMany(
       npc.facts.map((f) => ({
         entityId,
         topic: f.topic,
@@ -205,10 +198,10 @@ async function persistNpcs(
 // UUIDv7) entity per §D8 — UUIDv7 is time-ordered, so the smaller
 // id is the earlier insert.
 async function buildNameToIdMap(
-  client: PoolClient,
+  tx: TxRepo,
   worldId: string,
 ): Promise<Map<string, string>> {
-  const allLocations = (await entities.listByWorld(client, worldId)).filter(
+  const allLocations = (await tx.entities.listByWorld(worldId)).filter(
     (e) => e.entityType === 'location',
   )
   const nameToId = new Map<string, string>()
@@ -228,7 +221,7 @@ async function buildNameToIdMap(
 // after the transaction commits, so the client doesn't see the patch
 // unless the row actually landed).
 async function resolveAndPersistHierarchy(
-  client: PoolClient,
+  tx: TxRepo,
   unresolved: readonly UnresolvedRef[],
   nameToId: ReadonlyMap<string, string>,
   parentClearedSynthKeys: string[],
@@ -247,7 +240,7 @@ async function resolveAndPersistHierarchy(
       parentClearedSynthKeys.push(ref.synthKey)
       continue
     }
-    await entityHierarchy.insert(client, {
+    await tx.entityHierarchy.insert({
       parentEntityId: parentId,
       childEntityId: ref.childEntityId,
     })
@@ -259,19 +252,19 @@ async function resolveAndPersistHierarchy(
 // Returns the post-COMMIT events the caller will publish after its
 // COMMIT lands.
 async function persistAndCollectEvents(
-  client: PoolClient,
+  tx: TxRepo,
   worldId: string,
   tree: LocationsAndNpcsTree,
   bypassAccessFilter: boolean,
 ): Promise<readonly PipelineEvent[]> {
   const finalized: FinalizedRow[] = []
   const unresolved: UnresolvedRef[] = []
-  await persistLocations(client, worldId, tree.locations, finalized, unresolved)
-  await persistNpcs(client, worldId, tree.npcs, finalized)
+  await persistLocations(tx, worldId, tree.locations, finalized, unresolved)
+  await persistNpcs(tx, worldId, tree.npcs, finalized)
 
-  const nameToId = await buildNameToIdMap(client, worldId)
+  const nameToId = await buildNameToIdMap(tx, worldId)
   const parentClearedSynthKeys: string[] = []
-  await resolveAndPersistHierarchy(client, unresolved, nameToId, parentClearedSynthKeys)
+  await resolveAndPersistHierarchy(tx, unresolved, nameToId, parentClearedSynthKeys)
 
   // Compose deferred post-COMMIT events: `finalized` per persisted
   // entity (tier-filtered: only `known` rows surface on the wire unless
@@ -298,7 +291,7 @@ async function persistAndCollectEvents(
 }
 
 export async function runLocationsAndNpcsStage(
-  client: PoolClient,
+  repo: Repo,
   args: RunLocationsAndNpcsArgs,
 ): Promise<StageDispatchResult> {
   const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.world.name)
@@ -372,9 +365,13 @@ export async function runLocationsAndNpcsStage(
     outputTokens: opusOutputTokens,
   })
 
-  // Persist in a short transaction — see backend/src/db/transaction.ts.
-  const finalizedEvents = await withTransaction(client, () =>
-    persistAndCollectEvents(client, args.world.id, validatedTree, args.bypassAccessFilter),
+  // Persist in a short transaction (writes + same-tx reads only; LLM done —
+  // MYT-55). SQL byte-identical, relocated into the entities/proseKernels/
+  // facts/entityHierarchy binders, composed over the tx client.
+  const finalizedEvents = expectCommitted(
+    await repo.transaction((tx) =>
+      persistAndCollectEvents(tx, args.world.id, validatedTree, args.bypassAccessFilter),
+    ),
   )
 
   return {

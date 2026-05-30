@@ -20,7 +20,7 @@
  * flags streamObject deprecated but design §D1 mandates it. */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import IoredisMock from 'ioredis-mock'
 import type { Job } from 'bullmq'
 import { guardTestDatabase } from '../../../../db/__tests__/guard-db.js'
@@ -31,6 +31,7 @@ import {
   type TestScope,
 } from '../../../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
+import { createRepo } from '../../../../repo/index.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -210,26 +211,14 @@ function makeArgs(opts: {
   }
 }
 
-// Simulates the outer-scope dispatch wrapper: acquires a client, BEGINs,
-// runs the handler, COMMITs on success and ROLLBACKs on throw. The
-// handler under test is responsible for neither — the unified contract
-// puts that on the caller (world-gen-processor.runStage).
-async function withTxn<T>(
-  pool: Pool,
-  fn: (client: PoolClient) => Promise<T>,
-): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const value = await fn(client)
-    await client.query('COMMIT')
-    return value
-  } catch (err) {
-    await client.query('ROLLBACK')
-    throw err
-  } finally {
-    client.release()
-  }
+// Post data-layer-unification: the handler owns its own persist transaction
+// via `repo.transaction` (which acquires + releases its own connection), so
+// the test scaffold no longer opens an outer BEGIN/COMMIT. It just builds a
+// pool-bound repo and invokes the handler; the handler commits its writes on
+// success and rolls them back on throw (the LLM repair-exhaustion throw fires
+// BEFORE the persist tx opens, so a failed run lands zero rows regardless).
+async function runStageWithRepo<T>(pool: Pool, fn: (repo: ReturnType<typeof createRepo>) => Promise<T>): Promise<T> {
+  return fn(createRepo(pool))
 }
 
 describe('runWorldAndFactionsStage', () => {
@@ -277,8 +266,9 @@ describe('runWorldAndFactionsStage', () => {
   it('persists regions + factions + prose + facts + world_overview', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
-    const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
+    const result = await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     expect(result.costUsd).toBeGreaterThan(0)
     expect(result.inputTokens).toBe(5000)
@@ -308,8 +298,9 @@ describe('runWorldAndFactionsStage', () => {
   it('returns one finalized event per persisted entity (regions then factions)', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
-    const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
+    const result = await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
 
     expect(result.finalizedEvents).toHaveLength(6)
@@ -349,9 +340,9 @@ describe('runWorldAndFactionsStage', () => {
     const redisRealtime = new IoredisMock()
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
-    await withTxn(pool, (client) =>
+    await runStageWithRepo(pool, (repo) =>
       runWorldAndFactionsStage(
-        client,
+        repo,
         makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
       ),
     )
@@ -374,8 +365,9 @@ describe('runWorldAndFactionsStage', () => {
   it('stamps facts.narrative_status = undelivered and source = prep', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
-    await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
+    await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
 
     const rows = await pool.query<{ narrative_status: string; source: string }>(
@@ -388,8 +380,9 @@ describe('runWorldAndFactionsStage', () => {
   it('does NOT write to relationships table (stage 4 owns edges)', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
 
-    await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
+    await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     // Scope to entities in THIS test's world — parallel siblings may
     // have their own relationship rows in flight (myth-oehx).
@@ -416,8 +409,9 @@ describe('runWorldAndFactionsStage', () => {
       usage: { inputTokens: 800, outputTokens: 700, totalTokens: 1500 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
+    const result = await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     // Opus stream cost surfaces (the wrapper folds repair-chain cost
     // internally — see ai.ts header).
@@ -447,8 +441,9 @@ describe('runWorldAndFactionsStage', () => {
       usage: { inputTokens: 1000, outputTokens: 900, totalTokens: 1900 },
     } as unknown as Awaited<ReturnType<typeof generateText>>)
 
-    const result = await withTxn(pool, (client) =>
-      runWorldAndFactionsStage(client, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
+    const result = await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo, makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) })),
     )
     expect(result.costUsd).toBeGreaterThan(0)
     expect(mockGenerateText).toHaveBeenCalledTimes(2) // Haiku + Sonnet
@@ -480,9 +475,9 @@ describe('runWorldAndFactionsStage', () => {
     const publishSpy = vi.spyOn(redisRealtime, 'publish')
 
     await expect(
-      withTxn(pool, (client) =>
+      runStageWithRepo(pool, (repo) =>
         runWorldAndFactionsStage(
-          client,
+        repo,
           makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
         ),
       ),
@@ -514,9 +509,9 @@ describe('runWorldAndFactionsStage', () => {
   it('persists all tiers; finalizedEvents filtered to known when bypass=false', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(tieredFixtureTree()))
 
-    const result = await withTxn(pool, (client) =>
+    const result = await runStageWithRepo(pool, (repo) =>
       runWorldAndFactionsStage(
-        client,
+        repo,
         makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0) }),
       ),
     )
@@ -568,9 +563,9 @@ describe('runWorldAndFactionsStage', () => {
       adjacent_franchises: ['Harry Potter'],
     }
 
-    await withTxn(pool, (client) =>
+    await runStageWithRepo(pool, (repo) =>
       runWorldAndFactionsStage(
-        client,
+        repo,
         makeArgs({
           worldId,
           userId,
@@ -591,9 +586,9 @@ describe('runWorldAndFactionsStage', () => {
   it('bypassAccessFilter=true emits finalized events for every persisted entity', async () => {
     mockStreamObject.mockReturnValueOnce(makeStream(tieredFixtureTree()))
 
-    const result = await withTxn(pool, (client) =>
+    const result = await runStageWithRepo(pool, (repo) =>
       runWorldAndFactionsStage(
-        client,
+        repo,
         makeArgs({
           worldId,
           userId,

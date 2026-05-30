@@ -17,15 +17,13 @@
 // out of this module preserves the unit-test boundary (no fs reads here)
 // and matches the test pattern from T3/T4/T5.
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import type { Repo } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { generateObject } from '../../ai.js'
 import { z } from 'zod'
 import { HAIKU } from '../../models.js'
-import { uuidv7 } from '../../../repo/uuidv7.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
@@ -84,7 +82,7 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 }
 
 export async function runRandomTablesStage(
-  client: PoolClient,
+  repo: Repo,
   args: RandomTablesArgs,
 ): Promise<StageCostResult> {
   const prompt = PROMPT_TEMPLATE.replaceAll('{{name}}', args.worldName)
@@ -107,22 +105,17 @@ export async function runRandomTablesStage(
 
   // Idempotency: delete prior rows for this world before re-inserting.
   // Matches the §3 "idempotent persisters" rule — retried stages start
-  // from a clean slate for their persistence scope.
-  await withTransaction(client, async () => {
-    await client.query(`DELETE FROM random_tables WHERE world_id = $1`, [args.worldId])
+  // from a clean slate for their persistence scope. Writes only (LLM done —
+  // MYT-55); SQL byte-identical, relocated into the randomTables binder.
+  await repo.transaction(async (tx) => {
+    await tx.randomTables.deleteByWorld(args.worldId)
     for (const table of result.output.tables) {
-      const tableId = uuidv7()
-      await client.query(
-        `INSERT INTO random_tables (id, world_id, name, category) VALUES ($1, $2, $3, $4)`,
-        [tableId, args.worldId, table.name, table.category],
-      )
-      for (const entry of table.entries) {
-        await client.query(
-          `INSERT INTO random_table_entries (id, table_id, roll_min, roll_max, content)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [uuidv7(), tableId, entry.roll_min, entry.roll_max, entry.content],
-        )
-      }
+      const tableId = await tx.randomTables.insertTable({
+        worldId: args.worldId,
+        name: table.name,
+        category: table.category,
+      })
+      await tx.randomTables.insertEntries(tableId, table.entries)
     }
   })
 

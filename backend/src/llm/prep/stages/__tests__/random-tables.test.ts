@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { runRandomTablesStage } from '../random-tables.js'
 import * as ai from 'ai'
 import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
+import { makeFakeRepo } from './_helpers/fake-repo.js'
+import type { Repo } from '../../../../repo/index.js'
 
 const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
 
@@ -15,14 +17,6 @@ vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return { ...actual, generateText: vi.fn() }
 })
-
-interface QuerySpy {
-  query: ReturnType<typeof vi.fn>
-}
-
-function makeClient(): QuerySpy {
-  return { query: vi.fn().mockResolvedValue({ rows: [] }) }
-}
 
 function makeEntries(prefix: string): { roll_min: number; roll_max: number; content: string }[] {
   return Array.from({ length: 20 }, (_, i) => ({
@@ -70,35 +64,45 @@ describe('runRandomTablesStage', () => {
       usage: { inputTokens: 2000, outputTokens: 1500, totalTokens: 3500 },
     } as never)
 
-    const client = makeClient()
-    const result = await runRandomTablesStage(client as never, baseArgs)
+    const repo = makeFakeRepo()
+    // insertTable returns a distinct id per call so the entries are keyed to
+    // the right table (mirrors the binder's per-table uuidv7).
+    repo.randomTables.insertTable
+      .mockResolvedValueOnce('table-0')
+      .mockResolvedValueOnce('table-1')
+    const result = await runRandomTablesStage(repo as unknown as Repo, baseArgs)
 
-    // MYT-55: writes wrapped in BEGIN/COMMIT via withTransaction.
-    // BEGIN + 1 DELETE + 2 random_tables INSERTs + 40 random_table_entries
-    // INSERTs + COMMIT = 45
-    expect(client.query).toHaveBeenCalledTimes(45)
-    expect(client.query.mock.calls[0]?.[0]).toBe('BEGIN')
-    expect(client.query.mock.calls[44]?.[0]).toBe('COMMIT')
+    // Post data-layer-unification: the DELETE + per-table INSERTs run inside
+    // one repo.transaction via the randomTables binder (the binder SQL is
+    // covered by random-tables.test in src/repo/__tests__). Assert the
+    // persistence contract at the binder-call level: idempotency DELETE first,
+    // then one insertTable + one insertEntries per table, with entries keyed
+    // to the returned table id.
+    expect(repo.transaction).toHaveBeenCalledTimes(1)
+    expect(repo.randomTables.deleteByWorld).toHaveBeenCalledTimes(1)
+    expect(repo.randomTables.deleteByWorld).toHaveBeenCalledWith('wld-1')
 
-    const [deleteSql, deleteParams] = client.query.mock.calls[1] as [string, unknown[]]
-    expect(deleteSql).toContain('DELETE FROM random_tables WHERE world_id')
-    expect(deleteParams[0]).toBe('wld-1')
+    // deleteByWorld runs BEFORE the first insertTable (retry idempotency).
+    const deleteOrder = repo.randomTables.deleteByWorld.mock.invocationCallOrder[0] ?? 0
+    const firstInsertOrder = repo.randomTables.insertTable.mock.invocationCallOrder[0] ?? 0
+    expect(deleteOrder).toBeLessThan(firstInsertOrder)
 
-    // First table insert (call index 2 now — BEGIN consumed index 0):
-    const [firstTableSql, firstTableParams] = client.query.mock.calls[2] as [string, unknown[]]
-    expect(firstTableSql).toContain('INSERT INTO random_tables')
-    expect(firstTableParams[1]).toBe('wld-1')
-    expect(firstTableParams[2]).toBe('Regional NPC Quirks of the Salted Reach')
-    expect(firstTableParams[3]).toBe('regional_npc_quirks')
+    expect(repo.randomTables.insertTable).toHaveBeenCalledTimes(2)
+    expect(repo.randomTables.insertTable).toHaveBeenNthCalledWith(1, {
+      worldId: 'wld-1',
+      name: 'Regional NPC Quirks of the Salted Reach',
+      category: 'regional_npc_quirks',
+    })
 
-    // First entry insert (call index 3):
-    const [firstEntrySql, firstEntryParams] = client.query.mock.calls[3] as [string, unknown[]]
-    expect(firstEntrySql).toContain('INSERT INTO random_table_entries')
-    // table_id at $2 equals the first random_tables insert's $1 (uuidv7)
-    expect(firstEntryParams[1]).toBe(firstTableParams[0])
-    expect(firstEntryParams[2]).toBe(1)
-    expect(firstEntryParams[3]).toBe(1)
-    expect(firstEntryParams[4]).toBe('quirk entry 1')
+    // Entries for table 0: keyed to 'table-0', 20 rows, first entry verbatim.
+    expect(repo.randomTables.insertEntries).toHaveBeenCalledTimes(2)
+    const firstEntriesCall = repo.randomTables.insertEntries.mock.calls[0] as [
+      string,
+      { roll_min: number; roll_max: number; content: string }[],
+    ]
+    expect(firstEntriesCall[0]).toBe('table-0')
+    expect(firstEntriesCall[1]).toHaveLength(20)
+    expect(firstEntriesCall[1][0]).toEqual({ roll_min: 1, roll_max: 1, content: 'quirk entry 1' })
 
     // Haiku pricing: 2000/1M * 1 + 1500/1M * 5 = 0.002 + 0.0075 = 0.0095
     expect(result.costUsd).toBeCloseTo(0.0095, 4)
@@ -117,8 +121,7 @@ describe('runRandomTablesStage', () => {
       usage: { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined },
     } as never)
 
-    const client = makeClient()
-    const result = await runRandomTablesStage(client as never, baseArgs)
+        const result = await runRandomTablesStage(makeFakeRepo() as unknown as Repo, baseArgs)
 
     expect(result.costUsd).toBe(0)
     expect(result.inputTokens).toBe(0)
@@ -132,8 +135,7 @@ describe('runRandomTablesStage', () => {
       usage: { inputTokens: 2000, outputTokens: 1500, totalTokens: 3500 },
     } as never)
 
-    const client = makeClient()
-    await runRandomTablesStage(client as never, baseArgs)
+        await runRandomTablesStage(makeFakeRepo() as unknown as Repo, baseArgs)
 
     const call = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as Record<
       string,
@@ -170,8 +172,7 @@ describe('runRandomTablesStage', () => {
       adjacent_franchises: ['Harry Potter'],
     }
 
-    const client = makeClient()
-    await runRandomTablesStage(client as never, {
+        await runRandomTablesStage(makeFakeRepo() as unknown as Repo, {
       ...baseArgs,
       vocabularyRegistry: registry,
     })

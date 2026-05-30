@@ -21,9 +21,10 @@
 // clears; Redis emits at least one entity-added (with placeholderId)
 // and at least one edge-added with resolved (non-placeholder) UUIDs.
 
-import { Pool, type PoolClient } from 'pg'
+import { Pool } from 'pg'
 import { Redis } from 'ioredis'
 import { loadEnv } from '../../src/config/env.js'
+import { createRepo } from '../../src/repo/index.js'
 import { uuidv7 } from '../../src/repo/uuidv7.js'
 import { entities } from '../../src/repo/entities.js'
 import { facts } from '../../src/repo/facts.js'
@@ -240,16 +241,10 @@ async function subscribeToPipeline(
   }
 }
 
-async function runWithClient<T>(
-  pool: Pool,
-  fn: (client: PoolClient) => Promise<T>,
-): Promise<T> {
-  const client = await pool.connect()
-  try {
-    return await fn(client)
-  } finally {
-    client.release()
-  }
+// Post data-layer-unification the stages own their persist tx via
+// `repo.transaction`; the smoke just hands them a pool-bound repo.
+function repoFor(pool: Pool): ReturnType<typeof createRepo> {
+  return createRepo(pool)
 }
 
 interface PendingDeclaration {
@@ -322,8 +317,7 @@ async function main(): Promise<void> {
 
     // ------- STAGE 4 -------
     log('stage 4: invoking runEntityRelationshipsStage')
-    await runWithClient(pool, (client) =>
-      runEntityRelationshipsStage(client, {
+    await runEntityRelationshipsStage(repoFor(pool), {
         campaignId: seeded.campaignId,
         worldId: seeded.worldId,
         worldName: WORLD_NAME,
@@ -335,8 +329,7 @@ async function main(): Promise<void> {
         redisRealtime: realtimePub,
         keyPrefix,
         bypassAccessFilter: true,
-      }),
-    )
+    })
 
     const pendingAfterS4 = await readPending(pool, seeded.worldId)
     log(`stage 4 done: declarations=${String(pendingAfterS4.declarations.length)} placeholderRelationships=${String(pendingAfterS4.relationships.length)}`)
@@ -348,20 +341,18 @@ async function main(): Promise<void> {
 
     // ------- STAGE 4b -------
     log('stage 4b: invoking runEntityConsolidationStage')
-    const result = await runWithClient(pool, (client) =>
-      runEntityConsolidationStage(client, {
-        campaignId: seeded.campaignId,
-        worldId: seeded.worldId,
-        worldName: WORLD_NAME,
-        tone: 'low-fantasy, ash-and-salt',
-        themes: 'rivalry, scarcity, distant authority',
-        keyTensions: 'The hunting bands compete for Boneright; the Magisterium tolerates them but does not intervene.',
-        vocabularyRegistry: vocab,
-        bypassAccessFilter: true,
-        redisRealtime: realtimePub,
-        keyPrefix,
-      }),
-    )
+    const result = await runEntityConsolidationStage(repoFor(pool), {
+      campaignId: seeded.campaignId,
+      worldId: seeded.worldId,
+      worldName: WORLD_NAME,
+      tone: 'low-fantasy, ash-and-salt',
+      themes: 'rivalry, scarcity, distant authority',
+      keyTensions: 'The hunting bands compete for Boneright; the Magisterium tolerates them but does not intervene.',
+      vocabularyRegistry: vocab,
+      bypassAccessFilter: true,
+      redisRealtime: realtimePub,
+      keyPrefix,
+    })
     log(`stage 4b done: costUsd=${result.costUsd.toFixed(4)} inputTokens=${String(result.inputTokens)} outputTokens=${String(result.outputTokens)}`)
 
     // ------- ASSERTIONS -------

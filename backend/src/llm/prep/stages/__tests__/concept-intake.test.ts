@@ -10,19 +10,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { runConceptIntakeStage } from '../concept-intake.js'
 import * as ai from 'ai'
+import { makeFakeRepo } from './_helpers/fake-repo.js'
+import type { Repo } from '../../../../repo/index.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return { ...actual, generateText: vi.fn() }
 })
-
-interface QuerySpy {
-  query: ReturnType<typeof vi.fn>
-}
-
-function makeClient(): QuerySpy {
-  return { query: vi.fn().mockResolvedValue({ rows: [] }) }
-}
 
 const DRAFT = {
   name: 'Aelmoor',
@@ -58,32 +52,34 @@ describe('runConceptIntakeStage', () => {
       usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
     } as never)
 
-    const client = makeClient()
-    const result = await runConceptIntakeStage(client as never, {
+    const repo = makeFakeRepo()
+    const result = await runConceptIntakeStage(repo as unknown as Repo, {
       worldId: 'wld-1',
       conceptText: 'lighthouse-keepers tending storm spirits',
       intentSummary: null,
     })
 
-    // myth-4lhr: concept_intake now issues TWO updates — worlds first
-    // (the existing path), then campaigns (the new name propagation so
-    // campaigns.name stops being 'Untitled'). MYT-55: the writes are
-    // wrapped in BEGIN/COMMIT (via withTransaction) so the LLM call
-    // doesn't trip RDS idle_in_transaction_session_timeout; total
-    // client.query count is 4 = BEGIN + 2 UPDATEs + COMMIT.
-    expect(client.query).toHaveBeenCalledTimes(4)
-    expect(client.query.mock.calls[0]?.[0]).toBe('BEGIN')
-    const [worldsSql, worldsParams] = client.query.mock.calls[1] as [string, unknown[]]
-    expect(worldsSql).toContain('UPDATE worlds SET')
-    expect(worldsSql).toContain('name = $2')
-    expect(worldsParams[0]).toBe('wld-1')
-    expect(worldsParams[1]).toBe('Aelmoor')
-    expect(worldsParams[2]).toBe(DRAFT.tone)
-    const [campSql, campParams] = client.query.mock.calls[2] as [string, unknown[]]
-    expect(campSql).toContain('UPDATE campaigns SET name')
-    expect(campSql).toContain("name = 'Untitled'")
-    expect(campParams).toEqual(['wld-1', 'Aelmoor'])
-    expect(client.query.mock.calls[3]?.[0]).toBe('COMMIT')
+    // myth-4lhr: concept_intake now issues TWO writes inside one
+    // repo.transaction — worlds.applyConcept (the LLM-synthesized concept
+    // columns), then campaigns.setNameFromUntitled (the name propagation so
+    // campaigns.name stops being 'Untitled'). Post data-layer-unification the
+    // writes go through the repo binders; the binders' SQL is covered by the
+    // repo integration tests. Here we assert the persistence contract at the
+    // binder-call level + that both run inside the same transaction callback.
+    expect(repo.transaction).toHaveBeenCalledTimes(1)
+    expect(repo.worlds.applyConcept).toHaveBeenCalledTimes(1)
+    expect(repo.worlds.applyConcept).toHaveBeenCalledWith('wld-1', {
+      name: 'Aelmoor',
+      tone: DRAFT.tone,
+      themes: DRAFT.themes,
+      geographySummary: DRAFT.geography_summary,
+      politicalSummary: DRAFT.political_summary,
+      era: DRAFT.era,
+      keyTensions: DRAFT.key_tensions,
+      followUpQuestions: DRAFT.follow_up_questions,
+    })
+    expect(repo.campaigns.setNameFromUntitled).toHaveBeenCalledTimes(1)
+    expect(repo.campaigns.setNameFromUntitled).toHaveBeenCalledWith('wld-1', 'Aelmoor')
 
     // (800+200)/1M * 3 + (600+100)/1M * 15 = 0.003 + 0.0105 = 0.0135
     expect(result.costUsd).toBeCloseTo(0.0135, 4)
@@ -103,8 +99,8 @@ describe('runConceptIntakeStage', () => {
       usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
     } as never)
 
-    const client = makeClient()
-    await runConceptIntakeStage(client as never, {
+    const repo = makeFakeRepo()
+    await runConceptIntakeStage(repo as unknown as Repo, {
       worldId: 'wld-2',
       conceptText: 'storm-pact world',
       intentSummary: {

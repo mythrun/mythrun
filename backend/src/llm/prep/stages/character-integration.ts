@@ -48,7 +48,8 @@ import {
   type PCIntegration,
   type IntegrationRelationship,
 } from '../../schemas/character-integration.js'
-import { loadWorldInventory, renderWorldDump, type WorldInventory } from '../world-dump.js'
+import { renderWorldDump, type WorldInventory } from '../world-dump.js'
+import { worldInventoryNs } from '../../../repo/world-inventory.js'
 import {
   sumCharacterCreationStageCosts,
   readCharacterCreationCostCap,
@@ -181,7 +182,7 @@ export async function runCharacterIntegrationStage(
 async function loadWorldInventoryUsingPool(pool: Pool, worldId: string): Promise<WorldInventory> {
   const client = await pool.connect()
   try {
-    return await loadWorldInventory(client, worldId)
+    return await worldInventoryNs(client).load(worldId)
   } finally {
     client.release()
   }

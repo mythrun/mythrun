@@ -29,42 +29,10 @@ vi.mock('ai', async (importOriginal) => {
   }
 })
 
-vi.mock('../../../../repo/entities.js', () => ({
-  entities: {
-    listByWorld: vi.fn(),
-    insert: vi.fn().mockResolvedValue(undefined),
-  },
-}))
-
-vi.mock('../../../../repo/relationships.js', () => ({
-  relationships: {
-    insertMany: vi
-      .fn()
-      .mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/require-await
-        async (_client: unknown, rows: readonly unknown[]): Promise<readonly string[]> =>
-          rows.map((_r, i) => `rel-${String(i)}`),
-      ),
-  },
-}))
-
-vi.mock('../../../../repo/facts.js', () => ({
-  facts: {
-    insertMany: vi.fn().mockResolvedValue(undefined),
-  },
-}))
-
-vi.mock('../../../../repo/prose-kernels.js', () => ({
-  proseKernels: {
-    insert: vi.fn().mockResolvedValue(undefined),
-  },
-}))
-
-vi.mock('../../../../repo/entity-hierarchy.js', () => ({
-  entityHierarchy: {
-    insert: vi.fn().mockResolvedValue(undefined),
-  },
-}))
+// Stage 4b reads + writes go through the repo binders (the fake repo's
+// recording spies — see makeFakeRepo). No standalone repo module mocks are
+// needed; the binder SQL is covered by the per-namespace repo integration
+// tests (src/repo/__tests__/*).
 
 // Deterministic UUIDv7 stream so we can assert IDs precisely. The handler
 // calls uuidv7() once per surviving ghost; subsequent IDs return GHOST_UUID_N.
@@ -81,29 +49,18 @@ vi.mock('../../../../repo/uuidv7.js', () => {
 
 import * as ai from 'ai'
 import { runEntityConsolidationStage } from '../entity-consolidation.js'
-import { entities } from '../../../../repo/entities.js'
-import { relationships } from '../../../../repo/relationships.js'
-import { facts } from '../../../../repo/facts.js'
-import { proseKernels } from '../../../../repo/prose-kernels.js'
-import { entityHierarchy } from '../../../../repo/entity-hierarchy.js'
+import { makeFakeRepo, type FakeRepo } from './_helpers/fake-repo.js'
+import type { Repo } from '../../../../repo/index.js'
 import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
 
 const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
 
-interface QuerySpy {
-  query: ReturnType<typeof vi.fn>
-}
-
-function makeClientWithEmptyPending(): QuerySpy {
-  return {
-    query: vi.fn().mockResolvedValue({
-      rows: [
-        {
-          entity_consolidation_pending: { declarations: [], relationships: [] },
-        },
-      ],
-    }),
-  }
+// Fake repo whose pending-state read returns the given value. null = the
+// worlds.id-race defensive arm (SELECT returned no row).
+function makeRepoWithPending(pending: unknown): FakeRepo {
+  const repo = makeFakeRepo()
+  repo.worlds.getEntityConsolidationPending.mockResolvedValue(pending)
+  return repo
 }
 
 // P5.2: a per-test Redis publish stub. Each `it` rebinds the spy via the
@@ -132,16 +89,11 @@ const baseArgs = makeArgs(makeRedisStub())
 describe('runEntityConsolidationStage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(entities.listByWorld).mockResolvedValue([])
-    vi.mocked(relationships.insertMany).mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/require-await
-      async (_client, rows) => rows.map((_r, i) => `rel-${String(i)}`),
-    )
   })
 
   it('skip path: empty pending state → zero-cost result, no LLM call, no finalizedEvents', async () => {
-    const client = makeClientWithEmptyPending()
-    const result = await runEntityConsolidationStage(client as never, baseArgs)
+    const repo = makeRepoWithPending({ declarations: [], relationships: [] })
+    const result = await runEntityConsolidationStage(repo as unknown as Repo, baseArgs)
 
     expect(result.costUsd).toBe(0)
     expect(result.inputTokens).toBe(0)
@@ -154,22 +106,19 @@ describe('runEntityConsolidationStage', () => {
     expect(ai.streamObject).not.toHaveBeenCalled()
     expect(ai.generateText).not.toHaveBeenCalled()
 
-    // Exactly one DB call: the SELECT against `worlds` to read pending state.
-    expect(client.query).toHaveBeenCalledTimes(1)
-    const call = client.query.mock.calls[0] as unknown as readonly [string, readonly unknown[]]
-    expect(call[0]).toContain('entity_consolidation_pending')
-    expect(call[0]).toContain('FROM worlds')
-    expect(call[1]).toEqual(['wld-1'])
+    // Exactly one read: repo.worlds.getEntityConsolidationPending('wld-1').
+    // No transaction opened on the skip path.
+    expect(repo.worlds.getEntityConsolidationPending).toHaveBeenCalledTimes(1)
+    expect(repo.worlds.getEntityConsolidationPending).toHaveBeenCalledWith('wld-1')
+    expect(repo.transaction).not.toHaveBeenCalled()
   })
 
   it('skip path: row missing entirely (worlds.id race) → still zero-cost, no LLM call', async () => {
-    // Defense-in-depth: if the SELECT returns zero rows (e.g., world was
-    // deleted between stage-4 commit and stage-4b dispatch), the handler
-    // must treat that as "no phantoms to consolidate" rather than crashing.
-    const client: QuerySpy = {
-      query: vi.fn().mockResolvedValue({ rows: [] }),
-    }
-    const result = await runEntityConsolidationStage(client as never, baseArgs)
+    // Defense-in-depth: if the read returns null (world deleted between
+    // stage-4 commit and stage-4b dispatch), the handler applies its
+    // EMPTY_PENDING default → "no phantoms to consolidate" rather than crash.
+    const repo = makeRepoWithPending(null)
+    const result = await runEntityConsolidationStage(repo as unknown as Repo, baseArgs)
 
     expect(result.costUsd).toBe(0)
     expect(result.finalizedEvents).toEqual([])
@@ -198,22 +147,11 @@ describe('runEntityConsolidationStage', () => {
       ],
     }
 
-    // SELECT pending state → 1 declaration. All other client.query calls
-    // (DELETE / UPDATE) return an empty rowset.
-    const client: QuerySpy = {
-      query: vi.fn().mockImplementation((sql: string) => {
-        if (sql.includes('SELECT entity_consolidation_pending')) {
-          return Promise.resolve({
-            rows: [{ entity_consolidation_pending: PENDING_STATE }],
-          })
-        }
-        return Promise.resolve({ rows: [] })
-      }),
-    }
+    const repo = makeRepoWithPending(PENDING_STATE)
 
     // Inventory: one real faction; the Sonnet prompt renders it into the
     // existing-entities block. The ghost is NOT in the inventory.
-    vi.mocked(entities.listByWorld).mockResolvedValue([
+    repo.entities.listByWorld.mockResolvedValue([
       {
         id: FACTION_E1,
         worldId: 'wld-1',
@@ -254,11 +192,11 @@ describe('runEntityConsolidationStage', () => {
       usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
     } as never)
 
-    const result = await runEntityConsolidationStage(client as never, args)
+    const result = await runEntityConsolidationStage(repo as unknown as Repo, args)
 
     // Ghost persisted with the correct created_in marker + name.
-    expect(entities.insert).toHaveBeenCalledTimes(1)
-    const insertCall = vi.mocked(entities.insert).mock.calls[0]?.[1] as {
+    expect(repo.entities.insert).toHaveBeenCalledTimes(1)
+    const insertCall = repo.entities.insert.mock.calls[0]?.[0] as {
       readonly name: string
       readonly entityType: string
       readonly accessLevel: string
@@ -271,8 +209,8 @@ describe('runEntityConsolidationStage', () => {
     expect(insertCall.createdIn).toBe('stage:entity_consolidation')
 
     // Prose persisted.
-    expect(proseKernels.insert).toHaveBeenCalledTimes(1)
-    const proseArg = vi.mocked(proseKernels.insert).mock.calls[0]?.[1] as {
+    expect(repo.proseKernels.insert).toHaveBeenCalledTimes(1)
+    const proseArg = repo.proseKernels.insert.mock.calls[0]?.[0] as {
       readonly entityId: string
       readonly content: string
     }
@@ -280,8 +218,8 @@ describe('runEntityConsolidationStage', () => {
     expect(proseArg.content).toContain('hunting bands')
 
     // Both facts persisted in a single insertMany call.
-    expect(facts.insertMany).toHaveBeenCalledTimes(1)
-    const factRows = vi.mocked(facts.insertMany).mock.calls[0]?.[1] as readonly {
+    expect(repo.facts.insertMany).toHaveBeenCalledTimes(1)
+    const factRows = repo.facts.insertMany.mock.calls[0]?.[0] as readonly {
       readonly entityId: string
       readonly topic: string
       readonly content: string
@@ -295,8 +233,8 @@ describe('runEntityConsolidationStage', () => {
     }
 
     // Pending placeholder-touching relationship resolved + persisted.
-    expect(relationships.insertMany).toHaveBeenCalledTimes(1)
-    const relRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+    expect(repo.relationships.insertMany).toHaveBeenCalledTimes(1)
+    const relRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly {
       readonly sourceEntityId: string
       readonly targetEntityId: string
       readonly relationshipType: string
@@ -321,34 +259,22 @@ describe('runEntityConsolidationStage', () => {
       'entity_consolidation/relationships/0',
     ])
 
-    // Pending state UPDATE clears declarations + relationships to empty.
-    const clearCall = client.query.mock.calls.find((call) => {
-      const sql = call[0] as string
-      return sql.includes('UPDATE worlds') && sql.includes('entity_consolidation_pending')
-    })
-    expect(clearCall).toBeDefined()
-    const clearSql = clearCall?.[0] as string
-    expect(clearSql).toContain('declarations')
-    expect(clearSql).toContain('relationships')
-    // The cleared shape is empty arrays.
-    expect(clearSql).toMatch(/\[\s*\]/)
+    // Pending state cleared via repo.worlds.clearEntityConsolidationPending.
+    expect(repo.worlds.clearEntityConsolidationPending).toHaveBeenCalledTimes(1)
+    expect(repo.worlds.clearEntityConsolidationPending).toHaveBeenCalledWith('wld-1')
 
-    // MYT-55: idempotency wipe now runs AFTER the LLM call (inside the
-    // post-LLM persist transaction) so the LLM call doesn't hold a
-    // BEGIN-open connection that RDS kills via
-    // idle_in_transaction_session_timeout. The wipe still happens atomically
-    // with the re-inserts via withTransaction — the FK cascade is preserved.
-    const ghostWipeIdx = client.query.mock.calls.findIndex((call) => {
-      const sql = call[0] as string
-      return (
-        sql.includes('DELETE FROM entities') &&
-        sql.includes("'stage:entity_consolidation'")
-      )
-    })
-    expect(ghostWipeIdx).toBeGreaterThanOrEqual(0)
-    const wipeOrder = client.query.mock.invocationCallOrder[ghostWipeIdx]
-    const llmOrder = vi.mocked(ai.generateText).mock.invocationCallOrder[0]
-    expect(wipeOrder).toBeGreaterThan(llmOrder ?? 0)
+    // MYT-55: idempotency wipe (repo.entities.deleteByWorldAndCreatedIn) runs
+    // AFTER the LLM call (inside the post-LLM persist transaction) so the LLM
+    // call doesn't hold a BEGIN-open connection. The wipe is still atomic with
+    // the re-inserts (same tx) — the FK cascade is preserved.
+    expect(repo.entities.deleteByWorldAndCreatedIn).toHaveBeenCalledTimes(1)
+    expect(repo.entities.deleteByWorldAndCreatedIn).toHaveBeenCalledWith(
+      'wld-1',
+      'stage:entity_consolidation',
+    )
+    const wipeOrder = repo.entities.deleteByWorldAndCreatedIn.mock.invocationCallOrder[0] ?? 0
+    const llmOrder = vi.mocked(ai.generateText).mock.invocationCallOrder[0] ?? 0
+    expect(wipeOrder).toBeGreaterThan(llmOrder)
 
     // Cost accounting: 500/1M * 3 + 800/1M * 15 = 0.0015 + 0.012 = 0.0135
     expect(result.costUsd).toBeCloseTo(0.0135, 6)
@@ -417,17 +343,7 @@ describe('runEntityConsolidationStage', () => {
       ],
       relationships: [],
     }
-    const client: QuerySpy = {
-      query: vi.fn().mockImplementation((sql: string) => {
-        if (sql.includes('SELECT entity_consolidation_pending')) {
-          return Promise.resolve({
-            rows: [{ entity_consolidation_pending: PENDING_STATE }],
-          })
-        }
-        return Promise.resolve({ rows: [] })
-      }),
-    }
-    vi.mocked(entities.listByWorld).mockResolvedValue([])
+    const repo = makeRepoWithPending(PENDING_STATE)
 
     // LLM emits two ghosts: one matches declarations, one is an undeclared
     // hallucination. The handler must persist only the matched one.
@@ -466,11 +382,11 @@ describe('runEntityConsolidationStage', () => {
       usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
     } as never)
 
-    await runEntityConsolidationStage(client as never, baseArgs)
+    await runEntityConsolidationStage(repo as unknown as Repo, baseArgs)
 
     // Only the declared ghost is persisted.
-    expect(entities.insert).toHaveBeenCalledTimes(1)
-    const insertCall = vi.mocked(entities.insert).mock.calls[0]?.[1] as { readonly name: string }
+    expect(repo.entities.insert).toHaveBeenCalledTimes(1)
+    const insertCall = repo.entities.insert.mock.calls[0]?.[0] as { readonly name: string }
     expect(insertCall.name).toBe('The Ironjaw')
   })
 
@@ -497,17 +413,7 @@ describe('runEntityConsolidationStage', () => {
         },
       ],
     }
-    const client: QuerySpy = {
-      query: vi.fn().mockImplementation((sql: string) => {
-        if (sql.includes('SELECT entity_consolidation_pending')) {
-          return Promise.resolve({
-            rows: [{ entity_consolidation_pending: PENDING_STATE }],
-          })
-        }
-        return Promise.resolve({ rows: [] })
-      }),
-    }
-    vi.mocked(entities.listByWorld).mockResolvedValue([])
+    const repo = makeRepoWithPending(PENDING_STATE)
 
     // LLM only emits one of the two declared placeholders.
     vi.mocked(ai.generateText).mockResolvedValueOnce({
@@ -532,12 +438,12 @@ describe('runEntityConsolidationStage', () => {
       usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
     } as never)
 
-    await runEntityConsolidationStage(client as never, baseArgs)
+    await runEntityConsolidationStage(repo as unknown as Repo, baseArgs)
 
     // Only the LLM-emitted ghost persists; the missing one is silently
     // skipped (WARN logged but no throw, no insert for new-002).
-    expect(entities.insert).toHaveBeenCalledTimes(1)
-    const insertCall = vi.mocked(entities.insert).mock.calls[0]?.[1] as { readonly name: string }
+    expect(repo.entities.insert).toHaveBeenCalledTimes(1)
+    const insertCall = repo.entities.insert.mock.calls[0]?.[0] as { readonly name: string }
     expect(insertCall.name).toBe('The Ironjaw')
   })
 
@@ -552,17 +458,8 @@ describe('runEntityConsolidationStage', () => {
       ],
       relationships: [],
     }
-    const client: QuerySpy = {
-      query: vi.fn().mockImplementation((sql: string) => {
-        if (sql.includes('SELECT entity_consolidation_pending')) {
-          return Promise.resolve({
-            rows: [{ entity_consolidation_pending: PENDING_STATE }],
-          })
-        }
-        return Promise.resolve({ rows: [] })
-      }),
-    }
-    vi.mocked(entities.listByWorld).mockResolvedValue([
+    const repo = makeRepoWithPending(PENDING_STATE)
+    repo.entities.listByWorld.mockResolvedValue([
       {
         id: PARENT_LOCATION_ID,
         worldId: 'wld-1',
@@ -594,18 +491,18 @@ describe('runEntityConsolidationStage', () => {
       usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
     } as never)
 
-    await runEntityConsolidationStage(client as never, baseArgs)
+    await runEntityConsolidationStage(repo as unknown as Repo, baseArgs)
 
     // Ghost was inserted as a location; the parent_location link fired.
-    expect(entities.insert).toHaveBeenCalledTimes(1)
-    const insertCall = vi.mocked(entities.insert).mock.calls[0]?.[1] as {
+    expect(repo.entities.insert).toHaveBeenCalledTimes(1)
+    const insertCall = repo.entities.insert.mock.calls[0]?.[0] as {
       readonly id: string
       readonly entityType: string
     }
     expect(insertCall.entityType).toBe('location')
 
-    expect(entityHierarchy.insert).toHaveBeenCalledTimes(1)
-    expect(entityHierarchy.insert).toHaveBeenCalledWith(expect.anything(), {
+    expect(repo.entityHierarchy.insert).toHaveBeenCalledTimes(1)
+    expect(repo.entityHierarchy.insert).toHaveBeenCalledWith({
       parentEntityId: PARENT_LOCATION_ID,
       childEntityId: insertCall.id,
     })

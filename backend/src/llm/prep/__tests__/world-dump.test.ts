@@ -31,7 +31,8 @@ import {
   type TestScope,
 } from '../../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../../repo/__tests__/_helpers/test-pool.js'
-import { loadWorldInventory, renderWorldDump } from '../world-dump.js'
+import { worldInventoryNs } from '../../../repo/world-inventory.js'
+import { renderWorldDump } from '../world-dump.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -135,7 +136,7 @@ describe('world-dump', () => {
     const seeded = await seed()
     const client = await pool.connect()
     try {
-      const inv = await loadWorldInventory(client, seeded.worldId)
+      const inv = await worldInventoryNs(client).load(seeded.worldId)
 
       expect(inv.entitiesById.has(seeded.entityA)).toBe(true)
       expect(inv.entitiesById.has(seeded.entityB)).toBe(true)
@@ -163,7 +164,7 @@ describe('world-dump', () => {
     const seeded = await seed()
     const client = await pool.connect()
     try {
-      const inv = await loadWorldInventory(client, seeded.worldId)
+      const inv = await worldInventoryNs(client).load(seeded.worldId)
       const dump = renderWorldDump(inv)
       expect(dump).toContain(seeded.entityA)
       expect(dump).toContain(seeded.entityB)
@@ -176,7 +177,7 @@ describe('world-dump', () => {
     const seeded = await seed()
     const client = await pool.connect()
     try {
-      const inv = await loadWorldInventory(client, seeded.worldId)
+      const inv = await worldInventoryNs(client).load(seeded.worldId)
       const dump = renderWorldDump(inv)
       expect(dump).toContain(seeded.entityAName)
       expect(dump).toContain(seeded.entityBName)
@@ -236,7 +237,7 @@ describe('loadWorldInventory — synthKey on relationships', () => {
 
     const client = await pool.connect()
     try {
-      const inv = await loadWorldInventory(client, worldId)
+      const inv = await worldInventoryNs(client).load(worldId)
       expect(inv.relationshipsById.get(relId ?? '')?.synthKey).toBe(synthKey)
     } finally {
       client.release()

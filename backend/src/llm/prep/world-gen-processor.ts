@@ -48,6 +48,7 @@ import { runCoherencePassStage } from './stages/coherence-pass.js'
 import { StageNotImplementedError } from './stages/stage-not-implemented.js'
 import { isTerminalError } from '../errors.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
+import { createRepo, type Repo } from '../../repo/index.js'
 import type { PipelineEvent } from '../../contract/pipeline-events.js'
 import {
   VocabularyRegistrySchema,
@@ -608,15 +609,20 @@ async function runStage(
   job: Job<WorldGenJobPayload>,
   stage: WorldGenStage,
 ): Promise<StageDispatchResult> {
-  // No outer BEGIN/COMMIT — each stage handler manages its own
-  // transaction around just the persist phase. The LLM call runs OUTSIDE
-  // any transaction so the connection isn't "idle in a transaction" while
-  // the model streams (MYT-55: staging RDS sets
-  // idle_in_transaction_session_timeout=60000ms; LLM calls regularly
-  // exceed that and were FATALly killing the connection mid-stream).
+  // No outer BEGIN/COMMIT — each stage handler owns its own persist
+  // transaction via `repo.transaction` (which acquires + releases its own
+  // connection per the foundation), so the LLM call runs OUTSIDE any
+  // transaction and the connection isn't "idle in a transaction" while the
+  // model streams (MYT-55).
+  //
+  // A pooled `client` is still acquired here for: (a) the not-yet-migrated
+  // coherence_pass stage (still takes a PoolClient), and (b) the pre-stage
+  // read loaders (loadStage3Inputs / loadStartingSituationInputs), which run
+  // pool reads OUTSIDE any transaction.
+  const repo = createRepo(deps.pool)
   const client = await deps.pool.connect()
   try {
-    const result = await dispatchStage(client, ctx, stage, deps, campaignId, job)
+    const result = await dispatchStage(client, repo, ctx, stage, deps, campaignId, job)
     // Publish post-COMMIT events accumulated by the handler: `finalized`
     // entries for newly-persisted entities, `entity-updated` patches for
     // parent-cleared locations, per-patch events for coherence_pass, and
@@ -655,6 +661,7 @@ function wrapLegacyStage(cost: StageCost): StageDispatchResult {
 
 async function dispatchStage(
   client: PoolClient,
+  repo: Repo,
   ctx: CampaignContext,
   stage: WorldGenStage,
   deps: WorldGenDeps,
@@ -662,7 +669,7 @@ async function dispatchStage(
   job: Job<WorldGenJobPayload>,
 ): Promise<StageDispatchResult> {
   if (stage === 'concept_intake') {
-    const cost = await runConceptIntakeStage(client, {
+    const cost = await runConceptIntakeStage(repo, {
       worldId: ctx.world.id,
       conceptText: ctx.world.concept,
       intentSummary: null,
@@ -677,7 +684,7 @@ async function dispatchStage(
      * its schema, so the null arms are defensive. Real coverage of this
      * arg-marshaling comes from the live-LLM E2E smoke per
      * feedback_dev_tool_e2e_smoke_required. */
-    const cost = await runVocabularyIntakeStage(client, {
+    const cost = await runVocabularyIntakeStage(repo, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
       concept: ctx.world.concept,
@@ -698,7 +705,7 @@ async function dispatchStage(
    * live-LLM E2E smoke against a real Anthropic key (per
    * feedback_dev_tool_e2e_smoke_required). */
   if (stage === 'world_and_factions') {
-    return runWorldAndFactionsStage(client, {
+    return runWorldAndFactionsStage(repo, {
       world: {
         id: ctx.world.id,
         createdBy: ctx.world.createdBy,
@@ -715,7 +722,7 @@ async function dispatchStage(
   }
   if (stage === 'locations_and_npcs') {
     const stage3Inputs = await loadStage3Inputs(client, ctx.world.id)
-    return runLocationsAndNpcsStage(client, {
+    return runLocationsAndNpcsStage(repo, {
       world: {
         id: ctx.world.id,
         createdBy: ctx.world.createdBy,
@@ -737,7 +744,7 @@ async function dispatchStage(
     })
   }
   if (stage === 'entity_relationships') {
-    return runEntityRelationshipsStage(client, {
+    return runEntityRelationshipsStage(repo, {
       campaignId,
       worldId: ctx.world.id,
       worldName: ctx.world.name,
@@ -752,7 +759,7 @@ async function dispatchStage(
     })
   }
   if (stage === 'entity_consolidation') {
-    return runEntityConsolidationStage(client, {
+    return runEntityConsolidationStage(repo, {
       campaignId,
       worldId: ctx.world.id,
       worldName: ctx.world.name,
@@ -784,7 +791,7 @@ async function dispatchStage(
     // Populating the actual summaries removes the mixed signal AND saves the
     // wasteful first call that hallucinated names on every world.
     const stage6Inputs = await loadStartingSituationInputs(client, ctx.world.id)
-    const cost = await runStartingSituationStage(client, {
+    const cost = await runStartingSituationStage(repo, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',
@@ -799,7 +806,7 @@ async function dispatchStage(
     return wrapLegacyStage(cost)
   }
   if (stage === 'random_tables') {
-    const cost = await runRandomTablesStage(client, {
+    const cost = await runRandomTablesStage(repo, {
       worldId: ctx.world.id,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',

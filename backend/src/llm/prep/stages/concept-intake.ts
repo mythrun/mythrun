@@ -10,8 +10,7 @@
 // runtime, this constant flips — for the non-streaming launch the
 // validator is fixed on Sonnet.
 
-import type { PoolClient } from 'pg'
-import { withTransaction } from '../../../db/transaction.js'
+import type { Repo } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -66,7 +65,7 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 }
 
 export async function runConceptIntakeStage(
-  client: PoolClient,
+  repo: Repo,
   args: ConceptIntakeArgs,
 ): Promise<StageCostResult> {
   const intentBlock =
@@ -84,35 +83,26 @@ export async function runConceptIntakeStage(
     schemaName: 'WorldConceptSchema',
   })
 
-  // Persist in a short transaction (LLM call is already done — see
-  // backend/src/db/transaction.ts for why the BEGIN/COMMIT scope is
-  // post-LLM only).
-  await withTransaction(client, async () => {
-    await client.query(
-      `UPDATE worlds SET
-         name = $2, tone = $3, themes = $4, geography_summary = $5,
-         political_summary = $6, era = $7, key_tensions = $8, follow_up_questions = $9
-       WHERE id = $1`,
-      [
-        args.worldId,
-        result.draft.name,
-        result.draft.tone,
-        result.draft.themes,
-        result.draft.geography_summary,
-        result.draft.political_summary,
-        result.draft.era,
-        result.draft.key_tensions,
-        result.draft.follow_up_questions,
-      ],
-    )
+  // Persist in a short transaction (LLM call is already done — the
+  // repo.transaction callback holds writes only, so the connection is never
+  // idle-in-transaction while the model runs; MYT-55). SQL is byte-identical
+  // to the prior inline statements — relocated into the repo binders.
+  await repo.transaction(async (tx) => {
+    await tx.worlds.applyConcept(args.worldId, {
+      name: result.draft.name,
+      tone: result.draft.tone,
+      themes: result.draft.themes,
+      geographySummary: result.draft.geography_summary,
+      politicalSummary: result.draft.political_summary,
+      era: result.draft.era,
+      keyTensions: result.draft.key_tensions,
+      followUpQuestions: result.draft.follow_up_questions,
+    })
     // myth-4lhr: also propagate the LLM-synthesized name to the campaign
     // that owns this world. The campaigns.name was inserted as 'Untitled'
     // at create-time; this is where it gets its real name. Users can
     // subsequently rename via PATCH /api/campaigns/:campaignId/name.
-    await client.query(
-      `UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'`,
-      [args.worldId, result.draft.name],
-    )
+    await tx.campaigns.setNameFromUntitled(args.worldId, result.draft.name)
   })
 
   return {

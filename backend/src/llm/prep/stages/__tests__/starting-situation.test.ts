@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { runStartingSituationStage } from '../starting-situation.js'
 import * as ai from 'ai'
 import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
+import { makeFakeRepo, type FakeRepo } from './_helpers/fake-repo.js'
+import type { Repo } from '../../../../repo/index.js'
 
 const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
 
@@ -16,28 +18,17 @@ vi.mock('ai', async () => {
   return { ...actual, generateText: vi.fn() }
 })
 
-interface QuerySpy {
-  query: ReturnType<typeof vi.fn>
-}
-
-function makeClient(): QuerySpy {
-  // Default: the entities lookup returns rows matching the HOOKS fixture's
-  // location_name values so resolution succeeds. Tests that exercise the
-  // miss/retry path override via `query.mockImplementation` after construction.
-  return {
-    query: vi.fn().mockImplementation((sql: string) => {
-      if (/SELECT.*FROM entities.*entity_type = 'location'/i.test(sql)) {
-        return Promise.resolve({
-          rows: [
-            { id: 'loc-wharf', name: 'The Salt-Eaten Wharf' },
-            { id: 'loc-hill', name: 'Lantern Hill' },
-            { id: 'loc-causeway', name: 'The Drowned Causeway' },
-          ],
-        })
-      }
-      return Promise.resolve({ rows: [] })
-    }),
-  }
+// Default fake repo whose location lookup returns rows matching the HOOKS
+// fixture's location_name values so resolution succeeds. Tests that exercise
+// the miss/retry path override `entities.listLocationsByWorld`.
+function makeRepo(): FakeRepo {
+  const repo = makeFakeRepo()
+  repo.entities.listLocationsByWorld.mockResolvedValue([
+    { id: 'loc-wharf', name: 'The Salt-Eaten Wharf' },
+    { id: 'loc-hill', name: 'Lantern Hill' },
+    { id: 'loc-causeway', name: 'The Drowned Causeway' },
+  ])
+  return repo
 }
 
 const HOOKS = {
@@ -88,16 +79,17 @@ describe('runStartingSituationStage', () => {
       usage: { inputTokens: 1200, outputTokens: 500, totalTokens: 1700 },
     } as never)
 
-    const client = makeClient()
-    const result = await runStartingSituationStage(client as never, baseArgs)
+    const repo = makeRepo()
+    const result = await runStartingSituationStage(repo as unknown as Repo, baseArgs)
 
-    const proseUpdate = client.query.mock.calls.find((c: unknown[]) =>
-      /UPDATE worlds SET starting_situations\b/i.test(String(c[0])),
-    ) as [string, unknown[]] | undefined
-    expect(proseUpdate).toBeDefined()
-    if (proseUpdate === undefined) throw new Error('unreachable')
-    expect(proseUpdate[1][0]).toBe('wld-1')
-    expect(JSON.parse(proseUpdate[1][1] as string)).toEqual(HOOKS)
+    // Post data-layer-unification: the prose blob is persisted via
+    // repo.worlds.setStartingSituations (the binder SQL is covered by the
+    // worlds repo integration test). Assert the serialized payload it received.
+    expect(repo.transaction).toHaveBeenCalledTimes(1)
+    expect(repo.worlds.setStartingSituations).toHaveBeenCalledTimes(1)
+    const proseCall = repo.worlds.setStartingSituations.mock.calls[0] as [string, string]
+    expect(proseCall[0]).toBe('wld-1')
+    expect(JSON.parse(proseCall[1])).toEqual(HOOKS)
 
     // 1200/1M * 3 + 500/1M * 15 = 0.0036 + 0.0075 = 0.0111
     expect(result.costUsd).toBeCloseTo(0.0111, 4)
@@ -112,8 +104,7 @@ describe('runStartingSituationStage', () => {
       usage: { inputTokens: 1200, outputTokens: 500, totalTokens: 1700 },
     } as never)
 
-    const client = makeClient()
-    await runStartingSituationStage(client as never, baseArgs)
+    await runStartingSituationStage(makeRepo() as unknown as Repo, baseArgs)
 
     const call = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as Record<
       string,
@@ -130,19 +121,12 @@ describe('runStartingSituationStage', () => {
 
   // myth-xg6p T3: structured-entries persistence + name→id resolution.
   it('resolves location_name to locationEntityId via entities lookup and persists structured array', async () => {
-    const client = makeClient()
-    client.query.mockImplementation((sql: string) => {
-      if (/SELECT.*FROM entities.*entity_type = 'location'/i.test(sql)) {
-        return Promise.resolve({
-          rows: [
-            { id: 'loc-1', name: 'The Whispering Well' },
-            { id: 'loc-2', name: 'Ashen Market' },
-            { id: 'loc-3', name: 'Iron Sept' },
-          ],
-        })
-      }
-      return Promise.resolve({ rows: [] })
-    })
+    const repo = makeRepo()
+    repo.entities.listLocationsByWorld.mockResolvedValue([
+      { id: 'loc-1', name: 'The Whispering Well' },
+      { id: 'loc-2', name: 'Ashen Market' },
+      { id: 'loc-3', name: 'Iron Sept' },
+    ])
 
     vi.mocked(ai.generateText).mockResolvedValueOnce({
       output: {
@@ -168,18 +152,13 @@ describe('runStartingSituationStage', () => {
       usage: { inputTokens: 1000, outputTokens: 600, totalTokens: 1600 },
     } as never)
 
-    await runStartingSituationStage(client as never, baseArgs)
+    await runStartingSituationStage(repo as unknown as Repo, baseArgs)
 
-    const updateCalls = client.query.mock.calls.filter((c: unknown[]) =>
-      /UPDATE worlds/i.test(String(c[0])),
-    )
-    const entriesUpdate = updateCalls.find((c: unknown[]) =>
-      /starting_situation_entries/i.test(String(c[0])),
-    ) as [string, unknown[]] | undefined
-    expect(entriesUpdate).toBeDefined()
-    if (entriesUpdate === undefined) throw new Error('unreachable')
-    const params = entriesUpdate[1]
-    const payload = JSON.parse(params[1] as string) as {
+    // Structured entries persisted via repo.worlds.setStartingSituationEntries.
+    expect(repo.worlds.setStartingSituationEntries).toHaveBeenCalledTimes(1)
+    const entriesCall = repo.worlds.setStartingSituationEntries.mock.calls[0] as [string, string]
+    expect(entriesCall[0]).toBe('wld-1')
+    const payload = JSON.parse(entriesCall[1]) as {
       index: number
       title: string
       locationEntityId: string
@@ -202,13 +181,8 @@ describe('runStartingSituationStage', () => {
   })
 
   it('throws LlmStructuredOutputError after one retry when a location_name does not match', async () => {
-    const client = makeClient()
-    client.query.mockImplementation((sql: string) => {
-      if (/SELECT.*FROM entities.*entity_type = 'location'/i.test(sql)) {
-        return Promise.resolve({ rows: [{ id: 'loc-1', name: 'The Real Place' }] })
-      }
-      return Promise.resolve({ rows: [] })
-    })
+    const repo = makeRepo()
+    repo.entities.listLocationsByWorld.mockResolvedValue([{ id: 'loc-1', name: 'The Real Place' }])
     vi.mocked(ai.generateText).mockResolvedValue({
       output: {
         location_hooks: [
@@ -221,7 +195,7 @@ describe('runStartingSituationStage', () => {
       usage: { inputTokens: 1000, outputTokens: 600, totalTokens: 1600 },
     } as never)
 
-    await expect(runStartingSituationStage(client as never, baseArgs)).rejects.toThrow(
+    await expect(runStartingSituationStage(repo as unknown as Repo, baseArgs)).rejects.toThrow(
       /location_name.*not.*found|cannot resolve|cannot be resolved/i,
     )
     expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(2) // initial + one retry
@@ -249,8 +223,7 @@ describe('runStartingSituationStage', () => {
       adjacent_franchises: ['Harry Potter'],
     }
 
-    const client = makeClient()
-    await runStartingSituationStage(client as never, {
+    await runStartingSituationStage(makeRepo() as unknown as Repo, {
       ...baseArgs,
       vocabularyRegistry: registry,
     })

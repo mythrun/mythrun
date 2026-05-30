@@ -30,47 +30,40 @@ vi.mock('ai', async (importOriginal) => {
   }
 })
 
-vi.mock('../../../../repo/entities.js', () => ({
-  entities: {
-    listByWorld: vi.fn(),
-  },
-}))
-
-vi.mock('../../../../repo/relationships.js', () => ({
-  relationships: {
-    // myth-exac T15: insertMany now returns the generated UUIDv7 ids so the
-    // stage can emit `finalized` events keyed to relationship IDs (only for
-    // rows whose endpoints pass the tier filter). Default mock returns an
-    // ids array matching the input row count.
-    insertMany: vi
-      .fn()
-      .mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/require-await
-        async (_client: unknown, rows: readonly unknown[]): Promise<readonly string[]> =>
-          rows.map((_r, i) => `rel-${String(i)}`),
-      ),
-    deleteByWorld: vi.fn().mockResolvedValue(undefined),
-    // myth-2ob3: loadWorldInventory (used by stage 4 to build the resolver
-    // context) calls relationships.listByWorld. Default to no prior rels.
-    listByWorld: vi.fn().mockResolvedValue([]),
-  },
-}))
-
-vi.mock('../../../../repo/entity-hierarchy.js', () => ({
-  entityHierarchy: {
-    insert: vi.fn().mockResolvedValue(undefined),
-  },
-}))
-
 import * as ai from 'ai'
 import { LlmStructuredOutputError } from '../../../errors.js'
 import { runEntityRelationshipsStage } from '../entity-relationships.js'
-import { entities } from '../../../../repo/entities.js'
-import { relationships } from '../../../../repo/relationships.js'
-import { entityHierarchy } from '../../../../repo/entity-hierarchy.js'
+import { makeFakeRepo, type FakeRepo } from './_helpers/fake-repo.js'
+import type { Repo } from '../../../../repo/index.js'
+import type { WorldInventory } from '../../../../repo/world-inventory.js'
 import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
 
 const EMPTY_REGISTRY: VocabularyRegistry = { entries: [], adjacent_franchises: [] }
+
+// The stage reads the full world inventory through `repo.worldInventory.load`
+// (pool-bound, OUTSIDE the persist tx). The handler only consumes the
+// entitiesById map (name → UUID + tier); build a WorldInventory whose
+// entitiesById carries the fixture entities and whose other maps are empty.
+function inventoryFromEntities(
+  entries: readonly {
+    readonly id: string
+    readonly entityType: string
+    readonly name: string
+    readonly accessLevel: 'known' | 'discoverable' | 'secret'
+  }[],
+): WorldInventory {
+  return {
+    entitiesById: new Map(
+      entries.map((e) => [
+        e.id,
+        { id: e.id, name: e.name, entityType: e.entityType, accessLevel: e.accessLevel },
+      ]),
+    ),
+    proseByEntityId: new Map(),
+    factsById: new Map(),
+    relationshipsById: new Map(),
+  }
+}
 
 // myth-t1qz: under the wrapper, repair fires when the SDK rejects
 // `.object` with LlmStructuredOutputError. The wrapper inspects
@@ -88,12 +81,17 @@ function makeRejectedObject(brokenTreeForCause: unknown): Promise<unknown> {
   return rejection
 }
 
-interface QuerySpy {
-  query: ReturnType<typeof vi.fn>
-}
-
-function makeClient(rows: Record<string, unknown>[] = []): QuerySpy {
-  return { query: vi.fn().mockResolvedValue({ rows }) }
+// Build a fake repo wired for stage 4. The hierarchy-straggler pre-filter
+// probe (formerly a raw client.query) is now
+// repo.entityHierarchy.listExistingChildIds — `existingChildIds` seeds the
+// child ids it returns (the rows the probe would have found). The
+// world-inventory read defaults to the all-known DEFAULT_INVENTORY; mixed-tier
+// tests override repo.worldInventory.load with their own inventory.
+function makeRepo(existingChildIds: readonly string[] = []): FakeRepo {
+  const repo = makeFakeRepo()
+  repo.entityHierarchy.listExistingChildIds.mockResolvedValue(existingChildIds)
+  repo.worldInventory.load.mockResolvedValue(DEFAULT_INVENTORY)
+  return repo
 }
 
 interface FakeJob {
@@ -140,6 +138,10 @@ const INVENTORY = [
   { id: E5, worldId: 'wld-1', entityType: 'location' as const, name: 'Stormhaven', accessLevel: 'known' as const },
   { id: E6, worldId: 'wld-1', entityType: 'npc' as const, name: 'Magister Vance', accessLevel: 'known' as const },
 ]
+
+// Default inventory used by makeRepo. Mixed-tier tests pass a different
+// inventory directly to repo.worldInventory.load.
+const DEFAULT_INVENTORY: WorldInventory = inventoryFromEntities(INVENTORY)
 
 interface TreeRelationship {
   readonly from_name: string
@@ -206,13 +208,6 @@ const baseArgs = {
 describe('runEntityRelationshipsStage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(entities.listByWorld).mockResolvedValue(INVENTORY)
-    vi.mocked(relationships.insertMany).mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/require-await
-      async (_client, rows) => rows.map((_r, i) => `rel-${String(i)}`),
-    )
-    vi.mocked(relationships.deleteByWorld).mockResolvedValue(undefined)
-    vi.mocked(entityHierarchy.insert).mockResolvedValue(undefined)
   })
 
   it('happy path: streams 5 valid relationships and persists them with deleteByWorld first', async () => {
@@ -224,8 +219,8 @@ describe('runEntityRelationshipsStage', () => {
     } as never)
 
     const redis = fakeRedis()
-    const client = makeClient()
-    const result = await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    const result = await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: redis,
@@ -233,12 +228,12 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     // deleteByWorld called BEFORE insertMany (retry idempotency, design §D9)
-    const deleteOrder = vi.mocked(relationships.deleteByWorld).mock.invocationCallOrder[0]
-    const insertOrder = vi.mocked(relationships.insertMany).mock.invocationCallOrder[0]
+    const deleteOrder = repo.relationships.deleteByWorld.mock.invocationCallOrder[0]
+    const insertOrder = repo.relationships.insertMany.mock.invocationCallOrder[0]
     expect(deleteOrder).toBeLessThan(insertOrder ?? Number.MAX_SAFE_INTEGER)
 
-    expect(relationships.insertMany).toHaveBeenCalledTimes(1)
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+    expect(repo.relationships.insertMany).toHaveBeenCalledTimes(1)
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly {
       readonly sourceEntityId: string
       readonly targetEntityId: string
       readonly relationshipType: string
@@ -312,9 +307,9 @@ describe('runEntityRelationshipsStage', () => {
     } as never)
 
     const redis = fakeRedis()
-    const client = makeClient()
+    const repo = makeRepo()
     await expect(
-      runEntityRelationshipsStage(client as never, {
+      runEntityRelationshipsStage(repo as unknown as Repo, {
         ...baseArgs,
         job: fakeJob(),
         redisRealtime: redis,
@@ -322,7 +317,7 @@ describe('runEntityRelationshipsStage', () => {
       }),
     ).resolves.toBeDefined()
 
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly {
       readonly sourceEntityId: string
       readonly targetEntityId: string
     }[]
@@ -355,9 +350,9 @@ describe('runEntityRelationshipsStage', () => {
 
     // myth-2ob3: the existing-child-id probe queries with entity UUIDs
     // (resolved from names by the partitioner), so the mock returns E5.
-    const client = makeClient([{ child_entity_id: E5 }])
+    const repo = makeRepo([E5])
 
-    await runEntityRelationshipsStage(client as never, {
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -365,8 +360,8 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     // Only one hierarchy insert: E1→E4 (names resolved to UUIDs)
-    expect(entityHierarchy.insert).toHaveBeenCalledTimes(1)
-    expect(entityHierarchy.insert).toHaveBeenCalledWith(expect.anything(), {
+    expect(repo.entityHierarchy.insert).toHaveBeenCalledTimes(1)
+    expect(repo.entityHierarchy.insert).toHaveBeenCalledWith({
       parentEntityId: E1,
       childEntityId: E4,
     })
@@ -393,8 +388,8 @@ describe('runEntityRelationshipsStage', () => {
       usage: { inputTokens: 1000, outputTokens: 800, totalTokens: 1800 },
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -402,7 +397,7 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     expect(ai.generateText).toHaveBeenCalledTimes(1)
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as unknown[]
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as unknown[]
     expect(insertedRows).toHaveLength(5)
   })
 
@@ -435,8 +430,8 @@ describe('runEntityRelationshipsStage', () => {
       usage: { inputTokens: 1200, outputTokens: 1000, totalTokens: 2200 },
     } as never)
 
-    const client = makeClient()
-    const result = await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    const result = await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -479,9 +474,9 @@ describe('runEntityRelationshipsStage', () => {
     } as never)
 
     const redis = fakeRedis()
-    const client = makeClient()
+    const repo = makeRepo()
     await expect(
-      runEntityRelationshipsStage(client as never, {
+      runEntityRelationshipsStage(repo as unknown as Repo, {
         ...baseArgs,
         job: fakeJob(),
         redisRealtime: redis,
@@ -494,7 +489,7 @@ describe('runEntityRelationshipsStage', () => {
       (p) => (p.payload as { type: string }).type === 'stage-reset',
     )
     expect(resetEvents).toHaveLength(0)
-    expect(relationships.insertMany).not.toHaveBeenCalled()
+    expect(repo.relationships.insertMany).not.toHaveBeenCalled()
   })
 
   it('renders the entity inventory + world-summary placeholders into the prompt', async () => {
@@ -505,8 +500,8 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -546,22 +541,19 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
       keyPrefix: 'test:',
     })
 
-    expect(entityHierarchy.insert).not.toHaveBeenCalled()
-    // No probe SQL was issued (the early-return path skipped it). Only the
-    // existing-row probe queries on the client; happy-path stragglers test
-    // exercises that arm explicitly.
-    for (const call of client.query.mock.calls) {
-      const sql = call[0] as string
-      expect(sql).not.toContain('FROM entity_hierarchy')
-    }
+    expect(repo.entityHierarchy.insert).not.toHaveBeenCalled()
+    // No existing-row probe was issued (the early-return path skipped it):
+    // every straggler failed name resolution, so persistStragglers returns
+    // before calling repo.entityHierarchy.listExistingChildIds.
+    expect(repo.entityHierarchy.listExistingChildIds).not.toHaveBeenCalled()
   })
 
   it('empty hierarchy_stragglers — no entityHierarchy.insert calls + no straggler SQL probe', async () => {
@@ -572,15 +564,15 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
       keyPrefix: 'test:',
     })
 
-    expect(entityHierarchy.insert).not.toHaveBeenCalled()
+    expect(repo.entityHierarchy.insert).not.toHaveBeenCalled()
   })
 
   it('myth-exac T15: tier filter on endpoints — inserts all rows in DB but only emits finalized for known→known', async () => {
@@ -588,10 +580,10 @@ describe('runEntityRelationshipsStage', () => {
     // 5 relationships (min schema cardinality) — one known→known, the rest
     // touch the secret entity. Expected DB writes: 5 rows. Expected
     // finalizedEvents: 1 (the known→known edge only).
-    vi.mocked(entities.listByWorld).mockResolvedValue([
-      { id: E1, worldId: 'wld-1', entityType: 'location', name: 'Iron Coast', accessLevel: 'known' },
-      { id: E2, worldId: 'wld-1', entityType: 'faction', name: 'Brotherhood', accessLevel: 'known' },
-      { id: E3, worldId: 'wld-1', entityType: 'npc', name: 'Hidden Cabal', accessLevel: 'secret' },
+    const mixedTierInventory = inventoryFromEntities([
+      { id: E1, entityType: 'location', name: 'Iron Coast', accessLevel: 'known' },
+      { id: E2, entityType: 'faction', name: 'Brotherhood', accessLevel: 'known' },
+      { id: E3, entityType: 'npc', name: 'Hidden Cabal', accessLevel: 'secret' },
     ])
     const padded = {
       relationships: [
@@ -615,8 +607,9 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    const result = await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    repo.worldInventory.load.mockResolvedValue(mixedTierInventory)
+    const result = await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -624,7 +617,7 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     // DB: every accepted row is inserted, regardless of tier.
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly unknown[]
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly unknown[]
     expect(insertedRows).toHaveLength(5)
     // SSE: only the single known→known relationship surfaces.
     const finalized = result.finalizedEvents.filter((e) => e.type === 'finalized')
@@ -658,8 +651,8 @@ describe('runEntityRelationshipsStage', () => {
       adjacent_franchises: ['Harry Potter'],
     }
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       vocabularyRegistry: registry,
       job: fakeJob(),
@@ -679,10 +672,10 @@ describe('runEntityRelationshipsStage', () => {
   it('myth-exac T15: bypassAccessFilter=true surfaces every relationship regardless of endpoint tier', async () => {
     // Same mixed-tier inventory but bypass on: every persisted row also
     // emits a finalized event (dev-tool / author mode).
-    vi.mocked(entities.listByWorld).mockResolvedValue([
-      { id: E1, worldId: 'wld-1', entityType: 'location', name: 'Iron Coast', accessLevel: 'known' },
-      { id: E2, worldId: 'wld-1', entityType: 'faction', name: 'Brotherhood', accessLevel: 'known' },
-      { id: E3, worldId: 'wld-1', entityType: 'npc', name: 'Hidden Cabal', accessLevel: 'secret' },
+    const mixedTierInventory = inventoryFromEntities([
+      { id: E1, entityType: 'location', name: 'Iron Coast', accessLevel: 'known' },
+      { id: E2, entityType: 'faction', name: 'Brotherhood', accessLevel: 'known' },
+      { id: E3, entityType: 'npc', name: 'Hidden Cabal', accessLevel: 'secret' },
     ])
     const tree = {
       relationships: [
@@ -701,8 +694,9 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    const result = await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    repo.worldInventory.load.mockResolvedValue(mixedTierInventory)
+    const result = await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       bypassAccessFilter: true,
       job: fakeJob(),
@@ -710,7 +704,7 @@ describe('runEntityRelationshipsStage', () => {
       keyPrefix: 'test:',
     })
 
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly unknown[]
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly unknown[]
     expect(insertedRows).toHaveLength(5)
     const finalized = result.finalizedEvents.filter((e) => e.type === 'finalized')
     expect(finalized).toHaveLength(5)
@@ -744,8 +738,8 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -753,8 +747,8 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     // Real-endpoint relationship persists; placeholder one does NOT.
-    expect(relationships.insertMany).toHaveBeenCalledTimes(1)
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+    expect(repo.relationships.insertMany).toHaveBeenCalledTimes(1)
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly {
       readonly sourceEntityId: string
       readonly targetEntityId: string
       readonly relationshipType: string
@@ -769,18 +763,15 @@ describe('runEntityRelationshipsStage', () => {
       synthKey: 'entity_relationships/relationships/0',
     })
 
-    // Pending state column UPDATE on worlds — find the call.
-    const pendingUpdate = client.query.mock.calls.find((call) => {
-      const sql = call[0] as string
-      return sql.includes('UPDATE worlds') && sql.includes('entity_consolidation_pending')
-    })
-    expect(pendingUpdate).toBeDefined()
-    const params = pendingUpdate?.[1] as readonly unknown[]
-    const pendingJson = JSON.parse(params[0] as string) as {
+    // Pending state persisted via repo.worlds.setEntityConsolidationPending
+    // (worldId, json).
+    expect(repo.worlds.setEntityConsolidationPending).toHaveBeenCalledTimes(1)
+    const pendingCall = repo.worlds.setEntityConsolidationPending.mock.calls[0] as [string, string]
+    expect(pendingCall[0]).toBe('wld-1')
+    const pendingJson = JSON.parse(pendingCall[1]) as {
       declarations: { placeholderId: string; name: string; entityType: string }[]
       relationships: { from: string; to: string; relationship: string; description: string }[]
     }
-    expect(params[1]).toBe('wld-1')
     expect(pendingJson.declarations).toHaveLength(1)
     expect(pendingJson.declarations[0]).toEqual({
       placeholderId: 'new-001',
@@ -819,26 +810,22 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
       keyPrefix: 'test:',
     })
 
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly {
       readonly sourceEntityId: string
       readonly targetEntityId: string
     }[]
     expect(insertedRows).toHaveLength(4)
     // The placeholder side dropped too — no placeholder rel survived.
-    const pendingUpdate = client.query.mock.calls.find((call) => {
-      const sql = call[0] as string
-      return sql.includes('UPDATE worlds') && sql.includes('entity_consolidation_pending')
-    })
-    const params = pendingUpdate?.[1] as readonly unknown[]
-    const pendingJson = JSON.parse(params[0] as string) as { relationships: unknown[] }
+    const pendingCall = repo.worlds.setEntityConsolidationPending.mock.calls[0] as [string, string]
+    const pendingJson = JSON.parse(pendingCall[1]) as { relationships: unknown[] }
     expect(pendingJson.relationships).toHaveLength(0)
   })
 
@@ -865,8 +852,8 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -874,7 +861,7 @@ describe('runEntityRelationshipsStage', () => {
     })
 
     // The 4 real→real rows persist; the placeholder→GHOST row is dropped.
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly {
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly {
       readonly sourceEntityId: string
       readonly targetEntityId: string
     }[]
@@ -908,8 +895,8 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
@@ -919,15 +906,11 @@ describe('runEntityRelationshipsStage', () => {
     // The 4 real rows persist; the orphan-placeholder row drops — the
     // pending-state UPDATE still fires (always written) but its payload
     // contains zero declarations + zero placeholder rows.
-    const insertedRows = vi.mocked(relationships.insertMany).mock.calls[0]?.[1] as readonly unknown[]
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly unknown[]
     expect(insertedRows).toHaveLength(4)
-    const pendingUpdate = client.query.mock.calls.find((call) => {
-      const sql = call[0] as string
-      return sql.includes('UPDATE worlds') && sql.includes('entity_consolidation_pending')
-    })
-    expect(pendingUpdate).toBeDefined()
-    const params = pendingUpdate?.[1] as readonly unknown[]
-    const pendingJson = JSON.parse(params[0] as string) as {
+    expect(repo.worlds.setEntityConsolidationPending).toHaveBeenCalledTimes(1)
+    const pendingCall = repo.worlds.setEntityConsolidationPending.mock.calls[0] as [string, string]
+    const pendingJson = JSON.parse(pendingCall[1]) as {
       declarations: unknown[]
       relationships: unknown[]
     }
@@ -953,39 +936,30 @@ describe('runEntityRelationshipsStage', () => {
       usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
     } as never)
 
-    const client = makeClient()
-    await runEntityRelationshipsStage(client as never, {
+    const repo = makeRepo()
+    await runEntityRelationshipsStage(repo as unknown as Repo, {
       ...baseArgs,
       job: fakeJob(),
       redisRealtime: fakeRedis(),
       keyPrefix: 'test:',
     })
 
-    // The handler must issue a DELETE against entities scoped to the world
-    // AND created_in='stage:entity_consolidation'. CASCADE on relationships
-    // takes care of the orphaned rows pointing at those ghosts.
-    const ghostWipe = client.query.mock.calls.find((call) => {
-      const sql = call[0] as string
-      return (
-        sql.includes('DELETE FROM entities') &&
-        sql.includes('world_id') &&
-        sql.includes("'stage:entity_consolidation'")
-      )
-    })
-    expect(ghostWipe).toBeDefined()
-    expect(ghostWipe?.[1]).toEqual(['wld-1'])
+    // The handler must wipe entities scoped to the world AND
+    // created_in='stage:entity_consolidation' via
+    // repo.entities.deleteByWorldAndCreatedIn. CASCADE on relationships takes
+    // care of the orphaned rows pointing at those ghosts.
+    expect(repo.entities.deleteByWorldAndCreatedIn).toHaveBeenCalledTimes(1)
+    expect(repo.entities.deleteByWorldAndCreatedIn).toHaveBeenCalledWith(
+      'wld-1',
+      'stage:entity_consolidation',
+    )
 
-    // And it must run AFTER the existing relationships.deleteByWorld — the
-    // two together form the stage's idempotency wipe.
-    const deleteByWorldOrder = vi.mocked(relationships.deleteByWorld).mock.invocationCallOrder[0]
-    const ghostWipeCallIndex = client.query.mock.calls.findIndex((call) => {
-      const sql = call[0] as string
-      return (
-        sql.includes('DELETE FROM entities') &&
-        sql.includes("'stage:entity_consolidation'")
-      )
-    })
-    const ghostWipeOrder = client.query.mock.invocationCallOrder[ghostWipeCallIndex]
-    expect(deleteByWorldOrder).toBeLessThan(ghostWipeOrder ?? Number.MAX_SAFE_INTEGER)
+    // And it must run AFTER relationships.deleteByWorld — the two together
+    // form the stage's idempotency wipe (both inside the same tx).
+    const deleteByWorldOrder = repo.relationships.deleteByWorld.mock.invocationCallOrder[0] ?? 0
+    const ghostWipeOrder =
+      repo.entities.deleteByWorldAndCreatedIn.mock.invocationCallOrder[0] ??
+      Number.MAX_SAFE_INTEGER
+    expect(deleteByWorldOrder).toBeLessThan(ghostWipeOrder)
   })
 })
