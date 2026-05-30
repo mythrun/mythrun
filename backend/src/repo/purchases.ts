@@ -61,3 +61,17 @@ export const purchases = {
     return { rowsAffected: result.rowCount ?? 0 }
   },
 }
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `purchases` object so `repo.purchases.X` and `tx.purchases.X` share one
+ *  body. */
+export function purchasesNs(c: ClientLike) {
+  return {
+    insertMany: (rows: readonly NewPurchaseRow[]): Promise<void> =>
+      purchases.insertMany(c, rows),
+    getByPaymentIntent: (payment_intent_id: string): Promise<readonly PurchaseRow[]> =>
+      purchases.getByPaymentIntent(c, payment_intent_id),
+    markRefunded: (id: string): Promise<{ rowsAffected: number }> =>
+      purchases.markRefunded(c, id),
+  }
+}

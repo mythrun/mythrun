@@ -356,3 +356,24 @@ export const billingHistory = {
     /* c8 ignore stop */
   },
 }
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `billingHistory` object so `repo.billingHistory.X` and
+ *  `tx.billingHistory.X` share one body. */
+export function billingHistoryNs(c: ClientLike) {
+  return {
+    append: (row: NewBillingHistoryRow, opts: AppendOpts = {}): Promise<BillingHistoryRow> =>
+      billingHistory.append(c, row, opts),
+    findBySourceStripeId: (source_id_stripe: string): Promise<BillingHistoryRow | null> =>
+      billingHistory.findBySourceStripeId(c, source_id_stripe),
+    findInvoiceByPaymentIntent: (payment_intent_id: string): Promise<BillingHistoryRow | null> =>
+      billingHistory.findInvoiceByPaymentIntent(c, payment_intent_id),
+    listByUser: (
+      user_id: string,
+      opts: ListByUserOpts,
+    ): Promise<{ readonly rows: readonly BillingHistoryRow[]; readonly nextCursor: string | null }> =>
+      billingHistory.listByUser(c, user_id, opts),
+    markRefunded: (id: string): Promise<{ readonly rowsAffected: number }> =>
+      billingHistory.markRefunded(c, id),
+  }
+}

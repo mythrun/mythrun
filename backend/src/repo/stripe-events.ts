@@ -16,3 +16,13 @@ export const stripeEvents = {
     return result.rows.length === 0 ? 'duplicate' : 'inserted'
   },
 }
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `stripeEvents` object so `repo.stripeEvents.X` and `tx.stripeEvents.X`
+ *  share one body. */
+export function stripeEventsNs(c: ClientLike) {
+  return {
+    recordOrSkip: (event_id: string, event_type: string): Promise<'inserted' | 'duplicate'> =>
+      stripeEvents.recordOrSkip(c, event_id, event_type),
+  }
+}

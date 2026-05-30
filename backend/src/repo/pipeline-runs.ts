@@ -9,6 +9,7 @@
 // parser override).
 
 import type { Pool } from 'pg'
+import type { ClientLike } from './_types.js'
 import type { PipelineRunRow } from '../sse/derive-phase.js'
 
 export interface FailedRunRow {
@@ -90,19 +91,29 @@ const STAGE_COMPLETED_QUERY = `
    LIMIT 1
 `
 
-export function createPipelineRunsRepo(pool: Pool): PipelineRunsRepo {
+// Composable binder: every method is a single statement over a ClientLike
+// (pool OR an in-flight tx client) — no `pool.connect()`, no advisory lock —
+// so all three are transaction-bindable. pipelineRuns participates in
+// Cluster A's transaction; its composable writers MUST be tx-bindable.
+// Mirrors the worlds.ts `worldsNs` pattern.
+export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
   return {
     async listLatestForCampaign(campaignId: string): Promise<readonly PipelineRunRow[]> {
-      const result = await pool.query<PipelineRunRowRaw>(QUERY, [campaignId])
+      const result = await c.query<PipelineRunRowRaw>(QUERY, [campaignId])
       return result.rows
     },
     async getLatestFailedForWorld(worldId: string): Promise<FailedRunRow | null> {
-      const result = await pool.query<FailedRunRow>(LATEST_FAILED_QUERY, [worldId])
+      const result = await c.query<FailedRunRow>(LATEST_FAILED_QUERY, [worldId])
       return result.rows[0] ?? null
     },
     async isStageCompleted(worldId: string, stage: string): Promise<boolean> {
-      const result = await pool.query(STAGE_COMPLETED_QUERY, [worldId, stage])
+      const result = await c.query(STAGE_COMPLETED_QUERY, [worldId, stage])
       return result.rows.length > 0
     },
   }
 }
+
+/** Back-compat factory — pool-bound `pipelineRuns` surface. Identical shape to
+ *  the pre-unification `createPipelineRunsRepo`. Direct importers keep working;
+ *  new code goes through `repo.pipelineRuns`. */
+export const createPipelineRunsRepo = (pool: Pool): PipelineRunsRepo => pipelineRunsNs(pool)

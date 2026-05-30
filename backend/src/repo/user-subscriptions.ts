@@ -228,3 +228,19 @@ export const userSubscriptions = {
     return result.rows[0] ?? null
   },
 }
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `userSubscriptions` object so `repo.userSubscriptions.X` and
+ *  `tx.userSubscriptions.X` share one body. */
+export function userSubscriptionsNs(c: ClientLike) {
+  return {
+    upsertFromStripe: (row: UpsertFromStripeRow): Promise<UserSubscriptionRow> =>
+      userSubscriptions.upsertFromStripe(c, row),
+    markCanceled: (
+      stripe_subscription_id: string,
+      payload: MarkCanceledPayload,
+    ): Promise<number> => userSubscriptions.markCanceled(c, stripe_subscription_id, payload),
+    getActiveForUser: (user_id: string): Promise<UserSubscriptionRow | null> =>
+      userSubscriptions.getActiveForUser(c, user_id),
+  }
+}

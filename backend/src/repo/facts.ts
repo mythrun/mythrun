@@ -126,3 +126,18 @@ async function listByEntities(
 }
 
 export const facts = { insertMany, updateContentById, deleteById, listByEntities } as const
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `facts` object so `repo.facts.X` and `tx.facts.X` share one body. */
+export function factsNs(c: ClientLike) {
+  return {
+    insertMany: (rows: readonly InsertFactInput[]): Promise<void> => facts.insertMany(c, rows),
+    updateContentById: (factId: string, patch: { content: string }): Promise<number> =>
+      facts.updateContentById(c, factId, patch),
+    deleteById: (id: string): Promise<number> => facts.deleteById(c, id),
+    listByEntities: (
+      entityIds: readonly string[],
+      opts: { readonly accessLevels: readonly AccessLevel[] },
+    ): Promise<readonly FactRow[]> => facts.listByEntities(c, entityIds, opts),
+  }
+}

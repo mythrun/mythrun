@@ -182,3 +182,23 @@ async function deleteById(client: ClientLike, id: string): Promise<number> {
 export const relationships = {
   insertMany, listByWorld, listAmong, deleteByWorld, updateById, deleteById,
 } as const
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `relationships` object so `repo.relationships.X` and `tx.relationships.X`
+ *  share one body. */
+export function relationshipsNs(c: ClientLike) {
+  return {
+    insertMany: (rows: readonly InsertRelationshipInput[]): Promise<readonly string[]> =>
+      relationships.insertMany(c, rows),
+    listByWorld: (worldId: string): Promise<Relationship[]> =>
+      relationships.listByWorld(c, worldId),
+    listAmong: (entityIds: readonly string[]): Promise<readonly RelationshipRow[]> =>
+      relationships.listAmong(c, entityIds),
+    deleteByWorld: (worldId: string): Promise<void> => relationships.deleteByWorld(c, worldId),
+    updateById: (
+      id: string,
+      patch: { relationshipType?: string; description?: string },
+    ): Promise<number> => relationships.updateById(c, id, patch),
+    deleteById: (id: string): Promise<number> => relationships.deleteById(c, id),
+  }
+}

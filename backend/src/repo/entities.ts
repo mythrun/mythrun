@@ -112,3 +112,18 @@ async function listByWorld(
 }
 
 export const entities = { insert, findByWorldAndName, listByWorld } as const
+
+/** Composable binder: captures `c` (pool OR in-flight tx client) and delegates
+ *  to the bare-named `entities` object so `repo.entities.X` and `tx.entities.X`
+ *  share one implementation. Mirrors the worlds.ts `worldsNs` pattern. */
+export function entitiesNs(c: ClientLike) {
+  return {
+    insert: (input: InsertEntityInput): Promise<void> => entities.insert(c, input),
+    findByWorldAndName: (worldId: string, name: string): Promise<Entity | null> =>
+      entities.findByWorldAndName(c, worldId, name),
+    listByWorld: (
+      worldId: string,
+      opts?: { readonly accessLevels?: readonly AccessLevel[] },
+    ): Promise<Entity[]> => entities.listByWorld(c, worldId, opts),
+  }
+}

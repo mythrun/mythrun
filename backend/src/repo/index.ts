@@ -7,6 +7,17 @@ import { creditsNs, selfManagingCredits } from './credits.js'
 import { invitesNs, selfManagingInvites } from './invites.js'
 import { charactersNs } from './characters.js'
 import { characterConceptsNs } from './character-concepts.js'
+import { entitiesNs } from './entities.js'
+import { factsNs } from './facts.js'
+import { proseKernelsNs } from './prose-kernels.js'
+import { relationshipsNs } from './relationships.js'
+import { entityHierarchyNs } from './entity-hierarchy.js'
+import { statBlocksNs } from './stat-blocks.js'
+import { purchasesNs } from './purchases.js'
+import { userSubscriptionsNs } from './user-subscriptions.js'
+import { stripeEventsNs } from './stripe-events.js'
+import { billingHistoryNs } from './billing-history.js'
+import { pipelineRunsNs } from './pipeline-runs.js'
 import type { ClientLike } from './_types.js'
 import { runTransaction, type RollbackSignal } from './_client.js'
 import { type TxOpts } from '../db/transaction.js'
@@ -36,6 +47,20 @@ function bindTx(c: ClientLike) {
     invites: invitesNs(c),
     characters: charactersNs(c),
     characterConcepts: characterConceptsNs(c),
+    // Tier-2 standalone modules (T5): delegating binders co-located in each
+    // module file. All are single-statement-composable — no connection-owning
+    // self-managing methods — so they bind cleanly on both pool and tx.
+    entities: entitiesNs(c),
+    facts: factsNs(c),
+    proseKernels: proseKernelsNs(c),
+    relationships: relationshipsNs(c),
+    entityHierarchy: entityHierarchyNs(c),
+    statBlocks: statBlocksNs(c),
+    purchases: purchasesNs(c),
+    userSubscriptions: userSubscriptionsNs(c),
+    stripeEvents: stripeEventsNs(c),
+    billingHistory: billingHistoryNs(c),
+    pipelineRuns: pipelineRunsNs(c),
   }
 }
 

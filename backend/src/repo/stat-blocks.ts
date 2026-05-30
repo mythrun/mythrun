@@ -91,3 +91,13 @@ async function listByIds(
 }
 
 export const statBlocks = { listByIds } as const
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `statBlocks` object so `repo.statBlocks.X` and `tx.statBlocks.X` share one
+ *  body. */
+export function statBlocksNs(c: ClientLike) {
+  return {
+    listByIds: (ids: readonly string[]): Promise<readonly StatBlockRow[]> =>
+      statBlocks.listByIds(c, ids),
+  }
+}

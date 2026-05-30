@@ -79,3 +79,16 @@ async function listByEntities(
 }
 
 export const proseKernels = { insert, updateByEntityId, listByEntities } as const
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `proseKernels` object so `repo.proseKernels.X` and `tx.proseKernels.X`
+ *  share one body. */
+export function proseKernelsNs(c: ClientLike) {
+  return {
+    insert: (input: InsertProseKernelInput): Promise<void> => proseKernels.insert(c, input),
+    updateByEntityId: (entityId: string, patch: { content: string }): Promise<number> =>
+      proseKernels.updateByEntityId(c, entityId, patch),
+    listByEntities: (entityIds: readonly string[]): Promise<readonly ProseKernelRow[]> =>
+      proseKernels.listByEntities(c, entityIds),
+  }
+}

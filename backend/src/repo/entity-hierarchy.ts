@@ -59,3 +59,14 @@ async function listForWorld(
 }
 
 export const entityHierarchy = { insert, listForWorld } as const
+
+/** Composable binder over a single ClientLike. Delegates to the bare-named
+ *  `entityHierarchy` object so `repo.entityHierarchy.X` and
+ *  `tx.entityHierarchy.X` share one body. */
+export function entityHierarchyNs(c: ClientLike) {
+  return {
+    insert: (input: InsertHierarchyInput): Promise<void> => entityHierarchy.insert(c, input),
+    listForWorld: (worldId: string): Promise<readonly EntityHierarchyRow[]> =>
+      entityHierarchy.listForWorld(c, worldId),
+  }
+}
