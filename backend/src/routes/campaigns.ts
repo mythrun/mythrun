@@ -21,11 +21,11 @@
 // from BullMQ at app boot.
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { Logger as PinoLogger } from 'pino'
 import { z } from 'zod'
-import { createRepo } from '../repo/index.js'
+import { createRepo, type Repo } from '../repo/index.js'
 import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
@@ -402,7 +402,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       }
 
       // Step 2d: credit balance peek (no advisory lock).
-      const peekBalance = await readWorldGenBalance(opts.pool, dbUser.id)
+      const peekBalance = await repo.credits.getWorldGenBalance(dbUser.id)
       if (peekBalance < 1) {
         return reply.code(403).send({ code: 'insufficient_credits', creditType: 'world_gen' })
       }
@@ -434,9 +434,9 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
       // Step 5: locked transaction (debit + worlds + campaigns + member +
       // pipeline_runs seed row).
-      let txResult: { campaignId: string }
+      let txResult: { campaignId: string; worldId: string }
       try {
-        txResult = await executeCreateTransaction(opts.pool, {
+        txResult = await executeCreateTransaction(repo, {
           userId: dbUser.id,
           concept,
           devBypassAccessFilter,
@@ -873,25 +873,6 @@ function sumQueueCounts(counts: Record<string, number>): number {
 }
 
 /**
- * Read the current world_gen balance (unexpired credits only).
- * Plain pool — caller decides whether to wrap it in an advisory-locked tx.
- */
-async function readWorldGenBalance(client: Pool | PoolClient, userId: string): Promise<number> {
-  const result = await client.query<{ balance: string }>(
-    `SELECT COALESCE(SUM(amount), 0)::text AS balance
-       FROM credit_ledger
-      WHERE user_id = $1
-        AND credit_type = 'world_gen'
-        AND (expires_at IS NULL OR expires_at > now())`,
-    [userId],
-  )
-  /* c8 ignore start — `?? 0` falsy arm: COALESCE(SUM(...), 0) always
-   * returns one row. Kept for TS. */
-  return Number(result.rows[0]?.balance ?? 0)
-  /* c8 ignore stop */
-}
-
-/**
  * Gate rejection branch: increments the rejection-storm counter, logs the
  * server-side reasoning (Roc-Imp6 — never returned in the HTTP response),
  * and shapes the 422 response. `synthesizedConcept` is included only on
@@ -940,104 +921,78 @@ async function handleGateRejection(args: {
 /**
  * Step 5 of the POST flow — the locked transaction.
  *
- * Sequence (revised — Roc-Imp1 UUID-cast fix + Hydra-Imp1 / Phoenix-Imp4
- * seeded-row recovery contract):
- *   - BEGIN + lock_timeout 5s + statement_timeout 10s
- *   - pg_advisory_xact_lock(hashtextextended(userId::text, 0))
- *   - Re-read balance under lock; throw InsufficientCreditsError if < 1
- *   - INSERT worlds (status='generating')
- *   - INSERT campaigns (status='setup')
- *   - INSERT campaign_members (role='owner', invite_accepted=true)
- *   - INSERT credit_ledger (-1 debit; source_id = worldId for the
+ * Runs the create footprint through `repo.transaction` (one tx client,
+ * writes-only — slow I/O stays OUTSIDE the callback; the enqueue side-effect
+ * runs AFTER this returns, off the returned value). The hand-managed
+ * connect/BEGIN/SET LOCAL/COMMIT recipe was replaced by repo.transaction +
+ * the Cluster-A composable binders; the SQL moved verbatim into those binders.
+ *
+ * Sequence (Roc-Imp1 UUID-cast fix + Hydra-Imp1 / Phoenix-Imp4 seeded-row
+ * recovery contract):
+ *   - BEGIN + lock_timeout 5s + statement_timeout 10s (TxOpts)
+ *   - acquireUserCreditLock → pg_advisory_xact_lock(hashtextextended(userId, 0))
+ *   - getWorldGenBalance under lock; throw InsufficientCreditsError if < 1
+ *     (rolls back + propagates to the route's 403 mapping)
+ *   - insertGenerating (worlds, status='generating')
+ *   - insertSetup (campaigns, status='setup')
+ *   - insertOwnerMember (campaign_members, role='owner', invite_accepted=true)
+ *   - insertWorldGenDebit (credit_ledger -1; source_id = worldId for the
  *     migration 004 debit-has-source check)
- *   - INSERT pipeline_runs (concept_intake, status='pending', started_at=NULL)
+ *   - insertSeedRow (pipeline_runs concept_intake, status='pending',
+ *     started_at=NULL) — a missed enqueue (Redis blip between COMMIT and the
+ *     queue.add call) presents as `world_gen_failed` via derivePhase instead
+ *     of `not_started`, so the resume route can recover from it (Hydra-Imp1,
+ *     Phoenix-Imp4)
  *   - COMMIT
+ *
+ * myth-4lhr: 'Untitled' placeholder for both worlds.name and campaigns.name
+ * (the binders default `name` to 'Untitled'). Concept_intake's worker pass
+ * UPDATEs both to the LLM-synthesized name on completion. myth-exac T21:
+ * dev_bypass_access_filter is passed explicitly (false-by-default at the route
+ * handler) rather than relying on the migration's column default.
  */
 async function executeCreateTransaction(
-  pool: Pool,
+  repo: Repo,
   args: { userId: string; concept: string; devBypassAccessFilter: boolean },
 ): Promise<{ campaignId: string; worldId: string }> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    await client.query("SET LOCAL lock_timeout = '5s'")
-    await client.query("SET LOCAL statement_timeout = '10s'")
-    // hashtextextended produces a stable bigint from any text input,
-    // sidestepping pg's lack of a direct uuid→bigint cast (Roc-Imp1).
-    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, [args.userId])
+  // ids generated up-front (uuidv7) so they can be threaded as FKs + returned.
+  const worldId = uuidv7()
+  const campaignId = uuidv7()
+  const memberId = uuidv7()
+  const ledgerId = uuidv7()
+  const runId = uuidv7()
 
-    const lockedBalance = await readWorldGenBalance(client, args.userId)
-    if (lockedBalance < 1) {
-      await client.query('ROLLBACK')
-      throw new InsufficientCreditsError()
-    }
-
-    const worldId = uuidv7()
-    const campaignId = uuidv7()
-    const memberId = uuidv7()
-    const ledgerId = uuidv7()
-    const runId = uuidv7()
-
-    // myth-4lhr: 'Untitled' placeholder for both worlds.name and
-    // campaigns.name. Concept_intake's worker pass UPDATEs both to the
-    // LLM-synthesized name on completion (see stages/concept-intake.ts).
-    // Users can subsequently PATCH /api/campaigns/:campaignId/name to
-    // rename their campaign.
-    //
-    // myth-exac T21: dev_bypass_access_filter is always passed (false-by-
-    // default at the route handler) rather than relying on the migration's
-    // column default — keeps the INSERT shape deterministic and the
-    // route→DB contract auditable from a single line.
-    await client.query(
-      `INSERT INTO worlds (id, created_by, name, concept, status, dev_bypass_access_filter)
-       VALUES ($1, $2, 'Untitled', $3, 'generating', $4)`,
-      [worldId, args.userId, args.concept, args.devBypassAccessFilter],
-    )
-    await client.query(
-      `INSERT INTO campaigns (id, world_id, created_by, name, status)
-       VALUES ($1, $2, $3, 'Untitled', 'setup')`,
-      [campaignId, worldId, args.userId],
-    )
-    await client.query(
-      `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
-       VALUES ($1, $2, $3, 'owner', true)`,
-      [memberId, campaignId, args.userId],
-    )
-    // Debit. source_id = worldId so migration 004's
-    // credit_ledger_debit_has_source_chk is satisfied; both FKs (purchase
-    // / billing_history) are NULL per migration 007's debit branch.
-    await client.query(
-      `INSERT INTO credit_ledger
-         (id, user_id, credit_type, amount, source_type, source_id,
-          expires_at, source_purchase_id, source_billing_history_id)
-       VALUES ($1, $2, 'world_gen', -1, 'debit', $3, NULL, NULL, NULL)`,
-      [ledgerId, args.userId, worldId],
-    )
-    // Seed row — a missed enqueue (Redis blip between COMMIT and the
-    // queue.add call) presents as `world_gen_failed` via derivePhase
-    // instead of `not_started`, so the resume route can recover from it
-    // (Hydra-Imp1, Phoenix-Imp4).
-    await client.query(
-      `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
-       VALUES ($1, $2, 'concept_intake', 'pending', NULL, NULL)`,
-      [runId, worldId],
-    )
-    await client.query('COMMIT')
-    return { campaignId, worldId }
-    /* c8 ignore start — ROLLBACK only throws when the pg client is
-       already in a torn-down state; we swallow so the original error
-       from the catch arm propagates with its real stack. */
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // Connection may already be in a failed state; rethrow original.
-    }
-    throw err
-  } finally {
-    /* c8 ignore stop */
-    client.release()
+  const result = await repo.transaction(
+    async (tx) => {
+      // hashtextextended produces a stable bigint from any text input,
+      // sidestepping pg's lack of a direct uuid→bigint cast (Roc-Imp1).
+      await tx.credits.acquireUserCreditLock(args.userId)
+      const lockedBalance = await tx.credits.getWorldGenBalance(args.userId)
+      if (lockedBalance < 1) {
+        throw new InsufficientCreditsError()
+      }
+      await tx.worlds.insertGenerating({
+        id: worldId,
+        createdBy: args.userId,
+        concept: args.concept,
+        devBypassAccessFilter: args.devBypassAccessFilter,
+      })
+      await tx.campaigns.insertSetup({ id: campaignId, worldId, createdBy: args.userId })
+      await tx.campaigns.insertOwnerMember({ id: memberId, campaignId, userId: args.userId })
+      await tx.credits.insertWorldGenDebit({ id: ledgerId, userId: args.userId, worldId })
+      await tx.pipelineRuns.insertSeedRow({ id: runId, worldId })
+      return { campaignId, worldId }
+    },
+    { lockTimeoutMs: 5000, statementTimeoutMs: 10000 },
+  )
+  /* c8 ignore start — the callback never returns ROLLBACK (it throws on the
+   * insufficient-credits path instead), so `result` is always the value;
+   * the narrowing is for TS, never exercised at runtime. */
+  if (typeof result === 'symbol') {
+    throw new Error('unreachable: create transaction does not return ROLLBACK')
   }
+  /* c8 ignore stop */
+  return result
 }
 
 // ---------------------------------------------------------------------------
