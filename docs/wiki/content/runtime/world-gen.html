@@ -51,7 +51,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:edef648bc99740d27e2f34bc2af1f6c0f40e68c4caa3a921d61a38c4b563f173 -->
+<!-- source-hash: sha256:d1b2dac8f7d86d924ee52004e67730f88001f5cb8206a08d4ba7e31e48fb6700 -->
 <!-- last-ticket: myth-imxg -->
 
 <h1>World gen</h1>
@@ -1649,8 +1649,9 @@
       <td>
         <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53 landed the
         character-creation pipeline itself, but resume from those phases remains unimplemented —
-        re-trigger via owner-side <code>POST /start-character-creation</code> instead. The
-        downstream ticket reference is logged server-side, not in the response.
+        a player re-triggers their own per-player pipeline by re-POSTing
+        <code>POST /characters</code> instead. The downstream ticket reference is logged
+        server-side, not in the response.
       </td>
     </tr>
     <tr>

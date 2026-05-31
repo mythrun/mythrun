@@ -2269,8 +2269,9 @@
       <td>
         <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53 landed the
         character-creation pipeline itself, but resume from those phases remains unimplemented —
-        re-trigger via owner-side <code>POST /start-character-creation</code> instead. The
-        downstream ticket reference is logged server-side, not in the response.
+        a player re-triggers their own per-player pipeline by re-POSTing
+        <code>POST /characters</code> instead. The downstream ticket reference is logged
+        server-side, not in the response.
       </td>
     </tr>
     <tr>

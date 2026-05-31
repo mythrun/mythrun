@@ -6,7 +6,7 @@
 <!-- source: backend/src/routes/campaign-characters.ts -->
 <!-- source: backend/migrations/018_character_integration.sql -->
 <!-- source: docs/superpowers/specs/2026-05-23-myt-54-character-integration-design.md -->
-<!-- source-hash: sha256:b4ba1a24019840be602f90a6c5c38e48e38ff571f240519c153c67bd952c4fe4 -->
+<!-- source-hash: sha256:ec7e63d8f025b0e5580e7958adc8350a5163033bce2e59bdc58b026fa09dcef8 -->
 <!-- last-ticket: MYT-54 -->
 
 <h1>Character integration</h1>
@@ -315,8 +315,8 @@
       <td><code>processing</code></td>
       <td>
         POST <code>/characters</code> — the member's own submit atomically flips the row to
-        processing and enqueues the per-player job in the same transaction (no separate owner
-        trigger).
+        processing (committed alongside a <code>character_concept</code> recovery row) and enqueues
+        the per-player job right after that transaction commits (no separate owner trigger).
       </td>
     </tr>
     <tr>

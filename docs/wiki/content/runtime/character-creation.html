@@ -18,7 +18,7 @@
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md -->
-<!-- source-hash: sha256:d306a6c6a9d30c3bbb76ba8613a17997f423efa52ad25c9547887a0c143a02fd -->
+<!-- source-hash: sha256:a8643de07704437da801739e9803fa870d1fb88ffae3bcb64f63b22d8d853db1 -->
 <!-- last-ticket: MYT-54 -->
 
 <h1>Character creation</h1>
@@ -27,10 +27,11 @@
   The per-player parallel character-creation surface. After world-gen completes and the wiki
   snapshot is fetchable, the owner picks one of the three generated starting situations for the
   entire party, and each member submits a character (a concept text plus a situation-grounding
-  text). Every <code>POST /characters</code> auto-flips the player's
-  <code>character_concepts</code> row to <code>'processing'</code> inside the same transaction and
-  enqueues one <code>character-creation</code> job on the <code>campaign-setup</code> BullMQ queue —
-  there is no separate owner fan-out step. Each job walks three stages (<code
+  text). Every <code>POST /characters</code> commits one transaction that flips the player's
+  <code>character_concepts</code> row to <code>'processing'</code> AND seeds a
+  <code>character_concept</code> recovery row in <code>pipeline_runs</code>, then — after that
+  transaction commits — enqueues one <code>character-creation</code> job on the
+  <code>campaign-setup</code> BullMQ queue. There is no separate owner fan-out step. Each job walks three stages (<code
     >location_selection</code
   >
   → <code>character_concept</code> → <code>character_sheet</code>) and ends with a populated
@@ -75,9 +76,12 @@ creation            │   campaigns.starting_situation_index ← {0,1,2}   │
                     │ Step 2: Each member submits, auto-fires job      │
                     │   POST /api/campaigns/:id/characters             │
                     │   { conceptText, situationGroundingText }        │
-                    │   In the same transaction:                       │
+                    │   In one transaction:                            │
                     │   - UPSERT character_concepts row                │
                     │   - Atomically flip → 'processing'               │
+                    │   - Seed 'pending' character_concept             │
+                    │     pipeline_runs recovery row                   │
+                    │   AFTER COMMIT:                                  │
                     │   - Enqueue per-player job on campaign-setup     │
                     │     queue (jobId = cc-CAMPAIGN-USER)             │
                     │   (re-POST while 'failed' resets to submitted)   │
@@ -123,7 +127,8 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   the entire party (not per-character) is the other half of the same simplification — different
   characters cannot have different starting situations and still play together. Once the situation
   is chosen, members no longer need an owner action to start their pipeline — submitting their
-  character flips the row to processing and enqueues the job in the same transaction.
+  character flips the row to processing (committed alongside a recovery row) and enqueues the job
+  right after that transaction commits.
 </aside>
 
 <h2>The two-prompt model</h2>
@@ -197,11 +202,13 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       <td><code>POST /api/campaigns/:campaignId/characters</code></td>
       <td>Member</td>
       <td>
-        UPSERTs the caller's <code>character_concepts</code> row with
+        In one transaction, UPSERTs the caller's <code>character_concepts</code> row with
         <code>{ conceptText, situationGroundingText }</code>, atomically flips it from
-        <code>'submitted'</code> to <code>'processing'</code> in the same transaction, and enqueues
-        the per-player <code>character-creation</code> job on the <code>campaign-setup</code> queue.
-        Returns <code>200 { conceptId, status: 'processing', jobId }</code>.
+        <code>'submitted'</code> to <code>'processing'</code>, and seeds a <code>'pending'</code>
+        <code>character_concept</code> recovery row in <code>pipeline_runs</code>. After the
+        transaction commits, it enqueues the per-player <code>character-creation</code> job on the
+        <code>campaign-setup</code> queue. Returns
+        <code>200 { conceptId, status: 'processing', jobId }</code>.
         <code>409 'concept_locked'</code> for <code>'processing'</code> / <code>'completed'</code>;
         <code>503 'queue_not_ready'</code> if the queue connection is unhealthy. Re-POSTing while
         <code>'failed'</code> resets the row and re-enqueues.
@@ -383,6 +390,21 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <code>'processing'</code> or <code>'completed'</code> (409 <code>concept_locked</code>).
 </p>
 
+<aside class="wiki-rationale">
+  <strong>Enqueue after commit, with a recovery row inside the commit</strong> — the
+  <code>queue.add</code> sits AFTER the submit transaction commits, never inside <code>BEGIN</code>.
+  A <code>queue.add</code> wrapped in <code>BEGIN/COMMIT</code> is the "enqueued but the commit
+  rolled back" zombie-job shape this refactor exists to eliminate. The trade is the opposite window:
+  a Redis blip between <code>COMMIT</code> and <code>queue.add</code> could leave a concept stranded
+  at <code>'processing'</code> with no job ever running. The fix is to seed a <code>'pending'</code>
+  <code>character_concept</code> row in <code>pipeline_runs</code> <em>inside</em> the same
+  transaction (mirroring world-gen's seed-row contract). A missed enqueue therefore leaves a
+  resumable trace: <code>derivePhase</code> maps the <code>'pending'</code>
+  <code>character_concept</code> row to <code>'character_creation'</code>, and the worker's
+  campaign-user atomic claim re-arms that pending row to <code>'running'</code> via
+  <code>ON CONFLICT</code> rather than double-inserting.
+</aside>
+
 <p>
   The flow is symmetric for late joiners — members who accept invites after the rest of the party
   has submitted — since the per-player job fires on the member's own POST, not an owner action:
@@ -394,9 +416,10 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
     <code>character_concepts</code> row yet.
   </li>
   <li>
-    Late member POSTs <code>/characters</code>. The same transaction creates the row, flips it to
-    <code>'processing'</code>, and enqueues the per-player job. No owner action required. Other
-    members' <code>'completed'</code> rows are untouched.
+    Late member POSTs <code>/characters</code>. One transaction creates the row, flips it to
+    <code>'processing'</code>, and seeds the recovery row; the per-player job is enqueued right after
+    that transaction commits. No owner action required. Other members' <code>'completed'</code> rows
+    are untouched.
   </li>
   <li>Late-joiner's character creation runs in parallel with any other in-flight jobs.</li>
 </ol>
@@ -404,8 +427,9 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 <p>
   Failure handling is per-player and resubmittable. On terminal stage failure the processor sets
   <code>character_concepts.status='failed'</code> and writes the error JSON; the player re-POSTs
-  <code>/characters</code> to reset the row and re-enqueue the job in the same transaction (no
-  separate owner trigger). The processor's re-run is idempotent at the stage boundary, not
+  <code>/characters</code>, which commits the reset-row + recovery-row transaction and then
+  re-enqueues the job after commit (no separate owner trigger). The processor's re-run is idempotent
+  at the stage boundary, not
   delete-and-recreate: stage 3 detects an existing <code>characters</code> row for
   <code>(campaign_id, user_id)</code> and UPDATEs rather than INSERTs (TRUNCATE-then-INSERT on the
   four sub-tables). The frontend reframes the second prompt for late joiners ("describe the

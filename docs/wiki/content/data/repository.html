@@ -1,6 +1,6 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:0b7611c21316af4a8686f06aef231964179e54ccf7de345161a37329f70d03dc -->
+<!-- source-hash: sha256:fe8b4e5a508e4406a1c56706425005e893e2195f157843d2336e0eb20ca60a1e -->
 <!-- last-ticket: myth-p4sz -->
 
 <h1>Repository layer</h1>
@@ -249,9 +249,12 @@
   <code>character_concepts</code> follows the rule: its own repo
   (<code>backend/src/repo/character-concepts.ts</code>) ships under MYT-53 with exactly the
   primitives the routes and the worker need (<code>upsert</code>, <code>getByCampaignAndUser</code>,
-  <code>listSubmittedByCampaign</code>, the four status flips, and the transactional
-  <code>flipAllSubmittedToProcessing</code> the fan-out route wraps in a BEGIN/COMMIT with the
-  BullMQ enqueue), because the concept lifecycle has a real consumer to shape it against.
+  <code>listSubmittedByCampaign</code>, <code>countCompleted</code>, the four status flips, and the
+  composable <code>flipSubmittedToProcessing</code>), because the concept lifecycle has a real
+  consumer to shape it against. Cluster C dropped that flip's explicit BEGIN/COMMIT so it composes
+  into <code>POST /characters</code>' <code>repo.transaction</code> (upsert → flip →
+  seed the <code>character_concept</code> recovery row), with the BullMQ enqueue moved to AFTER the
+  commit (the MYT-56 shape).
 </p>
 
 <h2>Camel out, snake in: mappers at the boundary</h2>
@@ -1207,10 +1210,12 @@
       <td>
         <code>createCharacterConceptsRepo(pool)</code> — <code>upsert</code> (member submission; ON
         CONFLICT (campaign_id, user_id) DO UPDATE), <code>getByCampaignAndUser</code>,
-        <code>listSubmittedByCampaign</code>, the four status flips (<code>markProcessing</code>,
-        <code>markCompleted</code>, <code>markFailed</code>, the transactional
-        <code>flipAllSubmittedToProcessing(client, ...)</code> the fan-out route wraps in a
-        BEGIN/COMMIT alongside the BullMQ enqueue).
+        <code>listSubmittedByCampaign</code>, <code>countCompleted</code>,
+        <code>loadCompletedParty</code>, the four status flips (<code>markProcessing</code>,
+        <code>markCompleted</code>, <code>markFailed</code>, <code>markIntegrated</code>), and the
+        composable <code>flipSubmittedToProcessing</code> — Cluster C dropped its explicit
+        BEGIN/COMMIT so <code>POST /characters</code> composes it into <code>repo.transaction</code>
+        (with the BullMQ enqueue moved AFTER the commit).
       </td>
     </tr>
     <tr>
@@ -1274,12 +1279,16 @@
       <td>
         <code>pipelineRunsNs(c)</code> — <code>listLatestForCampaign</code>,
         <code>getLatestFailedForWorld</code>, <code>isStageCompleted</code>,
-        <code>insertSeedRow</code>; plus the prep-pipeline claim/completion bookkeeping
+        <code>insertSeedRow</code>, and (Cluster C) the composable
+        <code>insertCharacterConceptSeedRow</code> — the campaign-user-keyed analogue
+        <code>POST /characters</code> seeds inside its <code>repo.transaction</code> so a missed
+        enqueue stays resumable; plus the prep-pipeline claim/completion bookkeeping
         <code>claimStage</code> (the atomic INSERT-or-coerce, dispatched on a world / campaign-user
         / campaign <code>ClaimRequest</code>), <code>markStageCompleted</code>,
-        <code>markStageFailed</code>, and <code>sumCostForWorld</code> (the cost-cap sum) — the last
-        four pool-bound by design so the bookkeeping survives a stage-tx rollback;
-        <code>createPipelineRunsRepo(pool)</code> back-compat factory.
+        <code>markStageFailed</code>, <code>sumCostForWorld</code> (the cost-cap sum), and
+        <code>sumCharacterCreationStageCosts</code> (the character-creation cap pre-flight) — the
+        claim/completion/sum methods pool-bound by design so the bookkeeping survives a stage-tx
+        rollback; <code>createPipelineRunsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
     <tr>
