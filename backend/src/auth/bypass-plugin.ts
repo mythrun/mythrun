@@ -11,16 +11,62 @@
 //
 // Spec: docs/superpowers/specs/2026-04-30-myt-37-jwt-middleware-design.md §4 + §6.
 
+import os from 'node:os'
 import type { FastifyPluginAsync } from 'fastify'
 import fastifyPlugin from 'fastify-plugin'
 import { REGISTERED_DECORATOR } from './constants.js'
 import type { AuthUser } from './types.js'
 
-const BYPASS_USER: AuthUser = {
-  sub: 'bypass:dev-1',
-  cognitoUsername: 'bypass_dev_1',
-  scopes: Object.freeze(['bypass']),
+// myth-yetw: derive the default bypass sub from os.hostname() so that
+// multiple devs sharing a dev DB (or a staging DB) each register a distinct
+// users row instead of all colliding on a single `bypass:dev-1` literal.
+//
+// CRITICAL: the `bypass:` prefix is preserved. It's keyed on by dev-credits,
+// the rejection-storm per-sub counters, and the sibling users.cognito_sub
+// `NOT LIKE 'bypass:%'` CHECK constraint work (myth-sea4). Only the suffix
+// varies per machine.
+const BYPASS_SUB_PREFIX = 'bypass:'
+// Test/CI determinism override ONLY. When set, the bypass sub is this value
+// verbatim, bypassing hostname derivation. The integration suite pins this
+// to `bypass:dev-1` (in src/__tests__/setup-env.ts) so the many test files
+// that hardcode that sub + mock getByCognitoSub on it keep passing across
+// machines. Production and ordinary dev never set this → hostname-derived
+// per-machine subs, as designed. Read at registration time, same as the
+// hostname path.
+const BYPASS_SUB_ENV = 'MYTHRUN_BYPASS_SUB'
+// Bound the derived slug so a pathologically long hostname can't produce an
+// unbounded sub. 64 chars of slug is plenty to keep machines distinct.
+const MAX_SLUG_LEN = 64
+// Stable fallback when a hostname sanitizes to empty (e.g. all-unsafe chars)
+// so the sub is always valid and non-empty.
+const EMPTY_HOSTNAME_FALLBACK = 'dev'
+
+/** Sanitize a raw hostname into a safe, stable sub slug: lowercase, replace
+ *  any run of non-[a-z0-9] characters with a single dash, trim leading and
+ *  trailing dashes, bound length, and fall back to a stable token when the
+ *  result is empty. Pure + deterministic — same hostname → same slug. */
+const sanitizeHostname = (hostname: string): string => {
+  const slug = hostname
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, MAX_SLUG_LEN)
+    .replace(/-+$/g, '')
+  return slug.length > 0 ? slug : EMPTY_HOSTNAME_FALLBACK
 }
+
+/** Build the default bypass user for this machine, `bypass:` prefix
+ *  preserved. Called at plugin-registration time (not module load) so both
+ *  the MYTHRUN_BYPASS_SUB override and the hostname are read when the app
+ *  boots. The override (test/CI determinism only) wins; otherwise the sub is
+ *  hostname-derived per machine. The static `bypass_dev_1` cognitoUsername
+ *  stays fixed — only the identity-bearing `sub` varies. */
+const buildBypassUser = (): AuthUser =>
+  Object.freeze({
+    sub: process.env[BYPASS_SUB_ENV] ?? `${BYPASS_SUB_PREFIX}${sanitizeHostname(os.hostname())}`,
+    cognitoUsername: 'bypass_dev_1',
+    scopes: Object.freeze(['bypass']),
+  })
 
 export interface BypassPluginOptions {
   /** Plumbed in from loadEnv. Layer 3 rejects if any are populated. */
@@ -99,9 +145,13 @@ const bypassPluginImpl: FastifyPluginAsync<BypassPluginOptions> = async (app, op
     )
   }
 
+  // Build the default bypass user once per registration (hostname read at
+  // boot, not module load — see buildBypassUser). The hook closes over this.
+  const bypassUser = buildBypassUser()
+
   // Layer 4: loud, structured warning at registration.
   app.log.warn(
-    { event: 'auth.bypass_mode_active' },
+    { event: 'auth.bypass_mode_active', sub: bypassUser.sub },
     'AUTH BYPASS MODE: all requests authenticated as dev user. NEVER run in staging/production.',
   )
 
@@ -142,17 +192,17 @@ const bypassPluginImpl: FastifyPluginAsync<BypassPluginOptions> = async (app, op
     // Per-request sub override via the `x-mythrun-dev-sub` header. Tests
     // that exercise per-sub-keyed flows (rate-limit per-sub keying after
     // MYT-45, future ownership-matrix tests) need unique subs per test;
-    // without the override, every bypass request collapses to
-    // `bypass:dev-1` and per-sub counters / lookups bleed across tests.
-    // Production never sees this header because bypass is gated by
+    // without the override, every bypass request collapses to the
+    // hostname-derived default and per-sub counters / lookups bleed across
+    // tests. Production never sees this header because bypass is gated by
     // Layers 2a/2b/3 — only fires in NODE_ENV=development|test off-ECS
     // with no Cognito config.
     const subHeader = request.headers['x-mythrun-dev-sub']
     const overrideSub = typeof subHeader === 'string' && subHeader.length > 0 ? subHeader : null
     if (overrideSub !== null) {
-      request.user = Object.freeze({ ...BYPASS_USER, sub: overrideSub })
+      request.user = Object.freeze({ ...bypassUser, sub: overrideSub })
     } else {
-      request.user = BYPASS_USER
+      request.user = bypassUser
     }
   })
 }

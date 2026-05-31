@@ -1,3 +1,4 @@
+import os from 'node:os'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -19,6 +20,13 @@ afterEach(() => {
 
 import { bypassPlugin } from '../bypass-plugin.js'
 
+// SAFE_DEV_ENV establishes the dev-mode baseline. setup-env.ts pins
+// MYTHRUN_BYPASS_SUB = 'bypass:dev-1' for the whole suite (so the ~10 files
+// that hardcode that sub keep passing across machines), so the default
+// attach path here asserts that pinned override value. The hostname-
+// derivation tests below explicitly delete MYTHRUN_BYPASS_SUB to exercise
+// the os.hostname() path. afterEach restores the os.hostname spy via
+// vi.restoreAllMocks.
 const SAFE_DEV_ENV = (): void => {
   vi.stubEnv('NODE_ENV', 'development')
   vi.stubEnv('COGNITO_USER_POOL_ID', '')
@@ -29,6 +37,11 @@ const SAFE_DEV_ENV = (): void => {
   mockFetchImpl = () => Promise.reject(new Error('ECONNREFUSED'))
 }
 
+// The suite-wide pinned bypass sub (setup-env.ts). The default-path tests
+// assert this; the hostname-derivation tests delete the env var to reach the
+// os.hostname() branch instead.
+const PINNED_SUB = 'bypass:dev-1'
+
 describe('bypassPlugin', () => {
   let app: FastifyInstance | undefined
 
@@ -37,6 +50,10 @@ describe('bypassPlugin', () => {
   })
   afterEach(async () => {
     if (app) await app.close()
+    // Restore os.hostname spy (SAFE_DEV_ENV installs it) so it doesn't
+    // leak to sibling tests sharing this fork. vi.unstubAllEnvs is handled
+    // globally in setup-env.ts; vi.spyOn is not, so we restore here.
+    vi.restoreAllMocks()
   })
 
   it('attaches BYPASS_USER on protected route', async () => {
@@ -51,7 +68,7 @@ describe('bypassPlugin', () => {
     const res = await app.inject({ method: 'GET', url: '/protected' })
     expect(res.statusCode).toBe(200)
     expect(attached).toEqual({
-      sub: 'bypass:dev-1',
+      sub: PINNED_SUB,
       cognitoUsername: 'bypass_dev_1',
       scopes: ['bypass'],
     })
@@ -194,7 +211,7 @@ describe('bypassPlugin', () => {
     })
     const res = await app.inject({ method: 'GET', url: '/parent-route' })
     expect(res.statusCode).toBe(200)
-    expect(attached).toMatchObject({ sub: 'bypass:dev-1' })
+    expect(attached).toMatchObject({ sub: PINNED_SUB })
   })
 
   it('public route: no user attached', async () => {
@@ -278,6 +295,118 @@ describe('bypassPlugin', () => {
       headers: { 'x-mythrun-dev-sub': '' },
     })
     expect(res.statusCode).toBe(200)
-    expect(attached.sub).toBe('bypass:dev-1')
+    expect(attached.sub).toBe(PINNED_SUB)
+  })
+
+  const attachDefaultSub = async (): Promise<string> => {
+    const instance = Fastify({ logger: false })
+    app = instance
+    await instance.register(bypassPlugin, {})
+    let sub = ''
+    instance.get('/protected', (request) => {
+      sub = (request.user as { sub: string }).sub
+      return { ok: true }
+    })
+    const res = await instance.inject({ method: 'GET', url: '/protected' })
+    expect(res.statusCode).toBe(200)
+    return sub
+  }
+
+  // --- myth-yetw: MYTHRUN_BYPASS_SUB full-sub override (test/CI determinism) ---
+
+  it('MYTHRUN_BYPASS_SUB overrides hostname derivation verbatim', async () => {
+    SAFE_DEV_ENV()
+    // Override wins even with a hostname spy that would derive a different sub.
+    vi.spyOn(os, 'hostname').mockReturnValue('some-other-host')
+    vi.stubEnv('MYTHRUN_BYPASS_SUB', 'bypass:override-verbatim')
+    const sub = await attachDefaultSub()
+    expect(sub).toBe('bypass:override-verbatim')
+  })
+
+  // --- myth-yetw: hostname-derived bypass sub ---
+  // With MYTHRUN_BYPASS_SUB deleted, the bypass sub is derived from
+  // os.hostname() so that multiple devs sharing a dev DB (or staging) don't
+  // collide on a single users row. The `bypass:` prefix MUST be preserved —
+  // it's keyed on by dev-credits, the rejection-storm per-sub counters, and
+  // the sibling cognito_sub `NOT LIKE 'bypass:%'` CHECK work (myth-sea4).
+  //
+  // setup-env.ts pins MYTHRUN_BYPASS_SUB for the whole suite, so these tests
+  // delete it (via vi.stubEnv(..., undefined); vi.unstubAllEnvs in the global
+  // afterEach restores it) to reach the os.hostname() branch.
+  const clearBypassSubOverride = (): void => {
+    vi.stubEnv('MYTHRUN_BYPASS_SUB', undefined)
+  }
+
+  it('derives the default sub from os.hostname() and keeps the bypass: prefix', async () => {
+    SAFE_DEV_ENV()
+    clearBypassSubOverride()
+    vi.spyOn(os, 'hostname').mockReturnValue('Alices-MacBook-Pro.local')
+    const sub = await attachDefaultSub()
+    expect(sub.startsWith('bypass:')).toBe(true)
+    expect(sub).toBe('bypass:alices-macbook-pro-local')
+  })
+
+  it('produces distinct subs for distinct hostnames', async () => {
+    SAFE_DEV_ENV()
+    clearBypassSubOverride()
+    vi.spyOn(os, 'hostname').mockReturnValue('host-one')
+    const subOne = await attachDefaultSub()
+    await app?.close()
+
+    vi.spyOn(os, 'hostname').mockReturnValue('host-two')
+    const subTwo = await attachDefaultSub()
+
+    expect(subOne).not.toBe(subTwo)
+    expect(subOne.startsWith('bypass:')).toBe(true)
+    expect(subTwo.startsWith('bypass:')).toBe(true)
+  })
+
+  it('produces a stable sub for a given hostname (deterministic)', async () => {
+    SAFE_DEV_ENV()
+    clearBypassSubOverride()
+    vi.spyOn(os, 'hostname').mockReturnValue('Stable-Host.local')
+    const first = await attachDefaultSub()
+    await app?.close()
+
+    vi.spyOn(os, 'hostname').mockReturnValue('Stable-Host.local')
+    const second = await attachDefaultSub()
+
+    expect(first).toBe(second)
+    expect(first).toBe('bypass:stable-host-local')
+  })
+
+  it('sanitizes hostnames with unsafe characters, collapses runs, and trims dashes', async () => {
+    SAFE_DEV_ENV()
+    clearBypassSubOverride()
+    // Mixed case, dots, underscores, spaces, and a trailing unsafe run.
+    vi.spyOn(os, 'hostname').mockReturnValue('  Böb_Dev Box!! .local  ')
+    const sub = await attachDefaultSub()
+    expect(sub.startsWith('bypass:')).toBe(true)
+    // Everything after the prefix is a clean [a-z0-9-] slug with no
+    // leading/trailing dashes and no repeated dashes.
+    const slug = sub.slice('bypass:'.length)
+    expect(slug).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  })
+
+  it('bounds the derived sub length for pathologically long hostnames', async () => {
+    SAFE_DEV_ENV()
+    clearBypassSubOverride()
+    vi.spyOn(os, 'hostname').mockReturnValue('a'.repeat(500))
+    const sub = await attachDefaultSub()
+    expect(sub.startsWith('bypass:')).toBe(true)
+    // The slug is bounded; assert it didn't pass through the full 500 chars.
+    expect(sub.length).toBeLessThanOrEqual('bypass:'.length + 64)
+  })
+
+  it('falls back to a stable slug when the hostname sanitizes to empty', async () => {
+    SAFE_DEV_ENV()
+    clearBypassSubOverride()
+    // A hostname made entirely of unsafe characters sanitizes to '' — the
+    // derivation must still yield a valid, prefixed, non-empty sub.
+    vi.spyOn(os, 'hostname').mockReturnValue('!!!@@@###')
+    const sub = await attachDefaultSub()
+    expect(sub.startsWith('bypass:')).toBe(true)
+    expect(sub.length).toBeGreaterThan('bypass:'.length)
+    expect(sub.slice('bypass:'.length)).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
   })
 })
