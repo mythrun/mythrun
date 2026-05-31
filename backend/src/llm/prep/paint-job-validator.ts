@@ -27,11 +27,31 @@ const JUDGE_TEMPLATE = readFileSync(
   'utf8',
 )
 
+// myth-3e4y: the judge scores TWO IP-mirror axes now, not one.
+//   - structural mirroring (plot/characters/factions/setting reads as a
+//     re-skin of a known work) — the original check.
+//   - vocabulary mirroring (the concept invokes a single franchise so
+//     directly that the world's natural vocabulary will lean into that
+//     franchise's *invented* neologisms downstream: "muggle", "Statute of
+//     Secrecy", "Floo", "midi-chlorian", "mithril", "Mystra", "Faerûn").
+// A concept with structurally original bones can still fail on vocabulary
+// (Veil & Chalk did: original Section-14 / Hedgewise / Founders'-Vault
+// world-building, but the magical/mundane interface vocabulary leaked
+// verbatim JKR-coined terms downstream). `failureKind` records WHICH axis
+// (or both) drove the flag so the retry can steer off it precisely.
+//
+// `adjacentFranchise` is a soft signal independent of the flag: even a
+// concept that clears the gate can be franchise-adjacent. It's surfaced on
+// the result so downstream UI (world inspector / world-snapshot) can show
+// "this world sits near <franchise>" without re-deriving it. Null when the
+// concept invokes no single dominant franchise.
 const PaintJobJudgementSchema = z.object({
   flagged: z.boolean(),
   confidence: z.number().min(0).max(1),
   mirroredWork: z.string().nullable(),
   specificDriftAxes: z.array(z.string().min(1).max(400)).max(8),
+  failureKind: z.enum(['structural', 'vocabulary', 'both', 'none']),
+  adjacentFranchise: z.string().min(1).max(120).nullable(),
 })
 export type PaintJobJudgement = z.infer<typeof PaintJobJudgementSchema>
 
@@ -73,6 +93,10 @@ export interface ValidateAndGenerateArgs<TDraft> {
 export interface ValidateAndGenerateResult<TDraft> {
   readonly draft: TDraft
   readonly attempts: number
+  // myth-3e4y: the franchise this world sits closest to, as judged at the
+  // attempt that cleared the gate. Null when the judge saw no single
+  // dominant franchise. A soft signal for downstream UI — does NOT gate.
+  readonly adjacentFranchise: string | null
   readonly totalUsage: {
     inputTokens: number
     outputTokens: number
@@ -120,6 +144,7 @@ export async function validateAndGenerateConcept<TDraft>(
       return {
         draft: genResult.output,
         attempts: attempt,
+        adjacentFranchise: judgeResult.output.adjacentFranchise,
         totalUsage,
       }
     }
@@ -145,14 +170,25 @@ function buildRetryPrompt(basePrompt: string, lastJudgement: PaintJobJudgement |
    * lastJudgement; the null arm is the seed for the first build. */
   const driftAxes = lastJudgement?.specificDriftAxes.join(', ') ?? ''
   const mirroredWork = lastJudgement?.mirroredWork ?? 'a recognizable copyrighted work'
+  const failureKind = lastJudgement?.failureKind ?? 'structural'
   /* c8 ignore stop */
+  // myth-3e4y: when the flag was (partly) a vocabulary mirror, the structural
+  // amendment alone isn't enough — the regeneration can keep the same bones
+  // and still slide back into the franchise's invented neologisms. Append an
+  // explicit vocabulary-steer clause so the retry moves off BOTH the
+  // structure and the franchise-iconic vocabulary.
+  const vocabularySteer =
+    failureKind === 'vocabulary' || failureKind === 'both'
+      ? ` This world also leaned so hard into ${mirroredWork} that its natural vocabulary would pull in that franchise's franchise-iconic invented terms downstream. Move the concept far enough from ${mirroredWork} that no reader would reach for those signature neologisms; invent the world's own distinctive vocabulary instead.`
+      : ''
   return (
     basePrompt +
     '\n\n---\n\n' +
     `IMPORTANT (retry pass): an earlier draft of this world mirrored ${mirroredWork} along these axes: ${driftAxes}. ` +
     `Do NOT iterate on that direction. Explore a fundamentally different aesthetic register, ` +
     `different faction archetype, different plot shape. The output must read as a fresh original world, ` +
-    `not a corrected version of the prior attempt.`
+    `not a corrected version of the prior attempt.` +
+    vocabularySteer
   )
 }
 

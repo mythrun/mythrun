@@ -34,6 +34,8 @@ function mockJudge(judgement: Partial<PaintJobJudgement>): void {
       confidence: 0.95,
       mirroredWork: null,
       specificDriftAxes: [],
+      failureKind: 'none',
+      adjacentFranchise: null,
       ...judgement,
     },
     finishReason: 'stop',
@@ -179,6 +181,126 @@ describe('validateAndGenerateConcept', () => {
     >
     expect(firstGenCall.temperature).toBeCloseTo(0.9)
     expect(secondGenCall.temperature).toBeCloseTo(1.0)
+  })
+
+  // ------------------------------------------------------------------
+  // Vocabulary-mirroring check (myth-3e4y)
+  //
+  // The judge now scores VOCABULARY mirroring on top of structural
+  // mirroring: a concept can have structurally original bones yet invoke
+  // a single franchise so directly that downstream stages will leak that
+  // franchise's iconic neologisms (Veil & Chalk → "muggle"/"Statute of
+  // Secrecy"/"Floo"). Such a concept is rejected even though the existing
+  // structural axes (plot/characters/factions/setting) all clear.
+  // ------------------------------------------------------------------
+
+  it('rejects a vocabulary-mirroring concept that clears the structural check', async () => {
+    // Veil & Chalk shape: structurally original (failureKind=vocabulary,
+    // not structural), but so HP-shaped that downstream vocabulary leaks.
+    mockGenerator({ name: 'Veil & Chalk', concept: 'wizarding academy + hidden mundane world' })
+    mockJudge({
+      flagged: true,
+      confidence: 0.93,
+      mirroredWork: 'Harry Potter',
+      specificDriftAxes: ['vocabulary: "muggle"/"Statute of Secrecy"/"Floo" will leak downstream'],
+      failureKind: 'vocabulary',
+      adjacentFranchise: 'Harry Potter',
+    })
+    // Three flagged attempts → terminal (the concept is fundamentally
+    // franchise-shaped; re-running yields the same flag).
+    mockGenerator({ name: 'Veil 2', concept: 'still a wizarding academy' })
+    mockJudge({
+      flagged: true,
+      confidence: 0.93,
+      mirroredWork: 'Harry Potter',
+      specificDriftAxes: ['vocabulary'],
+      failureKind: 'vocabulary',
+      adjacentFranchise: 'Harry Potter',
+    })
+    mockGenerator({ name: 'Veil 3', concept: 'still a wizarding academy' })
+    mockJudge({
+      flagged: true,
+      confidence: 0.93,
+      mirroredWork: 'Harry Potter',
+      specificDriftAxes: ['vocabulary'],
+      failureKind: 'vocabulary',
+      adjacentFranchise: 'Harry Potter',
+    })
+
+    await expect(
+      validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema }),
+    ).rejects.toThrow(/concept_intake_paint_job_loop_exhausted/)
+  })
+
+  it('passes a structurally-clean concept and surfaces adjacentFranchise=null on the result', async () => {
+    // Sword-and-sorcery shape: borrows generic genre furniture but invokes
+    // no single franchise — failureKind=none, adjacentFranchise=null.
+    mockGenerator({ name: 'Saltmarch', concept: 'feuding coastal city-states' })
+    mockJudge({
+      flagged: false,
+      confidence: 0.96,
+      mirroredWork: null,
+      specificDriftAxes: [],
+      failureKind: 'none',
+      adjacentFranchise: null,
+    })
+
+    const result = await validateAndGenerateConcept({
+      basePrompt: 'Generate a world',
+      schema: TestSchema,
+    })
+    expect(result.draft.name).toBe('Saltmarch')
+    expect(result.attempts).toBe(1)
+    expect(result.adjacentFranchise).toBeNull()
+  })
+
+  it('surfaces adjacentFranchise on the result when a passing concept is franchise-adjacent', async () => {
+    // A concept can clear the flag (confidence at-or-below threshold) yet
+    // still be adjacent to a franchise. The validator surfaces that soft
+    // signal so downstream UI / world-snapshot can display it (myth-3e4y #4).
+    mockGenerator({ name: 'Veil & Chalk', concept: 'wizarding academy, original bones' })
+    mockJudge({
+      flagged: true,
+      confidence: 0.8, // <= FLAG_THRESHOLD (0.85) → not rejected
+      mirroredWork: 'Harry Potter',
+      specificDriftAxes: ['vocabulary'],
+      failureKind: 'vocabulary',
+      adjacentFranchise: 'Harry Potter',
+    })
+
+    const result = await validateAndGenerateConcept({
+      basePrompt: 'Generate a world',
+      schema: TestSchema,
+    })
+    expect(result.attempts).toBe(1)
+    expect(result.adjacentFranchise).toBe('Harry Potter')
+  })
+
+  it('steers the retry off the franchise vocabulary when failureKind=vocabulary', async () => {
+    mockGenerator({ name: 'Veil & Chalk', concept: 'wizarding academy + hidden mundane world' })
+    mockJudge({
+      flagged: true,
+      confidence: 0.93,
+      mirroredWork: 'Harry Potter',
+      specificDriftAxes: ['Section-14-style mundane-intelligence framing'],
+      failureKind: 'vocabulary',
+      adjacentFranchise: 'Harry Potter',
+    })
+    mockGenerator({ name: 'Hollowfen', concept: 'bog-witch fenland with no academy' })
+    mockJudge({ flagged: false, confidence: 0.95 })
+
+    await validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema })
+
+    const secondGenCall = vi.mocked(ai.generateText).mock.calls.at(2)?.[0] as unknown as Record<
+      string,
+      unknown
+    >
+    // The retry prompt must carry an explicit vocabulary-steer clause keyed
+    // off failureKind — NOT merely echo the drift-axes string (here the axis
+    // doesn't even contain the word "vocabulary"). Pins the failureKind-driven
+    // branch in buildRetryPrompt.
+    expect(secondGenCall.prompt).toContain('franchise-iconic')
+    expect(secondGenCall.prompt).toContain('Harry Potter')
   })
 
   // ------------------------------------------------------------------

@@ -1,16 +1,34 @@
 You are reviewing a draft D&D world specification for IP-paint-job concerns.
 
+You score TWO kinds of IP mirroring. A draft fails on EITHER one.
+
+1. STRUCTURAL mirroring
 A "paint-job clone" is a world that, despite using original names, structurally mirrors a recognizable copyrighted work. Consider:
 - Plot structure (chosen one, ring quest, magical-academy-with-evil-rivals)
 - Character archetypes that map 1:1 to a known IP (boy wizard with scar, farm boy with destiny)
 - Faction shapes (dark lord + minions; rebel alliance + galactic empire)
 - Setting tropes that read as a specific work re-skinned
 
-Original tropes are FINE. Magical schools exist. Chosen-one stories exist. Ring quests exist. The bar is "does this read as a thin paint-job of a specific work, regardless of the names used?"
+Original tropes are FINE. Magical schools exist. Chosen-one stories exist. Ring quests exist. The structural bar is "does this read as a thin paint-job of a specific work, regardless of the names used?"
+
+2. VOCABULARY mirroring
+A world can have structurally ORIGINAL bones and still invoke a single franchise so directly that its NATURAL vocabulary will lean into that franchise's signature invented terms downstream. This is the more subtle failure and it is the one this check exists to catch.
+
+The danger is *invented* neologisms a single franchise coined and is known/enforced for — for example: "Statute of Secrecy", "muggle", "Floo", "pure-blood" (Harry Potter); "midi-chlorian", "the Force", "lightsaber" (Star Wars); "mithril", "Mystra", "Faerûn", "Underdark" (Tolkien / D&D-adjacent franchises). The test: would a writer fleshing out THIS concept naturally reach for a specific franchise's coined vocabulary because the concept is so close to that franchise's premise?
+
+A clear example that FAILS on vocabulary even while passing on structure: "a magical world with a wizarding academy, alongside a non-magical world unaware the magical one exists, set in the present day." The world-building can be genuinely original (its own secret-keeping institutions, its own metaphysics) — but it is so Harry-Potter-shaped that the magical/mundane interface vocabulary will leak HP's coined terms ("muggle", "Statute of Secrecy", "Floo"). Flag it.
+
+What is NOT a vocabulary problem: generic genre words drawn from folklore and the public domain (wand, wizard, witch, spell, sword, ring, dragon, elf). Do NOT flag a world for using those — they belong to everyone. Vocabulary mirroring is about *invented* franchise-coined words, not borrowed-from-folklore ones.
 
 DRAFT TO JUDGE
 
 {{draft}}
 
 OUTPUT
-Return JSON. confidence is "confidence in the negative finding" — 0.92 on flagged=true means "92% sure this is a paint-job." If you flag, specify which work it mirrors and along which axes (plot / characters / factions / setting). The retry pass uses these to steer toward a fundamentally different direction.
+Return JSON.
+- flagged: true if this draft fails on EITHER structural OR vocabulary mirroring (or both); false if it clears both.
+- confidence: "confidence in the negative finding" — 0.92 on flagged=true means "92% sure this is an IP paint-job." When flagged=false this is your confidence that the draft is clean.
+- mirroredWork: the specific work it mirrors, or null if none.
+- failureKind: "structural" if only the structure mirrors, "vocabulary" if only the natural vocabulary would leak a franchise's coined terms, "both" if both, "none" if the draft clears the gate.
+- specificDriftAxes: if flagged, the concrete axes (plot / characters / factions / setting for structural; the specific franchise-coined neologisms the concept would pull in for vocabulary). The retry pass uses these to steer toward a fundamentally different direction.
+- adjacentFranchise: the single franchise this world sits CLOSEST to as a soft signal, even if the draft is NOT flagged (a world can be franchise-adjacent yet clean). Null if the world invokes no single dominant franchise.
