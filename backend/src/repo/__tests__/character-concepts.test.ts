@@ -306,4 +306,83 @@ describe('character_concepts repo (integration)', () => {
       character_species: 'human',
     })
   })
+
+  // data-layer unification: methods absorbed from inline reads/writes in
+  // campaign-characters.ts and character-creation-processor.ts.
+  describe('route/processor read+write methods', () => {
+    it('countLocked counts only processing/completed concepts', async () => {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await makeMember(pool, scope)
+      // submitted → not counted.
+      await repo.upsert({
+        campaignId,
+        userId,
+        conceptText: 'x'.repeat(30),
+        situationGroundingText: 'grounding text long enough',
+        guidedChoices: {},
+      })
+      expect(await repo.countLocked(campaignId)).toBe(0)
+      // flip to processing → counted.
+      await repo.markProcessing(campaignId, userId)
+      expect(await repo.countLocked(campaignId)).toBe(1)
+      // flip to completed → still counted.
+      await repo.markCompleted(campaignId, userId)
+      expect(await repo.countLocked(campaignId)).toBe(1)
+    })
+
+    it('listForCampaign returns every concept row (user_id/status/submitted_at/error)', async () => {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await makeMember(pool, scope)
+      await repo.upsert({
+        campaignId,
+        userId,
+        conceptText: 'a'.repeat(30),
+        situationGroundingText: 'grounding text long enough',
+        guidedChoices: {},
+      })
+      const rows = await repo.listForCampaign(campaignId)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.user_id).toBe(userId)
+      expect(rows[0]?.status).toBe('submitted')
+      expect(rows[0]?.submitted_at).toBeInstanceOf(Date)
+      expect(rows[0]?.error).toBeNull()
+    })
+
+    it('getConceptInputs returns concept_text + guided_choices; null for unknown', async () => {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await makeMember(pool, scope)
+      await repo.upsert({
+        campaignId,
+        userId,
+        conceptText: 'a brave knight'.padEnd(30, '.'),
+        situationGroundingText: 'grounding text long enough',
+        guidedChoices: { foo: 'bar' },
+      })
+      const inputs = await repo.getConceptInputs(campaignId, userId)
+      expect(inputs?.concept_text).toBe('a brave knight'.padEnd(30, '.'))
+      expect(inputs?.guided_choices).toEqual({ foo: 'bar' })
+
+      expect(
+        await repo.getConceptInputs(campaignId, '019dccef-0000-7000-8000-000000000000'),
+      ).toBeNull()
+    })
+
+    it('setConceptOutput persists the structured narrative JSONB', async () => {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await makeMember(pool, scope)
+      await repo.upsert({
+        campaignId,
+        userId,
+        conceptText: 'b'.repeat(30),
+        situationGroundingText: 'grounding text long enough',
+        guidedChoices: {},
+      })
+      await repo.setConceptOutput(campaignId, userId, JSON.stringify({ summary: 'done' }))
+      const row = await pool.query<{ concept_output: unknown }>(
+        `SELECT concept_output FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+      expect(row.rows[0]?.concept_output).toEqual({ summary: 'done' })
+    })
+  })
 })

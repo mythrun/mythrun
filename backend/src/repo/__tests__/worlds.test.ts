@@ -452,4 +452,88 @@ describe('worlds repo (integration)', () => {
       expect(await worlds.getWorldOverview('019dccef-0000-7000-8000-000000000000')).toBe('')
     })
   })
+
+  // data-layer unification: focused reads/writes absorbed from inline SQL in
+  // campaign-characters.ts / campaigns.ts / the character-creation processor.
+  describe('route/processor read+write methods', () => {
+    async function seedWorld(): Promise<string> {
+      const users = createUsersRepo(pool)
+      const worlds = createWorldsRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      const w = await worlds.create({ createdBy: owner.id, name: scope.worldName(0), concept: 'c' })
+      return w.id
+    }
+
+    it('getStatus returns the world status; null for unknown', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      expect(await worlds.getStatus(id)).toBe('generating')
+      await worlds.markComplete(id)
+      expect(await worlds.getStatus(id)).toBe('complete')
+      expect(await worlds.getStatus('019dccef-0000-7000-8000-000000000000')).toBeNull()
+    })
+
+    it('getStartingSituationEntries returns the JSONB; [] when unset/unknown', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      // Fresh world: column defaults to '[]'.
+      expect(await worlds.getStartingSituationEntries(id)).toEqual([])
+      const entries = [{ index: 0, locationEntityId: 'e1', prose: 'A tavern.' }]
+      await worlds.setStartingSituationEntries(id, JSON.stringify(entries))
+      expect(await worlds.getStartingSituationEntries(id)).toEqual(entries)
+      expect(
+        await worlds.getStartingSituationEntries('019dccef-0000-7000-8000-000000000000'),
+      ).toEqual([])
+    })
+
+    it('deleteById removes the world row', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.deleteById(id)
+      expect(await worlds.getById(id)).toBeNull()
+    })
+
+    it('getCharacterConceptContext returns the prep columns + raw vocab; null for unknown', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.applyConcept(id, {
+        name: 'Aelmoor',
+        tone: 'misted',
+        themes: 'secrets',
+        geographySummary: 'drowned coast',
+        politicalSummary: 'fractured guilds',
+        era: 'twilight',
+        keyTensions: 'spirits chafe',
+        followUpQuestions: 'q?',
+      })
+      const ctx = await worlds.getCharacterConceptContext(id)
+      expect(ctx?.name).toBe('Aelmoor')
+      expect(ctx?.tone).toBe('misted')
+      expect(ctx?.geography_summary).toBe('drowned coast')
+      expect(ctx?.political_summary).toBe('fractured guilds')
+      expect(ctx?.key_tensions).toBe('spirits chafe')
+      // vocabulary_registry is the raw JSONB blob (default shape).
+      expect(ctx?.vocabulary_registry).toBeDefined()
+      expect(
+        await worlds.getCharacterConceptContext('019dccef-0000-7000-8000-000000000000'),
+      ).toBeNull()
+    })
+
+    it('getToneAndEra returns tone + era; null for unknown', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      await worlds.applyConcept(id, {
+        name: 'n',
+        tone: 'grim',
+        themes: 't',
+        geographySummary: 'g',
+        politicalSummary: 'p',
+        era: 'late age',
+        keyTensions: 'k',
+        followUpQuestions: 'f',
+      })
+      expect(await worlds.getToneAndEra(id)).toEqual({ tone: 'grim', era: 'late age' })
+      expect(await worlds.getToneAndEra('019dccef-0000-7000-8000-000000000000')).toBeNull()
+    })
+  })
 })

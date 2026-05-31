@@ -275,6 +275,58 @@ export function creditsNs(c: ClientLike) {
     },
 
     /**
+     * Dev-tool credit-ledger panel read (GET /api/dev/credits/me): the user's
+     * current non-expired balance per credit_type. Returns one row per type that
+     * has a non-zero ledger sum. SQL verbatim from the former inline read in
+     * dev-credits.ts. Dev-only consumer, but still goes through the repo
+     * surface (all-access-through-repo).
+     */
+    listBalancesByType: async (
+      userId: string,
+    ): Promise<readonly { credit_type: string; balance: number }[]> => {
+      const result = await c.query<{ credit_type: string; balance: number }>(
+        `SELECT credit_type, COALESCE(SUM(amount), 0)::int AS balance
+           FROM credit_ledger
+           WHERE user_id = $1
+             AND (expires_at IS NULL OR expires_at > now())
+           GROUP BY credit_type`,
+        [userId],
+      )
+      return result.rows
+    },
+
+    /**
+     * Dev-tool credit-ledger panel read (GET /api/dev/credits/me): the user's
+     * most-recent 20 ledger entries, newest first. SQL verbatim from the former
+     * inline read in dev-credits.ts.
+     */
+    listRecentLedger: async (
+      userId: string,
+    ): Promise<
+      readonly {
+        granted_at: string
+        amount: number
+        credit_type: string
+        source_type: string
+      }[]
+    > => {
+      const result = await c.query<{
+        granted_at: string
+        amount: number
+        credit_type: string
+        source_type: string
+      }>(
+        `SELECT granted_at, amount::int AS amount, credit_type, source_type
+           FROM credit_ledger
+           WHERE user_id = $1
+           ORDER BY granted_at DESC
+           LIMIT 20`,
+        [userId],
+      )
+      return result.rows
+    },
+
+    /**
      * Acquire the per-user create-serialization advisory xact lock. Composable
      * — runs over the captured tx client; the lock is held until the
      * transaction COMMITs/ROLLBACKs. `hashtextextended` produces a stable

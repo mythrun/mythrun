@@ -142,6 +142,94 @@ export function characterConceptsNs(c: ClientLike) {
       return row ? toConcept(row) : null
     },
 
+    /**
+     * Count concepts in a "situation-locked" state (status IN ('processing',
+     * 'completed')) for a campaign — the T12 POST /starting-situation guard.
+     * Once any player's pipeline is running or done, the owner can no longer
+     * change the starting situation. SQL verbatim from the former inline
+     * `SELECT COUNT(*)::text AS n FROM character_concepts WHERE campaign_id = $1
+     * AND status IN ('processing', 'completed')`.
+     */
+    countLocked: async (campaignId: string): Promise<number> => {
+      const result = await c.query<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM character_concepts
+         WHERE campaign_id = $1 AND status IN ('processing', 'completed')`,
+        [campaignId],
+      )
+      /* c8 ignore next — COUNT(*) always returns a row, fallback unreachable */
+      return Number.parseInt(result.rows[0]?.n ?? '0', 10)
+    },
+
+    /**
+     * MYT-54 T12 progress board: every character_concepts row for a campaign
+     * (user_id, status, submitted_at, error). The route nests these under the
+     * member roster. SQL verbatim from the former inline read in
+     * campaign-characters.ts (GET /character-creation-progress). `error` is
+     * JSONB; the caller decides when to surface it.
+     */
+    listForCampaign: async (
+      campaignId: string,
+    ): Promise<
+      readonly { user_id: string; status: string; submitted_at: Date; error: unknown }[]
+    > => {
+      const result = await c.query<{
+        user_id: string
+        status: string
+        submitted_at: Date
+        error: unknown
+      }>(
+        `SELECT user_id, status, submitted_at, error
+           FROM character_concepts
+          WHERE campaign_id = $1`,
+        [campaignId],
+      )
+      return result.rows
+    },
+
+    /**
+     * Read the concept_text + guided_choices for one (campaign, user) concept —
+     * the character_concept stage's prompt inputs. Returns null when the row is
+     * absent (the caller throws an invariant-violation in that case). SQL
+     * verbatim from the former inline read in
+     * `character-creation-processor.ts buildConceptArgs`.
+     */
+    getConceptInputs: async (
+      campaignId: string,
+      userId: string,
+    ): Promise<{ concept_text: string | null; guided_choices: Record<string, unknown> } | null> => {
+      const result = await c.query<{
+        concept_text: string | null
+        guided_choices: Record<string, unknown>
+      }>(
+        `SELECT concept_text, guided_choices FROM character_concepts
+           WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+      return result.rows[0] ?? null
+    },
+
+    /**
+     * myth-y7xt T2 / data-layer unification: persist the structured narrative
+     * (concept_output JSONB) once the character_concept stage produces it, so
+     * MYT-54's campaign-scoped integration worker can read it. SQL verbatim from
+     * the former inline `UPDATE character_concepts SET concept_output = $1::jsonb,
+     * updated_at = now() WHERE campaign_id = $2 AND user_id = $3`. `outputJson`
+     * is the caller-serialized JSON string (the column is jsonb; the cast lives
+     * in the SQL).
+     */
+    setConceptOutput: async (
+      campaignId: string,
+      userId: string,
+      outputJson: string,
+    ): Promise<void> => {
+      await c.query(
+        `UPDATE character_concepts
+            SET concept_output = $1::jsonb, updated_at = now()
+          WHERE campaign_id = $2 AND user_id = $3`,
+        [outputJson, campaignId, userId],
+      )
+    },
+
     listSubmittedByCampaign: async (
       campaignId: string,
     ): Promise<readonly CharacterConcept[]> => {

@@ -581,4 +581,144 @@ describe('campaigns repo (integration)', () => {
       expect(second).toBe(false)
     })
   })
+
+  // data-layer unification: methods absorbed from inline reads/writes in
+  // campaign-characters.ts / campaigns.ts / the character-creation processors.
+  describe('route/processor read+write methods', () => {
+    async function seedOwnerWorldCampaign(opts?: {
+      worldStatus?: string
+      situationIndex?: number | null
+    }): Promise<{ ownerId: string; worldId: string; campaignId: string }> {
+      await cleanupTestScope(pool, scope)
+      const owner = await createUsersRepo(pool).create(pool, baseUserInput)
+      const worldId = uuidv7()
+      await pool.query(
+        `INSERT INTO worlds (id, created_by, name, concept, status)
+         VALUES ($1, $2, $3, 'c', $4)`,
+        [worldId, owner.id, scope.worldName(0), opts?.worldStatus ?? 'complete'],
+      )
+      const campaignId = uuidv7()
+      await pool.query(
+        `INSERT INTO campaigns (id, world_id, created_by, name, status, starting_situation_index)
+         VALUES ($1, $2, $3, $4, 'setup', $5)`,
+        [campaignId, worldId, owner.id, scope.campaignName(0), opts?.situationIndex ?? null],
+      )
+      return { ownerId: owner.id, worldId, campaignId }
+    }
+
+    it('getWorldId returns the world_id; null for unknown', async () => {
+      const { worldId, campaignId } = await seedOwnerWorldCampaign()
+      const campaigns = createCampaignsRepo(pool)
+      expect(await campaigns.getWorldId(campaignId)).toBe(worldId)
+      expect(await campaigns.getWorldId('019dccef-0000-7000-8000-000000000000')).toBeNull()
+    })
+
+    it('getWorldAndSituationIndex returns the pair; null for unknown', async () => {
+      const { worldId, campaignId } = await seedOwnerWorldCampaign({ situationIndex: 2 })
+      const campaigns = createCampaignsRepo(pool)
+      expect(await campaigns.getWorldAndSituationIndex(campaignId)).toEqual({
+        world_id: worldId,
+        starting_situation_index: 2,
+      })
+      expect(
+        await campaigns.getWorldAndSituationIndex('019dccef-0000-7000-8000-000000000000'),
+      ).toBeNull()
+    })
+
+    it('getStartingSituationIndex returns the index; null when unset or unknown', async () => {
+      const { campaignId } = await seedOwnerWorldCampaign({ situationIndex: 1 })
+      const campaigns = createCampaignsRepo(pool)
+      expect(await campaigns.getStartingSituationIndex(campaignId)).toBe(1)
+
+      const { campaignId: noIdx } = await seedOwnerWorldCampaign({ situationIndex: null })
+      expect(await campaigns.getStartingSituationIndex(noIdx)).toBeNull()
+      expect(
+        await campaigns.getStartingSituationIndex('019dccef-0000-7000-8000-000000000000'),
+      ).toBeNull()
+    })
+
+    it('setStartingSituationIndex writes the chosen index', async () => {
+      const { campaignId } = await seedOwnerWorldCampaign({ situationIndex: null })
+      const campaigns = createCampaignsRepo(pool)
+      await campaigns.setStartingSituationIndex(campaignId, 2)
+      expect(await campaigns.getStartingSituationIndex(campaignId)).toBe(2)
+    })
+
+    it('archive flips setup→archived (true), no-op on already-archived (false)', async () => {
+      const { campaignId } = await seedOwnerWorldCampaign()
+      const campaigns = createCampaignsRepo(pool)
+      expect(await campaigns.archive(campaignId)).toBe(true)
+      const row = await pool.query<{ status: string }>(
+        `SELECT status FROM campaigns WHERE id = $1`, [campaignId],
+      )
+      expect(row.rows[0]?.status).toBe('archived')
+      // Second archive matches no setup/active row.
+      expect(await campaigns.archive(campaignId)).toBe(false)
+    })
+
+    it('renameById updates name + returns true; false for unknown', async () => {
+      const { campaignId } = await seedOwnerWorldCampaign()
+      const campaigns = createCampaignsRepo(pool)
+      expect(await campaigns.renameById(campaignId, 'A New Name')).toBe(true)
+      const row = await pool.query<{ name: string }>(
+        `SELECT name FROM campaigns WHERE id = $1`, [campaignId],
+      )
+      expect(row.rows[0]?.name).toBe('A New Name')
+      expect(
+        await campaigns.renameById('019dccef-0000-7000-8000-000000000000', 'X'),
+      ).toBe(false)
+    })
+
+    it('setFailed flips the campaign to failed', async () => {
+      const { campaignId } = await seedOwnerWorldCampaign()
+      const campaigns = createCampaignsRepo(pool)
+      await campaigns.setFailed(campaignId)
+      const row = await pool.query<{ status: string }>(
+        `SELECT status FROM campaigns WHERE id = $1`, [campaignId],
+      )
+      expect(row.rows[0]?.status).toBe('failed')
+    })
+
+    it('findInFlightGenerationForUser true when a generating world is owned, false otherwise', async () => {
+      const campaigns = createCampaignsRepo(pool)
+      const { ownerId } = await seedOwnerWorldCampaign({ worldStatus: 'generating' })
+      expect(await campaigns.findInFlightGenerationForUser(ownerId)).toBe(true)
+
+      const { ownerId: owner2 } = await seedOwnerWorldCampaign({ worldStatus: 'complete' })
+      expect(await campaigns.findInFlightGenerationForUser(owner2)).toBe(false)
+    })
+
+    it('getPartyRoster joins members → concept status + persisted PC id', async () => {
+      const { ownerId, campaignId } = await seedOwnerWorldCampaign()
+      const campaigns = createCampaignsRepo(pool)
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'owner', true)`,
+        [uuidv7(), campaignId, ownerId],
+      )
+      // Member with no concept yet → concept_status null, character_id null.
+      const roster = await campaigns.getPartyRoster(campaignId)
+      expect(roster).toEqual([
+        {
+          user_id: ownerId,
+          display_name: baseUserInput.displayName,
+          concept_status: null,
+          character_id: null,
+        },
+      ])
+    })
+
+    it('listMembersBasic returns display-only roster ordered by joined_at', async () => {
+      const { ownerId, campaignId } = await seedOwnerWorldCampaign()
+      const campaigns = createCampaignsRepo(pool)
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'owner', true)`,
+        [uuidv7(), campaignId, ownerId],
+      )
+      expect(await campaigns.listMembersBasic(campaignId)).toEqual([
+        { user_id: ownerId, display_name: baseUserInput.displayName },
+      ])
+    })
+  })
 })

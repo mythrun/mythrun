@@ -1712,4 +1712,53 @@ describe('credits repo — concurrency (separate pool)', () => {
     // catches a real leak (would show as ≥4 or growth across reruns).
     expect(Number(idleRes.rows[0]?.count ?? 0)).toBeLessThanOrEqual(2)
   }, 10_000)
+
+  // data-layer unification: the dev-tool credit-ledger panel reads
+  // (GET /api/dev/credits/me) absorbed from the inline SQL in dev-credits.ts.
+  // Lives in the concurrency describe (its own `pool` + `scope`); uses the
+  // scope's user identity so it cleans up with the rest of the suite.
+  describe('dev-tool ledger reads', () => {
+    it('listBalancesByType returns one row per non-expired credit_type', async () => {
+      await cleanupTestScope(pool, scope)
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, {
+        cognitoSub: scope.userSub(0),
+        displayName: scope.displayName(0),
+        username: scope.username(0),
+      })
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 5, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 2, sourceType: 'gift' })
+
+      const balances = await credits.listBalancesByType(u.id)
+      const byType = new Map(balances.map((b) => [b.credit_type, b.balance]))
+      expect(byType.get('session')).toBe(5)
+      expect(byType.get('world_gen')).toBe(2)
+    })
+
+    it('listRecentLedger returns entries newest-first', async () => {
+      await cleanupTestScope(pool, scope)
+      const users = createUsersRepo(pool)
+      const credits = createCreditsRepo(pool)
+      const u = await users.create(pool, {
+        cognitoSub: scope.userSub(0),
+        displayName: scope.displayName(0),
+        username: scope.username(0),
+      })
+      await credits.grant({ userId: u.id, creditType: 'session', amount: 1, sourceType: 'gift' })
+      await credits.grant({ userId: u.id, creditType: 'world_gen', amount: 3, sourceType: 'gift' })
+
+      const recent = await credits.listRecentLedger(u.id)
+      expect(recent.length).toBe(2)
+      // Every entry carries the four projected fields.
+      for (const r of recent) {
+        expect(r).toHaveProperty('granted_at')
+        expect(r).toHaveProperty('amount')
+        expect(r).toHaveProperty('credit_type')
+        expect(r).toHaveProperty('source_type')
+      }
+      // Newest-first ordering: total of amounts is 4.
+      expect(recent.reduce((sum, r) => sum + r.amount, 0)).toBe(4)
+    })
+  })
 })

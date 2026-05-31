@@ -165,6 +165,35 @@ describe('randomTables repo', () => {
     expect(row.rows[0]?.name).toBe('Back-Compat Table')
   })
 
+  // data-layer unification: the T19b GET /random-tables reads absorbed from
+  // the inline SQL in campaign-characters.ts.
+  it('listByWorld returns id+name+category ordered by name', async () => {
+    await repo.randomTables.insertTable({ worldId, name: 'Zephyrs', category: 'weather' })
+    await repo.randomTables.insertTable({ worldId, name: 'Ambushes', category: 'combat' })
+    const rows = await repo.randomTables.listByWorld(worldId)
+    // ORDER BY name → Ambushes before Zephyrs.
+    expect(rows.map((r) => r.name)).toEqual(['Ambushes', 'Zephyrs'])
+    expect(rows[0]).toMatchObject({ name: 'Ambushes', category: 'combat' })
+    expect(rows[0]?.id).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('listEntriesByTableIds returns entries ordered by (table_id, roll_min); [] for empty ids', async () => {
+    const tableId = await repo.randomTables.insertTable({
+      worldId,
+      name: 'Quirks',
+      category: 'quirks',
+    })
+    await repo.randomTables.insertEntries(tableId, [
+      { roll_min: 11, roll_max: 20, content: 'second' },
+      { roll_min: 1, roll_max: 10, content: 'first' },
+    ])
+    const entries = await repo.randomTables.listEntriesByTableIds([tableId])
+    expect(entries.map((e) => e.content)).toEqual(['first', 'second'])
+    expect(entries[0]).toMatchObject({ table_id: tableId, roll_min: 1, roll_max: 10 })
+    // Empty id list short-circuits to [] without a DB round-trip.
+    expect(await repo.randomTables.listEntriesByTableIds([])).toEqual([])
+  })
+
   it('a thrown transaction callback rolls back all random-table writes', async () => {
     await expect(
       repo.transaction(async (tx) => {

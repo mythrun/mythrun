@@ -295,6 +295,57 @@ export function worldsNs(c: ClientLike) {
     },
 
     /**
+     * Status-only read of a world. Returns null when the world row is absent.
+     * SQL verbatim from the inline `SELECT status FROM worlds WHERE id = $1`
+     * reads in campaign-characters.ts (T12/T15 world-complete gates) and
+     * campaigns.ts (DELETE world_gen_in_progress guard). Distinct from
+     * `getById` (full World row) — the callers only need the status string.
+     */
+    getStatus: async (id: string): Promise<string | null> => {
+      const result = await c.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0]?.status ?? null
+    },
+
+    /**
+     * Read a world's starting_situation_entries (the picker JSONB). Returns []
+     * when the column is null / the world is unknown, matching the route's
+     * prior `?? []` default. SQL verbatim from the inline read in
+     * campaign-characters.ts (T16 GET /starting-situations) and
+     * location-selection.ts. The entries shape is loose (`title` / `locationName`
+     * are optional per myth-k1ee) so the generic stays caller-supplied.
+     */
+    getStartingSituationEntries: async <
+      E = {
+        index: number
+        locationEntityId: string
+        prose: string
+      },
+    >(
+      id: string,
+    ): Promise<E[]> => {
+      const result = await c.query<{ starting_situation_entries: E[] }>(
+        `SELECT starting_situation_entries FROM worlds WHERE id = $1`,
+        [id],
+      )
+      /* c8 ignore next — world FK invariant per campaigns.world_id NOT NULL */
+      return result.rows[0]?.starting_situation_entries ?? []
+    },
+
+    /**
+     * Delete a world row by id. CASCADE FKs clear campaigns + entities + prose
+     * + facts + relationships + pipeline_runs + random_tables. SQL verbatim from
+     * the inline `DELETE FROM worlds WHERE id = $1` in the DELETE
+     * /api/campaigns/:campaignId route (deleting the campaign's world cascades
+     * the campaign away too).
+     */
+    deleteById: async (id: string): Promise<void> => {
+      await c.query(`DELETE FROM worlds WHERE id = $1`, [id])
+    },
+
+    /**
      * stage-3 (locations_and_npcs) input read: the world's overview prose.
      * Returns '' when the column is null / the world is unknown, matching the
      * processor's prior `?? ''` default. SQL verbatim from `loadStage3Inputs`.
@@ -363,6 +414,60 @@ export function worldsNs(c: ClientLike) {
           draft.followUpQuestions,
         ],
       )
+    },
+
+    /**
+     * Prep-tier read: the world columns the per-player character_concept stage
+     * needs — plot-bearing (geography_summary, political_summary, key_tensions)
+     * PLUS the raw vocabulary_registry JSONB. Returns null when the world is
+     * absent. Returns plot columns — prep/Slow-Thinker tier ONLY; player-facing
+     * reads use `getSnapshotSummary`. SQL verbatim from the former inline read
+     * in `character-creation-processor.ts buildConceptArgs`. Runs on the pool
+     * outside any stage tx exactly as the prior read did.
+     */
+    getCharacterConceptContext: async (
+      id: string,
+    ): Promise<{
+      name: string
+      tone: string | null
+      themes: string | null
+      era: string | null
+      geography_summary: string | null
+      political_summary: string | null
+      key_tensions: string | null
+      vocabulary_registry: unknown
+    } | null> => {
+      const result = await c.query<{
+        name: string
+        tone: string | null
+        themes: string | null
+        era: string | null
+        geography_summary: string | null
+        political_summary: string | null
+        key_tensions: string | null
+        vocabulary_registry: unknown
+      }>(
+        `SELECT name, tone, themes, era, geography_summary, political_summary,
+                key_tensions, vocabulary_registry
+           FROM worlds WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0] ?? null
+    },
+
+    /**
+     * Read a world's tone + era only. Both columns are non-plot (tone/era are
+     * surfaced to players), so this is tier-neutral. Returns null when the
+     * world is absent. SQL verbatim from the former inline read in
+     * `character-creation-processor.ts loadWorldContext` (the character_sheet
+     * stage's world-context loader).
+     */
+    getToneAndEra: async (id: string): Promise<{ tone: string | null; era: string | null } | null> => {
+      const result = await c.query<{ tone: string | null; era: string | null }>(
+        `SELECT tone, era FROM worlds WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0] ?? null
     },
 
     /**

@@ -20,6 +20,7 @@ import { billingHistoryNs } from './billing-history.js'
 import { pipelineRunsNs } from './pipeline-runs.js'
 import { randomTablesNs } from './random-tables.js'
 import { settingsNs } from './settings.js'
+import { healthNs } from './health.js'
 import { worldInventoryNs } from './world-inventory.js'
 import type { ClientLike } from './_types.js'
 import { runTransaction, type RollbackSignal } from './_client.js'
@@ -66,6 +67,9 @@ function bindTx(c: ClientLike) {
     pipelineRuns: pipelineRunsNs(c),
     randomTables: randomTablesNs(c),
     settings: settingsNs(c),
+    // Liveness-probe namespace (`repo.health.ping()` → SELECT 1). Composable —
+    // a single read — so it binds on both pool and tx surfaces.
+    health: healthNs(c),
     // Composite multi-table read (entities + prose + facts + relationships).
     // Replaces the former `repo.pool` escape hatch used by world-dump's
     // `loadWorldInventory`: a bespoke read now homed behind the repo boundary.

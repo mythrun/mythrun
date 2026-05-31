@@ -43,6 +43,51 @@ export function randomTablesNs(c: ClientLike) {
     },
 
     /**
+     * T19b GET /random-tables read: the world's random_tables (id + name +
+     * category), ordered by name. SQL verbatim from the former inline
+     * `SELECT id, name, category FROM random_tables WHERE world_id = $1
+     * ORDER BY name` in campaign-characters.ts.
+     */
+    listByWorld: async (
+      worldId: string,
+    ): Promise<readonly { id: string; name: string; category: string }[]> => {
+      const result = await c.query<{ id: string; name: string; category: string }>(
+        `SELECT id, name, category FROM random_tables WHERE world_id = $1 ORDER BY name`,
+        [worldId],
+      )
+      return result.rows
+    },
+
+    /**
+     * T19b GET /random-tables read: the entries for a set of table ids, ordered
+     * by (table_id, roll_min). Empty `tableIds` short-circuits to [] without a
+     * DB round-trip (the route skipped the query when no tables existed). SQL
+     * verbatim from the former inline `SELECT table_id, roll_min, roll_max,
+     * content FROM random_table_entries WHERE table_id = ANY($1::uuid[])
+     * ORDER BY table_id, roll_min`.
+     */
+    listEntriesByTableIds: async (
+      tableIds: readonly string[],
+    ): Promise<
+      readonly { table_id: string; roll_min: number; roll_max: number; content: string }[]
+    > => {
+      if (tableIds.length === 0) return []
+      const result = await c.query<{
+        table_id: string
+        roll_min: number
+        roll_max: number
+        content: string
+      }>(
+        `SELECT table_id, roll_min, roll_max, content
+               FROM random_table_entries
+               WHERE table_id = ANY($1::uuid[])
+               ORDER BY table_id, roll_min`,
+        [tableIds],
+      )
+      return result.rows
+    },
+
+    /**
      * Insert one random_tables row and return its generated UUIDv7 id (the
      * entries reference it as table_id). SQL verbatim from
      * `stages/random-tables.ts`.

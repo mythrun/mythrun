@@ -94,6 +94,105 @@ export function charactersNs(c: ClientLike) {
       return toCharacter(row)
     },
 
+    /**
+     * T18 ownership check: is `characterId` linked to `campaignId` via
+     * campaign_characters? Returns true when the join row exists. Guards against
+     * fishing for a character_id by probing campaigns the caller can see. SQL
+     * verbatim from the former inline `SELECT character_id FROM
+     * campaign_characters WHERE campaign_id = $1 AND character_id = $2`.
+     */
+    isInCampaign: async (campaignId: string, characterId: string): Promise<boolean> => {
+      const result = await c.query<{ character_id: string }>(
+        `SELECT character_id FROM campaign_characters
+         WHERE campaign_id = $1 AND character_id = $2`,
+        [campaignId, characterId],
+      )
+      return result.rows.length > 0
+    },
+
+    /**
+     * T18 GET /characters/:charId full read: the characters row + its four
+     * sub-tables (skills / features / equipment / spells), each projected to the
+     * meaningful columns only. Runs the four sub-table reads in parallel exactly
+     * as the route did. SQL byte-identical to the former inline reads in
+     * campaign-characters.ts. Homed on `repo.characters.getFullCharacter` per the
+     * design's `characters` namespace table.
+     */
+    getFullCharacter: async (
+      characterId: string,
+    ): Promise<{
+      character: CharacterDbRow | undefined
+      skills: readonly { skill_name: string; proficiency_level: string }[]
+      features: readonly { feature_name: string; feature_source: string; description: string }[]
+      equipment: readonly { item_name: string; quantity: number; equipped: boolean }[]
+      spells: readonly { spell_name: string; spell_level: number; prepared: boolean }[]
+    }> => {
+      const [character, skills, features, equipment, spells] = await Promise.all([
+        c.query<CharacterDbRow>(`SELECT * FROM characters WHERE id = $1`, [characterId]),
+        c.query<{ skill_name: string; proficiency_level: string }>(
+          `SELECT skill_name, proficiency_level FROM character_skills WHERE character_id = $1`,
+          [characterId],
+        ),
+        c.query<{ feature_name: string; feature_source: string; description: string }>(
+          `SELECT feature_name, feature_source, description FROM character_features WHERE character_id = $1`,
+          [characterId],
+        ),
+        c.query<{ item_name: string; quantity: number; equipped: boolean }>(
+          `SELECT item_name, quantity, equipped FROM character_equipment WHERE character_id = $1`,
+          [characterId],
+        ),
+        c.query<{ spell_name: string; spell_level: number; prepared: boolean }>(
+          `SELECT spell_name, spell_level, prepared FROM character_spells WHERE character_id = $1`,
+          [characterId],
+        ),
+      ])
+      return {
+        character: character.rows[0],
+        skills: skills.rows,
+        features: features.rows,
+        equipment: equipment.rows,
+        spells: spells.rows,
+      }
+    },
+
+    /**
+     * GET /api/campaigns/:campaignId details: the campaign's finalized PCs — one
+     * row per completed/integrated character_concept joined through
+     * campaign_characters to the characters row. Filters on the concept status
+     * (the ground truth) so half-built rows never surface. SQL verbatim from the
+     * former inline read in campaigns.ts. Homed on
+     * `repo.characters.listCampaignCharacters` per the design's cross-domain
+     * join section ("finalized-PC list").
+     */
+    listCampaignCharacters: async (
+      campaignId: string,
+    ): Promise<
+      readonly {
+        user_id: string
+        character_id: string
+        name: string
+        class: string
+        level: number
+      }[]
+    > => {
+      const result = await c.query<{
+        user_id: string
+        character_id: string
+        name: string
+        class: string
+        level: number
+      }>(
+        `SELECT cc.user_id, c.id AS character_id, c.name, c.class, c.level
+         FROM character_concepts cc
+         JOIN campaign_characters cm
+           ON cm.campaign_id = cc.campaign_id AND cm.user_id = cc.user_id
+         JOIN characters c ON c.id = cm.character_id
+         WHERE cc.campaign_id = $1 AND cc.status IN ('completed', 'integrated')`,
+        [campaignId],
+      )
+      return result.rows
+    },
+
     addToCampaign: async (
       campaignId: string,
       characterId: string,

@@ -265,4 +265,27 @@ describe('entities repo', () => {
     expect(rows.map((r) => r.entity_type).sort()).toEqual(['faction', 'location'])
     expect(rows.find((r) => r.entity_type === 'location')?.prose).toBe('A salt-eaten wharf.')
   })
+
+  // data-layer unification: the location-selection drift-defense check
+  // absorbed from the inline read in location-selection.ts.
+  it('existsInWorld true for a seeded entity, false for a ghost id or wrong world', async () => {
+    const id = uuidv7()
+    await entities.insert(pool, {
+      id,
+      worldId,
+      entityType: 'location',
+      name: 'Wharf',
+      accessLevel: 'known',
+      createdIn: 'stage:test',
+    })
+    expect(await repo.entities.existsInWorld(id, worldId)).toBe(true)
+    // Ghost id.
+    expect(
+      await repo.entities.existsInWorld('019dccef-0000-7000-8000-000000000000', worldId),
+    ).toBe(false)
+    // Right id, wrong world.
+    expect(
+      await repo.entities.existsInWorld(id, '019dccef-0000-7000-8000-000000000001'),
+    ).toBe(false)
+  })
 })

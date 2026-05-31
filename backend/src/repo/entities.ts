@@ -96,6 +96,20 @@ export function entitiesNs(c: ClientLike) {
       )
       return result.rows[0] ? toEntity(result.rows[0]) : null
     },
+    /**
+     * location-selection (character-creation stage 1) drift-defense check: does
+     * an entity with `id` exist in `worldId`? Returns true when the row exists.
+     * Guards against state drift between owner-pick time and fan-out time. SQL
+     * verbatim from the former inline `SELECT id FROM entities WHERE id = $1 AND
+     * world_id = $2` in location-selection.ts.
+     */
+    existsInWorld: async (id: string, worldId: string): Promise<boolean> => {
+      const result = await c.query<{ id: string }>(
+        `SELECT id FROM entities WHERE id = $1 AND world_id = $2`,
+        [id, worldId],
+      )
+      return result.rows.length > 0
+    },
     listByWorld: async (
       worldId: string,
       opts?: { readonly accessLevels?: readonly AccessLevel[] },

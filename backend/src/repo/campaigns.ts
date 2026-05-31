@@ -135,6 +135,130 @@ export function campaignsNs(c: ClientLike) {
     },
 
     /**
+     * World-id-only read. Returns null when the campaign is absent. SQL verbatim
+     * from the inline `SELECT world_id FROM campaigns WHERE id = $1` reads in
+     * campaign-characters.ts (T12 / T19a hierarchy / T19b random-tables) and
+     * character-creation-processor.ts (worldId resolution). Distinct from
+     * `getById` (full Campaign row) — the callers only need the world_id.
+     */
+    getWorldId: async (id: string): Promise<string | null> => {
+      const result = await c.query<{ world_id: string }>(
+        `SELECT world_id FROM campaigns WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0]?.world_id ?? null
+    },
+
+    /**
+     * Read a campaign's world_id + starting_situation_index together. Returns
+     * null when the campaign is absent. SQL verbatim from the inline read in
+     * campaign-characters.ts (T15 POST /characters + T16 GET
+     * /starting-situations). The two columns are read as a pair in both sites.
+     */
+    getWorldAndSituationIndex: async (
+      id: string,
+    ): Promise<{ world_id: string; starting_situation_index: number | null } | null> => {
+      const result = await c.query<{
+        world_id: string
+        starting_situation_index: number | null
+      }>(
+        `SELECT world_id, starting_situation_index FROM campaigns WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0] ?? null
+    },
+
+    /**
+     * Read a campaign's chosen starting_situation_index only. Returns null when
+     * the campaign is absent OR the index is unset (both collapse to null — the
+     * caller treats either as "owner has not chosen"). SQL verbatim from the
+     * inline read in location-selection.ts.
+     */
+    getStartingSituationIndex: async (id: string): Promise<number | null> => {
+      const result = await c.query<{ starting_situation_index: number | null }>(
+        `SELECT starting_situation_index FROM campaigns WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0]?.starting_situation_index ?? null
+    },
+
+    /**
+     * Set a campaign's starting_situation_index (T12 POST /starting-situation).
+     * SQL verbatim from the former inline `UPDATE campaigns SET
+     * starting_situation_index = $2 WHERE id = $1`.
+     */
+    setStartingSituationIndex: async (id: string, index: number): Promise<void> => {
+      await c.query(
+        `UPDATE campaigns SET starting_situation_index = $2 WHERE id = $1`,
+        [id, index],
+      )
+    },
+
+    /**
+     * Archive a campaign (T14 POST /archive) — only when it is still 'setup' or
+     * 'active'. Returns true when a row was archived, false when no eligible row
+     * matched (already archived / unknown). SQL verbatim from the former inline
+     * `UPDATE campaigns SET status = 'archived' WHERE id = $1 AND status IN
+     * ('setup', 'active') RETURNING status`.
+     */
+    archive: async (id: string): Promise<boolean> => {
+      const result = await c.query<{ status: string }>(
+        `UPDATE campaigns SET status = 'archived'
+         WHERE id = $1 AND status IN ('setup', 'active')
+         RETURNING status`,
+        [id],
+      )
+      return result.rows.length > 0
+    },
+
+    /**
+     * Rename a campaign by id (PATCH /name). Returns true when a row was
+     * updated, false when none matched. SQL verbatim from the former inline
+     * `UPDATE campaigns SET name = $2, updated_at = now() WHERE id = $1
+     * RETURNING id`. Distinct from the generic `update` (COALESCE multi-column)
+     * — this is the focused name-only flip the route used.
+     */
+    renameById: async (id: string, name: string): Promise<boolean> => {
+      const result = await c.query<{ id: string }>(
+        `UPDATE campaigns SET name = $2, updated_at = now() WHERE id = $1 RETURNING id`,
+        [id, name],
+      )
+      return result.rowCount === 1
+    },
+
+    /**
+     * Flip a campaign to 'failed' (character-integration terminal-error path).
+     * SQL verbatim from the former inline `UPDATE campaigns SET status =
+     * 'failed', updated_at = now() WHERE id = $1`. Distinct from `setActive`
+     * (the success flip) and the generic `update`.
+     */
+    setFailed: async (id: string): Promise<void> => {
+      await c.query(
+        `UPDATE campaigns SET status = 'failed', updated_at = now() WHERE id = $1`,
+        [id],
+      )
+    },
+
+    /**
+     * Concurrent-generation guard (POST /api/campaigns step 2b): does the user
+     * own a campaign whose world is currently 'generating'? Returns true when at
+     * least one such campaign exists. SQL verbatim from the former inline
+     * `SELECT campaigns.id FROM campaigns WHERE campaigns.created_by = $1 AND
+     * campaigns.world_id IN (SELECT id FROM worlds WHERE status = 'generating')
+     * LIMIT 1`.
+     */
+    findInFlightGenerationForUser: async (userId: string): Promise<boolean> => {
+      const result = await c.query<{ id: string }>(
+        `SELECT campaigns.id FROM campaigns
+         WHERE campaigns.created_by = $1
+           AND campaigns.world_id IN (SELECT id FROM worlds WHERE status = 'generating')
+         LIMIT 1`,
+        [userId],
+      )
+      return result.rows.length > 0
+    },
+
+    /**
      * World-gen job context: the campaign + its world's prep columns, joined.
      * Returns null when the campaign (or its world) is absent. SQL verbatim
      * from the world-gen processor's `loadCampaignContext`. The caller maps the
@@ -296,6 +420,69 @@ export function campaignsNs(c: ClientLike) {
       )
       const row = result.rows[0]
       return row ? toCampaignMember(row) : null
+    },
+
+    /**
+     * T17 GET /characters party roster: one row per campaign member joined to
+     * character_concepts (status) + campaign_characters (persisted PC id). LEFT
+     * JOINs because a member may not have submitted a concept yet, and a
+     * submitted concept may not yet have a persisted character. SQL verbatim
+     * from the former inline roster JOIN in campaign-characters.ts. Homed on
+     * `repo.campaigns.getPartyRoster` per the design's cross-domain join section.
+     */
+    getPartyRoster: async (
+      campaignId: string,
+    ): Promise<
+      readonly {
+        user_id: string
+        display_name: string
+        concept_status: 'submitted' | 'processing' | 'completed' | 'failed' | null
+        character_id: string | null
+      }[]
+    > => {
+      const result = await c.query<{
+        user_id: string
+        display_name: string
+        concept_status: 'submitted' | 'processing' | 'completed' | 'failed' | null
+        character_id: string | null
+      }>(
+        `SELECT cm.user_id,
+                u.display_name,
+                cc.status        AS concept_status,
+                ch.character_id  AS character_id
+         FROM campaign_members cm
+         JOIN users u ON u.id = cm.user_id
+         LEFT JOIN character_concepts cc
+           ON cc.campaign_id = cm.campaign_id AND cc.user_id = cm.user_id
+         LEFT JOIN campaign_characters ch
+           ON ch.campaign_id = cm.campaign_id AND ch.user_id = cm.user_id
+         WHERE cm.campaign_id = $1
+         ORDER BY cm.joined_at`,
+        [campaignId],
+      )
+      return result.rows
+    },
+
+    /**
+     * MYT-54 T12 progress board: member roster (user_id + display_name) ordered
+     * by joined_at, no concept/character join. SQL verbatim from the former
+     * inline read in campaign-characters.ts
+     * (GET /character-creation-progress). Distinct from `listMembers` (which
+     * also pulls username + role + filters suspended users) — this is the
+     * lighter display-only roster the progress board used.
+     */
+    listMembersBasic: async (
+      campaignId: string,
+    ): Promise<readonly { user_id: string; display_name: string }[]> => {
+      const result = await c.query<{ user_id: string; display_name: string }>(
+        `SELECT cm.user_id, u.display_name
+           FROM campaign_members cm
+           JOIN users u ON u.id = cm.user_id
+          WHERE cm.campaign_id = $1
+          ORDER BY cm.joined_at`,
+        [campaignId],
+      )
+      return result.rows
     },
 
     listMembers: async (

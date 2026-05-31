@@ -495,4 +495,111 @@ describe('repo.characters', () => {
       expect(c.rows[0]?.entity_id).toBe(entityId)
     })
   })
+
+  // data-layer unification: the T18 ownership check (isInCampaign), the T18
+  // full-character read (getFullCharacter), and the campaign-details
+  // finalized-PC list (listCampaignCharacters) absorbed from the inline reads
+  // in campaign-characters.ts / campaigns.ts.
+  const sheetInput = {
+    name: 'Roster PC',
+    level: 3,
+    class: 'wizard',
+    species: 'elf',
+    background: 'sage',
+    str: 8,
+    dex: 14,
+    con: 12,
+    int: 17,
+    wis: 11,
+    cha: 10,
+    hitPoints: 18,
+    maxHitPoints: 18,
+    armorClass: 12,
+    proficiencyBonus: 2,
+    skills: [{ name: 'Arcana', proficiencyLevel: 'proficient' as const }],
+    features: [{ name: 'Spellcasting', source: 'class', description: 'casts spells' }],
+    equipment: [{ name: 'Spellbook', quantity: 1 }],
+    spells: [{ name: 'Magic Missile', level: 1, prepared: true }],
+  }
+
+  describe('isInCampaign', () => {
+    it('true when the character is linked to the campaign, false otherwise', async () => {
+      const characters = createCharactersRepo(pool)
+      const characterId = await characters.replaceSubTables({ campaignId, userId, ...sheetInput })
+
+      expect(await characters.isInCampaign(campaignId, characterId)).toBe(true)
+      // Unknown character id → false.
+      expect(
+        await characters.isInCampaign(campaignId, '019dccef-0000-7000-8000-000000000000'),
+      ).toBe(false)
+    })
+  })
+
+  describe('getFullCharacter', () => {
+    it('returns the character row + all four sub-tables', async () => {
+      const characters = createCharactersRepo(pool)
+      const characterId = await characters.replaceSubTables({ campaignId, userId, ...sheetInput })
+
+      const full = await characters.getFullCharacter(characterId)
+      expect(full.character?.id).toBe(characterId)
+      expect(full.character?.name).toBe('Roster PC')
+      expect(full.skills).toEqual([{ skill_name: 'Arcana', proficiency_level: 'proficient' }])
+      expect(full.features).toEqual([
+        { feature_name: 'Spellcasting', feature_source: 'class', description: 'casts spells' },
+      ])
+      expect(full.equipment).toEqual([{ item_name: 'Spellbook', quantity: 1, equipped: false }])
+      expect(full.spells).toEqual([{ spell_name: 'Magic Missile', spell_level: 1, prepared: true }])
+    })
+
+    it('returns undefined character + empty sub-tables for an unknown id', async () => {
+      const characters = createCharactersRepo(pool)
+      const full = await characters.getFullCharacter('019dccef-0000-7000-8000-000000000000')
+      expect(full.character).toBeUndefined()
+      expect(full.skills).toEqual([])
+      expect(full.features).toEqual([])
+      expect(full.equipment).toEqual([])
+      expect(full.spells).toEqual([])
+    })
+  })
+
+  describe('listCampaignCharacters', () => {
+    it('lists finalized PCs (completed/integrated concept) and excludes other statuses', async () => {
+      const characters = createCharactersRepo(pool)
+      const characterId = await characters.replaceSubTables({ campaignId, userId, ...sheetInput })
+      // character_concepts has a composite FK (campaign_id, user_id) →
+      // campaign_members; seed the membership before inserting the concept.
+      const { uuidv7 } = await import('../uuidv7.js')
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'owner', true)`,
+        [uuidv7(), campaignId, userId],
+      )
+      // The concept must be 'completed' or 'integrated' for the row to surface.
+      await pool.query(
+        `INSERT INTO character_concepts
+           (id, campaign_id, user_id, situation_grounding_text, status)
+         VALUES ($1, $2, $3, 'grounding text long enough to satisfy', 'completed')`,
+        [uuidv7(), campaignId, userId],
+      )
+
+      const rows = await characters.listCampaignCharacters(campaignId)
+      expect(rows).toEqual([
+        {
+          user_id: userId,
+          character_id: characterId,
+          name: 'Roster PC',
+          class: 'wizard',
+          level: 3,
+        },
+      ])
+
+      // Flip the concept to 'submitted' — the PC should disappear from the list.
+      await pool.query(
+        `UPDATE character_concepts SET status = 'submitted'
+         WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+      expect(await characters.listCampaignCharacters(campaignId)).toEqual([])
+    })
+  })
 })
