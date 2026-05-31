@@ -11,7 +11,7 @@
 // Returns zeroed cost/usage so the worker's per-stage pipeline_runs
 // accounting treats this like any other stage (just with $0 spend).
 
-import type { Pool, PoolClient } from 'pg'
+import type { Repo } from '../../../repo/index.js'
 
 export interface LocationSelectionArgs {
   readonly campaignId: string
@@ -32,32 +32,19 @@ interface SituationEntry {
 }
 
 export async function runLocationSelectionStage(
-  client: Pool | PoolClient,
+  repo: Repo,
   args: LocationSelectionArgs,
 ): Promise<LocationSelectionResult> {
-  const campaign = await client.query<{ starting_situation_index: number | null }>(
-    `SELECT starting_situation_index FROM campaigns WHERE id = $1`,
-    [args.campaignId],
-  )
-  const idx = campaign.rows[0]?.starting_situation_index
-  if (idx === null || idx === undefined) {
+  const idx = await repo.campaigns.getStartingSituationIndex(args.campaignId)
+  if (idx === null) {
     throw new Error(
       `location-selection: campaigns.starting_situation_index is NULL for campaign ${args.campaignId} (owner has not chosen a starting situation)`,
     )
   }
 
-  const world = await client.query<{ starting_situation_entries: SituationEntry[] }>(
-    `SELECT starting_situation_entries FROM worlds WHERE id = $1`,
-    [args.worldId],
-  )
   // worldId came from campaigns.world_id (FK to worlds.id) so the row
   // exists; starting_situation_entries is NOT NULL DEFAULT '[]'.
-  const worldRow = world.rows[0]
-  /* c8 ignore next 3 — invariant per campaigns.world_id FK NOT NULL */
-  if (worldRow === undefined) {
-    throw new Error(`world ${args.worldId} not found — FK invariant violated`)
-  }
-  const entries = worldRow.starting_situation_entries
+  const entries = await repo.worlds.getStartingSituationEntries<SituationEntry>(args.worldId)
   const entry = entries.find((e) => e.index === idx)
   /* c8 ignore start — drift-defense: campaigns.starting_situation_index
    * CHECK constrains it to {0,1,2}; starting_situation stage always emits 3
@@ -70,11 +57,8 @@ export async function runLocationSelectionStage(
   }
   /* c8 ignore stop */
 
-  const entityCheck = await client.query<{ id: string }>(
-    `SELECT id FROM entities WHERE id = $1 AND world_id = $2`,
-    [entry.locationEntityId, args.worldId],
-  )
-  if (entityCheck.rows.length === 0) {
+  const entityExists = await repo.entities.existsInWorld(entry.locationEntityId, args.worldId)
+  if (!entityExists) {
     throw new Error(
       `location-selection: location entity not found — id=${entry.locationEntityId} world=${args.worldId} (state drift between owner pick and fan-out)`,
     )

@@ -21,6 +21,7 @@ import {
   type TestScope,
 } from '../../../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
+import { createRepo } from '../../../../repo/index.js'
 import { runLocationSelectionStage } from '../location-selection.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -128,7 +129,7 @@ describe('runLocationSelectionStage', () => {
       ],
     })
 
-    const result = await runLocationSelectionStage(pool, { campaignId, worldId })
+    const result = await runLocationSelectionStage(createRepo(pool), { campaignId, worldId })
 
     expect(result.locationEntityId).toBe(locId)
     expect(result.costUsd).toBe(0)
@@ -146,7 +147,7 @@ describe('runLocationSelectionStage', () => {
     })
 
     await expect(
-      runLocationSelectionStage(pool, { campaignId, worldId }),
+      runLocationSelectionStage(createRepo(pool), { campaignId, worldId }),
     ).rejects.toThrow(/location entity not found|drift/i)
   })
 
@@ -158,7 +159,7 @@ describe('runLocationSelectionStage', () => {
     })
 
     await expect(
-      runLocationSelectionStage(pool, { campaignId, worldId }),
+      runLocationSelectionStage(createRepo(pool), { campaignId, worldId }),
     ).rejects.toThrow(/starting_situation_index|not chosen/i)
   })
 })

@@ -378,14 +378,8 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       const devBypassAccessFilter = body.devBypassAccessFilter ?? false
 
       // Step 2b: concurrent-generation guard.
-      const inFlight = await opts.pool.query<{ id: string }>(
-        `SELECT campaigns.id FROM campaigns
-         WHERE campaigns.created_by = $1
-           AND campaigns.world_id IN (SELECT id FROM worlds WHERE status = 'generating')
-         LIMIT 1`,
-        [dbUser.id],
-      )
-      if (inFlight.rows.length > 0) {
+      const inFlight = await repo.campaigns.findInFlightGenerationForUser(dbUser.id)
+      if (inFlight) {
         return reply.code(409).send({ code: 'concurrent_generation_in_progress' })
       }
 
@@ -528,22 +522,8 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       // integration; both 'completed' (post-MYT-53) and 'integrated'
       // (post-MYT-54) mean the PC entity exists and the character row
       // is in its final shape.
-      const charactersResult = await opts.pool.query<{
-        user_id: string
-        character_id: string
-        name: string
-        class: string
-        level: number
-      }>(
-        `SELECT cc.user_id, c.id AS character_id, c.name, c.class, c.level
-         FROM character_concepts cc
-         JOIN campaign_characters cm
-           ON cm.campaign_id = cc.campaign_id AND cm.user_id = cc.user_id
-         JOIN characters c ON c.id = cm.character_id
-         WHERE cc.campaign_id = $1 AND cc.status IN ('completed', 'integrated')`,
-        [campaign.id],
-      )
-      const characters = charactersResult.rows.map((r) => ({
+      const charactersResult = await repo.characters.listCampaignCharacters(campaign.id)
+      const characters = charactersResult.map((r) => ({
         userId: r.user_id,
         characterId: r.character_id,
         name: r.name,
@@ -748,17 +728,13 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
       /* c8 ignore stop */
 
-      const worldRow = await opts.pool.query<{ status: string }>(
-        `SELECT status FROM worlds WHERE id = $1`,
-        [campaign.worldId],
-      )
-      const worldStatus = worldRow.rows[0]?.status
+      const worldStatus = await repo.worlds.getStatus(campaign.worldId)
       if (worldStatus === 'generating') {
         reply.header('Retry-After', '30')
         return reply.code(409).send({ code: 'world_gen_in_progress' })
       }
 
-      await opts.pool.query(`DELETE FROM worlds WHERE id = $1`, [campaign.worldId])
+      await repo.worlds.deleteById(campaign.worldId)
       return reply.code(204).send()
     },
   )
@@ -794,15 +770,12 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         return reply.code(400).send({ code: 'invalid_body', issues: parsed.error.issues })
       }
       const campaignId = request.params.campaignId
-      const result = await opts.pool.query<{ id: string }>(
-        `UPDATE campaigns SET name = $2, updated_at = now() WHERE id = $1 RETURNING id`,
-        [campaignId, parsed.data.name],
-      )
-      /* c8 ignore start — `rowCount === 0` arm: requireCampaignMember
+      const renamed = await repo.campaigns.renameById(campaignId, parsed.data.name)
+      /* c8 ignore start — `!renamed` arm: requireCampaignMember
        * runs first and 403s the caller before reaching here when the
        * campaign doesn't exist, so this defensive 404 is unreachable in
        * normal flow. */
-      if (result.rowCount === 0) {
+      if (!renamed) {
         return reply.code(404).send({ code: 'campaign_not_found' })
       }
       /* c8 ignore stop */

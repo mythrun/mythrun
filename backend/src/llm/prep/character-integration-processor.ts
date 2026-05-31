@@ -81,21 +81,23 @@ export async function processCharacterIntegrationJob(
     return
   }
 
+  // myth-gp2c Cluster C: the integration stage persists through the unified
+  // repo surface (reads + Opus call outside `repo.transaction`, the 7-table
+  // write inside it). Build the repo from the same pool the processor threads
+  // everywhere else; the per-stage bookkeeping writes go through it too.
+  const repo = createRepo(deps.pool)
+
   try {
-    // myth-gp2c Cluster C: the integration stage persists through the unified
-    // repo surface (reads + Opus call outside `repo.transaction`, the 7-table
-    // write inside it). Build the repo from the same pool the processor threads
-    // everywhere else.
-    const result = await runCharacterIntegrationStage(createRepo(deps.pool), {
+    const result = await runCharacterIntegrationStage(repo, {
       campaignId,
       ownerUserId,
     })
-    await deps.pool.query(
-      `UPDATE pipeline_runs
-          SET status = 'completed', cost_usd = $1, completed_at = now()
-        WHERE campaign_id = $2 AND stage = $3 AND user_id IS NULL`,
-      [result.llmCostUsd, campaignId, STAGE],
-    )
+    await repo.pipelineRuns.markStageCompleted({
+      kind: 'campaign',
+      campaignId,
+      stage: STAGE,
+      costUsd: result.llmCostUsd,
+    })
     await deps.publishEvent(campaignId, {
       type: 'stage-completed',
       stage: STAGE,
@@ -115,12 +117,12 @@ export async function processCharacterIntegrationJob(
     // (LlmStructuredOutputError, CostCapExceededError, pg errors, etc.).
     /* c8 ignore next */
     const message = err instanceof Error ? err.message : String(err)
-    await deps.pool.query(
-      `UPDATE pipeline_runs
-          SET status = 'failed', error = $1, completed_at = now()
-        WHERE campaign_id = $2 AND stage = $3 AND user_id IS NULL`,
-      [message, campaignId, STAGE],
-    )
+    await repo.pipelineRuns.markStageFailed({
+      kind: 'campaign',
+      campaignId,
+      stage: STAGE,
+      error: message,
+    })
     // MYT-56: on TERMINAL failure (no point retrying), flip campaigns.status
     // to 'failed' so the bare GET /api/campaigns row + the SSE-derived phase
     // both surface the terminal state. Without this, the campaign would sit
@@ -128,10 +130,7 @@ export async function processCharacterIntegrationJob(
     // NON-terminal failure we leave the campaign at 'setup' — BullMQ will
     // retry with backoff and a later attempt may succeed.
     if (terminal) {
-      await deps.pool.query(
-        `UPDATE campaigns SET status = 'failed', updated_at = now() WHERE id = $1`,
-        [campaignId],
-      )
+      await repo.campaigns.setFailed(campaignId)
     }
     await deps.publishEvent(campaignId, {
       type: 'stage-failed',

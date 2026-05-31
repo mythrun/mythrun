@@ -22,6 +22,7 @@ import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { Logger } from 'pino'
 import { getJobContext } from '../worker/job-context.js'
+import { createRepo } from '../repo/index.js'
 
 export interface ProcessErrorHandlerDeps {
   readonly pool: Pool
@@ -42,6 +43,12 @@ export function installProcessErrorHandlers(
   deps: ProcessErrorHandlerDeps,
 ): { uninstall: () => void } {
   const recent: number[] = []
+  // Build the repo once over the handler's pool. The best-effort crash-time
+  // "mark world failed" write goes through `repo.worlds.markFailed` (SQL
+  // byte-identical to the prior inline `UPDATE worlds SET status = 'failed'
+  // WHERE id = $1`) — keeping the all-access-through-repo rule total even for
+  // process-level glue.
+  const repo = createRepo(deps.pool)
 
   function pruneOld(): void {
     const cutoff = deps.now() - WINDOW_MS
@@ -54,10 +61,7 @@ export function installProcessErrorHandlers(
 
   async function markFailedBestEffort(worldId: string, campaignId: string): Promise<void> {
     try {
-      await deps.pool.query(
-        `UPDATE worlds SET status = 'failed' WHERE id = $1`,
-        [worldId],
-      )
+      await repo.worlds.markFailed(worldId)
     } catch (markErr) {
       deps.logger.error(
         { event: 'process.mark_failed.pg_error', worldId, err: markErr },

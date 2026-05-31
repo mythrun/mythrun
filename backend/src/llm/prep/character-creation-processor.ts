@@ -31,8 +31,7 @@ import { sumCharacterCreationStageCosts } from './cost-cap.js'
 import { runLocationSelectionStage } from './stages/location-selection.js'
 import { runCharacterConceptStage } from './stages/character-concept.js'
 import { runCharacterSheetStage } from './stages/character-sheet.js'
-import { createCharacterConceptsRepo } from '../../repo/character-concepts.js'
-import { createRepo } from '../../repo/index.js'
+import { createRepo, type Repo } from '../../repo/index.js'
 import type { CharacterConceptOutput } from '../schemas/character-concept.js'
 import {
   VocabularyRegistrySchema,
@@ -90,7 +89,7 @@ export async function runCharacterCreationJob(
   job: CharacterCreationJobLike,
 ): Promise<void> {
   const { campaignId, userId } = job.data
-  const conceptsRepo = createCharacterConceptsRepo(deps.pool)
+  const repo = createRepo(deps.pool)
 
   // 1. Cost-cap precheck. Sums all prior completed character-creation
   //    stage costs for this campaign (across all players) and compares to
@@ -104,7 +103,7 @@ export async function runCharacterCreationJob(
   const capUsd = deps.costCapUsd
   const spent = await sumCharacterCreationStageCosts(deps.pool, campaignId)
   if (spent > capUsd) {
-    await conceptsRepo.markFailed(campaignId, userId, {
+    await repo.characterConcepts.markFailed(campaignId, userId, {
       code: 'character_creation_cost_cap_exceeded',
       spent,
       capUsd,
@@ -120,16 +119,12 @@ export async function runCharacterCreationJob(
   }
 
   // 2. Resolve worldId once — every stage needs it.
-  const worldRow = await deps.pool.query<{ world_id: string }>(
-    `SELECT world_id FROM campaigns WHERE id = $1`,
-    [campaignId],
-  )
   // campaigns.world_id is NOT NULL + FK ON DELETE CASCADE, so a row from
   // campaigns table is guaranteed to have world_id set. The fan-out
   // route's preHandler proves the campaign exists.
-  const worldId = worldRow.rows[0]?.world_id
+  const worldId = await repo.campaigns.getWorldId(campaignId)
   /* c8 ignore next 3 — invariant per preHandler + FK NOT NULL */
-  if (worldId === undefined) {
+  if (worldId === null) {
     throw new Error(`campaign ${campaignId} not found — preHandler invariant violated`)
   }
 
@@ -165,7 +160,7 @@ export async function runCharacterCreationJob(
 
     const startedAt = Date.now()
     try {
-      const result = await runStage(deps, stage, {
+      const result = await runStage(repo, deps, stage, {
         campaignId,
         userId,
         worldId,
@@ -179,18 +174,21 @@ export async function runCharacterCreationJob(
         conceptOutput = result.concept
         // myth-y7xt T2: persist the structured narrative so MYT-54's campaign-
         // scoped character_integration worker can read it.
-        await deps.pool.query(
-          `UPDATE character_concepts
-              SET concept_output = $1::jsonb, updated_at = now()
-            WHERE campaign_id = $2 AND user_id = $3`,
-          [JSON.stringify(conceptOutput), campaignId, userId],
+        await repo.characterConcepts.setConceptOutput(
+          campaignId,
+          userId,
+          JSON.stringify(conceptOutput),
         )
       }
       if (stage === 'character_sheet' && result.characterId !== undefined) {
         characterId = result.characterId
       }
 
-      await markStageCompleted(deps.pool, campaignId, userId, stage, {
+      await repo.pipelineRuns.markStageCompleted({
+        kind: 'campaign-user',
+        campaignId,
+        userId,
+        stage,
         costUsd: result.costUsd,
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
@@ -208,9 +206,15 @@ export async function runCharacterCreationJob(
       // subclasses (LlmStructuredOutputError, pg errors, etc.).
       /* c8 ignore next */
       const message = err instanceof Error ? err.message : String(err)
-      await markStageFailed(deps.pool, campaignId, userId, stage, message)
+      await repo.pipelineRuns.markStageFailed({
+        kind: 'campaign-user',
+        campaignId,
+        userId,
+        stage,
+        error: message,
+      })
       if (terminal) {
-        await conceptsRepo.markFailed(campaignId, userId, { stage, message })
+        await repo.characterConcepts.markFailed(campaignId, userId, { stage, message })
         await deps.publishEvent(campaignId, {
           type: 'stage-failed',
           stage,
@@ -239,7 +243,7 @@ export async function runCharacterCreationJob(
   //    'completed' and emit the terminal phase event. The campaign-scoped
   //    character_integration stage (MYT-54) runs separately, owner-
   //    triggered, after all members reach this state.
-  await conceptsRepo.markCompleted(campaignId, userId)
+  await repo.characterConcepts.markCompleted(campaignId, userId)
   await deps.publishEvent(campaignId, {
     type: 'phase',
     phase: 'character_creation_complete',
@@ -266,18 +270,19 @@ interface RunStageResult {
 }
 
 async function runStage(
+  repo: Repo,
   deps: CharacterCreationDeps,
   stage: CharacterCreationStage,
   ctx: RunStageCtx,
 ): Promise<RunStageResult> {
   if (stage === 'location_selection') {
-    return runLocationSelectionStage(deps.pool, {
+    return runLocationSelectionStage(repo, {
       campaignId: ctx.campaignId,
       worldId: ctx.worldId,
     })
   }
   if (stage === 'character_concept') {
-    const args = await buildConceptArgs(deps.pool, ctx)
+    const args = await buildConceptArgs(repo, ctx)
     const r = await runCharacterConceptStage(args)
     return {
       costUsd: r.costUsd,
@@ -304,12 +309,11 @@ async function runStage(
     )
   }
   const narrative = ctx.conceptOutput
-  const w = await loadWorldContext(deps.pool, ctx.worldId)
+  const w = await loadWorldContext(repo, ctx.worldId)
   // myth-gp2c Cluster C: stage 3 persists through the unified repo surface
   // (`repo.transaction(tx => tx.characters.replaceSubTables(...))`). The LLM
-  // call stays outside that tx inside the stage. Build the repo from the same
-  // pool the processor threads everywhere else.
-  const r = await runCharacterSheetStage(createRepo(deps.pool), {
+  // call stays outside that tx inside the stage.
+  const r = await runCharacterSheetStage(repo, {
     campaignId: ctx.campaignId,
     userId: ctx.userId,
     worldId: ctx.worldId,
@@ -328,38 +332,15 @@ async function runStage(
 // -- arg builders -----------------------------------------------------------
 
 async function buildConceptArgs(
-  pool: Pool,
+  repo: Repo,
   ctx: RunStageCtx,
 ): Promise<Parameters<typeof runCharacterConceptStage>[0]> {
-  const concept = await pool.query<{
-    concept_text: string | null
-    guided_choices: Record<string, unknown>
-  }>(
-    `SELECT concept_text, guided_choices FROM character_concepts
-       WHERE campaign_id = $1 AND user_id = $2`,
-    [ctx.campaignId, ctx.userId],
-  )
-  const world = await pool.query<{
-    name: string
-    tone: string | null
-    themes: string | null
-    era: string | null
-    geography_summary: string | null
-    political_summary: string | null
-    key_tensions: string | null
-    vocabulary_registry: unknown
-  }>(
-    `SELECT name, tone, themes, era, geography_summary, political_summary,
-            key_tensions, vocabulary_registry
-       FROM worlds WHERE id = $1`,
-    [ctx.worldId],
-  )
+  const conceptRow = await repo.characterConcepts.getConceptInputs(ctx.campaignId, ctx.userId)
   // ctx.worldId came from campaigns.world_id (FK to worlds.id) so this
   // row is guaranteed to exist; no defensive arm needed.
-  const w = world.rows[0]
-  const conceptRow = concept.rows[0]
+  const w = await repo.worlds.getCharacterConceptContext(ctx.worldId)
   /* c8 ignore next 6 — invariant: world FK NOT NULL + character_concepts flip-to-processing */
-  if (w === undefined || conceptRow === undefined) {
+  if (w === null || conceptRow === null) {
     throw new Error(
       `world or character_concepts missing — world=${ctx.worldId} campaign=${ctx.campaignId} user=${ctx.userId}`,
     )
@@ -389,54 +370,11 @@ async function buildConceptArgs(
 }
 
 async function loadWorldContext(
-  pool: Pool,
+  repo: Repo,
   worldId: string,
 ): Promise<{ tone: string; era: string }> {
-  const r = await pool.query<{ tone: string | null; era: string | null }>(
-    `SELECT tone, era FROM worlds WHERE id = $1`,
-    [worldId],
-  )
-  return { tone: r.rows[0]?.tone ?? '', era: r.rows[0]?.era ?? '' }
-}
-
-// -- pipeline_runs accounting -----------------------------------------------
-
-async function markStageCompleted(
-  pool: Pool,
-  campaignId: string,
-  userId: string,
-  stage: CharacterCreationStage,
-  costs: { costUsd: number; inputTokens: number; outputTokens: number },
-): Promise<void> {
-  await pool.query(
-    `UPDATE pipeline_runs
-        SET status = 'completed', completed_at = now(),
-            cost_usd = $3, input_tokens = $4, output_tokens = $5, error = NULL
-      WHERE campaign_id = $1 AND stage = $2 AND user_id = $6`,
-    [
-      campaignId,
-      stage,
-      costs.costUsd,
-      costs.inputTokens,
-      costs.outputTokens,
-      userId,
-    ],
-  )
-}
-
-async function markStageFailed(
-  pool: Pool,
-  campaignId: string,
-  userId: string,
-  stage: CharacterCreationStage,
-  message: string,
-): Promise<void> {
-  await pool.query(
-    `UPDATE pipeline_runs
-        SET status = 'failed', completed_at = now(), error = $3
-      WHERE campaign_id = $1 AND stage = $2 AND user_id = $4`,
-    [campaignId, stage, message, userId],
-  )
+  const r = await repo.worlds.getToneAndEra(worldId)
+  return { tone: r?.tone ?? '', era: r?.era ?? '' }
 }
 
 // -- BullMQ processor factory ----------------------------------------------

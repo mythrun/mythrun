@@ -29,8 +29,6 @@ import type { Pool } from 'pg'
 import { z } from 'zod'
 import { createRepo, ROLLBACK } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
-import { entityHierarchy } from '../repo/entity-hierarchy.js'
-import type { CharacterDbRow } from '../repo/mappers.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
 
@@ -89,15 +87,6 @@ const FinalizeBodySchema = z.object({
   pre_integration_notes: z.string().min(0).max(4000).nullable().optional(),
 })
 
-// Row shape returned by the T17 roster JOIN. Declared at module scope so the
-// query's pool.query<...> generic and the response mapper share a single type.
-interface RosterRow {
-  user_id: string
-  display_name: string
-  concept_status: 'submitted' | 'processing' | 'completed' | 'failed' | null
-  character_id: string | null
-}
-
 // FastifyPluginAsync requires an async function shape; the body has no
 // top-level await (only synchronous app.post registrations).
 // eslint-disable-next-line @typescript-eslint/require-await, max-lines-per-function
@@ -123,37 +112,19 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       // requireCampaignMember has already proven the campaign exists +
       // current user is its owner. Trust that and reach for world_id
       // unconditionally.
-      const campaign = await opts.pool.query<{ world_id: string }>(
-        `SELECT world_id FROM campaigns WHERE id = $1`,
-        [req.params.campaignId],
-      )
       /* c8 ignore next — invariant per requireCampaignMember preHandler */
-      const worldId = campaign.rows[0]?.world_id ?? ''
+      const worldId = (await repo.campaigns.getWorldId(req.params.campaignId)) ?? ''
 
-      const world = await opts.pool.query<{ status: string }>(
-        `SELECT status FROM worlds WHERE id = $1`,
-        [worldId],
-      )
-      if (world.rows[0]?.status !== 'complete') {
+      const worldStatus = await repo.worlds.getStatus(worldId)
+      if (worldStatus !== 'complete') {
         return reply.code(409).send({ code: 'world_not_complete' })
       }
 
-      // COUNT(*) always returns exactly one row, so locked.rows[0].n is
-      // always defined — fallback '0' is unreachable but type-safe.
-      const locked = await opts.pool.query<{ n: string }>(
-        `SELECT COUNT(*)::text AS n FROM character_concepts
-         WHERE campaign_id = $1 AND status IN ('processing', 'completed')`,
-        [req.params.campaignId],
-      )
-      /* c8 ignore next — COUNT(*) always returns a row, fallback unreachable */
-      if (Number.parseInt(locked.rows[0]?.n ?? '0', 10) > 0) {
+      if ((await repo.characterConcepts.countLocked(req.params.campaignId)) > 0) {
         return reply.code(409).send({ code: 'situation_locked' })
       }
 
-      await opts.pool.query(
-        `UPDATE campaigns SET starting_situation_index = $2 WHERE id = $1`,
-        [req.params.campaignId, parsed.data.index],
-      )
+      await repo.campaigns.setStartingSituationIndex(req.params.campaignId, parsed.data.index)
       return reply.code(200).send({ index: parsed.data.index })
     },
   )
@@ -176,13 +147,8 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
     '/api/campaigns/:campaignId/archive',
     { preHandler: requireCampaignMember(repo, 'owner') },
     async (req, reply) => {
-      const result = await opts.pool.query<{ status: string }>(
-        `UPDATE campaigns SET status = 'archived'
-         WHERE id = $1 AND status IN ('setup', 'active')
-         RETURNING status`,
-        [req.params.campaignId],
-      )
-      if (result.rows.length === 0) {
+      const archived = await repo.campaigns.archive(req.params.campaignId)
+      if (!archived) {
         return reply.code(409).send({ code: 'cannot_archive' })
       }
       return reply.code(200).send({ status: 'archived' })
@@ -212,22 +178,13 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       const body = parsed.data
 
       const dbUser = requireDbUser(req)
-      const campaign = await opts.pool.query<{
-        world_id: string
-        starting_situation_index: number | null
-      }>(
-        `SELECT world_id, starting_situation_index FROM campaigns WHERE id = $1`,
-        [req.params.campaignId],
-      )
       // requireCampaignMember already proved this campaign exists.
+      const campRow = await repo.campaigns.getWorldAndSituationIndex(req.params.campaignId)
       /* c8 ignore next — invariant per requireCampaignMember preHandler */
-      const camp = campaign.rows[0] ?? { world_id: '', starting_situation_index: null }
+      const camp = campRow ?? { world_id: '', starting_situation_index: null }
 
-      const world = await opts.pool.query<{ status: string }>(
-        `SELECT status FROM worlds WHERE id = $1`,
-        [camp.world_id],
-      )
-      if (world.rows[0]?.status !== 'complete') {
+      const worldStatus = await repo.worlds.getStatus(camp.world_id)
+      if (worldStatus !== 'complete') {
         return reply.code(409).send({ code: 'world_not_complete' })
       }
       if (camp.starting_situation_index === null) {
@@ -326,34 +283,21 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       config: { pipelineRoute: true },
     },
     async (req, reply) => {
-      const campaign = await opts.pool.query<{
-        world_id: string
-        starting_situation_index: number | null
-      }>(
-        `SELECT world_id, starting_situation_index FROM campaigns WHERE id = $1`,
-        [req.params.campaignId],
-      )
       // requireCampaignMember already proved this campaign exists.
+      const campRow = await repo.campaigns.getWorldAndSituationIndex(req.params.campaignId)
       /* c8 ignore next — invariant per requireCampaignMember preHandler */
-      const camp = campaign.rows[0] ?? { world_id: '', starting_situation_index: null }
+      const camp = campRow ?? { world_id: '', starting_situation_index: null }
 
-      const world = await opts.pool.query<{
-        // myth-k1ee added `title` + `locationName` to each entry; older
-        // pre-myth-k1ee worlds may still have entries without these fields.
-        // The route passes the JSONB through verbatim so both shapes work.
-        starting_situation_entries: {
-          index: number
-          locationEntityId: string
-          prose: string
-          title?: string
-          locationName?: string
-        }[]
-      }>(
-        `SELECT starting_situation_entries FROM worlds WHERE id = $1`,
-        [camp.world_id],
-      )
-      /* c8 ignore next — world FK invariant per campaigns.world_id NOT NULL */
-      const entries = world.rows[0]?.starting_situation_entries ?? []
+      // myth-k1ee added `title` + `locationName` to each entry; older
+      // pre-myth-k1ee worlds may still have entries without these fields.
+      // The route passes the JSONB through verbatim so both shapes work.
+      const entries = await repo.worlds.getStartingSituationEntries<{
+        index: number
+        locationEntityId: string
+        prose: string
+        title?: string
+        locationName?: string
+      }>(camp.world_id)
       if (entries.length === 0) return reply.code(404).send({ code: 'world_not_ready' })
 
       return reply.code(200).send({
@@ -380,22 +324,8 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       config: { pipelineRoute: true },
     },
     async (req, reply) => {
-      const result = await opts.pool.query<RosterRow>(
-        `SELECT cm.user_id,
-                u.display_name,
-                cc.status        AS concept_status,
-                ch.character_id  AS character_id
-         FROM campaign_members cm
-         JOIN users u ON u.id = cm.user_id
-         LEFT JOIN character_concepts cc
-           ON cc.campaign_id = cm.campaign_id AND cc.user_id = cm.user_id
-         LEFT JOIN campaign_characters ch
-           ON ch.campaign_id = cm.campaign_id AND ch.user_id = cm.user_id
-         WHERE cm.campaign_id = $1
-         ORDER BY cm.joined_at`,
-        [req.params.campaignId],
-      )
-      const members = result.rows.map((r) => ({
+      const roster = await repo.campaigns.getPartyRoster(req.params.campaignId)
+      const members = roster.map((r) => ({
         userId: r.user_id,
         displayName: r.display_name,
         conceptStatus: r.concept_status ?? 'none',
@@ -425,27 +355,10 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       config: { pipelineRoute: true },
     },
     async (req, reply) => {
-      const memberRes = await opts.pool.query<{ user_id: string; display_name: string }>(
-        `SELECT cm.user_id, u.display_name
-           FROM campaign_members cm
-           JOIN users u ON u.id = cm.user_id
-          WHERE cm.campaign_id = $1
-          ORDER BY cm.joined_at`,
-        [req.params.campaignId],
-      )
+      const memberRows = await repo.campaigns.listMembersBasic(req.params.campaignId)
 
-      const conceptRes = await opts.pool.query<{
-        user_id: string
-        status: string
-        submitted_at: Date
-        error: unknown
-      }>(
-        `SELECT user_id, status, submitted_at, error
-           FROM character_concepts
-          WHERE campaign_id = $1`,
-        [req.params.campaignId],
-      )
-      const byUserId = new Map(conceptRes.rows.map((r) => [r.user_id, r]))
+      const conceptRows = await repo.characterConcepts.listForCampaign(req.params.campaignId)
+      const byUserId = new Map(conceptRows.map((r) => [r.user_id, r]))
 
       const concepts: {
         userId: string
@@ -455,7 +368,7 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
         error?: unknown
       }[] = []
       const missing: { userId: string; displayName: string }[] = []
-      for (const m of memberRes.rows) {
+      for (const m of memberRows) {
         const c = byUserId.get(m.user_id)
         if (c) {
           concepts.push({
@@ -478,7 +391,7 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
 
       return reply.code(200).send({
         campaignId: req.params.campaignId,
-        totalMembers: memberRes.rows.length,
+        totalMembers: memberRows.length,
         concepts,
         missing,
       })
@@ -501,42 +414,21 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       config: { pipelineRoute: true },
     },
     async (req, reply) => {
-      const join = await opts.pool.query<{ character_id: string }>(
-        `SELECT character_id FROM campaign_characters
-         WHERE campaign_id = $1 AND character_id = $2`,
-        [req.params.campaignId, req.params.charId],
+      const inCampaign = await repo.characters.isInCampaign(
+        req.params.campaignId,
+        req.params.charId,
       )
-      if (join.rows.length === 0) {
+      if (!inCampaign) {
         return reply.code(404).send({ code: 'character_not_in_campaign' })
       }
 
-      const [c, skills, features, equipment, spells] = await Promise.all([
-        opts.pool.query<CharacterDbRow>(`SELECT * FROM characters WHERE id = $1`, [
-          req.params.charId,
-        ]),
-        opts.pool.query<{ skill_name: string; proficiency_level: string }>(
-          `SELECT skill_name, proficiency_level FROM character_skills WHERE character_id = $1`,
-          [req.params.charId],
-        ),
-        opts.pool.query<{ feature_name: string; feature_source: string; description: string }>(
-          `SELECT feature_name, feature_source, description FROM character_features WHERE character_id = $1`,
-          [req.params.charId],
-        ),
-        opts.pool.query<{ item_name: string; quantity: number; equipped: boolean }>(
-          `SELECT item_name, quantity, equipped FROM character_equipment WHERE character_id = $1`,
-          [req.params.charId],
-        ),
-        opts.pool.query<{ spell_name: string; spell_level: number; prepared: boolean }>(
-          `SELECT spell_name, spell_level, prepared FROM character_spells WHERE character_id = $1`,
-          [req.params.charId],
-        ),
-      ])
+      const full = await repo.characters.getFullCharacter(req.params.charId)
       return reply.code(200).send({
-        character: c.rows[0],
-        skills: skills.rows,
-        features: features.rows,
-        equipment: equipment.rows,
-        spells: spells.rows,
+        character: full.character,
+        skills: full.skills,
+        features: full.features,
+        equipment: full.equipment,
+        spells: full.spells,
       })
     },
   )
@@ -558,14 +450,10 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       config: { pipelineRoute: true },
     },
     async (req, reply) => {
-      const camp = await opts.pool.query<{ world_id: string }>(
-        `SELECT world_id FROM campaigns WHERE id = $1`,
-        [req.params.campaignId],
-      )
       // requireCampaignMember already proved this campaign exists.
       /* c8 ignore next — invariant per requireCampaignMember preHandler */
-      const worldId = camp.rows[0]?.world_id ?? ''
-      const hierarchy = await entityHierarchy.listForWorld(opts.pool, worldId)
+      const worldId = (await repo.campaigns.getWorldId(req.params.campaignId)) ?? ''
+      const hierarchy = await repo.entityHierarchy.listForWorld(worldId)
       return reply.code(200).send({ hierarchy })
     },
   )
@@ -586,52 +474,24 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       config: { pipelineRoute: true },
     },
     async (req, reply) => {
-      const camp = await opts.pool.query<{ world_id: string }>(
-        `SELECT world_id FROM campaigns WHERE id = $1`,
-        [req.params.campaignId],
-      )
       // requireCampaignMember already proved this campaign exists.
       /* c8 ignore next — invariant per requireCampaignMember preHandler */
-      const worldId = camp.rows[0]?.world_id ?? ''
+      const worldId = (await repo.campaigns.getWorldId(req.params.campaignId)) ?? ''
 
-      const tables = await opts.pool.query<{ id: string; name: string; category: string }>(
-        `SELECT id, name, category FROM random_tables WHERE world_id = $1 ORDER BY name`,
-        [worldId],
-      )
-      const tableIds = tables.rows.map((r) => r.id)
-      const entries =
-        tableIds.length === 0
-          ? {
-              rows: [] as {
-                table_id: string
-                roll_min: number
-                roll_max: number
-                content: string
-              }[],
-            }
-          : await opts.pool.query<{
-              table_id: string
-              roll_min: number
-              roll_max: number
-              content: string
-            }>(
-              `SELECT table_id, roll_min, roll_max, content
-               FROM random_table_entries
-               WHERE table_id = ANY($1::uuid[])
-               ORDER BY table_id, roll_min`,
-              [tableIds],
-            )
+      const tables = await repo.randomTables.listByWorld(worldId)
+      const tableIds = tables.map((r) => r.id)
+      const entries = await repo.randomTables.listEntriesByTableIds(tableIds)
       const entriesByTable = new Map<
         string,
         { rollMin: number; rollMax: number; content: string }[]
       >()
-      for (const r of entries.rows) {
+      for (const r of entries) {
         const arr = entriesByTable.get(r.table_id) ?? []
         arr.push({ rollMin: r.roll_min, rollMax: r.roll_max, content: r.content })
         entriesByTable.set(r.table_id, arr)
       }
       return reply.code(200).send({
-        tables: tables.rows.map((t) => ({
+        tables: tables.map((t) => ({
           id: t.id,
           name: t.name,
           category: t.category,

@@ -156,30 +156,11 @@ export const devCreditsRoutes: FastifyPluginAsync<DevCreditsRoutesOpts> = async 
         return reply.code(400).send({ code: 'unknown_dev_sub', sub })
       }
 
-      const balances = await opts.pool.query<{ credit_type: string; balance: number }>(
-        `SELECT credit_type, COALESCE(SUM(amount), 0)::int AS balance
-           FROM credit_ledger
-           WHERE user_id = $1
-             AND (expires_at IS NULL OR expires_at > now())
-           GROUP BY credit_type`,
-        [user.id],
-      )
-      const recent = await opts.pool.query<{
-        granted_at: string
-        amount: number
-        credit_type: string
-        source_type: string
-      }>(
-        `SELECT granted_at, amount::int AS amount, credit_type, source_type
-           FROM credit_ledger
-           WHERE user_id = $1
-           ORDER BY granted_at DESC
-           LIMIT 20`,
-        [user.id],
-      )
+      const balances = await repo.credits.listBalancesByType(user.id)
+      const recent = await repo.credits.listRecentLedger(user.id)
 
       const out: Record<'world_gen' | 'session', number> = { world_gen: 0, session: 0 }
-      for (const row of balances.rows) {
+      for (const row of balances) {
         if (row.credit_type === 'world_gen' || row.credit_type === 'session') {
           out[row.credit_type] = row.balance
         }
@@ -188,7 +169,7 @@ export const devCreditsRoutes: FastifyPluginAsync<DevCreditsRoutesOpts> = async 
       return reply.code(200).send({
         sub,
         balances: out,
-        recent: recent.rows.map((r) => ({
+        recent: recent.map((r) => ({
           grantedAt: r.granted_at,
           amount: r.amount,
           creditType: r.credit_type,
