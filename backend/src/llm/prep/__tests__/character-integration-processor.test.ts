@@ -170,10 +170,12 @@ describe('processCharacterIntegrationJob (MYT-54 T11)', () => {
     await processor(makeJob({ campaignId, ownerUserId }))
 
     expect(handlerSpy).toHaveBeenCalledTimes(1)
-    expect(handlerSpy).toHaveBeenCalledWith(pool, {
-      campaignId,
-      ownerUserId,
-    })
+    // myth-gp2c Cluster C: the processor now builds a repo (createRepo(pool))
+    // and passes it — the handler takes a Repo, not the raw pool. Assert the
+    // repo shape (carries `.transaction`) + the unchanged args.
+    const [repoArg, argsArg] = handlerSpy.mock.calls[0] ?? []
+    expect(typeof (repoArg as { transaction?: unknown }).transaction).toBe('function')
+    expect(argsArg).toEqual({ campaignId, ownerUserId })
 
     const runs = await pool.query<{ status: string; cost_usd: string }>(
       `SELECT status, cost_usd FROM pipeline_runs

@@ -28,6 +28,7 @@ import { isTerminalError } from '../errors.js'
 import { logger } from '../logger.js'
 import { atomicClaimStage } from './world-gen-processor.js'
 import { runCharacterIntegrationStage } from './stages/character-integration.js'
+import { createRepo } from '../../repo/index.js'
 
 export interface CharacterIntegrationJobPayload {
   readonly campaignId: string
@@ -81,7 +82,11 @@ export async function processCharacterIntegrationJob(
   }
 
   try {
-    const result = await runCharacterIntegrationStage(deps.pool, {
+    // myth-gp2c Cluster C: the integration stage persists through the unified
+    // repo surface (reads + Opus call outside `repo.transaction`, the 7-table
+    // write inside it). Build the repo from the same pool the processor threads
+    // everywhere else.
+    const result = await runCharacterIntegrationStage(createRepo(deps.pool), {
       campaignId,
       ownerUserId,
     })

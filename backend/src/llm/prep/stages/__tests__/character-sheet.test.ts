@@ -29,6 +29,7 @@ import {
   type TestScope,
 } from '../../../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
+import { createRepo } from '../../../../repo/index.js'
 import { runCharacterSheetStage } from '../character-sheet.js'
 
 vi.mock('ai', async () => {
@@ -176,7 +177,7 @@ describe('runCharacterSheetStage', () => {
       usage: { inputTokens: 2000, outputTokens: 2000, totalTokens: 4000 },
     } as never)
 
-    const result = await runCharacterSheetStage(pool, {
+    const result = await runCharacterSheetStage(createRepo(pool), {
       campaignId,
       userId,
       worldId,
@@ -283,7 +284,7 @@ describe('runCharacterSheetStage', () => {
       finishReason: 'stop',
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
-    const first = await runCharacterSheetStage(pool, {
+    const first = await runCharacterSheetStage(createRepo(pool), {
       campaignId,
       userId,
       worldId,
@@ -312,7 +313,7 @@ describe('runCharacterSheetStage', () => {
       finishReason: 'stop',
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
-    const second = await runCharacterSheetStage(pool, {
+    const second = await runCharacterSheetStage(createRepo(pool), {
       campaignId,
       userId,
       worldId,

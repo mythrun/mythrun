@@ -95,19 +95,12 @@ export async function sumCharacterCreationStageCosts(
   // so the per-player character_concept + character_sheet rows and the
   // campaign-scoped character_integration row all roll up into the same
   // character_creation_cost_cap_usd budget.
-  const result = await pool.query<{ total: number }>(
-    `SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total
-     FROM pipeline_runs
-     WHERE campaign_id = $1
-       AND status = 'completed'
-       AND stage IN ('character_concept', 'character_sheet', 'character_integration')`,
-    [campaignId],
-  )
-  /* c8 ignore start — COALESCE(SUM(...), 0) always returns one row, so
-     the `?? 0` falsy arm is unreachable; kept for TS optional-chain
-     narrowing without a non-null assertion. */
-  return result.rows[0]?.total ?? 0
-  /* c8 ignore stop */
+  //
+  // myth-gp2c Cluster C: SQL homed in repo.pipelineRuns.sumCharacterCreationStageCosts
+  // (verbatim). This wrapper keeps the existing (pool|client, campaignId) signature
+  // for the per-player character-creation processor; the integration stage reads
+  // it via repo.pipelineRuns directly (mirrors coherence-pass's cap reads).
+  return pipelineRunsNs(pool).sumCharacterCreationStageCosts(campaignId)
 }
 
 export interface IssueCostCapRefundArgs {

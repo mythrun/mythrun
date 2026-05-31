@@ -30,6 +30,7 @@ import {
   type TestScope,
 } from '../../../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
+import { createRepo } from '../../../../repo/index.js'
 import { runCharacterIntegrationStage } from '../character-integration.js'
 import { CostCapExceededError } from '../../cost-cap.js'
 import { LlmStructuredOutputError } from '../../../errors.js'
@@ -313,7 +314,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       }),
     )
 
-    const result = await runCharacterIntegrationStage(pool, {
+    const result = await runCharacterIntegrationStage(createRepo(pool), {
       campaignId,
       ownerUserId,
     })
@@ -415,7 +416,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
     )
 
     await expect(
-      runCharacterIntegrationStage(pool, { campaignId, ownerUserId }),
+      runCharacterIntegrationStage(createRepo(pool), { campaignId, ownerUserId }),
     ).rejects.toBeInstanceOf(LlmStructuredOutputError)
   })
 
@@ -430,7 +431,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
     )
 
     await expect(
-      runCharacterIntegrationStage(pool, { campaignId, ownerUserId }),
+      runCharacterIntegrationStage(createRepo(pool), { campaignId, ownerUserId }),
     ).rejects.toBeInstanceOf(CostCapExceededError)
     // LLM must NOT have been called once the cap is exhausted.
     expect(mockGenerateText).not.toHaveBeenCalled()
@@ -472,7 +473,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       }),
     )
 
-    const result = await runCharacterIntegrationStage(pool, {
+    const result = await runCharacterIntegrationStage(createRepo(pool), {
       campaignId,
       ownerUserId,
     })
@@ -537,7 +538,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       }),
     )
 
-    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+    await runCharacterIntegrationStage(createRepo(pool), { campaignId, ownerUserId })
 
     const { rows: pcEntityRows } = await pool.query<{ id: string; name: string }>(
       `SELECT id, name FROM entities
@@ -619,7 +620,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       }),
     )
 
-    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+    await runCharacterIntegrationStage(createRepo(pool), { campaignId, ownerUserId })
 
     const { rows: npcFactRows } = await pool.query<{ content: string }>(
       `SELECT content FROM facts WHERE entity_id = $1`,
@@ -654,7 +655,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       }),
     )
 
-    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+    await runCharacterIntegrationStage(createRepo(pool), { campaignId, ownerUserId })
 
     const { rows: pcRows } = await pool.query<{ id: string; name: string }>(
       `SELECT id, name FROM entities WHERE entity_type = 'pc' AND world_id = $1`,
@@ -702,7 +703,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       }),
     )
 
-    const result = await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+    const result = await runCharacterIntegrationStage(createRepo(pool), { campaignId, ownerUserId })
 
     expect(result.characterIds).toHaveLength(1)
     const { rows: relRows } = await pool.query<{ count: string }>(
@@ -746,7 +747,7 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       }),
     )
 
-    await runCharacterIntegrationStage(pool, { campaignId, ownerUserId })
+    await runCharacterIntegrationStage(createRepo(pool), { campaignId, ownerUserId })
 
     // Verify NO facts.entity_id matches the hallucinated UUID.
     const { rows: factRows } = await pool.query<{ count: string }>(

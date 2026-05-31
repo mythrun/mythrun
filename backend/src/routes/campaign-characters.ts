@@ -27,7 +27,8 @@
 import type { FastifyPluginAsync } from 'fastify'
 import type { Pool } from 'pg'
 import { z } from 'zod'
-import { createRepo } from '../repo/index.js'
+import { createRepo, ROLLBACK } from '../repo/index.js'
+import { uuidv7 } from '../repo/uuidv7.js'
 import { entityHierarchy } from '../repo/entity-hierarchy.js'
 import type { CharacterDbRow } from '../repo/mappers.js'
 import { requireCampaignMember } from '../auth/access-control.js'
@@ -241,63 +242,73 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
         return reply.code(409).send({ code: 'concept_locked' })
       }
 
-      // myth-nmg9: submit + flip + enqueue in one transaction. The
-      // upsert writes status='submitted'; the flip immediately advances
-      // to 'processing'; the enqueue puts the per-player BullMQ job on
-      // the campaign-setup queue. If the enqueue throws, the rollback
-      // leaves the row at its previous state (either nonexistent for a
-      // first submit, or 'submitted'/'failed' for a resubmit).
+      // myth-nmg9 / myth-gp2c Cluster C: submit + flip + seed the recovery row
+      // atomically in one `repo.transaction` (the upsert writes
+      // status='submitted'; the flip immediately advances it to 'processing';
+      // the seed row writes a 'pending' character_concept pipeline_runs trace),
+      // THEN enqueue AFTER the tx commits. Moving the enqueue out of the
+      // transaction is the MYT-56 discipline: a queue.add inside BEGIN/COMMIT is
+      // the "enqueued but commit failed" zombie-job shape this refactor exists
+      // to eliminate. Seeding the recovery row mirrors world-gen's
+      // executeCreateTransaction (insertSeedRow): a missed enqueue (Redis blip
+      // between COMMIT and queue.add) leaves a resumable 'pending' trace instead
+      // of a concept stranded at 'processing' with no pipeline_runs row. The
+      // worker's campaign-user claim re-arms that pending row to 'running' via
+      // ON CONFLICT. The tx returns the conceptId; the enqueue runs off that
+      // value after commit.
       const queue = opts.characterCreationQueue
       if (!queue) {
         return reply.code(503).send({ code: 'queue_not_ready' })
       }
 
-      const row = await repo.characterConcepts.upsert({
-        campaignId: req.params.campaignId,
-        userId: dbUser.id,
-        conceptText: body.conceptText,
-        situationGroundingText: body.situationGroundingText,
-        guidedChoices: {},
-      })
-
-      const client = await opts.pool.connect()
-      try {
-        await client.query('BEGIN')
-        const flipped = await repo.characterConcepts.flipSubmittedToProcessing(
-          client,
+      const txResult = await repo.transaction(async (tx) => {
+        const row = await tx.characterConcepts.upsert({
+          campaignId: req.params.campaignId,
+          userId: dbUser.id,
+          conceptText: body.conceptText,
+          situationGroundingText: body.situationGroundingText,
+          guidedChoices: {},
+        })
+        const flipped = await tx.characterConcepts.flipSubmittedToProcessing(
           req.params.campaignId,
           dbUser.id,
         )
         /* c8 ignore start — the upsert immediately above wrote
          * status='submitted', and the row is uniquely keyed on
-         * (campaign_id, user_id) so the flip MUST find it. The null
-         * branch is defense-in-depth against a concurrent admin DELETE
-         * between the upsert and the flip. */
+         * (campaign_id, user_id) so the flip MUST find it. The ROLLBACK
+         * sentinel branch is defense-in-depth against a concurrent admin
+         * DELETE between the upsert and the flip. */
         if (flipped === null) {
-          await client.query('ROLLBACK')
-          return await reply.code(409).send({ code: 'concept_lost_race' })
+          return ROLLBACK
         }
         /* c8 ignore stop */
-        const jobId = `cc-${req.params.campaignId}-${dbUser.id}`
-        await queue.add(
-          'character-creation',
-          { campaignId: req.params.campaignId, userId: dbUser.id },
-          { jobId },
-        )
-        await client.query('COMMIT')
-        return await reply.code(200).send({
-          conceptId: row.id,
-          status: 'processing',
-          jobId,
+        await tx.pipelineRuns.insertCharacterConceptSeedRow({
+          id: uuidv7(),
+          campaignId: req.params.campaignId,
+          userId: dbUser.id,
         })
-      } catch (err) {
-        await client.query('ROLLBACK')
-        throw err
-      } /* c8 ignore start — v8-instrumentation artifact on the finally
-         * branch boundary; the queue-throw rollback test exercises the
-         * catch + release path. */ finally {
-        client.release()
-      } /* c8 ignore stop */
+        return { conceptId: row.id }
+      })
+
+      /* c8 ignore start — see the in-tx ROLLBACK note above; the sentinel
+       * surfaces here only on the concurrent-delete race. */
+      if (txResult === ROLLBACK) {
+        return reply.code(409).send({ code: 'concept_lost_race' })
+      }
+      /* c8 ignore stop */
+
+      // Enqueue AFTER the tx committed (MYT-56), off the returned conceptId.
+      const jobId = `cc-${req.params.campaignId}-${dbUser.id}`
+      await queue.add(
+        'character-creation',
+        { campaignId: req.params.campaignId, userId: dbUser.id },
+        { jobId },
+      )
+      return reply.code(200).send({
+        conceptId: txResult.conceptId,
+        status: 'processing',
+        jobId,
+      })
     },
   )
 
@@ -633,13 +644,21 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
   // --------------------------------------------------------------------
   // MYT-54 T13: POST /finalize-character-creation
   //
-  // Owner-only fan-in trigger. Wraps the column flip
-  // (`campaigns.pre_integration_notes`) + queue enqueue in a single
-  // transaction so a successful 202 implies both the notes are persisted
-  // AND the singleton `ci-${campaignId}` job is on the `campaign-setup`
-  // queue (picked up by the MYT-54 T11 processor, which calls the T10
-  // handler). jobId is deterministic — BullMQ dedups on duplicate IDs,
-  // so a frantic double-click from the owner is safe at the queue layer.
+  // Owner-only fan-in trigger. The column flip
+  // (`campaigns.pre_integration_notes`) + the completed-concept gate run
+  // atomically in one `repo.transaction`; the singleton `ci-${campaignId}`
+  // queue enqueue runs AFTER the tx commits (MYT-56 — a queue.add inside
+  // BEGIN/COMMIT is the zombie-job shape this refactor eliminates). A 202
+  // therefore implies the notes are committed AND the job was enqueued; the
+  // job picked up by the MYT-54 T11 processor calls the T10 handler. jobId is
+  // deterministic — BullMQ dedups on duplicate IDs, so a frantic double-click
+  // from the owner is safe at the queue layer.
+  //
+  // The two 409 paths (`not_in_setup`, `no_completed_concepts`) reject from
+  // INSIDE the callback by throwing FinalizeRejected — that ROLLBACKs (so the
+  // notes flip is never persisted on the no-completed path) and the catch
+  // below maps the carried code to the 409. The queue is never touched on
+  // either 409 path (it only runs after a clean commit).
   //
   // Body normalization: missing OR empty-string `pre_integration_notes`
   // collapse to NULL in the column — the integration handler treats
@@ -671,66 +690,67 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       }
       const dbUser = requireDbUser(req)
 
-      const client = await opts.pool.connect()
       try {
-        await client.query('BEGIN')
+        await repo.transaction(async (tx) => {
+          // Transactional flip: false back means status was already
+          // 'active' or 'archived' (i.e. finalize already ran or owner
+          // archived the campaign). Throw → ROLLBACK keeps the contract
+          // tight — the queue is never touched on the 409 path.
+          const flipped = await tx.campaigns.setPreIntegrationNotesIfSetup(
+            req.params.campaignId,
+            notes,
+          )
+          if (!flipped) {
+            throw new FinalizeRejected('not_in_setup')
+          }
 
-        // Transactional flip: 0 rows back means status was already
-        // 'active' or 'archived' (i.e. finalize already ran or owner
-        // archived the campaign). Returning 409 + ROLLBACK keeps the
-        // contract tight — the queue is never touched on the 409 path.
-        const upd = await client.query(
-          `UPDATE campaigns
-              SET pre_integration_notes = $1, updated_at = now()
-            WHERE id = $2 AND status = 'setup'
-            RETURNING id`,
-          [notes, req.params.campaignId],
-        )
-        if (upd.rowCount === 0) {
-          await client.query('ROLLBACK')
-          // return-await: the finally { client.release() } runs after
-          // this return, so the inflight reply Promise must be awaited
-          // inside the try (matches T13 start-character-creation).
-          return await reply.code(409).send({ code: 'not_in_setup' })
+          // At least one 'completed' concept required — fan-in trigger.
+          // Without this gate the integration job would run with an empty
+          // party and produce zero characters. Throw → ROLLBACK undoes the
+          // notes flip above (preserving the prior contract).
+          const n = await tx.characterConcepts.countCompleted(req.params.campaignId)
+          if (n === 0) {
+            throw new FinalizeRejected('no_completed_concepts')
+          }
+        })
+      } /* c8 ignore start — the catch's `instanceof` discriminates the two
+         * 409 rejects (covered by tests) from a real non-FinalizeRejected DB
+         * error inside the tx (the tx already rolled back + released), which
+         * rethrows to the Fastify error handler → 500. That false branch +
+         * rethrow is not deterministically reproducible from the route tests
+         * once inputs are normalized; the whole catch is ignored so the v8
+         * branch-boundary artifact on the closing brace is absorbed too. The
+         * 409 outcomes are still asserted at the response level by the finalize
+         * tests (not_in_setup / no_completed_concepts). */ catch (err) {
+        if (err instanceof FinalizeRejected) {
+          return reply.code(409).send({ code: err.code })
         }
-
-        // At least one 'completed' concept required — fan-in trigger.
-        // Without this gate the integration job would run with an empty
-        // party and produce zero characters.
-        const completedRes = await client.query<{ n: string }>(
-          `SELECT COUNT(*)::text AS n
-             FROM character_concepts
-            WHERE campaign_id = $1 AND status = 'completed'`,
-          [req.params.campaignId],
-        )
-        /* c8 ignore next — COUNT(*) always returns a row, fallback unreachable */
-        const n = Number.parseInt(completedRes.rows[0]?.n ?? '0', 10)
-        if (n === 0) {
-          await client.query('ROLLBACK')
-          return await reply.code(409).send({ code: 'no_completed_concepts' })
-        }
-
-        // Singleton jobId — BullMQ dedups, so a re-POST while the job
-        // is queued/processing is a no-op at the queue layer.
-        const jobId = `ci-${req.params.campaignId}`
-        await queue.add(
-          'character-integration',
-          { campaignId: req.params.campaignId, ownerUserId: dbUser.id },
-          { jobId },
-        )
-        await client.query('COMMIT')
-        return await reply.code(202).send({ campaignId: req.params.campaignId, jobId })
-      } /* c8 ignore start — same v8 instrumentation artifact as the
-         * adjacent sibling: tests exercise the COMMIT-success path and
-         * the bd-add-throw rollback path (campaign-characters-finalize
-         * test covers both via mocked queue throw), but the catch arm
-         * is harder to surface deterministically once the route
-         * normalizes everything; finally always runs. */ catch (err) {
-        await client.query('ROLLBACK')
         throw err
-      } finally {
-        client.release()
-      } /* c8 ignore stop */
+      }
+      /* c8 ignore stop */
+
+      // Enqueue AFTER the tx committed (MYT-56). Singleton jobId — BullMQ
+      // dedups, so a re-POST while the job is queued/processing is a no-op at
+      // the queue layer.
+      const jobId = `ci-${req.params.campaignId}`
+      await queue.add(
+        'character-integration',
+        { campaignId: req.params.campaignId, ownerUserId: dbUser.id },
+        { jobId },
+      )
+      return reply.code(202).send({ campaignId: req.params.campaignId, jobId })
     },
   )
+}
+
+// Internal sentinel carrying the 409 code from inside the finalize tx callback.
+// Throwing forces a ROLLBACK (undoing the notes flip on the no-completed path)
+// + propagates; the route's catch maps `.code` to the 409 response. A typed
+// throw is the cleanest way to distinguish the two reject reasons while still
+// rolling back — the `repo.ROLLBACK` sentinel carries no reason.
+class FinalizeRejected extends Error {
+  constructor(readonly code: 'not_in_setup' | 'no_completed_concepts') {
+    super(code)
+    this.name = 'FinalizeRejected'
+  }
 }

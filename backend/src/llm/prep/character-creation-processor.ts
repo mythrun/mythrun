@@ -32,6 +32,7 @@ import { runLocationSelectionStage } from './stages/location-selection.js'
 import { runCharacterConceptStage } from './stages/character-concept.js'
 import { runCharacterSheetStage } from './stages/character-sheet.js'
 import { createCharacterConceptsRepo } from '../../repo/character-concepts.js'
+import { createRepo } from '../../repo/index.js'
 import type { CharacterConceptOutput } from '../schemas/character-concept.js'
 import {
   VocabularyRegistrySchema,
@@ -304,7 +305,11 @@ async function runStage(
   }
   const narrative = ctx.conceptOutput
   const w = await loadWorldContext(deps.pool, ctx.worldId)
-  const r = await runCharacterSheetStage(deps.pool, {
+  // myth-gp2c Cluster C: stage 3 persists through the unified repo surface
+  // (`repo.transaction(tx => tx.characters.replaceSubTables(...))`). The LLM
+  // call stays outside that tx inside the stage. Build the repo from the same
+  // pool the processor threads everywhere else.
+  const r = await runCharacterSheetStage(createRepo(deps.pool), {
     campaignId: ctx.campaignId,
     userId: ctx.userId,
     worldId: ctx.worldId,

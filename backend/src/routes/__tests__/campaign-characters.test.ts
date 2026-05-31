@@ -474,6 +474,17 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       expect(row.rows[0]?.id).toBe(body.conceptId)
       expect(row.rows[0]?.concept_text).toBe(longConcept)
       expect(row.rows[0]?.status).toBe('processing')
+
+      // myth-nmg9 recovery seed: a 'pending' character_concept pipeline_runs
+      // row was committed in the same tx (the resumable trace; the worker
+      // re-arms it to 'running' on claim).
+      const seedRow = await pool.query<{ status: string }>(
+        `SELECT status FROM pipeline_runs
+         WHERE campaign_id = $1 AND stage = 'character_concept' AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(seedRow.rows).toHaveLength(1)
+      expect(seedRow.rows[0]?.status).toBe('pending')
     })
 
     it('200 — player (non-owner) submits successfully', async () => {
@@ -661,13 +672,18 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       expect(row.rows).toHaveLength(0)
     })
 
-    it("500 when queue.add() throws — flip rolled back, row at 'submitted'", async () => {
-      // Force the enqueue inside the transaction to throw. The route's
-      // BEGIN/COMMIT wraps the flip + enqueue; the upsert runs OUTSIDE
-      // that transaction (via the pool). So after the rollback the
-      // character_concepts row persists at its pre-flip status of
-      // 'submitted', not 'processing' — that's the observable
-      // "rolled back to prior state" the route promises.
+    it("500 when queue.add() throws — concept committed at 'processing' + recovery pipeline_runs row seeded (enqueue is post-commit)", async () => {
+      // myth-gp2c Cluster C / myth-nmg9 recovery seed: the upsert + flip +
+      // recovery-row seed now run atomically inside `repo.transaction`, and the
+      // enqueue runs AFTER the tx commits (MYT-56: a queue.add inside
+      // BEGIN/COMMIT is the zombie-job shape the refactor eliminates). So a
+      // queue.add throw surfaces as a 500 AFTER the row is already committed at
+      // 'processing' — AND a 'pending' character_concept pipeline_runs row was
+      // committed alongside it. That seed row IS the recovery trace: the concept
+      // is in a well-defined committed state with a resumable pipeline_runs
+      // marker, so MYT-52's /resume can re-enqueue (the worker's campaign-user
+      // claim re-arms the pending row to 'running') without a half-written tx —
+      // mirroring world-gen's seed-row contract.
       const owner = await seedUser(pool, scope, 0)
       const seed = await seedCampaignWithSituation(owner)
       queueSpy.add.mockImplementation(() => Promise.reject(new Error('queue exploded')))
@@ -685,7 +701,18 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
         [seed.campaignId, owner.userId],
       )
       expect(row.rows).toHaveLength(1)
-      expect(row.rows[0]?.status).toBe('submitted')
+      expect(row.rows[0]?.status).toBe('processing')
+
+      // The recovery trace: a 'pending' character_concept pipeline_runs row
+      // committed in the same tx, keyed on (campaign_id, user_id), world_id NULL.
+      const seedRow = await pool.query<{ status: string; world_id: string | null }>(
+        `SELECT status, world_id FROM pipeline_runs
+          WHERE campaign_id = $1 AND stage = 'character_concept' AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(seedRow.rows).toHaveLength(1)
+      expect(seedRow.rows[0]?.status).toBe('pending')
+      expect(seedRow.rows[0]?.world_id).toBeNull()
     })
   })
 

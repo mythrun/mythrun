@@ -28,7 +28,7 @@
 //   spells[].level -> character_spells.spell_level
 //   narrative.race -> characters.species (note column rename).
 
-import type { Pool } from 'pg'
+import { type Repo, expectCommitted } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -39,7 +39,6 @@ import {
   type CharacterSheetOutput,
 } from '../../schemas/character-sheet.js'
 import type { CharacterConceptOutput } from '../../schemas/character-concept.js'
-import { uuidv7 } from '../../../repo/uuidv7.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(
@@ -72,7 +71,7 @@ export interface CharacterSheetStageResult {
 }
 
 export async function runCharacterSheetStage(
-  pool: Pool,
+  repo: Repo,
   args: CharacterSheetArgs,
 ): Promise<CharacterSheetStageResult> {
   const prompt = renderPrompt(args)
@@ -87,7 +86,7 @@ export async function runCharacterSheetStage(
     maxRetries: 3,
   })
 
-  const characterId = await persistCharacter(pool, args, result.output)
+  const characterId = await persistCharacter(repo, args, result.output)
 
   // LanguageModelUsage exposes token fields as `number | undefined`; default
   // to 0 to keep the strict-number contract (matches character-concept.ts).
@@ -127,136 +126,57 @@ function proficiencyLevel(s: {
 }
 
 // Single transactional write spanning 1 characters row + 1 campaign_characters
-// join + N sub-table rows. Exceeds the 50-line budget (~75 lines) because the
-// statements are inherently coupled — splitting would lose the single-BEGIN/
-// COMMIT semantic and force callers to thread a client through nested helpers.
-// eslint-disable-next-line max-lines-per-function
+// join + N sub-table rows. The LLM call already completed in the caller; this
+// scope is writes only (MYT-55 — slow I/O never sits inside BEGIN/COMMIT). The
+// 6-table SQL lives verbatim in `repo.characters.replaceSubTables`; here we map
+// the Zod sheet → the binder's resolved input (proficiency_level enum, the
+// narrative.race→species rename, args.narrative.class as feature_source) and
+// run it through `repo.transaction`. The callback throws (never returns
+// ROLLBACK), so `expectCommitted` narrows the result to the character id.
 async function persistCharacter(
-  pool: Pool,
+  repo: Repo,
   args: CharacterSheetArgs,
   sheet: CharacterSheetOutput,
 ): Promise<string> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-
-    // Lookup-or-INSERT keyed on (campaign_id, user_id) via campaign_characters.
-    // The join table's UNIQUE (campaign_id, user_id) is the day-one "one PC
-    // per player per campaign" invariant from migration 009.
-    const existing = await client.query<{ character_id: string }>(
-      `SELECT character_id FROM campaign_characters
-       WHERE campaign_id = $1 AND user_id = $2`,
-      [args.campaignId, args.userId],
-    )
-    const characterId = existing.rows[0]?.character_id ?? uuidv7()
-
-    if (existing.rows.length === 0) {
-      await client.query(
-        `INSERT INTO characters (
-           id, user_id, name, level, class, species, background,
-           str, dex, con, int, wis, cha,
-           hit_points, max_hit_points, armor_class, proficiency_bonus
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-        [
-          characterId,
-          args.userId,
-          args.narrative.name,
-          args.narrative.level,
-          args.narrative.class,
-          args.narrative.race,
-          args.narrative.background,
-          sheet.str,
-          sheet.dex,
-          sheet.con,
-          sheet.int,
-          sheet.wis,
-          sheet.cha,
-          sheet.hit_points,
-          sheet.max_hit_points,
-          sheet.armor_class,
-          sheet.proficiency_bonus,
-        ],
-      )
-      await client.query(
-        `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
-         VALUES ($1, $2, $3, $4)`,
-        [uuidv7(), args.campaignId, characterId, args.userId],
-      )
-    } else {
-      await client.query(
-        `UPDATE characters SET
-           name = $2, level = $3, class = $4, species = $5, background = $6,
-           str = $7, dex = $8, con = $9, int = $10, wis = $11, cha = $12,
-           hit_points = $13, max_hit_points = $14, armor_class = $15, proficiency_bonus = $16,
-           updated_at = now()
-         WHERE id = $1`,
-        [
-          characterId,
-          args.narrative.name,
-          args.narrative.level,
-          args.narrative.class,
-          args.narrative.race,
-          args.narrative.background,
-          sheet.str,
-          sheet.dex,
-          sheet.con,
-          sheet.int,
-          sheet.wis,
-          sheet.cha,
-          sheet.hit_points,
-          sheet.max_hit_points,
-          sheet.armor_class,
-          sheet.proficiency_bonus,
-        ],
-      )
-      // DELETE-by-character-id on sub-tables; re-INSERT below.
-      await client.query(`DELETE FROM character_skills WHERE character_id = $1`, [characterId])
-      await client.query(`DELETE FROM character_features WHERE character_id = $1`, [characterId])
-      await client.query(`DELETE FROM character_equipment WHERE character_id = $1`, [characterId])
-      await client.query(`DELETE FROM character_spells WHERE character_id = $1`, [characterId])
-    }
-
-    // Sub-table inserts with Zod-to-DB column mapping (see file header).
-    for (const s of sheet.skills) {
-      await client.query(
-        `INSERT INTO character_skills (id, character_id, skill_name, proficiency_level)
-         VALUES ($1, $2, $3, $4)`,
-        [uuidv7(), characterId, s.name, proficiencyLevel(s)],
-      )
-    }
-    for (const f of sheet.features) {
-      await client.query(
-        `INSERT INTO character_features (id, character_id, feature_name, feature_source, description)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [uuidv7(), characterId, f.name, args.narrative.class, f.description],
-      )
-    }
-    for (const e of sheet.equipment) {
-      await client.query(
-        `INSERT INTO character_equipment (id, character_id, item_name, quantity)
-         VALUES ($1, $2, $3, $4)`,
-        [uuidv7(), characterId, e.name, e.quantity],
-      )
-    }
-    for (const sp of sheet.spells) {
-      await client.query(
-        `INSERT INTO character_spells (id, character_id, spell_name, spell_level, prepared)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [uuidv7(), characterId, sp.name, sp.level, sp.prepared],
-      )
-    }
-
-    await client.query('COMMIT')
-    return characterId
-    /* c8 ignore start — ROLLBACK arm fires only when one of the INSERTs
-     * throws (PG constraint violation, connection drop). All inputs are
-     * Zod-validated; defense-in-depth, not happy path. */
-  } catch (err) {
-    await client.query('ROLLBACK')
-    throw err
-    /* c8 ignore stop */
-  } finally {
-    client.release()
-  }
+  return expectCommitted(
+    await repo.transaction(async (tx) =>
+      tx.characters.replaceSubTables({
+        campaignId: args.campaignId,
+        userId: args.userId,
+        name: args.narrative.name,
+        level: args.narrative.level,
+        class: args.narrative.class,
+        // narrative.race → characters.species (column rename, see file header).
+        species: args.narrative.race,
+        background: args.narrative.background,
+        str: sheet.str,
+        dex: sheet.dex,
+        con: sheet.con,
+        int: sheet.int,
+        wis: sheet.wis,
+        cha: sheet.cha,
+        hitPoints: sheet.hit_points,
+        maxHitPoints: sheet.max_hit_points,
+        armorClass: sheet.armor_class,
+        proficiencyBonus: sheet.proficiency_bonus,
+        skills: sheet.skills.map((s) => ({
+          name: s.name,
+          proficiencyLevel: proficiencyLevel(s),
+        })),
+        // feature_source has no Zod field — populated with the class, the
+        // source of nearly every level-1 feature (see file header).
+        features: sheet.features.map((f) => ({
+          name: f.name,
+          source: args.narrative.class,
+          description: f.description,
+        })),
+        equipment: sheet.equipment.map((e) => ({ name: e.name, quantity: e.quantity })),
+        spells: sheet.spells.map((sp) => ({
+          name: sp.name,
+          level: sp.level,
+          prepared: sp.prepared,
+        })),
+      }),
+    ),
+  )
 }
