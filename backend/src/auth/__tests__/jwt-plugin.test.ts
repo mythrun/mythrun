@@ -3,18 +3,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock aws-jwt-verify with a controllable stub. The stub's verify/hydrate
 // are configured per-test via getters on the mock module.
+//
+// `mockCreate` captures the args passed to CognitoJwtVerifier.create so the
+// JWKS-cache-binding test can assert the bounded-TTL cache is wired in as the
+// second (additionalProperties) argument.
 const mockVerify = vi.fn()
 const mockHydrate = vi.fn()
+// The mock's `create` records its args in `mockCreate.mock.calls`, so the
+// wiring test can read the (verifyProps, additionalProps) pair the plugin
+// passes to CognitoJwtVerifier.create. The rest param is typed as a tuple-
+// compatible rest so the spread call below type-checks.
+const mockCreate = vi.fn((...args: unknown[]): unknown => {
+  void args
+  return { verify: mockVerify, hydrate: mockHydrate }
+})
 vi.mock('aws-jwt-verify', () => ({
   CognitoJwtVerifier: {
-    create: () => ({
-      verify: mockVerify,
-      hydrate: mockHydrate,
-    }),
+    create: (...args: unknown[]) => mockCreate(...args),
   },
 }))
 
-import { jwtPlugin } from '../jwt-plugin.js'
+// The real SimpleJwksCache is imported (NOT mocked) so the TtlBoundedJwksCache
+// subclass exercises real parent caching behaviour in the TTL tests below.
+import { SimpleJwksCache } from 'aws-jwt-verify/jwk'
+import { JWKS_MAX_AGE_MS, jwtPlugin, TtlBoundedJwksCache } from '../jwt-plugin.js'
 
 const VALID_PAYLOAD = {
   sub: 'a1b2c3-d4e5-6789',
@@ -36,6 +48,7 @@ describe('jwtPlugin', () => {
     mockVerify.mockReset()
     mockHydrate.mockReset()
     mockHydrate.mockResolvedValue(undefined)
+    mockCreate.mockClear()
   })
   afterEach(async () => {
     // Defensive: restore real timers in case a test using fake timers
@@ -50,6 +63,25 @@ describe('jwtPlugin', () => {
     app = Fastify({ logger: false })
     await app.register(jwtPlugin, OPTS)
     expect(mockHydrate).toHaveBeenCalledOnce()
+  })
+
+  it('constructs the verifier with a TTL-bounded JWKS cache as additionalProperties', async () => {
+    app = Fastify({ logger: false })
+    await app.register(jwtPlugin, OPTS)
+    expect(mockCreate).toHaveBeenCalledOnce()
+    const call = mockCreate.mock.calls[0]
+    if (!call) throw new Error('CognitoJwtVerifier.create was not called')
+    const verifyProps = call[0] as Record<string, unknown>
+    const additionalProps = call[1] as { jwksCache?: unknown } | undefined
+    expect(verifyProps).toMatchObject({
+      userPoolId: OPTS.userPoolId,
+      clientId: OPTS.appClientId,
+      tokenUse: 'access',
+    })
+    // The bounded-TTL cache must be passed as the second arg so the verifier
+    // periodically re-fetches the JWKS (dropping AWS-revoked keys within 6h),
+    // instead of relying on the default cache that only re-fetches on a MISS.
+    expect(additionalProps?.jwksCache).toBeInstanceOf(TtlBoundedJwksCache)
   })
 
   it('throws on hydrate failure → boot fails loudly', async () => {
@@ -338,5 +370,144 @@ describe('jwtPlugin', () => {
     })
     expect(res.statusCode).toBe(200)
     expect(attached.scopes).toEqual([])
+  })
+})
+
+describe('TtlBoundedJwksCache', () => {
+  const JWKS_URI = 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool/.well-known/jwks.json'
+
+  // A JWKS with a single signing key. encoded() returns it as the ArrayBuffer
+  // the Fetcher contract requires (UTF-8 bytes of the JSON). The cache's
+  // default jwksParser does the UTF-8 decode + JSON.parse + shape assertion.
+  const jwks = {
+    keys: [{ kty: 'RSA', kid: 'kid-1', use: 'sig', alg: 'RS256', n: 'fake-n', e: 'AQAB' }],
+  }
+  const encoded = (obj: unknown): ArrayBuffer => {
+    const bytes = new TextEncoder().encode(JSON.stringify(obj))
+    // Return a standalone ArrayBuffer (not a view over a possibly-larger
+    // pooled buffer) so the parser sees exactly these bytes.
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  }
+
+  const decomposedJwt = {
+    header: { alg: 'RS256', kid: 'kid-1' },
+    payload: { sub: 'u-1' },
+  } as unknown as Parameters<SimpleJwksCache['getJwk']>[1]
+
+  // A Fetcher stub that records each call and returns the configured JWKS.
+  const makeFetcher = () => {
+    const fetch = vi.fn(() => Promise.resolve(encoded(jwks)))
+    return { fetcher: { fetch }, fetch }
+  }
+
+  // A penaltyBox that never throws/waits, so back-off behaviour doesn't
+  // interfere with the fetch-count assertions. (The default SimplePenaltyBox
+  // only throws on registered failed attempts, but we make this explicit.)
+  const noWaitPenaltyBox = () => ({
+    wait: () => Promise.resolve(),
+    registerFailedAttempt: () => undefined,
+    registerSuccessfulAttempt: () => undefined,
+  })
+
+  it('exposes the documented 6h TTL as a named constant', () => {
+    expect(JWKS_MAX_AGE_MS).toBe(6 * 60 * 60 * 1000)
+  })
+
+  it('fetches once on cold cache, then serves subsequent lookups from cache (no re-fetch before TTL)', async () => {
+    const { fetcher, fetch } = makeFetcher()
+    let nowMs = 1_000_000
+    const cache = new TtlBoundedJwksCache({
+      fetcher,
+      penaltyBox: noWaitPenaltyBox(),
+      now: () => nowMs,
+    })
+
+    // Cold: must fetch.
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    // Warm, still well within the 6h window: no additional fetch.
+    nowMs += 60_000 // +1 minute
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    // Right up to (but not past) the TTL boundary: still no re-fetch. This is
+    // the "NOT before 6h" half of the proof.
+    nowMs += JWKS_MAX_AGE_MS - 60_000 // total elapsed = exactly JWKS_MAX_AGE_MS
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-fetches the JWKS once the cached entry is older than the 6h TTL (drops revoked keys)', async () => {
+    const { fetcher, fetch } = makeFetcher()
+    let nowMs = 1_000_000
+    const cache = new TtlBoundedJwksCache({
+      fetcher,
+      penaltyBox: noWaitPenaltyBox(),
+      now: () => nowMs,
+    })
+
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    // Advance just past the TTL: the next lookup MUST force a re-fetch so an
+    // AWS-revoked key can't stay verifiable past 6h.
+    nowMs += JWKS_MAX_AGE_MS + 1
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(2)
+
+    // And the freshly-fetched entry resets the window: an immediate follow-up
+    // is served from cache again.
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('getJwks refreshes the cached entry timestamp so the explicit-fetch path also resets the TTL window', async () => {
+    const { fetcher, fetch } = makeFetcher()
+    let nowMs = 1_000_000
+    const cache = new TtlBoundedJwksCache({
+      fetcher,
+      penaltyBox: noWaitPenaltyBox(),
+      now: () => nowMs,
+    })
+
+    // hydrate() in the plugin goes through getJwks, not getJwk.
+    await cache.getJwks(JWKS_URI)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    // A getJwk well within the window after that getJwks must NOT re-fetch —
+    // proving getJwks stamped the freshness clock.
+    nowMs += JWKS_MAX_AGE_MS - 1
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('defaults the clock to Date.now when no clock is injected', async () => {
+    const { fetcher, fetch } = makeFetcher()
+    const cache = new TtlBoundedJwksCache({ fetcher, penaltyBox: noWaitPenaltyBox() })
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    // Immediate second lookup is well within 6h of real Date.now() → cached.
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('is a SimpleJwksCache subclass (inherits real parent caching behaviour)', () => {
+    const { fetcher } = makeFetcher()
+    const cache = new TtlBoundedJwksCache({ fetcher, penaltyBox: noWaitPenaltyBox() })
+    expect(cache).toBeInstanceOf(SimpleJwksCache)
+  })
+
+  it('forwards a custom jwksParser to the parent SimpleJwksCache', async () => {
+    const { fetcher } = makeFetcher()
+    // A custom parser proves the constructor forwards the `jwksParser` prop:
+    // it ignores the fetched bytes and returns a fixed JWKS containing kid-1.
+    const jwksParser = vi.fn(() => jwks as unknown as Parameters<SimpleJwksCache['addJwks']>[1])
+    const cache = new TtlBoundedJwksCache({
+      fetcher,
+      penaltyBox: noWaitPenaltyBox(),
+      jwksParser,
+    })
+    await cache.getJwk(JWKS_URI, decomposedJwt)
+    expect(jwksParser).toHaveBeenCalledTimes(1)
   })
 })
