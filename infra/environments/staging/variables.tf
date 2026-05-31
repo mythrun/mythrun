@@ -11,9 +11,9 @@ variable "github_repository_id" {
 }
 
 variable "alerts_email" {
-  description = "Email address to subscribe to the staging alerts SNS topic. Must be confirmed by clicking the AWS confirmation link after apply. Kept separate from personal inbox so it transitions cleanly to a team alias (alerts@mythrun.com) or PagerDuty at Launch."
+  description = "Email subscribed to the staging alerts SNS topic. Consolidated to dev@mythrun.com (2026-05-31) to match the AWS Budgets notification target — one inbox for both spend and operational alarms. NOTE: changing this recreates the subscription in PendingConfirmation; the new address must click the AWS confirmation link before alarms deliver. Transitions to a distribution list / PagerDuty at Launch (myth-z4f)."
   type        = string
-  default     = "miklos@mythrun.com"
+  default     = "dev@mythrun.com"
 }
 
 variable "bootstrap_image_tag" {
