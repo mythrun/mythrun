@@ -7,8 +7,16 @@
 //     fresh-direction amendment (mirroredWork + specificDriftAxes from the
 //     judge's structured output) + temperature bump to 1.0.
 //   - Max 3 attempts total (1 original + 2 retries).
-//   - All generator + judge usage accumulates into totalUsage so the
-//     stage's cost cap correctly observes every call.
+//   - Generator usage and judge usage accumulate SEPARATELY so cost can be
+//     priced per-tier (myth-rg09); the combined token counts are still
+//     surfaced for the stage's pipeline_runs input/output token columns.
+//
+// myth-rg09: the world-concept SYNTHESIS generator runs on OPUS for higher
+// foundational-synthesis quality. The IP-mirror JUDGE stays on SONNET — it's
+// a cheapest-capable classification guardrail (tiered-inference principle),
+// not a synthesis call. Because the run is now mixed-tier, cost is computed
+// PER-TIER via the shared `computeCostUsd` (Opus rates for generator usage,
+// Sonnet rates for judge usage) and summed — NOT priced Sonnet-flat.
 //
 // Routes through the canonical `generateObject` wrapper (myth-t1qz):
 // generator + judge both gain Sonnet-tier schema-repair fallback and
@@ -16,11 +24,12 @@
 // `callWithRepairFallback` helper was subsumed by the wrapper.
 
 import { z } from 'zod'
-import { generateObject, type LanguageModelUsage } from '../ai.js'
+import { generateObject } from '../ai.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { SONNET } from '../models.js'
+import { OPUS, SONNET } from '../models.js'
+import { computeCostUsd } from '../../billing/model-pricing.js'
 
 const JUDGE_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../prompts/prep/paint-job-validator.txt'),
@@ -97,18 +106,29 @@ export interface ValidateAndGenerateResult<TDraft> {
   // attempt that cleared the gate. Null when the judge saw no single
   // dominant franchise. A soft signal for downstream UI — does NOT gate.
   readonly adjacentFranchise: string | null
+  // Combined token COUNTS (generator + judge) for the pipeline_runs
+  // input/output token columns. These are counts, not prices.
   readonly totalUsage: {
     inputTokens: number
     outputTokens: number
     totalTokens: number
   }
+  // myth-rg09: USD cost priced PER-TIER — Opus rates for the generator
+  // usage, Sonnet rates for the judge usage — and summed. The stage forwards
+  // this verbatim into pipeline_runs.cost_usd; it no longer prices anything
+  // itself (a single Sonnet-flat rate would under-price the Opus generator).
+  readonly costUsd: number
 }
 
 export async function validateAndGenerateConcept<TDraft>(
   args: ValidateAndGenerateArgs<TDraft>,
 ): Promise<ValidateAndGenerateResult<TDraft>> {
   const generatorSchemaName = args.schemaName ?? 'WorldConceptDraft'
-  let totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  // myth-rg09: generator (Opus) and judge (Sonnet) usage are tracked
+  // SEPARATELY so cost can be priced per-tier. The combined total surfaced
+  // on the result is just the sum of the two (token counts, not prices).
+  let generatorUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  let judgeUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
   let lastJudgement: PaintJobJudgement | null = null
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -117,7 +137,7 @@ export async function validateAndGenerateConcept<TDraft>(
     const temperature = attempt === 1 ? 0.9 : 1.0
 
     const genResult = await generateObject<TDraft>({
-      model: SONNET,
+      model: OPUS,
       schema: args.schema,
       prompt,
       temperature,
@@ -126,7 +146,7 @@ export async function validateAndGenerateConcept<TDraft>(
       schemaName: generatorSchemaName,
       repairStrategy: 'sonnet',
     })
-    totalUsage = addUsage(totalUsage, genResult.usage)
+    generatorUsage = addUsage(generatorUsage, genResult.usage)
 
     const judgeResult = await generateObject({
       model: SONNET,
@@ -137,7 +157,7 @@ export async function validateAndGenerateConcept<TDraft>(
       callSite: 'paint-job-validator/judge',
       schemaName: 'PaintJobJudgementSchema',
     })
-    totalUsage = addUsage(totalUsage, judgeResult.usage)
+    judgeUsage = addUsage(judgeUsage, judgeResult.usage)
     lastJudgement = judgeResult.output
 
     if (!judgeResult.output.flagged || judgeResult.output.confidence <= FLAG_THRESHOLD) {
@@ -145,7 +165,10 @@ export async function validateAndGenerateConcept<TDraft>(
         draft: genResult.output,
         attempts: attempt,
         adjacentFranchise: judgeResult.output.adjacentFranchise,
-        totalUsage,
+        totalUsage: addUsage(generatorUsage, judgeUsage),
+        costUsd:
+          computeCostUsd('claude-opus-4-7', generatorUsage) +
+          computeCostUsd('claude-sonnet-4-6', judgeUsage),
       }
     }
   }
@@ -192,9 +215,18 @@ function buildRetryPrompt(basePrompt: string, lastJudgement: PaintJobJudgement |
   )
 }
 
+// `b` accepts both the SDK's `LanguageModelUsage` (token fields typed
+// `number | undefined`) and a plain narrow numeric sum — the body coalesces
+// undefined to 0, so the optional-field shape is the common supertype. This
+// lets us reuse one accumulator for both per-call SDK usage AND the final
+// generator+judge merge (myth-rg09).
 function addUsage(
   a: { inputTokens: number; outputTokens: number; totalTokens: number },
-  b: LanguageModelUsage,
+  b: {
+    inputTokens?: number | undefined
+    outputTokens?: number | undefined
+    totalTokens?: number | undefined
+  },
 ): { inputTokens: number; outputTokens: number; totalTokens: number } {
   /* c8 ignore start — `?? 0` fallbacks: the Anthropic SDK always
    * populates token counts; the optional chains are defense-in-depth. */

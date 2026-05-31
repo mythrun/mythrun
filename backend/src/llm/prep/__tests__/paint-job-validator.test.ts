@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { validateAndGenerateConcept, type PaintJobJudgement } from '../paint-job-validator.js'
 import { LlmStructuredOutputError } from '../../errors.js'
+import { OPUS, SONNET } from '../../models.js'
+import { computeCostUsd } from '../../../billing/model-pricing.js'
 import * as ai from 'ai'
 
 vi.mock('ai', async () => {
@@ -58,6 +60,115 @@ describe('validateAndGenerateConcept', () => {
     expect(result.draft.name).toBe('Aelmoor')
     expect(result.attempts).toBe(1)
     expect(result.totalUsage.totalTokens).toBe(300) // 200 gen + 100 judge
+  })
+
+  // ------------------------------------------------------------------
+  // Mixed-model tiering (myth-rg09)
+  //
+  // The world-concept SYNTHESIS (the generator) runs on Opus for higher
+  // foundational-synthesis quality; the IP-mirror JUDGE stays on Sonnet
+  // (cheapest-capable guardrail per the tiered-inference principle). Cost
+  // is therefore computed PER-TIER inside the validator — Opus rates for
+  // generator usage, Sonnet rates for judge usage — and summed.
+  // ------------------------------------------------------------------
+
+  it('runs the generator on OPUS and the judge on SONNET', async () => {
+    mockGenerator({ name: 'Aelmoor', concept: 'a windswept archipelago' })
+    mockJudge({ flagged: false, confidence: 0.95 })
+
+    await validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema })
+
+    // Calls 0,2,4 are generators; 1,3,5 are judges.
+    const genCall = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as {
+      model: unknown
+    }
+    const judgeCall = vi.mocked(ai.generateText).mock.calls.at(1)?.[0] as unknown as {
+      model: unknown
+    }
+    expect(genCall.model).toBe(OPUS)
+    expect(judgeCall.model).toBe(SONNET)
+  })
+
+  it('computes costUsd per-tier (Opus generator + Sonnet judge) and sums them', async () => {
+    const genUsage = { inputTokens: 800, outputTokens: 600, totalTokens: 1400 }
+    const judgeUsage = { inputTokens: 200, outputTokens: 100, totalTokens: 300 }
+    mockGenerator({ name: 'Aelmoor', concept: 'a windswept archipelago' }, genUsage)
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        flagged: false,
+        confidence: 0.95,
+        mirroredWork: null,
+        specificDriftAxes: [],
+        failureKind: 'none',
+        adjacentFranchise: null,
+      },
+      finishReason: 'stop',
+      usage: judgeUsage,
+    } as never)
+
+    const result = await validateAndGenerateConcept({
+      basePrompt: 'Generate a world',
+      schema: TestSchema,
+    })
+
+    const expectedCost =
+      computeCostUsd('claude-opus-4-7', genUsage) + computeCostUsd('claude-sonnet-4-6', judgeUsage)
+    expect(result.costUsd).toBeCloseTo(expectedCost, 10)
+    // Combined token TOTALS are still surfaced (counts, not prices) for the
+    // pipeline_runs input/output token columns.
+    expect(result.totalUsage.inputTokens).toBe(1000)
+    expect(result.totalUsage.outputTokens).toBe(700)
+  })
+
+  it('accumulates per-tier cost across retries (two Opus generators + two Sonnet judges)', async () => {
+    const gen1 = { inputTokens: 800, outputTokens: 600, totalTokens: 1400 }
+    const judge1 = { inputTokens: 200, outputTokens: 100, totalTokens: 300 }
+    const gen2 = { inputTokens: 900, outputTokens: 500, totalTokens: 1400 }
+    const judge2 = { inputTokens: 220, outputTokens: 90, totalTokens: 310 }
+
+    mockGenerator({ name: 'Burrowfolk', concept: 'magical school' }, gen1)
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        flagged: true,
+        confidence: 0.92,
+        mirroredWork: 'Harry Potter',
+        specificDriftAxes: ['plot'],
+        failureKind: 'structural',
+        adjacentFranchise: 'Harry Potter',
+      },
+      finishReason: 'stop',
+      usage: judge1,
+    } as never)
+    mockGenerator({ name: 'Tidekeep', concept: 'storm-spirit world' }, gen2)
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        flagged: false,
+        confidence: 0.95,
+        mirroredWork: null,
+        specificDriftAxes: [],
+        failureKind: 'none',
+        adjacentFranchise: null,
+      },
+      finishReason: 'stop',
+      usage: judge2,
+    } as never)
+
+    const result = await validateAndGenerateConcept({
+      basePrompt: 'Generate a world',
+      schema: TestSchema,
+    })
+
+    const expectedCost =
+      computeCostUsd('claude-opus-4-7', {
+        inputTokens: gen1.inputTokens + gen2.inputTokens,
+        outputTokens: gen1.outputTokens + gen2.outputTokens,
+      }) +
+      computeCostUsd('claude-sonnet-4-6', {
+        inputTokens: judge1.inputTokens + judge2.inputTokens,
+        outputTokens: judge1.outputTokens + judge2.outputTokens,
+      })
+    expect(result.attempts).toBe(2)
+    expect(result.costUsd).toBeCloseTo(expectedCost, 10)
   })
 
   it('retries with fresh context when judge flags (≤2 retries, 3 total)', async () => {

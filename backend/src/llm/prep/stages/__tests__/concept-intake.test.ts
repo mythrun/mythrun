@@ -12,6 +12,8 @@ import { runConceptIntakeStage } from '../concept-intake.js'
 import * as ai from 'ai'
 import { makeFakeRepo } from './_helpers/fake-repo.js'
 import type { Repo } from '../../../../repo/index.js'
+import { OPUS, SONNET } from '../../../models.js'
+import { computeCostUsd } from '../../../../billing/model-pricing.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -81,10 +83,45 @@ describe('runConceptIntakeStage', () => {
     expect(repo.campaigns.setNameFromUntitled).toHaveBeenCalledTimes(1)
     expect(repo.campaigns.setNameFromUntitled).toHaveBeenCalledWith('wld-1', 'Aelmoor')
 
-    // (800+200)/1M * 3 + (600+100)/1M * 15 = 0.003 + 0.0105 = 0.0135
-    expect(result.costUsd).toBeCloseTo(0.0135, 4)
+    // myth-rg09: cost is now mixed-tier — the generator runs on Opus, the
+    // judge stays on Sonnet, priced per-tier by the validator. The stage
+    // forwards result.costUsd verbatim (it no longer prices anything itself).
+    // Opus generator (800 in / 600 out) + Sonnet judge (200 in / 100 out):
+    //   (800*5 + 600*25)/1M + (200*3 + 100*15)/1M = 0.019 + 0.0021 = 0.0211
+    const expectedCost =
+      computeCostUsd('claude-opus-4-7', { inputTokens: 800, outputTokens: 600 }) +
+      computeCostUsd('claude-sonnet-4-6', { inputTokens: 200, outputTokens: 100 })
+    expect(result.costUsd).toBeCloseTo(expectedCost, 10)
+    expect(result.costUsd).toBeCloseTo(0.0211, 10)
     expect(result.inputTokens).toBe(1000)
     expect(result.outputTokens).toBe(700)
+  })
+
+  it('synthesizes the concept on OPUS (the foundational-synthesis generator)', async () => {
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: DRAFT,
+      finishReason: 'stop',
+      usage: { inputTokens: 800, outputTokens: 600, totalTokens: 1400 },
+    } as never)
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: { flagged: false, confidence: 0.95, mirroredWork: null, specificDriftAxes: [] },
+      finishReason: 'stop',
+      usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+    } as never)
+
+    const repo = makeFakeRepo()
+    await runConceptIntakeStage(repo as unknown as Repo, {
+      worldId: 'wld-3',
+      conceptText: 'lighthouse-keepers tending storm spirits',
+      intentSummary: null,
+    })
+
+    const genCall = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as { model: unknown }
+    const judgeCall = vi.mocked(ai.generateText).mock.calls.at(1)?.[0] as unknown as {
+      model: unknown
+    }
+    expect(genCall.model).toBe(OPUS)
+    expect(judgeCall.model).toBe(SONNET)
   })
 
   it('renders intentSummary into the generator prompt when present (guided mode)', async () => {

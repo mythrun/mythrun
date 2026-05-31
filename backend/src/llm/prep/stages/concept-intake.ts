@@ -3,12 +3,14 @@
 // Per MYT-51 D6 + parent spec §3.1. Stage 1 of world gen.
 // Generates a structured WorldConcept and persists to worlds columns.
 // Wrapped in the paint-job-validator loop (D6) — the validator owns retries
-// and aggregates generator + judge usage into a single totalUsage tally.
+// and aggregates generator + judge usage.
 //
-// Cost is computed against Sonnet pricing because the validator drives
-// Sonnet (T5). When parent spec §3.1 model assignment shifts to Opus at
-// runtime, this constant flips — for the non-streaming launch the
-// validator is fixed on Sonnet.
+// myth-rg09: the run is now MIXED-TIER — the foundational-synthesis generator
+// runs on Opus, the IP-mirror judge stays on Sonnet. Cost is therefore priced
+// PER-TIER inside the validator (Opus rates for generator usage, Sonnet rates
+// for judge usage) and surfaced as `result.costUsd`; this stage forwards that
+// verbatim and no longer prices anything itself. The returned token totals are
+// still combined counts (generator + judge) for the pipeline_runs columns.
 
 import type { Repo } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
@@ -41,27 +43,15 @@ export interface ConceptIntakeArgs {
   readonly intentSummary: SynthesizerOutput['intentSummary'] | null
 }
 
-// Per-stage cost result shape — duplicated by each stage handler so a future
-// model-tier change (e.g. concept_intake → Opus) doesn't drag the other
-// stages along. The processor reads these into `pipeline_runs.cost_usd`.
+// Per-stage cost result shape — duplicated by each stage handler so a
+// model-tier change doesn't drag the other stages along. The processor reads
+// these into `pipeline_runs.cost_usd`. myth-rg09: concept_intake is now
+// Opus (mixed-tier — Opus generator + Sonnet judge); its cost arrives
+// pre-priced from the validator as `result.costUsd`.
 export interface StageCostResult {
   readonly costUsd: number
   readonly inputTokens: number
   readonly outputTokens: number
-}
-
-// Anthropic Sonnet 4.6 pricing per https://www.anthropic.com/pricing
-// (verify quarterly). $3/MTok input, $15/MTok output. Held local to the
-// stage so a per-stage tier change is one-file scoped; promoting to a
-// shared module is deferred until a stage actually wants per-tier knobs.
-const SONNET_INPUT_PER_MTOK = 3.0
-const SONNET_OUTPUT_PER_MTOK = 15.0
-
-function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): number {
-  return (
-    (usage.inputTokens / 1_000_000) * SONNET_INPUT_PER_MTOK +
-    (usage.outputTokens / 1_000_000) * SONNET_OUTPUT_PER_MTOK
-  )
 }
 
 export async function runConceptIntakeStage(
@@ -106,10 +96,9 @@ export async function runConceptIntakeStage(
   })
 
   return {
-    costUsd: computeCostUsd({
-      inputTokens: result.totalUsage.inputTokens,
-      outputTokens: result.totalUsage.outputTokens,
-    }),
+    // myth-rg09: per-tier cost (Opus generator + Sonnet judge), priced by
+    // the validator. The token fields stay combined counts for pipeline_runs.
+    costUsd: result.costUsd,
     inputTokens: result.totalUsage.inputTokens,
     outputTokens: result.totalUsage.outputTokens,
   }
