@@ -13,7 +13,7 @@
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
-<!-- source-hash: sha256:27d47867bfaa396854bb432350c9d79f3b99cf8c498b3a654da341749fda9fba -->
+<!-- source-hash: sha256:64f56bccf0ed527009e3fb3237a60df2c7b731c43f54faf3cfc8f0fc9ae930d9 -->
 <!-- last-ticket: MYT-39 -->
 
 <h1>JWT middleware</h1>
@@ -214,6 +214,16 @@
   </li>
 </ul>
 
+<p>
+  The verifier is built over a <code>TtlBoundedJwksCache</code> — a subclass of aws-jwt-verify's
+  <code>SimpleJwksCache</code> that expires the cached JWKS set after a 6h TTL. The default cache
+  only re-fetches on a cache miss (an unknown <code>kid</code>), so a key AWS has revoked stays
+  verifiable until the container restarts. Bounding the cache to 6h forces a re-fetch once a cached
+  set is past the TTL, so a revoked compromised key drops within 6h instead of living for the life
+  of the process — without paying a network fetch on every verification. The hydrate-at-boot flow
+  above is unchanged; the TTL only governs how stale the cached keys are allowed to get afterward.
+</p>
+
 <aside class="wiki-rationale">
   <strong>Bumping <code>pluginTimeout</code> to 30 s</strong> — Fastify's default plugin-load
   timeout is 10 s, which is exactly our hydrate budget plus jitter. Without the bump, a slow Cognito
@@ -227,11 +237,17 @@
 
 <p>
   Bypass mode exists for one workflow: a developer running <code>pnpm dev</code> against the local
-  docker-compose stack, pre-Cognito, wanting <code>request.user</code> to be a fixed
-  <code>{ sub: 'bypass:dev-1', ... }</code> value so route handlers can be exercised. It is the one
-  piece of code in the system whose accidental activation in production would give every request the
-  same all-permissions identity. Six independent layers stand between the bypass plugin and an
-  AWS-managed runtime:
+  docker-compose stack, pre-Cognito, wanting <code>request.user</code> to be a fixed bypass identity
+  so route handlers can be exercised. The default sub is
+  <code>bypass:&lt;sanitized-os.hostname()&gt;</code> — the <code>bypass:</code> prefix is fixed (it's
+  keyed on by dev-credits, the per-sub rejection-storm counters, and the
+  <code>cognito_sub NOT LIKE 'bypass:%'</code> CHECK), but the suffix is derived per-machine so two
+  developers sharing a dev or staging DB each register a distinct users row instead of colliding on
+  one literal. A <code>MYTHRUN_BYPASS_SUB</code> env override, when set, pins the sub verbatim; the
+  integration suite sets it to <code>bypass:dev-1</code> so the many test files that hardcode that
+  sub stay deterministic across machines. It is the one piece of code in the system whose accidental
+  activation in production would give every request the same all-permissions identity. Six
+  independent layers stand between the bypass plugin and an AWS-managed runtime:
 </p>
 
 <h3>Layer 1 — <code>loadEnv</code> refuses ambiguity</h3>
@@ -335,9 +351,10 @@
 <p>
   Inside the bypass-only code path, the request hook reads an
   <code>x-mythrun-dev-sub</code> header and, if present + non-empty, uses its value as
-  <code>request.user.sub</code> instead of the default <code>bypass:dev-1</code>. The override
-  preserves <code>cognitoUsername</code>, <code>scopes</code>, and the <code>Object.freeze</code>
-  contract; only the sub field changes. Without the override, every bypass-mode request in a single
+  <code>request.user.sub</code> instead of the per-machine default
+  (<code>bypass:&lt;sanitized-hostname&gt;</code>, or the <code>MYTHRUN_BYPASS_SUB</code> override
+  when set). The override preserves <code>cognitoUsername</code>, <code>scopes</code>, and the
+  <code>Object.freeze</code> contract; only the sub field changes. Without the override, every bypass-mode request in a single
   test run collapses to one identity, which breaks integration tests that need distinct simulated
   users — most acutely, the per-sub rate-limit keying on
   <a href="./onboarding.html#rate-limits">/api/users/register</a>, which would otherwise share one

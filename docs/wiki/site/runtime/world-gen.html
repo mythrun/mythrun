@@ -958,13 +958,37 @@
   <code>validateAndGenerateConcept</code> — a judge-and-retry loop in
   <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one Sonnet call
   generates a structured <code>WorldConcept</code>; a SECOND Sonnet call (distinct prompt, fresh
-  context, <code>temperature: 0.1</code>) judges whether the draft mirrors a recognizable
-  copyrighted work; on flag (confidence &gt; 0.85), the loop discards the draft entirely and retries
-  with a fresh-direction amendment built from the judge's structured
-  <code>{ mirroredWork, specificDriftAxes }</code> output, plus a temperature bump to 1.0.
-  <strong>Max 3 attempts total</strong> (1 original + 2 retries). On exhaustion the loop throws
-  <code>PaintJobLoopExhaustedError</code>, which the worker treats as a stage failure.
+  context, <code>temperature: 0.1</code>) judges the draft along TWO IP-mirror axes —
+  <em>structural</em> (the plot, characters, factions, or setting read as a re-skin of a known work)
+  and <em>vocabulary</em> (the concept invokes one franchise so directly that the world's natural
+  vocabulary would pull in that franchise's <em>invented</em> neologisms downstream — "muggle",
+  "Floo", "midi-chlorian", "mithril"). On flag (confidence &gt; 0.85), the loop discards the draft
+  entirely and retries with a fresh-direction amendment built from the judge's structured output,
+  plus a temperature bump to 1.0. <strong>Max 3 attempts total</strong> (1 original + 2 retries). On
+  exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the worker treats as a
+  stage failure.
 </p>
+
+<p>
+  The judgement carries a <code>failureKind</code> field —
+  <code>'structural' | 'vocabulary' | 'both' | 'none'</code> — recording WHICH axis drove the flag.
+  The retry steers on it: a vocabulary (or both) failure appends an explicit clause telling the
+  regeneration to move far enough off the named franchise that no reader reaches for its signature
+  neologisms, on top of the structural fresh-direction amendment. Generic folklore words are never
+  violations; only a franchise's coined terms are. The result also surfaces
+  <code>adjacentFranchise</code> — a soft "this world sits near &lt;franchise&gt;" signal independent
+  of the flag, so even a concept that clears the gate can be reported as franchise-adjacent to
+  downstream UI. It does not gate; it's null when the judge sees no single dominant franchise.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Vocabulary mirroring lives here, not in the input gate</strong> — IP-mirror detection by
+  vocabulary used to sit in the earlier input-gate stage. The myth-pfke pivot moved it into the
+  paint-job judge so both IP-mirror axes are scored by the same fresh-context judge against the same
+  generated draft. A concept with structurally original bones can still fail on vocabulary alone
+  (original world-building, but the magic/mundane interface vocabulary leaks a single franchise's
+  coined terms downstream); scoring both axes together is what catches that case.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Distinct judge prompt, not a self-check</strong> — the SDK's structured-output retry
