@@ -126,6 +126,32 @@ resource "aws_route_table_association" "private_b" {
   route_table_id = aws_route_table.private.id
 }
 
+# ------ VPC Endpoints ------
+
+# Region for the gateway-endpoint service name — keeps the module region-portable
+# (mirrors the data.aws_region pattern used in the staging workspace).
+data "aws_region" "current" {}
+
+# S3 gateway endpoint — free: a route-table entry, no ENI, no hourly charge.
+# ECR stores image layer blobs in S3, so private-subnet image pulls fetch the
+# bulk of their bytes through this endpoint instead of egressing via the single
+# NAT gateway. That cuts NAT data-processing cost and removes a NAT dependency
+# for the largest part of every pull. Associated with the private route table
+# (where ECS api/worker, bootstrap-db, and smoke tasks run). Pure-additive.
+#
+# The ECR *interface* endpoints (ecr.api + ecr.dkr) are deliberately NOT here:
+# at pre-launch pull volume their ~$7.30/mo-per-AZ-per-endpoint standing cost
+# exceeds the NAT egress they would save. Deferred to Launch as a cold-start-
+# latency / NAT-resilience call, coupled to the NAT-HA decision (see myth-sua).
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = { Name = "mythrun-s3-gateway" }
+}
+
 # ------ Security groups ------
 
 resource "aws_security_group" "alb" {
