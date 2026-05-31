@@ -956,8 +956,9 @@
 <p>
   Stage 1 (<code>concept_intake</code>) wraps its generator call in
   <code>validateAndGenerateConcept</code> — a judge-and-retry loop in
-  <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one Sonnet call
-  generates a structured <code>WorldConcept</code>; a SECOND Sonnet call (distinct prompt, fresh
+  <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one <strong>Opus</strong>
+  call generates the structured <code>WorldConcept</code> (the foundational synthesis runs at
+  Opus-tier — myth-rg09); a SECOND <strong>Sonnet</strong> call (distinct prompt, fresh
   context, <code>temperature: 0.1</code>) judges the draft along TWO IP-mirror axes —
   <em>structural</em> (the plot, characters, factions, or setting read as a re-skin of a known work)
   and <em>vocabulary</em> (the concept invokes one franchise so directly that the world's natural
@@ -1228,7 +1229,7 @@
   <tbody>
     <tr>
       <td><code>concept_intake</code></td>
-      <td>Sonnet (paint-job validator: generator + judge)</td>
+      <td>Opus generator + Sonnet judge (paint-job validator)</td>
       <td>non-streaming</td>
       <td>
         <code
