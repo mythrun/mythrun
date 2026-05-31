@@ -266,34 +266,6 @@ describe('validateAndGenerateConcept', () => {
     expect(secondGenCall.prompt).not.toContain('UNIQUE_FAILING_DRAFT_TEXT')
   })
 
-  it('raises temperature on retry attempts for divergence', async () => {
-    mockGenerator({ name: 'Burrowfolk', concept: 'magical school' })
-    mockJudge({
-      flagged: true,
-      confidence: 0.92,
-      mirroredWork: 'Harry Potter',
-      specificDriftAxes: ['plot'],
-    })
-    mockGenerator({ name: 'OK', concept: 'good' })
-    mockJudge({ flagged: false, confidence: 0.95 })
-
-    await validateAndGenerateConcept({
-      basePrompt: 'Generate a world',
-      schema: TestSchema,
-    })
-
-    const firstGenCall = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as Record<
-      string,
-      unknown
-    >
-    const secondGenCall = vi.mocked(ai.generateText).mock.calls.at(2)?.[0] as unknown as Record<
-      string,
-      unknown
-    >
-    expect(firstGenCall.temperature).toBeCloseTo(0.9)
-    expect(secondGenCall.temperature).toBeCloseTo(1.0)
-  })
-
   // ------------------------------------------------------------------
   // Vocabulary-mirroring check (myth-3e4y)
   //

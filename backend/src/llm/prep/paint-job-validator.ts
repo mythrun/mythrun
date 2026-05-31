@@ -5,7 +5,9 @@
 //   - Distinct judge prompt (fresh Sonnet call, not a self-check).
 //   - On flag: discard the rejected draft entirely; retry with a
 //     fresh-direction amendment (mirroredWork + specificDriftAxes from the
-//     judge's structured output) + temperature bump to 1.0.
+//     judge's structured output). No temperature lever — the generator runs
+//     on Opus (myth-rg09), which ignores `temperature`; retry variation comes
+//     from the amendment + the model's inherent sampling (myth-v3rq).
 //   - Max 3 attempts total (1 original + 2 retries).
 //   - Generator usage and judge usage accumulate SEPARATELY so cost can be
 //     priced per-tier (myth-rg09); the combined token counts are still
@@ -134,13 +136,11 @@ export async function validateAndGenerateConcept<TDraft>(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const prompt: string =
       attempt === 1 ? args.basePrompt : buildRetryPrompt(args.basePrompt, lastJudgement)
-    const temperature = attempt === 1 ? 0.9 : 1.0
 
     const genResult = await generateObject<TDraft>({
       model: OPUS,
       schema: args.schema,
       prompt,
-      temperature,
       maxRetries: 1,
       callSite: 'paint-job-validator/generator',
       schemaName: generatorSchemaName,
