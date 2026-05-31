@@ -612,4 +612,167 @@ describe('runWorldAndFactionsStage', () => {
       'world_and_factions/factions/2',
     ])
   })
+
+  // myth-uqhy regression: the May 20 dev-tool run surfaced ZERO entity-added
+  // events in the live wire feed despite stages 2-4 persisting 42 entities.
+  // The mid-stream `entity-added` publish (via runStreamingStage) is what the
+  // dev-tool drawer renders; the existing tests above only asserted the
+  // post-COMMIT `finalized` events + DB rows, leaving the wire-emission path
+  // uncovered at the HANDLER boundary. These tests pin:
+  //   1. the handler DOES publish entity-added to the campaign channel,
+  //   2. the wire SHAPE the dev-tool drawer consumes (flat `name`, NOT `data`;
+  //      `entityKind`; `synthKey`) — see drawer.ts summarize() + the
+  //      pipeline-events.ts contract test "entity-added carries name (not data)",
+  //   3. the access-tier gate that explains the symptom: with the default
+  //      bypassAccessFilter=false, only `known`-tier entities surface on the
+  //      wire (the dev-tool's bypass checkbox defaults OFF), while bypass=true
+  //      surfaces every tier.
+  interface EntityAddedWire {
+    readonly type: string
+    readonly synthKey?: unknown
+    readonly entityKind?: unknown
+    readonly name?: unknown
+    readonly data?: unknown
+  }
+
+  // publish is spied via vi.spyOn(redisRealtime, 'publish'); the IoredisMock
+  // signature widens its params to (string|Buffer, ...) so we read the call
+  // tuples through `unknown[]` and narrow each arg explicitly below.
+  function entityAddedEvents(
+    publishSpy: { mock: { calls: readonly unknown[][] } },
+    expectedCampaignId: string,
+  ): EntityAddedWire[] {
+    return publishSpy.mock.calls
+      .filter(([channel]) => {
+        // Only this campaign's channel — parallel siblings publish to theirs.
+        return (
+          typeof channel === 'string' &&
+          channel.includes(`pipeline:campaign:${expectedCampaignId}`)
+        )
+      })
+      .map(([, payload]) => {
+        if (typeof payload !== 'string') return null
+        try {
+          return JSON.parse(payload) as EntityAddedWire
+        } catch {
+          return null
+        }
+      })
+      .filter((e): e is EntityAddedWire => e !== null && e.type === 'entity-added')
+  }
+
+  it('publishes one entity-added per persisted entity mid-stream (myth-uqhy)', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
+    const redisRealtime = new IoredisMock()
+    const publishSpy = vi.spyOn(redisRealtime, 'publish')
+
+    await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo,
+        makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
+      ),
+    )
+
+    // fixtureTree is all `known`-tier: every region + faction emits even with
+    // the default bypassAccessFilter=false. ZERO here is the original bug.
+    const added = entityAddedEvents(publishSpy, campaignId)
+    const synthKeys = added.map((e) => e.synthKey).sort()
+    expect(synthKeys).toEqual([
+      'world_and_factions/factions/0',
+      'world_and_factions/factions/1',
+      'world_and_factions/factions/2',
+      'world_and_factions/regions/0',
+      'world_and_factions/regions/1',
+      'world_and_factions/regions/2',
+    ])
+  })
+
+  it('entity-added wire shape carries flat name + entityKind, NOT a data envelope', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(fixtureTree()))
+    const redisRealtime = new IoredisMock()
+    const publishSpy = vi.spyOn(redisRealtime, 'publish')
+
+    await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo,
+        makeArgs({ worldId, userId, campaignId, worldName: scope.worldName(0), redisRealtime }),
+      ),
+    )
+
+    const region0 = entityAddedEvents(publishSpy, campaignId).find(
+      (e) => e.synthKey === 'world_and_factions/regions/0',
+    )
+    expect(region0).toBeDefined()
+    // Shape the dev-tool drawer reads (drawer.ts: d.entityKind, d.name).
+    expect(region0).toMatchObject({
+      type: 'entity-added',
+      synthKey: 'world_and_factions/regions/0',
+      entityKind: 'location',
+      name: 'Region 0',
+    })
+    // Contract guard: NO `data` envelope (myth-exac narrowed the wire shape;
+    // the dead live-events-panel reducer's `data.name` read is not the feed).
+    expect(region0?.data).toBeUndefined()
+  })
+
+  it('bypassAccessFilter=false suppresses non-known entity-added on the wire (DB still persists)', async () => {
+    // tieredFixtureTree: regions[0]=known, [1]=discoverable, [2]=secret;
+    // factions all known. The DB persists all 6 (asserted by the tier test
+    // above); the WIRE only carries the 4 `known` ones.
+    mockStreamObject.mockReturnValueOnce(makeStream(tieredFixtureTree()))
+    const redisRealtime = new IoredisMock()
+    const publishSpy = vi.spyOn(redisRealtime, 'publish')
+
+    await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo,
+        makeArgs({
+          worldId,
+          userId,
+          campaignId,
+          worldName: scope.worldName(0),
+          redisRealtime,
+          bypassAccessFilter: false,
+        }),
+      ),
+    )
+
+    const names = entityAddedEvents(publishSpy, campaignId)
+      .map((e) => e.name)
+      .sort()
+    // regions/1 (discoverable) + regions/2 (secret) are NOT on the wire.
+    expect(names).toEqual(['Faction 0', 'Faction 1', 'Faction 2', 'Region 0'])
+  })
+
+  it('bypassAccessFilter=true surfaces every tier on the wire (dev-tool mode)', async () => {
+    mockStreamObject.mockReturnValueOnce(makeStream(tieredFixtureTree()))
+    const redisRealtime = new IoredisMock()
+    const publishSpy = vi.spyOn(redisRealtime, 'publish')
+
+    await runStageWithRepo(pool, (repo) =>
+      runWorldAndFactionsStage(
+        repo,
+        makeArgs({
+          worldId,
+          userId,
+          campaignId,
+          worldName: scope.worldName(0),
+          redisRealtime,
+          bypassAccessFilter: true,
+        }),
+      ),
+    )
+
+    const names = entityAddedEvents(publishSpy, campaignId)
+      .map((e) => e.name)
+      .sort()
+    expect(names).toEqual([
+      'Faction 0',
+      'Faction 1',
+      'Faction 2',
+      'Region 0',
+      'Region 1',
+      'Region 2',
+    ])
+  })
 })
