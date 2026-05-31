@@ -51,7 +51,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:2e6a5c7713d3f267b16fef4130e7e4b0c367d748ee31a8e272af6b15603013e0 -->
+<!-- source-hash: sha256:0749182c2e5d034dda3f29744d09d0e63cacf3f95de8d90f7c04207d64290205 -->
 <!-- last-ticket: myth-imxg -->
 
 <h1>World gen</h1>
@@ -344,8 +344,9 @@
   and <em>vocabulary</em> (the concept invokes one franchise so directly that the world's natural
   vocabulary would pull in that franchise's <em>invented</em> neologisms downstream — "muggle",
   "Floo", "midi-chlorian", "mithril"). On flag (confidence &gt; 0.85), the loop discards the draft
-  entirely and retries with a fresh-direction amendment built from the judge's structured output,
-  plus a temperature bump to 1.0. <strong>Max 3 attempts total</strong> (1 original + 2 retries). On
+  entirely and retries with a fresh-direction amendment built from the judge's structured output
+  (the Opus generator ignores <code>temperature</code> — myth-v3rq — so divergence comes from the
+  amendment + the model's inherent sampling). <strong>Max 3 attempts total</strong> (1 original + 2 retries). On
   exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the worker treats as a
   stage failure.
 </p>
