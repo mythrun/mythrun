@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:c3ad410a675f4e1e3181a4bb50810f48e526e7499176a898cee6f3230872f024 -->
+<!-- source-hash: sha256:f9f76733c9bd07d2378317a95e29773de15057186f5402f26e5b983110395d23 -->
 <!-- last-ticket: MYT-49 -->
 
 <h1>Backend</h1>
@@ -61,9 +61,11 @@
   <code>contract/</code>, <code>db/</code>, <code>dev-tool-check/</code>, <code>llm/</code>,
   <code>redis/</code>, <code>repo/</code>, and <code>routes/</code>. Each has a colocated
   <code>__tests__/</code>. ESLint rules custom to Mythrun live one level up at
-  <code>backend/eslint-rules/</code> — currently the two AST tripwires that ban Stripe
+  <code>backend/eslint-rules/</code> — the two AST tripwires that ban Stripe
   price/product/subscription mutations from app code (see
-  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> for details).
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> for details), plus
+  <code>no-raw-db-access</code> which bans raw DB access outside the
+  <a href="../data/repository.html">repository layer</a> (see that page for the rule's shape).
 </p>
 
 <h2>The app factory and the dependency-injection shape</h2>
@@ -455,12 +457,15 @@
   <code>dist/</code> carries only runtime code. ESLint sits at the repo root and runs against every
   workspace: <code>typescript-eslint</code> strict + stylistic type-checked presets, a repo-specific
   ban on default exports, a 400-line module cap, a 50-line function cap, and
-  <code>any</code>/non-null-assertion bans. The two repo-local rules under
+  <code>any</code>/non-null-assertion bans. The three repo-local rules under
   <code>backend/eslint-rules/</code> register under a <code>mythrun</code> plugin namespace at
-  <code>error</code> severity — they enforce the no-Stripe-price-mutation contract from the
-  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> page, and a config-wiring smoke
-  test catches the failure mode where a rule ships but isn't registered.
-  <code>eslint-config-prettier</code> is applied last so Prettier owns formatting.
+  <code>error</code> severity — the two that enforce the no-Stripe-price-mutation contract from the
+  <a href="../auth-billing/stripe-contract.html">Stripe contract</a> page, and
+  <code>no-raw-db-access</code>, which bans raw DB access outside the
+  <a href="../data/repository.html">repository layer</a> (now at <code>error</code> since the
+  data-layer unification is complete). A config-wiring smoke test catches the failure mode where a
+  rule ships but isn't registered. <code>eslint-config-prettier</code> is applied last so Prettier
+  owns formatting.
 </p>
 
 <p>
@@ -888,8 +893,9 @@
       <td><code>backend/eslint-rules/</code></td>
       <td>
         <code>no-stripe-price-mutations.cjs</code>,
-        <code>no-stripe-subscription-price-mutation.cjs</code>. AST tripwires registered under the
-        <code>mythrun</code> plugin namespace by the repo-root <code>eslint.config.js</code>.
+        <code>no-stripe-subscription-price-mutation.cjs</code>, <code>no-raw-db-access.cjs</code>.
+        AST/source-text tripwires registered under the <code>mythrun</code> plugin namespace by the
+        repo-root <code>eslint.config.js</code>, all at <code>error</code> severity.
       </td>
     </tr>
     <tr>
@@ -902,9 +908,7 @@
       </td>
     </tr>
     <tr>
-      <td>
-        <code>src/worker/bullmq-config.ts</code>, <code>src/worker/health-server.ts</code>
-      </td>
+      <td><code>src/worker/bullmq-config.ts</code>, <code>src/worker/health-server.ts</code></td>
       <td>
         Queue identifiers + concurrency caps; Fastify <code>/health</code> server probing pg + both
         Redis + each worker's <code>isRunning()</code> state.

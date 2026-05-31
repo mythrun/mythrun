@@ -728,15 +728,18 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Currently <code>'warn'</code> — the migration is in progress</strong> — the binder, the
-  <code>repo.transaction</code> primitive, and the lint rule all ship now, but the consumers are NOT
-  yet migrated: route and worker handlers still hold inline SQL at a few dozen sites. Flipping the
-  rule to <code>'error'</code> today would red-build the whole backend. So it sits at
-  <code>'warn'</code> while the inline-SQL sites are converted to <code>repo.X</code> /
-  <code>repo.transaction</code> one cluster at a time; it flips to <code>'error'</code> at teardown,
-  once the last raw site is gone. A tripwire, not a wall — the rule matches the literal shapes that
-  caused the MYT-55/56 incidents, not full dataflow; the documented residual evasions are listed in
-  the rule's own header.
+  <strong>Set to <code>'error'</code> — the migration is complete</strong> — the unification is
+  done. Every production DB access now goes through <code>repo.X</code> /
+  <code>repo.transaction</code>; the count of raw-SQL sites outside the repo/db layer is zero. With
+  the consumers fully migrated, the rule flipped from <code>'warn'</code> to <code>'error'</code>: a
+  raw <code>.query</code> / <code>.connect</code> call, a value-import of <code>pg</code>, or a bare
+  tx-control literal outside the repo/db layer is now a <em>build failure</em>, not a warning. The
+  only carve-outs are test files (which legitimately seed prerequisite rows via raw
+  <code>pool.query</code> / <code>redis</code>, exempted via a per-file override) and the
+  <code>@mythrun/wiki</code> build tooling (which introspects the live schema via raw DDL queries
+  and lives under its own <code>docs/wiki/eslint.config.js</code> root). A tripwire, not a wall —
+  the rule matches the literal shapes that caused the MYT-55/56 incidents, not full dataflow; the
+  documented residual evasions are listed in the rule's own header.
 </aside>
 
 <h2 id="namespace-boundaries-shipped-vs-deferred">Namespace boundaries: shipped vs. deferred</h2>
@@ -797,9 +800,9 @@
   <code>listSubmittedByCampaign</code>, <code>countCompleted</code>, the four status flips, and the
   composable <code>flipSubmittedToProcessing</code>), because the concept lifecycle has a real
   consumer to shape it against. Cluster C dropped that flip's explicit BEGIN/COMMIT so it composes
-  into <code>POST /characters</code>' <code>repo.transaction</code> (upsert → flip →
-  seed the <code>character_concept</code> recovery row), with the BullMQ enqueue moved to AFTER the
-  commit (the MYT-56 shape).
+  into <code>POST /characters</code>' <code>repo.transaction</code> (upsert → flip → seed the
+  <code>character_concept</code> recovery row), with the BullMQ enqueue moved to AFTER the commit
+  (the MYT-56 shape).
 </p>
 
 <h2 id="camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</h2>
@@ -1926,8 +1929,10 @@
         The <code>mythrun/no-raw-db-access</code> rule — bans raw <code>.query</code> /
         <code>.connect</code>, <code>pg</code> value-imports, bare tx-control literals, SQL
         pass-through laundering, and in-tx side-effects outside the repo/db allowlist. Registered in
-        the repo-root <code>eslint.config.js</code> at <code>'warn'</code> during the in-progress
-        migration; flips to <code>'error'</code> at teardown.
+        the repo-root <code>eslint.config.js</code> at <code>'error'</code> — the migration is
+        complete, so a raw-DB site outside the repo/db layer is a build failure. Test files are
+        carved out via a per-file override; the <code>@mythrun/wiki</code> build tooling lives under
+        its own ESLint root.
       </td>
     </tr>
   </tbody>
