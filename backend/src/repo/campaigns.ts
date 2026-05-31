@@ -35,6 +35,23 @@ export interface WorldGenContextRow {
   readonly vocabulary_registry: unknown
 }
 
+// myth-gp2c Cluster C: raw row shape of the character-integration meta JOIN
+// (campaigns ⋈ worlds) — pre_integration_notes + world_id + the chosen
+// starting-situation index and the world's situation entries. Homed on
+// `repo.campaigns` per the design's "campaigns ⋈ worlds context loaders stay
+// composite methods on repo.campaigns". The integration stage resolves the
+// chosen situation's prose from these.
+export interface IntegrationMetaRow {
+  readonly pre_integration_notes: string | null
+  readonly world_id: string
+  readonly starting_situation_index: number | null
+  readonly starting_situation_entries: {
+    readonly index: number
+    readonly locationEntityId: string
+    readonly prose: string
+  }[]
+}
+
 // Composable binder: each method captures the ClientLike `c` (pool OR an
 // in-flight tx client) so the same body serves `repo.campaigns.X` and
 // `tx.campaigns.X`. The body is the method dictionary, not a complex
@@ -148,6 +165,65 @@ export function campaignsNs(c: ClientLike) {
         `UPDATE campaigns SET name = $2 WHERE world_id = $1 AND name = 'Untitled'`,
         [worldId, name],
       )
+    },
+
+    /**
+     * myth-gp2c Cluster C: flip a campaign to 'active' — the final write of
+     * character-integration once every PC is woven into the world. Distinct
+     * from the generic `update` (COALESCE + RETURNING) so the SQL stays
+     * byte-identical to the former inline write. SQL verbatim from
+     * `stages/character-integration.ts writeIntegration`. Composes inside the
+     * stage's `repo.transaction`.
+     */
+    setActive: async (campaignId: string): Promise<void> => {
+      await c.query(
+        `UPDATE campaigns SET status = 'active', updated_at = now() WHERE id = $1`,
+        [campaignId],
+      )
+    },
+
+    /**
+     * myth-gp2c Cluster C: the POST /finalize-character-creation flip. Sets
+     * pre_integration_notes ONLY while the campaign is still 'setup' (RETURNING
+     * tells the route whether the flip applied — 0 rows means finalize already
+     * ran or the owner archived). Returns true when a row was updated, false
+     * otherwise. SQL verbatim from the former inline write. Composes inside the
+     * route's `repo.transaction`.
+     */
+    setPreIntegrationNotesIfSetup: async (
+      campaignId: string,
+      notes: string | null,
+    ): Promise<boolean> => {
+      const result = await c.query(
+        `UPDATE campaigns
+              SET pre_integration_notes = $1, updated_at = now()
+            WHERE id = $2 AND status = 'setup'
+            RETURNING id`,
+        [notes, campaignId],
+      )
+      return result.rowCount === 1
+    },
+
+    /**
+     * myth-gp2c Cluster C: load character-integration campaign meta — the
+     * campaign's pre_integration_notes + world_id, joined to the world's
+     * starting-situation entries + the campaign's chosen index. Runs on the
+     * pool OUTSIDE the integration persist tx. SQL verbatim from the former
+     * `character-integration.ts loadCampaignMeta`. Returns null when the
+     * campaign row is absent (callers gate on existence).
+     */
+    loadIntegrationMeta: async (campaignId: string): Promise<IntegrationMetaRow | null> => {
+      const result = await c.query<IntegrationMetaRow>(
+        `SELECT c.pre_integration_notes,
+                c.world_id,
+                c.starting_situation_index,
+                w.starting_situation_entries
+           FROM campaigns c
+           JOIN worlds w ON w.id = c.world_id
+          WHERE c.id = $1`,
+        [campaignId],
+      )
+      return result.rows[0] ?? null
     },
 
     listByUser: async (userId: string): Promise<Campaign[]> => {

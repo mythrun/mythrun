@@ -366,6 +366,24 @@ export function worldsNs(c: ClientLike) {
     },
 
     /**
+     * myth-gp2c Cluster C: read a world's raw vocabulary_registry JSONB for
+     * character-integration's prompt-rendering. Returns the column verbatim
+     * (the stage typeguards the shape itself) or null when no world row exists.
+     * Distinct from `getById` (full World, parses the registry into a typed
+     * VocabularyRegistry) — this is a prep/Slow-Thinker-tier read that hands
+     * back the raw blob for the integration prompt's inline bullet rendering.
+     * SQL verbatim from the former `character-integration.ts
+     * loadWorldVocabularyText`. Runs on the pool OUTSIDE the persist tx.
+     */
+    getVocabularyRegistryRaw: async (id: string): Promise<unknown> => {
+      const result = await c.query<{ vocabulary_registry: unknown }>(
+        `SELECT vocabulary_registry FROM worlds WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0]?.vocabulary_registry ?? null
+    },
+
+    /**
      * vocabulary-intake (stage 1.5) persist. SQL verbatim from
      * `stages/vocabulary-intake.ts`. `registryJson` is the caller-serialized
      * JSON string (the column is jsonb; the cast lives in the SQL).

@@ -126,6 +126,80 @@ describe('pipeline-runs repo', () => {
   // per-namespace tests cover the markStage* token-presence union (all three
   // kinds) + sumCostForWorld + the world-claim stuck-reset directly.
 
+  // myth-nmg9: the campaign-user-keyed recovery seed for POST /characters.
+  // Round-trip the insert, then prove the worker's campaign-user claim re-arms
+  // the pre-seeded 'pending' row to 'running' (NOT a double-insert / error).
+  describe('insertCharacterConceptSeedRow', () => {
+    it("writes a 'pending' character_concept row keyed on (campaign_id, user_id), world_id NULL", async () => {
+      const { campaignId, userId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      await repo.insertCharacterConceptSeedRow({ id: uuidv7(), campaignId, userId })
+      const row = await pool.query<{
+        stage: string
+        status: string
+        user_id: string | null
+        world_id: string | null
+        started_at: Date | null
+      }>(
+        `SELECT stage, status, user_id, world_id, started_at FROM pipeline_runs
+          WHERE campaign_id = $1 AND stage = 'character_concept' AND user_id = $2`,
+        [campaignId, userId],
+      )
+      expect(row.rows).toHaveLength(1)
+      expect(row.rows[0]?.status).toBe('pending')
+      expect(row.rows[0]?.user_id).toBe(userId)
+      expect(row.rows[0]?.world_id).toBeNull()
+      expect(row.rows[0]?.started_at).toBeNull()
+    })
+
+    it("the campaign-user claim re-arms the pre-seeded 'pending' row to 'running' (single row, no double-insert)", async () => {
+      const { campaignId, userId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      await repo.insertCharacterConceptSeedRow({ id: uuidv7(), campaignId, userId })
+      // The worker claims the campaign-user character_concept stage. The
+      // pre-existing 'pending' row must be coerced to 'running' via ON CONFLICT.
+      const result = await repo.claimStage({
+        kind: 'campaign-user',
+        campaignId,
+        userId,
+        stage: 'character_concept',
+      })
+      expect(result).toBe('claimed')
+      const row = await pool.query<{ status: string; started_at: Date | null }>(
+        `SELECT status, started_at FROM pipeline_runs
+          WHERE campaign_id = $1 AND stage = 'character_concept' AND user_id = $2`,
+        [campaignId, userId],
+      )
+      // Exactly one row (re-arm UPDATE, not a second INSERT) and now 'running'.
+      expect(row.rows).toHaveLength(1)
+      expect(row.rows[0]?.status).toBe('running')
+      expect(row.rows[0]?.started_at).not.toBeNull()
+    })
+
+    it("is idempotent on resubmit — re-arms a prior 'failed' row back to 'pending' (no unique violation)", async () => {
+      const { campaignId, userId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      // Simulate a prior failed attempt that already left a character_concept row.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, error, user_id)
+         VALUES ($1, $2, 'character_concept', 'failed', now(), now(), 'boom', $3)`,
+        [uuidv7(), campaignId, userId],
+      )
+      // Resubmit seeds again — must re-arm in place, not 500 on the unique index.
+      await repo.insertCharacterConceptSeedRow({ id: uuidv7(), campaignId, userId })
+      const row = await pool.query<{ status: string; error: string | null; started_at: Date | null; completed_at: Date | null }>(
+        `SELECT status, error, started_at, completed_at FROM pipeline_runs
+          WHERE campaign_id = $1 AND stage = 'character_concept' AND user_id = $2`,
+        [campaignId, userId],
+      )
+      expect(row.rows).toHaveLength(1)
+      expect(row.rows[0]?.status).toBe('pending')
+      expect(row.rows[0]?.error).toBeNull()
+      expect(row.rows[0]?.started_at).toBeNull()
+      expect(row.rows[0]?.completed_at).toBeNull()
+    })
+  })
+
   describe('claimStage', () => {
     it('claims a fresh world-keyed row, then returns lost-race on a recent re-claim', async () => {
       const { worldId } = await insertCampaign()
@@ -376,6 +450,58 @@ describe('pipeline-runs repo', () => {
     it('returns 0 for a world with no completed rows', async () => {
       const { worldId } = await insertCampaign()
       expect(await pipelineRunsNs(pool).sumCostForWorld(worldId)).toBe(0)
+    })
+  })
+
+  // myth-gp2c Cluster C: the character-integration cost-cap pre-flight sum.
+  describe('sumCharacterCreationStageCosts', () => {
+    it('sums completed character_concept/sheet/integration rows for the campaign', async () => {
+      const { campaignId, userId } = await insertCampaign()
+      // A second member so the "must NOT count" failed row has a distinct
+      // (campaign_id, stage, user_id) tuple (idx_pipeline_runs_unique).
+      const userId2 = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [userId2, `s-${userId2}`, 'Test2', `t${userId2.slice(-6)}`],
+      )
+      const repo = pipelineRunsNs(pool)
+      // Counts: per-player character_concept + character_sheet, and the
+      // campaign-scoped character_integration (user_id IS NULL).
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_concept', 'completed', now(), 1.00, $3)`,
+        [uuidv7(), campaignId, userId],
+      )
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_sheet', 'completed', now(), 2.00, $3)`,
+        [uuidv7(), campaignId, userId],
+      )
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_integration', 'completed', now(), 0.50, NULL)`,
+        [uuidv7(), campaignId],
+      )
+      // A 'failed' character-creation row (distinct user) + an unrelated
+      // completed stage must NOT count.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'character_sheet', 'failed', now(), 9.99, $3)`,
+        [uuidv7(), campaignId, userId2],
+      )
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, cost_usd, user_id)
+         VALUES ($1, $2, 'concept_intake', 'completed', now(), 4.00, NULL)`,
+        [uuidv7(), campaignId],
+      )
+      const sum = await repo.sumCharacterCreationStageCosts(campaignId)
+      expect(typeof sum).toBe('number')
+      expect(sum).toBeCloseTo(3.5)
+    })
+
+    it('returns 0 for a campaign with no completed character-creation rows', async () => {
+      const { campaignId } = await insertCampaign()
+      expect(await pipelineRunsNs(pool).sumCharacterCreationStageCosts(campaignId)).toBe(0)
     })
   })
 

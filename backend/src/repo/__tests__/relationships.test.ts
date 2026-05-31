@@ -73,6 +73,29 @@ describe('relationships repo', () => {
     expect(row.rows[0]).toEqual({ id: relId, relationship_type: 'home_of', synth_key: 'coherence_pass/edges/x' })
   })
 
+  // myth-gp2c Cluster C: character-integration edge insert — minted id, NO
+  // synth_key column (stays NULL, distinct from insertOne/insertMany).
+  it('insertIntegrationEdge inserts an edge with a minted id and NULL synth_key', async () => {
+    await relationshipsNs(pool).insertIntegrationEdge({
+      sourceEntityId: entA,
+      targetEntityId: entB,
+      relationshipType: 'sibling_of',
+      description: 'A and B are siblings.',
+    })
+    const row = await pool.query<{
+      relationship_type: string; description: string; synth_key: string | null
+    }>(
+      `SELECT relationship_type, description, synth_key FROM relationships WHERE source_entity_id = $1`,
+      [entA],
+    )
+    expect(row.rows).toHaveLength(1)
+    expect(row.rows[0]).toEqual({
+      relationship_type: 'sibling_of',
+      description: 'A and B are siblings.',
+      synth_key: null,
+    })
+  })
+
   it('insertMany with empty array is a no-op', async () => {
     await relationships.insertMany(pool, [])
     // Scope to entities created in this test's beforeEach. Unscoped

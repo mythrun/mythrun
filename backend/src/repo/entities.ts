@@ -157,6 +157,23 @@ export function entitiesNs(c: ClientLike) {
       await c.query(`UPDATE entities SET name = $1 WHERE id = $2`, [input.name, input.id])
     },
     /**
+     * myth-gp2c Cluster C: insert one PC entity for character-integration.
+     * entity_type is the literal 'pc' and access_level the literal 'known' —
+     * a PC is always player-visible. The caller mints the id up-front (uuidv7)
+     * so it can build the userId→entityId map for the relationship/fact passes.
+     * SQL verbatim from `stages/character-integration.ts writeIntegration`
+     * pass 1. Distinct from `insert` (which carries stat_block_id + created_in
+     * and a caller-supplied type/tier) — this one bakes in the pc/known literals.
+     * Composes inside the stage's `repo.transaction`.
+     */
+    insertPc: async (input: { id: string; worldId: string; name: string }): Promise<void> => {
+      await c.query(
+        `INSERT INTO entities (id, world_id, entity_type, name, access_level)
+         VALUES ($1, $2, 'pc', $3, 'known')`,
+        [input.id, input.worldId, input.name],
+      )
+    },
+    /**
      * starting-situation (stage 6) input read: every location / npc / faction
      * entity for a world with its prose-kernel content, ordered by type then
      * creation. SQL verbatim from the processor's `loadStartingSituationInputs`.

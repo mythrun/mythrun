@@ -7,7 +7,7 @@
 // 'processing' and 'completed' are not UPSERT-able through this path
 // (the route layer guards with 409 'concept_locked').
 
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import type { ClientLike } from './_types.js'
 
@@ -30,6 +30,28 @@ interface UpsertInput {
   readonly conceptText: string | null
   readonly situationGroundingText: string
   readonly guidedChoices: Record<string, unknown>
+}
+
+// myth-gp2c Cluster C: raw row shape of the character-integration party JOIN
+// (character_concepts ⋈ campaign_members ⋈ users ⋈ campaign_characters ⋈
+// characters), filtered to status='completed'. Homed on
+// `repo.characterConcepts.loadCompletedParty` per the design's cross-domain
+// join section ("integration party (concept-anchored)"). The character-
+// integration stage maps this into its in-memory PartyMember shape.
+export interface CompletedPartyRow {
+  readonly user_id: string
+  readonly display_name: string
+  readonly concept_text: string | null
+  readonly situation_grounding_text: string
+  readonly concept_output: Record<string, unknown> | null
+  readonly character_id: string | null
+  readonly character_name: string | null
+  readonly character_class: string | null
+  readonly character_species: string | null
+  readonly character_background: string | null
+  readonly character_level: number | null
+  readonly character_hit_points: number | null
+  readonly character_armor_class: number | null
 }
 
 interface DbRow {
@@ -65,11 +87,10 @@ function toConcept(row: DbRow): CharacterConcept {
 // ClientLike `c` so it serves `repo.characterConcepts.X` and
 // `tx.characterConcepts.X`. SQL unchanged — only `pool.query` → `c.query`.
 //
-// `flipSubmittedToProcessing` keeps its explicit `client` first-param: its
-// existing callers (POST /characters, the per-player flip) pass a PoolClient
-// from a hand-managed tx, and the unification's explicit-client-param drop is
-// a later migration step (see the design's Migration note). Holding the param
-// here preserves the byte-for-byte caller contract.
+// myth-gp2c Cluster C: `flipSubmittedToProcessing` dropped its explicit
+// `client` first-param — POST /characters now composes it inside a
+// `repo.transaction` callback (`tx.characterConcepts.flipSubmittedToProcessing`),
+// so the closure binder supplies the client per the design's Migration note.
 // eslint-disable-next-line max-lines-per-function
 export function characterConceptsNs(c: ClientLike) {
   return {
@@ -164,18 +185,87 @@ export function characterConceptsNs(c: ClientLike) {
       )
     },
 
-    // myth-nmg9: per-player flip used inside POST /characters' own
-    // transaction. The upsert wrote status='submitted'; this call
-    // immediately advances it to 'processing' so the per-player BullMQ
-    // job can be enqueued in the same transaction. Replaces the old
-    // batch flipAllSubmittedToProcessing path used by the retired
-    // POST /start-character-creation route.
+    // myth-gp2c Cluster C: flip a concept to 'integrated' during character-
+    // integration (pass 4) once its PC entity + relationships are persisted.
+    // Distinct from markCompleted (the per-player pipeline's terminal flip) —
+    // 'integrated' is the post-MYT-54 campaign-scoped terminal state. SQL
+    // verbatim from `stages/character-integration.ts writeIntegration`.
+    // Composes inside the stage's `repo.transaction`.
+    // myth-gp2c Cluster C: count 'completed' concepts for a campaign — the
+    // POST /finalize-character-creation fan-in gate (without ≥1 completed
+    // concept the integration job would run with an empty party). SQL verbatim
+    // from the former inline COUNT. Composes inside the route's
+    // `repo.transaction` so the count is consistent with the same-tx flip.
+    countCompleted: async (campaignId: string): Promise<number> => {
+      const result = await c.query<{ n: string }>(
+        `SELECT COUNT(*)::text AS n
+             FROM character_concepts
+            WHERE campaign_id = $1 AND status = 'completed'`,
+        [campaignId],
+      )
+      /* c8 ignore next — COUNT(*) always returns a row, fallback unreachable */
+      return Number.parseInt(result.rows[0]?.n ?? '0', 10)
+    },
+
+    markIntegrated: async (campaignId: string, userId: string): Promise<void> => {
+      await c.query(
+        `UPDATE character_concepts
+            SET status = 'integrated', updated_at = now()
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+    },
+
+    // myth-gp2c Cluster C: load the character-integration party — every
+    // 'completed' concept for a campaign joined to its player display name +
+    // the persisted characters row (via campaign_characters). Runs on the pool
+    // OUTSIDE the integration persist tx exactly as the prior inline read did.
+    // SQL verbatim from the former `character-integration.ts loadParty`.
+    loadCompletedParty: async (campaignId: string): Promise<readonly CompletedPartyRow[]> => {
+      // characters.campaign_id was dropped in migration 009 — membership lives
+      // in campaign_characters. Join through it to reach the per-(campaign,
+      // user) characters row.
+      const result = await c.query<CompletedPartyRow>(
+        `SELECT
+           cc.user_id,
+           u.display_name,
+           cc.concept_text,
+           cc.situation_grounding_text,
+           cc.concept_output,
+           ch.id           AS character_id,
+           ch.name         AS character_name,
+           ch.class        AS character_class,
+           ch.species      AS character_species,
+           ch.background   AS character_background,
+           ch.level        AS character_level,
+           ch.hit_points   AS character_hit_points,
+           ch.armor_class  AS character_armor_class
+           FROM character_concepts cc
+           JOIN campaign_members cm USING (campaign_id, user_id)
+           JOIN users u ON cm.user_id = u.id
+           LEFT JOIN campaign_characters cch
+             ON cch.campaign_id = cc.campaign_id AND cch.user_id = cc.user_id
+           LEFT JOIN characters ch ON ch.id = cch.character_id
+          WHERE cc.campaign_id = $1
+            AND cc.status = 'completed'
+          ORDER BY cc.submitted_at ASC`,
+        [campaignId],
+      )
+      return result.rows
+    },
+
+    // myth-nmg9 / myth-gp2c Cluster C: per-player flip used inside POST
+    // /characters' `repo.transaction`. The upsert wrote status='submitted';
+    // this call immediately advances it to 'processing' so the per-player
+    // BullMQ job can be enqueued AFTER the tx commits. The explicit-client
+    // first-param was dropped during the data-layer unification — the closure
+    // binder supplies the client, so the same body composes inside the route's
+    // tx (`tx.characterConcepts.flipSubmittedToProcessing`). SQL unchanged.
     flipSubmittedToProcessing: async (
-      client: PoolClient,
       campaignId: string,
       userId: string,
     ): Promise<{ userId: string; conceptId: string } | null> => {
-      const result = await client.query<{ id: string; user_id: string }>(
+      const result = await c.query<{ id: string; user_id: string }>(
         `UPDATE character_concepts
          SET status = 'processing', updated_at = now()
          WHERE campaign_id = $1 AND user_id = $2 AND status = 'submitted'

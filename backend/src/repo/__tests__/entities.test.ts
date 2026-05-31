@@ -204,6 +204,22 @@ describe('entities repo', () => {
 
   // ── data-layer unification: coherence rename + world-gen input loaders ────
 
+  // myth-gp2c Cluster C: PC-entity insert for character-integration. Bakes
+  // in the entity_type='pc' + access_level='known' literals.
+  it('insertPc writes a pc entity with type pc + access_level known', async () => {
+    const id = uuidv7()
+    await repo.entities.insertPc({ id, worldId, name: 'Ada the Cleric' })
+    const row = await pool.query<{ entity_type: string; name: string; access_level: string }>(
+      `SELECT entity_type, name, access_level FROM entities WHERE id = $1`,
+      [id],
+    )
+    expect(row.rows[0]).toEqual({
+      entity_type: 'pc',
+      name: 'Ada the Cleric',
+      access_level: 'known',
+    })
+  })
+
   it('updateName renames an entity (coherence-pass apply-patch)', async () => {
     const id = uuidv7()
     await entities.insert(pool, {

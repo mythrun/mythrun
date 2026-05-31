@@ -112,6 +112,22 @@ export interface PipelineRunsRepo {
    */
   readonly insertSeedRow: (input: { id: string; worldId: string }) => Promise<void>
   /**
+   * myth-nmg9 recovery-row footprint for POST /characters: the campaign-user-
+   * keyed analogue of `insertSeedRow`. Seeds the `character_concept` recovery
+   * row (campaign_id + user_id, status='pending', started_at NULL) INSIDE the
+   * same tx that flips the concept to 'processing', so a missed enqueue (Redis
+   * blip between COMMIT and queue.add) leaves a resumable trace instead of a
+   * concept stranded at 'processing' with no pipeline_runs row. The worker's
+   * campaign-user claim re-arms this pending row to 'running' via ON CONFLICT
+   * (it does NOT double-insert). Mirrors world-gen's seed-row contract.
+   * Composable — runs over the captured client (pool OR an in-flight tx client).
+   */
+  readonly insertCharacterConceptSeedRow: (input: {
+    id: string
+    campaignId: string
+    userId: string
+  }) => Promise<void>
+  /**
    * Atomic stage claim — INSERT a fresh 'running' row, or coerce an existing
    * pending/failed/stuck-running row into 'running' via ON CONFLICT. Returns
    * 'claimed' / 'completed' / 'lost-race' (see ClaimResult). Dispatches on the
@@ -140,6 +156,13 @@ export interface PipelineRunsRepo {
    * from cost-cap.ts's sumCompletedStageCosts.
    */
   readonly sumCostForWorld: (worldId: string) => Promise<number>
+  /**
+   * myth-gp2c Cluster C: sum cost_usd across a campaign's completed character-
+   * creation stages (character_concept + character_sheet + character_integration).
+   * Returns a JS number via the ::float8 cast. SQL verbatim from cost-cap.ts's
+   * sumCharacterCreationStageCosts — the character-integration cap pre-flight.
+   */
+  readonly sumCharacterCreationStageCosts: (campaignId: string) => Promise<number>
 }
 
 interface PipelineRunRowRaw {
@@ -367,6 +390,17 @@ const SUM_COST_FOR_WORLD_QUERY = `
     AND status = 'completed'
 `
 
+// myth-gp2c Cluster C: SQL verbatim from cost-cap.ts's
+// sumCharacterCreationStageCosts. Rolls up the per-player character_concept +
+// character_sheet rows and the campaign-scoped character_integration row
+// (filtered by stage, not user_id presence) into the character-creation cap
+// budget.
+const SUM_CHARACTER_CREATION_COSTS_QUERY = `SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total
+     FROM pipeline_runs
+     WHERE campaign_id = $1
+       AND status = 'completed'
+       AND stage IN ('character_concept', 'character_sheet', 'character_integration')`
+
 // Composable binder: every method is a single statement over a ClientLike
 // (pool OR an in-flight tx client) — no `pool.connect()`, no advisory lock —
 // so all three are transaction-bindable. pipelineRuns participates in
@@ -401,6 +435,35 @@ export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
         `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
          VALUES ($1, $2, 'concept_intake', 'pending', NULL, NULL)`,
         [input.id, input.worldId],
+      )
+    },
+    async insertCharacterConceptSeedRow(input: {
+      id: string
+      campaignId: string
+      userId: string
+    }): Promise<void> {
+      // Campaign-user-keyed analogue of insertSeedRow. The column shape
+      // (campaign_id + user_id, world_id NULL) matches what the campaign-user
+      // claim (claimCampaignUserStage) keys on, so the worker's ON CONFLICT
+      // re-arm finds THIS row instead of double-inserting.
+      //
+      // Unlike world-gen's one-time insertSeedRow, POST /characters is
+      // re-enterable (resubmit on a 'submitted'/'failed' concept), so a prior
+      // attempt may already have left a 'character_concept' row. The ON CONFLICT
+      // re-arm coerces that prior pending/failed/completed row back to 'pending'
+      // (matching the idx_pipeline_runs_unique target), keeping the seed
+      // idempotent across resubmits instead of 500-ing on the unique violation.
+      await c.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+         VALUES ($1, $2, 'character_concept', 'pending', NULL, $3)
+         ON CONFLICT (
+           COALESCE(world_id, campaign_id),
+           stage,
+           COALESCE(user_id, '${SENTINEL_USER_UUID}'::uuid)
+         )
+         DO UPDATE SET status = 'pending', started_at = NULL,
+                       completed_at = NULL, error = NULL`,
+        [input.id, input.campaignId, input.userId],
       )
     },
     async claimStage(req: ClaimRequest): Promise<ClaimResult> {
@@ -474,6 +537,15 @@ export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
     },
     async sumCostForWorld(worldId: string): Promise<number> {
       const result = await c.query<{ total: number }>(SUM_COST_FOR_WORLD_QUERY, [worldId])
+      /* c8 ignore start — `?? 0` falsy arm: COALESCE(SUM(...), 0) always returns
+       * one row; kept for TS optional-chain narrowing without a non-null assert. */
+      return result.rows[0]?.total ?? 0
+      /* c8 ignore stop */
+    },
+    async sumCharacterCreationStageCosts(campaignId: string): Promise<number> {
+      const result = await c.query<{ total: number }>(SUM_CHARACTER_CREATION_COSTS_QUERY, [
+        campaignId,
+      ])
       /* c8 ignore start — `?? 0` falsy arm: COALESCE(SUM(...), 0) always returns
        * one row; kept for TS optional-chain narrowing without a non-null assert. */
       return result.rows[0]?.total ?? 0

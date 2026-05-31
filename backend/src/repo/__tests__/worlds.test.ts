@@ -312,6 +312,19 @@ describe('worlds repo (integration)', () => {
       expect(row.rows[0]?.vocabulary_registry).toEqual(registry)
     })
 
+    // myth-gp2c Cluster C: raw vocabulary read for character-integration's
+    // prompt rendering (returns the column verbatim; null when no world).
+    it('getVocabularyRegistryRaw returns the raw registry blob, or null for unknown world', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      const registry = { entries: [{ term: 'kine', definition: 'cattle' }], adjacent_franchises: [] }
+      await worlds.setVocabularyRegistry(id, JSON.stringify(registry))
+      expect(await worlds.getVocabularyRegistryRaw(id)).toEqual(registry)
+      expect(
+        await worlds.getVocabularyRegistryRaw('019dccef-0000-7000-8000-000000000000'),
+      ).toBeNull()
+    })
+
     it('setWorldOverview writes the overview + bumps updated_at (stage 2)', async () => {
       const worlds = createWorldsRepo(pool)
       const id = await seedWorld()

@@ -114,6 +114,30 @@ describe('facts repo', () => {
     })
   })
 
+  // myth-gp2c Cluster C: character-integration fact insert (column order
+  // id, entity_id, topic, access_level, narrative_status, content — distinct
+  // from insertOne/insertMany; access_level + narrative_status baked-in).
+  it('insertIntegrationFact inserts with baked-in known/undelivered + minted id', async () => {
+    await factsNs(pool).insertIntegrationFact({
+      entityId,
+      topic: 'origin',
+      content: 'Raised at the Bone Sept.',
+    })
+    const row = await pool.query<{
+      topic: string; content: string; access_level: string; narrative_status: string
+    }>(
+      `SELECT topic, content, access_level, narrative_status FROM facts WHERE entity_id = $1`,
+      [entityId],
+    )
+    expect(row.rows).toHaveLength(1)
+    expect(row.rows[0]).toEqual({
+      topic: 'origin',
+      content: 'Raised at the Bone Sept.',
+      access_level: 'known',
+      narrative_status: 'undelivered',
+    })
+  })
+
   describe('listByEntities (myth-exac)', () => {
     it('returns facts for given entity IDs filtered by accessLevels', async () => {
       // Reuse the outer beforeEach's world+entity (entityId) as entity 1; create entity 2 alongside it.

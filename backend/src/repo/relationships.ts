@@ -140,6 +140,35 @@ export function relationshipsNs(c: ClientLike) {
         ],
       )
     },
+    /**
+     * myth-gp2c Cluster C: insert one character-integration relationship (PC→world
+     * and the mirrored PC↔PC edges). The id is minted internally (uuidv7) and
+     * synth_key is intentionally OMITTED — character-integration edges are not
+     * addressed on the wire by synth_key the way world-gen edges are, so the
+     * column stays NULL (nullable per migration 020). SQL verbatim from
+     * `stages/character-integration.ts writeIntegration` pass 2 — distinct from
+     * `insertOne` / `insertMany`, which both write synth_key. Composes inside the
+     * stage's `repo.transaction`.
+     */
+    insertIntegrationEdge: async (input: {
+      sourceEntityId: string
+      targetEntityId: string
+      relationshipType: string
+      description: string
+    }): Promise<void> => {
+      await c.query(
+        `INSERT INTO relationships
+             (id, source_entity_id, target_entity_id, relationship_type, description)
+           VALUES ($1, $2, $3, $4, $5)`,
+        [
+          uuidv7(),
+          input.sourceEntityId,
+          input.targetEntityId,
+          input.relationshipType,
+          input.description,
+        ],
+      )
+    },
     listByWorld: async (worldId: string): Promise<Relationship[]> => {
       const result = await c.query<RelationshipListByWorldDbRow>(
         `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description, r.synth_key

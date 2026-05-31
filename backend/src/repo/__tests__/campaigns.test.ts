@@ -510,4 +510,75 @@ describe('campaigns repo (integration)', () => {
       expect(row.rows[0]?.name).toBe(scope.campaignName(0))
     })
   })
+
+  // myth-gp2c Cluster C: character-integration campaign methods.
+  describe('character-integration (Cluster C)', () => {
+    async function seedSetupCampaign(
+      situationEntries: { index: number; locationEntityId: string; prose: string }[],
+      chosenIndex: number | null,
+    ): Promise<{ campaignId: string; worldId: string }> {
+      await cleanupTestScope(pool, scope)
+      const users = createUsersRepo(pool)
+      const owner = await users.create(pool, baseUserInput)
+      // Raw world INSERT: worlds.create defaults status='generating' and has no
+      // starting_situation_entries param; this seed needs status='complete' +
+      // pre-populated situation entries for loadIntegrationMeta's JOIN.
+      const worldId = uuidv7()
+      await pool.query(
+        `INSERT INTO worlds (id, created_by, name, concept, status, starting_situation_entries)
+         VALUES ($1, $2, $3, 'c', 'complete', $4::jsonb)`,
+        [worldId, owner.id, scope.worldName(0), JSON.stringify(situationEntries)],
+      )
+      const campaignId = uuidv7()
+      await pool.query(
+        `INSERT INTO campaigns (id, world_id, created_by, name, status, starting_situation_index)
+         VALUES ($1, $2, $3, $4, 'setup', $5)`,
+        [campaignId, worldId, owner.id, scope.campaignName(0), chosenIndex],
+      )
+      return { campaignId, worldId }
+    }
+
+    it('setActive flips the campaign to active', async () => {
+      const { campaignId } = await seedSetupCampaign([], null)
+      const campaigns = createCampaignsRepo(pool)
+      await campaigns.setActive(campaignId)
+      const row = await pool.query<{ status: string }>(
+        `SELECT status FROM campaigns WHERE id = $1`, [campaignId],
+      )
+      expect(row.rows[0]?.status).toBe('active')
+    })
+
+    it('loadIntegrationMeta returns notes + world_id + situation entries (JOIN); null for unknown', async () => {
+      const entries = [{ index: 0, locationEntityId: uuidv7(), prose: 'At the tavern.' }]
+      const { campaignId, worldId } = await seedSetupCampaign(entries, 0)
+      const campaigns = createCampaignsRepo(pool)
+      const meta = await campaigns.loadIntegrationMeta(campaignId)
+      expect(meta).not.toBeNull()
+      expect(meta?.world_id).toBe(worldId)
+      expect(meta?.starting_situation_index).toBe(0)
+      expect(meta?.starting_situation_entries).toEqual(entries)
+      expect(meta?.pre_integration_notes).toBeNull()
+
+      expect(
+        await campaigns.loadIntegrationMeta('019dccef-0000-7000-8000-000000000000'),
+      ).toBeNull()
+    })
+
+    it('setPreIntegrationNotesIfSetup writes notes + returns true only while status=setup', async () => {
+      const { campaignId } = await seedSetupCampaign([], null)
+      const campaigns = createCampaignsRepo(pool)
+
+      const flipped = await campaigns.setPreIntegrationNotesIfSetup(campaignId, 'owner notes')
+      expect(flipped).toBe(true)
+      const row = await pool.query<{ pre_integration_notes: string | null }>(
+        `SELECT pre_integration_notes FROM campaigns WHERE id = $1`, [campaignId],
+      )
+      expect(row.rows[0]?.pre_integration_notes).toBe('owner notes')
+
+      // Once the campaign leaves 'setup', the conditional UPDATE returns false.
+      await campaigns.setActive(campaignId)
+      const second = await campaigns.setPreIntegrationNotesIfSetup(campaignId, 'late notes')
+      expect(second).toBe(false)
+    })
+  })
 })

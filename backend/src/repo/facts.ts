@@ -109,6 +109,28 @@ export function factsNs(c: ClientLike) {
         [input.id, input.entityId, input.topic, input.content, input.accessLevel],
       )
     },
+    /**
+     * myth-gp2c Cluster C: insert one character-integration fact — both the
+     * per-PC starter facts and the `newFacts` on existing world entities. The
+     * id is minted internally (uuidv7); access_level + narrative_status are the
+     * baked-in literals 'known' / 'undelivered' (a PC's backstory fact is
+     * player-known by construction). SQL verbatim from
+     * `stages/character-integration.ts writeIntegration` (passes 2 + 3) — note
+     * the column order (id, entity_id, topic, access_level, narrative_status,
+     * content) differs from `insertOne` / `insertMany`, preserved exactly here.
+     * Composes inside the stage's `repo.transaction`.
+     */
+    insertIntegrationFact: async (input: {
+      entityId: string
+      topic: string
+      content: string
+    }): Promise<void> => {
+      await c.query(
+        `INSERT INTO facts (id, entity_id, topic, access_level, narrative_status, content)
+         VALUES ($1, $2, $3, 'known', 'undelivered', $4)`,
+        [uuidv7(), input.entityId, input.topic, input.content],
+      )
+    },
     updateContentById: async (factId: string, patch: { content: string }): Promise<number> => {
       const result = await c.query(
         `UPDATE facts SET content = $1, updated_at = now() WHERE id = $2`,

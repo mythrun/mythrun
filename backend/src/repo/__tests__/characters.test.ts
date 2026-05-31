@@ -326,4 +326,173 @@ describe('repo.characters', () => {
       expect(found).toBeNull()
     })
   })
+
+  // myth-gp2c Cluster C: the 6-table character-sheet write absorbed from
+  // the character-sheet stage. SQL is exercised here at the binder level;
+  // the stage test (character-sheet.test.ts) covers the Zod→DB mapping.
+  describe('replaceSubTables', () => {
+    const sheetInput = (overrides?: Partial<Parameters<
+      ReturnType<typeof createCharactersRepo>['replaceSubTables']
+    >[0]>) => ({
+      campaignId,
+      userId,
+      name: 'Bran of the Hollow',
+      level: 1,
+      class: 'cleric',
+      species: 'human',
+      background: 'acolyte',
+      str: 12,
+      dex: 10,
+      con: 14,
+      int: 13,
+      wis: 16,
+      cha: 11,
+      hitPoints: 9,
+      maxHitPoints: 9,
+      armorClass: 14,
+      proficiencyBonus: 2,
+      skills: [{ name: 'Insight', proficiencyLevel: 'proficient' as const }],
+      features: [{ name: 'Divine Domain', source: 'cleric', description: 'extra healing' }],
+      equipment: [{ name: 'Mace', quantity: 1 }],
+      spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
+      ...overrides,
+    })
+
+    it('first run: INSERTs characters + campaign_characters join + 4 sub-tables', async () => {
+      const characters = createCharactersRepo(pool)
+      const characterId = await characters.replaceSubTables(sheetInput())
+
+      expect(characterId).toMatch(/^[0-9a-f-]{36}$/)
+
+      const c = await pool.query<{ species: string; str: number; user_id: string }>(
+        `SELECT species, str, user_id FROM characters WHERE id = $1`,
+        [characterId],
+      )
+      expect(c.rows[0]).toMatchObject({ species: 'human', str: 12, user_id: userId })
+
+      const join = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM campaign_characters
+         WHERE campaign_id = $1 AND character_id = $2 AND user_id = $3`,
+        [campaignId, characterId, userId],
+      )
+      expect(join.rows[0]?.count).toBe('1')
+
+      const skills = await pool.query(
+        `SELECT skill_name, proficiency_level FROM character_skills WHERE character_id = $1`,
+        [characterId],
+      )
+      expect(skills.rows).toHaveLength(1)
+      expect(skills.rows[0]).toMatchObject({ skill_name: 'Insight', proficiency_level: 'proficient' })
+
+      const features = await pool.query(
+        `SELECT feature_name, feature_source FROM character_features WHERE character_id = $1`,
+        [characterId],
+      )
+      expect(features.rows[0]).toMatchObject({ feature_name: 'Divine Domain', feature_source: 'cleric' })
+
+      const equipment = await pool.query(
+        `SELECT item_name, quantity, equipped FROM character_equipment WHERE character_id = $1`,
+        [characterId],
+      )
+      expect(equipment.rows[0]).toMatchObject({ item_name: 'Mace', quantity: 1, equipped: false })
+
+      const spells = await pool.query(
+        `SELECT spell_name, spell_level, prepared FROM character_spells WHERE character_id = $1`,
+        [characterId],
+      )
+      expect(spells.rows[0]).toMatchObject({ spell_name: 'Cure Wounds', spell_level: 1, prepared: true })
+    })
+
+    it('re-run: UPDATEs the same characters row + DELETEs/re-INSERTs sub-tables (idempotent)', async () => {
+      const characters = createCharactersRepo(pool)
+      const first = await characters.replaceSubTables(sheetInput())
+
+      const second = await characters.replaceSubTables(
+        sheetInput({
+          str: 18,
+          hitPoints: 12,
+          maxHitPoints: 12,
+          skills: [
+            { name: 'Religion', proficiencyLevel: 'expertise' },
+            { name: 'Acrobatics', proficiencyLevel: 'none' },
+          ],
+        }),
+      )
+      expect(second).toBe(first)
+
+      const c = await pool.query<{ str: number; hit_points: number }>(
+        `SELECT str, hit_points FROM characters WHERE id = $1`,
+        [first],
+      )
+      expect(c.rows[0]).toMatchObject({ str: 18, hit_points: 12 })
+
+      // Exactly one join row (no second INSERT).
+      const join = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM campaign_characters WHERE character_id = $1`,
+        [first],
+      )
+      expect(join.rows[0]?.count).toBe('1')
+
+      // Sub-tables replaced, not appended.
+      const skills = await pool.query<{ skill_name: string; proficiency_level: string }>(
+        `SELECT skill_name, proficiency_level FROM character_skills
+         WHERE character_id = $1 ORDER BY skill_name`,
+        [first],
+      )
+      expect(skills.rows).toHaveLength(2)
+      expect(skills.rows[0]).toMatchObject({ skill_name: 'Acrobatics', proficiency_level: 'none' })
+      expect(skills.rows[1]).toMatchObject({ skill_name: 'Religion', proficiency_level: 'expertise' })
+    })
+
+    it('composes inside repo.transaction (tx.characters.replaceSubTables)', async () => {
+      const { createRepo } = await import('../index.js')
+      const repo = createRepo(pool)
+      const characterId = await repo.transaction((tx) => tx.characters.replaceSubTables(sheetInput()))
+      const c = await pool.query<{ id: string }>(`SELECT id FROM characters WHERE id = $1`, [
+        characterId as string,
+      ])
+      expect(c.rows).toHaveLength(1)
+    })
+  })
+
+  // myth-gp2c Cluster C: character-integration pass-4 link. Resolves the
+  // characters row via campaign_characters and stamps entity_id.
+  describe('linkEntityForCampaignUser', () => {
+    it('sets characters.entity_id via the (campaign, user) → character_id sub-SELECT', async () => {
+      const characters = createCharactersRepo(pool)
+      const characterId = await characters.replaceSubTables({
+        campaignId,
+        userId,
+        name: 'Linkable',
+        level: 1,
+        class: 'cleric',
+        species: 'human',
+        background: 'acolyte',
+        str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10,
+        hitPoints: 8, maxHitPoints: 8, armorClass: 12, proficiencyBonus: 2,
+        skills: [], features: [], equipment: [], spells: [],
+      })
+
+      // Seed a PC entity to link to (entities.world_id FK → the campaign's world).
+      const worldRow = await pool.query<{ world_id: string }>(
+        `SELECT world_id FROM campaigns WHERE id = $1`,
+        [campaignId],
+      )
+      const worldId = worldRow.rows[0]?.world_id ?? ''
+      const entityId = (await import('../uuidv7.js')).uuidv7()
+      await pool.query(
+        `INSERT INTO entities (id, world_id, entity_type, name, access_level)
+         VALUES ($1, $2, 'pc', 'PC Link', 'known')`,
+        [entityId, worldId],
+      )
+
+      await characters.linkEntityForCampaignUser({ entityId, campaignId, userId })
+
+      const c = await pool.query<{ entity_id: string | null }>(
+        `SELECT entity_id FROM characters WHERE id = $1`,
+        [characterId],
+      )
+      expect(c.rows[0]?.entity_id).toBe(entityId)
+    })
+  })
 })
