@@ -76,6 +76,12 @@ const SERIAL_FILES = [
   // timeout (passes deterministically in isolation). Serializing removes it
   // from the parallel-storm pool.
   'src/repo/__tests__/world-snapshot-view.test.ts',
+  // pipeline-subscriber.test.ts gates Redis pub/sub fan-out on fixed
+  // setTimeout windows (e.g. 50ms for SUBSCRIBE to register before publish).
+  // Under peak 6-fork load those windows occasionally lapse (passes 19/19 in
+  // isolation). Serializing removes it from the parallel-storm pool. (A
+  // condition-based rewrite would be the durable fix; out of scope here.)
+  'src/sse/__tests__/pipeline-subscriber.test.ts',
 ]
 
 export default defineConfig({

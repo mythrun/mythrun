@@ -88,18 +88,3 @@ export function purchasesNs(c: ClientLike) {
     },
   }
 }
-
-/** Back-compat shim: explicit-client const-object surface that delegates to the
- *  canonical `purchasesNs` binder. Direct importers
- *  (`purchases.insertMany(tx, rows)`) keep working; new code goes through
- *  `repo.purchases`. */
-export const purchases = {
-  insertMany: (tx: ClientLike, rows: readonly NewPurchaseRow[]): Promise<void> =>
-    purchasesNs(tx).insertMany(rows),
-  getByPaymentIntent: (
-    tx: ClientLike,
-    payment_intent_id: string,
-  ): Promise<readonly PurchaseRow[]> => purchasesNs(tx).getByPaymentIntent(payment_intent_id),
-  markRefunded: (tx: ClientLike, id: string): Promise<{ rowsAffected: number }> =>
-    purchasesNs(tx).markRefunded(id),
-}

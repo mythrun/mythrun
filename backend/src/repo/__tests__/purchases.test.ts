@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll, beforeEach } from 'vitest'
 import { createTestUser } from './_helpers/create-test-user.js'
 import { cleanupTestScope, makeTestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
-import { purchases } from '../purchases.js'
+import { purchasesNs } from '../purchases.js'
 import type { ClientLike } from '../_types.js'
 import { uuidv7 } from '../uuidv7.js'
 
@@ -34,7 +34,7 @@ beforeEach(async () => {
 describe('repo.purchases', () => {
   it('insertMany writes one row per (PI, lookup_key); composite UNIQUE blocks duplicates', async () => {
     const user = await createTestUser(pool, scope, { sub: scope.userSub(0) })
-    await purchases.insertMany(pool, [
+    await purchasesNs(pool).insertMany([
       {
         id: uuidv7(),
         user_id: user.id,
@@ -54,11 +54,11 @@ describe('repo.purchases', () => {
         currency: 'usd',
       },
     ])
-    const got = await purchases.getByPaymentIntent(pool, 'pi_test_1')
+    const got = await purchasesNs(pool).getByPaymentIntent('pi_test_1')
     expect(got).toHaveLength(2)
     // Inserting (pi_test_1, sku_session) again raises 23505
     await expect(
-      purchases.insertMany(pool, [
+      purchasesNs(pool).insertMany([
         {
           id: uuidv7(),
           user_id: user.id,
@@ -76,8 +76,7 @@ describe('repo.purchases', () => {
     const user = await createTestUser(pool, scope, { sub: scope.userSub(0) })
     const ids = [uuidv7(), uuidv7(), uuidv7()]
     const lookupKeys: string[] = ['sku_session', 'sku_world', 'sku_session_pack_3']
-    await purchases.insertMany(
-      pool,
+    await purchasesNs(pool).insertMany(
       ids.map((id, i) => ({
         id,
         user_id: user.id,
@@ -88,7 +87,7 @@ describe('repo.purchases', () => {
         currency: 'usd',
       })),
     )
-    const got = await purchases.getByPaymentIntent(pool, 'pi_test_2')
+    const got = await purchasesNs(pool).getByPaymentIntent('pi_test_2')
     const sorted = [...ids].sort()
     expect(got.map((r) => r.id)).toEqual(sorted)
   })
@@ -102,7 +101,7 @@ describe('repo.purchases', () => {
       },
     }
 
-    await purchases.insertMany(fakeTx, [])
+    await purchasesNs(fakeTx).insertMany([])
   })
 
   it('markRefunded normalizes a null pg rowCount to 0 (defensive ?? branch)', async () => {
@@ -111,14 +110,14 @@ describe('repo.purchases', () => {
     const fakeTx = {
       query: () => Promise.resolve({ rows: [], rowCount: null }),
     }
-    const result = await purchases.markRefunded(fakeTx as unknown as ClientLike, uuidv7())
+    const result = await purchasesNs(fakeTx as unknown as ClientLike).markRefunded(uuidv7())
     expect(result.rowsAffected).toBe(0)
   })
 
   it('markRefunded is idempotent — second call sees status=refunded already, returns rowcount 0 cleanly', async () => {
     const user = await createTestUser(pool, scope, { sub: scope.userSub(0) })
     const id = uuidv7()
-    await purchases.insertMany(pool, [
+    await purchasesNs(pool).insertMany([
       {
         id,
         user_id: user.id,
@@ -129,9 +128,9 @@ describe('repo.purchases', () => {
         currency: 'usd',
       },
     ])
-    const r1 = await purchases.markRefunded(pool, id)
+    const r1 = await purchasesNs(pool).markRefunded(id)
     expect(r1.rowsAffected).toBe(1)
-    const r2 = await purchases.markRefunded(pool, id)
+    const r2 = await purchasesNs(pool).markRefunded(id)
     expect(r2.rowsAffected).toBe(0) // status='completed' predicate filters out the already-refunded row
   })
 })

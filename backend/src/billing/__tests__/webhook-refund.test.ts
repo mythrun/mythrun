@@ -19,7 +19,7 @@ import { uuidv7 } from '../../repo/uuidv7.js'
 import { STRIPE_API_VERSION } from '../stripe-client.js'
 import { dispatchEvent } from '../webhook.js'
 import { billingHistory } from '../../repo/billing-history.js'
-import { purchases } from '../../repo/purchases.js'
+import { purchasesNs } from '../../repo/purchases.js'
 import { grantInTx } from '../../repo/credits.js'
 
 // ─── shared test helpers ────────────────────────────────────────────────────
@@ -266,7 +266,7 @@ async function seedAlaCartePurchaseWithGrants(
     await client.query('BEGIN')
     for (const row of rows) {
       const purchaseId = uuidv7()
-      await purchases.insertMany(client, [
+      await purchasesNs(client).insertMany([
         {
           id: purchaseId,
           user_id: userId,

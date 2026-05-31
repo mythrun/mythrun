@@ -71,13 +71,14 @@ export default tseslint.config(
       'mythrun/no-stripe-price-mutations': 'error',
       'mythrun/no-stripe-subscription-price-mutation': 'error',
       // Data-layer repository unification: ban raw DB access outside the
-      // repo/db layer. Starts as 'warn' during migration (the many
-      // un-migrated raw-SQL sites are warnings, not errors — `pnpm lint`
-      // carries no --max-warnings 0, so the warn phase stays green) and
-      // flips per-directory to 'error' as clusters migrate, then globally
-      // in teardown. The allowlist lives INSIDE the rule (reads
-      // context.filename), so no per-file ESLint override is needed.
-      'mythrun/no-raw-db-access': 'warn',
+      // repo/db layer. The migration is complete — every production consumer
+      // goes through `repo.X` / `repo.transaction`, so the rule is now an
+      // ERROR (a raw-DB site outside the repo/db layer is a BUILD FAILURE,
+      // the refactor's enforcement guarantee). The allowlist lives INSIDE the
+      // rule (reads context.filename) to exempt the repo/db layer + boot
+      // entrypoints; test files are carved out via the per-file override
+      // below (legitimate seed/probe SQL).
+      'mythrun/no-raw-db-access': 'error',
       // myth-t1qz: direct 'ai' SDK imports are banned across the repo.
       // The canonical entry point is `backend/src/llm/ai.ts` — its
       // `generateObject` / `streamObject` wrap the SDK with repair-fallback
@@ -132,6 +133,15 @@ export default tseslint.config(
     rules: {
       'max-lines-per-function': 'off',
       'no-restricted-imports': 'off',
+      // no-raw-db-access carve-out for test files: integration tests
+      // legitimately seed prerequisite rows via raw `pool.query` (and use
+      // `redis.connect`); forcing repo.X there would be circular — the repo
+      // layer is the thing under test, and seed/probe SQL sets up state that
+      // doesn't map to a public repo method. The ~606 test-file raw-DB
+      // warnings were all verified during the data-layer refactor to be
+      // legitimate seed/probe SQL (zero production false-positives). This
+      // per-file carve-out matches the T4-review recommendation.
+      'mythrun/no-raw-db-access': 'off',
     },
   },
   {
