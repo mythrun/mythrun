@@ -667,7 +667,7 @@
 
 <p>
   <code>mythrun-staging-alerts</code> is the SNS topic that CloudWatch alarms will eventually
-  publish to. It lands with a single email subscription to <code>miklos@mythrun.com</code> and is
+  publish to. It lands with a single email subscription to <code>dev@mythrun.com</code> and is
   encrypted at rest with the AWS-managed <code>alias/aws/sns</code> key. The email subscription
   starts in <code>PendingConfirmation</code> and stays there until the recipient clicks the AWS-sent
   confirmation link — that confirmation is not a Terraform-managed attribute, so re-running
@@ -693,7 +693,7 @@
   </li>
   <li>
     If it prints <code>PendingConfirmation</code>, open the inbox for the
-    <code>alerts_email</code> address (<code>miklos@mythrun.com</code> by default) and click the AWS
+    <code>alerts_email</code> address (<code>dev@mythrun.com</code> by default) and click the AWS
     confirmation link.
   </li>
   <li>Re-run the same command; the ARN should now be the full subscription ARN.</li>

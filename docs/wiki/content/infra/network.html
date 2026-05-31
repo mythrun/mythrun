@@ -1,5 +1,5 @@
 <!-- source: infra/modules/network/ -->
-<!-- source-hash: sha256:4ea2ce07f14c700578751ecc2cda4578665b3d2eb843006f1d9d138ef524ee9f -->
+<!-- source-hash: sha256:c73134bdd67ee03a33972f2fe58a78573fd3e2231b3e3ea284c9657c9ac609b9 -->
 <!-- last-ticket: MYT-25 -->
 
 <h1>Network</h1>
@@ -72,6 +72,21 @@
   Gateway; both private subnets attach to it. The NAT's Elastic IP is the only public IP in the VPC
   that Mythrun owns.
 </p>
+
+<p>
+  A free <strong>S3 gateway endpoint</strong> is attached to the private route table, so
+  private-subnet traffic to S3 — most importantly the ECR image-layer blobs pulled on every task
+  start — stays on the AWS network instead of egressing through the NAT Gateway. Gateway endpoints
+  are route-table entries (no ENI, no hourly charge), so this is pure upside.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>S3 gateway only; ECR interface endpoints deferred</strong> — the paid ECR
+  <em>interface</em> endpoints (<code>ecr.api</code> + <code>ecr.dkr</code>) would cost more in
+  standing per-AZ charges than the NAT egress they save at pre-launch pull volume, so they are
+  deferred to Launch as a cold-start-latency / NAT-independence decision, coupled to the single-NAT
+  vs HA-pair choice above.
+</aside>
 
 <h2>Integration points</h2>
 

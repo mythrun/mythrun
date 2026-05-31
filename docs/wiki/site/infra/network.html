@@ -247,6 +247,21 @@
   that Mythrun owns.
 </p>
 
+<p>
+  A free <strong>S3 gateway endpoint</strong> is attached to the private route table, so
+  private-subnet traffic to S3 — most importantly the ECR image-layer blobs pulled on every task
+  start — stays on the AWS network instead of egressing through the NAT Gateway. Gateway endpoints
+  are route-table entries (no ENI, no hourly charge), so this is pure upside.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>S3 gateway only; ECR interface endpoints deferred</strong> — the paid ECR
+  <em>interface</em> endpoints (<code>ecr.api</code> + <code>ecr.dkr</code>) would cost more in
+  standing per-AZ charges than the NAT egress they save at pre-launch pull volume, so they are
+  deferred to Launch as a cold-start-latency / NAT-independence decision, coupled to the single-NAT
+  vs HA-pair choice above.
+</aside>
+
 <h2 id="integration-points">Integration points</h2>
 
 <p>
