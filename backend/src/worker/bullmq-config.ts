@@ -5,6 +5,8 @@
 
 export const QUEUE_WORLD_GEN = 'world-gen' as const
 export const QUEUE_CAMPAIGN_SETUP = 'campaign-setup' as const
+export const QUEUE_SESSION_PREP = 'session-prep' as const
 
 export const CONCURRENCY_WORLD_GEN = 3
 export const CONCURRENCY_CAMPAIGN_SETUP = 5
+export const CONCURRENCY_SESSION_PREP = 3

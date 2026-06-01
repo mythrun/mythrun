@@ -42,6 +42,8 @@
   "exempt": {
     "routes": {},
     "events": {},
-    "jobs": {}
+    "jobs": {
+      "session-prep": "No dev-tool live-events driver yet — the driver is MYT-62; session-prep is enqueued by the play-runtime and exercised E2E via the MYT-64 smoke. (MYT-61)"
+    }
   }
 }
