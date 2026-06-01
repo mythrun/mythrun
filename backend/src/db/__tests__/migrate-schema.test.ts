@@ -677,6 +677,7 @@ describe('schema-parity (integration)', () => {
       '019_starting_situation_titles.sql',
       '020_relationships_synth_key.sql',
       '021_campaigns_failed_status.sql',
+      '022_session_preps_unique.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -860,5 +861,40 @@ describe('migration 014 — access tier rework', () => {
       `SELECT indexname FROM pg_indexes WHERE tablename='entities' AND indexname='idx_entities_world_access'`,
     )
     expect(rows).toHaveLength(1)
+  })
+})
+
+// MYT-61 T1: migration 022 promotes session_preps to one record per
+// (campaign, session_number) via a named UNIQUE table constraint — the
+// precondition for the prep worker's INSERT ... ON CONFLICT resume. Lives
+// in its own describe so the schema-parity test above stays self-contained.
+describe('migration 022 — session_preps uniqueness', () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createPgPool(databaseUrl, { max: 1 })
+    await resetSchema(pool)
+    await runMigrations({
+      pool,
+      migrationsDir: REAL_MIGRATIONS_DIR,
+      logger: makeSilentLogger(),
+    })
+  })
+
+  afterAll(async () => {
+    // Restore globalSetup's seed rows so subsequent test files see the same
+    // baseline they assume — same teardown shape as the migration-014 block.
+    await seedTestDatabase(pool)
+    await pool.end()
+  })
+
+  it('has a UNIQUE constraint on (campaign_id, session_number)', async () => {
+    const { rows } = await pool.query<{ def: string }>(
+      `SELECT pg_get_constraintdef(c.oid) AS def
+       FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relname = 'session_preps' AND c.contype = 'u'`,
+    )
+    expect(rows.some((r) => r.def.includes('UNIQUE (campaign_id, session_number)'))).toBe(true)
   })
 })
