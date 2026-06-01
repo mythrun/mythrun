@@ -632,7 +632,7 @@ Connection-leak safeguards:
 
 ### Session Prep (Streaming) — Out of This Milestone
 
-Session prep generation is invoked at session start, not as part of the prep pipeline. It is owned by Session Runtime. The original spec's session-prep streaming pattern (FT-context-with-Haiku-leak-validation) is dropped from this milestone's surface and moved to Session Runtime. The `session_preps` table stays in the schema; no inserts happen until that milestone ships.
+Session prep generation is invoked at session start, not as part of the prep pipeline. It is owned by the **Session Prep Pipeline** milestone (MYT-59 onward) — built before, and invoked by, Session Runtime. The session-prep streaming pattern (FT-context-with-Haiku-leak-validation) is dropped from this milestone's surface and lands in the Session Prep Pipeline. The `session_preps` table stays in the schema; no inserts happen until that milestone ships.
 
 ---
 
@@ -666,12 +666,12 @@ Future "share an existing world during campaign creation" is the only realistic 
 | DELETE | `/api/campaigns/:id` | Owner | 5/min per-sub | Delete (cascade through campaign_characters, characters that are campaign-only, sessions, etc. — world stays unless explicitly cascaded too). |
 | POST | `/api/campaigns/:id/archive` | Owner | 5/min per-sub | Archive (transitions `setup → archived`) |
 
-**Cut from original spec (moved to Session Runtime):**
-- `POST /api/campaigns/:id/session-prep` — session prep generation
-- `GET /api/campaigns/:id/session-preps` — session prep listing
-- `GET /api/campaigns/:id/session-preps/:prepId` — single session prep
-- `POST /api/campaigns/:id/reset-prep` — session-prep reset
-- `POST /api/campaigns/:id/reset-to-session/:n` — snapshot restore
+**Cut from original spec (session-prep routes → the Session Prep Pipeline milestone, MYT-63; snapshot restore → Session Runtime):**
+- `POST /api/campaigns/:id/session-prep` — session prep generation *(Session Prep Pipeline / MYT-63)*
+- `GET /api/campaigns/:id/session-preps` — session prep listing *(Session Prep Pipeline / MYT-63)*
+- `GET /api/campaigns/:id/session-preps/:prepId` — single session prep *(Session Prep Pipeline / MYT-63)*
+- `POST /api/campaigns/:id/reset-prep` — session-prep reset *(Session Prep Pipeline / MYT-63)*
+- `POST /api/campaigns/:id/reset-to-session/:n` — snapshot restore *(Session Runtime)*
 
 **Dropped entirely (consolidated under campaign-scoped surface, 2026-05-12):**
 - `POST /api/worlds` → `POST /api/campaigns` is the entry point

@@ -4,7 +4,7 @@
 > **Date**: 2026-04-13
 > **Status**: Draft
 > **Parent**: `2026-04-06-production-architecture-overview.md`
-> **Depends on**: Backend Core (schema, repository), Auth & Users (JWT, WebSocket tickets, membership), Billing (session credit debit, token budget), World & Campaign Pipeline (session prep generation)
+> **Depends on**: Backend Core (schema, repository), Auth & Users (JWT, WebSocket tickets, membership), Billing (session credit debit, token budget), Session Prep Pipeline (session prep generation — built before Session Runtime, invoked at session start)
 > **Scope**: Live multiplayer game sessions — WebSocket connection management, transient SessionController, FastThinker/SlowThinker/Scribe for multiplayer, DM trigger system with tiered inference, Redis session state, message ordering, reconnection protocol, session lifecycle (start/play/suspend/end).
 
 ---
