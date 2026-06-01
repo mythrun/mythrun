@@ -103,4 +103,107 @@ describe('serializeWorldStateForPrep', () => {
       (repo as { worldInventory: { load: { mock: { calls: unknown[] } } } }).worldInventory.load.mock.calls,
     ).toHaveLength(0)
   })
+
+  it('rejects when the campaign is not found', async () => {
+    const repo = stubRepo() as unknown as {
+      campaigns: { getWorldAndSituationIndex: ReturnType<typeof vi.fn> }
+    }
+    repo.campaigns.getWorldAndSituationIndex = vi.fn(() => Promise.resolve(null))
+    await expect(
+      serializeWorldStateForPrep(repo as never, { campaignId: 'missing', sessionNumber: 1 }),
+    ).rejects.toThrow(/campaign not found/)
+  })
+
+  it('rejects when the world is not found (campaign meta present)', async () => {
+    const repo = stubRepo() as unknown as { worlds: { getById: ReturnType<typeof vi.fn> } }
+    repo.worlds.getById = vi.fn(() => Promise.resolve(null))
+    await expect(
+      serializeWorldStateForPrep(repo as never, { campaignId: 'camp1', sessionNumber: 1 }),
+    ).rejects.toThrow(/world not found/)
+  })
+
+  it('omits optional world-concept sections when their fields are null', async () => {
+    const repo = stubRepo() as unknown as { worlds: { getById: ReturnType<typeof vi.fn> } }
+    repo.worlds.getById = vi.fn(() =>
+      Promise.resolve({
+        id: 'w1',
+        name: 'Barebones',
+        tone: null,
+        era: null,
+        themes: null,
+        keyTensions: null,
+        worldOverview: null,
+      }),
+    )
+    const out = await serializeWorldStateForPrep(repo as never, { campaignId: 'camp1', sessionNumber: 1 })
+    expect(out).toContain('Barebones')
+    expect(out).not.toContain('**Tone:**')
+    expect(out).not.toContain('**Era:**')
+    expect(out).not.toContain('**Themes:**')
+    expect(out).not.toContain('**Key Tensions:**')
+    expect(out).not.toContain('## World Overview')
+  })
+
+  it('renders a PC with a null entityId without a known-facts block', async () => {
+    const repo = stubRepo() as unknown as {
+      characters: { listForCampaign: ReturnType<typeof vi.fn> }
+      facts: { listByEntities: ReturnType<typeof vi.fn> }
+    }
+    repo.characters.listForCampaign = vi.fn(() =>
+      Promise.resolve([{ id: 'c9', name: 'Nameless', level: 1, class: 'fighter', entityId: null }]),
+    )
+    // No PC entity ids → the batched facts read short-circuits and is not called.
+    repo.facts.listByEntities = vi.fn(() => Promise.resolve([]))
+    const out = await serializeWorldStateForPrep(repo as never, { campaignId: 'camp1', sessionNumber: 1 })
+    expect(out).toContain('Nameless')
+    expect(out).not.toContain('Known at session start:')
+    expect(repo.facts.listByEntities.mock.calls).toHaveLength(0)
+  })
+
+  it('handles an empty party (no PC entity ids → facts read short-circuits)', async () => {
+    const repo = stubRepo() as unknown as {
+      characters: { listForCampaign: ReturnType<typeof vi.fn> }
+      facts: { listByEntities: ReturnType<typeof vi.fn> }
+    }
+    repo.characters.listForCampaign = vi.fn(() => Promise.resolve([]))
+    repo.facts.listByEntities = vi.fn(() => Promise.resolve([]))
+    const out = await serializeWorldStateForPrep(repo as never, { campaignId: 'camp1', sessionNumber: 1 })
+    expect(out).toContain('## The Party')
+    expect(repo.facts.listByEntities.mock.calls).toHaveLength(0)
+  })
+
+  it('omits the situation section when starting_situation_index is null', async () => {
+    const repo = stubRepo() as unknown as {
+      campaigns: { getWorldAndSituationIndex: ReturnType<typeof vi.fn> }
+      worlds: { getStartingSituationEntries: ReturnType<typeof vi.fn> }
+    }
+    repo.campaigns.getWorldAndSituationIndex = vi.fn(() =>
+      Promise.resolve({ world_id: 'w1', starting_situation_index: null }),
+    )
+    const out = await serializeWorldStateForPrep(repo as never, { campaignId: 'camp1', sessionNumber: 1 })
+    expect(out).not.toContain('## The Situation')
+    expect(repo.worlds.getStartingSituationEntries.mock.calls).toHaveLength(0)
+  })
+
+  it('omits the situation section when the chosen entry is out of range', async () => {
+    const repo = stubRepo() as unknown as {
+      campaigns: { getWorldAndSituationIndex: ReturnType<typeof vi.fn> }
+    }
+    // Index 5 with only two entries → entries[5] is undefined.
+    repo.campaigns.getWorldAndSituationIndex = vi.fn(() =>
+      Promise.resolve({ world_id: 'w1', starting_situation_index: 5 }),
+    )
+    const out = await serializeWorldStateForPrep(repo as never, { campaignId: 'camp1', sessionNumber: 1 })
+    expect(out).not.toContain('## The Situation')
+  })
+
+  it('appends prior-session summaries when priorSessionContext is provided', async () => {
+    const out = await serializeWorldStateForPrep(stubRepo(), {
+      campaignId: 'camp1',
+      sessionNumber: 2,
+      priorSessionContext: { previousSummaries: ['Last time, the party torched the docks.'] },
+    })
+    expect(out).toContain('## Prior Sessions')
+    expect(out).toContain('Last time, the party torched the docks.')
+  })
 })
