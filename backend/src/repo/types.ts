@@ -337,3 +337,16 @@ export interface CampaignCharacter {
   readonly userId: string
   readonly joinedAt: Date
 }
+
+// ─── Session Preps (MYT-61) ────────────────────────────────────────────────────
+// Named SessionPrepRow (not SessionPrep) to avoid clashing with the Zod
+// LLM-output type exported from src/llm/prep/stages/session-prep.ts.
+export interface SessionPrepRow {
+  readonly id: string
+  readonly campaignId: string
+  readonly sessionNumber: number
+  readonly ftContext: string
+  readonly sdPlaybook: string
+  readonly snapshotId: string | null
+  readonly createdAt: Date
+}
