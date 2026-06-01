@@ -78,6 +78,8 @@ streamObject({
 
 `sessionPrepSchema = z.object({ ft_context: z.string().min(<floor>), sd_playbook: z.string().min(<floor>) })` — `min` is a **presence/length floor, not a completeness check** (see §9). Exported from the stage file (matches sibling stages).
 
+**No in-prose delineator.** The two documents are the two **structured-output fields** the model fills (`ft_context`, `sd_playbook`); the JSON schema does the separation. The template describes what each field must contain — it must NOT instruct a `===STAGE_DIRECTION_PLAYBOOK===` separator. (That separator was the prototype's mechanism for a single *text* completion; it is obsolete under `streamObject`'s structured schema and would be inert/harmful here.)
+
 **Streaming for MYT-62:** session prep does **not** reuse `runStreamingStage` (it's array-keyed for entity/edge events and would emit nothing for a two-string object). MYT-62 consumes `result.partialObjectStream` / `result.textStream` directly with a stage-specific handler, surfacing the accumulating `ft_context` then `sd_playbook` fields. (Honest tradeoff vs. delimiter-split text: structured output keeps validation + repair; readable streaming requires this bespoke consumer rather than the existing extractor.)
 
 ### 4.3 Prompt template — `backend/src/llm/prompts/prep/session-prep.txt`

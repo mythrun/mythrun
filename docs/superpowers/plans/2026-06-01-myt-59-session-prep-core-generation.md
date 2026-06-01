@@ -144,7 +144,8 @@ describe('session-prep template', () => {
   it('carries the placeholders and the hard-exclusion + party + session-N framing', () => {
     expect(TEMPLATE).toContain('{{world_state}}')
     expect(TEMPLATE).toContain('{{session_number}}')
-    expect(TEMPLATE).toContain('===STAGE_DIRECTION_PLAYBOOK===')
+    expect(TEMPLATE).toContain('ft_context')
+    expect(TEMPLATE).toContain('sd_playbook')
     // fact AND entity level exclusions (the SHOWSTOPPER fix)
     expect(TEMPLATE.toLowerCase()).toContain('discoverable')
     expect(TEMPLATE.toLowerCase()).toContain('secret')
@@ -165,7 +166,7 @@ Expected: FAIL — file does not exist.
 - [ ] **Step 3: Write the template** (`session-prep.txt`)
 
 Port the prototype template (`Personal/mythrun-v5/backend/src/prep/prompts/session-prep.txt`) and adapt per the spec §4.3/§5. It MUST contain:
-- A system framing: "You are the Slow Thinker preparing one session for a party. Produce two documents separated by a single line `===STAGE_DIRECTION_PLAYBOOK===`."
+- A system framing: "You are the Slow Thinker preparing one session for a party. Produce two things — the **Fast-Thinker context** and the **Stage-Direction playbook**." The stage uses `streamObject` with a `{ft_context, sd_playbook}` schema, so the model fills those two FIELDS directly: the template must describe what each field contains and must NOT instruct an in-prose `===STAGE_DIRECTION_PLAYBOOK===` delineator (obsolete prototype-ism; the JSON schema does the separation).
 - **FT Context** section spec: `## The World`, `## The Party` (per PC: sheet, personality, session-start known facts), `## Where You Are`, `## The Situation`, `## People You Know` / `## People You Don't Know (Yet)` (with depth markers), `## Factions`, `## Places of Interest` (clue markers), `## Encounters & Set Pieces` (no DCs), `## DM Guidance`.
 - **Hard exclusions** (verbatim intent): "The FT Context may contain only `known`-tier content. NEVER include `discoverable` or `secret` facts (discoverable = clue content the players must earn in play). A `secret` entity must NOT appear in the FT Context at all — not named, not as a stub; it is playbook-only. A `discoverable` entity may appear only as a depth-marked stub without its discoverable/secret facts."
 - **Depth-marker protocol** + **Three-Clue Rule** + NPC knowledge boundaries (port from prototype).
