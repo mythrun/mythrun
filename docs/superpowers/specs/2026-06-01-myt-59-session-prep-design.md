@@ -24,7 +24,7 @@ MYT-59 builds **session 1**, designed forward-compatible with session N (§8).
 
 **Out of this issue** (consumes MYT-59's output):
 - Persistence into `session_preps`, the BullMQ job, per-prep cost cap, idempotent resume → **MYT-61**.
-- The runtime Haiku leak guard → **MYT-60**.
+- Runtime leak guard → **descoped** (MYT-60 canceled 2026-06-01). Runtime enforced ignorance rests on the authoring prompt + live FT/ST + Launch red-team — see §7.
 - Streaming to the dev-tool / phase-level `prep-status` SSE → **MYT-62**.
 - The **four routes** → **MYT-63**: `POST /api/campaigns/:id/session-prep`, `GET …/session-preps`, `GET …/session-preps/:prepId`, `POST …/reset-prep` (enumerated in World & Campaign Pipeline §"API Routes", lines 670-673). Note `reset-prep` interacts with MYT-61's idempotent resume — MYT-61 decides overwrite-vs-version semantics.
 - Real-LLM constructed-state smoke + wiki → **MYT-64**.
@@ -115,9 +115,11 @@ Add `maxOutputTokens?: number` to `StreamObjectOpts` (and the `generateObject` o
 
 ## 7. Enforced ignorance
 
-Primary enforcement is **prompt-level**: the template's fact- and entity-level hard-exclusion rules + depth-marker protocol (§5) instruct the Slow Thinker to keep all non-`known` content out of `ft_context`. The **runtime guard is MYT-60** — a Haiku **semantic** classifier (NOT a substring matcher; ZFC forbids pattern-matching on LLM output) that checks `ft_context` against the set of all `discoverable`+`secret` **facts** and the names/existence of all `discoverable`+`secret` **entities**, before `ft_context` reaches the live Fast Thinker. MYT-59 owns producing a clean `ft_context` and carrying the exclusion instructions in the template. Hard boundary (CLAUDE.md §1).
+Primary (and, at this layer, the sole runtime) enforcement is **prompt-level**: the template's fact- and entity-level hard-exclusion rules + depth-marker protocol (§5) instruct the Slow Thinker to keep all non-`known` content out of `ft_context`. The `ft_context` is the only document that omits secrets; the `sd_playbook` holds them. MYT-59 owns producing a clean `ft_context` and carrying the exclusion instructions in the template. Hard boundary (CLAUDE.md §1).
 
-**MYT-59 ↔ MYT-60 window:** until MYT-60 lands, the only consumer of `ft_context` is the dev-tool / smoke path (MYT-62/64); no live Fast-Thinker call reads it (the `/start` invocation is Session Runtime). The absence of a runtime guard in this window is therefore safe by construction.
+**DECISION (2026-06-01): no runtime per-doc leak guard (MYT-60 descoped).** A per-doc checker — a Haiku/Sonnet classifier comparing `ft_context` against the world's `discoverable`+`secret` facts + hidden entities — was considered and dropped. Opus authors `ft_context` under the full exclusion prompt, so a weaker per-doc checker can't out-judge it on the subtle/inferential leaks where a guard would matter, and it risks redacting the *intended* foreshadowing the depth-marker protocol plants (a good secret is implied before it's revealed). Runtime enforced ignorance therefore rests on (1) this authoring prompt, (2) the live Fast Thinker's "NPCs only know what they'd plausibly know" instructions, and (3) the Slow Thinker gating reveals via stage directions; systemic assurance is the Launch adversarial red-team (MYT-46). See MYT-60 for the full rationale.
+
+Note: nothing reads `ft_context` until Session Runtime wires `/start` — the prep stage (MYT-59) only produces and persists it (MYT-61). The live Fast Thinker is where the runtime "NPCs only know what they'd know" instructions apply.
 
 ## 8. Forward-compatibility (Session N)
 
