@@ -1,8 +1,8 @@
 digraph worker {
   // The worker. A second ECS Fargate service that runs node dist/worker.js
-  // and pulls jobs from two BullMQ queues on redisBatch. Health server on
-  // 127.0.0.1:3001 is what ECS probes. Phase 0 ships stub processors;
-  // real prep-stage logic lands in MYT-51 onward.
+  // and pulls jobs from three BullMQ queues on redisBatch. Health server on
+  // 127.0.0.1:3001 is what ECS probes. Real prep-stage processors land across
+  // MYT-51 onward; session-prep (MYT-61) is the third queue/worker.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -14,7 +14,7 @@ digraph worker {
     color="ember";
     fontcolor="ember";
 
-    queue_producer [label="Queue producer\nadd('world-gen' | 'campaign-setup')"];
+    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep')"];
   }
 
   subgraph cluster_redis {
@@ -23,6 +23,7 @@ digraph worker {
 
     q_world    [label="queue: world-gen"];
     q_campaign [label="queue: campaign-setup"];
+    q_prep     [label="queue: session-prep"];
   }
 
   subgraph cluster_worker {
@@ -32,35 +33,38 @@ digraph worker {
     fontcolor="ember";
 
     entry      [label="backend/src/worker.ts\nloadEnv() → ping pg + redises\n→ register Workers\n→ start health last", color="ember", fontcolor="ember"];
-    cfg        [label="worker/bullmq-config.ts\nQUEUE_WORLD_GEN  (c=3)\nQUEUE_CAMPAIGN_SETUP (c=5)"];
-    stub       [label="worker/stub-processor.ts\nPhase 0: log + complete\n(real stages land MYT-51+)"];
+    cfg        [label="worker/bullmq-config.ts\nQUEUE_WORLD_GEN  (c=3)\nQUEUE_CAMPAIGN_SETUP (c=5)\nQUEUE_SESSION_PREP (c=3)"];
     w_world    [label="BullmqWorker\nworld-gen\nconcurrency 3"];
     w_camp     [label="BullmqWorker\ncampaign-setup\nconcurrency 5"];
+    w_prep     [label="BullmqWorker\nsession-prep\nconcurrency 3", color="ember", fontcolor="ember"];
     health     [label="worker/health-server.ts\nGET /health on 127.0.0.1:3001\nprobes: pg + redisBatch +\nredisRealtime + isRunning()"];
     bullmq_redis [label="redis/bullmq-client.ts\nmaxRetriesPerRequest: null\n(BullMQ requirement)"];
   }
 
   ecs   [label="ECS healthCheck\ncurl :3001/health every 30s\nstopTimeout=120s"];
   pg    [label="Postgres\npool max=4"];
-  realtime [label="redisRealtime\n(unused at Phase 0;\nreserved for MYT-52 PUBLISH)"];
+  realtime [label="redisRealtime\nPUBLISH stage-* /\n  per-fact events"];
 
   // API enqueues
   queue_producer -> q_world;
   queue_producer -> q_campaign;
+  queue_producer -> q_prep;
 
   // Worker consumes
   q_world    -> w_world  [label="BLPOP-style"];
   q_campaign -> w_camp   [label="BLPOP-style"];
+  q_prep     -> w_prep   [label="BLPOP-style"];
 
   // Worker shape
   cfg     -> w_world  [style=dashed, label="queue name + concurrency"];
   cfg     -> w_camp   [style=dashed];
-  stub    -> w_world  [style=dashed, label="processor"];
-  stub    -> w_camp   [style=dashed];
+  cfg     -> w_prep   [style=dashed];
   entry   -> w_world  [style=dashed, label="register"];
   entry   -> w_camp   [style=dashed];
+  entry   -> w_prep   [style=dashed];
   bullmq_redis -> w_world [style=dashed, label="connection"];
   bullmq_redis -> w_camp  [style=dashed];
+  bullmq_redis -> w_prep  [style=dashed];
 
   // Health + ECS probe
   entry  -> health [style=dashed, label="start last"];
@@ -68,5 +72,6 @@ digraph worker {
   health -> pg          [label="SELECT 1", style=dotted];
   health -> w_world     [label="isRunning()", style=dotted];
   health -> w_camp      [label="isRunning()", style=dotted];
+  health -> w_prep      [label="isRunning()", style=dotted];
   health -> realtime    [label="PING", style=dotted];
 }

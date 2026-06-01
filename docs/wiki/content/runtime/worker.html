@@ -8,21 +8,22 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
 <!-- source: docs/specs/2026-04-10-infrastructure-devops.md -->
-<!-- source-hash: sha256:3b62acfa14e7a197b38da60a7f066dd55e2fb85d692b83fa2220d2c962f701c4 -->
-<!-- last-ticket: MYT-49 -->
+<!-- source-hash: sha256:7f639feee0abbf1286381fe36181601a886483c6e399c837da7167888095e523 -->
+<!-- last-ticket: MYT-61 -->
 
 <h1>Worker</h1>
 
 <p class="lead">
   The async-execution half of the backend. A second ECS Fargate service running
-  <code>node dist/worker.js</code> with two BullMQ Workers — <code>world-gen</code> (concurrency 3)
-  and <code>campaign-setup</code> (concurrency 5) — both consuming from <code>redisBatch</code>.
-  Phase 0 shipped stub processors that logged job receipt and marked complete. The real prep-stage
-  processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
-  (per-player character creation), and MYT-54 (campaign-scoped character integration). The shape
-  locked in at Phase 0 so each later stage was a coverage edit, not a service-topology change. The
-  stub-processor file was retired in MYT-55 once the dedicated worker container caught up to the
-  same wiring the API container already used.
+  <code>node dist/worker.js</code> with three BullMQ Workers — <code>world-gen</code> (concurrency
+  3), <code>campaign-setup</code> (concurrency 5), and <code>session-prep</code> (concurrency 3) —
+  all consuming from <code>redisBatch</code>. Phase 0 shipped stub processors that logged job
+  receipt and marked complete. The real prep-stage processors landed across MYT-51 (world-gen),
+  MYT-52 (streaming entity / edge events), MYT-53 (per-player character creation), MYT-54
+  (campaign-scoped character integration), and MYT-61 (session prep). The shape locked in at Phase 0
+  so each later stage was a coverage edit, not a service-topology change. The stub-processor file
+  was retired in MYT-55 once the dedicated worker container caught up to the same wiring the API
+  container already used.
 </p>
 
 <!-- @diagram: runtime/worker -->
@@ -49,19 +50,23 @@
 <p>
   The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
   <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
-  data plane, and then registers two BullMQ <code>Worker</code> instances against
-  <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3) and
-  <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5). Queue names and
-  concurrency caps live in <code>backend/src/worker/bullmq-config.ts</code> — the single source of
-  truth so the API-side <code>Queue</code> producers and the worker-side <code>Worker</code>
-  consumers can't drift.
+  data plane, and then registers three BullMQ <code>Worker</code> instances against
+  <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3),
+  <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5), and
+  <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61). Queue
+  names and concurrency caps live in <code>backend/src/worker/bullmq-config.ts</code> — the single
+  source of truth so the API-side <code>Queue</code> producers and the worker-side
+  <code>Worker</code> consumers can't drift.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Two queues, not one</strong> — world-generation and campaign-setup have different
-  cost-per-job, different SLAs (interactive vs. batch), and different retry semantics. Putting them
-  on one queue would mean a slow world-gen run could starve a quick campaign-setup of worker slots.
-  Two queues with independent concurrency caps lets each stage be tuned in isolation.
+  <strong>A queue per stage, not one shared queue</strong> — world-generation, campaign-setup, and
+  session-prep have different cost-per-job, different SLAs (interactive vs. batch), and different
+  retry semantics. Sharing one queue would let a slow world-gen run starve a quick campaign-setup of
+  worker slots, or a long session-prep Opus stream starve both. Separate queues with independent
+  concurrency caps let each stage be tuned in isolation — which is why
+  <a href="./session-prep.html">session prep</a> got its own queue rather than a slot on
+  <code>campaign-setup</code>.
 </aside>
 
 <p>
@@ -113,8 +118,8 @@
 <p>
   ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
   <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
-  new probes from going green during teardown), then runs <code>worker.close()</code> on both BullMQ
-  Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
+  new probes from going green during teardown), then runs <code>worker.close()</code> on all three
+  BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
   force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
   After both close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish out,
@@ -298,8 +303,10 @@
   <a href="./llm.html">LLM client</a> with the API. Its task definition and service are provisioned
   by the <a href="../infra/serving.html">serving</a> module alongside the API service. Job names
   live in <code>backend/src/contract/pipeline-jobs.ts</code> — the same contract file the
-  <a href="./dev-tool.html">dev tool</a>'s ship gate enforces coverage against. Streaming-cost
-  attribution joins to the <code>pipeline_runs</code> table introduced in MYT-43.
+  <a href="./dev-tool.html">dev tool</a>'s ship gate enforces coverage against. The
+  <a href="./session-prep.html">session-prep</a> worker is the third <code>Worker</code> registered
+  here, on its own queue. Streaming-cost attribution joins to the <code>pipeline_runs</code> table
+  introduced in MYT-43.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -321,7 +328,8 @@
       <td><code>backend/src/worker/bullmq-config.ts</code></td>
       <td>
         <code>QUEUE_WORLD_GEN</code>, <code>QUEUE_CAMPAIGN_SETUP</code>,
-        <code>CONCURRENCY_WORLD_GEN = 3</code>, <code>CONCURRENCY_CAMPAIGN_SETUP = 5</code>.
+        <code>QUEUE_SESSION_PREP</code>, <code>CONCURRENCY_WORLD_GEN = 3</code>,
+        <code>CONCURRENCY_CAMPAIGN_SETUP = 5</code>, <code>CONCURRENCY_SESSION_PREP = 3</code>.
       </td>
     </tr>
     <tr>
@@ -379,6 +387,10 @@
     <tr>
       <td>Concurrency: <code>campaign-setup</code></td>
       <td>5</td>
+    </tr>
+    <tr>
+      <td>Concurrency: <code>session-prep</code></td>
+      <td>3</td>
     </tr>
   </tbody>
 </table>

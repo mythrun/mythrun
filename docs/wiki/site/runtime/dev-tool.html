@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html" class="active">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html" class="active">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Dev tool</div>
         <article>
@@ -837,8 +837,9 @@
   <code>wiki-check.yml</code>: it runs on every <code>pull_request</code> and on
   <code>push: branches: [main]</code>, scoped via <code>paths:</code> to the gated surface so
   unrelated PRs don't pay CI minutes. The pipeline contract files are populated and the gate is
-  load-bearing: the routes, events, and BullMQ jobs that ride the registry today are all driven by
-  panels in the dev tool with zero exempt entries.
+  load-bearing: the routes and events that ride the registry today are all driven by panels in the
+  dev tool, and every BullMQ job but one — <code>session-prep</code>, whose live-events driver is
+  tracked for a later ticket — is too.
 </p>
 
 <h2 id="the-exempt-list">The exempt list</h2>
@@ -848,11 +849,14 @@
   <code>exempt</code> object, enforced by <code>dev-tool-check</code>) and one for the all-routes
   panel-registry invariant (<code>EXEMPT_ROUTES</code> in
   <code>backend/dev-tool/verify-registry.ts</code>, enforced by the vitest test). The pipeline
-  contracts' exempt object is currently empty. The verifier's <code>EXEMPT_ROUTES</code> currently
-  lists three entries: <code>POST /webhooks/stripe</code> (signature-verified consumer, no human
-  UI), <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel +
-  the dev tool's self-bootstrap), and <code>GET /api/users/check-username</code> (same shape,
-  embedded in the register probe-helper).
+  contracts' exempt object currently holds one entry — the <code>session-prep</code> job, which the
+  play-runtime enqueues and which is exercised end-to-end by a staging smoke; its dev-tool
+  live-events driver is tracked for a later ticket. The verifier's
+  <code>EXEMPT_ROUTES</code> currently lists three entries:
+  <code>POST /webhooks/stripe</code> (signature-verified consumer, no human UI),
+  <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel + the dev
+  tool's self-bootstrap), and <code>GET /api/users/check-username</code> (same shape, embedded in
+  the register probe-helper).
 </p>
 
 <aside class="wiki-rationale">

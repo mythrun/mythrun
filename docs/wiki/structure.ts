@@ -25,6 +25,7 @@ export const structure: Section[] = [
       { slug: 'world-gen', title: 'World gen' },
       { slug: 'character-creation', title: 'Character creation' },
       { slug: 'character-integration', title: 'Character integration' },
+      { slug: 'session-prep', title: 'Session prep' },
       { slug: 'pipeline-status', title: 'Pipeline status' },
     ],
   },

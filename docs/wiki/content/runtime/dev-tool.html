@@ -34,8 +34,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:363d641a1775aa48ee1a54c34b4eb28c2290ea39b5b6177afbef6c86bb3349d0 -->
-<!-- last-ticket: myth-8awv -->
+<!-- source-hash: sha256:22078a799bf4ffbbf3b8aa5864d6d4f433cb7ab909e6c7bdab7c1f5d62a8557e -->
+<!-- last-ticket: MYT-61 -->
 
 <h1>Dev tool</h1>
 
@@ -435,8 +435,9 @@
   <code>wiki-check.yml</code>: it runs on every <code>pull_request</code> and on
   <code>push: branches: [main]</code>, scoped via <code>paths:</code> to the gated surface so
   unrelated PRs don't pay CI minutes. The pipeline contract files are populated and the gate is
-  load-bearing: the routes, events, and BullMQ jobs that ride the registry today are all driven by
-  panels in the dev tool with zero exempt entries.
+  load-bearing: the routes and events that ride the registry today are all driven by panels in the
+  dev tool, and every BullMQ job but one — <code>session-prep</code>, whose live-events driver is
+  tracked for a later ticket — is too.
 </p>
 
 <h2>The exempt list</h2>
@@ -446,11 +447,14 @@
   <code>exempt</code> object, enforced by <code>dev-tool-check</code>) and one for the all-routes
   panel-registry invariant (<code>EXEMPT_ROUTES</code> in
   <code>backend/dev-tool/verify-registry.ts</code>, enforced by the vitest test). The pipeline
-  contracts' exempt object is currently empty. The verifier's <code>EXEMPT_ROUTES</code> currently
-  lists three entries: <code>POST /webhooks/stripe</code> (signature-verified consumer, no human
-  UI), <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel +
-  the dev tool's self-bootstrap), and <code>GET /api/users/check-username</code> (same shape,
-  embedded in the register probe-helper).
+  contracts' exempt object currently holds one entry — the <code>session-prep</code> job, which the
+  play-runtime enqueues and which is exercised end-to-end by a staging smoke; its dev-tool
+  live-events driver is tracked for a later ticket. The verifier's
+  <code>EXEMPT_ROUTES</code> currently lists three entries:
+  <code>POST /webhooks/stripe</code> (signature-verified consumer, no human UI),
+  <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel + the dev
+  tool's self-bootstrap), and <code>GET /api/users/check-username</code> (same shape, embedded in
+  the register probe-helper).
 </p>
 
 <aside class="wiki-rationale">

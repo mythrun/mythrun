@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:7ad562165962d237b809ea6aba13ca369c47cc6d2490785c726c68091e377579 -->
-<!-- last-ticket: MYT-49 -->
+<!-- source-hash: sha256:b9e1010214f1e3bdda4a94574c126e189992600e3ea15fbec18ed1a3b4f75615 -->
+<!-- last-ticket: MYT-61 -->
 
 <h1>Backend</h1>
 
@@ -338,15 +338,16 @@
   <a href="./worker.html">Worker</a> page. The short version: it loads the same
   <code>loadEnv</code> contract the API uses, opens its own pg pool and both Redis clients (with a
   BullMQ-compatible ioredis factory at <code>redis/bullmq-client.ts</code> for the batch side),
-  registers two BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code> and
-  <code>QUEUE_CAMPAIGN_SETUP</code>, and binds a Fastify <code>/health</code> server on
-  <code>127.0.0.1:3001</code> that the ECS container <code>healthCheck</code> probes. Graceful
-  shutdown drains the workers within a <code>100s</code> deadline (under the task's 120s
-  <code>stopTimeout</code>) and falls back to a forced close that marks any in-flight jobs as
-  stalled for BullMQ to re-deliver. Phase 0 shipped stub processors that logged and completed; the
-  real prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge
-  events), MYT-53 (per-player character creation), and MYT-54 (campaign-scoped character
-  integration). The dedicated worker container caught up to the API container's wiring in MYT-55.
+  registers three BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
+  <code>QUEUE_CAMPAIGN_SETUP</code>, and <code>QUEUE_SESSION_PREP</code>, and binds a Fastify
+  <code>/health</code> server on <code>127.0.0.1:3001</code> that the ECS container
+  <code>healthCheck</code> probes. Graceful shutdown drains the workers within a
+  <code>100s</code> deadline (under the task's 120s <code>stopTimeout</code>) and falls back to a
+  forced close that marks any in-flight jobs as stalled for BullMQ to re-deliver. Phase 0 shipped
+  stub processors that logged and completed; the real prep-stage processors landed across MYT-51
+  (world-gen), MYT-52 (streaming entity / edge events), MYT-53 (per-player character creation),
+  MYT-54 (campaign-scoped character integration), and MYT-61 (session prep). The dedicated worker
+  container caught up to the API container's wiring in MYT-55.
 </p>
 
 <h2>The env loader accepts two shapes</h2>

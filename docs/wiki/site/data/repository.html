@@ -566,7 +566,7 @@
   <code>createRepo(pool)</code> in <code>backend/src/repo/index.ts</code> is the entry point. It
   takes a <code>pg.Pool</code> and returns the table-cluster namespaces — one per cluster
   (<code>users</code>, <code>worlds</code>, <code>campaigns</code>, <code>sessions</code>,
-  <code>credits</code>, <code>invites</code>, <code>characters</code>,
+  <code>sessionPreps</code>, <code>credits</code>, <code>invites</code>, <code>characters</code>,
   <code>characterConcepts</code>) plus the former standalone Tier-2 modules (<code>entities</code>,
   <code>facts</code>, <code>proseKernels</code>, <code>relationships</code>,
   <code>entityHierarchy</code>, <code>statBlocks</code>, <code>purchases</code>,
@@ -750,7 +750,7 @@
   pool-bound table-cluster factories and standalone transaction-scoped Tier-2 modules — into one
   binder shape, so <code>createRepo</code> now exposes them all on a single surface:
   <code>users</code>, <code>worlds</code>, <code>campaigns</code>, <code>sessions</code>,
-  <code>credits</code>, <code>invites</code>, <code>characters</code>,
+  <code>sessionPreps</code>, <code>credits</code>, <code>invites</code>, <code>characters</code>,
   <code>characterConcepts</code>, plus the world-content and billing namespaces
   (<code>entities</code>, <code>facts</code>, <code>proseKernels</code>, <code>relationships</code>,
   <code>entityHierarchy</code>, <code>statBlocks</code>, <code>purchases</code>,
@@ -1618,11 +1618,11 @@
       <td><code>src/repo/types.ts</code></td>
       <td>
         <code>User</code>, <code>World</code> (with <code>isDemo</code>), <code>Campaign</code>,
-        <code>Session</code>, <code>SessionUsage</code>, <code>CampaignMember</code>,
-        <code>CampaignInvite</code>, <code>CampaignInvitePreview</code>, <code>Character</code>,
-        <code>CampaignCharacter</code>; <code>AtomicDebitResult</code> +
-        <code>TryDebitResult</code> credit-debit shapes; <code>CreateXxxInput</code> +
-        <code>XxxUpdate</code> for each mutable row type.
+        <code>Session</code>, <code>SessionUsage</code>, <code>SessionPrepRow</code>,
+        <code>CampaignMember</code>, <code>CampaignInvite</code>,
+        <code>CampaignInvitePreview</code>, <code>Character</code>, <code>CampaignCharacter</code>;
+        <code>AtomicDebitResult</code> + <code>TryDebitResult</code> credit-debit shapes;
+        <code>CreateXxxInput</code> + <code>XxxUpdate</code> for each mutable row type.
       </td>
     </tr>
     <tr>
@@ -1711,6 +1711,18 @@
       <td><code>src/repo/sessions-errors.ts</code></td>
       <td>
         <code>SessionNotFoundError</code> — thrown by <code>recordUsage</code> on a missing session.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/session-preps.ts</code></td>
+      <td>
+        <code>sessionPrepsNs(c)</code> binder (MYT-61, facts.ts canonical pattern) —
+        <code>insert</code> (UUIDv7 id,
+        <code>ON CONFLICT (campaign_id, session_number) DO NOTHING</code> — the idempotent resume
+        landing the <a href="../runtime/session-prep.html">session-prep</a> processor uses),
+        <code>existsFor</code>, <code>getBy</code>. <code>SessionPrepRow</code> type in
+        <code>types.ts</code> (named <code>-Row</code> to avoid the LLM <code>SessionPrep</code>
+        clash).
       </td>
     </tr>
     <tr>

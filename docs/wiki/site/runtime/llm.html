@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM client</div>
         <article>
@@ -683,12 +683,15 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Built, but not yet wired into a live flow</strong> — the stage exists on
-  <code>main</code> and is unit-tested, but nothing calls it in production yet. There is no BullMQ
-  job that enqueues it, no route that triggers it, no SSE channel that streams it, no leak guard on
-  its <code>ft_context</code>, and no <code>/start</code> path that invokes it. Those land across
-  the rest of the Session Prep Pipeline milestone. This page documents the generation primitive as a
-  shipped building block; the orchestration around it is future work and out of scope here.
+  <strong>The generation primitive, wired into a job</strong> — this page documents
+  <code>generateSessionPrep</code> as a building block. The orchestration around it — a
+  <code>session-prep</code> BullMQ job, a processor that persists the two documents to
+  <code>session_preps</code> and records cost, a dedicated queue and worker — ships on the
+  <a href="./session-prep.html">session prep</a> page. Still ahead: the route that enqueues the job
+  and the <code>/start</code> path in Session Runtime that reads the persisted prep and feeds
+  <code>ft_context</code> to the Fast Thinker. There is no runtime leak guard on
+  <code>ft_context</code> and there will not be one — see the omniscient-serializer note below for
+  how enforced ignorance is achieved instead.
 </aside>
 
 <aside class="wiki-rationale">
@@ -736,9 +739,15 @@
   Fast-Thinker context is <em>pointing at</em>. Pre-filtering the input to known-tier would blind
   the playbook. So the serializer is deliberately omniscient and the access markers ride through
   verbatim; the model is instructed to route <code>known</code>-tier-only into
-  <code>ft_context</code> and everything else into <code>sd_playbook</code>. A separate, code-level
-  leak guard on the produced <code>ft_context</code> is a later milestone ticket — the prompt
-  boundary is the first line of defense, not the only one.
+  <code>ft_context</code> and everything else into <code>sd_playbook</code>. There is no separate,
+  code-level leak guard on the produced <code>ft_context</code>, and one is not planned. Enforced
+  ignorance rests on two things: the Opus author writes a watertight <code>ft_context</code> under
+  the template's hard exclusions (omitting <code>discoverable</code> /
+  <code>secret</code> material), and the access-tier separation means only <code>known</code> facts
+  are ever Fast-Thinker-safe in the first place. A weaker per-document checker run after the fact
+  couldn't out-judge the omniscient author on subtle leaks, and would risk redacting the deliberate
+  foreshadowing (depth markers) the author put there on purpose. Systemic assurance is the launch
+  red-team, not a runtime gate.
 </aside>
 
 <h2 id="configuration-anthropic-api-key">Configuration: <code>ANTHROPIC_API_KEY</code></h2>

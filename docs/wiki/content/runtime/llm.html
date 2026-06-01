@@ -3,8 +3,8 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:933f6a063605a1f97f759f362d2ce95ac40cbd244461cd42dcb012946d85973b -->
-<!-- last-ticket: MYT-55 -->
+<!-- source-hash: sha256:d579c687649dfea33c6cf93216e9b162f314be00dba77a9c4d18aac8da225fbf -->
+<!-- last-ticket: MYT-61 -->
 
 <h1>LLM client</h1>
 
@@ -480,12 +480,15 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Built, but not yet wired into a live flow</strong> — the stage exists on
-  <code>main</code> and is unit-tested, but nothing calls it in production yet. There is no BullMQ
-  job that enqueues it, no route that triggers it, no SSE channel that streams it, no leak guard on
-  its <code>ft_context</code>, and no <code>/start</code> path that invokes it. Those land across
-  the rest of the Session Prep Pipeline milestone. This page documents the generation primitive as a
-  shipped building block; the orchestration around it is future work and out of scope here.
+  <strong>The generation primitive, wired into a job</strong> — this page documents
+  <code>generateSessionPrep</code> as a building block. The orchestration around it — a
+  <code>session-prep</code> BullMQ job, a processor that persists the two documents to
+  <code>session_preps</code> and records cost, a dedicated queue and worker — ships on the
+  <a href="./session-prep.html">session prep</a> page. Still ahead: the route that enqueues the job
+  and the <code>/start</code> path in Session Runtime that reads the persisted prep and feeds
+  <code>ft_context</code> to the Fast Thinker. There is no runtime leak guard on
+  <code>ft_context</code> and there will not be one — see the omniscient-serializer note below for
+  how enforced ignorance is achieved instead.
 </aside>
 
 <aside class="wiki-rationale">
@@ -533,9 +536,15 @@
   Fast-Thinker context is <em>pointing at</em>. Pre-filtering the input to known-tier would blind
   the playbook. So the serializer is deliberately omniscient and the access markers ride through
   verbatim; the model is instructed to route <code>known</code>-tier-only into
-  <code>ft_context</code> and everything else into <code>sd_playbook</code>. A separate, code-level
-  leak guard on the produced <code>ft_context</code> is a later milestone ticket — the prompt
-  boundary is the first line of defense, not the only one.
+  <code>ft_context</code> and everything else into <code>sd_playbook</code>. There is no separate,
+  code-level leak guard on the produced <code>ft_context</code>, and one is not planned. Enforced
+  ignorance rests on two things: the Opus author writes a watertight <code>ft_context</code> under
+  the template's hard exclusions (omitting <code>discoverable</code> /
+  <code>secret</code> material), and the access-tier separation means only <code>known</code> facts
+  are ever Fast-Thinker-safe in the first place. A weaker per-document checker run after the fact
+  couldn't out-judge the omniscient author on subtle leaks, and would risk redacting the deliberate
+  foreshadowing (depth markers) the author put there on purpose. Systemic assurance is the launch
+  red-team, not a runtime gate.
 </aside>
 
 <h2>Configuration: <code>ANTHROPIC_API_KEY</code></h2>

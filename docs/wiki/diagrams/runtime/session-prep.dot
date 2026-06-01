@@ -1,0 +1,86 @@
+digraph session_prep {
+  // Session prep — MYT-61. The play-runtime (the enqueue route lands in
+  // MYT-63) adds one 'session-prep' job per (campaign, session_number) on
+  // the dedicated session-prep queue, jobId sp-{campaignId}-{sessionNumber}.
+  // The processor claims the per-session pipeline_runs row
+  // (stage='session-prep:{n}'), resolves the campaign's world, runs MYT-59's
+  // generateSessionPrep (one Opus streamObject producing ft_context +
+  // sd_playbook), persists the two docs to session_preps (ON CONFLICT
+  // (campaign_id, session_number) DO NOTHING), marks the run completed WITH
+  // recorded cost (no cost cap — the structural bound is maxOutputTokens),
+  // and publishes stage-completed. A prep failure marks the run failed and
+  // publishes stage-failed but DELIBERATELY never flips campaigns.status —
+  // a prep failure is session-scoped, resumable on a later attempt.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  runtime [label="Play-runtime\n(enqueue route: MYT-63)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_redis {
+    label="redisBatch";
+    style="dotted";
+
+    queue   [label="BullMQ queue\nsession-prep\njobId: sp-{campaignId}-\n  {sessionNumber}\nattempts 2, exp backoff 30s", color="ember", fontcolor="ember"];
+    channel [label="{redisKeyPrefix}\npipeline:campaign:{campaignId}\nstage-completed / stage-failed", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_worker {
+    label="session-prep Worker  (concurrency 3)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    claim [label="session-prep-processor.ts\natomicClaimStage(kind:'campaign',\n  campaignId,\n  stage='session-prep:{n}')\n'completed' → no-op\n'lost-race' → return", color="ember", fontcolor="ember"];
+
+    subgraph cluster_generate {
+      label="generation — OUTSIDE any txn";
+      style="dotted";
+
+      resolve [label="campaigns.getWorldId\n  (campaign → world_id)"];
+      serialize [label="serialize-world-state-\n  for-prep.ts\nOMNISCIENT dump\n  (all access tiers)\n  + party known-facts\n  + starting situation"];
+      llm [label="generateSessionPrep\n  model: Opus\n  streamObject\n  sessionPrepSchema\n   { ft_context, sd_playbook }\n  maxOutputTokens 16384\n  timeout 9 min\n  (slowest call in system)"];
+    }
+
+    persist [label="sessionPreps.insert\nINSERT session_preps\n  ON CONFLICT\n  (campaign_id, session_number)\n  DO NOTHING"];
+    mark [label="markStageCompleted\npipeline_runs.status='completed'\ncost_usd = computeCostUsd(Opus)\n  (recorded, NOT capped)\npublishEvent('stage-completed')", color="ember", fontcolor="ember"];
+
+    fail [label="catch: markStageFailed\npublishEvent('stage-failed',\n  terminal)\nNO campaigns.setFailed\n  (session-scoped)\nnon-terminal → rethrow\n  (BullMQ retries)"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres";
+    style="dotted";
+
+    campaigns_t     [label="campaigns\n  world_id (read)\n  status UNCHANGED\n   on prep failure"];
+    preps_t         [label="session_preps\n  ft_context + sd_playbook\n  UNIQUE(campaign_id,\n    session_number)\n  (migration 022)"];
+    pipeline_runs_t [label="pipeline_runs\n  campaign_id, user_id NULL\n  stage='session-prep:{n}'"];
+  }
+
+  // Enqueue
+  runtime -> queue [label="add sp-{id}-{n}"];
+
+  // Worker pickup
+  queue -> claim [label="job { campaignId,\n  sessionNumber }"];
+  claim -> pipeline_runs_t [label="INSERT pending\n(ON CONFLICT coerce)", style=dashed];
+
+  // Generation
+  claim    -> resolve;
+  resolve  -> campaigns_t [label="SELECT world_id", style=dotted];
+  resolve  -> serialize;
+  serialize -> llm;
+
+  // Persist + mark
+  llm     -> persist;
+  persist -> preps_t [label="ft_context +\n  sd_playbook", style=dotted];
+  persist -> mark;
+  mark    -> pipeline_runs_t [label="completed +\n  cost_usd", style=dotted];
+  mark    -> channel         [label="stage-completed", style=dashed];
+
+  // Failure path
+  llm  -> fail [label="error", style=dashed, color="ember"];
+  fail -> pipeline_runs_t [label="failed + error", style=dotted];
+  fail -> channel         [label="stage-failed", style=dashed];
+  fail -> campaigns_t     [label="status NOT\n  touched", style=dotted];
+}
