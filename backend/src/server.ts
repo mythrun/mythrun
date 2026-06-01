@@ -9,6 +9,7 @@ import {
   createShutdown,
   type BullMqQueueShutdown,
   type BullMqWorkerLike,
+  type ShutdownHandler,
 } from './app.js'
 import type { RegisterAuthOptions } from './auth/index.js'
 import { loadEnv, type Env } from './config/env.js'
@@ -31,11 +32,14 @@ import {
   createCharacterIntegrationProcessor,
   type CharacterIntegrationJobPayload,
 } from './llm/prep/character-integration-processor.js'
+import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
 import { readCharacterCreationCostCap, readCostCap } from './llm/prep/cost-cap.js'
 import {
   CONCURRENCY_CAMPAIGN_SETUP,
+  CONCURRENCY_SESSION_PREP,
   CONCURRENCY_WORLD_GEN,
   QUEUE_CAMPAIGN_SETUP,
+  QUEUE_SESSION_PREP,
   QUEUE_WORLD_GEN,
 } from './worker/bullmq-config.js'
 import type { WorldGenQueueLike } from './routes/campaigns.js'
@@ -253,6 +257,79 @@ async function buildCharacterCreationWorker(
   )
 }
 
+/** MYT-61 T4: build the session-prep BullMQ Queue. Job-options policy mirrors
+ *  buildWorldGenQueue's D9 fix: `removeOnComplete: { count: 0 } +
+ *  removeOnFail: { count: 0 }` so terminal jobs are pruned and a future
+ *  re-enqueue with the same jobId (`sp-${campaignId}-${sessionNumber}`, per
+ *  MYT-63) does not silently no-op against a leftover completed record.
+ *  `attempts: 2 + exponential backoff (30s)` matches world-gen so the
+ *  processor's terminal/non-terminal classification (isTerminalError) is
+ *  actually fired by BullMQ retries.
+ *
+ *  The request-time enqueue surface (the route that calls `.add()`) lands in
+ *  MYT-63 along with the AppDeps field that threads this queue to the route.
+ *  This task wires the consumer (Worker) end + the queue's lifecycle (created
+ *  here, closed at shutdown); returns the raw Queue so shutdown can close()
+ *  it after its worker drains. */
+function buildSessionPrepQueue(redisBatch: Redis): Queue {
+  return new Queue(QUEUE_SESSION_PREP, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 30000 },
+      removeOnComplete: { count: 0 },
+      removeOnFail: { count: 0 },
+    },
+  })
+}
+
+/** MYT-61 T4: build the session-prep Worker on a dedicated BullMQ-tuned
+ *  ioredis connection. Mirrors buildWorldGenWorker / buildCharacterCreation-
+ *  Worker. publishEvent is constructed here (same channel + JSON-encode policy
+ *  as the other workers) so all worker-emitted events land on the single
+ *  `pipeline:campaign:{id}` SSE channel. */
+async function buildSessionPrepWorker(
+  pool: Pool,
+  redisRealtime: Redis,
+  redisBatchUrl: string,
+  redisKeyPrefix: string,
+  signal: AbortSignal,
+): Promise<Worker> {
+  const connection = createBullmqRedisClient(redisBatchUrl)
+  await waitFor({
+    label: 'Redis (worker bullmq session-prep)',
+    probe: () => connection.ping(),
+    signal,
+  })
+  const publishEvent = async (campaignId: string, event: Record<string, unknown>): Promise<void> => {
+    const channel = `${redisKeyPrefix}pipeline:campaign:${campaignId}`
+    await redisRealtime.publish(channel, JSON.stringify(event))
+  }
+  return new Worker(
+    QUEUE_SESSION_PREP,
+    createSessionPrepProcessor({ pool, publishEvent }),
+    { connection, concurrency: CONCURRENCY_SESSION_PREP },
+  )
+}
+
+/** MYT-61 T4: wrap the createShutdown handler to drain the session-prep
+ *  worker + queue FIRST. createShutdown owns the existing drain chain and
+ *  process.exit's at the end, so the session-prep pair can't be closed AFTER
+ *  it; we close them up front (worker before queue — lets an in-flight Opus
+ *  prep finish, then releases the queue's Redis bookkeeping) and delegate to
+ *  the rest of the chain. Extracted so main() stays close to its line budget. */
+function withSessionPrepShutdown(
+  inner: ShutdownHandler,
+  worker: Worker,
+  queue: Queue,
+): ShutdownHandler {
+  return async (signal) => {
+    await worker.close()
+    await queue.close()
+    await inner(signal)
+  }
+}
+
 // Stub queue/worker for the boot-gate-disabled fallback path. The fallback
 // never connects to Redis, so we can't construct real BullMQ handles; the
 // app-deps + shutdown contracts both expect a non-undefined value, so
@@ -434,6 +511,10 @@ export async function main(): Promise<void> {
     const { bullmqQueue, worldGenQueue } = buildWorldGenQueue(rTBRef)
     const { bullmqQueue: bullmqCharacterCreationQueue, characterCreationQueue } =
       buildCharacterCreationQueue(rTBRef)
+    // MYT-61 T4: session-prep queue. The enqueue route + AppDeps wiring lands
+    // in MYT-63; here we create the queue so its connection bookkeeping exists
+    // and is closed at shutdown (after the session-prep worker drains).
+    const sessionPrepQueue = buildSessionPrepQueue(rTBRef)
 
     const app = await buildApp(
       {
@@ -457,10 +538,17 @@ export async function main(): Promise<void> {
       pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
       caps.characterCreationCostCapUsd, abortController.signal,
     )
+    const sessionPrepWorker = await buildSessionPrepWorker(
+      pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
+      abortController.signal,
+    )
 
     await app.listen({ port: env.port, host: '0.0.0.0' })
 
-    const handleShutdown = createShutdown(app, {
+    // MYT-61 T4: the session-prep worker + queue are drained ahead of the
+    // existing chain via withSessionPrepShutdown (see that helper for the
+    // worker-before-queue rationale).
+    const innerShutdown = createShutdown(app, {
       pg: pgRef,
       redisRealtime: rTRRef,
       redisBatch: rTBRef,
@@ -476,6 +564,9 @@ export async function main(): Promise<void> {
       // Queue's close(), not the CharacterCreationQueueLike adapter.
       characterCreationQueue: bullmqCharacterCreationQueue,
     })
+    const handleShutdown = withSessionPrepShutdown(
+      innerShutdown, sessionPrepWorker, sessionPrepQueue,
+    )
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))
     }

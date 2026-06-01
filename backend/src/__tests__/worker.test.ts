@@ -91,9 +91,10 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
-    // Wait for startup: workers registered, health server up.
+    // Wait for startup: workers registered, health server up. Three workers:
+    // world-gen, campaign-setup, session-prep (MYT-61 T4).
     await vi.waitFor(() => {
-      expect(workerInstances).toHaveLength(2)
+      expect(workerInstances).toHaveLength(3)
     })
     expect(batchPingMock).toHaveBeenCalledTimes(1)
     expect(realtimePingMock).toHaveBeenCalledTimes(1)

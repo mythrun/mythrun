@@ -7,8 +7,10 @@ import { createBullmqRedisClient } from './redis/bullmq-client.js'
 import { createRedisClient } from './redis/client.js'
 import {
   CONCURRENCY_CAMPAIGN_SETUP,
+  CONCURRENCY_SESSION_PREP,
   CONCURRENCY_WORLD_GEN,
   QUEUE_CAMPAIGN_SETUP,
+  QUEUE_SESSION_PREP,
   QUEUE_WORLD_GEN,
 } from './worker/bullmq-config.js'
 import { startHealthServer } from './worker/health-server.js'
@@ -23,6 +25,7 @@ import {
   createCharacterIntegrationProcessor,
   type CharacterIntegrationJobPayload,
 } from './llm/prep/character-integration-processor.js'
+import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
 
 const HEALTH_PORT = 3001
 const WORKER_PG_POOL_SIZE = 4
@@ -108,19 +111,30 @@ export async function main(): Promise<void> {
     concurrency: CONCURRENCY_CAMPAIGN_SETUP,
   })
 
+  // Session-prep (MYT-61) — one job per (campaign, session_number), enqueued
+  // by MYT-63 with jobId `sp-${campaignId}-${sessionNumber}`. Streams two prose
+  // docs through Opus; the processor owns the per-session pipeline_runs
+  // (`session-prep:${n}`) lifecycle. A prep failure is session-scoped and never
+  // fails the campaign. The API container (server.ts) wires the same processor.
+  const sessionPrepWorker = new BullmqWorker(
+    QUEUE_SESSION_PREP,
+    createSessionPrepProcessor({ pool: pg, publishEvent }),
+    { connection: redisBatch, concurrency: CONCURRENCY_SESSION_PREP },
+  )
+
   // Start health server last — only marks healthy once everything else is up.
   const health = await startHealthServer(HEALTH_PORT, {
     pg,
     redisBatch,
     redisRealtime,
-    workers: [worldGenWorker, campaignSetupWorker],
+    workers: [worldGenWorker, campaignSetupWorker, sessionPrepWorker],
   })
 
   logger.info(
     {
       event: 'worker.started',
       healthPort: HEALTH_PORT,
-      queues: [QUEUE_WORLD_GEN, QUEUE_CAMPAIGN_SETUP],
+      queues: [QUEUE_WORLD_GEN, QUEUE_CAMPAIGN_SETUP, QUEUE_SESSION_PREP],
     },
     'worker started',
   )
@@ -138,6 +152,7 @@ export async function main(): Promise<void> {
     await Promise.all([
       closeWithDeadline(worldGenWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(campaignSetupWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(sessionPrepWorker, WORKER_CLOSE_GRACE_MS),
     ])
 
     await pg.end().catch((err: unknown) => {
