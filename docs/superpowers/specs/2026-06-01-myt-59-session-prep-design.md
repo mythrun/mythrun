@@ -48,7 +48,7 @@ MYT-59 builds **session 1**, designed forward-compatible with session N (§8).
 `serializeWorldStateForPrep(repo, { campaignId, worldId, sessionNumber, priorSessionContext? }): Promise<string>` — **async**, returns the omniscient world state as markdown for the Opus prompt.
 
 It does **not** reinvent world serialization. It composes:
-- `repo.campaigns.getById(campaignId)` → resolve `campaign.world_id` (entities/facts/prose are **world-scoped**, not campaign-scoped).
+- `repo.campaigns.getWorldAndSituationIndex(campaignId)` → `world_id` + the chosen `starting_situation_index` in one read (entities/facts/prose are **world-scoped**, not campaign-scoped).
 - `repo.worldInventory.load(worldId)` — the canonical omniscient read (entities + facts + prose + relationships at **all** access tiers; this is the prep-side read that intentionally bypasses the player allowlist). Reuse/extend **`renderWorldDump(inv)`** (`src/llm/prep/world-dump.ts`) for the markdown form — it already renders each entity with its `[access_level: …]` marker.
 - World-level prose (tone, era, themes, `world_overview`, `key_tensions`) from the **`worlds`** row (NOT `campaigns` — the campaign row is thin).
 - **The party:** `repo.characters.listForCampaign(campaignId)` (the owner is a member with a character — `reference_campaign_owner_is_member`). For each PC, its session-start known facts = the **`known`-tier facts on the PC's linked entity** (`characters.entity_id`), written by character-integration via `insertIntegrationFact` (hardcoded `known`). There is **no `starting_facts` field** — it's the `known`-fact subset on the PC entity.
@@ -106,7 +106,7 @@ Add `maxOutputTokens?: number` to `StreamObjectOpts` (and the `generateObject` o
 ## 6. Data flow
 
 `campaignId (status='active')`
-→ `repo.campaigns.getById` → `world_id`
+→ `repo.campaigns.getWorldAndSituationIndex` → `world_id` + `starting_situation_index`
 → `repo.worldInventory.load(world_id)` (omniscient, all tiers) + `worlds` row prose + party (`characters.listForCampaign`, each PC's `known` facts) + chosen `starting_situation_entries[index]`
 → `renderWorldDump`-based markdown serialization
 → `streamObject(OPUS, sessionPrepSchema, prompt, …)` (§4.2)
