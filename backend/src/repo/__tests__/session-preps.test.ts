@@ -52,4 +52,9 @@ describe('sessionPreps repo', () => {
     await repo.sessionPreps.insert({ campaignId, sessionNumber: 1, ftContext: 'FT2', sdPlaybook: 'SD2' }) // ON CONFLICT DO NOTHING
     expect((await repo.sessionPreps.getBy(campaignId, 1))?.ftContext).toBe('FT')
   })
+
+  it('getBy returns null when no prep exists for the session', async () => {
+    const repo = createRepo(pool)
+    expect(await repo.sessionPreps.getBy(campaignId, 7)).toBeNull()
+  })
 })
