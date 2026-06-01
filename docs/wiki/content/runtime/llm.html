@@ -3,7 +3,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:ff6058e9b066718a5366f26fa0e5f43ed5ce63b31bc6a7eb5923cec16f16034e -->
+<!-- source-hash: sha256:933f6a063605a1f97f759f362d2ce95ac40cbd244461cd42dcb012946d85973b -->
 <!-- last-ticket: MYT-55 -->
 
 <h1>LLM client</h1>
@@ -13,13 +13,17 @@
   (<code>HAIKU</code>, <code>SONNET</code>, <code>OPUS</code>), a logging + error-normalization
   middleware that handles both <code>generateText</code> and <code>streamObject</code> /
   <code>streamText</code> call shapes, a typed error taxonomy (eight classes including the terminal
-  <code>LlmContentFilteredError</code>), and a file-based prompt loader. Consumers include the
-  onboarding profanity classifier, the world-gen input gate, the paint-job validator, the eight
-  world-gen stage handlers (concept_intake, vocabulary_intake, world_and_factions,
-  locations_and_npcs, entity_relationships, entity_consolidation, starting_situation, random_tables,
-  coherence_pass), and the structured-output repair chain plus its companion per-item drop-on-fail
-  gate on the streaming stages. Everything heavier (provider mechanics, retries, structured-output
-  validation) is delegated to Vercel AI SDK v6.
+  <code>LlmContentFilteredError</code>), and a file-based prompt loader. The
+  <code>streamObject</code> / <code>generateObject</code> wrappers also accept an optional
+  <code>maxOutputTokens</code> ceiling so a long-prose call can lift the SDK default before it
+  truncates. Consumers include the onboarding profanity classifier, the world-gen input gate, the
+  paint-job validator, the eight world-gen stage handlers (concept_intake, vocabulary_intake,
+  world_and_factions, locations_and_npcs, entity_relationships, entity_consolidation,
+  starting_situation, random_tables, coherence_pass), the structured-output repair chain plus its
+  companion per-item drop-on-fail gate on the streaming stages, and — newest, built ahead of the
+  flow that will call it — the
+  <a href="#the-session-prep-generation-stage">session-prep generation stage</a>. Everything heavier
+  (provider mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
 </p>
 
 <!-- @diagram: runtime/llm -->
@@ -458,6 +462,82 @@
   area can decide.
 </p>
 
+<h2 id="the-session-prep-generation-stage">The session-prep generation stage</h2>
+
+<p>
+  <code>llm/prep/stages/session-prep.ts</code> is the first consumer of the
+  <code>maxOutputTokens</code> seam, and the first call site that builds for a tier the live game
+  hasn't reached yet.
+  <code>generateSessionPrep(repo, { campaignId, worldId, sessionNumber })</code> produces the two
+  prep documents a session needs before play starts: <code>ft_context</code> — the
+  Fast-Thinker-facing context, enforced-ignorance safe — and <code>sd_playbook</code> — the
+  Slow-Thinker's stage-direction playbook carrying every secret, clue, and revelation condition. It
+  serializes the omniscient world state (<code>llm/prep/serialize-world-state-for-prep.ts</code>),
+  renders the <code>prompts/prep/session-prep.txt</code> template against it, and runs one
+  <code>streamObject</code> call on <code>OPUS</code> against a two-string Zod schema
+  (<code>sessionPrepSchema</code>: <code>{ ft_context, sd_playbook }</code> with presence/length
+  floors), returning the parsed object plus its token usage.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Built, but not yet wired into a live flow</strong> — the stage exists on
+  <code>main</code> and is unit-tested, but nothing calls it in production yet. There is no BullMQ
+  job that enqueues it, no route that triggers it, no SSE channel that streams it, no leak guard on
+  its <code>ft_context</code>, and no <code>/start</code> path that invokes it. Those land across
+  the rest of the Session Prep Pipeline milestone. This page documents the generation primitive as a
+  shipped building block; the orchestration around it is future work and out of scope here.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >Two prose docs in one structured object → an explicit <code>maxOutputTokens</code></strong
+  >
+  — the call asks Opus for two long markdown documents (a ~2,000–3,000-word context plus a
+  ~1,000–2,000-word playbook) inside a single structured response. The SDK's default output ceiling
+  truncates that mid-document, which a schema-presence floor can't recover from. The stage pins
+  <code>maxOutputTokens: 16384</code> — the reason the <code>maxOutputTokens</code> opt was added to
+  the wrapper at all. It also sets the codebase's largest LLM timeout (9 minutes) because two long
+  Opus documents over a streamed object is the slowest single call in the system.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Read <code>await result.object</code>, not <code>runStreamingStage</code></strong> — the
+  world-gen streaming stages key on arrays (<code>regions</code>, <code>relationships</code>) and
+  use the <a href="./world-gen.html">partial-tree iterator</a> to emit per-entry events as the LLM
+  writes them. Session prep emits a flat two-string object with no array to walk, so it reads the
+  validated result directly via <code>await result.object</code> — the array-keyed
+  <code>runStreamingStage</code> would emit nothing here. The call sets
+  <code>maxRetries: 0</code> at the SDK layer on purpose: the <code>haiku-then-sonnet</code> repair
+  chain owns schema-validation recovery and the BullMQ stage retry (once it's wired) owns transport
+  recovery, so a third hidden SDK retry layer would only multiply cost. The call threads
+  <code>providerOptions.mythrun.stage = 'session_prep'</code> for log attribution — one of the stage
+  labels the wrapper now recognizes alongside the world-gen stages.
+</aside>
+
+<p>
+  The serializer is async and omniscient by design. It hops <code>campaign → world_id</code>, loads
+  the full world inventory (all access tiers, secrets included — this is a Slow-Thinker-tier
+  artifact, not a Fast-Thinker read), renders it with the omniscient world dump, and appends the
+  world concept, the party (each character with their <code>known</code>-tier facts only, batched in
+  one query — never N+1), and the chosen starting situation. Two forward-compat seams are present
+  but unexercised: a swappable inventory-source function so a later session-N caller can feed
+  evolved state, and an optional prior-session-context block. The enforced-ignorance split happens
+  inside the prompt, not the serializer: the serializer hands Opus the whole truth with
+  authoritative <code>[access_level]</code> markers, and the template's hard exclusions are what
+  keep <code>discoverable</code> and <code>secret</code> material out of <code>ft_context</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Omniscient serializer + in-prompt exclusion, not a pre-filtered input</strong> — the Slow
+  Thinker needs to see every secret to write the playbook and to decide what a depth marker in the
+  Fast-Thinker context is <em>pointing at</em>. Pre-filtering the input to known-tier would blind
+  the playbook. So the serializer is deliberately omniscient and the access markers ride through
+  verbatim; the model is instructed to route <code>known</code>-tier-only into
+  <code>ft_context</code> and everything else into <code>sd_playbook</code>. A separate, code-level
+  leak guard on the produced <code>ft_context</code> is a later milestone ticket — the prompt
+  boundary is the first line of defense, not the only one.
+</aside>
+
 <h2>Configuration: <code>ANTHROPIC_API_KEY</code></h2>
 
 <p>
@@ -650,6 +730,28 @@
         System prompt template for the daily Anthropic-pricing extractor; consumed by
         <code>scripts/check-pricing.ts</code>. See
         <a href="../auth-billing/billing-metering.html#the-daily-price-check">billing-metering</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/prep/stages/session-prep.ts</code></td>
+      <td>
+        <code>generateSessionPrep(repo, args)</code>, <code>sessionPrepSchema</code> (Zod),
+        <code>SessionPrep</code> / <code>SessionPrepResult</code> (TS). Built ahead of its caller;
+        see <a href="#the-session-prep-generation-stage">the session-prep generation stage</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/prep/serialize-world-state-for-prep.ts</code></td>
+      <td>
+        <code>serializeWorldStateForPrep(repo, args)</code> — async omniscient world-state markdown
+        serializer; <code>SerializeArgs</code>, <code>PriorSessionContext</code> (TS).
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/prompts/prep/session-prep.txt</code></td>
+      <td>
+        Two-field session-prep template (<code>ft_context</code> + <code>sd_playbook</code>);
+        known-only Fast-Thinker hard exclusions live here.
       </td>
     </tr>
   </tbody>

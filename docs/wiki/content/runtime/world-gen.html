@@ -51,7 +51,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:0749182c2e5d034dda3f29744d09d0e63cacf3f95de8d90f7c04207d64290205 -->
+<!-- source-hash: sha256:7800373044f726daffe33a87e33deb1121fad9e735525d9791463b01d6a3c676 -->
 <!-- last-ticket: myth-imxg -->
 
 <h1>World gen</h1>
@@ -336,19 +336,19 @@
 <p>
   Stage 1 (<code>concept_intake</code>) wraps its generator call in
   <code>validateAndGenerateConcept</code> — a judge-and-retry loop in
-  <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one <strong>Opus</strong>
-  call generates the structured <code>WorldConcept</code> (the foundational synthesis runs at
-  Opus-tier — myth-rg09); a SECOND <strong>Sonnet</strong> call (distinct prompt, fresh
-  context, <code>temperature: 0.1</code>) judges the draft along TWO IP-mirror axes —
+  <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one
+  <strong>Opus</strong> call generates the structured <code>WorldConcept</code> (the foundational
+  synthesis runs at Opus-tier — myth-rg09); a SECOND <strong>Sonnet</strong> call (distinct prompt,
+  fresh context, <code>temperature: 0.1</code>) judges the draft along TWO IP-mirror axes —
   <em>structural</em> (the plot, characters, factions, or setting read as a re-skin of a known work)
   and <em>vocabulary</em> (the concept invokes one franchise so directly that the world's natural
   vocabulary would pull in that franchise's <em>invented</em> neologisms downstream — "muggle",
   "Floo", "midi-chlorian", "mithril"). On flag (confidence &gt; 0.85), the loop discards the draft
   entirely and retries with a fresh-direction amendment built from the judge's structured output
   (the Opus generator ignores <code>temperature</code> — myth-v3rq — so divergence comes from the
-  amendment + the model's inherent sampling). <strong>Max 3 attempts total</strong> (1 original + 2 retries). On
-  exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the worker treats as a
-  stage failure.
+  amendment + the model's inherent sampling). <strong>Max 3 attempts total</strong> (1 original + 2
+  retries). On exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the worker
+  treats as a stage failure.
 </p>
 
 <p>
@@ -358,9 +358,10 @@
   regeneration to move far enough off the named franchise that no reader reaches for its signature
   neologisms, on top of the structural fresh-direction amendment. Generic folklore words are never
   violations; only a franchise's coined terms are. The result also surfaces
-  <code>adjacentFranchise</code> — a soft "this world sits near &lt;franchise&gt;" signal independent
-  of the flag, so even a concept that clears the gate can be reported as franchise-adjacent to
-  downstream UI. It does not gate; it's null when the judge sees no single dominant franchise.
+  <code>adjacentFranchise</code> — a soft "this world sits near &lt;franchise&gt;" signal
+  independent of the flag, so even a concept that clears the gate can be reported as
+  franchise-adjacent to downstream UI. It does not gate; it's null when the judge sees no single
+  dominant franchise.
 </p>
 
 <aside class="wiki-rationale">
@@ -1674,8 +1675,8 @@
       <td><code>character_creation</code> | <code>post_creation</code></td>
       <td>
         <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53 landed the
-        character-creation pipeline itself, but resume from those phases remains unimplemented —
-        a player re-triggers their own per-player pipeline by re-POSTing
+        character-creation pipeline itself, but resume from those phases remains unimplemented — a
+        player re-triggers their own per-player pipeline by re-POSTing
         <code>POST /characters</code> instead. The downstream ticket reference is logged
         server-side, not in the response.
       </td>
