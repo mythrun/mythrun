@@ -30,7 +30,12 @@ vi.mock('ai', async (importOriginal) => {
 })
 
 import * as ai from 'ai'
-import { generateObject, streamObject, generateText as wrapperGenerateText } from '../ai.js'
+import {
+  generateObject,
+  streamObject,
+  generateText as wrapperGenerateText,
+  extractStage,
+} from '../ai.js'
 
 const mockGenerateText = vi.mocked(ai.generateText)
 const mockStreamObject = vi.mocked(ai.streamObject)
@@ -884,5 +889,101 @@ describe('generateText (passthrough)', () => {
     const err = new Error('boom')
     mockGenerateText.mockRejectedValueOnce(err)
     await expect(wrapperGenerateText({ model: SONNET, prompt: 'p' })).rejects.toBe(err)
+  })
+})
+
+describe('maxOutputTokens forwarding', () => {
+  beforeEach(() => {
+    mockGenerateText.mockReset()
+    mockStreamObject.mockReset()
+    vi.restoreAllMocks()
+  })
+
+  function fakeStreamResult(final: TestShape): ReturnType<typeof ai.streamObject> {
+    async function* gen(): AsyncGenerator<TestShape> {
+      yield final
+    }
+    return {
+      partialObjectStream: gen(),
+      object: Promise.resolve(final),
+      usage: Promise.resolve(makeUsage()),
+      warnings: Promise.resolve(undefined),
+    } as unknown as ReturnType<typeof ai.streamObject>
+  }
+
+  it('streamObject forwards maxOutputTokens to the SDK', () => {
+    mockStreamObject.mockReturnValueOnce(fakeStreamResult({ name: 'x' }))
+
+    streamObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'p',
+      callSite: 'test/stream-maxout',
+      maxOutputTokens: 16384,
+    })
+
+    expect(mockStreamObject.mock.calls[0]?.[0]).toMatchObject({ maxOutputTokens: 16384 })
+  })
+
+  it('streamObject omits maxOutputTokens when unset', () => {
+    mockStreamObject.mockReturnValueOnce(fakeStreamResult({ name: 'x' }))
+
+    streamObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'p',
+      callSite: 'test/stream-no-maxout',
+    })
+
+    expect(mockStreamObject.mock.calls[0]?.[0]).not.toHaveProperty('maxOutputTokens')
+  })
+
+  it('generateObject forwards maxOutputTokens to the SDK', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'x' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'p',
+      callSite: 'test/gen-maxout',
+      maxOutputTokens: 16384,
+    })
+
+    expect(mockGenerateText.mock.calls[0]?.[0]).toMatchObject({ maxOutputTokens: 16384 })
+  })
+
+  it('generateObject omits maxOutputTokens when unset', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'x' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'p',
+      callSite: 'test/gen-no-maxout',
+    })
+
+    expect(mockGenerateText.mock.calls[0]?.[0]).not.toHaveProperty('maxOutputTokens')
+  })
+})
+
+describe('extractStage', () => {
+  it('accepts session_prep without falling back', () => {
+    expect(extractStage({ mythrun: { stage: 'session_prep' } })).toBe('session_prep')
+  })
+
+  it('accepts entity_consolidation without falling back', () => {
+    expect(extractStage({ mythrun: { stage: 'entity_consolidation' } })).toBe(
+      'entity_consolidation',
+    )
+  })
+
+  it('falls back to concept_intake on an unrecognized stage', () => {
+    expect(extractStage({ mythrun: { stage: 'not_a_stage' } })).toBe('concept_intake')
   })
 })

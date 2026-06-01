@@ -74,9 +74,11 @@ const VALID_STAGES = new Set<WorldGenStage>([
   'world_and_factions',
   'locations_and_npcs',
   'entity_relationships',
+  'entity_consolidation',
   'starting_situation',
   'random_tables',
   'coherence_pass',
+  'session_prep',
 ])
 
 export type RepairStrategy = 'sonnet' | 'haiku-then-sonnet'
@@ -136,6 +138,8 @@ export interface GenerateObjectOpts<T> {
    * indefinite hangs but is too generous for most stages.
    */
   readonly timeoutMs?: number
+  /** Hard output ceiling; session-prep needs it or the SDK default truncates. */
+  readonly maxOutputTokens?: number
 }
 
 export interface GenerateObjectResult<T> {
@@ -157,6 +161,8 @@ export interface StreamObjectOpts<T> {
   /** myth-4omh: see GenerateObjectOpts.timeoutMs. Streaming stages should
    *  budget for the full stream, not just first-byte. */
   readonly timeoutMs?: number
+  /** Hard output ceiling; session-prep needs it or the SDK default truncates. */
+  readonly maxOutputTokens?: number
 }
 
 export interface GenerateTextOpts {
@@ -220,7 +226,7 @@ function snippet(rawText: string | undefined): string | undefined {
   return rawText?.slice(0, 2048)
 }
 
-function extractStage(providerOptions: unknown): WorldGenStage {
+export function extractStage(providerOptions: unknown): WorldGenStage {
   if (typeof providerOptions !== 'object' || providerOptions === null) return DEFAULT_STAGE
   const mythrun = (providerOptions as { mythrun?: unknown }).mythrun
   /* c8 ignore next -- defensive: stage callers always pass providerOptions.mythrun.stage; the no-mythrun arm covers non-stage callers (input-gate, profanity). */
@@ -228,7 +234,7 @@ function extractStage(providerOptions: unknown): WorldGenStage {
   const stage = (mythrun as { stage?: unknown }).stage
   /* c8 ignore next -- defensive: same as above; type-narrows for hand-rolled providerOptions without a string stage. */
   if (typeof stage !== 'string') return DEFAULT_STAGE
-  /* c8 ignore next -- defensive: stage callers pass one of the seven WorldGenStage literals; the fallback covers a future caller passing an unrecognized stage name. */
+  // Fallback for an unrecognized stage name (covered by extractStage tests).
   if (!VALID_STAGES.has(stage as WorldGenStage)) return DEFAULT_STAGE
   return stage as WorldGenStage
 }
@@ -532,6 +538,7 @@ export async function generateObject<T>(
       ...(opts.system !== undefined ? { system: opts.system } : {}),
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+      ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
       ...(opts.providerOptions !== undefined
         ? {
             providerOptions: opts.providerOptions as NonNullable<
@@ -613,6 +620,7 @@ export function streamObject<T>(
     abortSignal: timeout.signal,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+    ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
     ...(opts.providerOptions !== undefined
       ? {
           providerOptions: opts.providerOptions as NonNullable<
