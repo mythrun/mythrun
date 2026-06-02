@@ -26,6 +26,7 @@ import {
   type CharacterIntegrationJobPayload,
 } from './llm/prep/character-integration-processor.js'
 import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
+import { makePipelinePublishers } from './worker/publishers.js'
 
 const HEALTH_PORT = 3001
 const WORKER_PG_POOL_SIZE = 4
@@ -60,14 +61,16 @@ export async function main(): Promise<void> {
     readCharacterCreationCostCap(pg),
   ])
 
-  // Shared publishEvent: pipeline:campaign:{campaignId} is the single SSE
-  // channel for all worker-emitted events (MYT-50 architecture). All three
-  // processors publish into the same channel so the API's SSE subscriber
-  // sees one ordered stream per campaign.
-  const publishEvent = async (campaignId: string, event: Record<string, unknown>): Promise<void> => {
-    const channel = `${env.redisKeyPrefix}pipeline:campaign:${campaignId}`
-    await redisRealtime.publish(channel, JSON.stringify(event))
-  }
+  // Shared publishers (MYT-62). publishEvent → pipeline:campaign:{id} is the
+  // single SSE channel for all worker-emitted lifecycle events (MYT-50); all
+  // three processors publish there so the API's SSE subscriber sees one ordered
+  // stream per campaign. publishProse → prep:campaign:{id} is the SEPARATE
+  // dev-only channel for session-prep prose (sd_playbook may carry secrets).
+  // Both channel formulas are single-sourced in worker/publishers.ts.
+  const { publishEvent, publishProse } = makePipelinePublishers(
+    redisRealtime,
+    env.redisKeyPrefix,
+  )
 
   // World-gen — real processor wired here. MYT-51 landed the non-streaming
   // stages, MYT-52 the streaming stages + coherence pass. The API container
@@ -118,7 +121,7 @@ export async function main(): Promise<void> {
   // fails the campaign. The API container (server.ts) wires the same processor.
   const sessionPrepWorker = new BullmqWorker(
     QUEUE_SESSION_PREP,
-    createSessionPrepProcessor({ pool: pg, publishEvent }),
+    createSessionPrepProcessor({ pool: pg, publishEvent, publishProse }),
     { connection: redisBatch, concurrency: CONCURRENCY_SESSION_PREP },
   )
 

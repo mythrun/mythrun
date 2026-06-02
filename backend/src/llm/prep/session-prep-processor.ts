@@ -11,13 +11,16 @@
 //      in the stage string gives each session its own claim/mark row.
 //      'completed' → no-op (idempotent re-entry: BullMQ retried an already-
 //      done job); 'lost-race' → another worker won, return cleanly.
-//   2. Resolve the campaign's world_id, run the stage (streams two prose
-//      docs through Opus).
+//   2. Publish `prep-started` (player-facing pipeline:campaign: channel),
+//      resolve the campaign's world_id, run the stage (streams two prose docs
+//      through Opus). Prose deltas ride the SEPARATE prep:campaign: channel via
+//      publishProse — never the player-facing channel (sd_playbook may carry
+//      secrets; enforced ignorance is type-enforced by the Deps split).
 //   3. On success: persist the two artifacts to session_preps (ON CONFLICT
 //      DO NOTHING — the first persisted row wins), UPDATE pipeline_runs →
-//      'completed' with cost_usd, publish stage-completed.
+//      'completed' with cost_usd, publish `prep-ready` with cost_usd.
 //   4. On failure: classify via `isTerminalError`. Mark pipeline_runs 'failed'
-//      either way; publish stage-failed with the terminal flag. Re-throw if
+//      either way; publish `prep-failed` with the terminal flag. Re-throw if
 //      NON-terminal so BullMQ retries; terminal errors return cleanly.
 //
 // CRITICAL (differs from character-integration-processor): a session-prep
@@ -33,6 +36,7 @@
 
 import type { Job } from 'bullmq'
 import type { Pool } from 'pg'
+import type { PipelineEvent, ProseEvent } from '../../contract/pipeline-events.js'
 import { isTerminalError } from '../errors.js'
 import { logger } from '../logger.js'
 import { atomicClaimStage } from './world-gen-processor.js'
@@ -47,10 +51,14 @@ export interface SessionPrepJobPayload {
 
 export interface SessionPrepProcessorDeps {
   readonly pool: Pool
-  readonly publishEvent: (
-    campaignId: string,
-    event: Record<string, unknown>,
-  ) => Promise<void>
+  // Player-facing phase events ride the `pipeline:campaign:` channel. Typed to
+  // PipelineEvent so the prose-carrying `prep-delta` (a ProseEvent) is a
+  // compile error here — enforced ignorance at the type level.
+  readonly publishEvent: (campaignId: string, event: PipelineEvent) => Promise<void>
+  // Dev-only prose deltas ride the SEPARATE `prep:campaign:` channel. The
+  // sd_playbook prose may contain secrets, so it must never type-check onto
+  // publishEvent.
+  readonly publishProse: (campaignId: string, event: ProseEvent) => Promise<void>
 }
 
 // Top-level orchestration: claim → resolve world → generate → persist → mark
@@ -95,6 +103,10 @@ export async function processSessionPrepJob(
 
   const repo = createRepo(deps.pool)
 
+  // Claim won → announce the prep is starting on the player-facing channel
+  // before any generation work.
+  await deps.publishEvent(campaignId, { type: 'prep-started', sessionNumber })
+
   try {
     const worldId = await repo.campaigns.getWorldId(campaignId)
     // Unreachable in practice: campaigns.world_id is NOT NULL (migration 001) and
@@ -104,7 +116,16 @@ export async function processSessionPrepJob(
     if (worldId === null) {
       throw new Error(`session-prep: no world for campaign ${campaignId}`)
     }
-    const result = await generateSessionPrep(repo, { campaignId, worldId, sessionNumber })
+    const result = await generateSessionPrep(repo, {
+      campaignId,
+      worldId,
+      sessionNumber,
+      // Progressive prose rides the dev-only `prep:campaign:` channel.
+      // Fire-and-forget: a publish failure must never abort generation.
+      onProseDelta: (field, text) => {
+        void deps.publishProse(campaignId, { type: 'prep-delta', field, text }).catch(() => undefined)
+      },
+    })
     await repo.sessionPreps.insert({
       campaignId,
       sessionNumber,
@@ -126,7 +147,7 @@ export async function processSessionPrepJob(
       stage,
       costUsd,
     })
-    await deps.publishEvent(campaignId, { type: 'stage-completed', stage, costUsd })
+    await deps.publishEvent(campaignId, { type: 'prep-ready', sessionNumber, costUsd })
     logger.info(
       { event: 'session_prep.completed', campaignId, sessionNumber, costUsd },
       'session-prep completed',
@@ -147,9 +168,8 @@ export async function processSessionPrepJob(
     // failure is session-scoped, not campaign-fatal. The campaign stays at its
     // current status; a later session attempt can still succeed.
     await deps.publishEvent(campaignId, {
-      type: 'stage-failed',
-      stage,
-      message,
+      type: 'prep-failed',
+      sessionNumber,
       terminal,
     })
     logger.warn(

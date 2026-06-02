@@ -33,6 +33,7 @@ import {
   type CharacterIntegrationJobPayload,
 } from './llm/prep/character-integration-processor.js'
 import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
+import { makePipelinePublishers } from './worker/publishers.js'
 import { readCharacterCreationCostCap, readCostCap } from './llm/prep/cost-cap.js'
 import {
   CONCURRENCY_CAMPAIGN_SETUP,
@@ -301,13 +302,14 @@ async function buildSessionPrepWorker(
     probe: () => connection.ping(),
     signal,
   })
-  const publishEvent = async (campaignId: string, event: Record<string, unknown>): Promise<void> => {
-    const channel = `${redisKeyPrefix}pipeline:campaign:${campaignId}`
-    await redisRealtime.publish(channel, JSON.stringify(event))
-  }
+  // Both channel formulas are single-sourced in worker/publishers.ts. The
+  // dev-tool prose feed rides THIS in-process worker in dev, so publishProse
+  // (the SEPARATE prep:campaign: channel; sd_playbook prose, never player-
+  // facing) must be wired here too — not only in worker.ts.
+  const { publishEvent, publishProse } = makePipelinePublishers(redisRealtime, redisKeyPrefix)
   return new Worker(
     QUEUE_SESSION_PREP,
-    createSessionPrepProcessor({ pool, publishEvent }),
+    createSessionPrepProcessor({ pool, publishEvent, publishProse }),
     { connection, concurrency: CONCURRENCY_SESSION_PREP },
   )
 }

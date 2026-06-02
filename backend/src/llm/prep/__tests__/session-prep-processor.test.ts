@@ -86,6 +86,7 @@ function makeJob(payload: SessionPrepJobPayload): Job<SessionPrepJobPayload> {
 
 interface MakeDepsOverrides {
   readonly publishEvent?: SessionPrepProcessorDeps['publishEvent']
+  readonly publishProse?: SessionPrepProcessorDeps['publishProse']
 }
 
 function makeDeps(
@@ -95,6 +96,7 @@ function makeDeps(
   return {
     pool,
     publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
+    publishProse: overrides.publishProse ?? (() => Promise.resolve()),
   }
 }
 
@@ -176,21 +178,33 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     return rows[0]?.status
   }
 
-  it('happy path: generates prep, persists session_preps, marks pipeline_runs completed, publishes stage-completed', async () => {
+  it('happy path: generates prep, persists session_preps, marks pipeline_runs completed, publishes prep-started then prep-ready, streams prose deltas to publishProse', async () => {
     const { campaignId } = await seed()
+    // The mock now exercises the optional prose sink: a single
+    // sd_playbook delta carrying a SECRET-flavored payload (the SD
+    // playbook may contain plot secrets — it must ONLY ever flow to
+    // publishProse, never to publishEvent).
     const stageSpy = vi
       .spyOn(sessionPrepStage, 'generateSessionPrep')
-      .mockResolvedValueOnce({
-        ft_context: 'FT',
-        sd_playbook: 'SD',
-        usage: { ...STAGE_USAGE },
+      .mockImplementationOnce((_repo, args) => {
+        args.onProseDelta?.('sd_playbook', 'SECRET')
+        return Promise.resolve({
+          ft_context: 'FT',
+          sd_playbook: 'SD',
+          usage: { ...STAGE_USAGE },
+        })
       })
 
     const events: Record<string, unknown>[] = []
+    const prose: Record<string, unknown>[] = []
     const processor = createSessionPrepProcessor(
       makeDeps(pool, {
         publishEvent: (cid, e) => {
           events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+        publishProse: (cid, e) => {
+          prose.push({ campaignId: cid, ...e })
           return Promise.resolve()
         },
       }),
@@ -221,10 +235,42 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     // cost_usd is NUMERIC(10,6) → pg returns a string; compare numerically.
     expect(Number(runs.rows[0]?.cost_usd)).toBeCloseTo(EXPECTED_COST_USD, 6)
 
-    const completed = events.find((e) => e.type === 'stage-completed')
-    expect(completed).toBeDefined()
-    expect(completed?.stage).toBe('session-prep:1')
-    expect(Number(completed?.costUsd)).toBeCloseTo(EXPECTED_COST_USD, 6)
+    // Phase events on publishEvent: prep-started BEFORE prep-ready.
+    const startedIdx = events.findIndex((e) => e.type === 'prep-started')
+    const readyIdx = events.findIndex((e) => e.type === 'prep-ready')
+    expect(startedIdx).toBeGreaterThanOrEqual(0)
+    expect(readyIdx).toBeGreaterThan(startedIdx)
+    expect(events[startedIdx]?.sessionNumber).toBe(1)
+    const ready = events[readyIdx]
+    expect(ready?.sessionNumber).toBe(1)
+    expect(Number(ready?.costUsd)).toBeCloseTo(EXPECTED_COST_USD, 6)
+
+    // Prose delta lands on publishProse with the field + text payload.
+    const delta = prose.find((e) => e.type === 'prep-delta')
+    expect(delta).toBeDefined()
+    expect(delta?.field).toBe('sd_playbook')
+    expect(delta?.text).toBe('SECRET')
+
+    // ENFORCED IGNORANCE — the player-facing channel (publishEvent) must
+    // NEVER carry a prep-delta (sd_playbook prose may contain secrets), and
+    // the prose channel must never carry a prep-* phase event.
+    expect(events.some((e) => e.type === 'prep-delta')).toBe(false)
+    expect(prose.some((e) => e.type === 'prep-started')).toBe(false)
+    expect(prose.some((e) => e.type === 'prep-ready')).toBe(false)
+    expect(prose.some((e) => e.type === 'prep-failed')).toBe(false)
+  })
+
+  it('type-level: publishEvent rejects a prep-delta (ProseEvent) payload — proves the channel quarantine', () => {
+    const deps = makeDeps(pool)
+    // The player-facing publishEvent is typed to PipelineEvent; prep-delta is
+    // a ProseEvent and lives only on PROSE_SSE_EVENTS, so this MUST NOT
+    // compile. The @ts-expect-error is the assertion — if the quarantine ever
+    // regresses (publishEvent widened to accept prose), tsc fails on an
+    // *unused* expect-error directive.
+    // @ts-expect-error prep-delta is a ProseEvent, not assignable to PipelineEvent
+    void deps.publishEvent('cid', { type: 'prep-delta', field: 'ft_context', text: 'x' })
+    // publishProse, conversely, MUST accept it.
+    void deps.publishProse('cid', { type: 'prep-delta', field: 'ft_context', text: 'x' })
   })
 
   it('resume: returns without generating when pipeline_runs for (campaign, session-prep:1) is already completed', async () => {
@@ -245,6 +291,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
         throw new Error('stage must not be called on resume')
       })
     const events: Record<string, unknown>[] = []
+    const prose: Record<string, unknown>[] = []
 
     await processSessionPrepJob(
       makeDeps(pool, {
@@ -252,12 +299,18 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
           events.push({ campaignId: cid, ...e })
           return Promise.resolve()
         },
+        publishProse: (cid, e) => {
+          prose.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
       }),
       makeJob({ campaignId, sessionNumber: 1 }),
     )
 
     expect(stageSpy).not.toHaveBeenCalled()
+    // The no-op path publishes nothing on either channel.
     expect(events).toHaveLength(0)
+    expect(prose).toHaveLength(0)
     // No session_preps row was written by the no-op path.
     const preps = await pool.query(
       `SELECT 1 FROM session_preps WHERE campaign_id = $1 AND session_number = 1`,
@@ -266,7 +319,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     expect(preps.rowCount).toBe(0)
   })
 
-  it('non-terminal failure: marks pipeline_runs failed, publishes stage-failed{terminal:false}, RETHROWS, leaves campaign status unchanged', async () => {
+  it('non-terminal failure: marks pipeline_runs failed, publishes prep-failed{terminal:false}, RETHROWS, leaves campaign status unchanged', async () => {
     const { campaignId } = await seed()
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockRejectedValueOnce(
       new LlmRateLimitedError('upstream 429'),
@@ -292,19 +345,20 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
       [campaignId],
     )
     expect(runs.rows[0]?.status).toBe('failed')
+    // The `message` local still feeds markStageFailed({error}); only the
+    // published payload dropped it in favor of {sessionNumber, terminal}.
     expect(runs.rows[0]?.error).toBe('upstream 429')
 
-    const failed = events.find((e) => e.type === 'stage-failed')
+    const failed = events.find((e) => e.type === 'prep-failed')
     expect(failed).toBeDefined()
-    expect(failed?.stage).toBe('session-prep:1')
-    expect(failed?.message).toBe('upstream 429')
+    expect(failed?.sessionNumber).toBe(1)
     expect(failed?.terminal).toBe(false)
 
     // A prep failure must NOT fail the campaign.
     expect(await campaignStatus(campaignId)).toBe('setup')
   })
 
-  it('terminal failure: marks pipeline_runs failed, publishes stage-failed{terminal:true}, does NOT rethrow, leaves campaign status unchanged', async () => {
+  it('terminal failure: marks pipeline_runs failed, publishes prep-failed{terminal:true}, does NOT rethrow, leaves campaign status unchanged', async () => {
     const { campaignId } = await seed()
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockRejectedValueOnce(
       new LlmStructuredOutputError('schema repair chain exhausted'),
@@ -333,10 +387,10 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     expect(runs.rows[0]?.status).toBe('failed')
     expect(runs.rows[0]?.error).toBe('schema repair chain exhausted')
 
-    const failed = events.find((e) => e.type === 'stage-failed')
+    const failed = events.find((e) => e.type === 'prep-failed')
     expect(failed).toBeDefined()
+    expect(failed?.sessionNumber).toBe(1)
     expect(failed?.terminal).toBe(true)
-    expect(failed?.message).toBe('schema repair chain exhausted')
 
     // CRITICAL: a TERMINAL prep failure must still NOT fail the campaign —
     // unlike character-integration, prep is session-scoped.
