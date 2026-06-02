@@ -42,6 +42,10 @@ export const PIPELINE_SSE_EVENTS: readonly string[] = [
   'fact-removed',
   'fact-updated',
   'finalized',
+  // Session-prep phase events (MYT-62) — player-safe, ride pipeline:campaign:
+  'prep-started',
+  'prep-ready',
+  'prep-failed',
 ] as const
 
 export type PipelineSseEvent = (typeof PIPELINE_SSE_EVENTS)[number]
@@ -176,3 +180,21 @@ export type PipelineEvent =
       accessLevel: 'known' | 'discoverable' | 'secret'
     }
   | { type: 'finalized'; synthKey: string; entityId: string }
+  // Session-prep phase events (MYT-62) — player-safe, ride pipeline:campaign:
+  | { type: 'prep-started'; sessionNumber: number }
+  | { type: 'prep-ready'; sessionNumber: number; costUsd: number }
+  | { type: 'prep-failed'; sessionNumber: number; terminal: boolean }
+
+// Prose events (MYT-62) — dev-only, ride the SEPARATE prep:campaign: channel.
+// Deliberately NOT in PipelineEvent / PIPELINE_SSE_EVENTS: prep-delta carries
+// sd_playbook prose (may contain secrets) and must never type-check onto the
+// player-facing pipeline channel. publishProse accepts ProseEvent; publishEvent
+// accepts PipelineEvent — so publishEvent(campaignId, prepDelta) is a compile error.
+export const PROSE_SSE_EVENTS: readonly string[] = ['prep-delta'] as const
+export type ProseSseEvent = (typeof PROSE_SSE_EVENTS)[number]
+
+export interface ProseEvent {
+  type: 'prep-delta'
+  field: 'ft_context' | 'sd_playbook'
+  text: string
+}

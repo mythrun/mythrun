@@ -13,6 +13,8 @@ import {
 import {
   PIPELINE_SSE_EVENTS,
   type PipelineSseEvent,
+  PROSE_SSE_EVENTS,
+  type ProseSseEvent,
 } from '../pipeline-events.js'
 
 describe('PIPELINE_ERROR_CODES', () => {
@@ -56,7 +58,18 @@ describe('PIPELINE_SSE_EVENTS', () => {
       'fact-removed',
       'fact-updated',
       'finalized',
+      'prep-started',
+      'prep-ready',
+      'prep-failed',
     ]
     expect([...PIPELINE_SSE_EVENTS].sort()).toEqual([...expected].sort())
+  })
+})
+
+describe('PROSE_SSE_EVENTS', () => {
+  it('is exactly the prose (dev-only) event set, disjoint from PIPELINE_SSE_EVENTS', () => {
+    const expected: readonly ProseSseEvent[] = ['prep-delta']
+    expect([...PROSE_SSE_EVENTS].sort()).toEqual([...expected].sort())
+    for (const e of PROSE_SSE_EVENTS) expect(PIPELINE_SSE_EVENTS).not.toContain(e)
   })
 })
