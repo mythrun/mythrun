@@ -33,273 +33,351 @@
   Fast-Thinker-safe <code>ft_context</code> and a secrets-bearing <code>sd_playbook</code> — and a
   dedicated BullMQ worker persists them to <code>session_preps</code>. The job is keyed on
   <code>(campaign_id, session_number)</code>, so re-enqueuing the same session is a resume, not a
-  duplicate. A prep failure is session-scoped: it never fails the campaign.
+  duplicate. A prep failure is session-scoped: it never fails the campaign. The Opus call streams,
+  so two parallel signals come off it: <strong>phase</strong> events (a player's "the DM is
+  preparing tonight's session" loading screen) and the live <strong>prose</strong> itself (a
+  dev-only inspector). Those two signals ride two different Redis channels — and that split is what
+  makes enforced ignorance structural rather than a runtime filter.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="2245pt" height="694pt"
- viewBox="14.00 14.00 2230.00 679.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 675.4)">
+<svg width="2422pt" height="878pt"
+ viewBox="14.00 14.00 2407.00 863.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 859.4)">
 <title>session_prep</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-661 2212.03,-661 2212.03,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-845 2388.93,-845 2388.93,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_redis</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1637.8,-459 1637.8,-649 1867.51,-649 1867.51,-459 1637.8,-459"/>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-635.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1821.29,-478 1821.29,-833 2031.2,-833 2031.2,-478 1821.29,-478"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-819.1" font-family="Courier,monospace" font-size="11.00">Redis</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_worker</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-176 8,-419 1874.11,-419 1874.11,-176 8,-176"/>
-<text xml:space="preserve" text-anchor="middle" x="941.06" y="-405.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep Worker &#160;(concurrency 3)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-212 8,-442 2044.41,-442 2044.41,-212 8,-212"/>
+<text xml:space="preserve" text-anchor="middle" x="1026.2" y="-428.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep Worker &#160;(concurrency 3)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_generate</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="308.52,-176 308.52,-320 1114.85,-320 1114.85,-176 308.52,-176"/>
-<text xml:space="preserve" text-anchor="middle" x="711.69" y="-306.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">generation — OUTSIDE any txn</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="510.01,-290 510.01,-421 1291.75,-421 1291.75,-290 510.01,-290"/>
+<text xml:space="preserve" text-anchor="middle" x="900.88" y="-407.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">generation — OUTSIDE any txn</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_pg</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1990.12,-74 1990.12,-363 2200.03,-363 2200.03,-74 1990.12,-74"/>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-349.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="2163.72,-73 2163.72,-362 2373.63,-362 2373.63,-73 2163.72,-73"/>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-348.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+</g>
+<g id="clust5" class="cluster">
+<title>cluster_consume</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="2160.42,-522 2160.42,-698 2376.93,-698 2376.93,-522 2160.42,-522"/>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-684.1" font-family="Courier,monospace" font-size="11.00">SSE consumers</text>
 </g>
 <!-- runtime -->
 <g id="node1" class="node">
 <title>runtime</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1464.78,-607.84 1281.27,-607.84 1281.27,-564.16 1464.78,-564.16 1464.78,-607.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-589.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Play&#45;runtime</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-576.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(enqueue route: MYT&#45;63)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1641.67,-791.84 1458.17,-791.84 1458.17,-748.16 1641.67,-748.16 1641.67,-791.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-773.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Play&#45;runtime</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-760.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(enqueue route: MYT&#45;63)</text>
 </g>
 <!-- queue -->
 <g id="node2" class="node">
 <title>queue</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1857.61,-627.64 1647.7,-627.64 1647.7,-544.36 1857.61,-544.36 1857.61,-627.64"/>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-609.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullMQ queue</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-595.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-582.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">jobId: sp&#45;{campaignId}&#45;</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-569.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;{sessionNumber}</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-556.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attempts 2, exp backoff 30s</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2031.2,-811.64 1821.29,-811.64 1821.29,-728.36 2031.2,-728.36 2031.2,-811.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-793.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullMQ queue</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-779.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-766.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">jobId: sp&#45;{campaignId}&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-753.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;{sessionNumber}</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-740.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attempts 2, exp backoff 30s</text>
 </g>
 <!-- runtime&#45;&gt;queue -->
 <g id="edge1" class="edge">
 <title>runtime&#45;&gt;queue</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1465.44,-586C1517.45,-586 1583.03,-586 1638.29,-586"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1638.25,-588.45 1645.25,-586 1638.25,-583.55 1638.25,-588.45"/>
-<text xml:space="preserve" text-anchor="middle" x="1561.19" y="-589" font-family="Courier,monospace" font-size="10.00">add sp&#45;{id}&#45;{n}</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1642.01,-770C1693.27,-770 1757.71,-770 1812.17,-770"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1812,-772.45 1819,-770 1812,-767.55 1812,-772.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1738.09" y="-773" font-family="Courier,monospace" font-size="10.00">add sp&#45;{id}&#45;{n}</text>
 </g>
 <!-- claim -->
-<g id="node4" class="node">
+<g id="node5" class="node">
 <title>claim</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="257.52,-278.24 8,-278.24 8,-181.76 257.52,-181.76 257.52,-278.24"/>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-259.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep&#45;processor.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-246.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">atomicClaimStage(kind:&#39;campaign&#39;,</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-233.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;campaignId,</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-220.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;stage=&#39;session&#45;prep:{n}&#39;)</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-206.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">&#39;completed&#39; → no&#45;op</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-193.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">&#39;lost&#45;race&#39; → return</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="257.52,-407.24 8,-407.24 8,-310.76 257.52,-310.76 257.52,-407.24"/>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-388.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep&#45;processor.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-375.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">atomicClaimStage(kind:&#39;campaign&#39;,</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-362.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;campaignId,</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-349.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;stage=&#39;session&#45;prep:{n}&#39;)</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-335.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">&#39;completed&#39; → no&#45;op</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-322.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">&#39;lost&#45;race&#39; → return</text>
 </g>
 <!-- queue&#45;&gt;claim -->
 <g id="edge2" class="edge">
 <title>queue&#45;&gt;claim</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1647.11,-557.72C1571.78,-539.81 1467.37,-520 1374.03,-520 405.87,-520 405.87,-520 405.87,-520 279.29,-520 194.45,-371.26 156.49,-286.83"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="158.77,-285.94 153.7,-280.53 154.29,-287.92 158.77,-285.94"/>
-<text xml:space="preserve" text-anchor="middle" x="809.13" y="-535" font-family="Courier,monospace" font-size="10.00">job { campaignId,</text>
-<text xml:space="preserve" text-anchor="middle" x="809.13" y="-523" font-family="Courier,monospace" font-size="10.00"> &#160;sessionNumber }</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1826.35,-727.63C1752.02,-699.6 1646.91,-668 1550.92,-668 382.77,-668 382.77,-668 382.77,-668 254.82,-668 181.47,-505.4 150.83,-416.1"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="153.23,-415.53 148.67,-409.68 148.58,-417.1 153.23,-415.53"/>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-683" font-family="Courier,monospace" font-size="10.00">job { campaignId,</text>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-671" font-family="Courier,monospace" font-size="10.00"> &#160;sessionNumber }</text>
 </g>
-<!-- channel -->
+<!-- phase_ch -->
 <g id="node3" class="node">
-<title>channel</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1867.51,-515.44 1637.8,-515.44 1637.8,-458.56 1867.51,-458.56 1867.51,-515.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-496.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-483.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline:campaign:{campaignId}</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-470.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">stage&#45;completed / stage&#45;failed</text>
+<title>phase_ch</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2031.2,-574.14 1821.29,-574.14 1821.29,-477.86 2031.2,-477.86 2031.2,-574.14"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-555.6" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-542.4" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline:campaign:{id}</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-516.2" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PHASE channel (player&#45;safe)</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-503" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prep&#45;started / prep&#45;ready /</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-489.8" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;prep&#45;failed</text>
 </g>
-<!-- resolve -->
-<g id="node5" class="node">
-<title>resolve</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="505.22,-251.84 308.52,-251.84 308.52,-208.16 505.22,-208.16 505.22,-251.84"/>
-<text xml:space="preserve" text-anchor="middle" x="406.87" y="-233.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.getWorldId</text>
-<text xml:space="preserve" text-anchor="middle" x="406.87" y="-220.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(campaign → world_id)</text>
+<!-- player -->
+<g id="node16" class="node">
+<title>player</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2376.93,-578.44 2160.42,-578.44 2160.42,-521.56 2376.93,-521.56 2376.93,-578.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-559.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prep&#45;status route</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-546.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;(always registered)</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-533.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player &#39;preparing…&#39; screen</text>
 </g>
-<!-- claim&#45;&gt;resolve -->
+<!-- phase_ch&#45;&gt;player -->
+<g id="edge20" class="edge">
+<title>phase_ch&#45;&gt;player</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2031.7,-533.36C2069.5,-536.03 2112.4,-539.05 2151.17,-541.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2150.92,-544.22 2158.08,-542.27 2151.26,-539.34 2150.92,-544.22"/>
+<text xml:space="preserve" text-anchor="middle" x="2102.41" y="-543.15" font-family="Courier,monospace" font-size="10.00">phase only</text>
+</g>
+<!-- prose_ch -->
+<g id="node4" class="node">
+<title>prose_ch</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2021.3,-699.14 1831.2,-699.14 1831.2,-602.86 2021.3,-602.86 2021.3,-699.14"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-680.6" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-667.4" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prep:campaign:{id}</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-641.2" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PROSE channel (dev&#45;only)</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-628" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prep&#45;delta (sd_playbook</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-614.8" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;may carry secrets)</text>
+</g>
+<!-- devtool -->
+<g id="node17" class="node">
+<title>devtool</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2367.03,-677.04 2170.32,-677.04 2170.32,-606.96 2367.03,-606.96 2367.03,-677.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-658.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prep&#45;prose route</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-645.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;(AUTH_MODE=bypass ONLY,</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-632.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;&#160;absent in prod)</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-618.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dev&#45;tool prose pane</text>
+</g>
+<!-- prose_ch&#45;&gt;devtool -->
+<g id="edge21" class="edge">
+<title>prose_ch&#45;&gt;devtool</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2021.62,-648.5C2064.97,-647.36 2116.57,-645.99 2161.29,-644.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2161.1,-647.27 2168.03,-644.63 2160.97,-642.37 2161.1,-647.27"/>
+<text xml:space="preserve" text-anchor="middle" x="2102.41" y="-650.04" font-family="Courier,monospace" font-size="10.00">prep&#45;delta</text>
+</g>
+<!-- started -->
+<g id="node6" class="node">
+<title>started</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="459.01,-380.84 308.52,-380.84 308.52,-337.16 459.01,-337.16 459.01,-380.84"/>
+<text xml:space="preserve" text-anchor="middle" x="383.77" y="-362.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">publishEvent</text>
+<text xml:space="preserve" text-anchor="middle" x="383.77" y="-349.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;(&#39;prep&#45;started&#39;)</text>
+</g>
+<!-- claim&#45;&gt;started -->
 <g id="edge4" class="edge">
-<title>claim&#45;&gt;resolve</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M257.87,-230C271.8,-230 285.9,-230 299.57,-230"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="299.21,-232.45 306.21,-230 299.21,-227.55 299.21,-232.45"/>
+<title>claim&#45;&gt;started</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M258.26,-359C272.22,-359 286.19,-359 299.45,-359"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="299.24,-361.45 306.24,-359 299.24,-356.55 299.24,-361.45"/>
 </g>
 <!-- pipeline_runs_t -->
-<g id="node13" class="node">
+<g id="node15" class="node">
 <title>pipeline_runs_t</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2200.03,-243.44 1990.12,-243.44 1990.12,-186.56 2200.03,-186.56 2200.03,-243.44"/>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-224.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline_runs</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-211.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;campaign_id, user_id NULL</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-198.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;stage=&#39;session&#45;prep:{n}&#39;</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2373.63,-228.44 2163.72,-228.44 2163.72,-171.56 2373.63,-171.56 2373.63,-228.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-209.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline_runs</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-196.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;campaign_id, user_id NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-183.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;stage=&#39;session&#45;prep:{n}&#39;</text>
 </g>
 <!-- claim&#45;&gt;pipeline_runs_t -->
 <g id="edge3" class="edge">
 <title>claim&#45;&gt;pipeline_runs_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M162.03,-181.22C205.23,-113.71 294.53,0 405.87,0 405.87,0 405.87,0 1753.65,0 1883.61,0 1882.66,-98.91 1990.12,-172 1995.23,-175.47 2000.66,-178.75 2006.26,-181.81"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2005.04,-183.94 2012.37,-185.02 2007.32,-179.6 2005.04,-183.94"/>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-15" font-family="Courier,monospace" font-size="10.00">INSERT pending</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-3" font-family="Courier,monospace" font-size="10.00">(ON CONFLICT coerce)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M143.62,-310.21C166.6,-212.05 233.53,0 382.77,0 382.77,0 382.77,0 1927.25,0 2052.43,0 2049.64,-99.71 2160.42,-158 2166.59,-161.25 2173.06,-164.39 2179.65,-167.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2178.37,-169.5 2185.76,-170.11 2180.37,-165.03 2178.37,-169.5"/>
+<text xml:space="preserve" text-anchor="middle" x="1001.63" y="-3" font-family="Courier,monospace" font-size="10.00">INSERT pending</text>
+</g>
+<!-- started&#45;&gt;phase_ch -->
+<g id="edge5" class="edge">
+<title>started&#45;&gt;phase_ch</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M396.08,-381.55C424.11,-433.86 502.16,-559 607.37,-559 607.37,-559 607.37,-559 1550.92,-559 1638.87,-559 1737.99,-549.85 1812.13,-541.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1812.12,-543.65 1818.78,-540.4 1811.54,-538.79 1812.12,-543.65"/>
+<text xml:space="preserve" text-anchor="middle" x="1001.63" y="-562" font-family="Courier,monospace" font-size="10.00">prep&#45;started</text>
+</g>
+<!-- resolve -->
+<g id="node7" class="node">
+<title>resolve</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="706.72,-366.84 510.01,-366.84 510.01,-323.16 706.72,-323.16 706.72,-366.84"/>
+<text xml:space="preserve" text-anchor="middle" x="608.37" y="-348.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.getWorldId</text>
+<text xml:space="preserve" text-anchor="middle" x="608.37" y="-335.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(campaign → world_id)</text>
+</g>
+<!-- started&#45;&gt;resolve -->
+<g id="edge6" class="edge">
+<title>started&#45;&gt;resolve</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M459.51,-354.3C472.79,-353.46 486.86,-352.58 500.82,-351.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="500.85,-354.15 507.68,-351.27 500.54,-349.26 500.85,-354.15"/>
 </g>
 <!-- serialize -->
-<g id="node6" class="node">
+<g id="node8" class="node">
 <title>serialize</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="733.13,-281.24 556.22,-281.24 556.22,-184.76 733.13,-184.76 733.13,-281.24"/>
-<text xml:space="preserve" text-anchor="middle" x="644.67" y="-262.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">serialize&#45;world&#45;state&#45;</text>
-<text xml:space="preserve" text-anchor="middle" x="644.67" y="-249.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;for&#45;prep.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="644.67" y="-236.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">OMNISCIENT dump</text>
-<text xml:space="preserve" text-anchor="middle" x="644.67" y="-223.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(all access tiers)</text>
-<text xml:space="preserve" text-anchor="middle" x="644.67" y="-209.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ party known&#45;facts</text>
-<text xml:space="preserve" text-anchor="middle" x="644.67" y="-196.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ starting situation</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="934.63,-393.24 757.72,-393.24 757.72,-296.76 934.63,-296.76 934.63,-393.24"/>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-374.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">serialize&#45;world&#45;state&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-361.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;for&#45;prep.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-348.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">OMNISCIENT dump</text>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-335.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(all access tiers)</text>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-321.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ party known&#45;facts</text>
+<text xml:space="preserve" text-anchor="middle" x="846.17" y="-308.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;+ starting situation</text>
 </g>
 <!-- resolve&#45;&gt;serialize -->
-<g id="edge6" class="edge">
+<g id="edge8" class="edge">
 <title>resolve&#45;&gt;serialize</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M505.82,-231.25C519.55,-231.42 533.65,-231.6 547.35,-231.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="546.97,-234.22 554,-231.86 547.03,-229.32 546.97,-234.22"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M707.32,-345C721.05,-345 735.15,-345 748.85,-345"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="748.5,-347.45 755.5,-345 748.5,-342.55 748.5,-347.45"/>
 </g>
 <!-- campaigns_t -->
-<g id="node11" class="node">
+<g id="node13" class="node">
 <title>campaigns_t</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2170.33,-342.04 2019.83,-342.04 2019.83,-271.96 2170.33,-271.96 2170.33,-342.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-323.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-310.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;world_id (read)</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-297.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;status UNCHANGED</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-283.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;on prep failure</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2343.92,-143.04 2193.42,-143.04 2193.42,-72.96 2343.92,-72.96 2343.92,-143.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-124.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-111.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;world_id (read)</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-98.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;status UNCHANGED</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-84.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;on prep failure</text>
 </g>
 <!-- resolve&#45;&gt;campaigns_t -->
-<g id="edge5" class="edge">
+<g id="edge7" class="edge">
 <title>resolve&#45;&gt;campaigns_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M424.61,-207.47C459.82,-162.96 546.32,-68 643.67,-68 643.67,-68 643.67,-68 1562.19,-68 1702.88,-68 1770.2,-27.15 1874.11,-122 1905.72,-150.85 1871.67,-182.15 1899.11,-215 1927.68,-249.19 1971.83,-271.47 2010.9,-285.53"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2010.02,-287.82 2017.43,-287.81 2011.63,-283.2 2010.02,-287.82"/>
-<text xml:space="preserve" text-anchor="middle" x="1184.86" y="-71" font-family="Courier,monospace" font-size="10.00">SELECT world_id</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M615.78,-322.56C636.56,-255.14 708.74,-59 845.17,-59 845.17,-59 845.17,-59 1927.25,-59 2015.57,-59 2115.49,-75.36 2184.11,-89.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2183.61,-91.57 2190.96,-90.57 2184.59,-86.77 2183.61,-91.57"/>
+<text xml:space="preserve" text-anchor="middle" x="1361.76" y="-62" font-family="Courier,monospace" font-size="10.00">SELECT world_id</text>
 </g>
 <!-- llm -->
-<g id="node7" class="node">
+<g id="node9" class="node">
 <title>llm</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1114.85,-298.44 885.14,-298.44 885.14,-175.56 1114.85,-175.56 1114.85,-298.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-279.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">generateSessionPrep</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-266.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;model: Opus</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-253.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;streamObject</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-240.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;sessionPrepSchema</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-227.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;{ ft_context, sd_playbook }</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-213.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;maxOutputTokens 16384</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-200.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;timeout 9 min</text>
-<text xml:space="preserve" text-anchor="middle" x="1000" y="-187.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(slowest call in system)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1291.75,-399.84 1068.64,-399.84 1068.64,-290.16 1291.75,-290.16 1291.75,-399.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1180.19" y="-381.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">generateSessionPrep</text>
+<text xml:space="preserve" text-anchor="middle" x="1180.19" y="-368.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;model: Opus, streamObject</text>
+<text xml:space="preserve" text-anchor="middle" x="1180.19" y="-354.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;{ ft_context, sd_playbook }</text>
+<text xml:space="preserve" text-anchor="middle" x="1180.19" y="-341.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;maxOutputTokens 16384</text>
+<text xml:space="preserve" text-anchor="middle" x="1180.19" y="-328.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;timeout 9 min</text>
+<text xml:space="preserve" text-anchor="middle" x="1180.19" y="-315.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;onProseDelta(field, text)</text>
+<text xml:space="preserve" text-anchor="middle" x="1180.19" y="-302.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(no extra LLM cost)</text>
 </g>
 <!-- serialize&#45;&gt;llm -->
-<g id="edge7" class="edge">
+<g id="edge9" class="edge">
 <title>serialize&#45;&gt;llm</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M733.47,-233.99C776.47,-234.48 828.97,-235.08 875.9,-235.61"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="875.75,-238.05 882.78,-235.68 875.81,-233.16 875.75,-238.05"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M935.28,-345C973.3,-345 1018.38,-345 1059.37,-345"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1059.24,-347.45 1066.24,-345 1059.24,-342.55 1059.24,-347.45"/>
+</g>
+<!-- llm&#45;&gt;prose_ch -->
+<g id="edge10" class="edge">
+<title>llm&#45;&gt;prose_ch</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1244.38,-400.46C1266.24,-417.7 1291.59,-435.66 1316.75,-449 1484.03,-537.68 1697.65,-597.69 1822.18,-627.98"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1821.47,-630.33 1828.85,-629.6 1822.63,-625.57 1821.47,-630.33"/>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-612.64" font-family="Courier,monospace" font-size="10.00">onProseDelta →</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-600.64" font-family="Courier,monospace" font-size="10.00"> &#160;publishProse</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-588.64" font-family="Courier,monospace" font-size="10.00"> &#160;(&#39;prep&#45;delta&#39;)</text>
 </g>
 <!-- persist -->
-<g id="node8" class="node">
+<g id="node10" class="node">
 <title>persist</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1491.18,-259.64 1254.87,-259.64 1254.87,-176.36 1491.18,-176.36 1491.18,-259.64"/>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-241.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessionPreps.insert</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-227.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INSERT session_preps</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-214.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;ON CONFLICT</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-201.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(campaign_id, session_number)</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-188.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;DO NOTHING</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1668.08,-420.64 1431.76,-420.64 1431.76,-337.36 1668.08,-337.36 1668.08,-420.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-402.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessionPreps.insert</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-388.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INSERT session_preps</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-375.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;ON CONFLICT</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-362.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(campaign_id, session_number)</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-349.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;DO NOTHING</text>
 </g>
 <!-- llm&#45;&gt;persist -->
-<g id="edge8" class="edge">
+<g id="edge11" class="edge">
 <title>llm&#45;&gt;persist</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1115.6,-231.13C1156.82,-229.02 1203.55,-226.63 1245.72,-224.47"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1245.68,-226.92 1252.55,-224.12 1245.43,-222.03 1245.68,-226.92"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1292.02,-355.25C1333.17,-359.05 1380.15,-363.4 1422.59,-367.32"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1422.29,-369.75 1429.48,-367.96 1422.74,-364.87 1422.29,-369.75"/>
 </g>
 <!-- fail -->
-<g id="node10" class="node">
+<g id="node12" class="node">
 <title>fail</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1481.28,-397.84 1264.77,-397.84 1264.77,-288.16 1481.28,-288.16 1481.28,-397.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-379.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">catch: markStageFailed</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-366.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">publishEvent(&#39;stage&#45;failed&#39;,</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-352.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;terminal)</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-339.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">NO campaigns.setFailed</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-326.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(session&#45;scoped)</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-313.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">non&#45;terminal → rethrow</text>
-<text xml:space="preserve" text-anchor="middle" x="1373.03" y="-300.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(BullMQ retries)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1654.88,-308.24 1444.97,-308.24 1444.97,-211.76 1654.88,-211.76 1654.88,-308.24"/>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-289.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">catch: markStageFailed</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-276.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">publishEvent(&#39;prep&#45;failed&#39;,</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-263.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;terminal)</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-250.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">NO campaigns.setFailed</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-236.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(session&#45;scoped)</text>
+<text xml:space="preserve" text-anchor="middle" x="1549.92" y="-223.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">non&#45;terminal → rethrow</text>
 </g>
 <!-- llm&#45;&gt;fail -->
-<g id="edge13" class="edge">
+<g id="edge16" class="edge">
 <title>llm&#45;&gt;fail</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1115.6,-269.74C1160.19,-282.48 1211.21,-297.06 1255.94,-309.84"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1255.07,-312.13 1262.47,-311.7 1256.41,-307.42 1255.07,-312.13"/>
-<text xml:space="preserve" text-anchor="middle" x="1184.86" y="-302.49" font-family="Courier,monospace" font-size="10.00">error</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1292.02,-319.38C1337.51,-308.87 1390.13,-296.71 1435.85,-286.14"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1436.26,-288.56 1442.53,-284.59 1435.16,-283.78 1436.26,-288.56"/>
+<text xml:space="preserve" text-anchor="middle" x="1361.76" y="-315.61" font-family="Courier,monospace" font-size="10.00">error</text>
 </g>
 <!-- mark -->
-<g id="node9" class="node">
+<g id="node11" class="node">
 <title>mark</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1874.11,-277.64 1631.2,-277.64 1631.2,-194.36 1874.11,-194.36 1874.11,-277.64"/>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-259.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">markStageCompleted</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-245.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline_runs.status=&#39;completed&#39;</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-232.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">cost_usd = computeCostUsd(Opus)</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-219.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;(recorded, NOT capped)</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-206.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">publishEvent(&#39;stage&#45;completed&#39;)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2044.41,-420.64 1808.09,-420.64 1808.09,-337.36 2044.41,-337.36 2044.41,-420.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-402.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">markStageCompleted</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-388.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline_runs=&#39;completed&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-375.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">cost_usd = computeCostUsd(Opus)</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-362.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;(recorded, NOT capped)</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-349.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">publishEvent(&#39;prep&#45;ready&#39;)</text>
 </g>
 <!-- persist&#45;&gt;mark -->
-<g id="edge10" class="edge">
+<g id="edge13" class="edge">
 <title>persist&#45;&gt;mark</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1491.7,-223.61C1533.01,-225.58 1579.64,-227.8 1621.89,-229.81"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1621.63,-232.26 1628.74,-230.14 1621.87,-227.36 1621.63,-232.26"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1668.59,-379C1710,-379 1756.7,-379 1798.81,-379"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1798.63,-381.45 1805.63,-379 1798.63,-376.55 1798.63,-381.45"/>
 </g>
 <!-- preps_t -->
-<g id="node12" class="node">
+<g id="node14" class="node">
 <title>preps_t</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2196.73,-157.64 1993.42,-157.64 1993.42,-74.36 2196.73,-74.36 2196.73,-157.64"/>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-139.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_preps</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-125.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;ft_context + sd_playbook</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-112.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;UNIQUE(campaign_id,</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-99.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;&#160;session_number)</text>
-<text xml:space="preserve" text-anchor="middle" x="2095.08" y="-86.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(migration 022)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2370.33,-340.64 2167.02,-340.64 2167.02,-257.36 2370.33,-257.36 2370.33,-340.64"/>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-322.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_preps</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-308.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;ft_context + sd_playbook</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-295.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;UNIQUE(campaign_id,</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-282.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;&#160;session_number)</text>
+<text xml:space="preserve" text-anchor="middle" x="2268.67" y="-269.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;(migration 022)</text>
 </g>
 <!-- persist&#45;&gt;preps_t -->
-<g id="edge9" class="edge">
-<title>persist&#45;&gt;preps_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1491.7,-185.7C1535.23,-174.79 1585.19,-163.49 1631.2,-156 1751.05,-136.49 1890.02,-126.09 1984.17,-120.84"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1984.19,-123.29 1991.04,-120.46 1983.92,-118.4 1984.19,-123.29"/>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-171" font-family="Courier,monospace" font-size="10.00">ft_context +</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-159" font-family="Courier,monospace" font-size="10.00"> &#160;sd_playbook</text>
-</g>
-<!-- mark&#45;&gt;channel -->
 <g id="edge12" class="edge">
-<title>mark&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1630.51,-270.27C1572.25,-293.54 1520.6,-328.87 1548.09,-377 1568.54,-412.79 1605.28,-437.54 1642.03,-454.36"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1640.82,-456.5 1648.21,-457.09 1642.8,-452.02 1640.82,-456.5"/>
-<text xml:space="preserve" text-anchor="middle" x="1561.19" y="-368" font-family="Courier,monospace" font-size="10.00">stage&#45;completed</text>
+<title>persist&#45;&gt;preps_t</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1661.23,-336.67C1706.08,-321.58 1758.86,-306.48 1808.09,-299 1926.66,-280.98 2064.43,-284.12 2157.98,-289.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2157.65,-292.22 2164.79,-290.21 2157.96,-287.33 2157.65,-292.22"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-314" font-family="Courier,monospace" font-size="10.00">ft_context +</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-302" font-family="Courier,monospace" font-size="10.00"> &#160;sd_playbook</text>
+</g>
+<!-- mark&#45;&gt;phase_ch -->
+<g id="edge15" class="edge">
+<title>mark&#45;&gt;phase_ch</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1926.25,-421.12C1926.25,-435.87 1926.25,-452.69 1926.25,-468.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1923.8,-468.31 1926.25,-475.31 1928.7,-468.31 1923.8,-468.31"/>
+<text xml:space="preserve" text-anchor="middle" x="1917.25" y="-446.25" font-family="Courier,monospace" font-size="10.00">prep&#45;ready</text>
 </g>
 <!-- mark&#45;&gt;pipeline_runs_t -->
-<g id="edge11" class="edge">
+<g id="edge14" class="edge">
 <title>mark&#45;&gt;pipeline_runs_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1874.63,-228.54C1909.25,-226.4 1946.84,-224.08 1980.97,-221.98"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1980.92,-224.44 1987.76,-221.56 1980.62,-219.54 1980.92,-224.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1932.12" y="-241.76" font-family="Courier,monospace" font-size="10.00">completed +</text>
-<text xml:space="preserve" text-anchor="middle" x="1932.12" y="-229.76" font-family="Courier,monospace" font-size="10.00"> &#160;cost_usd</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2006.04,-336.74C2018.93,-329.6 2032.09,-322.18 2044.41,-315 2096.83,-284.44 2106.27,-270.39 2160.42,-243 2167.38,-239.48 2174.71,-236.03 2182.13,-232.72"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2183.11,-234.96 2188.54,-229.91 2181.14,-230.47 2183.11,-234.96"/>
+<text xml:space="preserve" text-anchor="middle" x="2102.41" y="-313.41" font-family="Courier,monospace" font-size="10.00">completed +</text>
+<text xml:space="preserve" text-anchor="middle" x="2102.41" y="-301.41" font-family="Courier,monospace" font-size="10.00"> &#160;cost_usd</text>
 </g>
-<!-- fail&#45;&gt;channel -->
-<g id="edge15" class="edge">
-<title>fail&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1457.6,-398.47C1476.35,-409.33 1496.52,-419.87 1516.18,-428 1551.76,-442.71 1591.92,-454.44 1628.87,-463.44"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1628.05,-465.76 1635.43,-465.01 1629.2,-460.99 1628.05,-465.76"/>
-<text xml:space="preserve" text-anchor="middle" x="1561.19" y="-460.24" font-family="Courier,monospace" font-size="10.00">stage&#45;failed</text>
+<!-- fail&#45;&gt;phase_ch -->
+<g id="edge18" class="edge">
+<title>fail&#45;&gt;phase_ch</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1646.41,-308.83C1653.87,-313.4 1661.18,-318.15 1668.08,-323 1736.55,-371.17 1741.81,-397.86 1808.09,-449 1818.29,-456.87 1829.28,-464.77 1840.29,-472.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1838.86,-474.35 1846.02,-476.27 1841.62,-470.3 1838.86,-474.35"/>
+<text xml:space="preserve" text-anchor="middle" x="1738.09" y="-429.14" font-family="Courier,monospace" font-size="10.00">prep&#45;failed</text>
 </g>
 <!-- fail&#45;&gt;campaigns_t -->
-<g id="edge16" class="edge">
+<g id="edge19" class="edge">
 <title>fail&#45;&gt;campaigns_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1482,-377.53C1493.45,-380.17 1504.99,-382.42 1516.18,-384 1634.42,-400.71 1837.03,-387.24 1965.12,-358 1980.41,-354.51 1996.27,-349.49 2011.42,-343.95"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2011.87,-346.4 2017.57,-341.65 2010.15,-341.81 2011.87,-346.4"/>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-406.28" font-family="Courier,monospace" font-size="10.00">status NOT</text>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-394.28" font-family="Courier,monospace" font-size="10.00"> &#160;touched</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1655.33,-227.08C1701.79,-213.18 1757.36,-197.57 1808.09,-186 1938.36,-156.3 2091.75,-132.47 2184.26,-119.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2184.35,-121.75 2190.94,-118.34 2183.67,-116.9 2184.35,-121.75"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-201" font-family="Courier,monospace" font-size="10.00">status NOT</text>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-189" font-family="Courier,monospace" font-size="10.00"> &#160;touched</text>
 </g>
 <!-- fail&#45;&gt;pipeline_runs_t -->
-<g id="edge14" class="edge">
+<g id="edge17" class="edge">
 <title>fail&#45;&gt;pipeline_runs_t</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1482.01,-339.31C1584.09,-334.1 1741.01,-321.65 1874.11,-292 1900.39,-286.15 1958.8,-265.57 2008.83,-247.16"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2009.67,-249.46 2015.39,-244.73 2007.98,-244.86 2009.67,-249.46"/>
-<text xml:space="preserve" text-anchor="middle" x="1752.65" y="-331.28" font-family="Courier,monospace" font-size="10.00">failed + error</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1655.37,-249.9C1702.08,-245.47 1757.83,-240.31 1808.09,-236 1926.21,-225.86 2061.5,-215.4 2154.55,-208.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2154.53,-210.85 2161.33,-207.88 2154.16,-205.96 2154.53,-210.85"/>
+<text xml:space="preserve" text-anchor="middle" x="1926.25" y="-239" font-family="Courier,monospace" font-size="10.00">failed + error</text>
 </g>
 </g>
 </svg>
@@ -381,14 +459,16 @@
 </aside>
 
 <p>
-  With the claim held, the processor resolves the campaign's <code>world_id</code> and calls
-  <code>generateSessionPrep</code> — one Opus <code>streamObject</code> producing the two prose
-  documents. That call runs against the raw pool, outside any open transaction: it is the slowest
-  single call in the system (a 9-minute timeout, two long markdown documents), and holding a pooled
-  connection for its full duration would starve the rest of the worker. The
-  <a href="./llm.html#the-session-prep-generation-stage">LLM client page</a> covers the generation
-  primitive — the omniscient serializer, the <code>maxOutputTokens</code> ceiling, the
-  enforced-ignorance split that lives inside the prompt.
+  With the claim held, the processor publishes a <code>prep-started</code> phase event, resolves the
+  campaign's <code>world_id</code>, and calls <code>generateSessionPrep</code> — one Opus
+  <code>streamObject</code> producing the two prose documents. That call runs against the raw pool,
+  outside any open transaction: it is the slowest single call in the system (a 9-minute timeout, two
+  long markdown documents), and holding a pooled connection for its full duration would starve the
+  rest of the worker. The <a href="./llm.html#the-session-prep-generation-stage">LLM client page</a>
+  covers the generation primitive — the omniscient serializer, the
+  <code>maxOutputTokens</code> ceiling, the enforced-ignorance split that lives inside the prompt,
+  and the optional <code>onProseDelta</code> callback the processor threads in to capture the stream
+  as it lands.
 </p>
 
 <p>
@@ -397,8 +477,96 @@
     >ON CONFLICT (campaign_id, session_number) DO NOTHING</code
   >
   — the first persisted row wins), then marks the <code>pipeline_runs</code> row
-  <code>completed</code> with the call's cost and publishes a <code>stage-completed</code> event on
-  the campaign's SSE channel.
+  <code>completed</code> with the call's cost and publishes a <code>prep-ready</code> event carrying
+  the recorded <code>costUsd</code>. On any error it publishes <code>prep-failed</code> with the
+  terminal flag instead. These three <code>prep-*</code> arms are the entire player-visible signal —
+  they ride the campaign's pipeline channel, never the prose.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Dedicated <code>prep-*</code> arms, not the generic <code>stage-*</code> events</strong> —
+  an earlier cut of this processor reused the pipeline's generic <code>stage-completed</code> /
+  <code>stage-failed</code> arms, but their shapes drifted (they expect a <code>userId</code> and a
+  <code>durationMs</code> the session-prep job has no use for, and carried a free-form
+  <code>message</code> the contract doesn't define). The three purpose-built arms —
+  <code>prep-started { sessionNumber }</code>, <code>prep-ready { sessionNumber, costUsd }</code>,
+  <code>prep-failed { sessionNumber, terminal }</code> — carry exactly the fields a prep loading
+  screen needs and nothing a Fast Thinker could mistake for narrative. They're added to the
+  <a href="./pipeline-status.html">pipeline event contract</a> alongside the world-gen and
+  character-creation arms.
+</aside>
+
+<h3 id="two-channels-one-stream">Two channels off one stream</h3>
+
+<p>
+  <code>generateSessionPrep</code> already streamed its result under the hood — the original code
+  just <code>await</code>ed the final object and threw the intermediate chunks away. The processor
+  now passes an <code>onProseDelta(field, text)</code> callback into the stage, so consuming the
+  partial stream costs <strong>no extra LLM tokens</strong>: the same bytes that were being
+  discarded are now forwarded as they arrive. (The
+  <a href="./llm.html#the-session-prep-generation-stage">stage page</a> covers the delta mechanics —
+  per-field length-diff, the mid-escape resync.) What the processor does with those deltas is the
+  load-bearing design choice on this page.
+</p>
+
+<p>
+  The processor holds two publishers, both built by
+  <code>makePipelinePublishers</code> in <code>backend/src/worker/publishers.ts</code>, and they
+  write to two different Redis channels:
+</p>
+
+<ul>
+  <li>
+    <code>publishEvent</code> →
+    <code>&#123;redisKeyPrefix&#125;pipeline:campaign:&#123;id&#125;</code> — the
+    <strong>existing player-facing channel</strong>. The three <code>prep-*</code> phase events go
+    here. This is what the player's
+    <a href="./pipeline-status.html#the-prep-status-route">prep-status</a> loading screen reads.
+  </li>
+  <li>
+    <code>publishProse</code> →
+    <code>&#123;redisKeyPrefix&#125;prep:campaign:&#123;id&#125;</code> — a
+    <strong>new, parallel channel</strong> that exists only to carry <code>prep-delta</code> prose.
+    The <code>onProseDelta</code> callback wraps each delta in a <code>prep-delta</code> event and
+    publishes it here. The only consumer is the dev-only prose route the
+    <a href="./dev-tool.html#the-session-prep-prose-pane">dev tool</a> subscribes to.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Prose rides its own channel exposed only in dev — structural enforced ignorance</strong> —
+  the <code>sd_playbook</code> half of the stream is, by design, full of secrets: clues, revelation
+  conditions, what the depth markers in <code>ft_context</code> are pointing at. There is no runtime
+  leak guard on prep prose (the Haiku leak-classifier idea was descoped), so the channel split
+  <em>is</em> the control. Phase events ("preparing… ready") are the only thing a player's surface
+  can subscribe to. The prose never touches the player channel — it's published to
+  <code>prep:campaign:</code>, and the single route that serves that channel is registered only when
+  <code>AUTH_MODE=bypass</code>, so it is <strong>literally absent in a production boot</strong>. A
+  player has no route to reach prep prose; leaking <code>sd_playbook</code> would require building
+  one that doesn't exist.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why the boundary holds even if someone wires it wrong</strong> — the split is defended at
+  three independent layers, so no single mistake leaks prose. <strong>Compile-time:</strong>
+  <code>prep-delta</code> is a <code>ProseEvent</code>, deliberately <em>not</em> a member of the
+  <code>PipelineEvent</code> union, and <code>publishEvent</code> only accepts
+  <code>PipelineEvent</code> — so <code>publishEvent(id, prepDelta)</code> doesn't type-check.
+  <strong>Runtime:</strong> the pipeline channel's subscriber carries a
+  <a href="./pipeline-status.html#the-type-tripwire">type tripwire</a> that drops any message whose
+  <code>type</code> isn't a known pipeline event before it reaches a sink — so even a stray
+  <code>prep-delta</code> hand-published onto <code>pipeline:</code> is discarded.
+  <strong>Topology:</strong> in production no prose route and no prose subscriber are constructed at
+  all. Defeating enforced ignorance would mean changing the types, removing the tripwire, AND
+  registering the dev route in prod — none of which happens by accident.
+</aside>
+
+<p>
+  A <code>publishProse</code> failure is swallowed: the <code>onProseDelta</code> callback is
+  fire-and-forget (a rejected publish is caught and dropped), and the stage wraps the callback in
+  its own try/catch so a throwing sink can never abort generation. Prose is cosmetic, dev-only
+  telemetry; the persisted documents and the <code>prep-*</code> phase events are the durable
+  output, and neither depends on a prose delta landing.
 </p>
 
 <h3 id="cost-is-recorded-not-capped">Cost is recorded, not capped</h3>
@@ -425,11 +593,11 @@
 
 <p>
   On any error the processor classifies it with <code>isTerminalError</code>, marks the
-  <code>pipeline_runs</code> row <code>failed</code>, and publishes a
-  <code>stage-failed</code> event carrying the terminal flag. A non-terminal error is re-thrown so
-  BullMQ retries with backoff; a terminal error returns cleanly so BullMQ marks the job done
-  (retrying the same payload wouldn't help). What it deliberately does <em>not</em> do — on either
-  path — is call <code>repo.campaigns.setFailed</code>.
+  <code>pipeline_runs</code> row <code>failed</code>, and publishes a <code>prep-failed</code> event
+  carrying the terminal flag. A non-terminal error is re-thrown so BullMQ retries with backoff; a
+  terminal error returns cleanly so BullMQ marks the job done (retrying the same payload wouldn't
+  help). What it deliberately does <em>not</em> do — on either path — is call
+  <code>repo.campaigns.setFailed</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -485,8 +653,11 @@
   </li>
   <li>
     <p>
-      Watch the attempt on the campaign's SSE stream. A clean run ends with one
-      <code>stage-completed</code> event carrying the recorded <code>costUsd</code>.
+      Watch the attempt on the campaign's SSE stream. A clean run opens with one
+      <code>prep-started</code> and ends with one <code>prep-ready</code> event carrying the
+      recorded <code>costUsd</code>; a failure publishes <code>prep-failed</code> with its terminal
+      flag. To watch the prose stream itself, attach the dev tool's prose pane (dev-only — see the
+      <a href="./dev-tool.html#the-session-prep-prose-pane">dev tool page</a>).
     </p>
   </li>
 </ol>
@@ -512,17 +683,22 @@
 <p>
   Upstream: the generation primitive on the
   <a href="./llm.html#the-session-prep-generation-stage">LLM client</a> page — the omniscient
-  serializer, the two-field schema, the <code>maxOutputTokens</code> ceiling, and the in-prompt
-  enforced-ignorance split that keeps <code>discoverable</code> / <code>secret</code> material out
-  of <code>ft_context</code>. Sideways: the <a href="./worker.html">worker</a> registers this
-  queue's <code>Worker</code> as a third peer; the
-  <a href="../data/repository.html">repository layer</a> holds the <code>sessionPreps</code> binder;
-  the <code>session-prep</code> job name lives in
-  <code>backend/src/contract/pipeline-jobs.ts</code>, carrying a
-  <a href="./dev-tool.html#the-exempt-list">dev-tool coverage exemption</a> until the driver lands.
-  Downstream: Session Runtime will read <code>session_preps</code> at <code>/start</code>, debit the
-  session credit, and feed <code>ft_context</code> to the Fast Thinker and
-  <code>sd_playbook</code> to the Slow Thinker.
+  serializer, the two-field schema, the <code>maxOutputTokens</code> ceiling, the
+  <code>onProseDelta</code> streaming seam, and the in-prompt enforced-ignorance split that keeps
+  <code>discoverable</code> / <code>secret</code> material out of <code>ft_context</code>. Sideways:
+  the <a href="./worker.html">worker</a> registers this queue's <code>Worker</code> as a third peer
+  and is one of the two entrypoints that wire <code>publishProse</code> (the other is the API
+  container's in-process worker); the <a href="../data/repository.html">repository layer</a> holds
+  the <code>sessionPreps</code> binder; the <code>session-prep</code> job name lives in
+  <code>backend/src/contract/pipeline-jobs.ts</code> and is now a fully
+  <a href="./dev-tool.html#the-ship-gate">dev-tool-covered</a> job (the prose pane is its driver).
+  The two SSE consumption surfaces live elsewhere: the player-facing
+  <a href="./pipeline-status.html#the-prep-status-route">prep-status route</a> reads the phase
+  channel, and the dev-only prose route + its prose subscriber are documented on
+  <a href="./pipeline-status.html#the-prep-status-route">pipeline status</a> alongside the rest of
+  the SSE plumbing. Downstream: Session Runtime will read <code>session_preps</code> at
+  <code>/start</code>, debit the session credit, and feed <code>ft_context</code> to the Fast
+  Thinker and <code>sd_playbook</code> to the Slow Thinker.
 </p>
 
 <h2 id="appendix-inputs-and-outputs">Appendix: inputs and outputs</h2>
@@ -624,18 +800,23 @@
 
 <p>
   <code>backend/src/llm/prep/session-prep-processor.ts</code>,
-  <code>backend/src/repo/session-preps.ts</code>,
-  <code>backend/migrations/022_session_preps_unique.sql</code>; queue wiring in
+  <code>backend/src/worker/publishers.ts</code> (the <code>publishEvent</code> /
+  <code>publishProse</code> pair), <code>backend/src/repo/session-preps.ts</code>,
+  <code>backend/migrations/022_session_preps_unique.sql</code>; queue + publisher wiring in
   <code>backend/src/worker.ts</code> + <code>backend/src/server.ts</code> against
   <code>backend/src/worker/bullmq-config.ts</code>; the job name in
-  <code>backend/src/contract/pipeline-jobs.ts</code>.
+  <code>backend/src/contract/pipeline-jobs.ts</code>. The streamed generation primitive
+  (<code>onProseDelta</code>) is on
+  <a href="./llm.html#the-session-prep-generation-stage"
+    ><code>llm/prep/stages/session-prep.ts</code></a
+  >; the two SSE routes are on <a href="./pipeline-status.html">pipeline status</a>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#two-channels-one-stream">Two channels off one stream</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

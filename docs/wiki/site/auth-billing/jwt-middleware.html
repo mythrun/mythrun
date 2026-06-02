@@ -477,8 +477,8 @@
   Bypass mode exists for one workflow: a developer running <code>pnpm dev</code> against the local
   docker-compose stack, pre-Cognito, wanting <code>request.user</code> to be a fixed bypass identity
   so route handlers can be exercised. The default sub is
-  <code>bypass:&lt;sanitized-os.hostname()&gt;</code> — the <code>bypass:</code> prefix is fixed (it's
-  keyed on by dev-credits, the per-sub rejection-storm counters, and the
+  <code>bypass:&lt;sanitized-os.hostname()&gt;</code> — the <code>bypass:</code> prefix is fixed
+  (it's keyed on by dev-credits, the per-sub rejection-storm counters, and the
   <code>cognito_sub NOT LIKE 'bypass:%'</code> CHECK), but the suffix is derived per-machine so two
   developers sharing a dev or staging DB each register a distinct users row instead of colliding on
   one literal. A <code>MYTHRUN_BYPASS_SUB</code> env override, when set, pins the sub verbatim; the
@@ -592,9 +592,9 @@
   <code>request.user.sub</code> instead of the per-machine default
   (<code>bypass:&lt;sanitized-hostname&gt;</code>, or the <code>MYTHRUN_BYPASS_SUB</code> override
   when set). The override preserves <code>cognitoUsername</code>, <code>scopes</code>, and the
-  <code>Object.freeze</code> contract; only the sub field changes. Without the override, every bypass-mode request in a single
-  test run collapses to one identity, which breaks integration tests that need distinct simulated
-  users — most acutely, the per-sub rate-limit keying on
+  <code>Object.freeze</code> contract; only the sub field changes. Without the override, every
+  bypass-mode request in a single test run collapses to one identity, which breaks integration tests
+  that need distinct simulated users — most acutely, the per-sub rate-limit keying on
   <a href="./onboarding.html#rate-limits">/api/users/register</a>, which would otherwise share one
   counter across every test that calls register.
 </p>

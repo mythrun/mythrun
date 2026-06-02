@@ -18,7 +18,7 @@
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md -->
-<!-- source-hash: sha256:a4761d78793bacf723bcb92c7602031a926d39da4a71cfbd2600e771a6ef86a5 -->
+<!-- source-hash: sha256:301519bd85fe0b32ffe170eddaf7cd6011abbbeb64b70b6cb106567086d15077 -->
 <!-- last-ticket: MYT-54 -->
 
 <h1>Character creation</h1>
@@ -31,11 +31,10 @@
   <code>character_concepts</code> row to <code>'processing'</code> AND seeds a
   <code>character_concept</code> recovery row in <code>pipeline_runs</code>, then — after that
   transaction commits — enqueues one <code>character-creation</code> job on the
-  <code>campaign-setup</code> BullMQ queue. There is no separate owner fan-out step. Each job walks three stages (<code
-    >location_selection</code
-  >
-  → <code>character_concept</code> → <code>character_sheet</code>) and ends with a populated
-  <code>characters</code> row plus the structured <code>concept_output</code> JSONB blob the
+  <code>campaign-setup</code> BullMQ queue. There is no separate owner fan-out step. Each job walks
+  three stages (<code>location_selection</code> → <code>character_concept</code> →
+  <code>character_sheet</code>) and ends with a populated <code>characters</code> row plus the
+  structured <code>concept_output</code> JSONB blob the
   <a href="./character-integration.html">character integration</a> pass consumes. The status panel
   and live-events feed render per-player progress via the existing campaign-scoped channel.
   Materializing the PC as an <code>entities</code> row, writing PC↔world facts and relationships,
@@ -417,9 +416,9 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   </li>
   <li>
     Late member POSTs <code>/characters</code>. One transaction creates the row, flips it to
-    <code>'processing'</code>, and seeds the recovery row; the per-player job is enqueued right after
-    that transaction commits. No owner action required. Other members' <code>'completed'</code> rows
-    are untouched.
+    <code>'processing'</code>, and seeds the recovery row; the per-player job is enqueued right
+    after that transaction commits. No owner action required. Other members'
+    <code>'completed'</code> rows are untouched.
   </li>
   <li>Late-joiner's character creation runs in parallel with any other in-flight jobs.</li>
 </ol>
@@ -429,12 +428,11 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <code>character_concepts.status='failed'</code> and writes the error JSON; the player re-POSTs
   <code>/characters</code>, which commits the reset-row + recovery-row transaction and then
   re-enqueues the job after commit (no separate owner trigger). The processor's re-run is idempotent
-  at the stage boundary, not
-  delete-and-recreate: stage 3 detects an existing <code>characters</code> row for
-  <code>(campaign_id, user_id)</code> and UPDATEs rather than INSERTs (TRUNCATE-then-INSERT on the
-  four sub-tables). The frontend reframes the second prompt for late joiners ("describe the
-  situation the party is currently in and how your character fits") but both forms map to the same
-  <code>situation_grounding_text</code> column.
+  at the stage boundary, not delete-and-recreate: stage 3 detects an existing
+  <code>characters</code> row for <code>(campaign_id, user_id)</code> and UPDATEs rather than
+  INSERTs (TRUNCATE-then-INSERT on the four sub-tables). The frontend reframes the second prompt for
+  late joiners ("describe the situation the party is currently in and how your character fits") but
+  both forms map to the same <code>situation_grounding_text</code> column.
 </p>
 
 <aside class="wiki-rationale">

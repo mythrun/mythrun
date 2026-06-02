@@ -4,14 +4,20 @@ digraph pipeline_status {
   // PSUBSCRIBE'd ioredis client per API process fans them out via an
   // in-memory Map<campaignId, Set<SseSink>> to attached SSE sinks. The
   // snapshot endpoint serves the same shape as a one-shot read; the
-  // stream endpoint delivers the same shape as the first SSE frame,
-  // then forwards live events.
+  // stream + prep-status endpoints deliver a first SSE frame then forward.
+  //
+  // MYT-62: the worker also publishes session-prep PROSE deltas to a
+  // SEPARATE prep:campaign: channel, served by a dedicated 'prep'
+  // subscriber behind a dev-only route registered only under
+  // AUTH_MODE=bypass (absent in prod). The 'pipeline' subscriber runs a
+  // type tripwire (drop any non-PIPELINE_SSE_EVENTS message); the 'prep'
+  // subscriber forwards verbatim.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
   ranksep=0.7;
 
-  worker [label="worker (MYT-49/-51+)\nPUBLISH after COMMIT", color="ember", fontcolor="ember"];
+  worker [label="worker (MYT-49/-51+/-61)\nPUBLISH after COMMIT\nphase → pipeline: · prose → prep:", color="ember", fontcolor="ember"];
 
   subgraph cluster_redis {
     label="Redis (deps.redisRealtime cluster)";
@@ -19,49 +25,61 @@ digraph pipeline_status {
     color="ember";
     fontcolor="ember";
 
-    channel [label="{redisKeyPrefix}\npipeline:campaign:{campaignId}\n\none channel per campaign"];
+    channel      [label="{redisKeyPrefix}\npipeline:campaign:{id}\nplayer-safe phase events"];
+    prep_channel [label="{redisKeyPrefix}\nprep:campaign:{id}\nprose (dev-only)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_api {
     label="API process  (per ECS task)";
     style="dashed";
 
-    subscriber [label="pipeline-subscriber.ts\n.duplicate({retryStrategy,\n maxRetriesPerRequest:null})\nPSUBSCRIBE pipeline:campaign:*\nMap<campaignId, Set<SseSink>>"];
+    subscriber [label="pipeline-subscriber.ts\nchannel:'pipeline'\nPSUBSCRIBE pipeline:campaign:*\nType TRIPWIRE: drop non-\n  PIPELINE_SSE_EVENTS\nMap<campaignId, Set<SseSink>>"];
 
-    snapshot [label="campaigns.ts\nGET /api/campaigns/\n  :campaignId/status\nderivePhase(\n  campaign, world, runs)"];
-    stream   [label="campaigns.ts\nGET /api/campaigns/\n  :campaignId/status/stream\nattach → snapshot → forward"];
+    prep_subscriber [label="pipeline-subscriber.ts\nchannel:'prep'\nPSUBSCRIBE prep:campaign:*\nverbatim (no tripwire)\nbypass-only", color="ember", fontcolor="ember"];
 
-    sse      [label="sse-connection.ts\nreply.hijack()\nkeepalive 25s\nidle-timeout 30min\nclose-reason enum"];
+    snapshot    [label="campaigns.ts\nGET /status\nderivePhase(campaign,\n  world, runs)"];
+    stream      [label="campaigns.ts\nGET /status/stream\nattach → snapshot → forward"];
+    prep_status [label="campaigns.ts\nGET /prep-status\nexistsFor snapshot →\n  PHASE-only forward"];
+    prose_route [label="dev-prep-prose.ts\nGET /api/dev/.../prep-prose\nbypass-only · prose stream", color="ember", fontcolor="ember"];
 
-    counter  [label="connection-counter.ts\nsse.connections.active\nevery 60s"];
+    sse      [label="sse-connection.ts\nreply.hijack()\nkeepalive 25s\nidle 30min\nclose-reason enum"];
   }
 
   subgraph cluster_repo {
     label="Postgres";
     style="dotted";
 
-    runs [label="pipeline_runs\nlatest per (stage, user_id)\nWHERE campaign_id = $1\n  OR world_id = ...", color="ember", fontcolor="ember"];
+    runs  [label="pipeline_runs\nlatest per (stage, user_id)", color="ember", fontcolor="ember"];
+    preps [label="session_preps\nexistsFor(campaign, n)"];
   }
 
-  client [label="EventSource client\n(dev tool today;\n SPA after MYT-51)", color="ember", fontcolor="ember"];
+  player [label="player / SPA\n(status + prep-status)", color="ember", fontcolor="ember"];
+  devtool [label="dev tool\n(prose pane)", color="ember", fontcolor="ember"];
 
-  // Worker → Redis → subscriber → sinks
-  worker     -> channel    [label="JSON payload"];
+  // Worker → Redis (two channels)
+  worker -> channel      [label="phase JSON"];
+  worker -> prep_channel [label="prep-delta", style=dashed, color="ember"];
+
+  // Pipeline channel → tripwire subscriber → sinks
   channel    -> subscriber [label="pmessage"];
-  subscriber -> sse        [label="sink.write(frame)"];
-  sse        -> client     [label="event: ...\\ndata: ..."];
+  subscriber -> sse        [label="sink.write\n(allowed only)"];
+  sse        -> player     [label="event: ...\\ndata: ..."];
 
-  // Snapshot path
-  client     -> snapshot   [label="GET /status"];
-  snapshot   -> runs       [label="listLatestForCampaign"];
-  snapshot   -> client     [label="200 JSON", style=dashed];
+  // Prep channel → prep subscriber → dev route → dev tool
+  prep_channel    -> prep_subscriber [label="pmessage"];
+  prep_subscriber -> prose_route     [label="attach()"];
+  prose_route     -> devtool         [label="prep-delta", style=dashed];
 
-  // Stream path — attach first, snapshot second, then forward
-  client     -> stream     [label="GET /status/stream"];
-  stream     -> subscriber [label="attach()"];
-  stream     -> runs       [label="listLatestForCampaign"];
-  stream     -> sse        [label="snapshot frame", style=dashed];
+  // Snapshot + stream + prep-status read paths
+  player -> snapshot    [label="GET /status"];
+  snapshot -> runs      [label="listLatestForCampaign"];
+  snapshot -> player    [label="200 JSON", style=dashed];
 
-  // Counter observes attach/detach
-  stream     -> counter    [label="increment / decrement", style=dotted];
+  player -> stream      [label="GET /status/stream"];
+  stream -> subscriber  [label="attach()"];
+  stream -> runs        [label="listLatestForCampaign"];
+
+  player -> prep_status [label="GET /prep-status"];
+  prep_status -> subscriber [label="attach()"];
+  prep_status -> preps  [label="existsFor", style=dotted];
 }

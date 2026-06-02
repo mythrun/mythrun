@@ -4,9 +4,9 @@ digraph dev_tool {
   // multiple single-purpose panel mount fns into a scrolling column.
   // Header chrome (always-on health pip + active-campaign dropdown)
   // sits above the banner; a persistent right-side drawer owns the
-  // sole EventSource for the active campaign. The ship gate
-  // (pnpm dev-tool:check) plus a registry invariant test keep
-  // coverage honest.
+  // SSE streams for the active campaign (pipeline status + a dev-only
+  // session-prep prose pane). The ship gate (pnpm dev-tool:check) plus
+  // a registry invariant test keep coverage honest.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -42,9 +42,10 @@ digraph dev_tool {
     label="drawer internals";
     style="dotted";
 
-    subs   [label="subscriptions.ts\nsole EventSource owner\none ES per active id"];
+    subs   [label="subscriptions.ts\nfetch-based SSE manager\none stream per active id\n(status + prose: 2 mgrs)"];
     bus    [label="event-bus.ts\nin-process pub/sub"];
     buffer [label="buffer.ts\n500-event FIFO ring"];
+    prose  [label="prose-view.ts\nft_context / sd_playbook\npanes (dev-only)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_panels {
@@ -98,7 +99,9 @@ digraph dev_tool {
   panels -> api [label="apiCall(...)", style=dashed];
   api -> vite [label="x-mythrun-dev-sub: dev-user-N"];
   vite -> backend [label="proxied"];
-  subs -> vite [label="EventSource\n/api/campaigns/:id/\nstatus/stream"];
+  subs -> vite [label="fetch SSE\n/api/campaigns/:id/\nstatus/stream"];
+  subs -> prose [label="prep-delta →\nappend pane", style=dashed];
+  subs -> vite [label="fetch SSE (bypass)\n/api/dev/campaigns/:id/\nprep-prose", style=dashed];
 
   // Ship gate path
   contracts -> check [label="read at boot"];

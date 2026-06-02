@@ -14,6 +14,7 @@
 <!-- source: backend/dev-tool/src/shell/drawer/subscriptions.ts -->
 <!-- source: backend/dev-tool/src/shell/drawer/event-bus.ts -->
 <!-- source: backend/dev-tool/src/shell/drawer/buffer.ts -->
+<!-- source: backend/dev-tool/src/shell/drawer/prose-view.ts -->
 <!-- source: backend/dev-tool/src/pages/_shared/page-skeleton.ts -->
 <!-- source: backend/dev-tool/src/pages/campaigns-page.ts -->
 <!-- source: backend/dev-tool/src/pages/world-page.ts -->
@@ -34,8 +35,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:22078a799bf4ffbbf3b8aa5864d6d4f433cb7ab909e6c7bdab7c1f5d62a8557e -->
-<!-- last-ticket: MYT-61 -->
+<!-- source-hash: sha256:5adc57e823576f826b835304e970ad7ecae4be459d9ddf0b3ed1e9adbad3fa00 -->
+<!-- last-ticket: MYT-62 -->
 
 <h1>Dev tool</h1>
 
@@ -44,8 +45,9 @@
   workflow pages — Campaigns, World, Characters, Users &amp; Access, Billing &amp; Credits, System —
   and each page composes the relevant single-purpose panels into one scrolling column. A header
   chrome bar pins an always-on backend health pip and an active-campaign dropdown above the banner;
-  a persistent right-side wire-log drawer owns the sole SSE stream for the active campaign. The tool
-  itself is throwaway — not a prototype of the production frontend. The ship gate (<code
+  a persistent right-side wire-log drawer owns the SSE streams for the active campaign — the
+  player-facing pipeline stream plus, in dev, a live session-prep prose pane. The tool itself is
+  throwaway — not a prototype of the production frontend. The ship gate (<code
     >pnpm dev-tool:check</code
   >) plus a four-invariant registry test keep coverage honest.
 </p>
@@ -251,13 +253,15 @@
 
 <p>
   <code>src/shell/drawer/drawer.ts</code> is the persistent right-side pane that owns every SSE
-  subscription for the page. It composes four pieces: a subscription manager
-  (<code>subscriptions.ts</code>) that holds one SSE connection per subscribed campaign id, an
-  in-process pub/sub event bus (<code>event-bus.ts</code>) that fans messages out to in-page
-  subscribers, a 500-event FIFO ring buffer (<code>buffer.ts</code>) that holds the recent-history
-  view, and the drawer's own UI controls (pause / clear / export-to-clipboard, collapsible to a
-  36-px stripe). The shell wires the trio together once at mount time and the drawer renders rows on
-  every <code>bus.publish</code>.
+  subscription for the page. It composes a subscription manager (<code>subscriptions.ts</code>) that
+  holds one SSE connection per subscribed campaign id, an in-process pub/sub event bus
+  (<code>event-bus.ts</code>) that fans messages out to in-page subscribers, a 500-event FIFO ring
+  buffer (<code>buffer.ts</code>) that holds the recent-history view, the drawer's own UI controls
+  (pause / clear / export-to-clipboard, collapsible to a 36-px stripe), and — below the wire log —
+  the
+  <a href="#the-session-prep-prose-pane">session-prep prose pane</a> (<code>prose-view.ts</code>),
+  fed by a separate prose stream. The shell wires the pieces together once at mount time and the
+  drawer renders rows on every <code>bus.publish</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -303,6 +307,38 @@
   open socket closes via <code>closeAll()</code>), and when the shell itself unmounts. Pause + clear
   state persists across reloads in <code>localStorage</code>.
 </p>
+
+<h3 id="the-session-prep-prose-pane">The session-prep prose pane</h3>
+
+<p>
+  Below the wire-log list the drawer also hosts a
+  <strong>prose pane</strong> (<code>drawer/prose-view.ts</code>): two accumulating
+  <code>&lt;pre&gt;</code> panes labelled <code>ft_context (Fast Thinker — public)</code> and
+  <code>sd_playbook (Slow Thinker — secret)</code> that fill in live while a
+  <a href="./session-prep.html">session prep</a> generates. It is fed by a <strong>second</strong>
+  <code>createSubscriptionManager</code> the shell instantiates with
+  <code>urlFor: (id) =&gt; /api/dev/campaigns/${id}/prep-prose</code>, driven by the same four
+  lifecycle sites (mount, identity switch, active-campaign change, unmount) as the wire-log manager.
+  Each incoming <code>prep-delta</code> event appends its <code>text</code> onto the matching
+  field's <code>&lt;pre&gt;</code> via <code>applyProseDelta</code> — a pure reducer; rendering uses
+  <code>textContent</code>, never <code>innerHTML</code>, so the prose is inert. On a campaign
+  switch or identity change the pane resets so a new campaign's deltas don't append onto the prior
+  one's.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A second subscription manager, not a second stream on the first</strong> —
+  <code>createSubscriptionManager</code> keys its open-connection map by <code>campaignId</code> and
+  early-returns if a campaign already has a connection, so it can't hold two streams per campaign. A
+  second manager instance is the cheapest way to run the prose stream alongside the status stream
+  without reworking the manager's keying. The prose feed pointedly does <strong>not</strong> go
+  through the shared wire-log bus: <code>sd_playbook</code> prose may carry plot secrets, so it
+  flows straight from the dev-only <code>prep-prose</code> route into the prose view and nowhere
+  else — the dev-tool side of the
+  <a href="./session-prep.html#two-channels-one-stream">enforced-ignorance boundary</a>. That route
+  exists only under <code>AUTH_MODE=bypass</code>, so the prose pane is dark in any environment but
+  local dev.
+</aside>
 
 <h2>The identity bridge</h2>
 
@@ -436,8 +472,13 @@
   <code>push: branches: [main]</code>, scoped via <code>paths:</code> to the gated surface so
   unrelated PRs don't pay CI minutes. The pipeline contract files are populated and the gate is
   load-bearing: the routes and events that ride the registry today are all driven by panels in the
-  dev tool, and every BullMQ job but one — <code>session-prep</code>, whose live-events driver is
-  tracked for a later ticket — is too.
+  dev tool, and as of MYT-62 every BullMQ job — <code>world-gen</code>,
+  <code>character-creation</code>, <code>character-integration</code>, and now
+  <code>session-prep</code> — is too. The <code>session-prep</code> entry moved out of the exempt
+  list when its driver landed: the live <a href="#the-session-prep-prose-pane">prose pane</a> is
+  what exercises it. (The <code>jobs</code> gate checks listed-or-exempt; no automated harness
+  drives the job, so the prose surface's correctness is proven by the MYT-64 end-to-end smoke, not
+  the gate.)
 </p>
 
 <h2>The exempt list</h2>
@@ -447,15 +488,27 @@
   <code>exempt</code> object, enforced by <code>dev-tool-check</code>) and one for the all-routes
   panel-registry invariant (<code>EXEMPT_ROUTES</code> in
   <code>backend/dev-tool/verify-registry.ts</code>, enforced by the vitest test). The pipeline
-  contracts' exempt object currently holds one entry — the <code>session-prep</code> job, which the
-  play-runtime enqueues and which is exercised end-to-end by a staging smoke; its dev-tool
-  live-events driver is tracked for a later ticket. The verifier's
-  <code>EXEMPT_ROUTES</code> currently lists three entries:
+  contracts' exempt object is now empty: every route, event, and job has a real coverage entry. (The
+  <code>session-prep</code> job left it when MYT-62 shipped its prose-pane driver.) The verifier's
+  <code>EXEMPT_ROUTES</code> currently lists four entries:
   <code>POST /webhooks/stripe</code> (signature-verified consumer, no human UI),
   <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel + the dev
-  tool's self-bootstrap), and <code>GET /api/users/check-username</code> (same shape, embedded in
-  the register probe-helper).
+  tool's self-bootstrap), <code>GET /api/users/check-username</code> (same shape, embedded in the
+  register probe-helper), and <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> (the live
+  prep-prose SSE — consumed by the wire-log drawer's prose pane, which is header chrome rather than
+  a JSDOM-mountable page panel, so it can't be credited to a <code>PAGE_REGISTRY</code> panel).
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The prose route is exempt, not panel-credited</strong> — the route-exhaustion invariant
+  credits a route only when some <code>PAGE_REGISTRY</code> panel exercises it. The prose pane lives
+  in the wire-log drawer, which is shell chrome the JSDOM verifier never mounts — the same reason
+  the two status-SSE routes can't be credited to a panel. So the prep-prose route is exempted with a
+  justification naming the drawer surface and the MYT-64 E2E smoke that proves it. It does
+  <strong>not</strong> appear in <code>coverage.json</code>'s <code>routes[]</code> (which is
+  checked against <code>PIPELINE_ROUTES</code>, and the bypass-only prose route is deliberately not
+  a pipeline route).
+</aside>
 
 <aside class="wiki-rationale">
   <strong>20-character minimum on exempt reasons</strong> — without a floor, the gate's escape hatch
@@ -699,8 +752,9 @@
     <tr>
       <td><code>src/shell/drawer/subscriptions.ts</code></td>
       <td>
-        Sole <code>EventSource</code> owner. One ES per subscribed campaign id;
-        <code>subscribe</code> / <code>unsubscribe</code> / <code>closeAll</code>.
+        Fetch-based SSE manager. One stream per subscribed campaign id;
+        <code>subscribe</code> / <code>unsubscribe</code> / <code>closeAll</code>. The shell runs
+        two instances — one for the pipeline status stream, one for the dev-only prep-prose stream.
       </td>
     </tr>
     <tr>
@@ -710,6 +764,15 @@
     <tr>
       <td><code>src/shell/drawer/buffer.ts</code></td>
       <td>500-event FIFO ring buffer. Oldest items evict on overflow.</td>
+    </tr>
+    <tr>
+      <td><code>src/shell/drawer/prose-view.ts</code></td>
+      <td>
+        Live session-prep prose pane. Pure <code>applyProseDelta</code> reducer + two accumulating
+        <code>ft_context</code> / <code>sd_playbook</code> <code>&lt;pre&gt;</code> panes
+        (<code>textContent</code>, never <code>innerHTML</code>). Fed by the second subscription
+        manager; reset on campaign / identity switch.
+      </td>
     </tr>
     <tr>
       <td><code>src/pages/_shared/page-skeleton.ts</code></td>

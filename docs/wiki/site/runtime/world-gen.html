@@ -1933,12 +1933,13 @@
 <p>
   The processor and its stage handlers publish to
   <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code>, the channel format the
-  <a href="./pipeline-status.html">pipeline status</a> surface listens on. Sixteen event arms are
-  declared in <code>PIPELINE_SSE_EVENTS</code> — six lifecycle arms, seven entity / edge arms, and
-  three per-fact arms (<code>fact-added</code>, <code>fact-removed</code>,
-  <code>fact-updated</code>) added under myth-imxg to mirror the entity / edge add-remove-update
-  shape. Every arm is now rendered by the dev tool's live-events panel; the contract has zero exempt
-  entries.
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. World gen produces
+  sixteen of the nineteen arms declared in <code>PIPELINE_SSE_EVENTS</code> — six lifecycle arms,
+  seven entity / edge arms, and three per-fact arms (<code>fact-added</code>,
+  <code>fact-removed</code>, <code>fact-updated</code>) added under myth-imxg to mirror the entity /
+  edge add-remove-update shape. (The other three, the <code>prep-*</code> phase arms, come from
+  <a href="./session-prep.html">session prep</a>.) Every arm is rendered by the dev tool's
+  live-events panel; the contract has zero exempt entries.
 </p>
 
 <table>
@@ -2353,11 +2354,11 @@
   The dev tool's <code>coverage.json</code> ship-gate keeps the contract honest: every entry in
   <code>PIPELINE_ROUTES</code>, <code>PIPELINE_SSE_EVENTS</code>, and
   <code>PIPELINE_JOBS</code> must either be driven by a panel or carry a typed exempt reason. The
-  exempt list is empty — the wire-log drawer renders all sixteen event arms (the three
-  <code>fact-*</code> arms landed under myth-imxg alongside the coherence-pass full vocabulary).
-  Adding a new pipeline route or job is a four-file change in a single PR — contract, handler,
-  dev-tool panel, coverage entry — and <code>pnpm dev-tool:check</code> red-CI's the merge
-  otherwise.
+  exempt list is empty — the wire-log drawer renders all nineteen event arms (the three
+  <code>fact-*</code> arms landed under myth-imxg alongside the coherence-pass full vocabulary; the
+  three <code>prep-*</code> arms under MYT-62). Adding a new pipeline route or job is a four-file
+  change in a single PR — contract, handler, dev-tool panel, coverage entry — and
+  <code>pnpm dev-tool:check</code> red-CI's the merge otherwise.
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -2542,14 +2543,17 @@
 <p>
   The processor and its handlers publish JSON event payloads on
   <code>{redisKeyPrefix}pipeline:campaign:{campaignId}</code> — the channel format the
-  <a href="./pipeline-status.html">pipeline status</a> surface listens on. All sixteen arms in
+  <a href="./pipeline-status.html">pipeline status</a> surface listens on. All nineteen arms in
   <code>PIPELINE_SSE_EVENTS</code> are now in use: the six lifecycle arms from MYT-50, the seven
   entity / edge arms wired by MYT-52 (<code>stage-reset</code>, <code>entity-added</code>,
   <code>entity-updated</code>, <code>entity-removed</code>, <code>edge-added</code>,
-  <code>edge-removed</code>, <code>finalized</code>), and the three per-fact arms from myth-imxg
-  (<code>fact-added</code>, <code>fact-removed</code>, <code>fact-updated</code>). The SSE bridge is
-  type-blind — every JSON payload published on a campaign channel is forwarded to attached sinks
-  unchanged. The <a href="./dev-tool.html">dev tool's wire-log drawer</a> renders every arm.
+  <code>edge-removed</code>, <code>finalized</code>), the three per-fact arms from myth-imxg
+  (<code>fact-added</code>, <code>fact-removed</code>, <code>fact-updated</code>), and the three
+  <code>prep-*</code> phase arms from <a href="./session-prep.html">session prep</a> (MYT-62). World
+  gen itself produces the first sixteen. The SSE fan-out drops anything whose type isn't a known
+  pipeline event (the <a href="./pipeline-status.html#the-type-tripwire">tripwire</a>); everything
+  else is forwarded to attached sinks unchanged. The
+  <a href="./dev-tool.html">dev tool's wire-log drawer</a> renders every arm.
 </p>
 
 <h2 id="out-of-scope">Out of scope</h2>

@@ -32,193 +32,270 @@
   The campaign-scoped status surface — a JSON snapshot endpoint plus an SSE stream — that lets
   clients watch a campaign's world-gen and character-creation pipeline progress in real time. One
   Redis channel per campaign, one dedicated PSUBSCRIBE'd ioredis client per API process, and an
-  in-memory fan-out from there to every attached SSE sink.
+  in-memory fan-out from there to every attached SSE sink. A second, parallel channel
+  (<code>prep:campaign:</code>) carries dev-only session-prep prose through the same plumbing — its
+  route exists only under <code>AUTH_MODE=bypass</code>, so production never serves it. A type
+  tripwire on the player-facing channel keeps the two from ever crossing.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1303pt" height="580pt"
- viewBox="14.00 14.00 1289.00 566.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 561.84)">
+<svg width="1756pt" height="752pt"
+ viewBox="14.00 14.00 1741.00 737.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 733.24)">
 <title>pipeline_status</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-547.44 1270.4,-547.44 1270.4,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-718.84 1722.94,-718.84 1722.94,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_redis</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="285.71,-444.44 285.71,-535.44 526.15,-535.44 526.15,-444.44 285.71,-444.44"/>
-<text xml:space="preserve" text-anchor="middle" x="405.93" y="-521.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (deps.redisRealtime cluster)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="392.53,-542.84 392.53,-706.84 632.97,-706.84 632.97,-542.84 392.53,-542.84"/>
+<text xml:space="preserve" text-anchor="middle" x="512.75" y="-692.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (deps.redisRealtime cluster)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_api</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="287.27,-184.44 287.27,-444.44 1258.4,-444.44 1258.4,-184.44 287.27,-184.44"/>
-<text xml:space="preserve" text-anchor="middle" x="772.84" y="-430.54" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task)</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="790.98,-235.84 790.98,-623.84 1710.94,-623.84 1710.94,-235.84 790.98,-235.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1250.96" y="-609.94" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_repo</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="712.07,-85.44 712.07,-176.44 921.98,-176.44 921.98,-85.44 712.07,-85.44"/>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-162.54" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1213.22,-97.84 1213.22,-235.84 1423.13,-235.84 1423.13,-97.84 1213.22,-97.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-221.94" font-family="Courier,monospace" font-size="11.00">Postgres</text>
 </g>
 <!-- worker -->
 <g id="node1" class="node">
 <title>worker</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="163.7,-501.28 0,-501.28 0,-457.6 163.7,-457.6 163.7,-501.28"/>
-<text xml:space="preserve" text-anchor="middle" x="81.85" y="-482.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">worker (MYT&#45;49/&#45;51+)</text>
-<text xml:space="preserve" text-anchor="middle" x="81.85" y="-469.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PUBLISH after COMMIT</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="282.52,-642.28 0,-642.28 0,-585.4 282.52,-585.4 282.52,-642.28"/>
+<text xml:space="preserve" text-anchor="middle" x="141.26" y="-623.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">worker (MYT&#45;49/&#45;51+/&#45;61)</text>
+<text xml:space="preserve" text-anchor="middle" x="141.26" y="-610.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PUBLISH after COMMIT</text>
+<text xml:space="preserve" text-anchor="middle" x="141.26" y="-597.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">phase → pipeline: · prose → prep:</text>
 </g>
 <!-- channel -->
 <g id="node2" class="node">
 <title>channel</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="520.29,-514.38 290.58,-514.38 290.58,-444.5 520.29,-444.5 520.29,-514.38"/>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-495.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{redisKeyPrefix}</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-482.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline:campaign:{campaignId}</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-456.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one channel per campaign</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="607.3,-685.28 417.2,-685.28 417.2,-628.4 607.3,-628.4 607.3,-685.28"/>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-666.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-653.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline:campaign:{id}</text>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-640.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player&#45;safe phase events</text>
 </g>
 <!-- worker&#45;&gt;channel -->
 <g id="edge1" class="edge">
 <title>worker&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M164.41,-479.44C199.79,-479.44 241.99,-479.44 281.07,-479.44"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="281.06,-481.89 288.06,-479.44 281.06,-476.99 281.06,-481.89"/>
-<text xml:space="preserve" text-anchor="middle" x="224.71" y="-482.44" font-family="Courier,monospace" font-size="10.00">JSON payload</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M283.08,-630.25C324.61,-635.09 369.29,-640.3 408,-644.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="407.63,-647.23 414.87,-645.61 408.2,-642.36 407.63,-647.23"/>
+<text xml:space="preserve" text-anchor="middle" x="337.53" y="-642.19" font-family="Courier,monospace" font-size="10.00">phase JSON</text>
+</g>
+<!-- prep_channel -->
+<g id="node3" class="node">
+<title>prep_channel</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="587.5,-599.28 437,-599.28 437,-542.4 587.5,-542.4 587.5,-599.28"/>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-580.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{redisKeyPrefix}</text>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-567.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prep:campaign:{id}</text>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-554.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prose (dev&#45;only)</text>
+</g>
+<!-- worker&#45;&gt;prep_channel -->
+<g id="edge2" class="edge">
+<title>worker&#45;&gt;prep_channel</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M283.08,-597.43C331.92,-591.74 385.1,-585.54 427.83,-580.56"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="428.03,-583 434.7,-579.76 427.46,-578.14 428.03,-583"/>
+<text xml:space="preserve" text-anchor="middle" x="337.53" y="-596.63" font-family="Courier,monospace" font-size="10.00">prep&#45;delta</text>
 </g>
 <!-- subscriber -->
-<g id="node3" class="node">
+<g id="node4" class="node">
 <title>subscriber</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="931.88,-423.08 702.17,-423.08 702.17,-339.8 931.88,-339.8 931.88,-423.08"/>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-404.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline&#45;subscriber.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-391.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.duplicate({retryStrategy,</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-378.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> maxRetriesPerRequest:null})</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-364.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PSUBSCRIBE pipeline:campaign:*</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-351.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Map&lt;campaignId, Set&lt;SseSink&gt;&gt;</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1433.03,-474.08 1203.32,-474.08 1203.32,-377.6 1433.03,-377.6 1433.03,-474.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-455.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pipeline&#45;subscriber.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-442.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">channel:&#39;pipeline&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-429.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PSUBSCRIBE pipeline:campaign:*</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-415.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Type TRIPWIRE: drop non&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-402.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;PIPELINE_SSE_EVENTS</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-389.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Map&lt;campaignId, Set&lt;SseSink&gt;&gt;</text>
 </g>
 <!-- channel&#45;&gt;subscriber -->
-<g id="edge2" class="edge">
+<g id="edge3" class="edge">
 <title>channel&#45;&gt;subscriber</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M520.8,-452.08C574.49,-439.23 638.56,-423.9 693.27,-410.81"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="693.62,-413.25 699.86,-409.23 692.48,-408.48 693.62,-413.25"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-445.1" font-family="Courier,monospace" font-size="10.00">pmessage</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M608.01,-665.36C745.03,-672.92 1001.38,-668.8 1178.32,-555.84 1210.92,-535.03 1242.75,-506.05 1267.69,-480.74"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1269.16,-482.75 1272.29,-476.03 1265.65,-479.33 1269.16,-482.75"/>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-667.16" font-family="Courier,monospace" font-size="10.00">pmessage</text>
+</g>
+<!-- prep_subscriber -->
+<g id="node5" class="node">
+<title>prep_subscriber</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1010.8,-602.48 807.49,-602.48 807.49,-519.2 1010.8,-519.2 1010.8,-602.48"/>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-583.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline&#45;subscriber.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-570.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">channel:&#39;prep&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-557.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PSUBSCRIBE prep:campaign:*</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-544.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">verbatim (no tripwire)</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-531.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">bypass&#45;only</text>
+</g>
+<!-- prep_channel&#45;&gt;prep_subscriber -->
+<g id="edge6" class="edge">
+<title>prep_channel&#45;&gt;prep_subscriber</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M587.99,-568.95C647.39,-567.44 731.33,-565.32 798.36,-563.62"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="798.11,-566.08 805.05,-563.45 797.99,-561.18 798.11,-566.08"/>
+<text xml:space="preserve" text-anchor="middle" x="711.98" y="-570.03" font-family="Courier,monospace" font-size="10.00">pmessage</text>
 </g>
 <!-- sse -->
-<g id="node6" class="node">
+<g id="node10" class="node">
 <title>sse</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1258.4,-268.08 1107.9,-268.08 1107.9,-184.8 1258.4,-184.8 1258.4,-268.08"/>
-<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-249.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sse&#45;connection.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-236.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reply.hijack()</text>
-<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-223.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">keepalive 25s</text>
-<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-209.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">idle&#45;timeout 30min</text>
-<text xml:space="preserve" text-anchor="middle" x="1183.15" y="-196.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">close&#45;reason enum</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1710.94,-398.48 1567.04,-398.48 1567.04,-315.2 1710.94,-315.2 1710.94,-398.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1638.99" y="-379.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sse&#45;connection.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1638.99" y="-366.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reply.hijack()</text>
+<text xml:space="preserve" text-anchor="middle" x="1638.99" y="-353.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">keepalive 25s</text>
+<text xml:space="preserve" text-anchor="middle" x="1638.99" y="-340.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">idle 30min</text>
+<text xml:space="preserve" text-anchor="middle" x="1638.99" y="-327.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">close&#45;reason enum</text>
 </g>
 <!-- subscriber&#45;&gt;sse -->
-<g id="edge3" class="edge">
+<g id="edge4" class="edge">
 <title>subscriber&#45;&gt;sse</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M917.53,-339.09C974.62,-314.78 1045.47,-284.62 1099.48,-261.63"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1100.17,-264 1105.65,-259 1098.25,-259.49 1100.17,-264"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.89" y="-320.82" font-family="Courier,monospace" font-size="10.00">sink.write(frame)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1433.38,-401.12C1474.74,-392.17 1520.53,-382.26 1558.28,-374.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1558.61,-376.53 1564.93,-372.65 1557.57,-371.74 1558.61,-376.53"/>
+<text xml:space="preserve" text-anchor="middle" x="1500.04" y="-410.47" font-family="Courier,monospace" font-size="10.00">sink.write</text>
+<text xml:space="preserve" text-anchor="middle" x="1500.04" y="-398.47" font-family="Courier,monospace" font-size="10.00">(allowed only)</text>
+</g>
+<!-- prose_route -->
+<g id="node9" class="node">
+<title>prose_route</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1423.13,-310.28 1213.22,-310.28 1213.22,-253.4 1423.13,-253.4 1423.13,-310.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-291.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dev&#45;prep&#45;prose.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-278.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET /api/dev/.../prep&#45;prose</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-265.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">bypass&#45;only · prose stream</text>
+</g>
+<!-- prep_subscriber&#45;&gt;prose_route -->
+<g id="edge7" class="edge">
+<title>prep_subscriber&#45;&gt;prose_route</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1011.43,-547.87C1068.08,-535.46 1135.66,-511.21 1178.32,-463.84 1209.27,-429.48 1177.3,-401.07 1203.32,-362.84 1216.03,-344.16 1234.56,-328.35 1253,-315.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1254.31,-317.87 1258.8,-311.97 1251.61,-313.78 1254.31,-317.87"/>
+<text xml:space="preserve" text-anchor="middle" x="1115.31" y="-539.49" font-family="Courier,monospace" font-size="10.00">attach()</text>
 </g>
 <!-- snapshot -->
-<g id="node4" class="node">
+<g id="node6" class="node">
 <title>snapshot</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="500.48,-268.08 310.38,-268.08 310.38,-184.8 500.48,-184.8 500.48,-268.08"/>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-249.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-236.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/campaigns/</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-223.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;:campaignId/status</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-209.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">derivePhase(</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-196.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;campaign, world, runs)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="994.29,-305.88 823.99,-305.88 823.99,-235.8 994.29,-235.8 994.29,-305.88"/>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-287.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-274.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /status</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-260.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">derivePhase(campaign,</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-247.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;world, runs)</text>
 </g>
 <!-- runs -->
-<g id="node8" class="node">
+<g id="node11" class="node">
 <title>runs</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="921.98,-155.48 712.07,-155.48 712.07,-85.4 921.98,-85.4 921.98,-155.48"/>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-136.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline_runs</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-123.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">latest per (stage, user_id)</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-110.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">WHERE campaign_id = $1</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-97.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> &#160;OR world_id = ...</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1423.13,-141.68 1213.22,-141.68 1213.22,-98 1423.13,-98 1423.13,-141.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-123.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">pipeline_runs</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-109.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">latest per (stage, user_id)</text>
 </g>
 <!-- snapshot&#45;&gt;runs -->
-<g id="edge6" class="edge">
+<g id="edge10" class="edge">
 <title>snapshot&#45;&gt;runs</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M447.76,-184.15C474.63,-159.79 511.88,-131.48 551.15,-118.44 599.22,-102.48 654.95,-100.62 702.86,-103.69"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="702.43,-106.11 709.59,-104.16 702.78,-101.23 702.43,-106.11"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-121.44" font-family="Courier,monospace" font-size="10.00">listLatestForCampaign</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M964.83,-235.24C990.58,-219.65 1022.19,-202.15 1052.3,-189.84 1100.68,-170.06 1156.34,-154.36 1204.11,-142.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1204.61,-145.28 1210.86,-141.28 1203.48,-140.51 1204.61,-145.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1115.31" y="-192.84" font-family="Courier,monospace" font-size="10.00">listLatestForCampaign</text>
 </g>
-<!-- client -->
-<g id="node9" class="node">
-<title>client</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="892.28,-56.88 741.78,-56.88 741.78,0 892.28,0 892.28,-56.88"/>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">EventSource client</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev tool today;</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> SPA after MYT&#45;51)</text>
+<!-- player -->
+<g id="node13" class="node">
+<title>player</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="600.7,-338.68 423.8,-338.68 423.8,-295 600.7,-295 600.7,-338.68"/>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-320.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
+<text xml:space="preserve" text-anchor="middle" x="512.25" y="-306.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(status + prep&#45;status)</text>
 </g>
-<!-- snapshot&#45;&gt;client -->
-<g id="edge7" class="edge">
-<title>snapshot&#45;&gt;client</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M437.91,-184.08C464.46,-151.48 505.39,-107.97 551.15,-83.44 607.24,-53.37 678.16,-39.73 732.5,-33.54"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="732.57,-36 739.27,-32.81 732.04,-31.13 732.57,-36"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-86.44" font-family="Courier,monospace" font-size="10.00">200 JSON</text>
+<!-- snapshot&#45;&gt;player -->
+<g id="edge11" class="edge">
+<title>snapshot&#45;&gt;player</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M823.33,-280.72C760.7,-288.02 675.35,-297.96 610.05,-305.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="609.85,-303.12 603.18,-306.36 610.42,-307.99 609.85,-303.12"/>
+<text xml:space="preserve" text-anchor="middle" x="711.98" y="-302.31" font-family="Courier,monospace" font-size="10.00">200 JSON</text>
 </g>
 <!-- stream -->
-<g id="node5" class="node">
+<g id="node7" class="node">
 <title>stream</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="523.59,-367.48 287.27,-367.48 287.27,-297.4 523.59,-297.4 523.59,-367.48"/>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-348.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-335.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/campaigns/</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-322.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;:campaignId/status/stream</text>
-<text xml:space="preserve" text-anchor="middle" x="405.43" y="-309.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">attach → snapshot → forward</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1027.3,-391.28 790.98,-391.28 790.98,-334.4 1027.3,-334.4 1027.3,-391.28"/>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-372.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-359.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /status/stream</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-346.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">attach → snapshot → forward</text>
 </g>
 <!-- stream&#45;&gt;subscriber -->
-<g id="edge9" class="edge">
+<g id="edge13" class="edge">
 <title>stream&#45;&gt;subscriber</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M524.08,-346.51C577.03,-352.85 639.53,-360.33 693.09,-366.73"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="692.57,-369.14 699.81,-367.54 693.15,-364.27 692.57,-369.14"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-367.19" font-family="Courier,monospace" font-size="10.00">attach()</text>
-</g>
-<!-- stream&#45;&gt;sse -->
-<g id="edge11" class="edge">
-<title>stream&#45;&gt;sse</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M496.56,-296.65C567.92,-269.04 662.04,-234.4 702.17,-227.44 839.65,-203.61 1002.64,-210.53 1098.94,-218.16"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1098.49,-220.58 1105.66,-218.71 1098.89,-215.7 1098.49,-220.58"/>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-230.44" font-family="Courier,monospace" font-size="10.00">snapshot frame</text>
-</g>
-<!-- counter -->
-<g id="node7" class="node">
-<title>counter</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="905.48,-310.88 728.57,-310.88 728.57,-254 905.48,-254 905.48,-310.88"/>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-292.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connection&#45;counter.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-279.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sse.connections.active</text>
-<text xml:space="preserve" text-anchor="middle" x="817.03" y="-265.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">every 60s</text>
-</g>
-<!-- stream&#45;&gt;counter -->
-<g id="edge12" class="edge">
-<title>stream&#45;&gt;counter</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M524.08,-318.08C586.03,-310.52 661.07,-301.36 719.55,-294.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="719.6,-296.68 726.25,-293.4 719.01,-291.82 719.6,-296.68"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-316.39" font-family="Courier,monospace" font-size="10.00">increment / decrement</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1027.87,-381.06C1080.13,-389.15 1141.64,-398.67 1194.46,-406.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1193.78,-409.22 1201.07,-407.87 1194.53,-404.38 1193.78,-409.22"/>
+<text xml:space="preserve" text-anchor="middle" x="1115.31" y="-406.66" font-family="Courier,monospace" font-size="10.00">attach()</text>
 </g>
 <!-- stream&#45;&gt;runs -->
-<g id="edge10" class="edge">
+<g id="edge14" class="edge">
 <title>stream&#45;&gt;runs</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M509.38,-296.85C515.46,-292.56 521.13,-287.77 526.15,-282.44 549.36,-257.76 526.11,-233.25 551.15,-210.44 593.79,-171.59 622.45,-197.67 677.17,-179.44 694.52,-173.66 712.73,-166.65 730.05,-159.5"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="730.74,-161.87 736.25,-156.91 728.85,-157.35 730.74,-161.87"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-213.44" font-family="Courier,monospace" font-size="10.00">listLatestForCampaign</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1010.44,-333.73C1016.5,-329.94 1022.19,-325.66 1027.3,-320.84 1048,-301.28 1032.4,-282.22 1052.3,-261.84 1095.24,-217.85 1133.66,-247.09 1178.32,-204.84 1195.79,-188.31 1184.96,-172.38 1203.32,-156.84 1207.8,-153.05 1212.67,-149.65 1217.8,-146.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1218.94,-148.76 1223.88,-143.23 1216.57,-144.47 1218.94,-148.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1115.31" y="-264.84" font-family="Courier,monospace" font-size="10.00">listLatestForCampaign</text>
 </g>
-<!-- sse&#45;&gt;client -->
-<g id="edge4" class="edge">
-<title>sse&#45;&gt;client</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1115.67,-184.16C1065.94,-153.26 995.77,-111.21 931.88,-78.44 920.38,-72.54 908.03,-66.66 895.85,-61.12"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="896.94,-58.92 889.55,-58.28 894.92,-63.39 896.94,-58.92"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.89" y="-166.6" font-family="Courier,monospace" font-size="10.00">event: ...\ndata: ...</text>
+<!-- prep_status -->
+<g id="node8" class="node">
+<title>prep_status</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="997.59,-489.88 820.69,-489.88 820.69,-419.8 997.59,-419.8 997.59,-489.88"/>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-471.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-458.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /prep&#45;status</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-444.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">existsFor snapshot →</text>
+<text xml:space="preserve" text-anchor="middle" x="909.14" y="-431.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;PHASE&#45;only forward</text>
 </g>
-<!-- client&#45;&gt;snapshot -->
-<g id="edge5" class="edge">
-<title>client&#45;&gt;snapshot</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M741.28,-10.18C685.77,-0.67 609.82,3.52 551.15,-26.44 490.05,-57.65 448.77,-128.04 426.42,-176.4"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="424.27,-175.22 423.61,-182.6 428.73,-177.24 424.27,-175.22"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-29.44" font-family="Courier,monospace" font-size="10.00">GET /status</text>
+<!-- prep_status&#45;&gt;subscriber -->
+<g id="edge16" class="edge">
+<title>prep_status&#45;&gt;subscriber</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M998.21,-448.57C1055.48,-444.48 1130.98,-439.11 1194.14,-434.61"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1193.95,-437.08 1200.76,-434.13 1193.61,-432.19 1193.95,-437.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1115.31" y="-447.63" font-family="Courier,monospace" font-size="10.00">attach()</text>
 </g>
-<!-- client&#45;&gt;stream -->
+<!-- preps -->
+<g id="node12" class="node">
+<title>preps</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1406.63,-214.68 1229.72,-214.68 1229.72,-171 1406.63,-171 1406.63,-214.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-196.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_preps</text>
+<text xml:space="preserve" text-anchor="middle" x="1318.17" y="-182.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">existsFor(campaign, n)</text>
+</g>
+<!-- prep_status&#45;&gt;preps -->
+<g id="edge17" class="edge">
+<title>prep_status&#45;&gt;preps</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M998.11,-425.22C1008.54,-419.69 1018.56,-413.26 1027.3,-405.84 1043.28,-392.27 1037.9,-381.08 1052.3,-365.84 1099.4,-316.01 1133.21,-328.48 1178.32,-276.84 1194.14,-258.73 1184.9,-244.31 1203.32,-228.84 1208.85,-224.19 1214.99,-220.14 1221.47,-216.62"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1222.44,-218.87 1227.59,-213.53 1220.23,-214.5 1222.44,-218.87"/>
+<text xml:space="preserve" text-anchor="middle" x="1115.31" y="-368.84" font-family="Courier,monospace" font-size="10.00">existsFor</text>
+</g>
+<!-- devtool -->
+<g id="node14" class="node">
+<title>devtool</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1694.44,-43.68 1583.55,-43.68 1583.55,0 1694.44,0 1694.44,-43.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1638.99" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dev tool</text>
+<text xml:space="preserve" text-anchor="middle" x="1638.99" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(prose pane)</text>
+</g>
+<!-- prose_route&#45;&gt;devtool -->
 <g id="edge8" class="edge">
-<title>client&#45;&gt;stream</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M741.27,-51.87C727.08,-58.79 713.23,-67.52 702.17,-78.44 683.06,-97.3 697.83,-116.29 677.17,-133.44 632.78,-170.27 591.27,-123 551.15,-164.44 513.86,-202.96 560.36,-241.16 526.15,-282.44 523.55,-285.58 520.71,-288.53 517.69,-291.29"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="516.42,-289.16 512.64,-295.54 519.58,-292.91 516.42,-289.16"/>
-<text xml:space="preserve" text-anchor="middle" x="614.16" y="-167.44" font-family="Courier,monospace" font-size="10.00">GET /status/stream</text>
+<title>prose_route&#45;&gt;devtool</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1415.55,-252.74C1421.63,-249.72 1427.51,-246.43 1433.03,-242.84 1514.03,-190.18 1584.8,-98.53 1617.97,-51.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1619.92,-53 1621.92,-45.86 1615.91,-50.19 1619.92,-53"/>
+<text xml:space="preserve" text-anchor="middle" x="1500.04" y="-226.99" font-family="Courier,monospace" font-size="10.00">prep&#45;delta</text>
+</g>
+<!-- sse&#45;&gt;player -->
+<g id="edge5" class="edge">
+<title>sse&#45;&gt;player</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1620.26,-314.49C1591.49,-252.05 1528.11,-137.61 1433.03,-90.84 1115.53,65.34 681.93,-200.71 551.73,-289.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="550.55,-287.36 546.17,-293.34 553.33,-291.4 550.55,-287.36"/>
+<text xml:space="preserve" text-anchor="middle" x="1115.31" y="-62.66" font-family="Courier,monospace" font-size="10.00">event: ...\ndata: ...</text>
+</g>
+<!-- player&#45;&gt;snapshot -->
+<g id="edge9" class="edge">
+<title>player&#45;&gt;snapshot</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M567.19,-294.37C593.97,-284.41 627.13,-273.82 657.97,-268.84 709.33,-260.54 767.41,-260.45 814.66,-262.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="814.43,-265.14 821.54,-263.05 814.68,-260.25 814.43,-265.14"/>
+<text xml:space="preserve" text-anchor="middle" x="711.98" y="-271.84" font-family="Courier,monospace" font-size="10.00">GET /status</text>
+</g>
+<!-- player&#45;&gt;stream -->
+<g id="edge12" class="edge">
+<title>player&#45;&gt;stream</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M601.38,-327.11C654.46,-333.29 722.93,-341.27 781.72,-348.11"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="781.27,-350.53 788.51,-348.9 781.84,-345.66 781.27,-350.53"/>
+<text xml:space="preserve" text-anchor="middle" x="711.98" y="-348.31" font-family="Courier,monospace" font-size="10.00">GET /status/stream</text>
+</g>
+<!-- player&#45;&gt;prep_status -->
+<g id="edge15" class="edge">
+<title>player&#45;&gt;prep_status</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M577.57,-339.32C641.13,-361.53 739.12,-395.77 811.93,-421.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="811.11,-423.53 818.52,-423.52 812.72,-418.9 811.11,-423.53"/>
+<text xml:space="preserve" text-anchor="middle" x="711.98" y="-405.26" font-family="Courier,monospace" font-size="10.00">GET /prep&#45;status</text>
 </g>
 </g>
 </svg>
@@ -251,17 +328,33 @@
 
 <p>
   The status surface itself is the consumption side: the worker (real processors landed across
-  MYT-49 / MYT-51 / MYT-52) is what publishes events to Redis; this page documents how those events
-  reach attached clients. The contract files
+  MYT-49 / MYT-51 / MYT-52 / MYT-61) is what publishes events to Redis; this page documents how
+  those events reach attached clients. The contract files
   <code>backend/src/contract/pipeline-routes.ts</code> and <code>pipeline-events.ts</code> declare
-  the surface — two routes, sixteen event types. All sixteen arms have producers (six lifecycle from
-  the processor, seven entity / edge from the streaming extractor + the post-COMMIT
-  <code>finalizedEvents</code> pipe, three per-fact arms from coherence pass) AND a consumer in the
-  <a href="./dev-tool.html">dev tool's wire-log drawer</a>. The bridge itself is type-blind: every
-  JSON payload published on a campaign channel is forwarded to attached sinks unchanged. The WORLD /
-  Status panel renders the snapshot's phase + stages list; the drawer renders all sixteen event arms
-  as wire-data rows in chronological order.
+  the surface — and as of MYT-62, <strong>nineteen</strong> pipeline event types. All nineteen arms
+  have producers (six lifecycle from the processor, seven entity / edge from the streaming extractor
+  + the post-COMMIT <code>finalizedEvents</code> pipe, three per-fact arms from the coherence pass,
+  and three <code>prep-*</code> phase arms from the
+  <a href="./session-prep.html">session-prep processor</a>) AND a consumer in the
+  <a href="./dev-tool.html">dev tool's wire-log drawer</a>. The fan-out itself is type-blind: every
+  JSON payload published on a campaign channel is forwarded to attached sinks unchanged — with one
+  guard, the <a href="#the-type-tripwire">type tripwire</a> below, that drops anything whose
+  <code>type</code> isn't a known pipeline event. The WORLD / Status panel renders the snapshot's
+  phase + stages list; the drawer renders all nineteen event arms as wire-data rows in chronological
+  order.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Prep prose is deliberately NOT one of the nineteen</strong> — session prep also produces a
+  stream of <code>prep-delta</code> prose events, but those live in a separate
+  <code>ProseEvent</code> type, on a separate channel, served by a separate dev-only route. They are
+  not in <code>PIPELINE_SSE_EVENTS</code> and never ride <code>pipeline:campaign:</code>. The reason
+  is enforced ignorance: <code>prep-delta</code> carries <code>sd_playbook</code> prose that may
+  hold plot secrets. Keeping it out of the pipeline event union makes publishing it on the player
+  channel a compile error — see
+  <a href="./session-prep.html#two-channels-one-stream">two channels off one stream</a> for the full
+  three-layer boundary.
+</aside>
 
 <h2 id="the-two-endpoints">The two endpoints</h2>
 
@@ -320,6 +413,80 @@
   every request because the auth pre-handler couldn't resolve the param. The parent spec text says
   <code>:id</code> in §9; this implementation standardises on <code>:campaignId</code> for every
   campaign-scoped route going forward.
+</aside>
+
+<h2 id="the-prep-status-route">The prep-status route</h2>
+
+<p>
+  <code>GET /api/campaigns/:campaignId/prep-status</code> is a third SSE route on the campaigns
+  plugin, added for the player-facing "the DM is preparing tonight's session…" loading screen. It
+  reuses the exact wiring of <code>status/stream</code> — <code>requireCampaignMember</code>, the
+  shared subscriber, the connection counter, per-user rate limit, <code>pipelineRoute: true</code> —
+  with one difference in the first frame. Instead of <code>derivePhase</code>, its snapshot is a
+  single bit: <code>repo.sessionPreps.existsFor(campaignId, sessionNumber)</code> →
+  <code>event: snapshot\ndata: { "status": "ready" | "generating" }\n\n</code>. After the snapshot
+  it attaches to the <strong>same</strong> <code>pipeline:campaign:</code> channel the status stream
+  uses, where the <a href="./session-prep.html">session-prep processor</a> publishes its
+  <code>prep-started</code> / <code>prep-ready</code> / <code>prep-failed</code> phase events.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Phase-only, by construction — not by filtering</strong> — a prep loading screen must never
+  see <code>sd_playbook</code> prose. This route doesn't earn that by filtering; it earns it
+  structurally. Prose is never published to <code>pipeline:campaign:</code> in the first place (it
+  rides the separate prep channel), and the <a href="#the-type-tripwire">type tripwire</a> below
+  drops anything on the pipeline channel whose <code>type</code> isn't a known pipeline event. So a
+  <code>prep-delta</code> can't reach this route's sinks even if some future bug published one
+  there. The session-prep page covers the full enforced-ignorance argument; here the takeaway is
+  that prep-status is just another <code>pipeline:</code> reader and inherits the channel's
+  guarantees.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Session number is hardcoded to 1 for the MVP</strong> — the
+  <code>existsFor</code> snapshot reads session 1's prep row, matching the session-1 scope the
+  generation stage shipped under. The handler states the constant (<code
+    >PREP_SESSION_NUMBER = 1</code
+  >) explicitly; a later session-runtime change resolves the campaign's current session and threads
+  it through here.
+</aside>
+
+<h2 id="the-prose-channel">The prose channel and its dev-only route</h2>
+
+<p>
+  Session prep streams its two documents as it generates them. The phase events above are the
+  player's signal; the prose itself — <code>ft_context</code> and the secrets-bearing
+  <code>sd_playbook</code> — flows on a second channel,
+  <code>&#123;redisKeyPrefix&#125;prep:campaign:&#123;campaignId&#125;</code>, as
+  <code>prep-delta</code> events. The same <code>createPipelineSubscriber</code> machinery serves
+  it: the function takes an <code>opts.channel</code> parameter (default <code>'pipeline'</code>),
+  and a second instance is constructed with <code>channel: 'prep'</code> so it PSUBSCRIBEs
+  <code>prep:campaign:*</code> instead. The only route that reads it is
+  <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> in
+  <code>backend/src/routes/dev-prep-prose.ts</code> — no snapshot frame (prose is ephemeral), no
+  <code>requireCampaignMember</code> (bypass mode is a single dev identity), just attach and stream.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The prose route is registered only under <code>AUTH_MODE=bypass</code></strong> — both the
+  route and its prose subscriber are constructed inside <code>app.ts</code>'s
+  <code>if (config.env.authMode === 'bypass')</code> block, the same gate that hides the dev-credits
+  routes. In production (<code>authMode ≠ bypass</code>) neither is built, so there is literally no
+  code path that serves <code>sd_playbook</code> prose over the wire. This absence — not a runtime
+  filter — is the enforced-ignorance control for the streaming prose (the Haiku leak-classifier that
+  would have guarded it at runtime was descoped). The route is in
+  <a href="./dev-tool.html#the-ship-gate"><code>BACKEND_ROUTES</code></a> (the drift test boots
+  under bypass and sees it) but deliberately <strong>not</strong> in <code>PIPELINE_ROUTES</code>: a
+  bypass-only route listed as a pipeline route would fail the <code>pipeline-routes</code> reverse
+  check at production boot, crashing the prod API.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The prose subscriber skips the type tripwire</strong> — the tripwire below runs only on
+  the <code>pipeline:</code> channel. The prep channel forwards every message verbatim: it is
+  dev-only by construction, and its whole purpose is to carry the secret-bearing
+  <code>sd_playbook</code> prose to an operator. A tripwire here would be both redundant (no player
+  reaches this channel) and harmful (it would drop the very prose the dev tool exists to show).
 </aside>
 
 <h2 id="the-pub-sub-channel">The pub/sub channel</h2>
@@ -587,8 +754,36 @@
   campaign-id, looks up the set, and writes the JSON payload to every attached sink as a
   <code>data: {...}\n\n</code> frame. Each <code>sink.write()</code> is wrapped in try/catch over a
   snapshot of the set so one stale sink can't wedge iteration over the others; on throw, the sink is
-  closed with <code>unknown</code> and removed from the set.
+  closed with <code>unknown</code> and removed from the set. The same factory builds both the
+  <code>pipeline</code> and the <code>prep</code> subscriber; the <code>channel</code> option
+  decides the PSUBSCRIBE pattern (<code>pipeline:campaign:*</code> vs <code>prep:campaign:*</code>)
+  and whether the tripwire runs.
 </p>
+
+<h3 id="the-type-tripwire">The type tripwire</h3>
+
+<p>
+  On the <code>pipeline</code> channel — and only there — every <code>'pmessage'</code> passes
+  through <code>classifyPipelineEvent</code> before reaching any sink. It JSON-parses the payload,
+  reads its <code>type</code>, and checks membership in <code>PIPELINE_SSE_EVENTS</code>. A message
+  whose type isn't a known pipeline event (malformed JSON, a missing <code>type</code>, or a
+  forbidden one) is logged at warn level with the parsed type and <strong>dropped</strong> — it
+  never reaches a sink. The <code>prep</code> subscriber skips this gate and forwards everything
+  verbatim.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A runtime guard on top of a compile-time one</strong> — <code>prep-delta</code> (the
+  prose-carrying event that may hold <code>sd_playbook</code> secrets) is a <code>ProseEvent</code>,
+  deliberately absent from the <code>PipelineEvent</code> union, so publishing it on the player
+  channel is already a compile error (the publisher is typed to accept only
+  <code>PipelineEvent</code>). The tripwire is the second layer: if a future code path ever
+  hand-built a raw payload and published a stray <code>prep-delta</code> onto
+  <code>pipeline:campaign:</code>, the tripwire drops it before any player sink sees it. This is
+  structural validation — an O(1) set-membership check, no cognition — which the ZFC boundary
+  explicitly allows. Together with the topology guarantee (no prose route in production), enforced
+  ignorance survives any single mistake.
+</aside>
 
 <p>
   Reconnection is the load-bearing operational behaviour. On the first <code>'ready'</code> event
@@ -724,8 +919,9 @@
   The worker side of the contract landed across MYT-49 (BullMQ shell +
   <code>wrapStream</code> middleware), MYT-51 (world-gen processor + lifecycle events), MYT-52
   (streaming entity / edge events after COMMIT), MYT-53 (per-player character-creation processor),
-  MYT-54 (campaign-scoped character integration), and myth-imxg (per-fact events from the coherence
-  pass). All sixteen arms in <code>PIPELINE_SSE_EVENTS</code> now have producers. The parent spec
+  MYT-54 (campaign-scoped character integration), myth-imxg (per-fact events from the coherence
+  pass), and MYT-62 (the three <code>prep-*</code> phase arms from the session-prep processor). All
+  nineteen arms in <code>PIPELINE_SSE_EVENTS</code> now have producers. The parent spec
   <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> §8 and §9 — both amended on
   2026-05-12 to consolidate around the campaign-scoped surface — are the contract these tickets
   shared.
@@ -764,8 +960,17 @@
     <tr>
       <td><code>backend/src/routes/campaigns.ts</code></td>
       <td>
-        Two-route Fastify plugin: <code>GET /status</code> + <code>GET /status/stream</code>. Owns
-        the attach→snapshot→forward ordering.
+        Three SSE routes: <code>GET /status</code>, <code>GET /status/stream</code>, and
+        <code>GET /prep-status</code> (phase-only prep loading screen, <code>existsFor</code>
+        snapshot). Owns the attach→snapshot→forward ordering.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/routes/dev-prep-prose.ts</code></td>
+      <td>
+        Dev-only <code>GET /api/dev/campaigns/:campaignId/prep-prose</code>. Registered solely under
+        <code>AUTH_MODE=bypass</code>; streams <code>prep-delta</code> off the <code>prep</code>
+        subscriber, no snapshot. Absent in production.
       </td>
     </tr>
     <tr>
@@ -773,7 +978,11 @@
       <td>
         Dedicated PSUBSCRIBE'd ioredis client;
         <code>Map&lt;campaignId, Set&lt;SseSink&gt;&gt;</code>; reconnect-on-blip with
-        <code>redis-resync-required</code> eviction.
+        <code>redis-resync-required</code> eviction. <code>opts.channel</code> (<code
+          >'pipeline'</code
+        >
+        | <code>'prep'</code>) picks the pattern; <code>classifyPipelineEvent</code> tripwire runs
+        on <code>pipeline</code> only.
       </td>
     </tr>
     <tr>
@@ -813,12 +1022,16 @@
     <tr>
       <td><code>backend/src/contract/pipeline-events.ts</code></td>
       <td>
-        Sixteen event-type strings (six lifecycle + seven entity / edge + three per-fact) plus the
-        typed <code>PipelineEvent</code> discriminated union. Entity / edge events carry a
-        <code>synthKey</code> of the form <code>${stage}/${arrayPath}/${index}</code>;
-        <code>finalized</code> binds it to the real <code>entityId</code> post-COMMIT. The
-        <code>fact-*</code> events carry an <code>entitySynthKey</code> (the owning entity's
-        synthKey, used for FE-side routing) plus the row's <code>factId</code>.
+        Nineteen event-type strings (six lifecycle + seven entity / edge + three per-fact + three
+        <code>prep-*</code> phase) plus the typed <code>PipelineEvent</code> discriminated union.
+        Entity / edge events carry a <code>synthKey</code> of the form
+        <code>${stage}/${arrayPath}/${index}</code>; <code>finalized</code> binds it to the real
+        <code>entityId</code> post-COMMIT. The <code>fact-*</code> events carry an
+        <code>entitySynthKey</code> plus the row's <code>factId</code>. The <code>prep-*</code> arms
+        carry <code>sessionNumber</code> (+ <code>costUsd</code> on <code>prep-ready</code>,
+        <code>terminal</code> on <code>prep-failed</code>). The file also declares the SEPARATE
+        <code>ProseEvent</code> / <code>PROSE_SSE_EVENTS</code> for <code>prep-delta</code> —
+        deliberately outside the pipeline union so prose can't type-check onto the player channel.
       </td>
     </tr>
     <tr>
@@ -917,20 +1130,21 @@
 <h2 id="source">Source</h2>
 
 <p>
-  <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/sse/</code>,
-  <code>backend/src/repo/pipeline-runs.ts</code>,
+  <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/routes/dev-prep-prose.ts</code>,
+  <code>backend/src/sse/</code>, <code>backend/src/repo/pipeline-runs.ts</code>,
   <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-events.ts</code>,
-  <code>backend/dev-tool/src/components/status-panel.ts</code>. Design spec:
-  <code>docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md</code>; parent
-  spec §8 + §9: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+  <code>backend/dev-tool/src/components/status-panel.ts</code>. Design specs:
+  <code>docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md</code> and
+  <code>docs/superpowers/specs/2026-06-02-myt-62-streaming-prep-status-dev-tool-design.md</code>;
+  parent spec §8 + §9: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-endpoints">The two endpoints</a></li><li style="padding-left:0"><a href="#the-pub-sub-channel">The pub/sub channel</a></li><li style="padding-left:0"><a href="#phase-derivation">Phase derivation</a></li><li style="padding-left:0"><a href="#sse-plumbing">SSE plumbing</a></li><li style="padding-left:0"><a href="#the-dedicated-subscriber-client">The dedicated subscriber client</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stale-sse-connection">Diagnose a stale SSE connection</a></li><li style="padding-left:12px"><a href="#verify-the-subscriber-survived-a-redis-blip">Verify the subscriber survived a Redis blip</a></li><li style="padding-left:12px"><a href="#watch-a-campaign-locally">Watch a campaign locally</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#close-reason-enum">Close-reason enum</a></li><li style="padding-left:12px"><a href="#periodic-log-fields">Periodic log fields</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-endpoints">The two endpoints</a></li><li style="padding-left:0"><a href="#the-prep-status-route">The prep-status route</a></li><li style="padding-left:0"><a href="#the-prose-channel">The prose channel and its dev-only route</a></li><li style="padding-left:0"><a href="#the-pub-sub-channel">The pub/sub channel</a></li><li style="padding-left:0"><a href="#phase-derivation">Phase derivation</a></li><li style="padding-left:0"><a href="#sse-plumbing">SSE plumbing</a></li><li style="padding-left:0"><a href="#the-dedicated-subscriber-client">The dedicated subscriber client</a></li><li style="padding-left:12px"><a href="#the-type-tripwire">The type tripwire</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stale-sse-connection">Diagnose a stale SSE connection</a></li><li style="padding-left:12px"><a href="#verify-the-subscriber-survived-a-redis-blip">Verify the subscriber survived a Redis blip</a></li><li style="padding-left:12px"><a href="#watch-a-campaign-locally">Watch a campaign locally</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#close-reason-enum">Close-reason enum</a></li><li style="padding-left:12px"><a href="#periodic-log-fields">Periodic log fields</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

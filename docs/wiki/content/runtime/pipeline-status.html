@@ -1,4 +1,5 @@
 <!-- source: backend/src/routes/campaigns.ts -->
+<!-- source: backend/src/routes/dev-prep-prose.ts -->
 <!-- source: backend/src/sse/pipeline-subscriber.ts -->
 <!-- source: backend/src/sse/sse-connection.ts -->
 <!-- source: backend/src/sse/derive-phase.ts -->
@@ -11,8 +12,8 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
-<!-- source-hash: sha256:43c51f1ee39be942a4feba6c4f8b01de8b965ff881a96900e5694c242c23db77 -->
-<!-- last-ticket: myth-imxg -->
+<!-- source-hash: sha256:0cef8743027f458681f07709c7ae8a22edb7a1b036b12369c2a62385c09ad6c9 -->
+<!-- last-ticket: MYT-62 -->
 
 <h1>Pipeline status</h1>
 
@@ -20,7 +21,10 @@
   The campaign-scoped status surface — a JSON snapshot endpoint plus an SSE stream — that lets
   clients watch a campaign's world-gen and character-creation pipeline progress in real time. One
   Redis channel per campaign, one dedicated PSUBSCRIBE'd ioredis client per API process, and an
-  in-memory fan-out from there to every attached SSE sink.
+  in-memory fan-out from there to every attached SSE sink. A second, parallel channel
+  (<code>prep:campaign:</code>) carries dev-only session-prep prose through the same plumbing — its
+  route exists only under <code>AUTH_MODE=bypass</code>, so production never serves it. A type
+  tripwire on the player-facing channel keeps the two from ever crossing.
 </p>
 
 <!-- @diagram: runtime/pipeline-status -->
@@ -48,17 +52,33 @@
 
 <p>
   The status surface itself is the consumption side: the worker (real processors landed across
-  MYT-49 / MYT-51 / MYT-52) is what publishes events to Redis; this page documents how those events
-  reach attached clients. The contract files
+  MYT-49 / MYT-51 / MYT-52 / MYT-61) is what publishes events to Redis; this page documents how
+  those events reach attached clients. The contract files
   <code>backend/src/contract/pipeline-routes.ts</code> and <code>pipeline-events.ts</code> declare
-  the surface — two routes, sixteen event types. All sixteen arms have producers (six lifecycle from
-  the processor, seven entity / edge from the streaming extractor + the post-COMMIT
-  <code>finalizedEvents</code> pipe, three per-fact arms from coherence pass) AND a consumer in the
-  <a href="./dev-tool.html">dev tool's wire-log drawer</a>. The bridge itself is type-blind: every
-  JSON payload published on a campaign channel is forwarded to attached sinks unchanged. The WORLD /
-  Status panel renders the snapshot's phase + stages list; the drawer renders all sixteen event arms
-  as wire-data rows in chronological order.
+  the surface — and as of MYT-62, <strong>nineteen</strong> pipeline event types. All nineteen arms
+  have producers (six lifecycle from the processor, seven entity / edge from the streaming extractor
+  + the post-COMMIT <code>finalizedEvents</code> pipe, three per-fact arms from the coherence pass,
+  and three <code>prep-*</code> phase arms from the
+  <a href="./session-prep.html">session-prep processor</a>) AND a consumer in the
+  <a href="./dev-tool.html">dev tool's wire-log drawer</a>. The fan-out itself is type-blind: every
+  JSON payload published on a campaign channel is forwarded to attached sinks unchanged — with one
+  guard, the <a href="#the-type-tripwire">type tripwire</a> below, that drops anything whose
+  <code>type</code> isn't a known pipeline event. The WORLD / Status panel renders the snapshot's
+  phase + stages list; the drawer renders all nineteen event arms as wire-data rows in chronological
+  order.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Prep prose is deliberately NOT one of the nineteen</strong> — session prep also produces a
+  stream of <code>prep-delta</code> prose events, but those live in a separate
+  <code>ProseEvent</code> type, on a separate channel, served by a separate dev-only route. They are
+  not in <code>PIPELINE_SSE_EVENTS</code> and never ride <code>pipeline:campaign:</code>. The reason
+  is enforced ignorance: <code>prep-delta</code> carries <code>sd_playbook</code> prose that may
+  hold plot secrets. Keeping it out of the pipeline event union makes publishing it on the player
+  channel a compile error — see
+  <a href="./session-prep.html#two-channels-one-stream">two channels off one stream</a> for the full
+  three-layer boundary.
+</aside>
 
 <h2>The two endpoints</h2>
 
@@ -117,6 +137,80 @@
   every request because the auth pre-handler couldn't resolve the param. The parent spec text says
   <code>:id</code> in §9; this implementation standardises on <code>:campaignId</code> for every
   campaign-scoped route going forward.
+</aside>
+
+<h2 id="the-prep-status-route">The prep-status route</h2>
+
+<p>
+  <code>GET /api/campaigns/:campaignId/prep-status</code> is a third SSE route on the campaigns
+  plugin, added for the player-facing "the DM is preparing tonight's session…" loading screen. It
+  reuses the exact wiring of <code>status/stream</code> — <code>requireCampaignMember</code>, the
+  shared subscriber, the connection counter, per-user rate limit, <code>pipelineRoute: true</code> —
+  with one difference in the first frame. Instead of <code>derivePhase</code>, its snapshot is a
+  single bit: <code>repo.sessionPreps.existsFor(campaignId, sessionNumber)</code> →
+  <code>event: snapshot\ndata: { "status": "ready" | "generating" }\n\n</code>. After the snapshot
+  it attaches to the <strong>same</strong> <code>pipeline:campaign:</code> channel the status stream
+  uses, where the <a href="./session-prep.html">session-prep processor</a> publishes its
+  <code>prep-started</code> / <code>prep-ready</code> / <code>prep-failed</code> phase events.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Phase-only, by construction — not by filtering</strong> — a prep loading screen must never
+  see <code>sd_playbook</code> prose. This route doesn't earn that by filtering; it earns it
+  structurally. Prose is never published to <code>pipeline:campaign:</code> in the first place (it
+  rides the separate prep channel), and the <a href="#the-type-tripwire">type tripwire</a> below
+  drops anything on the pipeline channel whose <code>type</code> isn't a known pipeline event. So a
+  <code>prep-delta</code> can't reach this route's sinks even if some future bug published one
+  there. The session-prep page covers the full enforced-ignorance argument; here the takeaway is
+  that prep-status is just another <code>pipeline:</code> reader and inherits the channel's
+  guarantees.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Session number is hardcoded to 1 for the MVP</strong> — the
+  <code>existsFor</code> snapshot reads session 1's prep row, matching the session-1 scope the
+  generation stage shipped under. The handler states the constant (<code
+    >PREP_SESSION_NUMBER = 1</code
+  >) explicitly; a later session-runtime change resolves the campaign's current session and threads
+  it through here.
+</aside>
+
+<h2 id="the-prose-channel">The prose channel and its dev-only route</h2>
+
+<p>
+  Session prep streams its two documents as it generates them. The phase events above are the
+  player's signal; the prose itself — <code>ft_context</code> and the secrets-bearing
+  <code>sd_playbook</code> — flows on a second channel,
+  <code>&#123;redisKeyPrefix&#125;prep:campaign:&#123;campaignId&#125;</code>, as
+  <code>prep-delta</code> events. The same <code>createPipelineSubscriber</code> machinery serves
+  it: the function takes an <code>opts.channel</code> parameter (default <code>'pipeline'</code>),
+  and a second instance is constructed with <code>channel: 'prep'</code> so it PSUBSCRIBEs
+  <code>prep:campaign:*</code> instead. The only route that reads it is
+  <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> in
+  <code>backend/src/routes/dev-prep-prose.ts</code> — no snapshot frame (prose is ephemeral), no
+  <code>requireCampaignMember</code> (bypass mode is a single dev identity), just attach and stream.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The prose route is registered only under <code>AUTH_MODE=bypass</code></strong> — both the
+  route and its prose subscriber are constructed inside <code>app.ts</code>'s
+  <code>if (config.env.authMode === 'bypass')</code> block, the same gate that hides the dev-credits
+  routes. In production (<code>authMode ≠ bypass</code>) neither is built, so there is literally no
+  code path that serves <code>sd_playbook</code> prose over the wire. This absence — not a runtime
+  filter — is the enforced-ignorance control for the streaming prose (the Haiku leak-classifier that
+  would have guarded it at runtime was descoped). The route is in
+  <a href="./dev-tool.html#the-ship-gate"><code>BACKEND_ROUTES</code></a> (the drift test boots
+  under bypass and sees it) but deliberately <strong>not</strong> in <code>PIPELINE_ROUTES</code>: a
+  bypass-only route listed as a pipeline route would fail the <code>pipeline-routes</code> reverse
+  check at production boot, crashing the prod API.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The prose subscriber skips the type tripwire</strong> — the tripwire below runs only on
+  the <code>pipeline:</code> channel. The prep channel forwards every message verbatim: it is
+  dev-only by construction, and its whole purpose is to carry the secret-bearing
+  <code>sd_playbook</code> prose to an operator. A tripwire here would be both redundant (no player
+  reaches this channel) and harmful (it would drop the very prose the dev tool exists to show).
 </aside>
 
 <h2>The pub/sub channel</h2>
@@ -384,8 +478,36 @@
   campaign-id, looks up the set, and writes the JSON payload to every attached sink as a
   <code>data: {...}\n\n</code> frame. Each <code>sink.write()</code> is wrapped in try/catch over a
   snapshot of the set so one stale sink can't wedge iteration over the others; on throw, the sink is
-  closed with <code>unknown</code> and removed from the set.
+  closed with <code>unknown</code> and removed from the set. The same factory builds both the
+  <code>pipeline</code> and the <code>prep</code> subscriber; the <code>channel</code> option
+  decides the PSUBSCRIBE pattern (<code>pipeline:campaign:*</code> vs <code>prep:campaign:*</code>)
+  and whether the tripwire runs.
 </p>
+
+<h3 id="the-type-tripwire">The type tripwire</h3>
+
+<p>
+  On the <code>pipeline</code> channel — and only there — every <code>'pmessage'</code> passes
+  through <code>classifyPipelineEvent</code> before reaching any sink. It JSON-parses the payload,
+  reads its <code>type</code>, and checks membership in <code>PIPELINE_SSE_EVENTS</code>. A message
+  whose type isn't a known pipeline event (malformed JSON, a missing <code>type</code>, or a
+  forbidden one) is logged at warn level with the parsed type and <strong>dropped</strong> — it
+  never reaches a sink. The <code>prep</code> subscriber skips this gate and forwards everything
+  verbatim.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A runtime guard on top of a compile-time one</strong> — <code>prep-delta</code> (the
+  prose-carrying event that may hold <code>sd_playbook</code> secrets) is a <code>ProseEvent</code>,
+  deliberately absent from the <code>PipelineEvent</code> union, so publishing it on the player
+  channel is already a compile error (the publisher is typed to accept only
+  <code>PipelineEvent</code>). The tripwire is the second layer: if a future code path ever
+  hand-built a raw payload and published a stray <code>prep-delta</code> onto
+  <code>pipeline:campaign:</code>, the tripwire drops it before any player sink sees it. This is
+  structural validation — an O(1) set-membership check, no cognition — which the ZFC boundary
+  explicitly allows. Together with the topology guarantee (no prose route in production), enforced
+  ignorance survives any single mistake.
+</aside>
 
 <p>
   Reconnection is the load-bearing operational behaviour. On the first <code>'ready'</code> event
@@ -521,8 +643,9 @@
   The worker side of the contract landed across MYT-49 (BullMQ shell +
   <code>wrapStream</code> middleware), MYT-51 (world-gen processor + lifecycle events), MYT-52
   (streaming entity / edge events after COMMIT), MYT-53 (per-player character-creation processor),
-  MYT-54 (campaign-scoped character integration), and myth-imxg (per-fact events from the coherence
-  pass). All sixteen arms in <code>PIPELINE_SSE_EVENTS</code> now have producers. The parent spec
+  MYT-54 (campaign-scoped character integration), myth-imxg (per-fact events from the coherence
+  pass), and MYT-62 (the three <code>prep-*</code> phase arms from the session-prep processor). All
+  nineteen arms in <code>PIPELINE_SSE_EVENTS</code> now have producers. The parent spec
   <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> §8 and §9 — both amended on
   2026-05-12 to consolidate around the campaign-scoped surface — are the contract these tickets
   shared.
@@ -561,8 +684,17 @@
     <tr>
       <td><code>backend/src/routes/campaigns.ts</code></td>
       <td>
-        Two-route Fastify plugin: <code>GET /status</code> + <code>GET /status/stream</code>. Owns
-        the attach→snapshot→forward ordering.
+        Three SSE routes: <code>GET /status</code>, <code>GET /status/stream</code>, and
+        <code>GET /prep-status</code> (phase-only prep loading screen, <code>existsFor</code>
+        snapshot). Owns the attach→snapshot→forward ordering.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/routes/dev-prep-prose.ts</code></td>
+      <td>
+        Dev-only <code>GET /api/dev/campaigns/:campaignId/prep-prose</code>. Registered solely under
+        <code>AUTH_MODE=bypass</code>; streams <code>prep-delta</code> off the <code>prep</code>
+        subscriber, no snapshot. Absent in production.
       </td>
     </tr>
     <tr>
@@ -570,7 +702,11 @@
       <td>
         Dedicated PSUBSCRIBE'd ioredis client;
         <code>Map&lt;campaignId, Set&lt;SseSink&gt;&gt;</code>; reconnect-on-blip with
-        <code>redis-resync-required</code> eviction.
+        <code>redis-resync-required</code> eviction. <code>opts.channel</code> (<code
+          >'pipeline'</code
+        >
+        | <code>'prep'</code>) picks the pattern; <code>classifyPipelineEvent</code> tripwire runs
+        on <code>pipeline</code> only.
       </td>
     </tr>
     <tr>
@@ -610,12 +746,16 @@
     <tr>
       <td><code>backend/src/contract/pipeline-events.ts</code></td>
       <td>
-        Sixteen event-type strings (six lifecycle + seven entity / edge + three per-fact) plus the
-        typed <code>PipelineEvent</code> discriminated union. Entity / edge events carry a
-        <code>synthKey</code> of the form <code>${stage}/${arrayPath}/${index}</code>;
-        <code>finalized</code> binds it to the real <code>entityId</code> post-COMMIT. The
-        <code>fact-*</code> events carry an <code>entitySynthKey</code> (the owning entity's
-        synthKey, used for FE-side routing) plus the row's <code>factId</code>.
+        Nineteen event-type strings (six lifecycle + seven entity / edge + three per-fact + three
+        <code>prep-*</code> phase) plus the typed <code>PipelineEvent</code> discriminated union.
+        Entity / edge events carry a <code>synthKey</code> of the form
+        <code>${stage}/${arrayPath}/${index}</code>; <code>finalized</code> binds it to the real
+        <code>entityId</code> post-COMMIT. The <code>fact-*</code> events carry an
+        <code>entitySynthKey</code> plus the row's <code>factId</code>. The <code>prep-*</code> arms
+        carry <code>sessionNumber</code> (+ <code>costUsd</code> on <code>prep-ready</code>,
+        <code>terminal</code> on <code>prep-failed</code>). The file also declares the SEPARATE
+        <code>ProseEvent</code> / <code>PROSE_SSE_EVENTS</code> for <code>prep-delta</code> —
+        deliberately outside the pipeline union so prose can't type-check onto the player channel.
       </td>
     </tr>
     <tr>
@@ -714,11 +854,12 @@
 <h2>Source</h2>
 
 <p>
-  <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/sse/</code>,
-  <code>backend/src/repo/pipeline-runs.ts</code>,
+  <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/routes/dev-prep-prose.ts</code>,
+  <code>backend/src/sse/</code>, <code>backend/src/repo/pipeline-runs.ts</code>,
   <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-events.ts</code>,
-  <code>backend/dev-tool/src/components/status-panel.ts</code>. Design spec:
-  <code>docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md</code>; parent
-  spec §8 + §9: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
+  <code>backend/dev-tool/src/components/status-panel.ts</code>. Design specs:
+  <code>docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md</code> and
+  <code>docs/superpowers/specs/2026-06-02-myt-62-streaming-prep-status-dev-tool-design.md</code>;
+  parent spec §8 + §9: <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code>.
 </p>

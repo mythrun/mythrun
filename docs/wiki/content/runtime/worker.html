@@ -8,8 +8,8 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
 <!-- source: docs/specs/2026-04-10-infrastructure-devops.md -->
-<!-- source-hash: sha256:7f639feee0abbf1286381fe36181601a886483c6e399c837da7167888095e523 -->
-<!-- last-ticket: MYT-61 -->
+<!-- source-hash: sha256:0e2a60fa76a5d3b9c44bf72b1ec02edf1a7a61d53aeac2ff22d74d89879a91dd -->
+<!-- last-ticket: MYT-62 -->
 
 <h1>Worker</h1>
 
@@ -74,12 +74,14 @@
   <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis client configured for
   BullMQ; immediately <code>ping()</code>'d so a misconfigured URL surfaces at startup rather than
   first-job time. <code>createRedisClient(env.redisRealtimeUrl)</code> opens the second Redis (the
-  realtime side, used by MYT-52's streaming entity / edge <code>PUBLISH</code> path and myth-imxg's
-  per-fact events &mdash; both feed the <a href="./pipeline-status.html">pipeline status</a> SSE
-  bridge). <code>createPgPool(env.databaseUrl, { max: 4 })</code> with
-  <code>SELECT 1</code> follows. Only once every dependency is up does
-  <code>startHealthServer</code> bind Fastify on <code>127.0.0.1:3001</code> — the order matters
-  because that bind is what flips the task from starting to healthy at the ECS level.
+  realtime side, used by MYT-52's streaming entity / edge <code>PUBLISH</code> path, myth-imxg's
+  per-fact events, and MYT-62's session-prep phase + prose deltas &mdash; all feeding the
+  <a href="./pipeline-status.html">pipeline status</a> SSE bridge, the prep deltas over the separate
+  dev-only <a href="./session-prep.html#two-channels-one-stream">prep channel</a>).
+  <code>createPgPool(env.databaseUrl, { max: 4 })</code> with <code>SELECT 1</code> follows. Only
+  once every dependency is up does <code>startHealthServer</code> bind Fastify on
+  <code>127.0.0.1:3001</code> — the order matters because that bind is what flips the task from
+  starting to healthy at the ECS level.
 </p>
 
 <aside class="wiki-rationale">

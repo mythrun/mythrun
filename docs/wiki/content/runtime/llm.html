@@ -3,8 +3,8 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:d579c687649dfea33c6cf93216e9b162f314be00dba77a9c4d18aac8da225fbf -->
-<!-- last-ticket: MYT-61 -->
+<!-- source-hash: sha256:9a0fd863672c4c053c5c79799ba837e18b570c0613b6d42ed60dad9f8347db44 -->
+<!-- last-ticket: MYT-62 -->
 
 <h1>LLM client</h1>
 
@@ -518,6 +518,32 @@
 </aside>
 
 <p>
+  <code>generateSessionPrepArgs</code> carries an optional <code>onProseDelta(field, text)</code>
+  callback. When a caller supplies it — the
+  <a href="./session-prep.html#two-channels-one-stream">session-prep processor</a> does, to push the
+  prose live to the dev tool — the stage drains <code>result.partialObjectStream</code> before
+  reading the final object, emitting the newly-appended substring of each field as it streams. The
+  two-string object is still finalized through <code>await result.object</code> afterward (consuming
+  the partial stream doesn't consume the object or usage promises), so the persisted documents and
+  the token usage are unchanged. When the callback is absent (the stage's own unit tests, a
+  direct-call smoke), the drain is skipped entirely and the result is identical.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Streaming the prose costs no extra tokens</strong> — <code>streamObject</code> was already
+  streaming under the hood; the original code just <code>await</code>ed the final object and threw
+  the intermediate chunks away. Forwarding them through <code>onProseDelta</code> reuses bytes that
+  were already on the wire — there is no second LLM call and no added cost. The diff is a simple
+  per-field length comparison: when a field's streamed value strictly extends its prior value, emit
+  the tail; when it doesn't (the SDK's partial-JSON parser briefly rewrites an in-flight escape
+  sequence — a dangling <code>\</code> resolving to <code>\n</code> — so the prefix diverges for one
+  tick), resync silently and emit nothing. The callback is wrapped in try/catch: it is
+  fire-and-forget cosmetic telemetry, so a throwing sink must never abort generation. Field
+  attribution is correct regardless of emission order because each field is diffed independently
+  against its own retained value — do not "simplify" this by assuming the fields fill in order.
+</aside>
+
+<p>
   The serializer is async and omniscient by design. It hops <code>campaign → world_id</code>, loads
   the full world inventory (all access tiers, secrets included — this is a Slow-Thinker-tier
   artifact, not a Fast-Thinker read), renders it with the omniscient world dump, and appends the
@@ -744,9 +770,10 @@
     <tr>
       <td><code>backend/src/llm/prep/stages/session-prep.ts</code></td>
       <td>
-        <code>generateSessionPrep(repo, args)</code>, <code>sessionPrepSchema</code> (Zod),
-        <code>SessionPrep</code> / <code>SessionPrepResult</code> (TS). Built ahead of its caller;
-        see <a href="#the-session-prep-generation-stage">the session-prep generation stage</a>.
+        <code>generateSessionPrep(repo, args)</code> (optional <code>onProseDelta</code> streaming
+        callback), <code>sessionPrepSchema</code> (Zod), <code>SessionPrep</code> /
+        <code>SessionPrepResult</code> (TS). See
+        <a href="#the-session-prep-generation-stage">the session-prep generation stage</a>.
       </td>
     </tr>
     <tr>
