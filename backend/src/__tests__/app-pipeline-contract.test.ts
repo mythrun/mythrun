@@ -57,6 +57,8 @@ vi.mock('../contract/pipeline-routes.js', () => ({
     // MYT-54 cross-PC integration (campaign-characters plugin):
     'GET /api/campaigns/:campaignId/character-creation-progress',
     'POST /api/campaigns/:campaignId/finalize-character-creation',
+    // MYT-62 player-facing prep-status SSE (campaigns plugin, pipelineRoute):
+    'GET /api/campaigns/:campaignId/prep-status',
     // Phantom entry — no plugin registers this route. The onReady hook
     // sees it in PIPELINE_ROUTES, can't find it in registeredPipelineRoutes,
     // and throws.
