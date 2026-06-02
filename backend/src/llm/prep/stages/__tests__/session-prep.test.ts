@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- mirrors source: Vercel SDK
- * flags streamObject deprecated but design §D1 mandates it. */
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -27,36 +25,149 @@ describe('session-prep template', () => {
   })
 })
 
-vi.mock('ai', async () => {
-  const actual = await vi.importActual<typeof import('ai')>('ai')
-  return { ...actual, streamObject: vi.fn(), generateText: vi.fn(), Output: { object: vi.fn((o: unknown) => o) } }
+// Mock the `../../ai.js` WRAPPER directly (not the underlying `ai` package):
+// the new delta logic consumes `result.partialObjectStream` and then awaits
+// `result.object` / `result.usage` exactly as the wrapper exposes them, so the
+// wrapper is the right seam to script. The type is re-exported so the SUT's
+// `import { streamObject, type LanguageModelUsage } from '../../ai.js'` resolves.
+const streamObjectMock =
+  vi.fn<(...args: unknown[]) => ReturnType<typeof import('../../../ai.js').streamObject>>()
+vi.mock('../../../ai.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../ai.js')>('../../../ai.js')
+  return { ...actual, streamObject: (...a: unknown[]) => streamObjectMock(...a) }
 })
 vi.mock('../../serialize-world-state-for-prep.js', () => ({
   serializeWorldStateForPrep: vi.fn(() => Promise.resolve('SERIALIZED WORLD STATE')),
 }))
-import { streamObject as sdkStreamObject } from 'ai'
+
+// import generateSessionPrep AFTER the mocks
 import { generateSessionPrep } from '../session-prep.js'
 import { OPUS } from '../../../models.js'
-function makeStream(tree: unknown) {
+
+function scripted(
+  partials: Record<string, string>[],
+  object: { ft_context: string; sd_playbook: string },
+) {
+  function* gen(): Generator<Record<string, string>> {
+    for (const p of partials) yield p
+  }
   return {
-    partialObjectStream: (function* () { yield tree })(),
-    object: Promise.resolve(tree),
-    usage: Promise.resolve({ inputTokens: 5000, outputTokens: 9000, totalTokens: 14000 }),
-  } as never
+    partialObjectStream: gen(),
+    object: Promise.resolve(object),
+    usage: Promise.resolve({ inputTokens: 10, outputTokens: 20, totalTokens: 30 }),
+  } as unknown as ReturnType<typeof import('../../../ai.js').streamObject>
 }
+
 describe('generateSessionPrep', () => {
   it('returns the two docs + usage and calls streamObject with the right contract', async () => {
-    vi.mocked(sdkStreamObject).mockReturnValueOnce(makeStream({ ft_context: 'FT DOC', sd_playbook: 'SD DOC' }))
+    streamObjectMock.mockReturnValueOnce(
+      scripted(
+        [{ ft_context: 'x'.repeat(200) }, { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100) }],
+        { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100) },
+      ),
+    )
     const repo = {} as never
     const result = await generateSessionPrep(repo, { campaignId: 'camp1', worldId: 'w1', sessionNumber: 1 })
-    expect(result.ft_context).toBe('FT DOC')
-    expect(result.sd_playbook).toBe('SD DOC')
-    expect(result.usage.outputTokens).toBe(9000)
-    const call = vi.mocked(sdkStreamObject).mock.calls[0]?.[0] as Record<string, unknown>
+    expect(result.ft_context).toBe('x'.repeat(200))
+    expect(result.sd_playbook).toBe('y'.repeat(100))
+    expect(result.usage.outputTokens).toBe(20)
+    const call = streamObjectMock.mock.calls[0]?.[0] as Record<string, unknown>
     expect(call.model).toBe(OPUS)
     expect(call.maxOutputTokens as number).toBeGreaterThanOrEqual(16384)
     expect(call.prompt as string).toContain('SERIALIZED WORLD STATE')
     const po = call.providerOptions as { mythrun: { stage: string } }
     expect(po.mythrun.stage).toBe('session_prep')
+  })
+
+  it('emits ordered per-field prose deltas with no overlap or loss', async () => {
+    const deltas: { field: string; text: string }[] = []
+    streamObjectMock.mockReturnValue(
+      scripted(
+        [{ ft_context: 'Hel' }, { ft_context: 'Hello' }, { ft_context: 'Hello', sd_playbook: 'SD' }],
+        { ft_context: 'Hello', sd_playbook: 'SD' },
+      ),
+    )
+    const r = await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 1,
+      onProseDelta: (field, text) => deltas.push({ field, text }),
+    })
+    expect(deltas).toEqual([
+      { field: 'ft_context', text: 'Hel' },
+      { field: 'ft_context', text: 'lo' },
+      { field: 'sd_playbook', text: 'SD' },
+    ])
+    expect(r.ft_context).toBe('Hello')
+    expect(r.sd_playbook).toBe('SD')
+  })
+
+  it('mid-escape truncation: resets without emitting when the new value is not a strict extension', async () => {
+    const deltas: string[] = []
+    streamObjectMock.mockReturnValue(
+      scripted(
+        // 'fo\' is an in-flight escape; the next tick is LONGER but its prefix
+        // DIVERGES ('foobar'[2] === 'o', not the '\' we'd already buffered), so
+        // the strict-extension check fails and we resync `prev` without
+        // emitting. The following tick extends 'foobar' cleanly and emits only
+        // the appended tail.
+        [{ ft_context: 'fo\\' }, { ft_context: 'foobar' }, { ft_context: 'foobar baz' }],
+        { ft_context: 'foobar baz', sd_playbook: 'x'.repeat(100) },
+      ),
+    )
+    await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 1,
+      onProseDelta: (_f, t) => deltas.push(t),
+    })
+    // tick 1 emitted 'fo\' (prev was empty → strict extension); tick 2 diverged
+    // and emitted NOTHING (reset branch); tick 3 emitted ' baz'. No throw, and
+    // the divergent middle value never leaks a garbled slice into the stream.
+    expect(deltas).toEqual(['fo\\', ' baz'])
+  })
+
+  it('a throwing onProseDelta does not abort generation', async () => {
+    streamObjectMock.mockReturnValue(scripted([{ ft_context: 'a' }], { ft_context: 'a', sd_playbook: 'b' }))
+    const r = await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 1,
+      onProseDelta: () => {
+        throw new Error('boom')
+      },
+    })
+    expect(r.ft_context).toBe('a')
+  })
+
+  it('drains cleanly with no callback', async () => {
+    streamObjectMock.mockReturnValue(scripted([{ ft_context: 'a' }], { ft_context: 'a', sd_playbook: 'b' }))
+    const r = await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 1,
+    })
+    expect(r.sd_playbook).toBe('b')
+  })
+
+  it('skips a partial that has not yet produced a string for a field', async () => {
+    const deltas: { field: string; text: string }[] = []
+    streamObjectMock.mockReturnValue(
+      scripted(
+        // First partial: ft_context absent entirely (non-string skip), sd_playbook present.
+        [{ sd_playbook: 'SD' }, { ft_context: 'FT', sd_playbook: 'SD' }],
+        { ft_context: 'FT', sd_playbook: 'SD' },
+      ),
+    )
+    await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 1,
+      onProseDelta: (field, text) => deltas.push({ field, text }),
+    })
+    expect(deltas).toEqual([
+      { field: 'sd_playbook', text: 'SD' },
+      { field: 'ft_context', text: 'FT' },
+    ])
   })
 })

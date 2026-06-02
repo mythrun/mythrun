@@ -33,6 +33,11 @@ export interface GenerateSessionPrepArgs {
   readonly campaignId: string
   readonly worldId: string
   readonly sessionNumber: number
+  // Optional progressive-prose sink. When present we drain
+  // `partialObjectStream` (which the SDK is already producing — zero extra LLM
+  // cost) and emit the newly-appended substring per field as it streams. When
+  // absent we skip the drain entirely and go straight to `await result.object`.
+  readonly onProseDelta?: (field: 'ft_context' | 'sd_playbook', text: string) => void
 }
 
 export interface SessionPrepResult {
@@ -77,6 +82,37 @@ export async function generateSessionPrep(
       },
     },
   })
+
+  // Progressive prose: diff each field's streamed value against the prior tick
+  // and forward only the newly-appended tail. We retain the previous full value
+  // per field and emit `value.slice(prev.length)` only when `value` strictly
+  // extends `prev` (`startsWith(prev)`). When the new value is NOT a strict
+  // extension — the AI SDK's mid-escape truncation, where a partial briefly
+  // rewrites an in-flight escape (e.g. a dangling `\` resolves to `\n`) so the
+  // prefix diverges — we resync `prev` and emit nothing for that tick rather
+  // than slice garbage. `await result.object` below is authoritative regardless.
+  const FIELDS = ['ft_context', 'sd_playbook'] as const
+  const prev: Record<(typeof FIELDS)[number], string> = { ft_context: '', sd_playbook: '' }
+  if (args.onProseDelta) {
+    for await (const partial of result.partialObjectStream) {
+      for (const field of FIELDS) {
+        const value = partial[field]
+        if (typeof value !== 'string') continue
+        if (value.length <= prev[field].length) continue
+        if (!value.startsWith(prev[field])) {
+          prev[field] = value
+          continue
+        }
+        const delta = value.slice(prev[field].length)
+        prev[field] = value
+        try {
+          args.onProseDelta(field, delta)
+        } catch {
+          /* fire-and-forget: a faulty sink must never abort generation */
+        }
+      }
+    }
+  }
 
   const output = await result.object
   const usage = await result.usage
