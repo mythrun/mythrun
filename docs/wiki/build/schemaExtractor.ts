@@ -120,19 +120,42 @@ export async function extractSchema(opts: ExtractOptions): Promise<SchemaMetadat
       [schemaName],
     )
 
+    // FK metadata via pg_catalog, NOT information_schema. The old query joined
+    // key_column_usage ⋈ constraint_column_usage USING (constraint_name) only,
+    // which CROSS-PRODUCTS columns for any table with >1 FK or a composite FK —
+    // inflating counts (character_concepts rendered "48 FKs") and MISPAIRING
+    // per-column targets non-deterministically (campaign_id → campaign_members
+    // (user_id) instead of campaigns(id)). pg_constraint's conkey/confkey arrays
+    // preserve column correspondence; `unnest(...) WITH ORDINALITY` pairs
+    // local↔foreign columns positionally, so a composite FK (campaign_id,
+    // user_id) → campaign_members(campaign_id, user_id) yields exactly
+    // campaign_id→campaign_members.campaign_id and user_id→…user_id. The
+    // `(cardinality(c.conkey) = 1)` sort key orders single-column FKs LAST within
+    // each (table, column) group, so the per-column `fkByTableCol` last-write
+    // prefers the single-column FK (campaign_id→campaigns, not the composite)
+    // for the column's References cell. Fully deterministic ORDER BY.
     const fksQ = await client.query<RawFkRow>(
       `SELECT
-         tc.table_name,
-         kcu.column_name,
-         ccu.table_name AS foreign_table_name,
-         ccu.column_name AS foreign_column_name,
-         rc.delete_rule
-       FROM information_schema.table_constraints tc
-       JOIN information_schema.key_column_usage kcu USING (constraint_name)
-       JOIN information_schema.constraint_column_usage ccu USING (constraint_name)
-       JOIN information_schema.referential_constraints rc USING (constraint_name)
-       WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1
-       ORDER BY tc.table_name, kcu.column_name`,
+         t.relname    AS table_name,
+         att.attname  AS column_name,
+         ft.relname   AS foreign_table_name,
+         fatt.attname AS foreign_column_name,
+         CASE c.confdeltype
+           WHEN 'c' THEN 'CASCADE'
+           WHEN 'r' THEN 'RESTRICT'
+           WHEN 'n' THEN 'SET NULL'
+           WHEN 'd' THEN 'SET DEFAULT'
+           ELSE 'NO ACTION'
+         END AS delete_rule
+       FROM pg_constraint c
+       JOIN pg_class t  ON t.oid = c.conrelid
+       JOIN pg_class ft ON ft.oid = c.confrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+       CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(local_attnum, foreign_attnum, ord)
+       JOIN pg_attribute att  ON att.attrelid  = c.conrelid  AND att.attnum  = k.local_attnum
+       JOIN pg_attribute fatt ON fatt.attrelid = c.confrelid AND fatt.attnum = k.foreign_attnum
+       WHERE c.contype = 'f' AND n.nspname = $1
+       ORDER BY t.relname, att.attname, (cardinality(c.conkey) = 1), ft.relname, k.ord`,
       [schemaName],
     )
 

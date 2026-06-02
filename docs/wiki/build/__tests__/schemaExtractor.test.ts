@@ -82,6 +82,44 @@ describe.skipIf(databaseUrl === '')('extractSchema (integration)', () => {
     expect(anyPkey).toBe(false)
   })
 
+  it('pairs FK columns correctly for composite + multi-FK tables (no information_schema cross-product)', async () => {
+    const meta = await extractSchema({ databaseUrl, migrationsDir })
+    const cc = meta.tables.find((t) => t.name === 'character_concepts')
+    expect(cc).toBeDefined()
+
+    // character_concepts has 3 FK constraints → 4 column-level FK pairs:
+    // campaign_id→campaigns(id), user_id→users(id), and the composite
+    // (campaign_id,user_id)→campaign_members(campaign_id,user_id) contributing
+    // two positionally-paired rows. The old kcu⋈ccu cross-product inflated this
+    // to dozens (the rendered meta showed "48 FKs").
+    expect(cc?.fks.length).toBe(4)
+
+    // Composite FK columns must be paired POSITIONALLY:
+    // campaign_id→campaign_members.campaign_id and user_id→campaign_members.user_id.
+    // The bug mispaired them (e.g. campaign_id→campaign_members.user_id).
+    const toMembers = (cc?.fks ?? []).filter((f) => f.foreignTable === 'campaign_members')
+    expect(toMembers).toHaveLength(2)
+    expect(toMembers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ column: 'campaign_id', foreignColumn: 'campaign_id' }),
+        expect.objectContaining({ column: 'user_id', foreignColumn: 'user_id' }),
+      ]),
+    )
+
+    // The per-column "References" cell prefers the single-column FK:
+    // campaign_id→campaigns(id), user_id→users(id).
+    const campaignCol = cc?.columns.find((c) => c.name === 'campaign_id')
+    expect(campaignCol?.fk).toEqual({
+      column: 'campaign_id',
+      foreignTable: 'campaigns',
+      foreignColumn: 'id',
+      deleteRule: 'CASCADE',
+    })
+    const userCol = cc?.columns.find((c) => c.name === 'user_id')
+    expect(userCol?.fk?.foreignTable).toBe('users')
+    expect(userCol?.fk?.foreignColumn).toBe('id')
+  })
+
   it('cleans up the throwaway schema after extraction', async () => {
     await extractSchema({
       databaseUrl,
