@@ -20,6 +20,7 @@ import { billingRoutes } from './routes/billing.js'
 import { campaignsRoutes } from './routes/campaigns.js'
 import { campaignCharactersPlugin } from './routes/campaign-characters.js'
 import { devCreditsRoutes } from './routes/dev-credits.js'
+import { devPrepProseRoutes } from './routes/dev-prep-prose.js'
 import { PIPELINE_ROUTES } from './contract/pipeline-routes.js'
 import { createPipelineSubscriber, type PipelineSubscriber } from './sse/pipeline-subscriber.js'
 import { createConnectionCounter } from './sse/connection-counter.js'
@@ -47,6 +48,12 @@ declare module 'fastify' {
   interface FastifyInstance {
     mythrunSubscriber: PipelineSubscriber
     mythrunStopPeriodicLog: () => void
+    /** MYT-62 T5: dedicated `prep`-channel prose subscriber behind the
+     *  dev-only GET /api/dev/campaigns/:campaignId/prep-prose route. OPTIONAL
+     *  because it is constructed ONLY in the bypass block (authMode ===
+     *  'bypass') — it is absent on a production boot. server.ts's shutdown
+     *  closes it only when present. */
+    mythrunProseSubscriber?: PipelineSubscriber
   }
 }
 
@@ -326,12 +333,23 @@ export const buildApp = async (
     characterCreationQueue: deps.characterCreationQueue,
   })
 
-  // Dev-only credit-grant route (MYT-51 T11). The plugin itself gates
-  // on AUTH_MODE === 'bypass' (defense in depth — Roc-C1); this outer
-  // gate is the belt-and-suspenders second layer so a future caller
-  // forgetting one gate still keeps the route off production.
+  // Dev-only routes (MYT-51 T11 credits + MYT-62 T5 prep-prose). The plugins
+  // self-gate on AUTH_MODE === 'bypass' (defense in depth — Roc-C1); this
+  // outer gate is the belt-and-suspenders second layer. The prep-prose route
+  // living in THIS gated block IS the structural enforced-ignorance control:
+  // sd_playbook prose (may carry plot secrets) rides the SEPARATE
+  // `prep:campaign:{id}` channel, and the only route that serves it exists
+  // only under bypass — a production boot never constructs the prose
+  // subscriber nor registers the route. The prose subscriber gets its OWN
+  // dedicated PSUBSCRIBE client ({ channel: 'prep' }), decorated as
+  // mythrunProseSubscriber so the shutdown handler can close it.
   if (config.env.authMode === 'bypass') {
     await app.register(devCreditsRoutes, { pool: deps.pg })
+    const proseSubscriber = createPipelineSubscriber(deps.redisRealtime, deps.redisKeyPrefix, pinoLog, {
+      channel: 'prep',
+    })
+    app.decorate('mythrunProseSubscriber', proseSubscriber)
+    await app.register(devPrepProseRoutes, { subscriber: proseSubscriber, counter })
   }
 
   // Billing plugin (MYT-42 Tasks 25–31). Registered last as a direct
@@ -436,6 +454,13 @@ export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): 
       //      in-flight commands; vs disconnect which rips the socket.
       clients.stopPeriodicLog()
       await clients.subscriber.close()
+      // MYT-62 T5: close the dev-only prep-prose subscriber if it exists.
+      // It is decorated (not threaded through ShutdownClients) because it is
+      // constructed ONLY in the bypass block — absent on a production boot.
+      // Closing it here (right after the pipeline subscriber) writes
+      // `server-shutdown` close frames to any attached prose sinks + QUITs
+      // its dedicated PSUBSCRIBE client before app.close rips the sockets.
+      if (app.mythrunProseSubscriber) await app.mythrunProseSubscriber.close()
       await clients.worldGenWorker.close()
       await clients.worldGenQueue.close()
       await clients.characterCreationWorker.close()

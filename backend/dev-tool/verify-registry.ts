@@ -164,6 +164,11 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // No standalone UI surface — exercised server-side by tests +
   // identity bootstrap.
   { method: 'GET', path: '/api/users/check-username' },
+
+  // GET /api/dev/campaigns/:campaignId/prep-prose: live prose SSE consumed
+  // by the dev-tool wire-log drawer — header chrome, not a JSDOM-mountable
+  // page panel; exercised E2E by MYT-64. (MYT-62 T5.)
+  { method: 'GET', path: '/api/dev/campaigns/:campaignId/prep-prose' },
 ]
 
 export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {

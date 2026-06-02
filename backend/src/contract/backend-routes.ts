@@ -1,14 +1,23 @@
 // backend/src/contract/backend-routes.ts
 //
-// Full enumeration of every route the production Fastify app registers.
-// The drift test in __tests__/backend-routes.test.ts boots the app and
-// diffs app.printRoutes() against this list; adding a new route handler
-// without updating this list fails the test.
+// Enumeration of every route the Fastify app registers when booted under
+// AUTH_MODE=bypass — i.e. the bypass-mode-boot SUPERSET. The drift test in
+// __tests__/backend-routes.test.ts boots the app under bypass and diffs
+// app.printRoutes() against this list; adding a new route handler without
+// updating this list fails the test.
+//
+// `/api/dev/*` routes (dev credits, prep-prose) are BYPASS-ONLY: they are
+// registered solely inside app.ts's `if (config.env.authMode === 'bypass')`
+// block and are LITERALLY ABSENT in production (authMode='real' skips the
+// block entirely). They appear here because the drift test boots under
+// bypass. The prep-prose route in particular is the structural enforced-
+// ignorance control — the only route that serves sd_playbook prose, and it
+// never exists in a prod boot.
 //
 // Pipeline routes (a subset) are also tracked separately in
 // pipeline-routes.ts for the status surface. Both stay in sync via the
 // drift test — anything in pipeline-routes that isn't here is a contract
-// bug.
+// bug. (The /api/dev/* routes are NOT pipeline routes.)
 
 export interface BackendRoute {
   readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
@@ -64,6 +73,12 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   // Dev credits (AUTH_MODE=bypass only)
   { method: 'POST', path: '/api/dev/credits/grant' },
   { method: 'GET', path: '/api/dev/credits/me' },
+
+  // Dev prep-prose SSE (AUTH_MODE=bypass only). MYT-62 T5 — the structural
+  // enforced-ignorance control: the only route that streams sd_playbook
+  // prose (off the separate prep:campaign: channel), and it is absent in
+  // production (the dev block is gated on authMode === 'bypass').
+  { method: 'GET', path: '/api/dev/campaigns/:campaignId/prep-prose' },
 
   // Stripe webhook (raw-body, public, signature-verified)
   { method: 'POST', path: '/webhooks/stripe' },
