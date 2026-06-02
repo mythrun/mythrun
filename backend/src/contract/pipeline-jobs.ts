@@ -12,8 +12,10 @@ export const PIPELINE_JOBS: readonly string[] = [
   // reaches 'completed'. Processor: character-integration-processor.ts.
   'character-integration',
   // MYT-61 T3: session-prep job, enqueued by the play-runtime before a live
-  // session. Processor + Worker wiring land in MYT-61 T4. No dev-tool driver
-  // yet (that's MYT-62); covered via exempt entry in dev-tool/coverage.json.
+  // session. Processor + Worker wiring land in MYT-61 T4. Dev-tool driver
+  // (MYT-62 T7): the live prose stream — /api/dev/campaigns/:id/prep-prose,
+  // surfaced in the drawer's prose view — so it's a real `jobs` entry in
+  // dev-tool/coverage.json, no longer exempt.
   'session-prep',
 ] as const
 

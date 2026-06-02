@@ -11,6 +11,7 @@ import { mountDrawer, type DrawerHandle } from './drawer/drawer.js'
 import { createEventBus } from './drawer/event-bus.js'
 import { createRingBuffer } from './drawer/buffer.js'
 import { createSubscriptionManager, type DrawerEvent } from './drawer/subscriptions.js'
+import { mountProseView, type ProseViewHandle } from './drawer/prose-view.js'
 import { installIdentityBridge } from './identity-bridge.js'
 import { mountHeaderChrome } from './header-chrome.js'
 import { getActiveCampaignId, onActiveCampaignChanged } from './active-campaign.js'
@@ -127,6 +128,20 @@ export function mountShell(): ShellHandle {
   flexRow.appendChild(mainPane)
   const drawer: DrawerHandle = mountDrawer(flexRow, { subscriptions, bus, buffer })
 
+  // MYT-62 T7: the live session-prep prose panes render inside the drawer,
+  // below the wire-log list, fed by a SECOND subscription manager (the
+  // prose stream). createSubscriptionManager keys its open-connection map
+  // by campaignId alone (one stream per campaign), so a second SSE stream
+  // per campaign needs its own manager instance. The prose stream carries
+  // `prep-delta` frames (sd_playbook prose may hold plot secrets) off the
+  // separate dev-only /api/dev/.../prep-prose route — it is NOT published
+  // onto the shared event bus / wire-log; it feeds the prose view directly.
+  const proseView: ProseViewHandle = mountProseView(drawer.root)
+  const proseSubscriptions = createSubscriptionManager({
+    onEvent: (e) => { proseView.onEvent(e); },
+    urlFor: (id) => `/api/dev/campaigns/${id}/prep-prose`,
+  })
+
   // Restore last-selected workflow from localStorage, or fall back to
   // the default Campaigns page. Active-campaign-required pages fall
   // back to Campaigns when no campaign is set.
@@ -173,9 +188,14 @@ export function mountShell(): ShellHandle {
   const dispose = installIdentityBridge({
     onIdentityChange: () => {
       subscriptions.closeAll()
+      proseSubscriptions.closeAll()
+      proseView.reset()
       // Re-subscribe to active campaign if set.
       const active = getActiveCampaignId()
-      if (active !== null) subscriptions.subscribe(active)
+      if (active !== null) {
+        subscriptions.subscribe(active)
+        proseSubscriptions.subscribe(active)
+      }
       sidebar.refresh()
     },
   })
@@ -184,6 +204,7 @@ export function mountShell(): ShellHandle {
   const initialActive = getActiveCampaignId()
   if (initialActive !== null) {
     subscriptions.subscribe(initialActive)
+    proseSubscriptions.subscribe(initialActive)
     void refreshBannerName(initialActive)
   }
 
@@ -218,8 +239,13 @@ export function mountShell(): ShellHandle {
   // myth-0nmz: wire active-campaign changes to drawer SSE + banner.
   const offActiveCampaign = onActiveCampaignChanged((newId) => {
     subscriptions.closeAll()
+    proseSubscriptions.closeAll()
+    // Campaign switch: clear the accumulated prose so the new campaign's
+    // deltas don't append onto the prior campaign's text.
+    proseView.reset()
     if (newId !== null) {
       subscriptions.subscribe(newId)
+      proseSubscriptions.subscribe(newId)
       void refreshBannerName(newId)
     } else {
       banner.setCampaign(null)
@@ -264,6 +290,7 @@ export function mountShell(): ShellHandle {
       sidebar.unmount()
       banner.unmount()
       subscriptions.closeAll()
+      proseSubscriptions.closeAll()
       bannerContainer.remove()
       flexRow.remove()
     },

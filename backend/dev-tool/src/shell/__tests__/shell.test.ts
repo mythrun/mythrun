@@ -64,6 +64,20 @@ describe('mountShell', () => {
     expect(document.querySelector('[data-region="drawer"]')).not.toBeNull()
   })
 
+  // MYT-62 T7: the live session-prep prose view mounts inside the drawer,
+  // with two labeled panes fed by the second (prose) subscription manager.
+  it('mounts the session-prep prose view (ft_context + sd_playbook panes) inside the drawer', () => {
+    ensureDom()
+    stubFetch()
+    mountShell()
+    const drawer = document.querySelector('[data-region="drawer"]')
+    expect(drawer).not.toBeNull()
+    const proseView = drawer?.querySelector('[data-region="prose-view"]')
+    expect(proseView).not.toBeNull()
+    expect(proseView?.querySelector('[data-prose-field="ft_context"]')).not.toBeNull()
+    expect(proseView?.querySelector('[data-prose-field="sd_playbook"]')).not.toBeNull()
+  })
+
   it('default workflow is Campaigns; sidebar shows one leaf per workflow', () => {
     ensureDom()
     stubFetch()

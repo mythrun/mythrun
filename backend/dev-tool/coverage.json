@@ -42,12 +42,10 @@
     "prep-ready",
     "prep-failed"
   ],
-  "jobs": ["world-gen", "character-creation", "character-integration"],
+  "jobs": ["world-gen", "character-creation", "character-integration", "session-prep"],
   "exempt": {
     "routes": {},
     "events": {},
-    "jobs": {
-      "session-prep": "No dev-tool live-events driver yet — the driver is MYT-62; session-prep is enqueued by the play-runtime and exercised E2E via the MYT-64 smoke. (MYT-61)"
-    }
+    "jobs": {}
   }
 }
