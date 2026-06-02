@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { Redis } from 'ioredis'
 import { EventEmitter } from 'node:events'
 import pino from 'pino'
-import { createPipelineSubscriber } from '../pipeline-subscriber.js'
+import { classifyPipelineEvent, createPipelineSubscriber } from '../pipeline-subscriber.js'
 import type { SseSink, CloseReason } from '../sse-connection.js'
 
 const REDIS_URL = process.env.REDIS_REALTIME_URL ?? 'redis://localhost:6379'
@@ -374,10 +374,13 @@ describe('pipeline-subscriber error paths (stubbed redis)', () => {
     // return early without iterating.
     const sub = makeFakeSub()
     const pipe = createPipelineSubscriber(makeFakeRedis(sub), 'rt:', pino({ level: 'silent' }))
-    sub.emit('pmessage', 'rt:pipeline:campaign:*', 'rt:pipeline:campaign:cmp-orphan', 'msg')
+    // Payload must be a valid pipeline event so it survives the type-tripwire
+    // and reaches the wasted-message arm (no attached sinks).
+    const validEvent = JSON.stringify({ type: 'phase', phase: 'world_gen' })
+    sub.emit('pmessage', 'rt:pipeline:campaign:*', 'rt:pipeline:campaign:cmp-orphan', validEvent)
     expect(pipe.wastedMessageCount()).toBe(1)
     // pmessage on a channel that doesn't match the prefix is ignored.
-    sub.emit('pmessage', 'rt:pipeline:campaign:*', 'mismatched:channel', 'msg')
+    sub.emit('pmessage', 'rt:pipeline:campaign:*', 'mismatched:channel', validEvent)
     expect(pipe.wastedMessageCount()).toBe(1)
     await pipe.close()
   })
@@ -414,7 +417,12 @@ describe('pipeline-subscriber error paths (stubbed redis)', () => {
     const good = makeSink()
     pipe.attach('cmp-z', bad)
     pipe.attach('cmp-z', good)
-    sub.emit('pmessage', 'rt:pipeline:campaign:*', 'rt:pipeline:campaign:cmp-z', 'x')
+    sub.emit(
+      'pmessage',
+      'rt:pipeline:campaign:*',
+      'rt:pipeline:campaign:cmp-z',
+      '{"type":"phase","phase":"world_gen"}',
+    )
     expect(good.written).toHaveLength(1)
     expect(badClosed).toBe('unknown')
     await pipe.close()
@@ -437,9 +445,143 @@ describe('pipeline-subscriber error paths (stubbed redis)', () => {
     pipe.attach('cmp-zz', fullyBroken)
     pipe.attach('cmp-zz', good)
     expect(() =>
-      sub.emit('pmessage', 'rt:pipeline:campaign:*', 'rt:pipeline:campaign:cmp-zz', 'x'),
+      sub.emit(
+        'pmessage',
+        'rt:pipeline:campaign:*',
+        'rt:pipeline:campaign:cmp-zz',
+        '{"type":"phase","phase":"world_gen"}',
+      ),
     ).not.toThrow()
     expect(good.written).toHaveLength(1)
     await pipe.close()
+  })
+})
+
+// --- MYT-62 Task 2: type-tripwire + prose-channel reuse ----------------
+//
+// The pipeline channel is player-facing. A type-tripwire drops + logs any
+// message whose parsed `type` is not in PIPELINE_SSE_EVENTS — defense in
+// depth so a stray `prep-delta` (secret-bearing prose) can never reach a
+// player sink. The prose channel (`prep:campaign:*`) does NOT apply this
+// gate; the prose subscriber forwards everything verbatim.
+
+describe('pipeline-subscriber type-tripwire (pipeline channel)', () => {
+  it('drops + warns on a forbidden event type (prep-delta) published on the pipeline channel', () => {
+    const sub = makeFakeSub()
+    const warnings: unknown[] = []
+    const logger = pino(
+      { level: 'warn' },
+      {
+        write: (line: string): void => {
+          const parsed = JSON.parse(line) as { level: number }
+          if (parsed.level === 40) warnings.push(parsed)
+        },
+      },
+    )
+    const pipe = createPipelineSubscriber(makeFakeRedis(sub), 'rt:', logger)
+    const sink = makeSink()
+    pipe.attach('cmp-trip', sink)
+    sub.emit(
+      'pmessage',
+      'rt:pipeline:campaign:*',
+      'rt:pipeline:campaign:cmp-trip',
+      JSON.stringify({ type: 'prep-delta', field: 'sd_playbook', text: 'a secret' }),
+    )
+    // Never written to the player sink.
+    expect(sink.written).toHaveLength(0)
+    // A warn was logged identifying the dropped type.
+    expect(
+      warnings.some((w) => JSON.stringify(w).includes('dropped message with unknown/forbidden event type')),
+    ).toBe(true)
+    // The dropped type reaches the warn payload for forensics — this
+    // distinguishes the forbidden-known-type case (parsedType='prep-delta')
+    // from the malformed-JSON case (parsedType=undefined).
+    expect(JSON.stringify(warnings)).toContain('prep-delta')
+  })
+
+  it('forwards a legit pipeline event (prep-started) to the attached sink', () => {
+    const sub = makeFakeSub()
+    const pipe = createPipelineSubscriber(makeFakeRedis(sub), 'rt:', pino({ level: 'silent' }))
+    const sink = makeSink()
+    pipe.attach('cmp-ok', sink)
+    const payload = JSON.stringify({ type: 'prep-started', sessionNumber: 1 })
+    sub.emit('pmessage', 'rt:pipeline:campaign:*', 'rt:pipeline:campaign:cmp-ok', payload)
+    expect(sink.written).toHaveLength(1)
+    expect(sink.written[0]).toBe(`data: ${payload}\n\n`)
+  })
+
+  it('drops + warns on a malformed (non-JSON) message on the pipeline channel', () => {
+    const sub = makeFakeSub()
+    const warnings: unknown[] = []
+    const logger = pino(
+      { level: 'warn' },
+      {
+        write: (line: string): void => {
+          const parsed = JSON.parse(line) as { level: number }
+          if (parsed.level === 40) warnings.push(parsed)
+        },
+      },
+    )
+    const pipe = createPipelineSubscriber(makeFakeRedis(sub), 'rt:', logger)
+    const sink = makeSink()
+    pipe.attach('cmp-bad-json', sink)
+    sub.emit('pmessage', 'rt:pipeline:campaign:*', 'rt:pipeline:campaign:cmp-bad-json', 'not-json{')
+    expect(sink.written).toHaveLength(0)
+    expect(
+      warnings.some((w) => JSON.stringify(w).includes('dropped message with unknown/forbidden event type')),
+    ).toBe(true)
+  })
+})
+
+describe('pipeline-subscriber prose channel (no tripwire)', () => {
+  it('forwards a prep-delta verbatim on prep:campaign: without the pipeline tripwire', () => {
+    const sub = makeFakeSub()
+    const pipe = createPipelineSubscriber(makeFakeRedis(sub), 'rt:', pino({ level: 'silent' }), {
+      channel: 'prep',
+    })
+    const sink = makeSink()
+    pipe.attach('cmp-prose', sink)
+    const payload = JSON.stringify({ type: 'prep-delta', field: 'sd_playbook', text: 'prose' })
+    sub.emit('pmessage', 'rt:prep:campaign:*', 'rt:prep:campaign:cmp-prose', payload)
+    expect(sink.written).toHaveLength(1)
+    expect(sink.written[0]).toBe(`data: ${payload}\n\n`)
+  })
+
+  it('subscribes to the prep:campaign:* pattern when channel is prep', () => {
+    const sub = makeFakeSub()
+    const pipe = createPipelineSubscriber(makeFakeRedis(sub), 'rt:', pino({ level: 'silent' }), {
+      channel: 'prep',
+    })
+    expect(sub.psubscribe).toHaveBeenCalledWith('rt:prep:campaign:*')
+    void pipe
+  })
+})
+
+describe('classifyPipelineEvent (pure tripwire classifier)', () => {
+  it('allows a known pipeline event type', () => {
+    const result = classifyPipelineEvent(JSON.stringify({ type: 'prep-started', sessionNumber: 1 }))
+    expect(result.allowed).toBe(true)
+    expect(result.parsedType).toBe('prep-started')
+  })
+
+  it('rejects an unknown / forbidden event type, surfacing parsedType for forensics', () => {
+    const result = classifyPipelineEvent(JSON.stringify({ type: 'prep-delta', text: 'secret' }))
+    expect(result.allowed).toBe(false)
+    expect(result.parsedType).toBe('prep-delta')
+  })
+
+  it('rejects malformed (non-JSON) input with parsedType undefined', () => {
+    const result = classifyPipelineEvent('not-json{')
+    expect(result.allowed).toBe(false)
+    expect(result.parsedType).toBeUndefined()
+  })
+
+  it('rejects a payload with a missing / non-string type', () => {
+    const missing = classifyPipelineEvent(JSON.stringify({ phase: 'world_gen' }))
+    expect(missing.allowed).toBe(false)
+    expect(missing.parsedType).toBeUndefined()
+    const nonString = classifyPipelineEvent(JSON.stringify({ type: 42 }))
+    expect(nonString.allowed).toBe(false)
+    expect(nonString.parsedType).toBe(42)
   })
 })

@@ -13,7 +13,33 @@
 
 import type { Redis } from 'ioredis'
 import type pino from 'pino'
+import { PIPELINE_SSE_EVENTS } from '../contract/pipeline-events.js'
 import type { SseSink } from './sse-connection.js'
+
+const PIPELINE_EVENT_TYPES = new Set(PIPELINE_SSE_EVENTS)
+
+/**
+ * Type-tripwire classifier for the player-facing pipeline channel. Parses
+ * the raw published message and reports whether its `type` is an allowed
+ * pipeline event. Returns `parsedType` alongside the verdict so the caller
+ * can log the dropped type for forensics (malformed JSON / missing-type
+ * yield `undefined`). Pure — no side effects, independently unit-testable.
+ */
+export function classifyPipelineEvent(message: string): {
+  readonly allowed: boolean
+  readonly parsedType: unknown
+} {
+  let parsedType: unknown
+  try {
+    parsedType = (JSON.parse(message) as { type?: unknown }).type
+  } catch {
+    parsedType = undefined
+  }
+  return {
+    allowed: typeof parsedType === 'string' && PIPELINE_EVENT_TYPES.has(parsedType),
+    parsedType,
+  }
+}
 
 export interface PipelineSubscriber {
   /** Attach an SSE sink to a campaign's channel. Returns a detach fn. */
@@ -30,7 +56,9 @@ export function createPipelineSubscriber(
   redis: Redis,
   redisKeyPrefix: string,
   logger: pino.Logger,
+  opts: { readonly channel?: 'pipeline' | 'prep' } = {},
 ): PipelineSubscriber {
+  const channel = opts.channel ?? 'pipeline'
   // Dedicated subscriber client. duplicate() inherits URL/AUTH/TLS but
   // we override retry options for the long-lived subscriber's needs.
   // Cast through `as unknown` because ioredis's duplicate() typing
@@ -47,8 +75,8 @@ export function createPipelineSubscriber(
     enableOfflineQueue: true,
   })
 
-  const pattern = `${redisKeyPrefix}pipeline:campaign:*`
-  const channelPrefix = `${redisKeyPrefix}pipeline:campaign:`
+  const pattern = `${redisKeyPrefix}${channel}:campaign:*`
+  const channelPrefix = `${redisKeyPrefix}${channel}:campaign:`
   const map = new Map<string, Set<SseSink>>()
   let wastedMessages = 0
   let closed = false
@@ -98,9 +126,23 @@ export function createPipelineSubscriber(
     }
   })
 
-  sub.on('pmessage', (_pattern: string, channel: string, message: string) => {
-    if (!channel.startsWith(channelPrefix)) return
-    const campaignId = channel.slice(channelPrefix.length)
+  sub.on('pmessage', (_pattern: string, pmessageChannel: string, message: string) => {
+    if (!pmessageChannel.startsWith(channelPrefix)) return
+    const campaignId = pmessageChannel.slice(channelPrefix.length)
+    // Type-tripwire (pipeline channel ONLY): defense-in-depth so a stray
+    // prose event (e.g. secret-bearing `prep-delta`) published on the
+    // player-facing pipeline channel can never reach a player sink. The
+    // prose channel forwards everything verbatim and skips this gate.
+    if (channel === 'pipeline') {
+      const { allowed, parsedType } = classifyPipelineEvent(message)
+      if (!allowed) {
+        logger.warn(
+          { campaignId, parsedType },
+          'pipeline-subscriber: dropped message with unknown/forbidden event type',
+        )
+        return
+      }
+    }
     const sinks = map.get(campaignId)
     if (!sinks || sinks.size === 0) {
       wastedMessages++
