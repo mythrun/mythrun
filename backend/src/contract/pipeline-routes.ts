@@ -11,6 +11,9 @@ export const PIPELINE_ROUTES: readonly string[] = [
   // Status surface (from the status-surface ticket; pre-existing):
   'GET /api/campaigns/:campaignId/status',
   'GET /api/campaigns/:campaignId/status/stream',
+  // MYT-62 T6 — player-facing session-prep loading-screen SSE feed
+  // (phase-only; rides pipeline:campaign:, tripwire drops prep-delta prose):
+  'GET /api/campaigns/:campaignId/prep-status',
   // World gen (this ticket):
   'POST /api/campaigns',
   'GET /api/campaigns/:campaignId',

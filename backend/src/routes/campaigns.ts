@@ -86,6 +86,10 @@ interface Params {
   readonly campaignId: string
 }
 
+// MVP: session 1 only (MYT-59 scope); session-runtime resolves the current
+// session later. Used by GET /prep-status's ready/generating snapshot.
+const PREP_SESSION_NUMBER = 1
+
 // ---------------------------------------------------------------------------
 // Body schema (MYT-51 D2). Discriminated union; only the `'new'` arm is
 // functional at launch — `'existing'` is an additive future addition.
@@ -300,6 +304,68 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       }
       /* c8 ignore stop */
       sink.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`)
+      return reply
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/:campaignId/prep-status (MYT-62 T6)
+  //
+  // Player-facing SSE feed for the "DM is preparing tonight's session…"
+  // loading screen. Phase-ONLY by construction: it rides the same
+  // `pipeline:campaign:{id}` channel as the status stream, where the
+  // prep-started / prep-ready / prep-failed phase events are published.
+  // The Task-2 tripwire in pipeline-subscriber.ts drops any event whose
+  // `type` is not in PIPELINE_SSE_EVENTS — so a stray prose `prep-delta`
+  // (sd_playbook secrets) published on this channel can never reach a
+  // player sink. That is the structural enforced-ignorance guarantee:
+  // NO prose, by construction.
+  //
+  // The snapshot is a single ready/generating bit derived from whether a
+  // session_preps row exists for the session — distinct from the status
+  // stream's world-gen phase snapshot, but the SSE wiring is identical.
+  // -------------------------------------------------------------------------
+
+  app.get<{ Params: Params }>(
+    '/api/campaigns/:campaignId/prep-status',
+    {
+      config: {
+        // Per-USER cap on stream opens (mirrors status/stream).
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+          keyGenerator: (req: FastifyRequest): string => {
+            try {
+              return requireDbUser(req).id
+            } catch {
+              return req.ip
+            }
+          },
+        },
+        pipelineRoute: true,
+      },
+      preHandler: requireCampaignMember(repo),
+    },
+    async (request, reply) => {
+      const campaignId = request.params.campaignId
+      opts.counter.increment()
+
+      let detach: (() => void) | null = null
+      const sink = openSseConnection({
+        request,
+        reply,
+        logger: request.log as PinoLogger,
+        onClose: () => {
+          if (detach) detach()
+          opts.counter.decrement()
+        },
+      })
+      detach = opts.subscriber.attach(campaignId, sink)
+
+      const exists = await repo.sessionPreps.existsFor(campaignId, PREP_SESSION_NUMBER)
+      sink.write(
+        `event: snapshot\ndata: ${JSON.stringify({ status: exists ? 'ready' : 'generating' })}\n\n`,
+      )
       return reply
     },
   )

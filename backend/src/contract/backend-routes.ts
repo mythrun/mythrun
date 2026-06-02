@@ -43,6 +43,9 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'POST', path: '/api/campaigns/:campaignId/resume' },
   { method: 'GET', path: '/api/campaigns/:campaignId/status' },
   { method: 'GET', path: '/api/campaigns/:campaignId/status/stream' },
+  // MYT-62 T6 — player-facing "DM is preparing tonight's session…" SSE feed.
+  // Phase-only by construction (rides pipeline:campaign:, no prose).
+  { method: 'GET', path: '/api/campaigns/:campaignId/prep-status' },
   { method: 'GET', path: '/api/campaigns/:campaignId/world-snapshot' }, // myth-exac
   // MYT-53 — per-player parallel character creation
   { method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' },

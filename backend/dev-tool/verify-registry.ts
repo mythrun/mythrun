@@ -169,6 +169,11 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // by the dev-tool wire-log drawer — header chrome, not a JSDOM-mountable
   // page panel; exercised E2E by MYT-64. (MYT-62 T5.)
   { method: 'GET', path: '/api/dev/campaigns/:campaignId/prep-prose' },
+
+  // GET /api/campaigns/:campaignId/prep-status: phase-only prep SSE;
+  // consumed by the frontend loading screen + dev-tool drawer, no JSDOM
+  // page panel; E2E via MYT-64. (MYT-62 T6.)
+  { method: 'GET', path: '/api/campaigns/:campaignId/prep-status' },
 ]
 
 export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
