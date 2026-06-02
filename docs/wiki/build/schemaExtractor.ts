@@ -86,11 +86,27 @@ export async function extractSchema(opts: ExtractOptions): Promise<SchemaMetadat
       [schemaName],
     )
 
+    // Indexes worth documenting: explicit `idx_*` indexes AND constraint-backed
+    // UNIQUE indexes — both the inline `<table>_<col>_key` form and named
+    // constraints like `session_preps_campaign_session_key` (added via ALTER
+    // TABLE ADD CONSTRAINT). The older `indexname LIKE 'idx_%'` filter dropped
+    // every constraint-backed unique index. Primary-key indexes (`<table>_pkey`)
+    // stay excluded — every table has one on `id`, so they'd be uniform noise.
+    // pg_get_indexdef yields the same `CREATE [UNIQUE] INDEX ... ON
+    // <schema>.<table> ...` string as pg_indexes.indexdef, so the downstream
+    // parser + schema-prefix strip apply unchanged.
     const indexesQ = await client.query<RawIndexRow>(
-      `SELECT tablename, indexname, indexdef
-         FROM pg_indexes
-        WHERE schemaname = $1 AND indexname LIKE 'idx_%'
-        ORDER BY tablename, indexname`,
+      `SELECT t.relname AS tablename,
+              ic.relname AS indexname,
+              pg_get_indexdef(i.indexrelid) AS indexdef
+         FROM pg_index i
+         JOIN pg_class ic ON ic.oid = i.indexrelid
+         JOIN pg_class t ON t.oid = i.indrelid
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = $1
+          AND NOT i.indisprimary
+          AND (ic.relname LIKE 'idx_%' OR i.indisunique)
+        ORDER BY t.relname, ic.relname`,
       [schemaName],
     )
 

@@ -57,6 +57,31 @@ describe.skipIf(databaseUrl === '')('extractSchema (integration)', () => {
     expect(others).toEqual([])
   })
 
+  it('surfaces named UNIQUE constraint indexes (not just idx_*), and excludes primary keys', async () => {
+    const meta = await extractSchema({ databaseUrl, migrationsDir })
+
+    // migration 022 adds a named UNIQUE constraint whose backing index is
+    // `session_preps_campaign_session_key` — NOT an idx_* name. The old
+    // `indexname LIKE 'idx_%'` filter dropped it; it must now appear.
+    const sessionPreps = meta.tables.find((t) => t.name === 'session_preps')
+    const uniqueIdx = sessionPreps?.indexes.find(
+      (i) => i.name === 'session_preps_campaign_session_key',
+    )
+    expect(uniqueIdx).toBeDefined()
+    expect(uniqueIdx?.unique).toBe(true)
+    expect(uniqueIdx?.columns).toEqual(['campaign_id', 'session_number'])
+
+    // Inline column-level UNIQUE constraints (the `<table>_<col>_key` form) also
+    // surface — e.g. users.cognito_sub is UNIQUE.
+    const users = meta.tables.find((t) => t.name === 'users')
+    expect(users?.indexes.some((i) => i.unique && i.columns.includes('cognito_sub'))).toBe(true)
+
+    // Primary-key backing indexes (`<table>_pkey`) remain excluded — every
+    // table has one on `id`; they'd be uniform noise.
+    const anyPkey = meta.tables.some((t) => t.indexes.some((i) => i.name.endsWith('_pkey')))
+    expect(anyPkey).toBe(false)
+  })
+
   it('cleans up the throwaway schema after extraction', async () => {
     await extractSchema({
       databaseUrl,
