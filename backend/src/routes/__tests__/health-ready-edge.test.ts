@@ -14,7 +14,7 @@ import IoredisMock from 'ioredis-mock'
 import { registerReadyRoute } from '../health-ready.js'
 import type { AppDeps } from '../../app-deps.js'
 import { createRepo } from '../../repo/index.js'
-import { noopWorldGenQueue } from '../../__tests__/helpers/stub-deps.js'
+import { noopWorldGenQueue, noopSessionPrepQueue } from '../../__tests__/helpers/stub-deps.js'
 
 function buildDeps(pgQuery: () => Promise<unknown>): AppDeps {
   const pg = {
@@ -30,6 +30,7 @@ function buildDeps(pgQuery: () => Promise<unknown>): AppDeps {
     redisKeyPrefix: 'test:use1:',
     repo: createRepo(pg),
     worldGenQueue: noopWorldGenQueue(),
+    sessionPrepQueue: noopSessionPrepQueue(),
   }
 }
 

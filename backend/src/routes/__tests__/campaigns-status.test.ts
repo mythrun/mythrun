@@ -28,7 +28,7 @@ import { createRepo } from '../../repo/index.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import type { AppDeps } from '../../app-deps.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
-import { noopWorldGenQueue } from '../../__tests__/helpers/stub-deps.js'
+import { noopWorldGenQueue, noopSessionPrepQueue } from '../../__tests__/helpers/stub-deps.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -75,6 +75,7 @@ describe('campaigns status routes', () => {
       redisKeyPrefix: REDIS_KEY_PREFIX,
       repo,
       worldGenQueue: noopWorldGenQueue(),
+      sessionPrepQueue: noopSessionPrepQueue(),
     }
     app = await buildApp(
       deps,

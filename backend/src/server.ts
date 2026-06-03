@@ -1,13 +1,12 @@
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
-import { Queue, Worker, type Job, type JobType } from 'bullmq'
+import { Queue, Worker, type Job } from 'bullmq'
 import type {
   AppDeps,
 } from './app-deps.js'
 import {
   buildApp,
   createShutdown,
-  type BullMqQueueShutdown,
   type BullMqWorkerLike,
   type ShutdownHandler,
 } from './app.js'
@@ -43,8 +42,14 @@ import {
   QUEUE_SESSION_PREP,
   QUEUE_WORLD_GEN,
 } from './worker/bullmq-config.js'
-import type { WorldGenQueueLike } from './routes/campaigns.js'
-import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
+import {
+  buildWorldGenQueue,
+  buildCharacterCreationQueue,
+  buildSessionPrepQueue,
+  stubWorldGenQueue,
+  stubCharacterCreationQueue,
+  stubSessionPrepQueue,
+} from './server-queues.js'
 import type { Logger as PinoLogger } from 'pino'
 
 // Build a RegisterAuthOptions from a loaded Env without emitting `undefined`
@@ -97,86 +102,6 @@ async function closePartials(
 function bootGateEnabled(): boolean {
   const raw = process.env.BOOT_GATE_ENABLED ?? ''
   return raw === '1' || raw.toLowerCase() === 'true'
-}
-
-/** MYT-51 T12: build the world-gen BullMQ queue + its plugin-facing
- *  adapter. Extracted from main() so the boot orchestrator stays under
- *  the 100-line lint budget. Returns the raw `bullmqQueue` (for
- *  shutdown.close) AND the `WorldGenQueueLike` adapter that bridges
- *  campaigns.ts's contract to BullMQ's variadic `getJobCounts` API. */
-function buildWorldGenQueue(redisBatch: Redis): {
-  bullmqQueue: Queue
-  worldGenQueue: WorldGenQueueLike
-} {
-  // SHOWSTOPPER fix from Hydra-C2 / spec D9:
-  //   `removeOnComplete: { count: 0 } + removeOnFail: { count: 0 }` —
-  //   BullMQ keeps terminal jobs permanently by default; with their
-  //   jobIds still in the dedupe set, our resume flow's
-  //   `queue.add(..., { jobId: campaignId })` silently no-ops on a
-  //   completed/failed job. The { count: 0 } config prunes terminal
-  //   jobs so resume's enqueue contract holds.
-  //
-  // MYT-52 T1: `attempts: 2 + exponential backoff (30s)` — BullMQ's
-  // default is `attempts: 1` (no retries), which makes every "BullMQ
-  // retries the stage" recovery path in the MYT-52 design's §7.2 error
-  // matrix (transient API, persistence COMMIT, repair-chain exhausted,
-  // max-tokens truncation, in-stream error) fictional. The retry budget
-  // here is the surface those paths rely on.
-  const bullmqQueue = new Queue(QUEUE_WORLD_GEN, {
-    connection: redisBatch,
-    defaultJobOptions: {
-      attempts: 2,
-      backoff: { type: 'exponential', delay: 30000 },
-      removeOnComplete: { count: 0 },
-      removeOnFail: { count: 0 },
-    },
-  })
-  // Adapter from the campaigns plugin's WorldGenQueueLike contract
-  // (which takes states as a readonly string[]) to BullMQ Queue's real
-  // `getJobCounts(...types)` variadic signature.
-  const worldGenQueue: WorldGenQueueLike = {
-    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
-    // The contract types `states` as readonly string[]; BullMQ's
-    // getJobCounts narrows to JobType[]. Cast at this single boundary
-    // — caller-supplied values come from the route handler, which
-    // hardcodes 'waiting'/'active'/'delayed' (all valid JobType).
-    getJobCounts: (states) => bullmqQueue.getJobCounts(...(states as JobType[])),
-    getJob: (jobId) => bullmqQueue.getJob(jobId),
-  }
-  return { bullmqQueue, worldGenQueue }
-}
-
-/** myth-epo4 T22 / MYT-53: build the character-creation BullMQ queue + its
- *  plugin-facing adapter. Parallels `buildWorldGenQueue` for the
- *  `campaign-setup` queue. Returns the raw `bullmqQueue` (for shutdown.close)
- *  AND the `CharacterCreationQueueLike` adapter that the campaign-characters
- *  plugin's POST /start-character-creation route uses to enqueue jobs.
- *
- *  Job-options policy mirrors world-gen's D9 fix: `removeOnComplete:
- *  { count: 0 } + removeOnFail: { count: 0 }` so terminal jobs are pruned
- *  and a future re-enqueue with the same jobId (`cc-${campaignId}-${userId}`,
- *  per MYT-53 T13) does not silently no-op against a leftover completed
- *  record. `attempts: 2 + exponential backoff` matches world-gen so the
- *  per-stage retry surface the character-creation processor relies on
- *  (terminal vs non-terminal classification — see isTerminalError) is
- *  actually fired by BullMQ. */
-function buildCharacterCreationQueue(redisBatch: Redis): {
-  bullmqQueue: Queue
-  characterCreationQueue: CharacterCreationQueueLike
-} {
-  const bullmqQueue = new Queue(QUEUE_CAMPAIGN_SETUP, {
-    connection: redisBatch,
-    defaultJobOptions: {
-      attempts: 2,
-      backoff: { type: 'exponential', delay: 30000 },
-      removeOnComplete: { count: 0 },
-      removeOnFail: { count: 0 },
-    },
-  })
-  const characterCreationQueue: CharacterCreationQueueLike = {
-    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
-  }
-  return { bullmqQueue, characterCreationQueue }
 }
 
 /** myth-epo4 T22 / MYT-53: build the world-gen Worker on a dedicated
@@ -258,32 +183,6 @@ async function buildCharacterCreationWorker(
   )
 }
 
-/** MYT-61 T4: build the session-prep BullMQ Queue. Job-options policy mirrors
- *  buildWorldGenQueue's D9 fix: `removeOnComplete: { count: 0 } +
- *  removeOnFail: { count: 0 }` so terminal jobs are pruned and a future
- *  re-enqueue with the same jobId (`sp-${campaignId}-${sessionNumber}`, per
- *  MYT-63) does not silently no-op against a leftover completed record.
- *  `attempts: 2 + exponential backoff (30s)` matches world-gen so the
- *  processor's terminal/non-terminal classification (isTerminalError) is
- *  actually fired by BullMQ retries.
- *
- *  The request-time enqueue surface (the route that calls `.add()`) lands in
- *  MYT-63 along with the AppDeps field that threads this queue to the route.
- *  This task wires the consumer (Worker) end + the queue's lifecycle (created
- *  here, closed at shutdown); returns the raw Queue so shutdown can close()
- *  it after its worker drains. */
-function buildSessionPrepQueue(redisBatch: Redis): Queue {
-  return new Queue(QUEUE_SESSION_PREP, {
-    connection: redisBatch,
-    defaultJobOptions: {
-      attempts: 2,
-      backoff: { type: 'exponential', delay: 30000 },
-      removeOnComplete: { count: 0 },
-      removeOnFail: { count: 0 },
-    },
-  })
-}
-
 /** MYT-61 T4: build the session-prep Worker on a dedicated BullMQ-tuned
  *  ioredis connection. Mirrors buildWorldGenWorker / buildCharacterCreation-
  *  Worker. publishEvent is constructed here (same channel + JSON-encode policy
@@ -332,37 +231,8 @@ function withSessionPrepShutdown(
   }
 }
 
-// Stub queue/worker for the boot-gate-disabled fallback path. The fallback
-// never connects to Redis, so we can't construct real BullMQ handles; the
-// app-deps + shutdown contracts both expect a non-undefined value, so
-// supply shape-conforming no-ops. None of the routes that USE the queue
-// are reachable on the fallback path (no DB, requireOnboarded 500s), so
-// `add` returning a rejected promise is operator-safe.
-function stubWorldGenQueue(): WorldGenQueueLike & BullMqQueueShutdown {
-  return {
-    add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
-    getJobCounts: () => Promise.resolve({}),
-    getJob: () => Promise.resolve(null),
-    close: () => Promise.resolve(),
-  }
-}
-
 function stubBullMqWorker(): BullMqWorkerLike {
   return { close: () => Promise.resolve() }
-}
-
-// myth-epo4 T22: the character-creation surface is a single `add()` plus
-// the shutdown-time `close()`. Reject on enqueue so a route that somehow
-// reaches the queue gate (the plugin returns 503 first; this is defense
-// in depth) gets a clean failure mode rather than a silent hang.
-function stubCharacterCreationQueue(): CharacterCreationQueueLike & BullMqQueueShutdown {
-  return {
-    add: () =>
-      Promise.reject(
-        new Error('character-creation queue unavailable: BOOT_GATE_ENABLED is off'),
-      ),
-    close: () => Promise.resolve(),
-  }
 }
 
 async function fallbackStart(): Promise<void> {
@@ -386,6 +256,7 @@ async function fallbackStart(): Promise<void> {
   } as unknown as Pool
   const stubQueue = stubWorldGenQueue()
   const stubCharacterQueue = stubCharacterCreationQueue()
+  const stubSessionPrep = stubSessionPrepQueue()
   const stubDeps: AppDeps = {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
@@ -394,6 +265,7 @@ async function fallbackStart(): Promise<void> {
     repo: createRepo(stubPool),
     worldGenQueue: stubQueue,
     characterCreationQueue: stubCharacterQueue,
+    sessionPrepQueue: stubSessionPrep,
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
@@ -513,10 +385,10 @@ export async function main(): Promise<void> {
     const { bullmqQueue, worldGenQueue } = buildWorldGenQueue(rTBRef)
     const { bullmqQueue: bullmqCharacterCreationQueue, characterCreationQueue } =
       buildCharacterCreationQueue(rTBRef)
-    // MYT-61 T4: session-prep queue. The enqueue route + AppDeps wiring lands
-    // in MYT-63; here we create the queue so its connection bookkeeping exists
-    // and is closed at shutdown (after the session-prep worker drains).
-    const sessionPrepQueue = buildSessionPrepQueue(rTBRef)
+    // MYT-61 T4 / MYT-63 T3: session-prep queue. The raw bullmqSessionPrepQueue
+    // is closed at shutdown (after the worker drains); the sessionPrepQueue
+    // adapter flows into AppDeps so the MYT-63 trigger route can enqueue.
+    const { bullmqQueue: bullmqSessionPrepQueue, sessionPrepQueue } = buildSessionPrepQueue(rTBRef)
 
     const app = await buildApp(
       {
@@ -527,6 +399,7 @@ export async function main(): Promise<void> {
         repo,
         worldGenQueue,
         characterCreationQueue,
+        sessionPrepQueue,
       },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
@@ -566,8 +439,10 @@ export async function main(): Promise<void> {
       // Queue's close(), not the CharacterCreationQueueLike adapter.
       characterCreationQueue: bullmqCharacterCreationQueue,
     })
+    // Pass the raw BullMQ Queue (bullmqSessionPrepQueue), not the
+    // SessionPrepQueueLike adapter — shutdown needs the underlying queue's close().
     const handleShutdown = withSessionPrepShutdown(
-      innerShutdown, sessionPrepWorker, sessionPrepQueue,
+      innerShutdown, sessionPrepWorker, bullmqSessionPrepQueue,
     )
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

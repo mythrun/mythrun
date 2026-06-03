@@ -16,6 +16,7 @@ import type { Redis } from 'ioredis'
 import IoredisMock from 'ioredis-mock'
 import type { AppDeps } from '../../app-deps.js'
 import type { WorldGenQueueLike } from '../../routes/campaigns.js'
+import type { SessionPrepQueueLike } from '../../routes/session-preps.js'
 import { createRepo } from '../../repo/index.js'
 
 export interface StubDepsOverrides {
@@ -55,6 +56,17 @@ export function noopWorldGenQueue(): WorldGenQueueLike {
   }
 }
 
+/**
+ * Hand-rolled no-op session-prep queue. Mirrors noopWorldGenQueue — suffices
+ * for buildApp callers that never exercise the MYT-63 trigger route; tests
+ * that drive enqueue build their own spy.
+ */
+export function noopSessionPrepQueue(): SessionPrepQueueLike {
+  return {
+    add: (): Promise<unknown> => Promise.resolve(undefined),
+  }
+}
+
 export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
   // Promise.resolve / Promise.reject form (not `async () =>`) avoids the
   // @typescript-eslint/require-await lint on stubs that don't internally
@@ -70,5 +82,6 @@ export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
     redisKeyPrefix: 'test:use1:',
     repo: createRepo(pg),
     worldGenQueue: overrides.worldGenQueue ?? noopWorldGenQueue(),
+    sessionPrepQueue: noopSessionPrepQueue(),
   }
 }

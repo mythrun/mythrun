@@ -43,7 +43,7 @@ import type { AppDeps } from '../../app-deps.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
-import { noopWorldGenQueue } from '../../__tests__/helpers/stub-deps.js'
+import { noopWorldGenQueue, noopSessionPrepQueue } from '../../__tests__/helpers/stub-deps.js'
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 import {
   cleanupTestScope,
@@ -86,6 +86,7 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
         redisKeyPrefix: REDIS_KEY_PREFIX,
         repo,
         worldGenQueue: noopWorldGenQueue(),
+        sessionPrepQueue: noopSessionPrepQueue(),
       }
       app = await buildApp(
         deps,
@@ -286,5 +287,6 @@ function makeStubDepsForRealMode(): AppDeps {
     redisKeyPrefix: 'test:use1:',
     repo: createRepo(mockPool),
     worldGenQueue: noopWorldGenQueue(),
+    sessionPrepQueue: noopSessionPrepQueue(),
   }
 }

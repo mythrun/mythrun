@@ -15,6 +15,12 @@ const COVERAGE_EXCLUDES: readonly string[] = [
   'src/server.ts',
   // Same: worker process entrypoint.
   'src/worker.ts',
+  // BullMQ producer-queue factories + boot-gate stubs, extracted verbatim from
+  // the (also-excluded) server.ts. Each build*Queue constructs a Redis-bound
+  // BullMQ Queue at boot — not vitest-unit-testable without a live Redis; the
+  // trivial adapter passthroughs are exercised by the route enqueue spies +
+  // the MYT-64 E2E smoke. Excluding preserves the pre-extraction posture.
+  'src/server-queues.ts',
   // One-shot CLI: runs migrations against a real DB. Migration logic itself
   // is exercised by every integration test's beforeAll runMigrations() call.
   'src/db/migrate.ts',

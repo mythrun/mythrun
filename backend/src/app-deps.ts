@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis'
 import type { Repo } from './repo/index.js'
 import type { WorldGenQueueLike } from './routes/campaigns.js'
 import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
+import type { SessionPrepQueueLike } from './routes/session-preps.js'
 
 export interface AppDeps {
   pg: Pool
@@ -27,4 +28,10 @@ export interface AppDeps {
    *  plugin route returns 503 'queue_not_ready' in that state. Typed as the
    *  minimal CharacterCreationQueueLike contract; routes only call `.add()`. */
   characterCreationQueue?: CharacterCreationQueueLike
+  /** MYT-63: BullMQ Queue handle for `session-prep` jobs. Constructed in
+   *  server.ts at boot (after Redis is reachable) and threaded into the
+   *  session-prep trigger plugin so the trigger route can enqueue. Required —
+   *  mirrors worldGenQueue (boot invariant). Typed as the minimal
+   *  SessionPrepQueueLike contract; the route only calls `.add()`. */
+  sessionPrepQueue: SessionPrepQueueLike
 }

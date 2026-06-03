@@ -34,7 +34,7 @@ import type { AppDeps } from '../app-deps.js'
 import { createRepo } from '../repo/index.js'
 import { classifyProfanity } from '../llm/profanity.js'
 import { makeStubEnv } from './helpers/stub-env.js'
-import { noopWorldGenQueue } from './helpers/stub-deps.js'
+import { noopWorldGenQueue, noopSessionPrepQueue } from './helpers/stub-deps.js'
 
 const classifyProfanityMock = vi.mocked(classifyProfanity)
 
@@ -82,6 +82,7 @@ describe('onboarding routes (integration)', () => {
       redisKeyPrefix: 'test:use1:',
       repo: createRepo(pool),
       worldGenQueue: noopWorldGenQueue(),
+      sessionPrepQueue: noopSessionPrepQueue(),
     }
     app = await buildApp(
       deps,

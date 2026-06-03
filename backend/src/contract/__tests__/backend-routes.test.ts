@@ -150,6 +150,7 @@ const makeStubDeps = (): AppDeps => {
       getJobCounts: (): Promise<Record<string, number>> => Promise.resolve({}),
       getJob: (): Promise<null> => Promise.resolve(null),
     },
+    sessionPrepQueue: { add: (): Promise<unknown> => Promise.resolve(undefined) },
   }
 }
 
