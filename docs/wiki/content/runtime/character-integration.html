@@ -6,8 +6,8 @@
 <!-- source: backend/src/routes/campaign-characters.ts -->
 <!-- source: backend/migrations/018_character_integration.sql -->
 <!-- source: docs/superpowers/specs/2026-05-23-myt-54-character-integration-design.md -->
-<!-- source-hash: sha256:be8be7a51ef68cf4fae538bd7f428b1a361b78f4ed758ce5629df525ffe87d2d -->
-<!-- last-ticket: MYT-54 -->
+<!-- source-hash: sha256:795b883042a4bec9d436ddeab3f4cee64be8217943cd529224b98b8be7a46d88 -->
+<!-- last-ticket: MYT-64 -->
 
 <h1>Character integration</h1>
 
@@ -136,6 +136,19 @@
   emits one side and forgets the other." A one-canonical-emission + worker-side mirror is robust to
   that. Asking for both sides and validating symmetry would just turn a tolerable asymmetry into a
   hard <code>LlmStructuredOutputError</code> retry loop.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Free LLM prose is validated min-only — no length cap</strong> — the
+  <code>proseKernel</code>, fact <code>content</code>, and relationship
+  <code>description</code> fields carry a substance floor (<code>min(...)</code>) but no
+  <code>max(...)</code>. The repair strategy fixes malformed JSON, not valid-but-long prose, so a
+  length cap would <em>terminal-fail</em> the stage on output that is structurally fine — wasting
+  the tokens already spent generating it. MYT-64's first real-Opus run surfaced exactly this: a
+  ~1400-char kernel hit the old <code>max(1200)</code> and failed the whole integration. The fix
+  dropped <code>max()</code> from every free-prose field across the LLM-output schemas; caps remain
+  only on short labels, array element counts, numerics, and fields that mirror a DB
+  <code>CHECK</code>.
 </aside>
 
 <h3>The single transaction</h3>
@@ -274,8 +287,9 @@
     <ul>
       <li><code>userId</code>, <code>displayName</code> — echo of the input party member.</li>
       <li>
-        <code>entity</code> — <code>{ name, proseKernel }</code> (1–2 paragraph PC summary, 80–1200
-        chars).
+        <code>entity</code> — <code>{ name, proseKernel }</code> (a 1–2 paragraph PC summary). The
+        kernel carries a substance floor (<code>min(80)</code>) but no upper bound — free LLM prose
+        is validated min-only.
       </li>
       <li>
         <code>facts</code> — 1–10 fact rows, each

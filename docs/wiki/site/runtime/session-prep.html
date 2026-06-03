@@ -537,6 +537,18 @@
   they ride the campaign's pipeline channel, never the prose.
 </p>
 
+<p>
+  This whole LLM path is now smoke-validated against real Opus. The
+  <a href="#run-the-session-prep-smoke">session-prep smoke</a> loads a captured ready-to-play world
+  into <code>mythrun_test</code> and invokes the processor directly, confirming the live behaviors
+  this page describes: the per-call Opus timeout fires from the
+  <a href="./llm.html#the-session-prep-generation-stage">generation primitive</a>, re-enqueuing an
+  already-completed session resumes idempotently (the atomic claim no-ops), and persistence is
+  partial-generation-safe — the <code>session_preps</code> row lands only after the stream resolves
+  to a complete object, so an interrupted stream leaves no half-written prep. It is a manual,
+  not-in-CI run (real Opus, ~$0.50 measured); the runbook is below.
+</p>
+
 <aside class="wiki-rationale">
   <strong>Dedicated <code>prep-*</code> arms, not the generic <code>stage-*</code> events</strong> —
   an earlier cut of this processor reused the pipeline's generic <code>stage-completed</code> /
@@ -900,6 +912,70 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
   </li>
 </ol>
 
+<h3 id="run-the-session-prep-smoke">Run the session-prep smoke</h3>
+<ol>
+  <li>
+    <p>
+      Migrate the test database so it has a current schema:
+      <code>pnpm db:migrate:test</code>. The smoke targets <code>mythrun_test</code>
+      (<code>DATABASE_URL_TEST</code>), not the dev DB — don't run it concurrently with
+      <code>pnpm test</code>, which also uses <code>mythrun_test</code>.
+    </p>
+  </li>
+  <li>
+    <p>
+      Run <code>pnpm smoke:session-prep</code>. It loads the captured
+      <a href="#regenerate-the-ready-to-play-fixture">ready-to-play fixture</a> into
+      <code>mythrun_test</code> and invokes the processor directly (no HTTP, no worker) against
+      <strong>real Opus</strong> — a manual run, not part of CI, ~$0.50 per the measured reference.
+    </p>
+  </li>
+  <li>
+    <p>
+      The run asserts the plumbing this page describes: a <code>prep-started</code> precedes a
+      <code>prep-ready</code> carrying a positive <code>costUsd</code>; a
+      <code>session_preps</code> row lands with non-empty, non-identical <code>ft_context</code> and
+      <code>sd_playbook</code>; and the <code>session-prep:1</code> <code>pipeline_runs</code> row
+      is <code>completed</code> with a positive cost. Prose-delta counts are diagnostic only (a
+      field repaired by the Haiku-then-Sonnet pass may stream no deltas yet still resolve), so they
+      warn rather than fail. A clean run prints <code>SMOKE PASSED</code>; any miss exits non-zero.
+      On pass it cleans up the fixture's world and characters.
+    </p>
+  </li>
+</ol>
+
+<h3 id="regenerate-the-ready-to-play-fixture">Regenerate the ready-to-play fixture</h3>
+<ol>
+  <li>
+    <p>
+      Migrate the test DB (<code>pnpm db:migrate:test</code>), then boot a server and worker against
+      <code>mythrun_test</code> — <code>DATABASE_URL</code> set to <code>DATABASE_URL_TEST</code>, a
+      real Anthropic key, Redis up, <code>AUTH_MODE=bypass</code>. The driver talks pure HTTP to the
+      bypass-auth backend; the server owns the DB.
+    </p>
+  </li>
+  <li>
+    <p>
+      Run <code>tsx scripts/smoke/fixtures/drive-ready-to-play.ts</code>. It drives the real
+      campaign pipeline — world generation, character creation — to
+      <code>campaign.status='active'</code>
+      against live Opus (world-gen alone runs ~20–25 min; the driver supports resume via
+      <code>SMOKE_RESUME_CAMPAIGN</code> if a run is interrupted) and prints the resulting campaign
+      id. One owner-member plus one character is the minimum viable ready-to-play graph the prep
+      serializer reads.
+    </p>
+  </li>
+  <li>
+    <p>
+      Capture the graph: <code>pnpm capture:ready-to-play &lt;campaignId&gt;</code>. The capture CLI
+      walks the fixture manifest (world, entities, prose, facts, relationships, the campaign and its
+      members + characters) and writes <code>ready-to-play-campaign.json</code>. Commit that JSON —
+      it is the fixture the session-prep smoke replays, so no future smoke run needs to re-drive the
+      ~25-minute pipeline.
+    </p>
+  </li>
+</ol>
+
 <h2 id="integration-points">Integration points</h2>
 
 <p>
@@ -1119,7 +1195,7 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#two-channels-one-stream">Two channels off one stream</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:12px"><a href="#the-http-surface">The HTTP surface: four routes, one safe projection</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:12px"><a href="#http-routes">HTTP routes</a></li><li style="padding-left:12px"><a href="#safesessionprep-fields-the-http-projection">SafeSessionPrep fields (the HTTP projection)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#two-channels-one-stream">Two channels off one stream</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:12px"><a href="#the-http-surface">The HTTP surface: four routes, one safe projection</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:12px"><a href="#run-the-session-prep-smoke">Run the session-prep smoke</a></li><li style="padding-left:12px"><a href="#regenerate-the-ready-to-play-fixture">Regenerate the ready-to-play fixture</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:12px"><a href="#http-routes">HTTP routes</a></li><li style="padding-left:12px"><a href="#safesessionprep-fields-the-http-projection">SafeSessionPrep fields (the HTTP projection)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

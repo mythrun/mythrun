@@ -625,6 +625,19 @@
   hard <code>LlmStructuredOutputError</code> retry loop.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>Free LLM prose is validated min-only — no length cap</strong> — the
+  <code>proseKernel</code>, fact <code>content</code>, and relationship
+  <code>description</code> fields carry a substance floor (<code>min(...)</code>) but no
+  <code>max(...)</code>. The repair strategy fixes malformed JSON, not valid-but-long prose, so a
+  length cap would <em>terminal-fail</em> the stage on output that is structurally fine — wasting
+  the tokens already spent generating it. MYT-64's first real-Opus run surfaced exactly this: a
+  ~1400-char kernel hit the old <code>max(1200)</code> and failed the whole integration. The fix
+  dropped <code>max()</code> from every free-prose field across the LLM-output schemas; caps remain
+  only on short labels, array element counts, numerics, and fields that mirror a DB
+  <code>CHECK</code>.
+</aside>
+
 <h3 id="the-single-transaction">The single transaction</h3>
 
 <p>
@@ -761,8 +774,9 @@
     <ul>
       <li><code>userId</code>, <code>displayName</code> — echo of the input party member.</li>
       <li>
-        <code>entity</code> — <code>{ name, proseKernel }</code> (1–2 paragraph PC summary, 80–1200
-        chars).
+        <code>entity</code> — <code>{ name, proseKernel }</code> (a 1–2 paragraph PC summary). The
+        kernel carries a substance floor (<code>min(80)</code>) but no upper bound — free LLM prose
+        is validated min-only.
       </li>
       <li>
         <code>facts</code> — 1–10 fact rows, each

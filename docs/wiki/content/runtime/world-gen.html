@@ -52,8 +52,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:1cb9989c8966bf49dddf8428d8c4951b7b54a129f003ccd6431edea34643070b -->
-<!-- last-ticket: MYT-63 -->
+<!-- source-hash: sha256:21cfb21326dae6478326218a51ee82a06cd5bb4e84dd3fb7373ad830ea85228c -->
+<!-- last-ticket: MYT-64 -->
 
 <h1>World gen</h1>
 
@@ -1022,8 +1022,9 @@
   </li>
   <li>
     Calls Sonnet <code>generateObject</code> against <code>EntityConsolidationSchema</code> —
-    <code>ghost_entities[]</code> with the same prose (40–2400 chars), facts (2–12), and
-    access-level depth as stage 2/3 entities.
+    <code>ghost_entities[]</code> with the same prose (a <code>min(40)</code> substance floor, no
+    upper cap — free LLM prose is validated min-only), facts (2–12), and access-level depth as stage
+    2/3 entities.
   </li>
   <li>
     Reconciles vs declarations: ghosts whose <code>placeholder_id</code> wasn't declared are dropped

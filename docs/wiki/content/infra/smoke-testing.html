@@ -9,8 +9,8 @@
 <!-- source: backend/scripts/smoke/staging.sh -->
 <!-- source: backend/scripts/smoke/prep-pipeline.ts -->
 <!-- source: package.json -->
-<!-- source-hash: sha256:1aad6baffba0f955223e14948fbfaeccece0d46229cfa7efaf8427956398dcbe -->
-<!-- last-ticket: MYT-55 -->
+<!-- source-hash: sha256:60325ffb86fd32bbc3425acb848f93839b57d502974cb8f8a959b6ffbcbf1e3e -->
+<!-- last-ticket: MYT-64 -->
 
 <h1>Smoke testing</h1>
 
@@ -214,25 +214,45 @@
     LLM variance without flaking.
   </li>
   <li>
-    <strong>Global gates</strong> &mdash; total cost across all 3 campaigns &le; $5; wall-clock &le;
-    10 minutes; zero <code>LlmRateLimitedError</code> entries observed during the run. The
+    <strong>Session-prep gate</strong> &mdash; once a campaign reaches <code>active</code>, the
+    smoke POSTs to its <code>session-prep</code> route, reads the <code>prep-status</code> SSE
+    through to <code>prep-ready</code> (accepting the connect-time
+    <code>snapshot: {status:'ready'}</code> frame as already-done, since the route emits that
+    snapshot but does not replay <code>prep-ready</code>), then asserts a
+    <code>session_preps</code> row with non-empty <code>ft_context</code> and
+    <code>sd_playbook</code>. This makes the prep-pipeline smoke the first real-LLM exercise of the
+    session-prep flow against staging. Leak-cleanliness is deliberately not asserted here &mdash;
+    that's eval / red-team territory, not a plumbing assertion.
+  </li>
+  <li>
+    <strong>Global gates</strong> &mdash; total cost across all 3 campaigns &le; $8; wall-clock &le;
+    35 minutes; zero <code>LlmRateLimitedError</code> entries observed during the run. The
     rate-limit gate is what makes this smoke also the concurrency-ceilings verification.
   </li>
 </ul>
 
+<aside class="wiki-rationale">
+  <strong>$8 cap, not $5</strong> &mdash; the prior $5 cap covered three-campaign world-gen +
+  character creation. Appending one session-prep stream per campaign adds three measured ~$0.52
+  streams (~$1.56), so the cap rose to $8 with headroom for LLM cost variance. The wall-clock budget
+  stayed at 35 minutes: session-prep (~3.4 min) appends to each campaign's <em>parallel</em> chain,
+  adding to the slowest campaign once rather than three times.
+</aside>
+
 <p>
-  Teardown is leave-on-failure, clean-on-success. PASS cascade-deletes every campaign, world, and
-  credit-ledger entry the run created (sanity-checking <code>DB_NAME</code> contains
-  <code>staging</code> before any DELETE &mdash; the staging RDS hostname is anonymized, the
-  database name is the env signal); FAIL prints the campaign + world IDs and exits non-zero
-  for forensic inspection. The smoke also runs a <strong>pre-run state reset</strong> at startup
-  (after auth + user-materialize, before campaign creation) that DELETEs any campaigns currently
-  owned by the four smoke users &mdash; otherwise the per-owner concurrency gate 409s every retry
-  after a FAIL. Forensics from prior runs live in CloudWatch logs (full campaign IDs and
-  assertion diagnostics from the FAIL summary), so the audit trail is preserved without the DB
-  carrying state across runs. The smoke does NOT seed credits at runtime &mdash; that's the
-  bootstrap-db's <code>--seed-smoke-credits</code> mode, run once after first auth materializes the
-  users in the application DB.
+  Teardown is leave-on-failure, clean-on-success. PASS cascade-deletes every campaign, world,
+  session-prep row, and credit-ledger entry the run created. The <code>session_preps</code> row and
+  its <code>session-prep:1</code> pipeline run cascade with the campaign, so the teardown needed no
+  new DELETE. The run sanity-checks <code>DB_NAME</code> contains <code>staging</code> before any
+  DELETE &mdash; the staging RDS hostname is anonymized, the database name is the env signal; FAIL
+  prints the campaign + world IDs and exits non-zero for forensic inspection. The smoke also runs a
+  <strong>pre-run state reset</strong> at startup (after auth + user-materialize, before campaign
+  creation) that DELETEs any campaigns currently owned by the four smoke users &mdash; otherwise the
+  per-owner concurrency gate 409s every retry after a FAIL. Forensics from prior runs live in
+  CloudWatch logs (full campaign IDs and assertion diagnostics from the FAIL summary), so the audit
+  trail is preserved without the DB carrying state across runs. The smoke does NOT seed credits at
+  runtime &mdash; that's the bootstrap-db's <code>--seed-smoke-credits</code> mode, run once after
+  first auth materializes the users in the application DB.
 </p>
 
 <h2>Bootstrap-db <code>--seed-smoke-credits</code> mode</h2>
@@ -422,16 +442,20 @@
     <tr>
       <td><code>SMOKE_WALL_CLOCK_BUDGET_MS</code></td>
       <td>Prep-pipeline task env</td>
-      <td><code>600000</code> (10 min)</td>
-      <td>Hard ceiling on a single smoke run; over-budget triggers FAIL.</td>
+      <td><code>2100000</code> (35 min)</td>
+      <td>
+        Hard ceiling on a single smoke run; over-budget triggers FAIL. Absorbs the slowest
+        campaign's full pipeline plus its appended session-prep stream and repair-chain headroom.
+      </td>
     </tr>
     <tr>
       <td><code>SMOKE_COST_CAP_USD</code></td>
       <td>Prep-pipeline task env</td>
-      <td><code>5.00</code></td>
+      <td><code>8.00</code></td>
       <td>
         Cumulative cost across all three campaigns. Calibrated against the myth-imxg reference run
-        (~$1.20 per world, with headroom for character creation + integration).
+        (~$1.20 per world, with headroom for character creation + integration), plus three measured
+        ~$0.52 session-prep streams added by MYT-64.
       </td>
     </tr>
   </tbody>
