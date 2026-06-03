@@ -284,6 +284,48 @@ async function pollFor<T>(
   )
 }
 
+// MYT-64: read the prep-status SSE until prep-ready/prep-failed, or treat the initial
+// `snapshot: {status:'ready'}` frame as already-done (the route emits one snapshot frame on
+// connect + does NOT replay prep-ready — so a fast/idempotent finish must be caught here).
+async function waitForPrepReady(client: ApiClient, campaignId: string, budgetMs: number): Promise<void> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort()
+  }, budgetMs)
+  try {
+    const res = await fetch(`${client.base}/api/campaigns/${campaignId}/prep-status`, {
+      headers: { authorization: `Bearer ${client.token}`, accept: 'text/event-stream' },
+      signal: controller.signal,
+    })
+    if (!res.ok || !res.body) throw new Error(`prep-status SSE open → ${String(res.status)}`)
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) throw new Error('prep-status stream closed before prep-ready')
+      buffer += decoder.decode(chunk.value, { stream: true })
+      let sep = buffer.indexOf('\n\n')
+      while (sep !== -1) {
+        const frame = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        sep = buffer.indexOf('\n\n')
+        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'))
+        if (dataLine === undefined) continue
+        const data = JSON.parse(dataLine.slice('data:'.length).trim()) as {
+          status?: string
+          type?: string
+          terminal?: boolean
+        }
+        if (data.status === 'ready' || data.type === 'prep-ready') return
+        if (data.type === 'prep-failed') throw new Error(`prep-failed (terminal=${String(data.terminal)})`)
+      }
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // User materialization
 //
@@ -494,6 +536,28 @@ async function runOneCampaign(
     throw new Error(`campaign ${campaignId} final status = ${finalState.campaign.status}`)
   }
   log('info', 'campaign_active', { concept: concept.name, campaignId })
+
+  // MYT-64: trigger session prep on the now-active campaign, observe the prep-status SSE to
+  // prep-ready, assert the persisted prep. The session-prep:1 pipeline_runs row carries
+  // campaign_id, so its cost folds into readCampaignStats' costUsd automatically.
+  const triggerRes = await apiPost<{ campaignId: string; sessionNumber: number }>(
+    ownerApi,
+    `/api/campaigns/${campaignId}/session-prep`,
+    {},
+  )
+  if (triggerRes.sessionNumber !== 1) {
+    throw new Error(`session-prep trigger returned sessionNumber=${String(triggerRes.sessionNumber)}`)
+  }
+  await waitForPrepReady(ownerApi, campaignId, 12 * 60_000)
+  const prepRow = await pool.query<{ ft_context: string; sd_playbook: string }>(
+    `SELECT ft_context, sd_playbook FROM session_preps WHERE campaign_id = $1 AND session_number = 1`,
+    [campaignId],
+  )
+  const prep = prepRow.rows[0]
+  if (prep === undefined || prep.ft_context.length === 0 || prep.sd_playbook.length === 0) {
+    throw new Error(`session-prep row missing/empty for ${campaignId}`)
+  }
+  log('info', 'session_prep_ready', { concept: concept.name, campaignId })
 
   // 9. Read final state from DB (counts + cost) via repo modules.
   const stats = await readCampaignStats(pool, worldId, campaignId)

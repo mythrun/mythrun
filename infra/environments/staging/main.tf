@@ -356,8 +356,14 @@ resource "aws_ecs_task_definition" "smoke_prep_pipeline" {
       # post-creation integration. Three campaigns burst-concurrent share
       # 3-worker concurrency so the wall clock is dominated by the slowest
       # campaign's full pipeline. 35min absorbs that + repair-chain headroom.
+      # MYT-64: session-prep (~3.4 min, measured) appends to each campaign's
+      # PARALLEL chain — +~3.4 min to the SLOWEST campaign, not ×3 — so the
+      # 35min budget still has comfortable headroom; left unchanged.
       { name = "SMOKE_WALL_CLOCK_BUDGET_MS", value = "2100000" },
-      { name = "SMOKE_COST_CAP_USD", value = "5.00" },
+      # MYT-64: prior $5 cap covered 3-campaign world-gen + character creation.
+      # This adds 3 session-prep streams at ~$0.52 each (measured) = +~$1.56,
+      # so the cap rises to $8 with headroom for LLM cost variance.
+      { name = "SMOKE_COST_CAP_USD", value = "8.00" },
       # DB connection inputs. The smoke composes DATABASE_URL at startup
       # from these (T8' wires this in the script); pattern parallels the
       # serving module's common_env / common_secrets split.
