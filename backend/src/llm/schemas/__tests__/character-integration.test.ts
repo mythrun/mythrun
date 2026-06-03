@@ -134,6 +134,17 @@ describe('IntegrationResultSchema', () => {
     expect(IntegrationResultSchema.safeParse(payload).success).toBe(false)
   })
 
+  it('accepts a rich proseKernel (min-only — no max; real Opus writes ~1400, the old 1200 cap terminal-failed integration — myth-vimk)', () => {
+    const richKernel = 'A road-weary cartographer who maps the harbor district. '.repeat(40).slice(0, 1500)
+    expect(richKernel.length).toBeGreaterThan(1200)
+    const payload = {
+      characters: [
+        { ...minimalPayload.characters[0], entity: { name: 'Solen Vare', proseKernel: richKernel } },
+      ],
+    }
+    expect(IntegrationResultSchema.safeParse(payload).success).toBe(true)
+  })
+
   it('rejects an empty characters array (min 1)', () => {
     expect(IntegrationResultSchema.safeParse({ characters: [] }).success).toBe(false)
   })

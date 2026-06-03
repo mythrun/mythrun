@@ -24,7 +24,11 @@ const ACCESS_LEVEL = z.enum(['known', 'discoverable', 'secret'])
 
 export const factSchema = z.object({
   topic: z.string().min(2).max(80),
-  content: z.string().min(20).max(800),
+  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
+  // myth-vimk. content + prose + world_overview land in TEXT columns; the
+  // haiku→sonnet repair only fixes malformed JSON, so a max() terminal-fails the
+  // stage on valid-but-long output.
+  content: z.string().min(20),
   access_level: ACCESS_LEVEL,
 })
 
@@ -32,19 +36,19 @@ export const regionItemSchema = z.object({
   // FIELD ORDER MATTERS: name first, access_level second.
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
-  prose: z.string().min(40).max(2400),
+  prose: z.string().min(40),
   facts: z.array(factSchema).min(2).max(12),
 })
 
 export const factionItemSchema = z.object({
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
-  prose: z.string().min(40).max(2400),
+  prose: z.string().min(40),
   facts: z.array(factSchema).min(2).max(12),
 })
 
 export const WorldAndFactionsSchema = z.object({
-  world_overview: z.string().min(60).max(2400),
+  world_overview: z.string().min(60),
   regions: z.array(regionItemSchema).min(3).max(8),
   factions: z.array(factionItemSchema).min(3).max(8),
 })

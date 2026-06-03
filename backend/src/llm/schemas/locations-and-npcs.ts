@@ -21,14 +21,17 @@ export const ACCESS_LEVEL = z.enum(['known', 'discoverable', 'secret'])
 
 export const factSchema = z.object({
   topic: z.string().min(2).max(80),
-  content: z.string().min(20).max(800),
+  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
+  // myth-vimk. content + prose land in TEXT columns; the haiku→sonnet repair only
+  // fixes malformed JSON, so a max() terminal-fails the stage on valid output.
+  content: z.string().min(20),
   access_level: ACCESS_LEVEL,
 })
 
 export const locationItemSchema = z.object({
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
-  prose: z.string().min(40).max(2400),
+  prose: z.string().min(40),
   facts: z.array(factSchema).min(2).max(12),
   parent_location: z.string().nullable(),
 })
@@ -36,7 +39,7 @@ export const locationItemSchema = z.object({
 export const npcItemSchema = z.object({
   name: z.string().min(1).max(200),
   access_level: ACCESS_LEVEL,
-  prose: z.string().min(40).max(2400),
+  prose: z.string().min(40),
   facts: z.array(factSchema).min(2).max(12),
   home_location: z.string().nullable(),
 })

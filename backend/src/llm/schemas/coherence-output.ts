@@ -26,15 +26,19 @@ const fixFactPatch = z.object({
   kind: z.literal('fix_fact_by_name'),
   entity_name: z.string().min(1).max(200),
   fact_topic: z.string().min(1).max(120),
-  new_content: z.string().min(10).max(2000),
-  rationale: z.string().min(20).max(400),
+  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
+  // myth-vimk. new_content / new_prose / description / rationale are free prose
+  // bound for TEXT columns; the haiku→sonnet repair only fixes malformed JSON, so
+  // a max() terminal-fails the coherence pass on valid-but-long patches.
+  new_content: z.string().min(10),
+  rationale: z.string().min(20),
 })
 
 const fixProsePatch = z.object({
   kind: z.literal('fix_prose_by_name'),
   entity_name: z.string().min(1).max(200),
-  new_prose: z.string().min(40).max(2400),
-  rationale: z.string().min(20).max(400),
+  new_prose: z.string().min(40),
+  rationale: z.string().min(20),
 })
 
 const fixRelationshipPatch = z.object({
@@ -45,8 +49,8 @@ const fixRelationshipPatch = z.object({
   newSource: z.string().min(1).max(200).optional(),
   newTarget: z.string().min(1).max(200).optional(),
   newType: z.string().min(2).max(60).optional(),
-  newDescription: z.string().min(10).max(600).optional(),
-  rationale: z.string().min(20).max(400),
+  newDescription: z.string().min(10).optional(),
+  rationale: z.string().min(20),
 }).refine(
   (p) => p.newSource !== undefined
     || p.newTarget !== undefined
@@ -60,24 +64,24 @@ const addRelationshipPatch = z.object({
   source_name: z.string().min(1).max(200),
   target_name: z.string().min(1).max(200),
   relationship: z.string().min(2).max(60),
-  description: z.string().min(10).max(600),
-  rationale: z.string().min(20).max(400),
+  description: z.string().min(10),
+  rationale: z.string().min(20),
 })
 
 const addFactPatch = z.object({
   kind: z.literal('add_fact_by_name'),
   entity_name: z.string().min(1).max(200),
   topic: z.string().min(1).max(120),
-  content: z.string().min(10).max(2000),
+  content: z.string().min(10),
   access_level: z.enum(['known', 'discoverable', 'secret']),
-  rationale: z.string().min(20).max(400),
+  rationale: z.string().min(20),
 })
 
 const renameEntityPatch = z.object({
   kind: z.literal('rename_entity_by_name'),
   old_name: z.string().min(1).max(200),
   new_name: z.string().min(1).max(200),
-  rationale: z.string().min(20).max(400),
+  rationale: z.string().min(20),
 })
 
 const deleteRelationshipPatch = z.object({
@@ -85,14 +89,14 @@ const deleteRelationshipPatch = z.object({
   source_name: z.string().min(1).max(200),
   target_name: z.string().min(1).max(200),
   current_type: z.string().min(2).max(60),
-  rationale: z.string().min(20).max(400),
+  rationale: z.string().min(20),
 })
 
 const deleteFactPatch = z.object({
   kind: z.literal('delete_fact_by_name'),
   entity_name: z.string().min(1).max(200),
   fact_topic: z.string().min(1).max(120),
-  rationale: z.string().min(60).max(400),  // higher floor — deletes are irreversible
+  rationale: z.string().min(60),  // higher floor — deletes are irreversible
 })
 
 export const CoherencePatchSchema = z.discriminatedUnion('kind', [

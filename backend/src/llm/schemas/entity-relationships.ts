@@ -29,7 +29,11 @@ export const relationshipItemSchema = z.object({
   from_name: z.string().min(1).max(200),
   to_name: z.string().min(1).max(200),
   relationship: z.string().min(2).max(60),
-  description: z.string().min(10).max(600),
+  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
+  // myth-vimk. description is a free-prose relationship summary in a TEXT column;
+  // the haiku→sonnet repair only fixes malformed JSON, so a max() terminal-fails
+  // the stage on valid output.
+  description: z.string().min(10),
 })
 
 export const hierarchyStragglerItemSchema = z.object({

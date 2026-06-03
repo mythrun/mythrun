@@ -57,13 +57,13 @@ describe('VocabularyEntrySchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects definition longer than 800 chars', () => {
+  it('accepts a definition far longer than the old 800-char cap (min-only — no max on LLM prose; myth-vimk)', () => {
     const result = VocabularyEntrySchema.safeParse({
       term: 'x',
-      definition: 'a'.repeat(801),
+      definition: 'a'.repeat(2000),
       source: 'stage_1_5',
     })
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
   })
 
   it('rejects invalid source enum value', () => {

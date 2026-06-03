@@ -15,7 +15,10 @@ export const skillEntrySchema = z.object({
 
 export const featureEntrySchema = z.object({
   name: z.string().min(2).max(80),
-  description: z.string().min(5).max(800),
+  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
+  // myth-vimk. The haiku→sonnet repair only fixes malformed JSON, so a max()
+  // terminal-fails the stage on valid-but-long feature text.
+  description: z.string().min(5),
 })
 
 export const equipmentEntrySchema = z.object({

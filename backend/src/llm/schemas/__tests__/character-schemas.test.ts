@@ -55,11 +55,11 @@ describe('CharacterConceptOutputSchema', () => {
       }).success,
     ).toBe(false)
   })
-  it('rejects backstory longer than 2000 chars', () => {
+  it('accepts a backstory far longer than the old 2000-char cap (min-only — no max on LLM prose; myth-vimk)', () => {
     expect(
-      CharacterConceptOutputSchema.safeParse({ ...validConcept, backstory: 'x'.repeat(2001) })
+      CharacterConceptOutputSchema.safeParse({ ...validConcept, backstory: 'x'.repeat(4000) })
         .success,
-    ).toBe(false)
+    ).toBe(true)
   })
 })
 

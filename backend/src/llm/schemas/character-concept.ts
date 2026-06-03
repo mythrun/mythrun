@@ -16,12 +16,18 @@ export const CharacterConceptOutputSchema = z.object({
   alignment: z.string().min(2).max(40),
   age: z.number().int().min(1).max(2000),
   gender: z.string().min(1).max(40),
-  physical_description: z.string().min(80).max(800),
-  personality_traits: z.array(z.string().min(5).max(300)).min(2).max(4),
-  ideals: z.array(z.string().min(5).max(300)).min(1).max(2),
-  bonds: z.array(z.string().min(5).max(300)).min(1).max(2),
-  flaws: z.array(z.string().min(5).max(300)).min(1).max(2),
-  backstory: z.string().min(300).max(2000),
+  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
+  // myth-vimk. physical_description, the trait/ideal/bond/flaw sentences, and
+  // backstory are all free prose; the haiku→sonnet repair only fixes malformed
+  // JSON, so a max() terminal-fails the stage on valid-but-long output. Array
+  // element-COUNT caps (min/max on the arrays themselves) are retained — those
+  // bound how many entries, not prose length.
+  physical_description: z.string().min(80),
+  personality_traits: z.array(z.string().min(5)).min(2).max(4),
+  ideals: z.array(z.string().min(5)).min(1).max(2),
+  bonds: z.array(z.string().min(5)).min(1).max(2),
+  flaws: z.array(z.string().min(5)).min(1).max(2),
+  backstory: z.string().min(300),
 })
 
 export type CharacterConceptOutput = z.infer<typeof CharacterConceptOutputSchema>

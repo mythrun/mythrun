@@ -14,12 +14,14 @@ import { z } from 'zod'
 export const VocabularyEntrySchema = z.object({
   term: z.string().min(1).max(80),
   // myth-pfke smoke surfaced: real Sonnet emits both terse (10-30 char)
-  // and expansive (400-800 char) definitions depending on the world's
-  // complexity. Floor at 10, ceiling at 800 — empirical range from the
-  // experimental A/B run on a sword-and-sorcery prompt.
-  definition: z.string().min(10).max(800),
+  // and expansive (400+ char) definitions depending on the world's
+  // complexity. Floor at 10.
+  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
+  // myth-vimk. definition + usage_notes are free prose; the haiku→sonnet repair
+  // only fixes malformed JSON, so a max() terminal-fails the stage on valid output.
+  definition: z.string().min(10),
   avoids: z.string().min(1).max(80).optional(),
-  usage_notes: z.string().min(1).max(400).optional(),
+  usage_notes: z.string().min(1).optional(),
   source: z.enum(['stage_1_5', 'consolidation', 'scribe_runtime']),
   access_level: z.enum(['known', 'discoverable', 'secret']).default('known'),
 })
