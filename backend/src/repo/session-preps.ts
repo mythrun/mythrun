@@ -22,6 +22,18 @@ interface SessionPrepDbRow {
   readonly created_at: Date
 }
 
+function mapSessionPrepRow(r: SessionPrepDbRow): SessionPrepRow {
+  return {
+    id: r.id,
+    campaignId: r.campaign_id,
+    sessionNumber: r.session_number,
+    ftContext: r.ft_context,
+    sdPlaybook: r.sd_playbook,
+    snapshotId: r.snapshot_id,
+    createdAt: r.created_at,
+  }
+}
+
 /** Composable binder over a single ClientLike. Holds the canonical SQL so
  *  `repo.sessionPreps.X` and `tx.sessionPreps.X` share one body. */
 export function sessionPrepsNs(c: ClientLike) {
@@ -53,17 +65,30 @@ export function sessionPrepsNs(c: ClientLike) {
         [campaignId, sessionNumber],
       )
       const r = rows[0]
-      return r
-        ? {
-            id: r.id,
-            campaignId: r.campaign_id,
-            sessionNumber: r.session_number,
-            ftContext: r.ft_context,
-            sdPlaybook: r.sd_playbook,
-            snapshotId: r.snapshot_id,
-            createdAt: r.created_at,
-          }
-        : null
+      return r ? mapSessionPrepRow(r) : null
+    },
+    listFor: async (campaignId: string): Promise<readonly SessionPrepRow[]> => {
+      const { rows } = await c.query<SessionPrepDbRow>(
+        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, snapshot_id, created_at
+         FROM session_preps WHERE campaign_id = $1 ORDER BY session_number`,
+        [campaignId],
+      )
+      return rows.map(mapSessionPrepRow)
+    },
+    getById: async (prepId: string): Promise<SessionPrepRow | null> => {
+      const { rows } = await c.query<SessionPrepDbRow>(
+        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, snapshot_id, created_at
+         FROM session_preps WHERE id = $1`,
+        [prepId],
+      )
+      const r = rows[0]
+      return r ? mapSessionPrepRow(r) : null
+    },
+    deleteFor: async (campaignId: string, sessionNumber: number): Promise<void> => {
+      await c.query(`DELETE FROM session_preps WHERE campaign_id = $1 AND session_number = $2`, [
+        campaignId,
+        sessionNumber,
+      ])
     },
   }
 }
