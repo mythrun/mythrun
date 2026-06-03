@@ -19,6 +19,7 @@ import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
 import { campaignsRoutes } from './routes/campaigns.js'
 import { campaignCharactersPlugin } from './routes/campaign-characters.js'
+import { sessionPrepsPlugin } from './routes/session-preps.js'
 import { devCreditsRoutes } from './routes/dev-credits.js'
 import { devPrepProseRoutes } from './routes/dev-prep-prose.js'
 import { PIPELINE_ROUTES } from './contract/pipeline-routes.js'
@@ -331,6 +332,11 @@ export const buildApp = async (
   await app.register(campaignCharactersPlugin, {
     pool: deps.pg,
     characterCreationQueue: deps.characterCreationQueue,
+  })
+
+  await app.register(sessionPrepsPlugin, {
+    pool: deps.pg,
+    sessionPrepQueue: deps.sessionPrepQueue,
   })
 
   // Dev-only routes (MYT-51 T11 credits + MYT-62 T5 prep-prose). The plugins

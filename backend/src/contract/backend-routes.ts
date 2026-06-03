@@ -61,6 +61,11 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   // MYT-54 T13 — owner fan-in trigger that flips campaigns.pre_integration_notes
   // and enqueues the singleton `ci-${campaignId}` character-integration job.
   { method: 'POST', path: '/api/campaigns/:campaignId/finalize-character-creation' },
+  // MYT-63 — session-prep trigger / list / read / reset
+  { method: 'POST', path: '/api/campaigns/:campaignId/session-prep' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/session-preps' },
+  { method: 'GET', path: '/api/campaigns/:campaignId/session-preps/:prepId' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/reset-prep' },
 
   // Sessions
   { method: 'POST', path: '/api/sessions/:id/ws-ticket' },
