@@ -151,6 +151,24 @@ export interface PipelineRunsRepo {
    */
   readonly markStageFailed: (req: StageFailedRequest) => Promise<void>
   /**
+   * MYT-63 reset-prep: re-arm a campaign-scoped stage row (user_id IS NULL) back
+   * to 'pending' so a subsequent atomicClaimStage re-claims it — the reset-prep
+   * counterpart to insertCharacterConceptSeedRow's re-arm. Coerces
+   * status='pending', started_at/completed_at/error to NULL; leaves cost_usd
+   * intact (the row is being re-armed, not erased as a spend record). Branchless +
+   * idempotent (no matching row -> 0 rows updated -> no-op). The `kind` discriminant
+   * mirrors ClaimRequest for forward-consistency (only 'campaign' is supported).
+   *
+   * Composable, and UNLIKE claimStage/markStage* (pool-bound BY DESIGN so recovery
+   * bookkeeping survives a stage-tx rollback), resetStage is MEANT to run inside
+   * repo.transaction — atomic with the session_preps delete in POST /reset-prep.
+   */
+  readonly resetStage: (args: {
+    kind: 'campaign'
+    campaignId: string
+    stage: string
+  }) => Promise<void>
+  /**
    * Sum cost_usd across a world's completed world-gen stages (user_id IS NULL,
    * status='completed'). Returns a JS number via the ::float8 cast. SQL verbatim
    * from cost-cap.ts's sumCompletedStageCosts.
@@ -533,6 +551,17 @@ export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
             SET status = 'failed', error = $1, completed_at = now()
           WHERE campaign_id = $2 AND stage = $3 AND user_id IS NULL`,
         [req.error, req.campaignId, req.stage],
+      )
+    },
+    async resetStage(args: { kind: 'campaign'; campaignId: string; stage: string }): Promise<void> {
+      // UPDATE-only re-arm. Branchless (no rowCount inspection) so it stays
+      // trivially 100%-covered; idempotent (0 rows on no match). Does NOT touch
+      // cost_usd — matches insertCharacterConceptSeedRow's reset SQL.
+      await c.query(
+        `UPDATE pipeline_runs
+            SET status = 'pending', started_at = NULL, completed_at = NULL, error = NULL
+          WHERE campaign_id = $1 AND stage = $2 AND user_id IS NULL`,
+        [args.campaignId, args.stage],
       )
     },
     async sumCostForWorld(worldId: string): Promise<number> {

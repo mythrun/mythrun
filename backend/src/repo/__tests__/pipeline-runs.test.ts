@@ -530,4 +530,54 @@ describe('pipeline-runs repo', () => {
     expect(rows[0]?.status).toBe('completed')
     expect(rows[0]?.cost_usd).toBeCloseTo(0.3)
   })
+
+  describe('resetStage (MYT-63)', () => {
+    it("coerces a completed campaign-scoped stage row back to 'pending', cost_usd intact", async () => {
+      const { campaignId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, cost_usd, error, user_id)
+         VALUES ($1, $2, 'session-prep:1', 'completed', now(), now(), 0.42, NULL, NULL)`,
+        [uuidv7(), campaignId],
+      )
+      await repo.resetStage({ kind: 'campaign', campaignId, stage: 'session-prep:1' })
+      const row = await pool.query<{
+        status: string
+        started_at: Date | null
+        completed_at: Date | null
+        cost_usd: string | null
+      }>(
+        `SELECT status, started_at, completed_at, cost_usd FROM pipeline_runs
+          WHERE campaign_id = $1 AND stage = 'session-prep:1' AND user_id IS NULL`,
+        [campaignId],
+      )
+      expect(row.rows[0]?.status).toBe('pending')
+      expect(row.rows[0]?.started_at).toBeNull()
+      expect(row.rows[0]?.completed_at).toBeNull()
+      expect(Number(row.rows[0]?.cost_usd)).toBeCloseTo(0.42)
+    })
+
+    it('is idempotent when no matching row exists (no-op, resolves undefined)', async () => {
+      const { campaignId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      await expect(
+        repo.resetStage({ kind: 'campaign', campaignId, stage: 'session-prep:9' }),
+      ).resolves.toBeUndefined()
+    })
+
+    it('round-trip: reset a completed stage -> claimStage re-claims (not a completed skip)', async () => {
+      const { campaignId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      await repo.claimStage({ kind: 'campaign', campaignId, stage: 'session-prep:1' })
+      await pool.query(
+        `UPDATE pipeline_runs SET status='completed', completed_at=now()
+          WHERE campaign_id=$1 AND stage='session-prep:1' AND user_id IS NULL`,
+        [campaignId],
+      )
+      await repo.resetStage({ kind: 'campaign', campaignId, stage: 'session-prep:1' })
+      expect(await repo.claimStage({ kind: 'campaign', campaignId, stage: 'session-prep:1' })).toBe(
+        'claimed',
+      )
+    })
+  })
 })
