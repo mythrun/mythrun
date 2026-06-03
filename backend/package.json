@@ -24,7 +24,8 @@
     "dev-tool:check": "tsx scripts/dev-tool-check.ts",
     "smoke:phantom-reconciliation": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/phantom-reconciliation.ts",
     "smoke:entity-consolidation-flow": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/entity-consolidation-flow.ts",
-    "smoke:prep-pipeline": "tsx --env-file=.env.smoke --env-file-if-exists=../.env.worktree scripts/smoke/prep-pipeline.ts"
+    "smoke:prep-pipeline": "tsx --env-file=.env.smoke --env-file-if-exists=../.env.worktree scripts/smoke/prep-pipeline.ts",
+    "capture:ready-to-play": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/fixtures/capture.ts ready-to-play-campaign"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.76",
