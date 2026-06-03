@@ -64,6 +64,10 @@ export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> 
   'world-snapshot': [{ method: 'GET', path: '/api/campaigns/:campaignId/world-snapshot' }],
   hierarchy: [{ method: 'GET', path: '/api/campaigns/:campaignId/hierarchy' }],
   'random-tables': [{ method: 'GET', path: '/api/campaigns/:campaignId/random-tables' }],
+  'session-prep-trigger': [{ method: 'POST', path: '/api/campaigns/:campaignId/session-prep' }],
+  'session-prep-reset': [{ method: 'POST', path: '/api/campaigns/:campaignId/reset-prep' }],
+  'session-preps-list': [{ method: 'GET', path: '/api/campaigns/:campaignId/session-preps' }],
+  'session-prep-view': [{ method: 'GET', path: '/api/campaigns/:campaignId/session-preps/:prepId' }],
 
   // CHARACTERS-page panels
   'submit-character-concept': [{ method: 'POST', path: '/api/campaigns/:campaignId/characters' }],
@@ -210,6 +214,10 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
       'world-snapshot',
       'hierarchy',
       'random-tables',
+      'session-prep-trigger',
+      'session-prep-reset',
+      'session-preps-list',
+      'session-prep-view',
     ],
   },
   characters: {

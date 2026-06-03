@@ -15,6 +15,10 @@ import { mountLiveEventsPanel } from '../components/live-events-panel.js'
 import { mountWorldSnapshotPanel } from '../components/world-snapshot-panel.js'
 import { mountHierarchyPanel } from '../components/hierarchy-panel.js'
 import { mountRandomTablesPanel } from '../components/random-tables-panel.js'
+import { mountSessionPrepTriggerPanel } from '../components/session-prep-trigger-panel.js'
+import { mountSessionPrepResetPanel } from '../components/session-prep-reset-panel.js'
+import { mountSessionPrepsListPanel } from '../components/session-preps-list-panel.js'
+import { mountSessionPrepViewPanel } from '../components/session-prep-view-panel.js'
 
 const SECTIONS: readonly {
   readonly id: string
@@ -25,6 +29,10 @@ const SECTIONS: readonly {
   { id: 'world-snapshot', mount: mountWorldSnapshotPanel },
   { id: 'hierarchy', mount: mountHierarchyPanel },
   { id: 'random-tables', mount: mountRandomTablesPanel },
+  { id: 'session-prep-trigger', mount: mountSessionPrepTriggerPanel },
+  { id: 'session-prep-reset', mount: mountSessionPrepResetPanel },
+  { id: 'session-preps-list', mount: mountSessionPrepsListPanel },
+  { id: 'session-prep-view', mount: mountSessionPrepViewPanel },
 ]
 
 export function mountWorldPage(parent: HTMLElement): PanelHandle {
