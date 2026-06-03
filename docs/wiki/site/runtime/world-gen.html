@@ -1059,13 +1059,13 @@
   queue is constructed with <code>attempts: 2</code> +
   <code>backoff: { type: 'exponential', delay: 30000 }</code> +
   <code>removeOnComplete: { count: 0 }</code> + <code>removeOnFail: { count: 0 }</code> in
-  <code>server.ts</code>'s <code>buildWorldGenQueue</code>. The two retries are what makes every
-  "BullMQ retries the stage" recovery path in the §7.2 error matrix real rather than fictional —
-  without <code>attempts: 2</code>, transient Anthropic 503s or persistence-COMMIT failures would
-  surface as terminal stage failures instead of self-healing. The
-  <code>removeOn*: { count: 0 }</code> pair prunes terminal jobs so the resume flow's
-  <code>queue.add</code> with <code>{ jobId: campaignId }</code> doesn't silently no-op on a
-  previously-completed run.
+  <code>buildWorldGenQueue</code> (extracted into <code>server-queues.ts</code>, called by
+  <code>server.ts</code> at boot). The two retries are what makes every "BullMQ retries the stage"
+  recovery path in the §7.2 error matrix real rather than fictional — without
+  <code>attempts: 2</code>, transient Anthropic 503s or persistence-COMMIT failures would surface as
+  terminal stage failures instead of self-healing. The <code>removeOn*: { count: 0 }</code> pair
+  prunes terminal jobs so the resume flow's <code>queue.add</code> with
+  <code>{ jobId: campaignId }</code> doesn't silently no-op on a previously-completed run.
 </aside>
 
 <h2 id="the-seven-stages">The seven stages</h2>
@@ -2595,8 +2595,9 @@
   <code>backend/src/auth/rejection-storm.ts</code>, <code>backend/src/repo/credit-grants.ts</code>,
   <code>backend/src/repo/pipeline-runs.ts</code>,
   <code>backend/src/repo/world-snapshot-view.ts</code>,
-  <code>backend/src/sse/derive-phase.ts</code>, <code>backend/src/server.ts</code> (the
-  <code>buildWorldGenQueue</code> options), <code>backend/src/contract/pipeline-routes.ts</code>,
+  <code>backend/src/sse/derive-phase.ts</code>, <code>backend/src/server.ts</code> +
+  <code>backend/src/server-queues.ts</code> (the <code>buildWorldGenQueue</code> options),
+  <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-jobs.ts</code>,
   <code>backend/src/contract/pipeline-errors.ts</code>,
   <code>backend/src/contract/pipeline-events.ts</code>,

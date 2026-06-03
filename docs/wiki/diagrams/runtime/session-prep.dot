@@ -1,7 +1,12 @@
 digraph session_prep {
-  // Session prep — MYT-61 + MYT-62. The play-runtime (the enqueue route lands
-  // in MYT-63) adds one 'session-prep' job per (campaign, session_number) on
-  // the dedicated session-prep queue, jobId sp-{campaignId}-{sessionNumber}.
+  // Session prep — MYT-61 + MYT-62 + MYT-63. The four-route HTTP plugin
+  // (routes/session-preps.ts, MYT-63) is the enqueue + CRUD surface: trigger
+  // (owner) adds one 'session-prep' job per (campaign, session_number) on
+  // the dedicated session-prep queue, jobId sp-{campaignId}-{sessionNumber};
+  // list/read (member) return a SafeSessionPrep projection that OMITS
+  // sd_playbook (the HTTP enforced-ignorance gate — an explicit field literal,
+  // not a spread, since there are no Fastify response schemas); reset (owner)
+  // deletes the prep row + re-arms the stage in one transaction.
   // The processor claims the per-session pipeline_runs row
   // (stage='session-prep:{n}'), publishes prep-started, resolves the campaign's
   // world, runs MYT-59's generateSessionPrep (one Opus streamObject producing
@@ -22,7 +27,16 @@ digraph session_prep {
   nodesep=0.4;
   ranksep=0.7;
 
-  runtime [label="Play-runtime\n(enqueue route: MYT-63)", color="ember", fontcolor="ember"];
+  subgraph cluster_http {
+    label="HTTP surface  routes/session-preps.ts (MYT-63)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    trigger [label="POST /session-prep  (owner)\n202 — always enqueue\n(idempotent: fixed jobId)", color="ember", fontcolor="ember"];
+    reads   [label="GET /session-preps[/:prepId]  (member)\ntoSafeSessionPrep(row)\n→ id, sessionNumber, ftContext,\n  snapshotId, createdAt\n  (NO sd_playbook)", color="ember", fontcolor="ember"];
+    reset   [label="POST /reset-prep  (owner)\nrepo.transaction:\n  deleteFor + resetStage", color="ember", fontcolor="ember"];
+  }
 
   subgraph cluster_redis {
     label="Redis";
@@ -76,9 +90,16 @@ digraph session_prep {
   }
 
   // Enqueue + pickup
-  runtime -> queue [label="add sp-{id}-{n}"];
+  trigger -> queue [label="add sp-{id}-{n}"];
   queue -> claim [label="job { campaignId,\n  sessionNumber }"];
   claim -> pipeline_runs_t [label="INSERT pending", style=dashed];
+
+  // Read surface: SafeSessionPrep projection off the persisted rows
+  preps_t -> reads [label="rows →\n  SafeSessionPrep\n  (no sd_playbook)", style=dotted, color="ember"];
+
+  // Reset: one transaction — drop the row + re-arm the stage
+  reset -> preps_t         [label="deleteFor", style=dashed, color="ember"];
+  reset -> pipeline_runs_t [label="resetStage\n  → pending", style=dashed, color="ember"];
 
   // prep-started, then generation
   claim -> started;

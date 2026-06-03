@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:bdee4de489b1e1d9654939a98f40573ef9ab16446775233a793aebed53cf5953 -->
-<!-- last-ticket: MYT-61 -->
+<!-- source-hash: sha256:78747caf9c7589f32bd5dbd102f332eab0df4daffcdb0f38cd2dfebdf43822ae -->
+<!-- last-ticket: MYT-63 -->
 
 <h1>Backend</h1>
 
@@ -77,7 +77,11 @@
   the injection shape:
   <code
     >{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, redisKeyPrefix: string, repo: Repo }</code
-  >. <code>Repo</code> is the closure-factory bundle from
+  >
+  plus the three BullMQ producer-queue handles (<code>worldGenQueue</code>,
+  <code>characterCreationQueue</code>, <code>sessionPrepQueue</code>) that
+  <code>server-queues.ts</code> builds at boot and the enqueue routes call <code>.add()</code> on.
+  <code>Repo</code> is the closure-factory bundle from
   <a href="../data/repository.html">the repository layer</a> — composed over the same
   <code>pg</code> by <code>server.ts</code> on both boot paths. <code>redisKeyPrefix</code> is the
   <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code> namespace envelope every Redis-keyed subsystem
@@ -816,7 +820,12 @@
     <tr>
       <td><code>src/app-deps.ts</code></td>
       <td>
-        <code>AppDeps { pg, redisRealtime, redisBatch, repo }</code>,
+        <code
+          >AppDeps { pg, redisRealtime, redisBatch, redisKeyPrefix, repo, worldGenQueue,
+          characterCreationQueue?, sessionPrepQueue }</code
+        >
+        — the three BullMQ producer-queue handles are built at boot in
+        <code>server-queues.ts</code> and threaded onto the shape;
         <code>ShutdownClients</code> (re-exported from <code>app.ts</code>).
       </td>
     </tr>

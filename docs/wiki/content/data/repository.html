@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:bbbddef137a8a0d61f6492474209e93fb75e994e9fd69f57346ea2c603f9ddab -->
-<!-- last-ticket: MYT-61 -->
+<!-- source-hash: sha256:910624ccb4b5346220a1d9cd1289dde1771f5fde9190f76d5b9a7aea83909a74 -->
+<!-- last-ticket: MYT-63 -->
 
 <h1>Repository layer</h1>
 
@@ -1175,8 +1175,13 @@
         <code>insert</code> (UUIDv7 id,
         <code>ON CONFLICT (campaign_id, session_number) DO NOTHING</code> — the idempotent resume
         landing the <a href="../runtime/session-prep.html">session-prep</a> processor uses),
-        <code>existsFor</code>, <code>getBy</code>. <code>SessionPrepRow</code> type in
-        <code>types.ts</code> (named <code>-Row</code> to avoid the LLM <code>SessionPrep</code>
+        <code>existsFor</code>, <code>getBy</code>, plus the
+        <a href="../runtime/session-prep.html#the-http-surface">HTTP-surface</a> reads/delete
+        (MYT-63) — <code>listFor(campaignId)</code>, <code>getById(prepId)</code>,
+        <code>deleteFor(campaignId, sessionNumber)</code> (the latter composes into the reset
+        transaction alongside <code>pipelineRuns.resetStage</code>).
+        <code>SessionPrepRow</code> type in <code>types.ts</code> (named <code>-Row</code> to avoid
+        the LLM <code>SessionPrep</code>
         clash).
       </td>
     </tr>

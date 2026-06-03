@@ -1,11 +1,16 @@
 <!-- source: backend/src/llm/prep/session-prep-processor.ts -->
 <!-- source: backend/src/worker/publishers.ts -->
 <!-- source: backend/src/repo/session-preps.ts -->
+<!-- source: backend/src/repo/pipeline-runs.ts -->
+<!-- source: backend/src/routes/session-preps.ts -->
+<!-- source: backend/src/app.ts -->
+<!-- source: backend/src/app-deps.ts -->
+<!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: backend/migrations/022_session_preps_unique.sql -->
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/worker/bullmq-config.ts -->
-<!-- source-hash: sha256:8e4c51533a5e1ee8e284f4155780691aec73bed9451adb61cc35798c628c2ce2 -->
-<!-- last-ticket: MYT-62 -->
+<!-- source-hash: sha256:16649c4df72577c33f4bf3629e4bea1aa206630c8d17916700141ceaf6216bde -->
+<!-- last-ticket: MYT-63 -->
 
 <h1>Session prep</h1>
 
@@ -37,11 +42,14 @@
 </p>
 
 <p>
-  The enqueue side — the play-runtime route that calls <code>queue.add</code> with
-  <code>jobId = sp-&#123;campaignId&#125;-&#123;sessionNumber&#125;</code> — lands in a later
-  ticket. This piece wires the consumer end (the worker) and the queue's lifecycle (created at boot,
-  drained at shutdown). The job carries a two-field payload: <code>campaignId</code> and
-  <code>sessionNumber</code>.
+  The enqueue side is a four-route HTTP plugin —
+  <code>backend/src/routes/session-preps.ts</code> — that
+  <a href="#the-http-surface">lands further down this page</a>. The trigger route calls
+  <code>queue.add</code> with
+  <code>jobId = sp-&#123;campaignId&#125;-&#123;sessionNumber&#125;</code>; the job carries a
+  two-field payload, <code>campaignId</code> and <code>sessionNumber</code>. The worker is the
+  consumer end, and the queue's lifecycle (created at boot, drained at shutdown) lives in
+  <code>server-queues.ts</code>.
 </p>
 
 <h3>The dedicated queue and worker</h3>
@@ -52,8 +60,11 @@
   <code>world-gen</code> and <code>campaign-setup</code> pair in
   <code>backend/src/worker/bullmq-config.ts</code>. Both the dedicated
   <a href="./worker.html">worker container</a> and the API process register the same processor
-  against this queue — the API side is wired so the queue's connection bookkeeping exists and is
-  closed cleanly at shutdown even before the enqueue route lands.
+  against this queue. The API side also constructs a <em>producer</em> handle for the queue — built
+  by <code>buildSessionPrepQueue</code> in <code>backend/src/server-queues.ts</code>, threaded onto
+  <code>AppDeps.sessionPrepQueue</code>, and handed to the trigger route so a
+  <code>POST /session-prep</code> can enqueue. Its connection bookkeeping is created at boot and
+  closed cleanly at shutdown.
 </p>
 
 <aside class="wiki-rationale">
@@ -259,10 +270,178 @@
   resume sound: without it, a retried job could write a second prep for the same session. The
   <code>repo.sessionPreps</code> binder exposes <code>insert</code> (the ON-CONFLICT landing),
   <code>existsFor</code> (the resume existence check), and <code>getBy</code> (the read Session
-  Runtime will use to load the docs at session start).
+  Runtime uses to load the docs at session start) — plus three binders the
+  <a href="#the-http-surface">HTTP surface</a> added: <code>listFor(campaignId)</code> (every prep
+  for a campaign, ordered by session), <code>getById(prepId)</code> (a single prep by its own id),
+  and <code>deleteFor(campaignId, sessionNumber)</code> (the row half of a reset). All six are
+  <code>ClientLike</code> binders, so the reset path can run <code>deleteFor</code> inside a
+  transaction alongside the stage re-arm.
+</p>
+
+<h3 id="the-http-surface">The HTTP surface: four routes, one safe projection</h3>
+
+<p>
+  <code>backend/src/routes/session-preps.ts</code> is the plugin that lets a caller drive prep over
+  HTTP. It registers four routes on the campaign, all under the same
+  <a href="../auth-billing/access-control-ws-ticket.html">campaign-membership</a> guard but at two
+  different roles:
+</p>
+
+<ul>
+  <li>
+    <code>POST /api/campaigns/:campaignId/session-prep</code> — <strong>trigger</strong> (owner).
+    Validates the body (<code>sessionNumber</code>, defaulting to 1), enqueues the
+    <code>session-prep</code> job with <code>jobId = sp-&#123;campaignId&#125;-&#123;n&#125;</code>,
+    and returns <code>202</code>. It does not check whether a prep already exists.
+  </li>
+  <li>
+    <code>GET /api/campaigns/:campaignId/session-preps</code> — <strong>list</strong> (member).
+    Returns every prep for the campaign, each as a <code>SafeSessionPrep</code> (below).
+  </li>
+  <li>
+    <code>GET /api/campaigns/:campaignId/session-preps/:prepId</code> —
+    <strong>read</strong> (member). Returns one prep as a <code>SafeSessionPrep</code>, or
+    <code>404</code> if the id is unknown <em>or</em> belongs to a different campaign.
+  </li>
+  <li>
+    <code>POST /api/campaigns/:campaignId/reset-prep</code> — <strong>reset</strong> (owner).
+    Deletes the prep row and re-arms its pipeline stage so a later trigger regenerates cleanly.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Trigger always enqueues; it doesn't pre-check existence</strong> — the route is a thin,
+  idempotent enqueue. A second <code>POST</code> for an already-prepared session is harmless: the
+  fixed <code>jobId</code> dedupes it at the queue, and even if a job runs, the processor's atomic
+  claim comes back <code>completed</code> and the <code>ON CONFLICT DO NOTHING</code> insert no-ops.
+  Pushing the existence check into the route would duplicate logic the queue and the claim already
+  enforce, and would race anything in flight. The <code>202</code> means "accepted for processing,"
+  not "a new prep was created."
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Read 404s on cross-campaign, not 403</strong> — <code>getById</code> looks a prep up by
+  its own id, which isn't scoped to a campaign. The route compares the row's
+  <code>campaignId</code> to the path and returns <code>404 prep_not_found</code> when they differ —
+  the same response as a genuinely-absent id. A <code>403</code> would confirm that
+  <em>some</em> campaign owns the id; the <code>404</code> leaks nothing about preps in campaigns
+  the caller can't see.
+</aside>
+
+<h4 id="the-safe-projection"><code>SafeSessionPrep</code>: the HTTP enforced-ignorance gate</h4>
+
+<p>
+  The persisted row carries both prep documents — the Fast-Thinker-safe <code>ft_context</code> and
+  the secrets-bearing <code>sd_playbook</code>. The HTTP surface serves a projection,
+  <code>SafeSessionPrep</code>, that carries the id, session number, <code>ftContext</code>,
+  <code>snapshotId</code>, and <code>createdAt</code> — and deliberately <strong>not</strong>
+  <code>sdPlaybook</code>. <code>toSafeSessionPrep(row)</code> builds that shape field by field;
+  both read routes pass every row through it before <code>reply.send</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>An explicit literal, never a spread — the projection IS the gate</strong> — the backend
+  declares no Fastify response schemas, so <code>reply.send(obj)</code> serializes every
+  own-enumerable property of <code>obj</code>. There is no schema layer downstream to strip
+  <code>sdPlaybook</code>. That makes <code>toSafeSessionPrep</code> the entire runtime control, and
+  it is written as a field-by-field literal on purpose. A
+  <code>&#123; ...row, /* omit playbook */ &#125;</code> spread would type-check under structural
+  typing <em>and</em> ship <code>sdPlaybook</code> to the wire — the type system can't catch the
+  leak because the extra field is still assignable. The explicit literal can only emit the five
+  fields it names, and an exact-key test pins the shape so adding a field to the row can't silently
+  widen the HTTP response.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >This is the HTTP half of the same enforced-ignorance split the
+    <a href="#two-channels-one-stream">prose channel</a> defends</strong
+  >
+  — <code>sd_playbook</code> never crosses the HTTP boundary at all. The two consumers that
+  legitimately need the playbook read it another way: Session Runtime loads it
+  <em>in-process</em> through <code>repo.sessionPreps.getBy</code> (no HTTP hop), and the dev tool
+  watches it <em>live</em> over the dev-only
+  <a href="./dev-tool.html#the-session-prep-prose-pane">prose stream</a>, never via these routes. So
+  the playbook reaches exactly the two surfaces entitled to it, by two paths that bypass the public
+  HTTP API entirely.
+</aside>
+
+<h4 id="reset-semantics">Reset: delete the row and re-arm the stage, atomically</h4>
+
+<p>
+  <code>POST /reset-prep</code> exists so an operator (or, later, Session Runtime) can throw away a
+  bad prep and regenerate. It does two writes inside a single <code>repo.transaction</code>:
+  <code>sessionPreps.deleteFor(campaignId, sessionNumber)</code> drops the persisted row, and
+  <code>pipelineRuns.resetStage</code> flips the <code>session-prep:&#123;n&#125;</code> claim row
+  back to <code>pending</code> (clearing <code>started_at</code>, <code>completed_at</code>, and
+  <code>error</code>). After the reset, a fresh <code>POST /session-prep</code> re-runs from a clean
+  slate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Both writes in one transaction, because the claim row is the resume key</strong> — the
+  processor treats a <code>completed</code> claim as "already done, no-op." If the reset deleted the
+  <code>session_preps</code> row but left the claim <code>completed</code>, a re-trigger would
+  short-circuit at claim time and never regenerate — the prep would be gone with no way to rebuild
+  it. Re-arming the stage is what makes the delete recoverable. Doing both in one transaction means
+  a reset is all-or-nothing: there's no window where the row is gone but the stage still reads done.
+  <code>resetStage</code> is a plain <code>UPDATE</code> on the binder, composable into the same
+  transaction as <code>deleteFor</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Reset doesn't fence a prep that's mid-flight</strong> — nothing stops an owner from
+  resetting while a generation job is still running. That's deliberate: the worst case is the
+  in-flight job lands its <code>ON CONFLICT DO NOTHING</code> insert after the delete (re-creating
+  the row the operator just removed), or finishes against a stage the reset already re-armed. Either
+  way the data stays consistent — there's no corruption, just a possibly-confusing "I reset it but a
+  prep reappeared." A lock to make reset-while-active strictly serial would add machinery for a
+  dev-and-operator surface that doesn't yet have a concurrent caller; Session Runtime will own that
+  sequencing when it drives this surface for real.
+</aside>
+
+<p>
+  All four routes are declared in <code>backend/src/contract/backend-routes.ts</code> (the
+  non-pipeline HTTP contract) and exercised by the dev tool's four
+  <a href="./dev-tool.html">session-prep panels</a> on the World page — which is what keeps the
+  route-exhaustion <a href="./dev-tool.html#the-ship-gate">ship gate</a> green. The trigger and
+  reset routes are owner-only and rate-limited at 5/min per user; list and read are member-level at
+  30/min.
 </p>
 
 <h2>Operating this piece</h2>
+
+<h3 id="trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</h3>
+<ol>
+  <li>
+    <p>Trigger generation for a session (owner, body optional — defaults to session 1):</p>
+    <pre><code>POST /api/campaigns/&lt;id&gt;/session-prep
+{ "sessionNumber": 1 }
+&rarr; 202 { campaignId, sessionNumber }</code></pre>
+    <p>
+      The <code>202</code> means the job was accepted, not that a new prep exists. Watch the
+      campaign's SSE stream for <code>prep-started</code> &rarr; <code>prep-ready</code> (see
+      below).
+    </p>
+  </li>
+  <li>
+    <p>
+      List the campaign's preps, or read one — both return the <code>sd_playbook</code>-free shape:
+    </p>
+    <pre><code>GET /api/campaigns/&lt;id&gt;/session-preps          &rarr; { preps: [SafeSessionPrep, ...] }
+GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPrep | 404</code></pre>
+  </li>
+  <li>
+    <p>
+      Reset a session to regenerate from scratch (owner). This deletes the row and re-arms the stage
+      in one transaction:
+    </p>
+    <pre><code>POST /api/campaigns/&lt;id&gt;/reset-prep
+{ "sessionNumber": 1 }
+&rarr; 200 { campaignId, sessionNumber, reset: true }</code></pre>
+    <p>Then re-trigger with <code>POST /session-prep</code> for a clean run.</p>
+  </li>
+</ol>
 
 <h3 id="re-run-a-failed-session-prep">Re-run a failed session prep</h3>
 <ol>
@@ -332,9 +511,18 @@
   <a href="./pipeline-status.html#the-prep-status-route">prep-status route</a> reads the phase
   channel, and the dev-only prose route + its prose subscriber are documented on
   <a href="./pipeline-status.html#the-prep-status-route">pipeline status</a> alongside the rest of
-  the SSE plumbing. Downstream: Session Runtime will read <code>session_preps</code> at
-  <code>/start</code>, debit the session credit, and feed <code>ft_context</code> to the Fast
-  Thinker and <code>sd_playbook</code> to the Slow Thinker.
+  the SSE plumbing. The four <a href="#the-http-surface">HTTP routes</a> register through
+  <code>app.ts</code>, declare into <code>backend/src/contract/backend-routes.ts</code>, and are
+  driven by the dev tool's four session-prep panels on the World page (<a href="./dev-tool.html"
+    >dev tool</a
+  >); the producer queue handle reaches them via <code>AppDeps.sessionPrepQueue</code>, built by
+  <code>buildSessionPrepQueue</code> in <code>server-queues.ts</code> (see the
+  <a href="../data/repository.html">repository layer</a> for the <code>AppDeps</code> shape).
+  Downstream: Session Runtime will read <code>session_preps</code> at <code>/start</code> through
+  the in-process <code>repo.sessionPreps.getBy</code> binder, debit the session credit, and feed
+  <code>ft_context</code> to the Fast Thinker and <code>sd_playbook</code> to the Slow Thinker — the
+  playbook reaches the Slow Thinker in-process, never over the HTTP surface, which serves only
+  <code>SafeSessionPrep</code>.
 </p>
 
 <h2>Appendix: inputs and outputs</h2>
@@ -432,16 +620,88 @@
   </tbody>
 </table>
 
+<h3>HTTP routes</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Route</th>
+      <th>Role</th>
+      <th>Rate</th>
+      <th>Returns</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/session-prep</code></td>
+      <td>owner</td>
+      <td>5/min</td>
+      <td><code>202 { campaignId, sessionNumber }</code> (enqueue)</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/session-preps</code></td>
+      <td>member</td>
+      <td>30/min</td>
+      <td><code>200 { preps: SafeSessionPrep[] }</code></td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/session-preps/:prepId</code></td>
+      <td>member</td>
+      <td>30/min</td>
+      <td><code>200 SafeSessionPrep</code> / <code>404</code></td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/reset-prep</code></td>
+      <td>owner</td>
+      <td>5/min</td>
+      <td><code>200 { campaignId, sessionNumber, reset: true }</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3><code>SafeSessionPrep</code> fields (the HTTP projection)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        <code>id</code>, <code>sessionNumber</code>, <code>snapshotId</code>, <code>createdAt</code>
+      </td>
+      <td>Identity + metadata; <code>createdAt</code> serialized as an ISO string.</td>
+    </tr>
+    <tr>
+      <td><code>ftContext</code></td>
+      <td>The Fast-Thinker-safe document — the only prep prose the HTTP surface serves.</td>
+    </tr>
+    <tr>
+      <td><em>(absent)</em> <code>sdPlaybook</code></td>
+      <td>
+        Deliberately omitted. <code>toSafeSessionPrep</code> is an explicit field literal, not a
+        spread — the projection is the runtime gate.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
 <h2>Source</h2>
 
 <p>
   <code>backend/src/llm/prep/session-prep-processor.ts</code>,
   <code>backend/src/worker/publishers.ts</code> (the <code>publishEvent</code> /
   <code>publishProse</code> pair), <code>backend/src/repo/session-preps.ts</code>,
-  <code>backend/migrations/022_session_preps_unique.sql</code>; queue + publisher wiring in
-  <code>backend/src/worker.ts</code> + <code>backend/src/server.ts</code> against
-  <code>backend/src/worker/bullmq-config.ts</code>; the job name in
-  <code>backend/src/contract/pipeline-jobs.ts</code>. The streamed generation primitive
+  <code>backend/migrations/022_session_preps_unique.sql</code>; the four-route plugin +
+  <code>SafeSessionPrep</code> in <code>backend/src/routes/session-preps.ts</code> (registered by
+  <code>backend/src/app.ts</code>, declared in <code>backend/src/contract/backend-routes.ts</code>);
+  the reset re-arm (<code>resetStage</code>) on <code>backend/src/repo/pipeline-runs.ts</code>; the
+  producer queue on <code>AppDeps.sessionPrepQueue</code> (<code>backend/src/app-deps.ts</code>),
+  built by <code>buildSessionPrepQueue</code> in <code>backend/src/server-queues.ts</code>; queue +
+  publisher wiring in <code>backend/src/worker.ts</code> +
+  <code>backend/src/server.ts</code> against <code>backend/src/worker/bullmq-config.ts</code>; the
+  job name in <code>backend/src/contract/pipeline-jobs.ts</code>. The streamed generation primitive
   (<code>onProseDelta</code>) is on
   <a href="./llm.html#the-session-prep-generation-stage"
     ><code>llm/prep/stages/session-prep.ts</code></a

@@ -26,6 +26,7 @@
 <!-- source: backend/src/boot/process-error-handlers.ts -->
 <!-- source: backend/src/llm/logger.ts -->
 <!-- source: backend/src/server.ts -->
+<!-- source: backend/src/server-queues.ts -->
 <!-- source: backend/src/routes/dev-credits.ts -->
 <!-- source: backend/src/repo/credit-grants.ts -->
 <!-- source: backend/src/auth/rejection-storm.ts -->
@@ -51,8 +52,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:4f1f9a4528dca12230f9caa32b67e195610dec3922599b864468ed29a61dc697 -->
-<!-- last-ticket: MYT-62 -->
+<!-- source-hash: sha256:1cb9989c8966bf49dddf8428d8c4951b7b54a129f003ccd6431edea34643070b -->
+<!-- last-ticket: MYT-63 -->
 
 <h1>World gen</h1>
 
@@ -439,13 +440,13 @@
   queue is constructed with <code>attempts: 2</code> +
   <code>backoff: { type: 'exponential', delay: 30000 }</code> +
   <code>removeOnComplete: { count: 0 }</code> + <code>removeOnFail: { count: 0 }</code> in
-  <code>server.ts</code>'s <code>buildWorldGenQueue</code>. The two retries are what makes every
-  "BullMQ retries the stage" recovery path in the §7.2 error matrix real rather than fictional —
-  without <code>attempts: 2</code>, transient Anthropic 503s or persistence-COMMIT failures would
-  surface as terminal stage failures instead of self-healing. The
-  <code>removeOn*: { count: 0 }</code> pair prunes terminal jobs so the resume flow's
-  <code>queue.add</code> with <code>{ jobId: campaignId }</code> doesn't silently no-op on a
-  previously-completed run.
+  <code>buildWorldGenQueue</code> (extracted into <code>server-queues.ts</code>, called by
+  <code>server.ts</code> at boot). The two retries are what makes every "BullMQ retries the stage"
+  recovery path in the §7.2 error matrix real rather than fictional — without
+  <code>attempts: 2</code>, transient Anthropic 503s or persistence-COMMIT failures would surface as
+  terminal stage failures instead of self-healing. The <code>removeOn*: { count: 0 }</code> pair
+  prunes terminal jobs so the resume flow's <code>queue.add</code> with
+  <code>{ jobId: campaignId }</code> doesn't silently no-op on a previously-completed run.
 </aside>
 
 <h2>The seven stages</h2>
@@ -1975,8 +1976,9 @@
   <code>backend/src/auth/rejection-storm.ts</code>, <code>backend/src/repo/credit-grants.ts</code>,
   <code>backend/src/repo/pipeline-runs.ts</code>,
   <code>backend/src/repo/world-snapshot-view.ts</code>,
-  <code>backend/src/sse/derive-phase.ts</code>, <code>backend/src/server.ts</code> (the
-  <code>buildWorldGenQueue</code> options), <code>backend/src/contract/pipeline-routes.ts</code>,
+  <code>backend/src/sse/derive-phase.ts</code>, <code>backend/src/server.ts</code> +
+  <code>backend/src/server-queues.ts</code> (the <code>buildWorldGenQueue</code> options),
+  <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-jobs.ts</code>,
   <code>backend/src/contract/pipeline-errors.ts</code>,
   <code>backend/src/contract/pipeline-events.ts</code>,
