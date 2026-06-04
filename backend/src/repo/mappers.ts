@@ -9,6 +9,7 @@ import type {
   CreditSourceType,
   CreditType,
   Session,
+  SessionParticipant,
   SessionUsage,
   User,
   World,
@@ -380,6 +381,26 @@ export function toCampaignCharacter(row: CampaignCharacterDbRow): CampaignCharac
     campaignId: row.campaign_id,
     characterId: row.character_id,
     userId: row.user_id,
+    joinedAt: row.joined_at,
+  }
+}
+
+// ─── Session Participants (MYT-65) ───────────────────────────────────────────
+
+export interface SessionParticipantDbRow {
+  readonly id: string
+  readonly session_id: string
+  readonly user_id: string
+  readonly character_id: string
+  readonly joined_at: Date
+}
+
+export function toSessionParticipant(row: SessionParticipantDbRow): SessionParticipant {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    userId: row.user_id,
+    characterId: row.character_id,
     joinedAt: row.joined_at,
   }
 }

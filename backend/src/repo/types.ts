@@ -170,6 +170,26 @@ export interface SessionUsage {
   readonly createdAt: Date
 }
 
+// ─── Session Participants (MYT-65) ───────────────────────────────────────────
+// Who is connected to a live session. A WS client join writes a row; a
+// disconnect removes it. character_id is resolved server-side from the
+// joiner's integrated character in the campaign — never supplied by the
+// client (the schema's NOT NULL FK→characters enforces this).
+
+export interface SessionParticipant {
+  readonly id: string
+  readonly sessionId: string
+  readonly userId: string
+  readonly characterId: string
+  readonly joinedAt: Date
+}
+
+export interface JoinParticipantInput {
+  readonly sessionId: string
+  readonly campaignId: string
+  readonly userId: string
+}
+
 // ─── Credits ─────────────────────────────────────────────────────────────────
 
 export type CreditType = 'session' | 'world_gen'
