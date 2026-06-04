@@ -55,10 +55,14 @@ export type ClientFrame =
 
 // Server -> Client payloads. Discriminated on `type`.
 //
-// All broadcast frames carry the server-assigned monotonic `seq` (§5.2:
-// `Redis INCR` on `session:{campaignId}:seq`); clients render in seq order,
-// not arrival order. `session_ready` / `typing_*` / `error` are non-ordered
-// control frames and carry no seq.
+// Only `player_message` carries the server-assigned monotonic `seq` (§5.2:
+// `Redis INCR` on `session:{campaignId}:seq`); clients render the SEQ STREAM
+// in seq order, not arrival order. `session_ready` / `player_joined` /
+// `player_left` / `typing_*` / `error` are non-ordered, out-of-band control /
+// presence frames and carry NO seq — they are not persisted to
+// `session_messages`, so a client must never gap-detect on a seq they carry
+// (that would corrupt reconnect-replay ordering). Per architecture overview
+// §5.2, which lists no seq on the presence frames.
 export type ServerFrame =
   | { type: 'session_ready' }
   | {
@@ -66,9 +70,8 @@ export type ServerFrame =
       userId: string
       displayName: string
       characterName: string
-      seq: number
     }
-  | { type: 'player_left'; userId: string; seq: number }
+  | { type: 'player_left'; userId: string }
   | {
       type: 'player_message'
       seq: number
