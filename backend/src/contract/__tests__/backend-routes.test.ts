@@ -64,12 +64,34 @@ const FILTERED_METHODS = new Set(['HEAD', 'OPTIONS'])
 // segment per node (otherwise siblings get squashed under a shared prefix).
 //
 // `:id|:campaignId` is Fastify's display for a parameterized node that
-// multiple plugins named differently — both campaigns.ts and
-// invites.ts declare `:campaignId`, and one of them happens to land in a
-// pre-existing radix node labeled `:id` from another plugin. Normalize
-// to whichever name BACKEND_ROUTES uses (the canonical one we declare).
-const PARAM_ALIASES: Record<string, string> = {
-  '/:id|:campaignId': '/:campaignId',
+// multiple plugins named differently — both campaigns.ts and invites.ts
+// declare `:campaignId`, and one of them lands in a pre-existing radix node
+// labeled `:id` from another plugin. `:id|:campaignId|:sessionId` is the
+// 3-way version under `/api/sessions/`: the sessions plugin declares the same
+// radix param node under four route names (ws-ticket `:id`, start/active
+// `:campaignId`, messages `:sessionId`), so Fastify prints the merged label.
+//
+// These merged tokens appear EITHER as a standalone tree-node segment
+// (`└── /:id|:campaignId (...)`, the campaigns case) OR embedded mid-string
+// in a flat full-path line (`/api/sessions/:id|:campaignId|:sessionId/start`,
+// the sessions case — those routes share no collapsible parent node). So we
+// replace the token wherever it occurs in the segment rather than exact-match
+// the whole segment. Each merged token collapses to the single canonical name
+// the corresponding BACKEND_ROUTES entries use.
+//
+// Order matters: replace the 3-way token before the 2-way so the longer one
+// wins (the 2-way is a substring of the 3-way).
+const PARAM_TOKEN_ALIASES: readonly (readonly [string, string])[] = [
+  [':id|:campaignId|:sessionId', ':id'],
+  [':id|:campaignId', ':campaignId'],
+]
+
+function normalizeParamTokens(segment: string): string {
+  let out = segment
+  for (const [token, canonical] of PARAM_TOKEN_ALIASES) {
+    out = out.split(token).join(canonical)
+  }
+  return out
 }
 
 function parsePrintedRoutes(app: FastifyInstance): PrintedRoute[] {
@@ -100,10 +122,11 @@ function parsePrintedRoutes(app: FastifyInstance): PrintedRoute[] {
     const methodsRaw = match[3]
     const depth = indent.length
 
-    // Apply param-alias normalization on the leaf segment so the tree
-    // walk reconstructs the canonical path BACKEND_ROUTES uses.
-    const alias = PARAM_ALIASES[segment]
-    if (alias) segment = alias
+    // Normalize merged param tokens (`:id|:campaignId`, the 3-way sessions
+    // variant) to their canonical name so the tree walk reconstructs the
+    // path BACKEND_ROUTES uses. Token-level (not exact-segment) replacement
+    // handles both standalone param nodes and flat full-path lines.
+    segment = normalizeParamTokens(segment)
 
     // Pop stack entries that are at the same depth or deeper — we're
     // descending into a new sibling/uncle.

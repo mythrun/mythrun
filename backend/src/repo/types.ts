@@ -142,6 +142,11 @@ export interface Session {
 }
 
 export interface CreateSessionInput {
+  /** Optional caller-supplied primary key. The MYT-65 /start route generates
+   *  the id UP FRONT so the credit debit's idempotency sourceId (= sessionId)
+   *  is known before the INSERT (atomicity ordering). Omitted → the repo
+   *  mints a uuidv7. */
+  readonly id?: string
   readonly campaignId: string
   readonly sessionNumber: number
   readonly status?: 'active' | 'ended' | 'crashed'

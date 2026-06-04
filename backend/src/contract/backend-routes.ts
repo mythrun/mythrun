@@ -67,8 +67,15 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/session-preps/:prepId' },
   { method: 'POST', path: '/api/campaigns/:campaignId/reset-prep' },
 
-  // Sessions
+  // Sessions. All four share one radix param node, which Fastify prints as
+  // the 3-way merge `:id|:campaignId|:sessionId` (the routes name the param
+  // differently: ws-ticket :id, start/active :campaignId, messages
+  // :sessionId). The drift test normalizes that printed node to the single
+  // canonical name `:id`, so every session route is keyed `:id` here.
   { method: 'POST', path: '/api/sessions/:id/ws-ticket' },
+  { method: 'POST', path: '/api/sessions/:id/start' },
+  { method: 'GET', path: '/api/sessions/:id/active' },
+  { method: 'GET', path: '/api/sessions/:id/messages' },
 
   // Invites
   { method: 'POST', path: '/api/campaigns/:campaignId/invites' },

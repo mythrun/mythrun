@@ -18,7 +18,10 @@ import type { ClientLike } from './_types.js'
 export function sessionsNs(c: ClientLike) {
   return {
     create: async (input: CreateSessionInput): Promise<Session> => {
-      const id = uuidv7()
+      // Caller may supply the id (MYT-65 /start mints it up front so the
+      // credit-debit idempotency key is known before the INSERT); default
+      // to a fresh uuidv7 otherwise.
+      const id = input.id ?? uuidv7()
       const result = await c.query<SessionDbRow>(
         `INSERT INTO sessions (id, campaign_id, session_number, status)
          VALUES ($1, $2, $3, COALESCE($4, 'active'))
@@ -54,6 +57,34 @@ export function sessionsNs(c: ClientLike) {
         [campaignId],
       )
       return result.rows.map(toSession)
+    },
+
+    /**
+     * Highest `session_number` for the campaign, or 0 when none exist. The
+     * lifecycle route (MYT-65) adds 1 to derive the "next" session number a
+     * /start serves — matching how the session-prep pipeline numbers preps.
+     * COALESCE(...,0) so the no-rows case returns 0 rather than null.
+     */
+    maxSessionNumber: async (campaignId: string): Promise<number> => {
+      const result = await c.query<{ max: string }>(
+        `SELECT COALESCE(MAX(session_number), 0)::text AS max
+           FROM sessions WHERE campaign_id = $1`,
+        [campaignId],
+      )
+      return Number(result.rows[0]?.max ?? 0)
+    },
+
+    /**
+     * Hard-delete a session row by id. Used ONLY by the MYT-65 /start route's
+     * 402-rollback: when the just-created session row can't be paid for
+     * (tryDebitForSession reports insufficient credits), the row is removed so
+     * the campaign isn't left with an unpaid 'active' session occupying the
+     * idx_sessions_one_active slot. session_messages / session_participants
+     * CASCADE, but a freshly-created session has none. No-op when the id is
+     * absent.
+     */
+    deleteById: async (id: string): Promise<void> => {
+      await c.query(`DELETE FROM sessions WHERE id = $1`, [id])
     },
 
     /**
