@@ -88,6 +88,7 @@ const EXPECTED_IDX_NAMES = [
   'idx_relationships_source',
   'idx_relationships_target',
   'idx_session_messages_session_seq',
+  'idx_session_messages_session_seq_unique',
   'idx_session_preps_campaign',
   'idx_session_usage_one_per_session',
   'idx_sessions_campaign',
@@ -678,6 +679,7 @@ describe('schema-parity (integration)', () => {
       '020_relationships_synth_key.sql',
       '021_campaigns_failed_status.sql',
       '022_session_preps_unique.sql',
+      '023_session_messages_unique_seq.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
