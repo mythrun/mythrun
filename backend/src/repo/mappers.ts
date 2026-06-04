@@ -9,6 +9,7 @@ import type {
   CreditSourceType,
   CreditType,
   Session,
+  SessionMessage,
   SessionParticipant,
   SessionUsage,
   User,
@@ -402,5 +403,29 @@ export function toSessionParticipant(row: SessionParticipantDbRow): SessionParti
     userId: row.user_id,
     characterId: row.character_id,
     joinedAt: row.joined_at,
+  }
+}
+
+// ─── Session Messages (MYT-65) ───────────────────────────────────────────────
+
+export interface SessionMessageDbRow {
+  readonly id: string
+  readonly session_id: string
+  readonly seq: number
+  readonly user_id: string | null
+  readonly message_type: string
+  readonly content: string
+  readonly created_at: Date
+}
+
+export function toSessionMessage(row: SessionMessageDbRow): SessionMessage {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    seq: row.seq,
+    userId: row.user_id,
+    messageType: row.message_type,
+    content: row.content,
+    createdAt: row.created_at,
   }
 }

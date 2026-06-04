@@ -190,6 +190,32 @@ export interface JoinParticipantInput {
   readonly userId: string
 }
 
+// ─── Session Messages (MYT-65) ───────────────────────────────────────────────
+// Append-only transcript of a live session. The WS chat transport persists
+// every message here (persist-then-broadcast) and replays from it on
+// reconnect. `seq` is a per-session monotonic counter owned by the WS route;
+// UNIQUE(session_id, seq) guarantees a re-used seq fails loudly rather than
+// silently corrupting replay. `userId` is null for system/DM-authored
+// messages (no FK — the author may be the DM, not a user).
+
+export interface SessionMessage {
+  readonly id: string
+  readonly sessionId: string
+  readonly seq: number
+  readonly userId: string | null
+  readonly messageType: string
+  readonly content: string
+  readonly createdAt: Date
+}
+
+export interface AppendMessageInput {
+  readonly sessionId: string
+  readonly seq: number
+  readonly userId: string | null
+  readonly messageType: string
+  readonly content: string
+}
+
 // ─── Credits ─────────────────────────────────────────────────────────────────
 
 export type CreditType = 'session' | 'world_gen'

@@ -4,6 +4,7 @@ import { worldsNs } from './worlds.js'
 import { campaignsNs } from './campaigns.js'
 import { sessionsNs } from './sessions.js'
 import { sessionParticipantsNs } from './session-participants.js'
+import { sessionMessagesNs } from './session-messages.js'
 import { sessionPrepsNs } from './session-preps.js'
 import { creditsNs, selfManagingCredits } from './credits.js'
 import { invitesNs, selfManagingInvites } from './invites.js'
@@ -50,6 +51,7 @@ function bindTx(c: ClientLike) {
     campaigns: campaignsNs(c),
     sessions: sessionsNs(c),
     sessionParticipants: sessionParticipantsNs(c),
+    sessionMessages: sessionMessagesNs(c),
     sessionPreps: sessionPrepsNs(c),
     credits: creditsNs(c),
     invites: invitesNs(c),
