@@ -29,7 +29,11 @@ import { createRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import type { AppDeps } from '../app-deps.js'
 import { makeStubEnv } from './helpers/stub-env.js'
-import { noopWorldGenQueue, noopSessionPrepQueue } from './helpers/stub-deps.js'
+import {
+  noopWorldGenQueue,
+  noopSessionPrepQueue,
+  noopSessionSuspendQueue,
+} from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const FRONTEND_BASE_URL = 'http://localhost:5173'
@@ -79,6 +83,7 @@ describe('pipeline status cross-process', () => {
       repo,
       worldGenQueue: noopWorldGenQueue(),
       sessionPrepQueue: noopSessionPrepQueue(),
+      sessionSuspendQueue: noopSessionSuspendQueue(),
     }
     const depsB: AppDeps = { ...depsA, redisRealtime: redisB, redisBatch: redisB }
 

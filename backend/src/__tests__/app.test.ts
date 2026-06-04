@@ -41,6 +41,7 @@ import { createRepo } from '../repo/index.js'
 import { _resetSkuCacheForTests } from '../billing/sku-cache.js'
 import { registerPublicRouteAllowlistHook } from '../auth/public-route-allowlist.js'
 import { makeStubEnv } from './helpers/stub-env.js'
+import { noopSessionSuspendQueue } from './helpers/stub-deps.js'
 
 const makeStubDeps = (): AppDeps => {
   const mockPool = {} as Pool
@@ -60,6 +61,7 @@ const makeStubDeps = (): AppDeps => {
       getJob: (): Promise<null> => Promise.resolve(null),
     },
     sessionPrepQueue: { add: (): Promise<unknown> => Promise.resolve(undefined) },
+    sessionSuspendQueue: noopSessionSuspendQueue(),
   }
 }
 

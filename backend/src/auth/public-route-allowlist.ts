@@ -17,6 +17,14 @@ export const PUBLIC_ROUTE_ALLOWLIST: ReadonlySet<string> = new Set([
   'GET /api/invites/:inviteCode/preview',
   'GET /api/billing/skus',
   'POST /webhooks/stripe',
+  // MYT-65: the WebSocket session-transport upgrade. It opts out of the JWT
+  // chain because a browser-native WebSocket cannot send an Authorization
+  // header — the auth boundary is instead the single-use ws-ticket, validated
+  // by wsSessionAuth (the route's preHandler) BEFORE the upgrade completes. So
+  // `auth: 'public'` here means "no JWT", NOT "unauthenticated": the preHandler
+  // consumes + binds the ticket to the path's sessionId and re-checks campaign
+  // membership against the loaded session row. See routes/ws-session.ts.
+  'GET /ws/session/:sessionId',
 ])
 
 /**

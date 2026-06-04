@@ -45,7 +45,11 @@ import { createRepo } from '../repo/index.js'
 import * as creditsRepo from '../repo/credits.js'
 import { classifyProfanity } from '../llm/profanity.js'
 import { makeStubEnv } from './helpers/stub-env.js'
-import { noopWorldGenQueue, noopSessionPrepQueue } from './helpers/stub-deps.js'
+import {
+  noopWorldGenQueue,
+  noopSessionPrepQueue,
+  noopSessionSuspendQueue,
+} from './helpers/stub-deps.js'
 
 const classifyProfanityMock = vi.mocked(classifyProfanity)
 
@@ -91,6 +95,7 @@ describe('onboarding trial-credit (integration)', () => {
       repo: createRepo(pool),
       worldGenQueue: noopWorldGenQueue(),
       sessionPrepQueue: noopSessionPrepQueue(),
+      sessionSuspendQueue: noopSessionSuspendQueue(),
     }
     app = await buildApp(
       deps,

@@ -36,7 +36,10 @@ import {
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-const KEY_PREFIX = 'test:use1:ws:ticket:'
+// The BARE env+region prefix — sessionsRoutes appends its own sub-prefixes
+// (`session:` for state, `ws:ticket:` for the mint store), matching the
+// production app.ts wiring + routes/ws-session.ts's consume side.
+const KEY_PREFIX = 'test:use1:'
 
 interface SeededUser {
   readonly userId: string

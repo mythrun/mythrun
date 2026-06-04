@@ -32,6 +32,8 @@ import {
   type CharacterIntegrationJobPayload,
 } from './llm/prep/character-integration-processor.js'
 import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
+import { makeSessionState, type CheckpointStore } from './redis/session-state.js'
+import { processSuspendJob, QUEUE_SESSION_SUSPEND } from './session/session-suspend.js'
 import { makePipelinePublishers } from './worker/publishers.js'
 import { readCharacterCreationCostCap, readCostCap } from './llm/prep/cost-cap.js'
 import {
@@ -46,9 +48,11 @@ import {
   buildWorldGenQueue,
   buildCharacterCreationQueue,
   buildSessionPrepQueue,
+  buildSessionSuspendQueue,
   stubWorldGenQueue,
   stubCharacterCreationQueue,
   stubSessionPrepQueue,
+  stubSessionSuspendQueue,
 } from './server-queues.js'
 import type { Logger as PinoLogger } from 'pino'
 
@@ -213,20 +217,65 @@ async function buildSessionPrepWorker(
   )
 }
 
+/** MYT-65 Task 11: build the session-suspend Worker on a dedicated BullMQ-tuned
+ *  ioredis connection. Mirrors buildSessionPrepWorker EXACTLY — the same
+ *  `createBullmqRedisClient` + MANDATORY `waitFor` ping-probe BEFORE `new
+ *  Worker(...)` (a single-shot `.ping()` without the boot-probe throws "Stream
+ *  isn't writeable" in cloud; see the ioredis/BullMQ connect race). The
+ *  processor re-reads live presence (over realtime Redis via makeSessionState)
+ *  and, when genuinely empty, checkpoints the session by overloading the
+ *  `st_running_summary` column through repo.sessions.update — the target Task 10
+ *  pinned. readMaxSeq reads the DURABLE MAX(seq) from session_messages. */
+async function buildSessionSuspendWorker(
+  repo: ReturnType<typeof createRepo>,
+  redisRealtime: Redis,
+  redisBatchUrl: string,
+  redisKeyPrefix: string,
+  signal: AbortSignal,
+): Promise<Worker> {
+  const connection = createBullmqRedisClient(redisBatchUrl)
+  await waitFor({
+    label: 'Redis (worker bullmq session-suspend)',
+    probe: () => connection.ping(),
+    signal,
+  })
+  const sessionState = makeSessionState(redisRealtime, redisKeyPrefix)
+  const store: CheckpointStore = {
+    readMaxSeq: (sessionId) => repo.sessionMessages.maxSeq(sessionId),
+    writeCheckpoint: async (sessionId, envelope) => {
+      await repo.sessions.update(sessionId, { stRunningSummary: envelope })
+    },
+  }
+  return new Worker(
+    QUEUE_SESSION_SUSPEND,
+    (job) => processSuspendJob({ sessionState, store }, job),
+    { connection },
+  )
+}
+
 /** MYT-61 T4: wrap the createShutdown handler to drain the session-prep
  *  worker + queue FIRST. createShutdown owns the existing drain chain and
  *  process.exit's at the end, so the session-prep pair can't be closed AFTER
  *  it; we close them up front (worker before queue — lets an in-flight Opus
  *  prep finish, then releases the queue's Redis bookkeeping) and delegate to
- *  the rest of the chain. Extracted so main() stays close to its line budget. */
+ *  the rest of the chain. Extracted so main() stays close to its line budget.
+ *
+ *  MYT-65 Task 11: the session-suspend worker + queue are drained on the same
+ *  up-front-of-the-chain principle (worker before queue) so a checkpoint write
+ *  that's mid-flight at shutdown finishes before the queue's Redis bookkeeping
+ *  is released. */
 function withSessionPrepShutdown(
   inner: ShutdownHandler,
   worker: Worker,
   queue: Queue,
+  suspendWorker: Worker,
+  suspendQueue: Queue,
 ): ShutdownHandler {
   return async (signal) => {
     await worker.close()
     await queue.close()
+    await suspendWorker.close()
+    await suspendQueue.close()
     await inner(signal)
   }
 }
@@ -257,6 +306,7 @@ async function fallbackStart(): Promise<void> {
   const stubQueue = stubWorldGenQueue()
   const stubCharacterQueue = stubCharacterCreationQueue()
   const stubSessionPrep = stubSessionPrepQueue()
+  const stubSessionSuspend = stubSessionSuspendQueue()
   const stubDeps: AppDeps = {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
@@ -266,6 +316,7 @@ async function fallbackStart(): Promise<void> {
     worldGenQueue: stubQueue,
     characterCreationQueue: stubCharacterQueue,
     sessionPrepQueue: stubSessionPrep,
+    sessionSuspendQueue: stubSessionSuspend,
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
@@ -389,6 +440,10 @@ export async function main(): Promise<void> {
     // is closed at shutdown (after the worker drains); the sessionPrepQueue
     // adapter flows into AppDeps so the MYT-63 trigger route can enqueue.
     const { bullmqQueue: bullmqSessionPrepQueue, sessionPrepQueue } = buildSessionPrepQueue(rTBRef)
+    // MYT-65 T11: session-suspend queue (raw closed at shutdown; adapter into
+    // AppDeps so the WS route can schedule/cancel suspends).
+    const { bullmqQueue: bullmqSessionSuspendQueue, sessionSuspendQueue } =
+      buildSessionSuspendQueue(rTBRef)
 
     const app = await buildApp(
       {
@@ -400,6 +455,7 @@ export async function main(): Promise<void> {
         worldGenQueue,
         characterCreationQueue,
         sessionPrepQueue,
+        sessionSuspendQueue,
       },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
@@ -415,6 +471,10 @@ export async function main(): Promise<void> {
     )
     const sessionPrepWorker = await buildSessionPrepWorker(
       pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
+      abortController.signal,
+    )
+    const sessionSuspendWorker = await buildSessionSuspendWorker(
+      repo, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
       abortController.signal,
     )
 
@@ -439,10 +499,11 @@ export async function main(): Promise<void> {
       // Queue's close(), not the CharacterCreationQueueLike adapter.
       characterCreationQueue: bullmqCharacterCreationQueue,
     })
-    // Pass the raw BullMQ Queue (bullmqSessionPrepQueue), not the
-    // SessionPrepQueueLike adapter — shutdown needs the underlying queue's close().
+    // Pass the raw BullMQ Queues (not the *QueueLike adapters) — shutdown needs
+    // the underlying close(). The suspend pair drains alongside the prep pair.
     const handleShutdown = withSessionPrepShutdown(
       innerShutdown, sessionPrepWorker, bullmqSessionPrepQueue,
+      sessionSuspendWorker, bullmqSessionSuspendQueue,
     )
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

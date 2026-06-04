@@ -97,6 +97,9 @@ importers:
       '@types/pg':
         specifier: ^8.11.0
         version: 8.20.0
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       '@vitest/coverage-v8':
         specifier: ^3.2.4
         version: 3.2.4(vitest@3.2.4(@types/node@24.12.2)(jsdom@25.0.1)(tsx@4.21.0)(yaml@2.8.4))
@@ -118,6 +121,9 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@24.12.2)(jsdom@25.0.1)(tsx@4.21.0)(yaml@2.8.4)
+      ws:
+        specifier: ^8.18.3
+        version: 8.18.3
 
   backend/dev-tool:
     devDependencies:

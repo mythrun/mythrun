@@ -4,6 +4,7 @@ import type { Repo } from './repo/index.js'
 import type { WorldGenQueueLike } from './routes/campaigns.js'
 import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
 import type { SessionPrepQueueLike } from './routes/session-preps.js'
+import type { SuspendQueueLike } from './session/session-suspend.js'
 
 export interface AppDeps {
   pg: Pool
@@ -34,4 +35,12 @@ export interface AppDeps {
    *  mirrors worldGenQueue (boot invariant). Typed as the minimal
    *  SessionPrepQueueLike contract; the route only calls `.add()`. */
   sessionPrepQueue: SessionPrepQueueLike
+  /** MYT-65 Task 11: BullMQ Queue handle for `session-suspend` jobs (built on
+   *  redisBatch in server.ts). Threaded into the WS session route so the
+   *  connection handler can `scheduleSuspend` on the last player's disconnect
+   *  and `cancelSuspend` on a returning player. Typed as the minimal
+   *  SuspendQueueLike contract (add/getJob/remove); the raw BullMQ Queue is
+   *  closed at shutdown in server.ts. Required — the WS transport is a boot
+   *  invariant of the gated binary. */
+  sessionSuspendQueue: SuspendQueueLike
 }

@@ -35,8 +35,11 @@ import { uuidv7 } from '../repo/uuidv7.js'
 interface Opts {
   readonly pool: Pool
   readonly redisRealtime: Redis
-  /** Includes trailing colon, e.g. "production:use1:ws:ticket:". Pinned
-   *  per environment+region per docs/specs/2026-04-10-infrastructure-devops.md
+  /** The BARE per-environment+region prefix, trailing colon, e.g.
+   *  "production:use1:" (config/env.ts `redisKeyPrefix`). Per-feature
+   *  sub-prefixes are appended by their callers — `makeSessionState` adds
+   *  `session:…`, the ws-ticket store adds `ws:ticket:`. Pinned per
+   *  environment+region (docs/specs/2026-04-10-infrastructure-devops.md)
    *  because staging+prod share one ElastiCache cluster. */
   readonly redisKeyPrefix: string
 }
@@ -48,6 +51,12 @@ interface Opts {
 export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const repo = createRepo(opts.pool)
   const sessionState = makeSessionState(opts.redisRealtime, opts.redisKeyPrefix)
+  // The ws-ticket store lives under the `ws:ticket:` sub-prefix. This MUST
+  // match routes/ws-session.ts's consume side (`${redisKeyPrefix}ws:ticket:`):
+  // mint and consume key the same Redis slot, so a divergence 401s every WS
+  // upgrade. (Before MYT-65 there was no consumer, so the missing sub-prefix
+  // here was a latent no-op; the two-client integration test surfaced it.)
+  const ticketKeyPrefix = `${opts.redisKeyPrefix}ws:ticket:`
 
   // Per-user rate-limit key: rate-limit's keyGenerator runs at onRequest,
   // BEFORE requireOnboarded (a preHandler) attaches request.dbUser. So a
@@ -110,7 +119,7 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       }
       /* c8 ignore stop */
       const { ticket, expiresAt } = await mintWsTicket(
-        { redis: opts.redisRealtime, keyPrefix: opts.redisKeyPrefix },
+        { redis: opts.redisRealtime, keyPrefix: ticketKeyPrefix },
         { userId: dbUser.id, sessionId, campaignId },
       )
       return { ticket, expiresAt }

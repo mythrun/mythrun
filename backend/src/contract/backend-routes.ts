@@ -77,14 +77,13 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/sessions/:id/active' },
   { method: 'GET', path: '/api/sessions/:id/messages' },
 
-  // WebSocket transport (MYT-65) — `GET /ws/session/:sessionId` — is added to
-  // this contract by MYT-65 Task 11, the same task that registers the
-  // wsSessionRoutes plugin into app.ts. It is INTENTIONALLY ABSENT here: this
-  // drift test boots the app and diffs printRoutes() against this list, so a
-  // contract entry for a route the app doesn't yet register would (correctly)
-  // fail the test. The route prints as a standalone radix subtree under `/ws/`
-  // (no merge with the `/api/sessions/:id` node), so when Task 11 adds it the
-  // entry needs no param-token normalization — `:sessionId` stands alone.
+  // WebSocket transport (MYT-65 Task 11) — `GET /ws/session/:sessionId`, the
+  // websocket-upgrade route registered by wsSessionRoutes in app.ts. It prints
+  // as a standalone radix subtree under `/ws/` (no merge with the
+  // `/api/sessions/:id` node), so the param token `:sessionId` stands alone and
+  // needs no normalization. @fastify/websocket attaches the handler as a plain
+  // GET, so a single GET entry mirrors printRoutes() exactly.
+  { method: 'GET', path: '/ws/session/:sessionId' },
 
   // Invites
   { method: 'POST', path: '/api/campaigns/:campaignId/invites' },

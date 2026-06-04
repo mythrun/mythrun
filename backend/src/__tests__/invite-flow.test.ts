@@ -31,7 +31,11 @@ import { buildApp } from '../app.js'
 import type { AppDeps } from '../app-deps.js'
 import { createRepo, type Repo } from '../repo/index.js'
 import { makeStubEnv } from './helpers/stub-env.js'
-import { noopWorldGenQueue, noopSessionPrepQueue } from './helpers/stub-deps.js'
+import {
+  noopWorldGenQueue,
+  noopSessionPrepQueue,
+  noopSessionSuspendQueue,
+} from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const FRONTEND_BASE_URL = 'http://localhost:5173'
@@ -158,6 +162,7 @@ describe('invite routes (integration)', () => {
       repo,
       worldGenQueue: noopWorldGenQueue(),
       sessionPrepQueue: noopSessionPrepQueue(),
+      sessionSuspendQueue: noopSessionSuspendQueue(),
     }
     app = await buildApp(
       deps,

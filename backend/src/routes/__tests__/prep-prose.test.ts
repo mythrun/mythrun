@@ -43,7 +43,11 @@ import type { AppDeps } from '../../app-deps.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
-import { noopWorldGenQueue, noopSessionPrepQueue } from '../../__tests__/helpers/stub-deps.js'
+import {
+  noopWorldGenQueue,
+  noopSessionPrepQueue,
+  noopSessionSuspendQueue,
+} from '../../__tests__/helpers/stub-deps.js'
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 import {
   cleanupTestScope,
@@ -87,6 +91,7 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
         repo,
         worldGenQueue: noopWorldGenQueue(),
         sessionPrepQueue: noopSessionPrepQueue(),
+        sessionSuspendQueue: noopSessionSuspendQueue(),
       }
       app = await buildApp(
         deps,
@@ -288,5 +293,6 @@ function makeStubDepsForRealMode(): AppDeps {
     repo: createRepo(mockPool),
     worldGenQueue: noopWorldGenQueue(),
     sessionPrepQueue: noopSessionPrepQueue(),
+    sessionSuspendQueue: noopSessionSuspendQueue(),
   }
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Server, IncomingMessage, ServerResponse } from 'node:http'
 import Fastify, { type FastifyInstance } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
+import fastifyWebsocket from '@fastify/websocket'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { AppDeps } from './app-deps.js'
@@ -25,6 +26,9 @@ import { devPrepProseRoutes } from './routes/dev-prep-prose.js'
 import { PIPELINE_ROUTES } from './contract/pipeline-routes.js'
 import { createPipelineSubscriber, type PipelineSubscriber } from './sse/pipeline-subscriber.js'
 import { createConnectionCounter } from './sse/connection-counter.js'
+import { wsSessionRoutes, WS_MAX_PAYLOAD_BYTES } from './routes/ws-session.js'
+import { createSessionHub, type SessionHub } from './ws/session-hub.js'
+import { makeSessionState } from './redis/session-state.js'
 import type { Logger as PinoLogger } from 'pino'
 
 export interface AppConfig {
@@ -55,6 +59,13 @@ declare module 'fastify' {
      *  'bypass') — it is absent on a production boot. server.ts's shutdown
      *  closes it only when present. */
     mythrunProseSubscriber?: PipelineSubscriber
+    /** MYT-65 Task 11: the cross-container WS fan-out hub. Owns a DEDICATED
+     *  PSUBSCRIBE'd duplicate of redisRealtime, so — like mythrunSubscriber —
+     *  it must be closed BEFORE app.close (its `close()` PUNSUBSCRIBEs + QUITs
+     *  the dedicated client + clears the registry). Decorated here so
+     *  createShutdown can reach it without widening the fixed ShutdownClients
+     *  struct (same decoration pattern as mythrunProseSubscriber). */
+    mythrunSessionHub: SessionHub
   }
 }
 
@@ -263,12 +274,52 @@ export const buildApp = async (
     frontendBaseUrl: config.frontendBaseUrl,
   })
 
-  // Sessions plugin (MYT-39 §6). Currently only POST /api/sessions/:id/ws-ticket;
-  // additional session-scoped routes land in the Session Runtime milestone.
+  // Sessions plugin (MYT-39 §6 + MYT-65 lifecycle). Mints ws-tickets, starts
+  // sessions, serves /active + /messages. The WS upgrade route (below) is the
+  // socket counterpart that the minted ticket authorizes.
   await app.register(sessionsRoutes, {
     pool: deps.pg,
     redisRealtime: deps.redisRealtime,
     redisKeyPrefix: deps.redisKeyPrefix,
+  })
+
+  // MYT-65 Task 11: the multiplayer WebSocket transport.
+  //
+  // @fastify/websocket is registered on the root scope BEFORE wsSessionRoutes
+  // so the `{ websocket: true }` route option resolves. `maxPayload` is the
+  // library-level oversized-frame guard (the in-handler MAX_MESSAGE_TEXT_LEN
+  // cap is the second line of defense, see routes/ws-session.ts).
+  await app.register(fastifyWebsocket, { options: { maxPayload: WS_MAX_PAYLOAD_BYTES } })
+
+  // The hub owns a DEDICATED PSUBSCRIBE'd duplicate of redisRealtime (a
+  // subscriber-mode client can't also publish/rate-limit). Constructed here —
+  // not inside the plugin — because its lifetime is the app's lifetime: the
+  // shutdown handler must PUNSUBSCRIBE + QUIT that client. app.log is a pino
+  // Logger at runtime; cast at the boundary (same rationale as the pinoLog cast
+  // for the pipeline subscriber below).
+  const hub = await createSessionHub({
+    redis: deps.redisRealtime,
+    keyPrefix: deps.redisKeyPrefix,
+    logger: app.log as PinoLogger,
+  })
+  // Expose to createShutdown (server.ts) via the module-augmented instance —
+  // same decoration pattern as mythrunSubscriber / mythrunProseSubscriber.
+  app.decorate('mythrunSessionHub', hub)
+
+  // A stable per-process identity. Keys each connection's presence key
+  // (`session:{cId}:conn:{containerId}:{userId}`) so a crashed container's
+  // presence lapses via TTL rather than wedging the suspend logic on a stale
+  // counter. Generated once per boot.
+  const containerId = randomUUID()
+
+  await app.register(wsSessionRoutes, {
+    repo: deps.repo,
+    sessionState: makeSessionState(deps.redisRealtime, deps.redisKeyPrefix),
+    hub,
+    suspendQueue: deps.sessionSuspendQueue,
+    redisRealtime: deps.redisRealtime,
+    redisKeyPrefix: deps.redisKeyPrefix,
+    containerId,
   })
 
   // MYT-50: pipeline status surface. The subscriber owns a DEDICATED
@@ -467,6 +518,13 @@ export const createShutdown = (app: FastifyInstance, clients: ShutdownClients): 
       // `server-shutdown` close frames to any attached prose sinks + QUITs
       // its dedicated PSUBSCRIBE client before app.close rips the sockets.
       if (app.mythrunProseSubscriber) await app.mythrunProseSubscriber.close()
+      // MYT-65 Task 11: close the WS session hub BEFORE app.close. Like the
+      // pipeline subscriber, the hub PUNSUBSCRIBEs + QUITs its dedicated
+      // PSUBSCRIBE client and clears the registry; doing it before app.close
+      // lets connected sockets receive a clean close rather than a socket-rip.
+      // Decorated (not threaded through ShutdownClients) and always present
+      // after a successful buildApp, so no `if`-guard is needed.
+      await app.mythrunSessionHub.close()
       await clients.worldGenWorker.close()
       await clients.worldGenQueue.close()
       await clients.characterCreationWorker.close()
