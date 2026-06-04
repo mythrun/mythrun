@@ -47,7 +47,12 @@ import type { SessionHub } from '../ws/session-hub.js'
 import type { SuspendQueueLike } from '../session/session-suspend.js'
 import { consumeWsTicket } from '../auth/ws-ticket.js'
 import { scheduleSuspend, cancelSuspend } from '../session/session-suspend.js'
-import { classifyClientFrame, type ClientFrame } from '../contract/session-events.js'
+import {
+  classifyClientFrame,
+  type ClientFrame,
+  type ParticipantSummary,
+  type ServerFrame,
+} from '../contract/session-events.js'
 
 /** The raw inbound-message payload `ws` hands the 'message' listener. `ws`
  *  isn't a direct dependency of this package (it's the @fastify/websocket
@@ -121,6 +126,13 @@ const MAX_MESSAGE_TEXT_LEN = 4_000
  *  MAX_MESSAGE_TEXT_LEN to leave room for the JSON envelope + multibyte UTF-8. */
 export const WS_MAX_PAYLOAD_BYTES = 16 * 1024
 
+/** Placeholder display name for a reconnect-replay author who is no longer a
+ *  current campaign member (left/removed since the message was written). Their
+ *  prose still replays; only the byline degrades gracefully. A neutral
+ *  user-facing label, NOT an internal sentinel, since it's rendered as a chat
+ *  byline. Brand register: plain, no gamerspeak. */
+const DEPARTED_AUTHOR_NAME = 'Former player'
+
 declare module 'fastify' {
   interface FastifyRequest {
     /** Stashed by `wsSessionAuth` for the websocket handler. `campaignId` is
@@ -140,7 +152,7 @@ export const wsSessionRoutes: FastifyPluginAsync<WsSessionDeps> = async (app, de
   // extracting handleSessionStart out of its plugin shell.
   const ctx: ConnCtx = { app, deps }
 
-  app.get<{ Params: { sessionId: string }; Querystring: { ticket?: string } }>(
+  app.get<{ Params: { sessionId: string }; Querystring: { ticket?: string; lastSeq?: string } }>(
     '/ws/session/:sessionId',
     {
       websocket: true,
@@ -170,6 +182,7 @@ export const wsSessionRoutes: FastifyPluginAsync<WsSessionDeps> = async (app, de
         auth.userId,
         auth.campaignId,
         request.params.sessionId,
+        parseLastSeq(request.query.lastSeq),
       ).catch((err: unknown) => {
         app.log.error({ err }, 'ws-session handleConnection escaped its own guard')
         try {
@@ -266,6 +279,7 @@ async function handleConnection(
   userId: string,
   campaignId: string,
   sessionId: string,
+  lastSeq: number | null,
 ): Promise<void> {
   const { repo, sessionState, hub, suspendQueue, containerId } = ctx.deps
   try {
@@ -282,24 +296,35 @@ async function handleConnection(
 
     // Record presence + register the socket BEFORE the player_joined broadcast
     // so this socket is in the registry when the fan-out comes back round.
+    // ORDERING (load-bearing for reconnect): hub.register MUST run before the
+    // session_reconnect replay's session_messages read below — any frame
+    // published live during that DB read is then delivered to this socket, and
+    // the client's seq-dedup drops the overlap with the replay batch. A
+    // read-then-register would drop that gap.
     await sessionState.addPresence(campaignId, containerId, userId)
     hub.register(campaignId, userId, socket)
     await sessionState.refreshTtls(campaignId)
     // A returning player cancels any pending all-disconnected suspend.
     await cancelSuspend(suspendQueue, sessionId)
 
-    // player_joined is a seq-LESS out-of-band presence frame (like typing_*):
-    // ONLY player_message advances `:seq` (arch overview §5.2 lists no seq on
-    // presence frames). Join/left aren't persisted to session_messages and are
-    // absent from reconnect replay, so they must never carry a seq a client
-    // could gap-detect on. The first player_message is therefore seq 1.
-    await hub.publish(campaignId, {
-      type: 'player_joined',
-      userId,
-      displayName,
-      characterName,
-    })
-    socket.send(JSON.stringify({ type: 'session_ready' }))
+    if (lastSeq !== null) {
+      // Reconnect: send the replay frame DIRECTLY (synchronous socket.send)
+      // BEFORE broadcasting player_joined. The direct send is guaranteed to
+      // reach this socket ahead of the join frame (which only arrives after a
+      // Redis pub/sub round-trip), so the client's FIRST frame is deterministic.
+      const reconnect = await buildReconnectFrame(ctx, sessionId, campaignId, lastSeq)
+      socket.send(JSON.stringify(reconnect))
+      await hub.publish(campaignId, { type: 'player_joined', userId, displayName, characterName })
+    } else {
+      // Fresh connect: player_joined is a seq-LESS out-of-band presence frame
+      // (like typing_*): ONLY player_message advances `:seq` (arch overview
+      // §5.2 lists no seq on presence frames). Join/left aren't persisted to
+      // session_messages and are absent from reconnect replay, so they must
+      // never carry a seq a client could gap-detect on. The first
+      // player_message is therefore seq 1.
+      await hub.publish(campaignId, { type: 'player_joined', userId, displayName, characterName })
+      socket.send(JSON.stringify({ type: 'session_ready' }))
+    }
 
     startHeartbeat(ctx, socket, campaignId, userId)
 
@@ -335,6 +360,87 @@ async function handleConnection(
     } catch {
       /* socket already torn down */
     }
+  }
+}
+
+/** Parse `?lastSeq` from the upgrade query. A non-negative integer is a
+ *  reconnect request (replay everything after it). Absent, empty, negative,
+ *  or non-integer (NaN / float / out-of-range) is a fresh connect → null, and
+ *  the connect path sends session_ready unchanged. Structural validation at
+ *  the transport boundary (ZFC structural exception), mirroring
+ *  parseClientFrame's drop-on-malformed posture. */
+function parseLastSeq(raw: string | undefined): number | null {
+  if (raw === undefined || raw === '') return null
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 0) return null
+  return n
+}
+
+/**
+ * Build the `session_reconnect` replay frame for a reconnecting socket.
+ *
+ *   - `messages`: every persisted player_message with seq > lastSeq, each
+ *     reconstructed into a `player_message` ServerFrame. (Only player_message
+ *     rows are persisted; join/left/typing were never written, so the replay
+ *     is a pure player_message stream.) Author display/character names are
+ *     resolved through an O(N) in-memory map built ONCE from the campaign-wide
+ *     reads below — NO per-message DB lookups. An author who has since left the
+ *     campaign (no row in either map) falls back to a stable placeholder rather
+ *     than an extra per-row lookup; their prose history still replays intact.
+ *   - `participants`: the current session participants, each resolved to a
+ *     ParticipantSummary via the same two maps.
+ *   - `mode`: the live `:state` blob's mode, defaulting to 'exploration' when
+ *     no state has been written yet (MYT-65 only exercises exploration).
+ *
+ * Three campaign/session-scoped reads (participants list + member display
+ * names + campaign characters) plus the seq-windowed message read — all
+ * bounded, none per-row.
+ */
+async function buildReconnectFrame(
+  ctx: ConnCtx,
+  sessionId: string,
+  campaignId: string,
+  lastSeq: number,
+): Promise<Extract<ServerFrame, { type: 'session_reconnect' }>> {
+  const { repo, sessionState } = ctx.deps
+  const [rows, participantRows, members, characters, state] = await Promise.all([
+    repo.sessionMessages.listAfterSeq(sessionId, lastSeq),
+    repo.sessionParticipants.list(sessionId),
+    repo.campaigns.listMembers(campaignId),
+    repo.characters.listForCampaign(campaignId),
+    sessionState.getState(campaignId),
+  ])
+
+  // userId -> displayName / characterName. Campaign-wide, built once.
+  const displayByUser = new Map(members.map((m) => [m.userId, m.displayName]))
+  const characterByUser = new Map(characters.map((c) => [c.userId, c.name]))
+
+  const participants: ParticipantSummary[] = participantRows.map((p) => ({
+    userId: p.userId,
+    displayName: displayByUser.get(p.userId) ?? DEPARTED_AUTHOR_NAME,
+    characterName: characterByUser.get(p.userId) ?? '',
+  }))
+
+  const messages: ServerFrame[] = rows.map((row) => {
+    // userId is nullable on session_messages (system/DM rows carry null), but
+    // only player_message rows are persisted in MYT-65 and those always carry
+    // the authoring user. A null author resolves to the same placeholder.
+    const authorId = row.userId
+    return {
+      type: 'player_message',
+      seq: row.seq,
+      userId: authorId ?? '',
+      displayName: (authorId ? displayByUser.get(authorId) : undefined) ?? DEPARTED_AUTHOR_NAME,
+      characterName: (authorId ? characterByUser.get(authorId) : undefined) ?? '',
+      text: row.content,
+    }
+  })
+
+  return {
+    type: 'session_reconnect',
+    messages,
+    participants,
+    mode: state?.mode ?? 'exploration',
   }
 }
 

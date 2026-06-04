@@ -401,6 +401,76 @@ describe('ws-session route (integration)', () => {
     }
   })
 
+  it('reconnect with ?lastSeq=N → session_reconnect replaying only seq > N (Task 8)', async () => {
+    // Seed three persisted player_message rows (seq 1,2,3) directly via the
+    // repo — the transcript a prior, now-dropped, socket would have written.
+    const repo = createRepo(pool)
+    for (const [seq, content] of [
+      [1, 'one'],
+      [2, 'two'],
+      [3, 'three'],
+    ] as const) {
+      await repo.sessionMessages.append({
+        sessionId,
+        seq,
+        userId,
+        messageType: 'player_message',
+        content,
+      })
+    }
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=2`)
+    try {
+      // The FIRST frame on a reconnect is session_reconnect (a direct
+      // socket.send), NOT session_ready and NOT the round-tripped player_joined
+      // (which arrives later via the Redis pub/sub loop).
+      const [first] = await collectFrames(ws, 1)
+      expect(first?.type).toBe('session_reconnect')
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+
+      // Only seq strictly greater than lastSeq=2 is replayed → [3].
+      expect(first.messages.map((m) => (m.type === 'player_message' ? m.seq : -1))).toEqual([3])
+      const replayed = first.messages[0]
+      expect(replayed).toMatchObject({
+        type: 'player_message',
+        seq: 3,
+        userId,
+        displayName,
+        text: 'three',
+      })
+
+      // participants includes the connected member, resolved with names.
+      expect(first.participants).toContainEqual(
+        expect.objectContaining({ userId, displayName }),
+      )
+      expect(first.mode).toBe('exploration')
+
+      // The connect path is otherwise unchanged: presence recorded, suspend
+      // cancelled.
+      const sessionState = makeSessionState(redis, KEY_PREFIX)
+      expect(await sessionState.countPresence(campaignId)).toBe(1)
+      expect(suspendQueue.removes).toContain(`suspend-${sessionId}`)
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('reconnect with a malformed ?lastSeq → treated as a fresh connect (session_ready)', async () => {
+    // A non-integer lastSeq is ignored → the connect behaves exactly like a
+    // fresh connect (session_ready, no session_reconnect).
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=not-a-number`)
+    try {
+      const frames = await collectFrames(ws, 2)
+      const types = frames.map((f) => f.type)
+      expect(types).toContain('session_ready')
+      expect(types).not.toContain('session_reconnect')
+    } finally {
+      ws.terminate()
+    }
+  })
+
   it('inbound player_message → persist-then-broadcast (seq 1 echo + a DB row)', async () => {
     const ticket = await mint()
     const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}`)
