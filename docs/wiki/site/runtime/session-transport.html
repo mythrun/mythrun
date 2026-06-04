@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session transport · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="session-transport">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html" class="active">Session transport</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session transport</div>
+        <article>
+<h1>Session transport</h1>
+
+<p class="lead">
+  The live multiplayer layer: a ticket-authed WebSocket per player, a cross-container fan-out hub
+  modeled on the SSE pipeline subscriber, ordered persist-then-broadcast chat, sequence-based
+  reconnection replay, and a crash-safe TTL-presence model that suspends an empty session through a
+  self-validating BullMQ job. This is the transport floor the DM-turn streaming surface (MYT-66+)
+  builds on; it carries player chat and system-presence frames only.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1610pt" height="985pt"
+ viewBox="14.00 14.00 1596.00 971.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 966.83)">
+<title>session_transport</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-952.43 1577.32,-952.43 1577.32,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_api</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-208.36 8,-511.36 1094.28,-511.36 1094.28,-208.36 8,-208.36"/>
+<text xml:space="preserve" text-anchor="middle" x="551.14" y="-497.46" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task — containerId)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_redis</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1302.61,-69.36 1302.61,-438.36 1545.52,-438.36 1545.52,-69.36 1302.61,-69.36"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-424.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_pg</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1282.8,-636.36 1282.8,-886.36 1565.32,-886.36 1565.32,-636.36 1282.8,-636.36"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-872.46" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_lifecycle</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="834.87,-762.36 834.87,-926.36 1110.79,-926.36 1110.79,-762.36 834.87,-762.36"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-912.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lifecycle (routes/sessions.ts)</text>
+</g>
+<!-- client -->
+<g id="node1" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="641.84,-757.8 445.14,-757.8 445.14,-700.92 641.84,-700.92 641.84,-757.8"/>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-739.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-726.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fetch+stream WebSocket</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-712.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">?ticket=&lt;nonce&gt;&amp;lastSeq=N</text>
+</g>
+<!-- auth -->
+<g id="node2" class="node">
+<title>auth</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="264.12,-490.6 8,-490.6 8,-394.12 264.12,-394.12 264.12,-490.6"/>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-472.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wsSessionAuth (preHandler)</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-458.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">consumeWsTicket → payload | null</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-445.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ticket.sessionId == :sessionId</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-432.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions.getById → active?</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-419.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">re&#45;check campaign_members</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-406.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(campaignId = SESSION ROW)</text>
+</g>
+<!-- client&#45;&gt;auth -->
+<g id="edge4" class="edge">
+<title>client&#45;&gt;auth</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M501.28,-700.19C433.67,-652.33 298.22,-556.45 212.91,-496.06"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="214.45,-494.14 207.32,-492.1 211.61,-498.14 214.45,-494.14"/>
+<text xml:space="preserve" text-anchor="middle" x="338.12" y="-614.57" font-family="Courier,monospace" font-size="10.00">WS upgrade</text>
+</g>
+<!-- start -->
+<g id="node16" class="node">
+<title>start</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1110.79,-904.8 834.87,-904.8 834.87,-847.92 1110.79,-847.92 1110.79,-904.8"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-886.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /:campaignId/start</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-873.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INSERT → debit owner → init Redis</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-859.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">402 + rollback on no credits</text>
+</g>
+<!-- client&#45;&gt;start -->
+<g id="edge1" class="edge">
+<title>client&#45;&gt;start</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.07,-758.46C681.33,-779.8 762.78,-809.15 834.87,-833.36 845.89,-837.07 857.45,-840.85 868.98,-844.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="868.22,-846.89 875.63,-846.69 869.71,-842.22 868.22,-846.89"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-825.6" font-family="Courier,monospace" font-size="10.00">start session</text>
+</g>
+<!-- rest -->
+<g id="node17" class="node">
+<title>rest</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1067.88,-818.8 877.77,-818.8 877.77,-761.92 1067.88,-761.92 1067.88,-818.8"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-800.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /:campaignId/active</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-787.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /:sessionId/messages</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-773.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(REST backfill)</text>
+</g>
+<!-- client&#45;&gt;rest -->
+<g id="edge26" class="edge">
+<title>client&#45;&gt;rest</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M642.53,-743.36C710.11,-753 799.78,-765.8 868.48,-775.61"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="868.11,-778.03 875.38,-776.6 868.8,-773.18 868.11,-778.03"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-768.33" font-family="Courier,monospace" font-size="10.00">gap fill</text>
+</g>
+<!-- conn -->
+<g id="node3" class="node">
+<title>conn</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="668.25,-490 418.73,-490 418.73,-406.72 668.25,-406.72 668.25,-490"/>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-471.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleConnection</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-458.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">participants.join</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-445.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">addPresence + hub.register</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-431.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cancelSuspend</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-418.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_ready | session_reconnect</text>
+</g>
+<!-- auth&#45;&gt;conn -->
+<g id="edge7" class="edge">
+<title>auth&#45;&gt;conn</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M264.78,-444.25C310.89,-444.93 363.02,-445.71 409.56,-446.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="409.33,-448.84 416.37,-446.5 409.4,-443.94 409.33,-448.84"/>
+<text xml:space="preserve" text-anchor="middle" x="338.12" y="-460.9" font-family="Courier,monospace" font-size="10.00">authorized</text>
+<text xml:space="preserve" text-anchor="middle" x="338.12" y="-448.9" font-family="Courier,monospace" font-size="10.00">(no reply sent)</text>
+</g>
+<!-- ticket -->
+<g id="node8" class="node">
+<title>ticket</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1502.61,-113.2 1345.51,-113.2 1345.51,-69.52 1502.61,-69.52 1502.61,-113.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-94.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ws:ticket:&lt;nonce&gt;</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-81.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GETDEL (single&#45;use)</text>
+</g>
+<!-- auth&#45;&gt;ticket -->
+<g id="edge5" class="edge">
+<title>auth&#45;&gt;ticket</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M174.18,-393.55C222.03,-334.72 311.18,-238.22 412.13,-193.36 729.15,-52.51 1155.66,-67.87 1336.38,-82.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1336.07,-84.99 1343.25,-83.13 1336.47,-80.11 1336.07,-84.99"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-109.33" font-family="Courier,monospace" font-size="10.00">GETDEL</text>
+</g>
+<!-- sessions -->
+<g id="node13" class="node">
+<title>sessions</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1522.42,-864.8 1325.71,-864.8 1325.71,-807.92 1522.42,-807.92 1522.42,-864.8"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-846.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-833.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one active per campaign</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-819.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(idx_sessions_one_active)</text>
+</g>
+<!-- auth&#45;&gt;sessions -->
+<g id="edge6" class="edge">
+<title>auth&#45;&gt;sessions</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M177.41,-491.11C208.89,-529.09 253.72,-583.13 293.12,-630.36 345.86,-693.6 344.85,-724.89 412.13,-772.36 575.9,-887.9 637.6,-893.91 834.87,-929.36 1018.56,-962.37 1074.47,-952.08 1253.8,-900.36 1284.43,-891.53 1317.37,-879.64 1345.97,-868.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1346.61,-870.9 1352.23,-866.06 1344.82,-866.34 1346.61,-870.9"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-926.87" font-family="Courier,monospace" font-size="10.00">getById</text>
+</g>
+<!-- hub -->
+<g id="node7" class="node">
+<title>hub</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1094.28,-412.4 851.37,-412.4 851.37,-342.32 1094.28,-342.32 1094.28,-412.4"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-393.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SessionHub</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-380.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Map&lt;campaignId, Map&lt;userId, ws&gt;&gt;</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-367.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PSUBSCRIBE session:campaign:*</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-354.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">resync&#45;close on reconnect</text>
+</g>
+<!-- conn&#45;&gt;hub -->
+<g id="edge10" class="edge">
+<title>conn&#45;&gt;hub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M668.95,-427.68C723.44,-418.63 787.37,-408.01 842.41,-398.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="842.52,-401.33 849.02,-397.77 841.71,-396.5 842.52,-401.33"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-424.31" font-family="Courier,monospace" font-size="10.00">register socket</text>
+</g>
+<!-- pres -->
+<g id="node10" class="node">
+<title>pres</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1545.52,-271.8 1302.61,-271.8 1302.61,-214.92 1545.52,-214.92 1545.52,-271.8"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-253.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:conn:{cont}:{user}</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-240.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SET EX 60 (TTL presence)</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-226.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SCAN to count</text>
+</g>
+<!-- conn&#45;&gt;pres -->
+<g id="edge9" class="edge">
+<title>conn&#45;&gt;pres</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M659.15,-406.07C664.78,-401.9 670.07,-397.34 674.85,-392.36 699.88,-366.28 675.15,-338.35 703.85,-316.36 749.53,-281.37 1098.88,-259.05 1293.36,-249.2"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1293.25,-251.66 1300.11,-248.86 1293,-246.77 1293.25,-251.66"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-287.96" font-family="Courier,monospace" font-size="10.00">addPresence</text>
+</g>
+<!-- messages -->
+<g id="node14" class="node">
+<title>messages</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1565.32,-692.8 1282.8,-692.8 1282.8,-635.92 1565.32,-635.92 1565.32,-692.8"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-674.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_messages</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-661.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">append&#45;only · UNIQUE(session_id, seq)</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-647.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listAfterSeq for replay</text>
+</g>
+<!-- conn&#45;&gt;messages -->
+<g id="edge12" class="edge">
+<title>conn&#45;&gt;messages</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M589.91,-490.55C620.09,-516.39 661.78,-548.09 703.85,-567.36 802.39,-612.51 1093.35,-640.79 1273.57,-654.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1273.36,-656.92 1280.53,-655 1273.73,-652.03 1273.36,-656.92"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-654.98" font-family="Courier,monospace" font-size="10.00">listAfterSeq</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-642.98" font-family="Courier,monospace" font-size="10.00">(reconnect replay)</text>
+</g>
+<!-- participants -->
+<g id="node15" class="node">
+<title>participants</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1538.92,-778.8 1309.21,-778.8 1309.21,-721.92 1538.92,-721.92 1538.92,-778.8"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-760.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_participants</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-747.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UNIQUE(session_id, user_id)</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-733.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">character resolved server&#45;side</text>
+</g>
+<!-- conn&#45;&gt;participants -->
+<g id="edge8" class="edge">
+<title>conn&#45;&gt;participants</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M559.33,-490.68C581.34,-546.43 628.34,-642.61 703.85,-687.36 729.05,-702.3 1101.08,-729.02 1299.88,-742.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1299.67,-744.79 1306.82,-742.81 1300,-739.9 1299.67,-744.79"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-731.27" font-family="Courier,monospace" font-size="10.00">join</text>
+</g>
+<!-- suspend -->
+<g id="node18" class="node">
+<title>suspend</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1097.58,-581.4 848.07,-581.4 848.07,-511.32 1097.58,-511.32 1097.58,-581.4"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-562.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;suspend job (BullMQ)</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-549.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">delay 5min · jobId suspend&#45;{sid}</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-536.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">re&#45;read presence → checkpoint</text>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-523.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">status stays &#39;active&#39;</text>
+</g>
+<!-- conn&#45;&gt;suspend -->
+<g id="edge11" class="edge">
+<title>conn&#45;&gt;suspend</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M609.27,-490.69C637.21,-506.74 670.98,-523.31 703.85,-532.36 746.91,-544.22 795.29,-549.16 838.98,-550.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="838.76,-553.14 845.83,-550.9 838.91,-548.24 838.76,-553.14"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-551.82" font-family="Courier,monospace" font-size="10.00">cancel pending</text>
+</g>
+<!-- inbound -->
+<g id="node4" class="node">
+<title>inbound</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="674.85,-278.4 412.13,-278.4 412.13,-208.32 674.85,-208.32 674.85,-278.4"/>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-259.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleInbound</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-246.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">parse + classify frame</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-233.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player_message: persist→broadcast</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-220.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typing_*: broadcast (no seq)</text>
+</g>
+<!-- inbound&#45;&gt;hub -->
+<g id="edge15" class="edge">
+<title>inbound&#45;&gt;hub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M658.45,-279.1C717.36,-297.57 789.32,-320.13 849.42,-338.98"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="848.67,-341.31 856.08,-341.07 850.14,-336.64 848.67,-341.31"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-325.36" font-family="Courier,monospace" font-size="10.00">publish frame</text>
+</g>
+<!-- seq -->
+<g id="node9" class="node">
+<title>seq</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1496.01,-186.2 1352.11,-186.2 1352.11,-142.52 1496.01,-142.52 1496.01,-186.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-167.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:seq</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-154.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INCR (monotonic)</text>
+</g>
+<!-- inbound&#45;&gt;seq -->
+<g id="edge13" class="edge">
+<title>inbound&#45;&gt;seq</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M675.31,-213.52C684.96,-211.41 694.55,-209.33 703.85,-207.36 761.92,-195.04 775.87,-188.02 834.87,-181.36 1015.68,-160.95 1229.61,-160.71 1343.06,-162.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1342.86,-164.9 1349.9,-162.57 1342.94,-160.01 1342.86,-164.9"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-184.36" font-family="Courier,monospace" font-size="10.00">INCR → seq</text>
+</g>
+<!-- inbound&#45;&gt;messages -->
+<g id="edge14" class="edge">
+<title>inbound&#45;&gt;messages</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M660.97,-279.1C666.03,-283.07 670.71,-287.47 674.85,-292.36 718.15,-343.53 654.46,-395.04 703.85,-440.36 770.86,-501.86 1024.31,-456.16 1110.79,-484.36 1213.69,-517.93 1320.1,-588.31 1378.3,-630.43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1376.58,-632.21 1383.68,-634.35 1379.47,-628.25 1376.58,-632.21"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-487.36" font-family="Courier,monospace" font-size="10.00">append(seq)</text>
+</g>
+<!-- heart -->
+<g id="node5" class="node">
+<title>heart</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="247.61,-264.8 24.5,-264.8 24.5,-207.92 247.61,-207.92 247.61,-264.8"/>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-246.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">heartbeat</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-233.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ping 30s · terminate at +10s</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-219.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">refresh presence TTL</text>
+</g>
+<!-- heart&#45;&gt;pres -->
+<g id="edge19" class="edge">
+<title>heart&#45;&gt;pres</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M153.48,-207.2C177.98,-166.88 228.27,-95.58 293.12,-64.36 498.72,34.6 580.74,-1.17 805.87,-38.36 1026.74,-74.85 1069.78,-131.55 1282.8,-200.36 1294.32,-204.08 1306.4,-207.91 1318.43,-211.66"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1317.6,-213.97 1325.01,-213.71 1319.06,-209.29 1317.6,-213.97"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-41.36" font-family="Courier,monospace" font-size="10.00">refresh TTL</text>
+</g>
+<!-- disc -->
+<g id="node6" class="node">
+<title>disc</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="658.35,-377.4 428.63,-377.4 428.63,-307.32 658.35,-307.32 658.35,-377.4"/>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-358.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleDisconnect</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-345.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dropPresence · deregister</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-332.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player_left · scheduleSuspend</text>
+<text xml:space="preserve" text-anchor="middle" x="543.49" y="-319.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">if countPresence == 0</text>
+</g>
+<!-- disc&#45;&gt;hub -->
+<g id="edge21" class="edge">
+<title>disc&#45;&gt;hub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M658.9,-355.11C674.01,-356.64 689.3,-358.1 703.85,-359.36 748.81,-363.27 798.09,-366.79 841.98,-369.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="841.73,-372.11 848.88,-370.12 842.05,-367.22 841.73,-372.11"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-369.79" font-family="Courier,monospace" font-size="10.00">deregister</text>
+</g>
+<!-- disc&#45;&gt;pres -->
+<g id="edge20" class="edge">
+<title>disc&#45;&gt;pres</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M645.68,-306.58C655.65,-302.39 665.52,-297.95 674.85,-293.36 688.46,-286.66 689.7,-280.82 703.85,-275.36 898.49,-200.24 1145.09,-209.48 1293.13,-225"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1292.83,-227.44 1300.05,-225.75 1293.35,-222.56 1292.83,-227.44"/>
+<text xml:space="preserve" text-anchor="middle" x="972.83" y="-240.01" font-family="Courier,monospace" font-size="10.00">dropPresence</text>
+</g>
+<!-- disc&#45;&gt;suspend -->
+<g id="edge22" class="edge">
+<title>disc&#45;&gt;suspend</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M658.28,-378.04C664.29,-382.3 669.88,-387.05 674.85,-392.36 704.71,-424.3 671.74,-456.69 703.85,-486.36 714.64,-496.33 777.12,-510.6 839.04,-522.73"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="838.25,-525.07 845.59,-524 839.18,-520.26 838.25,-525.07"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-517.84" font-family="Courier,monospace" font-size="10.00">schedule if empty</text>
+</g>
+<!-- hub&#45;&gt;client -->
+<g id="edge18" class="edge">
+<title>hub&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M858.92,-413.07C849.94,-419.11 841.71,-426.16 834.87,-434.36 796.1,-480.81 840.79,-517.96 805.87,-567.36 763.03,-627.96 689.65,-670.52 631.52,-696.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="630.85,-694.37 625.45,-699.45 632.84,-698.85 630.85,-694.37"/>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-671.05" font-family="Courier,monospace" font-size="10.00">ws.send</text>
+<text xml:space="preserve" text-anchor="middle" x="754.86" y="-659.05" font-family="Courier,monospace" font-size="10.00">(local sockets)</text>
+</g>
+<!-- channel -->
+<g id="node12" class="node">
+<title>channel</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1512.52,-344.2 1335.61,-344.2 1335.61,-300.52 1512.52,-300.52 1512.52,-344.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-325.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:campaign:{cId}</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-312.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PUBLISH frame JSON</text>
+</g>
+<!-- hub&#45;&gt;channel -->
+<g id="edge16" class="edge">
+<title>hub&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1094.88,-365.46C1144.22,-360.33 1201.79,-353.99 1253.8,-347.36 1277.29,-344.37 1302.56,-340.82 1326.23,-337.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1326.51,-339.78 1333.07,-336.33 1325.79,-334.93 1326.51,-339.78"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-362.99" font-family="Courier,monospace" font-size="10.00">PUBLISH</text>
+</g>
+<!-- state -->
+<g id="node11" class="node">
+<title>state</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1532.32,-417.2 1315.81,-417.2 1315.81,-373.52 1532.32,-373.52 1532.32,-417.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-398.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:state</text>
+<text xml:space="preserve" text-anchor="middle" x="1424.06" y="-385.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{participants, mode, status}</text>
+</g>
+<!-- channel&#45;&gt;hub -->
+<g id="edge17" class="edge">
+<title>channel&#45;&gt;hub</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1334.96,-311.65C1278.7,-306.98 1204.44,-304.86 1139.79,-316.36 1113.61,-321.02 1086.14,-329.51 1061.26,-338.71"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1060.66,-336.31 1054.97,-341.07 1062.39,-340.9 1060.66,-336.31"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-331.36" font-family="Courier,monospace" font-size="10.00">pmessage</text>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-319.36" font-family="Courier,monospace" font-size="10.00">(every container)</text>
+</g>
+<!-- start&#45;&gt;state -->
+<g id="edge3" class="edge">
+<title>start&#45;&gt;state</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1077.46,-847.2C1088.88,-842.99 1100.2,-838.37 1110.79,-833.36 1124.71,-826.77 1126.32,-821.85 1139.79,-814.36 1188.62,-787.2 1218.84,-804.96 1253.8,-761.36 1291.38,-714.5 1260.63,-685.18 1282.8,-629.36 1314.13,-550.51 1370.29,-467.43 1401.2,-424.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1403.09,-426.21 1405.23,-419.11 1399.13,-423.33 1403.09,-426.21"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-817.36" font-family="Courier,monospace" font-size="10.00">setState</text>
+</g>
+<!-- start&#45;&gt;sessions -->
+<g id="edge2" class="edge">
+<title>start&#45;&gt;sessions</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1111.25,-881.96C1156.75,-882.19 1207.57,-880.7 1253.8,-875.36 1274.34,-872.99 1296.02,-869.09 1316.75,-864.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1317.17,-867.07 1323.48,-863.18 1316.12,-862.28 1317.17,-867.07"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-884.77" font-family="Courier,monospace" font-size="10.00">create + one&#45;active</text>
+</g>
+<!-- rest&#45;&gt;messages -->
+<g id="edge27" class="edge">
+<title>rest&#45;&gt;messages</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1068.55,-763.79C1139.34,-743.94 1236.35,-716.73 1310.99,-695.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1311.23,-698.27 1317.31,-694.02 1309.91,-693.55 1311.23,-698.27"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-745.35" font-family="Courier,monospace" font-size="10.00">listAfterSeq</text>
+</g>
+<!-- suspend&#45;&gt;pres -->
+<g id="edge23" class="edge">
+<title>suspend&#45;&gt;pres</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1098.06,-513.8C1102.41,-511.78 1106.67,-509.63 1110.79,-507.36 1185.49,-466.19 1207.66,-451.11 1253.8,-379.36 1277.22,-342.95 1252.12,-316.9 1282.8,-286.36 1286.59,-282.59 1290.71,-279.15 1295.06,-276"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1296.13,-278.24 1300.59,-272.32 1293.41,-274.16 1296.13,-278.24"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-504.26" font-family="Courier,monospace" font-size="10.00">countPresence</text>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-492.26" font-family="Courier,monospace" font-size="10.00">(&gt;0 → bail)</text>
+</g>
+<!-- suspend&#45;&gt;sessions -->
+<g id="edge25" class="edge">
+<title>suspend&#45;&gt;sessions</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1088.45,-582.13C1096.89,-588.15 1104.53,-595.17 1110.79,-603.36 1172.23,-683.86 1064.59,-761.53 1139.79,-829.36 1165.32,-852.4 1247.46,-852.36 1316.76,-847.58"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1316.53,-850.05 1323.33,-847.11 1316.17,-845.17 1316.53,-850.05"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-853.11" font-family="Courier,monospace" font-size="10.00">checkpoint envelope</text>
+</g>
+<!-- suspend&#45;&gt;messages -->
+<g id="edge24" class="edge">
+<title>suspend&#45;&gt;messages</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1098,-568.99C1146.89,-578.81 1203.32,-591.31 1253.8,-605.36 1281.52,-613.08 1311.28,-622.91 1338.01,-632.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1337.07,-634.6 1344.49,-634.63 1338.71,-629.98 1337.07,-634.6"/>
+<text xml:space="preserve" text-anchor="middle" x="1196.79" y="-608.36" font-family="Courier,monospace" font-size="10.00">MAX(seq)</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  A session is a live play room scoped to one campaign — at most one active at a time. Three HTTP
+  routes bracket its lifecycle (<code>routes/sessions.ts</code>):
+  <code>POST /api/sessions/:campaignId/start</code> creates the row and debits a credit;
+  <code>GET /api/sessions/:campaignId/active</code> returns the live row or <code>null</code>;
+  <code>GET /api/sessions/:sessionId/messages</code> replays the persisted transcript for REST
+  gap-fill. The live transport itself is a single WebSocket route —
+  <code>GET /ws/session/:sessionId</code>, registered by <code>wsSessionRoutes</code> over
+  <code>@fastify/websocket</code>
+  — that a player upgrades into after minting a
+  <a href="../auth-billing/access-control-ws-ticket.html">ws-ticket</a>. Once connected, every
+  player message flows through the same path: a server-assigned sequence number, an append to
+  <code>session_messages</code>, then a fan-out across every API container via Redis pub/sub.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One active session per campaign, enforced in the schema</strong> — the
+  <code>idx_sessions_one_active</code> partial-unique index (a campaign can hold exactly one row
+  with <code>status = 'active'</code>) is what makes the campaignId a stable key for all the Redis
+  transport state below (<code>session:{campaignId}:…</code>). Two players racing
+  <code>/start</code> can't both win — the second <code>INSERT</code> raises a 23505 the route maps
+  to a clean <code>409 session_already_active</code> rather than a 500. Keying live state on
+  campaignId rather than sessionId means a reconnect after a suspend/resume cold-starts against the
+  same Redis keyspace without threading the new sessionId everywhere.
+</aside>
+
+<h2 id="starting-a-session-the-atomicity-critical-ordering">Starting a session: the atomicity-critical ordering</h2>
+
+<p>
+  <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
+  three preconditions (campaign is active, a session prep exists for the next session number, no
+  session already active), the handler runs a fixed four-step sequence whose ordering is
+  load-bearing:
+</p>
+
+<ol>
+  <li>
+    Mint the <code>sessionId</code> up front, so the credit debit's idempotency key (<code
+      >= sessionId</code
+    >) is known before either the INSERT or the debit.
+  </li>
+  <li>
+    <code>INSERT</code> the session row first. A concurrent <code>/start</code> that already took
+    the <code>idx_sessions_one_active</code> slot surfaces here as a 23505 →
+    <code>409</code> (closing the race; never 500).
+  </li>
+  <li>
+    Debit one session credit from the owner — self-managing transaction, idempotent on
+    <code>sessionId</code>. Insufficient credits → <code>deleteById</code> the just-created row (it
+    must not occupy the one-active slot unpaid) → <code>402</code>.
+  </li>
+  <li>
+    Initialize the Redis <code>:state</code> blob. A fresh session leaves the
+    <code>:seq</code> counter unset, so the first <code>nextSeq</code> returns 1.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Row-before-debit, with a delete-on-failure rollback</strong> — the debit and the row
+  insert can't share one Postgres transaction: the debit runs its own transaction against the credit
+  ledger. So the row goes in first to win the one-active slot, then the debit runs; if it fails on
+  no-credits, the row is deleted so the campaign isn't left with an unpaid active session wedging
+  the slot. The delete is itself wrapped — a cleanup failure logs and still returns
+  <code>402</code>, never a 500, because the money invariant already holds (no debit happened, and
+  the active-session guard blocks a double-charge on retry). The only fallout of a failed cleanup is
+  a stranded row, diagnosable from the logged line.
+</aside>
+
+<h2 id="the-upgrade-handshake-is-the-enforced-ignorance-boundary-s-entry-point">The upgrade handshake is the enforced-ignorance boundary's entry point</h2>
+
+<p>
+  <code>GET /ws/session/:sessionId</code> opts out of the JWT chain (<code
+    >config.auth: 'public'</code
+  >) because a browser-native WebSocket can't send an <code>Authorization</code> header — but
+  "public" here means "no JWT," not "unauthenticated." The auth boundary is the route's
+  <code>preHandler</code>, <code>wsSessionAuth</code>, which <code>@fastify/websocket</code> v11
+  runs <em>before</em> the upgrade completes: any <code>reply.code(…).send()</code> it issues
+  rejects the handshake with no socket opening at all. The handshake runs five checks in order:
+</p>
+
+<ol>
+  <li>No <code>?ticket</code> query param → <code>401 ws_ticket_missing</code>.</li>
+  <li>
+    <code>consumeWsTicket</code> (an atomic <code>GETDEL</code>). A <code>null</code> return
+    (consumed / expired / missing) → <code>401 ws_ticket_invalid</code>; a <em>throw</em> (a
+    transient Redis fault on the GETDEL itself) → <code>503 ws_ticket_store_unavailable</code>.
+  </li>
+  <li>
+    Ticket's <code>sessionId</code> must equal the path's <code>:sessionId</code> → else
+    <code>401 ws_ticket_session_mismatch</code>.
+  </li>
+  <li>
+    Load the session row: not found → <code>404</code>; not <code>active</code> →
+    <code>409 session_not_active</code>.
+  </li>
+  <li>
+    Re-check campaign membership against the <strong>session row's</strong>
+    campaignId (never the ticket's claimed value), with the same "pending invite is not a member"
+    predicate as
+    <code>requireCampaignMember</code> → else <code>403 not_campaign_member</code>.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong
+    >The campaignId the handler trusts comes from the loaded session row, not the ticket</strong
+  >
+  — a successful <code>consumeWsTicket</code> only proves some member minted a ticket in the last 30
+  seconds. It does not prove membership at upgrade time, and it must not be trusted to name the
+  campaign: binding the upgrade to the ticket's claimed <code>campaignId</code> against a different
+  URL session would let a ticket minted for session A authorize a socket on session B. So the
+  handshake loads the session, reads <em>its</em> campaignId, and re-queries
+  <code>campaign_members</code>. The ws-ticket page's "five load-bearing assertions for the future
+  handler" are all honored here — this is that handler.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>401 vs 503 on ticket consume, fail-closed either way</strong> — the SPA's reconnect logic
+  differentiates: a 401 means the ticket is dead, so re-mint and retry; a 503 means Redis is
+  wobbling, so back off and retry. Collapsing both into a generic 500 would make the client back off
+  on a transient that should retry immediately, or hammer on a dead ticket. Both paths reject the
+  handshake with no socket — the boundary fails closed.
+</aside>
+
+<h2 id="connect-presence-registration-then-the-first-frame">Connect: presence, registration, then the first frame</h2>
+
+<p>
+  Past the handshake, <code>handleConnection</code> resolves the participant's character and writes
+  the <code>session_participants</code> row (<code>sessionParticipants.join</code> resolves the
+  character server-side — the client never supplies a <code>character_id</code>, and a member with
+  no integrated character surfaces as a typed <code>NoCharacterForParticipantError</code> that
+  closes the socket cleanly rather than a raw FK violation). It then records presence and registers
+  the socket <em>before</em> broadcasting the join, so the new socket is in the registry when the
+  fan-out comes back around.
+</p>
+
+<p>
+  The first server frame is deterministic. A fresh connect (no
+  <code>?lastSeq</code>) broadcasts a <code>player_joined</code> and sends
+  <code>session_ready</code>. A reconnect (<code>?lastSeq=N</code>) instead builds a
+  <code>session_reconnect</code> replay frame and sends it <em>directly</em> on the socket — a
+  synchronous <code>send</code> that reaches this socket ahead of the
+  <code>player_joined</code> (which only arrives after a Redis pub/sub round-trip).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>register-before-replay, so live frames during the DB read aren't lost</strong> — the
+  socket is registered with the hub <em>before</em> the reconnect replay reads
+  <code>session_messages</code>. Any frame published live during that DB read is then delivered to
+  this socket too; the client's seq-dedup drops the overlap with the replay batch. A
+  read-then-register ordering would drop exactly that gap. This is the same ordering discipline the
+  hub-resync path relies on.
+</aside>
+
+<h2 id="inbound-chat-persist-then-broadcast-with-a-server-assigned-seq">Inbound chat: persist-then-broadcast with a server-assigned seq</h2>
+
+<p>
+  Every inbound frame is parsed and classified at the transport boundary (<code
+    >parseClientFrame</code
+  >
+  + <code>classifyClientFrame</code>): non-JSON, a missing <code>type</code>, or a type not on the
+  <code>CLIENT_FRAME_TYPES</code> allowlist (<code>player_message</code>, <code>typing_start</code>,
+  <code>typing_stop</code>) is silently dropped. A <code>typing_*</code> frame broadcasts
+  immediately with no sequence and no persistence. A <code>player_message</code> goes through
+  persist-then-broadcast: assign a server-ordered <code>seq</code> via Redis <code>INCR</code>,
+  append it to <code>session_messages</code>, then publish the frame through the hub.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Only <code>player_message</code> carries a seq; presence frames never do</strong> —
+  clients render the seq stream in <em>seq</em> order, not arrival order, and gap-detect to trigger
+  a reconnect replay. Presence and control frames (<code>player_joined</code>,
+  <code>player_left</code>, <code>typing_*</code>, <code>session_ready</code>, <code>error</code>)
+  are out-of-band: they're never persisted to <code>session_messages</code> and are absent from the
+  replay, so they must never carry a seq a client could gap-detect on — that would corrupt
+  reconnect-replay ordering. The first <code>player_message</code> is therefore seq 1.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Persist before broadcast, and a unique index that fails loud</strong> — the durable
+  transcript is the source of truth for replay, so a message is written before it's fanned out.
+  Migration 023 adds <code>UNIQUE(session_id, seq)</code>: a re-used number (a reseed race after a
+  crash-recovery counter bump) raises a 23505 rather than silently corrupting the ordering. The
+  route catches that one violation, re-INCRs once, and retries; a second collision re-throws as the
+  pathological state it is. If the broadcast throws <em>after</em> the append succeeds, the message
+  is still durable — the client gap-detects the missing seq and REST-backfills via
+  <code>GET …/messages</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A bad inbound frame drops; it never kills the socket</strong> — the whole inbound path is
+  a per-frame error boundary. A malformed frame, an oversized <code>text</code> (capped at 4 KB of
+  untrusted input, distinct from the no-max rule on LLM-generated prose), or a transient Redis fault
+  on persist/publish drops that one frame and keeps the connection alive. The worst case is one lost
+  message, logged. A library-level <code>maxPayload</code> (16 KB) rejects oversized frames before
+  the handler even runs; the in-handler text cap is the second line of defense.
+</aside>
+
+<h2 id="the-sessionhub-cross-container-fan-out">The SessionHub: cross-container fan-out</h2>
+
+<p>
+  The transport runs across many ECS tasks, and two players in the same campaign may be connected to
+  different containers. The <code>SessionHub</code> bridges them with Redis pub/sub — one channel
+  per campaign, <code>session:campaign:{campaignId}</code>. Each API process holds one
+  <em>dedicated</em> <code>PSUBSCRIBE</code>'d Redis client (a <code>duplicate()</code> of
+  <code>redisRealtime</code>) and an in-memory writable registry,
+  <code>Map&lt;campaignId, Map&lt;userId, socket&gt;&gt;</code>. When any container publishes a
+  frame, every container's subscriber receives the <code>pmessage</code> and sends it to its own
+  locally-registered sockets for that campaign. This is structurally the SSE
+  <a href="./pipeline-status.html">pipeline subscriber</a> with two WS-specific differences: the
+  registry holds writable sockets keyed per user (not a set of read-only SSE sinks), and a resync
+  teardown <em>closes</em> the socket rather than ending a sink.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A dedicated subscriber client, not the shared realtime one</strong> — once an ioredis
+  client enters subscriber mode it rejects almost all other commands, so the
+  <code>PSUBSCRIBE</code> client must be separate from the one the route uses to
+  <code>publish</code>, <code>INCR</code>, and rate-limit. The same split the pipeline subscriber
+  makes. The initial <code>psubscribe</code> is awaited before
+  <code>createSessionHub</code> returns, so a <code>publish</code> immediately after construction is
+  reliably delivered.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Reconnect → close every socket → clients replay</strong> — if the subscriber drops and
+  reconnects, it may have missed messages published during the gap. Rather than try to reconcile,
+  the hub closes every registered socket with WS code 1011 (<code>redis-resync-required</code>);
+  clients reconnect and pull a fresh <code>session_reconnect</code> replay, which is the canonical
+  recovery path anyway. The very first <code>ready</code> event is the initial connect (nothing
+  missed yet) and is exempt — only a <em>later</em> reconnect triggers the teardown. A single dead
+  socket whose <code>send</code> throws is evicted from the registry in place so it can't wedge the
+  others.
+</aside>
+
+<h2 id="reconnection-replay">Reconnection replay</h2>
+
+<p>
+  A client that drops reconnects with <code>?lastSeq=N</code> — the highest seq it has rendered.
+  <code>buildReconnectFrame</code> returns a <code>session_reconnect</code> carrying every persisted
+  <code>player_message</code> with <code>seq &gt; N</code> (only player messages were ever
+  persisted, so the replay is a pure ordered message stream), the current participant list, and the
+  session mode. Author display and character names are resolved through two in-memory maps built
+  <em>once</em> from campaign-wide reads — no per-message DB lookup. An author who has since left
+  the campaign falls back to a stable "Former player" byline; their prose history still replays
+  intact.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>lastSeq</code> is structurally validated at the boundary</strong>
+  — <code>parseLastSeq</code> accepts only a non-negative integer; absent, empty, negative, or
+  non-integer input is treated as a fresh connect (<code>null</code> → <code>session_ready</code>).
+  This is a transport-layer structural check (the ZFC structural-validation exception), mirroring
+  the drop-on-malformed posture of the inbound frame parser. The REST
+  <code>GET …/messages?afterSeq=N</code> route applies the same discipline more strictly — a
+  <code>/^\d+$/</code> match so <code>''</code>, <code>-1</code>, <code>1.5</code>, and hex don't
+  silently coerce — returning <code>400 bad_after_seq</code> on anything malformed.
+</aside>
+
+<h2 id="presence-heartbeat-and-crash-safe-suspend">Presence, heartbeat, and crash-safe suspend</h2>
+
+<p>
+  Presence is not a counter — it's one TTL key per live connection,
+  <code>session:{campaignId}:conn:{containerId}:{userId}</code>, set with a 60-second expiry. The
+  heartbeat pings every 30 seconds (terminating a socket that hasn't ponged within a 10-second
+  grace) and refreshes the presence key on each ping, so a live connection never lapses.
+  <code>countPresence</code> walks the keys with <code>SCAN</code> (never <code>KEYS</code>, which
+  blocks the single-threaded Redis event loop on a shared cluster).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>TTL keys keyed by containerId, not an INCR/DECR counter</strong> — a bare counter leaks or
+  goes negative under failure. A container that crashes skips its socket <code>close</code> handlers
+  and would never decrement, leaving a session that looks permanently occupied; a double-fire would
+  push it negative. Per-connection TTL keys self-heal: a crashed container's presence simply lapses
+  after 60 seconds. The <code>containerId</code> (a per-process UUID generated once at boot)
+  namespaces the keys so two containers' presence for the same user don't collide.
+</aside>
+
+<p>
+  When the last player disconnects (<code>countPresence == 0</code>),
+  <code>handleDisconnect</code> schedules a delayed BullMQ suspend job — a five-minute grace window
+  keyed <code>suspend-{sessionId}</code>. A returning player <em>cancels</em> the pending job on
+  connect. The processor (<code>processSuspendJob</code>) is idempotent and self-validating: on fire
+  it <strong>re-reads live presence</strong> and only suspends when it's genuinely zero. Suspend
+  flushes the live <code>:state</code> to a Postgres checkpoint, keeps
+  <code>status = 'active'</code> (suspend is not end), and holds the Redis transport keys for ~2
+  hours so a quick reconnect cold-starts from live Redis rather than the checkpoint.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The presence re-read is the guarantee; the cancel is only an optimization</strong> — a
+  player can reconnect during the grace window and the cancel can race the fire (the job
+  transitioning delayed→active just as the cancel's remove lands), and BullMQ's jobId-dedup can in
+  principle leave a phantom job. Neither matters: the processor re-reads presence and bails if
+  anyone is connected, so an over-schedule is inert. The handler also fails <em>safe</em> — if
+  <code>countPresence</code> itself throws on disconnect, it schedules the suspend anyway, because
+  the processor's re-read gates the actual suspend. An over-schedule wastes a wakeup; an
+  under-schedule would strand an empty session live forever.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The checkpoint target is a documented overload, pending a real column</strong> — the
+  <code>sessions</code> table has no dedicated checkpoint column yet, and adding one is a schema
+  migration this transport task didn't own. So the checkpoint writes a self-describing
+  <code>{ kind: 'myt65-checkpoint', maxSeq, state }</code> envelope into the existing
+  <code>st_running_summary</code> TEXT column through <code>repo.sessions.update</code>. The
+  <code>kind</code> discriminator lets a future reader tell a MYT-65 checkpoint apart from any other
+  use of the column. The <code>maxSeq</code> recorded is the <em>durable</em>
+  <code>MAX(session_messages.seq)</code> — never the raw <code>:seq</code> counter (which sits one
+  ahead between INCR and the row insert) — so a crash-recovery reseed never re-hands-out a number a
+  message already used. A dedicated <code>session_checkpoints</code> row is the long-term home.
+</aside>
+
+<h2 id="the-wire-contract-scope">The wire contract scope</h2>
+
+<p>
+  <code>contract/session-events.ts</code> is the declarative wire contract — a client-frame
+  allowlist, a server-frame allowlist, and discriminated-union payload types per direction,
+  mirroring <code>pipeline-events.ts</code>. MYT-65 ships the player-chat-and-presence subset only.
+  The DM-turn frames from the full protocol — <code>text_delta</code>, <code>dm_thinking</code>,
+  <code>skill_check</code>, <code>dice_roll</code>, <code>turn_end</code>, <code>combat_*</code>,
+  <code>session_end</code>, and the rest — are deliberately absent.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The contract is the allowlist, so unbuilt frames can't be broadcast</strong> — the
+  <code>classifyClientFrame</code> tripwire rejects any client frame type not in
+  <code>CLIENT_FRAME_TYPES</code> at the transport boundary. Adding the DM-turn frame types to the
+  contract before MYT-66 builds their handlers would let the transport accept and broadcast frames
+  it has no handler for. Keeping the contract scoped to what's implemented is the same
+  structural-gate discipline the pipeline subscriber uses (ZFC structural exception — not LLM
+  cognition).
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="trace-a-failed-ws-upgrade">Trace a failed WS upgrade</h3>
+<ol>
+  <li>
+    The HTTP status on the rejected handshake discriminates the cause:
+    <code>401 ws_ticket_missing</code> (no <code>?ticket</code>),
+    <code>401 ws_ticket_invalid</code> (consumed / expired / unknown ticket),
+    <code>401 ws_ticket_session_mismatch</code> (ticket minted for a different session),
+    <code>404 session_not_found</code>, <code>409 session_not_active</code>,
+    <code>403 not_campaign_member</code>, or <code>503 ws_ticket_store_unavailable</code> (transient
+    Redis fault).
+  </li>
+  <li>
+    A repeating <code>401 ws_ticket_invalid</code> from one client usually means the SPA isn't
+    minting a fresh ticket per upgrade attempt — tickets are single-use. Confirm the mint route
+    returns 201 just before each upgrade.
+  </li>
+  <li>
+    A <code>503</code> points at ElastiCache. Check for a failover; the ticket consume is a single
+    <code>GETDEL</code> with no retry layer between the handshake and Redis.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-session-that-wont-suspend">
+  Diagnose a session that won't suspend (or suspends too eagerly)
+</h3>
+<ol>
+  <li>
+    Count live presence keys for the campaign:
+    <code>SCAN</code> for <code>${MYTHRUN_ENV}:${REGION_PREFIX}:session:{campaignId}:conn:*</code>.
+    A non-empty match means at least one connection is still considered live (or a crashed
+    container's key hasn't lapsed yet — the keys carry a 60-second TTL).
+  </li>
+  <li>
+    Inspect the delayed suspend job in BullMQ: jobId
+    <code>suspend-{sessionId}</code> on the <code>session-suspend</code> queue. A present delayed
+    job means a suspend is pending; its absence after the last disconnect means either a reconnect
+    cancelled it or it already fired.
+  </li>
+  <li>
+    The processor logs its observed presence count and whether it suspended. A job that fires and
+    finds presence &gt; 0 bails by design — that's the cancel racing the fire, not a bug.
+  </li>
+</ol>
+
+<h3 id="read-the-checkpoint">Read a suspended session's checkpoint</h3>
+<ol>
+  <li>
+    The checkpoint envelope lives in <code>sessions.st_running_summary</code> as JSON with
+    <code>kind: 'myt65-checkpoint'</code>. <code>maxSeq</code> is the durable last-persisted
+    sequence; <code>state</code> is the live <code>:state</code> blob at suspend time.
+  </li>
+  <li>
+    Suspend leaves <code>status = 'active'</code> — a suspended session is still active, just
+    unoccupied. Do not treat a populated checkpoint as an ended-session signal.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  Upstream: a player earns the credential on the
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a> page —
+  <code>POST /api/sessions/:id/ws-ticket</code> mints the single-use ticket this route's handshake
+  consumes. The <a href="./index.html">backend runtime</a> registers
+  <code>@fastify/websocket</code>, constructs the <code>SessionHub</code> (closed in
+  <code>createShutdown</code> before <code>app.close</code>), generates the per-process
+  <code>containerId</code>, and builds the session-suspend BullMQ Worker on a dedicated connection —
+  the same shape as the <a href="./worker.html">prep workers</a>, with the mandatory
+  <code>waitFor</code> ping-probe before <code>new Worker(...)</code>. The fan-out mirrors the
+  <a href="./pipeline-status.html">pipeline status</a> SSE subscriber. Durable state lives in
+  <code>sessions</code>, <code>session_messages</code>, and
+  <code>session_participants</code> through
+  <a href="../data/repository.html">the repository layer</a>; see the
+  <a href="../data/schema.html">schema</a> for those tables. The DM-turn streaming surface (MYT-66+)
+  extends the wire contract and the connect path on top of this transport.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="websocket-route">WebSocket route</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Frame direction</th>
+      <th>Types</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Client → server</td>
+      <td>
+        <code>player_message</code> (carries <code>text</code>), <code>typing_start</code>,
+        <code>typing_stop</code>. Anything else is dropped at the boundary.
+      </td>
+    </tr>
+    <tr>
+      <td>Server → client</td>
+      <td>
+        <code>session_ready</code>, <code>session_reconnect</code>, <code>player_joined</code>,
+        <code>player_left</code>, <code>player_message</code> (the only frame with a
+        <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>, <code>error</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="http-surface-routes-sessions-ts">HTTP surface (routes/sessions.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Path</th>
+      <th>Limit</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/sessions/:campaignId/start</code></td>
+      <td>10/min/user</td>
+      <td>
+        <code>200 { sessionId }</code> · <code>402</code> (no credits, row rolled back) ·
+        <code>409</code> (<code>campaign_not_active</code> / <code>prep_not_ready</code> /
+        <code>session_already_active</code>)
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/sessions/:campaignId/active</code></td>
+      <td>60/min</td>
+      <td><code>200 { session }</code> (session is <code>null</code> when none)</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/sessions/:sessionId/messages?afterSeq=N</code></td>
+      <td>60/min</td>
+      <td>
+        <code>200 { messages }</code> (seq &gt; N, ordered) · <code>400 bad_after_seq</code> ·
+        <code>404 session_not_found</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/ws/session/:sessionId?ticket=…&amp;lastSeq=N</code></td>
+      <td>—</td>
+      <td>
+        WebSocket upgrade. Pre-upgrade rejects: 401 / 403 / 404 / 409 / 503 (see "Trace a failed WS
+        upgrade").
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="redis-keys-realtime-cluster">Redis keys (realtime cluster)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key (under <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>)</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{campaignId}:seq</code></td>
+      <td>Monotonic <code>INCR</code> counter; first <code>nextSeq</code> → 1. ~2h TTL.</td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:conn:{containerId}:{userId}</code></td>
+      <td>Per-connection presence; <code>SET … EX 60</code>, counted via <code>SCAN</code>.</td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:state</code></td>
+      <td><code>{ participants, mode, status }</code> JSON. ~2h TTL.</td>
+    </tr>
+    <tr>
+      <td><code>session:campaign:{campaignId}</code> (channel)</td>
+      <td>Pub/sub channel; the hub <code>PSUBSCRIBE</code>s <code>session:campaign:*</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="files">Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/routes/ws-session.ts</code></td>
+      <td>
+        <code>wsSessionRoutes</code> plugin (the upgrade route + handshake + connection lifecycle),
+        <code>WS_MAX_PAYLOAD_BYTES</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/ws/session-hub.ts</code></td>
+      <td>
+        <code>createSessionHub</code>, <code>SessionHub</code> / <code>WSLike</code> types — the
+        cross-container pub/sub fan-out.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/redis/session-state.ts</code></td>
+      <td>
+        <code>makeSessionState</code> — <code>nextSeq</code> / <code>reseedSeq</code> / presence /
+        <code>:state</code> / <code>checkpoint</code>; <code>PRESENCE_TTL</code>,
+        <code>SessionMode</code> / <code>SessionStateBlob</code> /
+        <code>CheckpointStore</code> types.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/session-suspend.ts</code></td>
+      <td>
+        <code>scheduleSuspend</code> / <code>cancelSuspend</code> / <code>processSuspendJob</code>,
+        <code>QUEUE_SESSION_SUSPEND</code>, <code>SUSPEND_GRACE_MS</code>,
+        <code>suspendJobId</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/contract/session-events.ts</code></td>
+      <td>
+        <code>CLIENT_FRAME_TYPES</code> / <code>SERVER_FRAME_TYPES</code> allowlists,
+        <code>ClientFrame</code> / <code>ServerFrame</code> unions,
+        <code>classifyClientFrame</code> tripwire.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/routes/sessions.ts</code></td>
+      <td>
+        <code>sessionsRoutes</code> — the ws-ticket mint plus <code>/start</code> /
+        <code>/active</code> / <code>/messages</code>
+        lifecycle routes.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/repo/session-messages.ts</code>,
+        <code>src/repo/session-participants.ts</code>
+      </td>
+      <td>
+        Composable repo binders — <code>append</code> / <code>listAfterSeq</code> /
+        <code>maxSeq</code>, and <code>join</code> (server-side character resolution) /
+        <code>leave</code> / <code>list</code>; <code>NoCharacterForParticipantError</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/migrations/023_session_messages_unique_seq.sql</code></td>
+      <td>
+        <code>idx_session_messages_session_seq_unique</code> — the
+        <code>UNIQUE(session_id, seq)</code> index that makes a reseed race fail loud instead of
+        corrupting replay.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/routes/ws-session.ts</code>, <code>backend/src/ws/session-hub.ts</code>,
+  <code>backend/src/redis/session-state.ts</code>,
+  <code>backend/src/session/session-suspend.ts</code>,
+  <code>backend/src/contract/session-events.ts</code>, <code>backend/src/routes/sessions.ts</code>,
+  <code>backend/src/repo/session-messages.ts</code>,
+  <code>backend/src/repo/session-participants.ts</code>,
+  <code>backend/migrations/023_session_messages_unique_seq.sql</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#starting-a-session-the-atomicity-critical-ordering">Starting a session: the atomicity-critical ordering</a></li><li style="padding-left:0"><a href="#the-upgrade-handshake-is-the-enforced-ignorance-boundary-s-entry-point">The upgrade handshake is the enforced-ignorance boundary's entry point</a></li><li style="padding-left:0"><a href="#connect-presence-registration-then-the-first-frame">Connect: presence, registration, then the first frame</a></li><li style="padding-left:0"><a href="#inbound-chat-persist-then-broadcast-with-a-server-assigned-seq">Inbound chat: persist-then-broadcast with a server-assigned seq</a></li><li style="padding-left:0"><a href="#the-sessionhub-cross-container-fan-out">The SessionHub: cross-container fan-out</a></li><li style="padding-left:0"><a href="#reconnection-replay">Reconnection replay</a></li><li style="padding-left:0"><a href="#presence-heartbeat-and-crash-safe-suspend">Presence, heartbeat, and crash-safe suspend</a></li><li style="padding-left:0"><a href="#the-wire-contract-scope">The wire contract scope</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#trace-a-failed-ws-upgrade">Trace a failed WS upgrade</a></li><li style="padding-left:12px"><a href="#diagnose-a-session-that-wont-suspend">Diagnose a session that won't suspend (or suspends too eagerly)</a></li><li style="padding-left:12px"><a href="#read-the-checkpoint">Read a suspended session's checkpoint</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#websocket-route">WebSocket route</a></li><li style="padding-left:12px"><a href="#http-surface-routes-sessions-ts">HTTP surface (routes/sessions.ts)</a></li><li style="padding-left:12px"><a href="#redis-keys-realtime-cluster">Redis keys (realtime cluster)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

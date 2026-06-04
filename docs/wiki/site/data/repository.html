@@ -750,7 +750,8 @@
   pool-bound table-cluster factories and standalone transaction-scoped Tier-2 modules — into one
   binder shape, so <code>createRepo</code> now exposes them all on a single surface:
   <code>users</code>, <code>worlds</code>, <code>campaigns</code>, <code>sessions</code>,
-  <code>sessionPreps</code>, <code>credits</code>, <code>invites</code>, <code>characters</code>,
+  <code>sessionPreps</code>, <code>sessionMessages</code>, <code>sessionParticipants</code>,
+  <code>credits</code>, <code>invites</code>, <code>characters</code>,
   <code>characterConcepts</code>, plus the world-content and billing namespaces
   (<code>entities</code>, <code>facts</code>, <code>proseKernels</code>, <code>relationships</code>,
   <code>entityHierarchy</code>, <code>statBlocks</code>, <code>purchases</code>,
@@ -761,9 +762,12 @@
   composite world-dump read). The
   <a href="../auth-billing/billing-webhook.html">webhook handlers</a>,
   <a href="../auth-billing/billing-routes.html">billing routes</a>, and
-  <a href="../runtime/world-gen.html">world-gen worker</a> consume them. The namespaces still
-  unfilled by any consumer are tracked as beads under the <code>repo-deferred</code> label and ship
-  batched with their consumers.
+  <a href="../runtime/world-gen.html">world-gen worker</a> consume them.
+  <code>sessionMessages</code> and <code>sessionParticipants</code> are the most recent additions —
+  they landed with their consumer, the
+  <a href="../runtime/session-transport.html">multiplayer session transport</a> (append-only
+  transcript + per-session participant rows). The namespaces still unfilled by any consumer are
+  tracked as beads under the <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">

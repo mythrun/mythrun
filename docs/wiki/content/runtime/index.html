@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:5c3e09122ef3e4b90f536e71c07a7e2a31bc8737d2d24f2301b97864b5d73d3c -->
-<!-- last-ticket: MYT-63 -->
+<!-- source-hash: sha256:f238f22144f74b9e9630d0242124639d70cc2fccd99cba5cbf93df35238c2201 -->
+<!-- last-ticket: MYT-65 -->
 
 <h1>Backend</h1>
 
@@ -119,7 +119,9 @@
   <code>invitesRoutes</code> register the
   <a href="../auth-billing/onboarding.html">first-login + invite surface</a>; then
   <code>sessionsRoutes</code> registers the
-  <a href="../auth-billing/access-control-ws-ticket.html">WS ticket mint endpoint</a>; finally
+  <a href="../auth-billing/access-control-ws-ticket.html">WS ticket mint endpoint</a> plus the
+  session-lifecycle routes, and <code>@fastify/websocket</code> + <code>wsSessionRoutes</code> add
+  the <a href="./session-transport.html">live multiplayer WebSocket transport</a>; finally
   <a href="../auth-billing/billing-routes.html"><code>billingRoutes</code></a> registers the seven
   player-facing billing routes. The order is load-bearing — the allowlist hook has to precede every
   public-route registration; auth attaches <code>request.user</code> before
@@ -884,8 +886,21 @@
     <tr>
       <td><code>src/routes/sessions.ts</code></td>
       <td>
-        <code>POST /api/sessions/:id/ws-ticket</code> mint route. See
-        <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>.
+        <code>POST /api/sessions/:id/ws-ticket</code> mint route plus the <code>/start</code> /
+        <code>/active</code> / <code>/messages</code> session-lifecycle routes. See
+        <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>
+        and <a href="./session-transport.html">session transport</a>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/routes/ws-session.ts</code>, <code>src/ws/session-hub.ts</code>,
+        <code>src/redis/session-state.ts</code>, <code>src/session/session-suspend.ts</code>
+      </td>
+      <td>
+        The live multiplayer WebSocket transport — upgrade route + handshake, cross-container
+        pub/sub fan-out, Redis session state, and the suspend job. See
+        <a href="./session-transport.html">session transport</a>.
       </td>
     </tr>
     <tr>
@@ -986,6 +1001,18 @@
       <td>signed-in member mints a 30 s single-use ticket</td>
       <td>
         <a href="../auth-billing/access-control-ws-ticket.html">Access control &amp; WS ticket</a>.
+      </td>
+    </tr>
+    <tr>
+      <td colspan="2">
+        <code>POST /api/sessions/:campaignId/start</code>,
+        <code>GET /api/sessions/:campaignId/active</code>,
+        <code>GET /api/sessions/:sessionId/messages</code>,
+        <code>GET /ws/session/:sessionId</code> (upgrade)
+      </td>
+      <td colspan="2">
+        Live multiplayer session lifecycle + the WebSocket transport. See
+        <a href="./session-transport.html">Session transport</a>.
       </td>
     </tr>
     <tr>

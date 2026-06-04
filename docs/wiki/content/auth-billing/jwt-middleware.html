@@ -13,8 +13,8 @@
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
-<!-- source-hash: sha256:dc8fd52d9b30cdb1ef60cf7653fc7c90cdcf1b38cdb307ff4ad39a03205b1e23 -->
-<!-- last-ticket: MYT-39 -->
+<!-- source-hash: sha256:5c46a70dbb2a4abc395048b3319baed3c03a0d3b93a945a3bf28a7a4422dce01 -->
+<!-- last-ticket: MYT-65 -->
 
 <h1>JWT middleware</h1>
 
@@ -111,8 +111,10 @@
   <li>
     <code>config: { auth: 'public' }</code> — skip validation entirely; no
     <code>request.user</code> attached. Used by <code>/health</code>, <code>/health/ready</code>,
-    the invite preview, the SKU listing, and the Stripe webhook. Pinned by the
-    <a href="#the-public-route-allowlist">public-route allowlist hook</a>.
+    the invite preview, the SKU listing, the Stripe webhook, and the
+    <a href="../runtime/session-transport.html">WebSocket session-transport upgrade</a> (which
+    authenticates via its ws-ticket preHandler, not the JWT chain — a browser WS can't send a
+    header). Pinned by the <a href="#the-public-route-allowlist">public-route allowlist hook</a>.
   </li>
   <li>
     <code>config: { auth: 'jwt-no-db' }</code> — verify the JWT, attach the claims, do not look up
@@ -151,9 +153,10 @@
   every <code>config: { auth: 'public' }</code> introduction is fragile: a public route that ships
   by mistake is a security incident, and code review fatigue makes the omission plausible. A
   boot-time hook fails the deploy on the first run; the deploy can't ship a public route that wasn't
-  authored alongside the allowlist entry. The five entries today cover the two health probes, the
-  invite preview, the SKU listing, and the Stripe webhook — adding a sixth is two file edits in the
-  same PR, both visible in the diff.
+  authored alongside the allowlist entry. The six entries today cover the two health probes, the
+  invite preview, the SKU listing, the Stripe webhook, and the WebSocket session-transport upgrade
+  (<code>GET /ws/session/:sessionId</code>, authenticated by its ws-ticket preHandler rather than
+  the JWT chain) — adding a seventh is two file edits in the same PR, both visible in the diff.
 </aside>
 
 <aside class="wiki-rationale">

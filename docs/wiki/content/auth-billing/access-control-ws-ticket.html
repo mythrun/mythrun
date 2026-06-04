@@ -9,16 +9,16 @@
 <!-- source: backend/src/app-deps.ts -->
 <!-- source: backend/src/config/env.ts -->
 <!-- source: infra/modules/serving/main.tf -->
-<!-- source-hash: sha256:038d311ff016824f443d543cffbeaf72ef8562718af3ade1bffbaaac46c7a973 -->
-<!-- last-ticket: MYT-39 -->
+<!-- source-hash: sha256:62582284f24869389a62b5fb19800c890019a8af5336e50106ab9062a0e7fd87 -->
+<!-- last-ticket: MYT-65 -->
 
 <h1>Access control &amp; WS ticket</h1>
 
 <p class="lead">
   How an authenticated request becomes an authorized one — Fastify
   <code>preHandler</code> factories that gate campaign-scoped and world-scoped routes — and how the
-  SPA earns a single-use 30-second Redis ticket to authenticate its future WebSocket upgrade. A
-  boot-time allowlist refuses any misconfiguration that would short-circuit the chain.
+  SPA earns a single-use 30-second Redis ticket to authenticate its WebSocket upgrade. A boot-time
+  allowlist refuses any misconfiguration that would short-circuit the chain.
 </p>
 
 <!-- @diagram: auth-billing/access-control-ws-ticket -->
@@ -170,8 +170,8 @@
   doesn't expose one — so they need a different credential. The standard pattern is a single-use
   short-lived token the SPA fetches over a normal authenticated HTTP request and passes as a query
   parameter on the WS connect URL. <code>backend/src/auth/ws-ticket.ts</code> implements that store;
-  <code>POST /api/sessions/:id/ws-ticket</code> mints; the future WebSocket upgrade handler (Session
-  Runtime milestone) consumes.
+  <code>POST /api/sessions/:id/ws-ticket</code> mints; the
+  <a href="../runtime/session-transport.html">session transport</a> upgrade handshake consumes.
 </p>
 
 <p>
@@ -211,11 +211,11 @@
 <aside class="wiki-rationale">
   <strong>Redis errors aren't silently <code>null</code></strong> — a Redis transient (failover,
   connection refused, <code>MaxRetriesPerRequestError</code>) surfaces as a Promise rejection from
-  <code>getdel</code>. The future WS upgrade handler must treat the rejection as 503 (transient
-  store unavailability) and the <code>null</code> return as 401 (ticket invalid). The SPA's
-  reconnect logic differentiates: 401 → re-mint and retry; 503 → backoff and retry. Collapsing them
-  into a single response code would make the SPA backoff on a transient that should retry
-  immediately.
+  <code>getdel</code>. The <a href="../runtime/session-transport.html">WS upgrade handler</a> treats
+  the rejection as 503 (transient store unavailability) and the <code>null</code> return as 401
+  (ticket invalid). The SPA's reconnect logic differentiates: 401 → re-mint and retry; 503 → backoff
+  and retry. Collapsing them into a single response code would make the SPA backoff on a transient
+  that should retry immediately.
 </aside>
 
 <h3>Key prefix: <code>${MYTHRUN_ENV}:${REGION_PREFIX}:ws:ticket:</code></h3>
@@ -277,24 +277,25 @@
   </li>
 </ul>
 
-<h2>Out of scope: the WebSocket server</h2>
+<h2>The consumer: the WebSocket upgrade handler</h2>
 
 <p>
-  This issue ships only the mint half of the exchange and the
-  <code>consumeWsTicket</code> helper. The WebSocket upgrade handler that calls the helper lives in
-  the Session Runtime milestone. There are five load-bearing assertions the future handler MUST
-  honor — all called out here so a reader who follows this page's mental model into the next ticket
-  doesn't miss them:
+  This page owns the mint half of the exchange and the <code>consumeWsTicket</code> helper. The
+  WebSocket upgrade handler that calls the helper now exists — it's the handshake on the
+  <a href="../runtime/session-transport.html">session transport</a> route (<code
+    >GET /ws/session/:sessionId</code
+  >). Five load-bearing assertions bound how that handler uses a consumed ticket, and the transport
+  handler honors all five:
 </p>
 
 <ol>
   <li>
     <strong>Re-validate <code>campaign_members</code> on upgrade.</strong> A successful
     <code>consumeWsTicket</code> only proves <em>some</em> member of the campaign minted the ticket
-    within the last 30 seconds. It does NOT prove membership at upgrade time. The upgrade handler
-    must re-query <code>repo.campaigns.getMembership(payload.campaignId, payload.userId)</code> and
-    reject if absent. The ticket payload carries <code>campaignId</code> directly so this is one
-    query, no <code>sessions.getById</code> lookup needed.
+    within the last 30 seconds. It does NOT prove membership at upgrade time. The handler re-queries
+    <code>repo.campaigns.getMembership</code> — against the <strong>loaded session row's</strong>
+    campaignId, not the ticket's claimed value — and rejects if the member row is absent or the
+    invite is unaccepted.
   </li>
   <li>
     <strong>Distinguish <code>null</code> from Redis errors.</strong> <code>null</code> → 401
@@ -398,7 +399,8 @@
   >'s <code>AppDeps</code> threads <code>redisRealtime</code> + <code>redisKeyPrefix</code> into the
   sessions plugin. The
   <a href="../infra/serving.html#per-env-task-definitions-and-services">serving module</a> is what
-  wires <code>MYTHRUN_ENV</code> into the API task definition.
+  wires <code>MYTHRUN_ENV</code> into the API task definition. The minted ticket's consumer is the
+  <a href="../runtime/session-transport.html">session transport</a> upgrade handshake.
 </p>
 
 <h2>Appendix: surface</h2>

@@ -31,8 +31,8 @@
 <p class="lead">
   How an authenticated request becomes an authorized one — Fastify
   <code>preHandler</code> factories that gate campaign-scoped and world-scoped routes — and how the
-  SPA earns a single-use 30-second Redis ticket to authenticate its future WebSocket upgrade. A
-  boot-time allowlist refuses any misconfiguration that would short-circuit the chain.
+  SPA earns a single-use 30-second Redis ticket to authenticate its WebSocket upgrade. A boot-time
+  allowlist refuses any misconfiguration that would short-circuit the chain.
 </p>
 
 <figure class="wiki-diagram">
@@ -86,17 +86,17 @@
 <!-- ws_future -->
 <g id="node14" class="node">
 <title>ws_future</title>
-<polygon fill="none" stroke="#8a5a3c" stroke-width="1.5" stroke-dasharray="5,2" points="1582.63,-120.88 1372.72,-120.88 1372.72,-50.8 1582.63,-50.8 1582.63,-120.88"/>
-<text xml:space="preserve" text-anchor="middle" x="1477.68" y="-102.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">future WS upgrade handler</text>
-<text xml:space="preserve" text-anchor="middle" x="1477.68" y="-89.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(Session Runtime milestone)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1589.23,-120.88 1366.12,-120.88 1366.12,-50.8 1589.23,-50.8 1589.23,-120.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1477.68" y="-102.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">WS upgrade handler</text>
+<text xml:space="preserve" text-anchor="middle" x="1477.68" y="-89.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(session transport · MYT&#45;65)</text>
 <text xml:space="preserve" text-anchor="middle" x="1477.68" y="-75.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">calls consumeWsTicket</text>
 <text xml:space="preserve" text-anchor="middle" x="1477.68" y="-62.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">re&#45;validates membership</text>
 </g>
 <!-- client&#45;&gt;ws_future -->
 <g id="edge15" class="edge">
 <title>client&#45;&gt;ws_future</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M157.79,-14.29C207.3,-10.14 272.67,-5.84 330.66,-5.84 330.66,-5.84 330.66,-5.84 1104.95,-5.84 1193.3,-5.84 1290.88,-27.71 1363.88,-48.58"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1363.06,-50.89 1370.47,-50.48 1364.42,-46.18 1363.06,-50.89"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M157.79,-14.29C207.3,-10.14 272.67,-5.84 330.66,-5.84 330.66,-5.84 330.66,-5.84 1104.95,-5.84 1192.03,-5.84 1288.07,-27.08 1360.72,-47.68"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1359.86,-49.98 1367.26,-49.55 1361.21,-45.27 1359.86,-49.98"/>
 <text xml:space="preserve" text-anchor="middle" x="690.75" y="-20.84" font-family="Courier,monospace" font-size="10.00">WS upgrade</text>
 <text xml:space="preserve" text-anchor="middle" x="690.75" y="-8.84" font-family="Courier,monospace" font-size="10.00">?ticket=&lt;nonce&gt;</text>
 </g>
@@ -267,7 +267,7 @@
 <!-- consume&#45;&gt;redis -->
 <g id="edge17" class="edge">
 <title>consume&#45;&gt;redis</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2549.29,-95.04C2592.41,-99.55 2646.26,-105.18 2698.78,-110.67"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2549.29,-95.04C2592.41,-99.55 2646.26,-105.18 2698.78,-110.67"/>
 <polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2698.51,-113.1 2705.73,-111.39 2699.02,-108.23 2698.51,-113.1"/>
 <text xml:space="preserve" text-anchor="middle" x="2651.23" y="-111.84" font-family="Courier,monospace" font-size="10.00">GETDEL</text>
 </g>
@@ -298,14 +298,14 @@
 <!-- ws_future&#45;&gt;consume -->
 <g id="edge16" class="edge">
 <title>ws_future&#45;&gt;consume</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1583.16,-85.84C1774.32,-85.84 2177.71,-85.84 2362.79,-85.84"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2362.62,-88.29 2369.62,-85.84 2362.62,-83.39 2362.62,-88.29"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1589.74,-85.84C1783.36,-85.84 2179.49,-85.84 2362.58,-85.84"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2362.31,-88.29 2369.31,-85.84 2362.31,-83.39 2362.31,-88.29"/>
 <text xml:space="preserve" text-anchor="middle" x="1928.45" y="-88.84" font-family="Courier,monospace" font-size="10.00">consume</text>
 </g>
 <!-- ws_future&#45;&gt;pg -->
 <g id="edge18" class="edge">
 <title>ws_future&#45;&gt;pg</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1583.28,-101.04C1632.62,-110.26 1684.44,-123.59 1701.75,-140.84 1725.11,-164.13 1698.01,-188.03 1719.75,-212.84 1721.59,-214.94 1723.58,-216.9 1725.7,-218.74"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1589.94,-102.31C1637.21,-111.46 1685.22,-124.37 1701.75,-140.84 1725.11,-164.13 1698.01,-188.03 1719.75,-212.84 1721.59,-214.94 1723.58,-216.9 1725.7,-218.74"/>
 <polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1723.92,-220.46 1730.97,-222.77 1726.9,-216.57 1723.92,-220.46"/>
 <text xml:space="preserve" text-anchor="middle" x="1662.74" y="-155.84" font-family="Courier,monospace" font-size="10.00">re&#45;validate</text>
 <text xml:space="preserve" text-anchor="middle" x="1662.74" y="-143.84" font-family="Courier,monospace" font-size="10.00">membership</text>
@@ -465,8 +465,8 @@
   doesn't expose one — so they need a different credential. The standard pattern is a single-use
   short-lived token the SPA fetches over a normal authenticated HTTP request and passes as a query
   parameter on the WS connect URL. <code>backend/src/auth/ws-ticket.ts</code> implements that store;
-  <code>POST /api/sessions/:id/ws-ticket</code> mints; the future WebSocket upgrade handler (Session
-  Runtime milestone) consumes.
+  <code>POST /api/sessions/:id/ws-ticket</code> mints; the
+  <a href="../runtime/session-transport.html">session transport</a> upgrade handshake consumes.
 </p>
 
 <p>
@@ -506,11 +506,11 @@
 <aside class="wiki-rationale">
   <strong>Redis errors aren't silently <code>null</code></strong> — a Redis transient (failover,
   connection refused, <code>MaxRetriesPerRequestError</code>) surfaces as a Promise rejection from
-  <code>getdel</code>. The future WS upgrade handler must treat the rejection as 503 (transient
-  store unavailability) and the <code>null</code> return as 401 (ticket invalid). The SPA's
-  reconnect logic differentiates: 401 → re-mint and retry; 503 → backoff and retry. Collapsing them
-  into a single response code would make the SPA backoff on a transient that should retry
-  immediately.
+  <code>getdel</code>. The <a href="../runtime/session-transport.html">WS upgrade handler</a> treats
+  the rejection as 503 (transient store unavailability) and the <code>null</code> return as 401
+  (ticket invalid). The SPA's reconnect logic differentiates: 401 → re-mint and retry; 503 → backoff
+  and retry. Collapsing them into a single response code would make the SPA backoff on a transient
+  that should retry immediately.
 </aside>
 
 <h3 id="key-prefix-mythrun-env-region-prefix-ws-ticket">Key prefix: <code>${MYTHRUN_ENV}:${REGION_PREFIX}:ws:ticket:</code></h3>
@@ -572,24 +572,25 @@
   </li>
 </ul>
 
-<h2 id="out-of-scope-the-websocket-server">Out of scope: the WebSocket server</h2>
+<h2 id="the-consumer-the-websocket-upgrade-handler">The consumer: the WebSocket upgrade handler</h2>
 
 <p>
-  This issue ships only the mint half of the exchange and the
-  <code>consumeWsTicket</code> helper. The WebSocket upgrade handler that calls the helper lives in
-  the Session Runtime milestone. There are five load-bearing assertions the future handler MUST
-  honor — all called out here so a reader who follows this page's mental model into the next ticket
-  doesn't miss them:
+  This page owns the mint half of the exchange and the <code>consumeWsTicket</code> helper. The
+  WebSocket upgrade handler that calls the helper now exists — it's the handshake on the
+  <a href="../runtime/session-transport.html">session transport</a> route (<code
+    >GET /ws/session/:sessionId</code
+  >). Five load-bearing assertions bound how that handler uses a consumed ticket, and the transport
+  handler honors all five:
 </p>
 
 <ol>
   <li>
     <strong>Re-validate <code>campaign_members</code> on upgrade.</strong> A successful
     <code>consumeWsTicket</code> only proves <em>some</em> member of the campaign minted the ticket
-    within the last 30 seconds. It does NOT prove membership at upgrade time. The upgrade handler
-    must re-query <code>repo.campaigns.getMembership(payload.campaignId, payload.userId)</code> and
-    reject if absent. The ticket payload carries <code>campaignId</code> directly so this is one
-    query, no <code>sessions.getById</code> lookup needed.
+    within the last 30 seconds. It does NOT prove membership at upgrade time. The handler re-queries
+    <code>repo.campaigns.getMembership</code> — against the <strong>loaded session row's</strong>
+    campaignId, not the ticket's claimed value — and rejects if the member row is absent or the
+    invite is unaccepted.
   </li>
   <li>
     <strong>Distinguish <code>null</code> from Redis errors.</strong> <code>null</code> → 401
@@ -693,7 +694,8 @@
   >'s <code>AppDeps</code> threads <code>redisRealtime</code> + <code>redisKeyPrefix</code> into the
   sessions plugin. The
   <a href="../infra/serving.html#per-env-task-definitions-and-services">serving module</a> is what
-  wires <code>MYTHRUN_ENV</code> into the API task definition.
+  wires <code>MYTHRUN_ENV</code> into the API task definition. The minted ticket's consumer is the
+  <a href="../runtime/session-transport.html">session transport</a> upgrade handshake.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -880,7 +882,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-frozen-request-dbuser-contract">The frozen request.dbUser contract</a></li><li style="padding-left:0"><a href="#param-name-conventions">Param-name conventions</a></li><li style="padding-left:0"><a href="#the-boot-time-allowlist">The boot-time allowlist</a></li><li style="padding-left:0"><a href="#the-ws-ticket-exchange">The WS ticket exchange</a></li><li style="padding-left:12px"><a href="#key-prefix-mythrun-env-region-prefix-ws-ticket">Key prefix: ${MYTHRUN_ENV}:${REGION_PREFIX}:ws:ticket:</a></li><li style="padding-left:0"><a href="#the-mint-route-s-prehandler-chain">The mint route's preHandler chain</a></li><li style="padding-left:0"><a href="#out-of-scope-the-websocket-server">Out of scope: the WebSocket server</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-new-campaign-rooted-route">Add a new campaign-rooted route</a></li><li style="padding-left:12px"><a href="#add-a-route-that-resolves-its-own-campaign-id">Add a route whose URL doesn't carry :campaignId</a></li><li style="padding-left:12px"><a href="#diagnose-a-ws-ticket-mint-failure">Diagnose a WS-ticket mint failure</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#error-codes-from-access-control">Error codes from access-control</a></li><li style="padding-left:12px"><a href="#redis-key-shape">Redis key shape</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-frozen-request-dbuser-contract">The frozen request.dbUser contract</a></li><li style="padding-left:0"><a href="#param-name-conventions">Param-name conventions</a></li><li style="padding-left:0"><a href="#the-boot-time-allowlist">The boot-time allowlist</a></li><li style="padding-left:0"><a href="#the-ws-ticket-exchange">The WS ticket exchange</a></li><li style="padding-left:12px"><a href="#key-prefix-mythrun-env-region-prefix-ws-ticket">Key prefix: ${MYTHRUN_ENV}:${REGION_PREFIX}:ws:ticket:</a></li><li style="padding-left:0"><a href="#the-mint-route-s-prehandler-chain">The mint route's preHandler chain</a></li><li style="padding-left:0"><a href="#the-consumer-the-websocket-upgrade-handler">The consumer: the WebSocket upgrade handler</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-new-campaign-rooted-route">Add a new campaign-rooted route</a></li><li style="padding-left:12px"><a href="#add-a-route-that-resolves-its-own-campaign-id">Add a route whose URL doesn't carry :campaignId</a></li><li style="padding-left:12px"><a href="#diagnose-a-ws-ticket-mint-failure">Diagnose a WS-ticket mint failure</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#error-codes-from-access-control">Error codes from access-control</a></li><li style="padding-left:12px"><a href="#redis-key-shape">Redis key shape</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

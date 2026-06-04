@@ -1,0 +1,106 @@
+digraph session_transport {
+  // The live multiplayer WebSocket session transport. A player mints a
+  // single-use ws-ticket (HTTP), then upgrades GET /ws/session/:sessionId
+  // carrying it as a query param. wsSessionAuth consumes the ticket
+  // PRE-UPGRADE, re-checks membership against the LOADED session row, and
+  // only then completes the handshake. Inbound chat is persist-then-broadcast:
+  // a server-assigned Redis-INCR seq, an append to session_messages, then a
+  // fan-out through the SessionHub. The hub PSUBSCRIBEs one Redis channel per
+  // campaign so a message published on any API container reaches every
+  // container's locally-connected sockets. Presence is a TTL key per
+  // connection; the last disconnect schedules a delayed BullMQ suspend job
+  // that re-reads presence on fire (idempotent, crash-safe).
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  client [label="player / SPA\nfetch+stream WebSocket\n?ticket=<nonce>&lastSeq=N", color="ember", fontcolor="ember"];
+
+  subgraph cluster_api {
+    label="API process  (per ECS task — containerId)";
+    style="dashed";
+
+    auth   [label="wsSessionAuth (preHandler)\nconsumeWsTicket → payload | null\nticket.sessionId == :sessionId\nsessions.getById → active?\nre-check campaign_members\n(campaignId = SESSION ROW)"];
+    conn   [label="handleConnection\nparticipants.join\naddPresence + hub.register\ncancelSuspend\nsession_ready | session_reconnect"];
+    inbound [label="handleInbound\nparse + classify frame\nplayer_message: persist→broadcast\ntyping_*: broadcast (no seq)"];
+    heart  [label="heartbeat\nping 30s · terminate at +10s\nrefresh presence TTL"];
+    disc   [label="handleDisconnect\ndropPresence · deregister\nplayer_left · scheduleSuspend\nif countPresence == 0"];
+    hub    [label="SessionHub\nMap<campaignId, Map<userId, ws>>\nPSUBSCRIBE session:campaign:*\nresync-close on reconnect", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_redis {
+    label="Redis (realtime cluster)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    ticket  [label="ws:ticket:<nonce>\nGETDEL (single-use)"];
+    seq     [label="session:{cId}:seq\nINCR (monotonic)"];
+    pres    [label="session:{cId}:conn:{cont}:{user}\nSET EX 60 (TTL presence)\nSCAN to count"];
+    state   [label="session:{cId}:state\n{participants, mode, status}"];
+    channel [label="session:campaign:{cId}\nPUBLISH frame JSON", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres";
+    style="dotted";
+
+    sessions    [label="sessions\none active per campaign\n(idx_sessions_one_active)"];
+    messages    [label="session_messages\nappend-only · UNIQUE(session_id, seq)\nlistAfterSeq for replay"];
+    participants [label="session_participants\nUNIQUE(session_id, user_id)\ncharacter resolved server-side"];
+  }
+
+  subgraph cluster_lifecycle {
+    label="lifecycle (routes/sessions.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    start [label="POST /:campaignId/start\nINSERT → debit owner → init Redis\n402 + rollback on no credits"];
+    rest  [label="GET /:campaignId/active\nGET /:sessionId/messages\n(REST backfill)"];
+  }
+
+  suspend [label="session-suspend job (BullMQ)\ndelay 5min · jobId suspend-{sid}\nre-read presence → checkpoint\nstatus stays 'active'", color="ember", fontcolor="ember"];
+
+  // Mint + upgrade
+  client -> start    [label="start session", style=dashed];
+  start  -> sessions [label="create + one-active", style=dashed];
+  start  -> state    [label="setState", style=dashed];
+  client -> auth     [label="WS upgrade"];
+  auth   -> ticket   [label="GETDEL"];
+  auth   -> sessions [label="getById"];
+  auth   -> conn     [label="authorized\n(no reply sent)"];
+
+  // Connect
+  conn -> participants [label="join"];
+  conn -> pres         [label="addPresence"];
+  conn -> hub          [label="register socket"];
+  conn -> suspend      [label="cancel pending", style=dashed];
+  conn -> messages     [label="listAfterSeq\n(reconnect replay)", style=dashed];
+
+  // Inbound chat: persist-then-broadcast
+  inbound -> seq      [label="INCR → seq"];
+  inbound -> messages [label="append(seq)"];
+  inbound -> hub      [label="publish frame"];
+
+  // Cross-container fan-out
+  hub     -> channel [label="PUBLISH"];
+  channel -> hub     [label="pmessage\n(every container)", color="ember"];
+  hub     -> client  [label="ws.send\n(local sockets)"];
+
+  // Heartbeat + disconnect
+  heart -> pres    [label="refresh TTL", style=dashed];
+  disc  -> pres    [label="dropPresence", style=dashed];
+  disc  -> hub     [label="deregister", style=dashed];
+  disc  -> suspend [label="schedule if empty"];
+
+  // Suspend processor
+  suspend -> pres     [label="countPresence\n(>0 → bail)", style=dashed];
+  suspend -> messages [label="MAX(seq)", style=dashed];
+  suspend -> sessions [label="checkpoint envelope", style=dashed];
+
+  // REST backfill
+  client -> rest     [label="gap fill", style=dashed];
+  rest   -> messages [label="listAfterSeq", style=dashed];
+}

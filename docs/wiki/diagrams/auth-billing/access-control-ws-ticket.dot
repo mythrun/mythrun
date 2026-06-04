@@ -4,8 +4,8 @@ digraph access_control_ws_ticket {
   // factories read it and check membership / world ownership against
   // the repo. The ws-ticket route is the first consumer — and currently
   // only consumer — of requireCampaignMember; it mints a single-use
-  // 30-second Redis ticket the future WS upgrade handler will consume
-  // via consumeWsTicket. A boot-time accessControlAllowlist plugin
+  // 30-second Redis ticket the session-transport WS upgrade handler
+  // consumes via consumeWsTicket. A boot-time accessControlAllowlist plugin
   // refuses any wiring that would put access-control onto a public or
   // jwt-no-db route.
   rankdir=LR;
@@ -57,7 +57,7 @@ digraph access_control_ws_ticket {
 
   pg [label="Postgres\ncampaign_members\nworlds, sessions", color="ember", fontcolor="ember"];
 
-  ws_future [label="future WS upgrade handler\n(Session Runtime milestone)\ncalls consumeWsTicket\nre-validates membership", style="dashed", color="ember", fontcolor="ember"];
+  ws_future [label="WS upgrade handler\n(session transport · MYT-65)\ncalls consumeWsTicket\nre-validates membership", color="ember", fontcolor="ember"];
 
   // Per-request flow
   client -> auth         [label="Bearer JWT"];
@@ -81,9 +81,9 @@ digraph access_control_ws_ticket {
   gate -> member         [label="onRoute scans\npreHandler arrays\nfor ACCESS_CONTROL_MARKER", style=dashed];
   gate -> creator        [label="", style=dashed];
 
-  // Future consumer (out of scope here)
-  client     -> ws_future [label="WS upgrade\n?ticket=<nonce>", style=dashed];
-  ws_future  -> consume   [label="consume", style=dashed];
-  consume    -> redis     [label="GETDEL", style=dashed];
-  ws_future  -> pg        [label="re-validate\nmembership", style=dashed];
+  // The consumer (session transport — documented on its own page)
+  client     -> ws_future [label="WS upgrade\n?ticket=<nonce>"];
+  ws_future  -> consume   [label="consume"];
+  consume    -> redis     [label="GETDEL"];
+  ws_future  -> pg        [label="re-validate\nmembership"];
 }

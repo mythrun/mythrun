@@ -1,0 +1,635 @@
+<!-- source: backend/src/routes/ws-session.ts -->
+<!-- source: backend/src/ws/session-hub.ts -->
+<!-- source: backend/src/redis/session-state.ts -->
+<!-- source: backend/src/session/session-suspend.ts -->
+<!-- source: backend/src/contract/session-events.ts -->
+<!-- source: backend/src/routes/sessions.ts -->
+<!-- source: backend/src/repo/session-messages.ts -->
+<!-- source: backend/src/repo/session-participants.ts -->
+<!-- source: backend/src/repo/session-participants-errors.ts -->
+<!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
+<!-- source-hash: sha256:dda610f105a419519bcff106815d9f3422270d668031c893fd416886148f6f29 -->
+<!-- last-ticket: MYT-65 -->
+
+<h1>Session transport</h1>
+
+<p class="lead">
+  The live multiplayer layer: a ticket-authed WebSocket per player, a cross-container fan-out hub
+  modeled on the SSE pipeline subscriber, ordered persist-then-broadcast chat, sequence-based
+  reconnection replay, and a crash-safe TTL-presence model that suspends an empty session through a
+  self-validating BullMQ job. This is the transport floor the DM-turn streaming surface (MYT-66+)
+  builds on; it carries player chat and system-presence frames only.
+</p>
+
+<!-- @diagram: runtime/session-transport -->
+
+<h2>How it fits together</h2>
+
+<p>
+  A session is a live play room scoped to one campaign — at most one active at a time. Three HTTP
+  routes bracket its lifecycle (<code>routes/sessions.ts</code>):
+  <code>POST /api/sessions/:campaignId/start</code> creates the row and debits a credit;
+  <code>GET /api/sessions/:campaignId/active</code> returns the live row or <code>null</code>;
+  <code>GET /api/sessions/:sessionId/messages</code> replays the persisted transcript for REST
+  gap-fill. The live transport itself is a single WebSocket route —
+  <code>GET /ws/session/:sessionId</code>, registered by <code>wsSessionRoutes</code> over
+  <code>@fastify/websocket</code>
+  — that a player upgrades into after minting a
+  <a href="../auth-billing/access-control-ws-ticket.html">ws-ticket</a>. Once connected, every
+  player message flows through the same path: a server-assigned sequence number, an append to
+  <code>session_messages</code>, then a fan-out across every API container via Redis pub/sub.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One active session per campaign, enforced in the schema</strong> — the
+  <code>idx_sessions_one_active</code> partial-unique index (a campaign can hold exactly one row
+  with <code>status = 'active'</code>) is what makes the campaignId a stable key for all the Redis
+  transport state below (<code>session:{campaignId}:…</code>). Two players racing
+  <code>/start</code> can't both win — the second <code>INSERT</code> raises a 23505 the route maps
+  to a clean <code>409 session_already_active</code> rather than a 500. Keying live state on
+  campaignId rather than sessionId means a reconnect after a suspend/resume cold-starts against the
+  same Redis keyspace without threading the new sessionId everywhere.
+</aside>
+
+<h2>Starting a session: the atomicity-critical ordering</h2>
+
+<p>
+  <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
+  three preconditions (campaign is active, a session prep exists for the next session number, no
+  session already active), the handler runs a fixed four-step sequence whose ordering is
+  load-bearing:
+</p>
+
+<ol>
+  <li>
+    Mint the <code>sessionId</code> up front, so the credit debit's idempotency key (<code
+      >= sessionId</code
+    >) is known before either the INSERT or the debit.
+  </li>
+  <li>
+    <code>INSERT</code> the session row first. A concurrent <code>/start</code> that already took
+    the <code>idx_sessions_one_active</code> slot surfaces here as a 23505 →
+    <code>409</code> (closing the race; never 500).
+  </li>
+  <li>
+    Debit one session credit from the owner — self-managing transaction, idempotent on
+    <code>sessionId</code>. Insufficient credits → <code>deleteById</code> the just-created row (it
+    must not occupy the one-active slot unpaid) → <code>402</code>.
+  </li>
+  <li>
+    Initialize the Redis <code>:state</code> blob. A fresh session leaves the
+    <code>:seq</code> counter unset, so the first <code>nextSeq</code> returns 1.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Row-before-debit, with a delete-on-failure rollback</strong> — the debit and the row
+  insert can't share one Postgres transaction: the debit runs its own transaction against the credit
+  ledger. So the row goes in first to win the one-active slot, then the debit runs; if it fails on
+  no-credits, the row is deleted so the campaign isn't left with an unpaid active session wedging
+  the slot. The delete is itself wrapped — a cleanup failure logs and still returns
+  <code>402</code>, never a 500, because the money invariant already holds (no debit happened, and
+  the active-session guard blocks a double-charge on retry). The only fallout of a failed cleanup is
+  a stranded row, diagnosable from the logged line.
+</aside>
+
+<h2>The upgrade handshake is the enforced-ignorance boundary's entry point</h2>
+
+<p>
+  <code>GET /ws/session/:sessionId</code> opts out of the JWT chain (<code
+    >config.auth: 'public'</code
+  >) because a browser-native WebSocket can't send an <code>Authorization</code> header — but
+  "public" here means "no JWT," not "unauthenticated." The auth boundary is the route's
+  <code>preHandler</code>, <code>wsSessionAuth</code>, which <code>@fastify/websocket</code> v11
+  runs <em>before</em> the upgrade completes: any <code>reply.code(…).send()</code> it issues
+  rejects the handshake with no socket opening at all. The handshake runs five checks in order:
+</p>
+
+<ol>
+  <li>No <code>?ticket</code> query param → <code>401 ws_ticket_missing</code>.</li>
+  <li>
+    <code>consumeWsTicket</code> (an atomic <code>GETDEL</code>). A <code>null</code> return
+    (consumed / expired / missing) → <code>401 ws_ticket_invalid</code>; a <em>throw</em> (a
+    transient Redis fault on the GETDEL itself) → <code>503 ws_ticket_store_unavailable</code>.
+  </li>
+  <li>
+    Ticket's <code>sessionId</code> must equal the path's <code>:sessionId</code> → else
+    <code>401 ws_ticket_session_mismatch</code>.
+  </li>
+  <li>
+    Load the session row: not found → <code>404</code>; not <code>active</code> →
+    <code>409 session_not_active</code>.
+  </li>
+  <li>
+    Re-check campaign membership against the <strong>session row's</strong>
+    campaignId (never the ticket's claimed value), with the same "pending invite is not a member"
+    predicate as
+    <code>requireCampaignMember</code> → else <code>403 not_campaign_member</code>.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong
+    >The campaignId the handler trusts comes from the loaded session row, not the ticket</strong
+  >
+  — a successful <code>consumeWsTicket</code> only proves some member minted a ticket in the last 30
+  seconds. It does not prove membership at upgrade time, and it must not be trusted to name the
+  campaign: binding the upgrade to the ticket's claimed <code>campaignId</code> against a different
+  URL session would let a ticket minted for session A authorize a socket on session B. So the
+  handshake loads the session, reads <em>its</em> campaignId, and re-queries
+  <code>campaign_members</code>. The ws-ticket page's "five load-bearing assertions for the future
+  handler" are all honored here — this is that handler.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>401 vs 503 on ticket consume, fail-closed either way</strong> — the SPA's reconnect logic
+  differentiates: a 401 means the ticket is dead, so re-mint and retry; a 503 means Redis is
+  wobbling, so back off and retry. Collapsing both into a generic 500 would make the client back off
+  on a transient that should retry immediately, or hammer on a dead ticket. Both paths reject the
+  handshake with no socket — the boundary fails closed.
+</aside>
+
+<h2>Connect: presence, registration, then the first frame</h2>
+
+<p>
+  Past the handshake, <code>handleConnection</code> resolves the participant's character and writes
+  the <code>session_participants</code> row (<code>sessionParticipants.join</code> resolves the
+  character server-side — the client never supplies a <code>character_id</code>, and a member with
+  no integrated character surfaces as a typed <code>NoCharacterForParticipantError</code> that
+  closes the socket cleanly rather than a raw FK violation). It then records presence and registers
+  the socket <em>before</em> broadcasting the join, so the new socket is in the registry when the
+  fan-out comes back around.
+</p>
+
+<p>
+  The first server frame is deterministic. A fresh connect (no
+  <code>?lastSeq</code>) broadcasts a <code>player_joined</code> and sends
+  <code>session_ready</code>. A reconnect (<code>?lastSeq=N</code>) instead builds a
+  <code>session_reconnect</code> replay frame and sends it <em>directly</em> on the socket — a
+  synchronous <code>send</code> that reaches this socket ahead of the
+  <code>player_joined</code> (which only arrives after a Redis pub/sub round-trip).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>register-before-replay, so live frames during the DB read aren't lost</strong> — the
+  socket is registered with the hub <em>before</em> the reconnect replay reads
+  <code>session_messages</code>. Any frame published live during that DB read is then delivered to
+  this socket too; the client's seq-dedup drops the overlap with the replay batch. A
+  read-then-register ordering would drop exactly that gap. This is the same ordering discipline the
+  hub-resync path relies on.
+</aside>
+
+<h2>Inbound chat: persist-then-broadcast with a server-assigned seq</h2>
+
+<p>
+  Every inbound frame is parsed and classified at the transport boundary (<code
+    >parseClientFrame</code
+  >
+  + <code>classifyClientFrame</code>): non-JSON, a missing <code>type</code>, or a type not on the
+  <code>CLIENT_FRAME_TYPES</code> allowlist (<code>player_message</code>, <code>typing_start</code>,
+  <code>typing_stop</code>) is silently dropped. A <code>typing_*</code> frame broadcasts
+  immediately with no sequence and no persistence. A <code>player_message</code> goes through
+  persist-then-broadcast: assign a server-ordered <code>seq</code> via Redis <code>INCR</code>,
+  append it to <code>session_messages</code>, then publish the frame through the hub.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Only <code>player_message</code> carries a seq; presence frames never do</strong> —
+  clients render the seq stream in <em>seq</em> order, not arrival order, and gap-detect to trigger
+  a reconnect replay. Presence and control frames (<code>player_joined</code>,
+  <code>player_left</code>, <code>typing_*</code>, <code>session_ready</code>, <code>error</code>)
+  are out-of-band: they're never persisted to <code>session_messages</code> and are absent from the
+  replay, so they must never carry a seq a client could gap-detect on — that would corrupt
+  reconnect-replay ordering. The first <code>player_message</code> is therefore seq 1.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Persist before broadcast, and a unique index that fails loud</strong> — the durable
+  transcript is the source of truth for replay, so a message is written before it's fanned out.
+  Migration 023 adds <code>UNIQUE(session_id, seq)</code>: a re-used number (a reseed race after a
+  crash-recovery counter bump) raises a 23505 rather than silently corrupting the ordering. The
+  route catches that one violation, re-INCRs once, and retries; a second collision re-throws as the
+  pathological state it is. If the broadcast throws <em>after</em> the append succeeds, the message
+  is still durable — the client gap-detects the missing seq and REST-backfills via
+  <code>GET …/messages</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A bad inbound frame drops; it never kills the socket</strong> — the whole inbound path is
+  a per-frame error boundary. A malformed frame, an oversized <code>text</code> (capped at 4 KB of
+  untrusted input, distinct from the no-max rule on LLM-generated prose), or a transient Redis fault
+  on persist/publish drops that one frame and keeps the connection alive. The worst case is one lost
+  message, logged. A library-level <code>maxPayload</code> (16 KB) rejects oversized frames before
+  the handler even runs; the in-handler text cap is the second line of defense.
+</aside>
+
+<h2>The SessionHub: cross-container fan-out</h2>
+
+<p>
+  The transport runs across many ECS tasks, and two players in the same campaign may be connected to
+  different containers. The <code>SessionHub</code> bridges them with Redis pub/sub — one channel
+  per campaign, <code>session:campaign:{campaignId}</code>. Each API process holds one
+  <em>dedicated</em> <code>PSUBSCRIBE</code>'d Redis client (a <code>duplicate()</code> of
+  <code>redisRealtime</code>) and an in-memory writable registry,
+  <code>Map&lt;campaignId, Map&lt;userId, socket&gt;&gt;</code>. When any container publishes a
+  frame, every container's subscriber receives the <code>pmessage</code> and sends it to its own
+  locally-registered sockets for that campaign. This is structurally the SSE
+  <a href="./pipeline-status.html">pipeline subscriber</a> with two WS-specific differences: the
+  registry holds writable sockets keyed per user (not a set of read-only SSE sinks), and a resync
+  teardown <em>closes</em> the socket rather than ending a sink.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A dedicated subscriber client, not the shared realtime one</strong> — once an ioredis
+  client enters subscriber mode it rejects almost all other commands, so the
+  <code>PSUBSCRIBE</code> client must be separate from the one the route uses to
+  <code>publish</code>, <code>INCR</code>, and rate-limit. The same split the pipeline subscriber
+  makes. The initial <code>psubscribe</code> is awaited before
+  <code>createSessionHub</code> returns, so a <code>publish</code> immediately after construction is
+  reliably delivered.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Reconnect → close every socket → clients replay</strong> — if the subscriber drops and
+  reconnects, it may have missed messages published during the gap. Rather than try to reconcile,
+  the hub closes every registered socket with WS code 1011 (<code>redis-resync-required</code>);
+  clients reconnect and pull a fresh <code>session_reconnect</code> replay, which is the canonical
+  recovery path anyway. The very first <code>ready</code> event is the initial connect (nothing
+  missed yet) and is exempt — only a <em>later</em> reconnect triggers the teardown. A single dead
+  socket whose <code>send</code> throws is evicted from the registry in place so it can't wedge the
+  others.
+</aside>
+
+<h2>Reconnection replay</h2>
+
+<p>
+  A client that drops reconnects with <code>?lastSeq=N</code> — the highest seq it has rendered.
+  <code>buildReconnectFrame</code> returns a <code>session_reconnect</code> carrying every persisted
+  <code>player_message</code> with <code>seq &gt; N</code> (only player messages were ever
+  persisted, so the replay is a pure ordered message stream), the current participant list, and the
+  session mode. Author display and character names are resolved through two in-memory maps built
+  <em>once</em> from campaign-wide reads — no per-message DB lookup. An author who has since left
+  the campaign falls back to a stable "Former player" byline; their prose history still replays
+  intact.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>lastSeq</code> is structurally validated at the boundary</strong>
+  — <code>parseLastSeq</code> accepts only a non-negative integer; absent, empty, negative, or
+  non-integer input is treated as a fresh connect (<code>null</code> → <code>session_ready</code>).
+  This is a transport-layer structural check (the ZFC structural-validation exception), mirroring
+  the drop-on-malformed posture of the inbound frame parser. The REST
+  <code>GET …/messages?afterSeq=N</code> route applies the same discipline more strictly — a
+  <code>/^\d+$/</code> match so <code>''</code>, <code>-1</code>, <code>1.5</code>, and hex don't
+  silently coerce — returning <code>400 bad_after_seq</code> on anything malformed.
+</aside>
+
+<h2>Presence, heartbeat, and crash-safe suspend</h2>
+
+<p>
+  Presence is not a counter — it's one TTL key per live connection,
+  <code>session:{campaignId}:conn:{containerId}:{userId}</code>, set with a 60-second expiry. The
+  heartbeat pings every 30 seconds (terminating a socket that hasn't ponged within a 10-second
+  grace) and refreshes the presence key on each ping, so a live connection never lapses.
+  <code>countPresence</code> walks the keys with <code>SCAN</code> (never <code>KEYS</code>, which
+  blocks the single-threaded Redis event loop on a shared cluster).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>TTL keys keyed by containerId, not an INCR/DECR counter</strong> — a bare counter leaks or
+  goes negative under failure. A container that crashes skips its socket <code>close</code> handlers
+  and would never decrement, leaving a session that looks permanently occupied; a double-fire would
+  push it negative. Per-connection TTL keys self-heal: a crashed container's presence simply lapses
+  after 60 seconds. The <code>containerId</code> (a per-process UUID generated once at boot)
+  namespaces the keys so two containers' presence for the same user don't collide.
+</aside>
+
+<p>
+  When the last player disconnects (<code>countPresence == 0</code>),
+  <code>handleDisconnect</code> schedules a delayed BullMQ suspend job — a five-minute grace window
+  keyed <code>suspend-{sessionId}</code>. A returning player <em>cancels</em> the pending job on
+  connect. The processor (<code>processSuspendJob</code>) is idempotent and self-validating: on fire
+  it <strong>re-reads live presence</strong> and only suspends when it's genuinely zero. Suspend
+  flushes the live <code>:state</code> to a Postgres checkpoint, keeps
+  <code>status = 'active'</code> (suspend is not end), and holds the Redis transport keys for ~2
+  hours so a quick reconnect cold-starts from live Redis rather than the checkpoint.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The presence re-read is the guarantee; the cancel is only an optimization</strong> — a
+  player can reconnect during the grace window and the cancel can race the fire (the job
+  transitioning delayed→active just as the cancel's remove lands), and BullMQ's jobId-dedup can in
+  principle leave a phantom job. Neither matters: the processor re-reads presence and bails if
+  anyone is connected, so an over-schedule is inert. The handler also fails <em>safe</em> — if
+  <code>countPresence</code> itself throws on disconnect, it schedules the suspend anyway, because
+  the processor's re-read gates the actual suspend. An over-schedule wastes a wakeup; an
+  under-schedule would strand an empty session live forever.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The checkpoint target is a documented overload, pending a real column</strong> — the
+  <code>sessions</code> table has no dedicated checkpoint column yet, and adding one is a schema
+  migration this transport task didn't own. So the checkpoint writes a self-describing
+  <code>{ kind: 'myt65-checkpoint', maxSeq, state }</code> envelope into the existing
+  <code>st_running_summary</code> TEXT column through <code>repo.sessions.update</code>. The
+  <code>kind</code> discriminator lets a future reader tell a MYT-65 checkpoint apart from any other
+  use of the column. The <code>maxSeq</code> recorded is the <em>durable</em>
+  <code>MAX(session_messages.seq)</code> — never the raw <code>:seq</code> counter (which sits one
+  ahead between INCR and the row insert) — so a crash-recovery reseed never re-hands-out a number a
+  message already used. A dedicated <code>session_checkpoints</code> row is the long-term home.
+</aside>
+
+<h2>The wire contract scope</h2>
+
+<p>
+  <code>contract/session-events.ts</code> is the declarative wire contract — a client-frame
+  allowlist, a server-frame allowlist, and discriminated-union payload types per direction,
+  mirroring <code>pipeline-events.ts</code>. MYT-65 ships the player-chat-and-presence subset only.
+  The DM-turn frames from the full protocol — <code>text_delta</code>, <code>dm_thinking</code>,
+  <code>skill_check</code>, <code>dice_roll</code>, <code>turn_end</code>, <code>combat_*</code>,
+  <code>session_end</code>, and the rest — are deliberately absent.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The contract is the allowlist, so unbuilt frames can't be broadcast</strong> — the
+  <code>classifyClientFrame</code> tripwire rejects any client frame type not in
+  <code>CLIENT_FRAME_TYPES</code> at the transport boundary. Adding the DM-turn frame types to the
+  contract before MYT-66 builds their handlers would let the transport accept and broadcast frames
+  it has no handler for. Keeping the contract scoped to what's implemented is the same
+  structural-gate discipline the pipeline subscriber uses (ZFC structural exception — not LLM
+  cognition).
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="trace-a-failed-ws-upgrade">Trace a failed WS upgrade</h3>
+<ol>
+  <li>
+    The HTTP status on the rejected handshake discriminates the cause:
+    <code>401 ws_ticket_missing</code> (no <code>?ticket</code>),
+    <code>401 ws_ticket_invalid</code> (consumed / expired / unknown ticket),
+    <code>401 ws_ticket_session_mismatch</code> (ticket minted for a different session),
+    <code>404 session_not_found</code>, <code>409 session_not_active</code>,
+    <code>403 not_campaign_member</code>, or <code>503 ws_ticket_store_unavailable</code> (transient
+    Redis fault).
+  </li>
+  <li>
+    A repeating <code>401 ws_ticket_invalid</code> from one client usually means the SPA isn't
+    minting a fresh ticket per upgrade attempt — tickets are single-use. Confirm the mint route
+    returns 201 just before each upgrade.
+  </li>
+  <li>
+    A <code>503</code> points at ElastiCache. Check for a failover; the ticket consume is a single
+    <code>GETDEL</code> with no retry layer between the handshake and Redis.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-session-that-wont-suspend">
+  Diagnose a session that won't suspend (or suspends too eagerly)
+</h3>
+<ol>
+  <li>
+    Count live presence keys for the campaign:
+    <code>SCAN</code> for <code>${MYTHRUN_ENV}:${REGION_PREFIX}:session:{campaignId}:conn:*</code>.
+    A non-empty match means at least one connection is still considered live (or a crashed
+    container's key hasn't lapsed yet — the keys carry a 60-second TTL).
+  </li>
+  <li>
+    Inspect the delayed suspend job in BullMQ: jobId
+    <code>suspend-{sessionId}</code> on the <code>session-suspend</code> queue. A present delayed
+    job means a suspend is pending; its absence after the last disconnect means either a reconnect
+    cancelled it or it already fired.
+  </li>
+  <li>
+    The processor logs its observed presence count and whether it suspended. A job that fires and
+    finds presence &gt; 0 bails by design — that's the cancel racing the fire, not a bug.
+  </li>
+</ol>
+
+<h3 id="read-the-checkpoint">Read a suspended session's checkpoint</h3>
+<ol>
+  <li>
+    The checkpoint envelope lives in <code>sessions.st_running_summary</code> as JSON with
+    <code>kind: 'myt65-checkpoint'</code>. <code>maxSeq</code> is the durable last-persisted
+    sequence; <code>state</code> is the live <code>:state</code> blob at suspend time.
+  </li>
+  <li>
+    Suspend leaves <code>status = 'active'</code> — a suspended session is still active, just
+    unoccupied. Do not treat a populated checkpoint as an ended-session signal.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  Upstream: a player earns the credential on the
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a> page —
+  <code>POST /api/sessions/:id/ws-ticket</code> mints the single-use ticket this route's handshake
+  consumes. The <a href="./index.html">backend runtime</a> registers
+  <code>@fastify/websocket</code>, constructs the <code>SessionHub</code> (closed in
+  <code>createShutdown</code> before <code>app.close</code>), generates the per-process
+  <code>containerId</code>, and builds the session-suspend BullMQ Worker on a dedicated connection —
+  the same shape as the <a href="./worker.html">prep workers</a>, with the mandatory
+  <code>waitFor</code> ping-probe before <code>new Worker(...)</code>. The fan-out mirrors the
+  <a href="./pipeline-status.html">pipeline status</a> SSE subscriber. Durable state lives in
+  <code>sessions</code>, <code>session_messages</code>, and
+  <code>session_participants</code> through
+  <a href="../data/repository.html">the repository layer</a>; see the
+  <a href="../data/schema.html">schema</a> for those tables. The DM-turn streaming surface (MYT-66+)
+  extends the wire contract and the connect path on top of this transport.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>WebSocket route</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Frame direction</th>
+      <th>Types</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Client → server</td>
+      <td>
+        <code>player_message</code> (carries <code>text</code>), <code>typing_start</code>,
+        <code>typing_stop</code>. Anything else is dropped at the boundary.
+      </td>
+    </tr>
+    <tr>
+      <td>Server → client</td>
+      <td>
+        <code>session_ready</code>, <code>session_reconnect</code>, <code>player_joined</code>,
+        <code>player_left</code>, <code>player_message</code> (the only frame with a
+        <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>, <code>error</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>HTTP surface (routes/sessions.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Path</th>
+      <th>Limit</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>POST</code></td>
+      <td><code>/api/sessions/:campaignId/start</code></td>
+      <td>10/min/user</td>
+      <td>
+        <code>200 { sessionId }</code> · <code>402</code> (no credits, row rolled back) ·
+        <code>409</code> (<code>campaign_not_active</code> / <code>prep_not_ready</code> /
+        <code>session_already_active</code>)
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/sessions/:campaignId/active</code></td>
+      <td>60/min</td>
+      <td><code>200 { session }</code> (session is <code>null</code> when none)</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/sessions/:sessionId/messages?afterSeq=N</code></td>
+      <td>60/min</td>
+      <td>
+        <code>200 { messages }</code> (seq &gt; N, ordered) · <code>400 bad_after_seq</code> ·
+        <code>404 session_not_found</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/ws/session/:sessionId?ticket=…&amp;lastSeq=N</code></td>
+      <td>—</td>
+      <td>
+        WebSocket upgrade. Pre-upgrade rejects: 401 / 403 / 404 / 409 / 503 (see "Trace a failed WS
+        upgrade").
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Redis keys (realtime cluster)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key (under <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>)</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{campaignId}:seq</code></td>
+      <td>Monotonic <code>INCR</code> counter; first <code>nextSeq</code> → 1. ~2h TTL.</td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:conn:{containerId}:{userId}</code></td>
+      <td>Per-connection presence; <code>SET … EX 60</code>, counted via <code>SCAN</code>.</td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:state</code></td>
+      <td><code>{ participants, mode, status }</code> JSON. ~2h TTL.</td>
+    </tr>
+    <tr>
+      <td><code>session:campaign:{campaignId}</code> (channel)</td>
+      <td>Pub/sub channel; the hub <code>PSUBSCRIBE</code>s <code>session:campaign:*</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/routes/ws-session.ts</code></td>
+      <td>
+        <code>wsSessionRoutes</code> plugin (the upgrade route + handshake + connection lifecycle),
+        <code>WS_MAX_PAYLOAD_BYTES</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/ws/session-hub.ts</code></td>
+      <td>
+        <code>createSessionHub</code>, <code>SessionHub</code> / <code>WSLike</code> types — the
+        cross-container pub/sub fan-out.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/redis/session-state.ts</code></td>
+      <td>
+        <code>makeSessionState</code> — <code>nextSeq</code> / <code>reseedSeq</code> / presence /
+        <code>:state</code> / <code>checkpoint</code>; <code>PRESENCE_TTL</code>,
+        <code>SessionMode</code> / <code>SessionStateBlob</code> /
+        <code>CheckpointStore</code> types.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/session-suspend.ts</code></td>
+      <td>
+        <code>scheduleSuspend</code> / <code>cancelSuspend</code> / <code>processSuspendJob</code>,
+        <code>QUEUE_SESSION_SUSPEND</code>, <code>SUSPEND_GRACE_MS</code>,
+        <code>suspendJobId</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/contract/session-events.ts</code></td>
+      <td>
+        <code>CLIENT_FRAME_TYPES</code> / <code>SERVER_FRAME_TYPES</code> allowlists,
+        <code>ClientFrame</code> / <code>ServerFrame</code> unions,
+        <code>classifyClientFrame</code> tripwire.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/routes/sessions.ts</code></td>
+      <td>
+        <code>sessionsRoutes</code> — the ws-ticket mint plus <code>/start</code> /
+        <code>/active</code> / <code>/messages</code>
+        lifecycle routes.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/repo/session-messages.ts</code>,
+        <code>src/repo/session-participants.ts</code>
+      </td>
+      <td>
+        Composable repo binders — <code>append</code> / <code>listAfterSeq</code> /
+        <code>maxSeq</code>, and <code>join</code> (server-side character resolution) /
+        <code>leave</code> / <code>list</code>; <code>NoCharacterForParticipantError</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/migrations/023_session_messages_unique_seq.sql</code></td>
+      <td>
+        <code>idx_session_messages_session_seq_unique</code> — the
+        <code>UNIQUE(session_id, seq)</code> index that makes a reseed race fail loud instead of
+        corrupting replay.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/routes/ws-session.ts</code>, <code>backend/src/ws/session-hub.ts</code>,
+  <code>backend/src/redis/session-state.ts</code>,
+  <code>backend/src/session/session-suspend.ts</code>,
+  <code>backend/src/contract/session-events.ts</code>, <code>backend/src/routes/sessions.ts</code>,
+  <code>backend/src/repo/session-messages.ts</code>,
+  <code>backend/src/repo/session-participants.ts</code>,
+  <code>backend/migrations/023_session_messages_unique_seq.sql</code>.
+</p>

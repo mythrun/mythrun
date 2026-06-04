@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime</div>
         <article>
@@ -406,7 +406,9 @@
   <code>invitesRoutes</code> register the
   <a href="../auth-billing/onboarding.html">first-login + invite surface</a>; then
   <code>sessionsRoutes</code> registers the
-  <a href="../auth-billing/access-control-ws-ticket.html">WS ticket mint endpoint</a>; finally
+  <a href="../auth-billing/access-control-ws-ticket.html">WS ticket mint endpoint</a> plus the
+  session-lifecycle routes, and <code>@fastify/websocket</code> + <code>wsSessionRoutes</code> add
+  the <a href="./session-transport.html">live multiplayer WebSocket transport</a>; finally
   <a href="../auth-billing/billing-routes.html"><code>billingRoutes</code></a> registers the seven
   player-facing billing routes. The order is load-bearing — the allowlist hook has to precede every
   public-route registration; auth attaches <code>request.user</code> before
@@ -1171,8 +1173,21 @@
     <tr>
       <td><code>src/routes/sessions.ts</code></td>
       <td>
-        <code>POST /api/sessions/:id/ws-ticket</code> mint route. See
-        <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>.
+        <code>POST /api/sessions/:id/ws-ticket</code> mint route plus the <code>/start</code> /
+        <code>/active</code> / <code>/messages</code> session-lifecycle routes. See
+        <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>
+        and <a href="./session-transport.html">session transport</a>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/routes/ws-session.ts</code>, <code>src/ws/session-hub.ts</code>,
+        <code>src/redis/session-state.ts</code>, <code>src/session/session-suspend.ts</code>
+      </td>
+      <td>
+        The live multiplayer WebSocket transport — upgrade route + handshake, cross-container
+        pub/sub fan-out, Redis session state, and the suspend job. See
+        <a href="./session-transport.html">session transport</a>.
       </td>
     </tr>
     <tr>
@@ -1273,6 +1288,18 @@
       <td>signed-in member mints a 30 s single-use ticket</td>
       <td>
         <a href="../auth-billing/access-control-ws-ticket.html">Access control &amp; WS ticket</a>.
+      </td>
+    </tr>
+    <tr>
+      <td colspan="2">
+        <code>POST /api/sessions/:campaignId/start</code>,
+        <code>GET /api/sessions/:campaignId/active</code>,
+        <code>GET /api/sessions/:sessionId/messages</code>,
+        <code>GET /ws/session/:sessionId</code> (upgrade)
+      </td>
+      <td colspan="2">
+        Live multiplayer session lifecycle + the WebSocket transport. See
+        <a href="./session-transport.html">Session transport</a>.
       </td>
     </tr>
     <tr>
