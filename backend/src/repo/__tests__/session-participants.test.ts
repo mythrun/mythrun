@@ -6,6 +6,7 @@ import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
 import { createCharactersRepo } from '../characters.js'
 import { createSessionsRepo } from '../sessions.js'
+import { createSessionParticipantsRepo } from '../session-participants.js'
 import { createRepo } from '../index.js'
 import { NoCharacterForParticipantError } from '../session-participants-errors.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
@@ -170,5 +171,33 @@ describe('repo.sessionParticipants (integration)', () => {
       tx.sessionParticipants.join({ sessionId, campaignId, userId }),
     )
     expect(p).toMatchObject({ sessionId, userId, characterId: seededCharacterId })
+  })
+
+  it('join defensively throws when the INSERT returns no row (fake pool)', async () => {
+    // `ON CONFLICT ... RETURNING *` always returns exactly one row in real PG, so
+    // the `if (!row) throw` arm is unreachable via integration. A fake pool whose
+    // character lookup resolves a row but whose INSERT yields zero rows exercises
+    // that defensive branch — and exercising it through the back-compat factory
+    // covers `createSessionParticipantsRepo`, mirroring the createSessionMessages
+    // fake-pool test + the createSessionsRepo pattern.
+    let call = 0
+    const fakePool = {
+      query: () => {
+        call += 1
+        // 1st query: characters.findUserCharacterForCampaign → resolve a row
+        // (only `.id` is read downstream). 2nd query: the INSERT → no row.
+        return call === 1
+          ? Promise.resolve({ rows: [{ id: 'char-1' }], rowCount: 1 })
+          : Promise.resolve({ rows: [], rowCount: 0 })
+      },
+    } as unknown as Pool
+    const repo = createSessionParticipantsRepo(fakePool)
+    await expect(
+      repo.join({
+        sessionId: '019dccef-0000-7000-8000-000000000000',
+        campaignId: '019dccef-0000-7000-8000-000000000001',
+        userId: '019dccef-0000-7000-8000-000000000002',
+      }),
+    ).rejects.toThrow(/INSERT returned no row/)
   })
 })

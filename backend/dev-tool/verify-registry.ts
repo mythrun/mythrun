@@ -178,6 +178,17 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // consumed by the frontend loading screen + dev-tool drawer, no JSDOM
   // page panel; E2E via MYT-64. (MYT-62 T6.)
   { method: 'GET', path: '/api/campaigns/:campaignId/prep-status' },
+
+  // MYT-65 session-runtime routes. The live multiplayer session transport is
+  // driven by real WebSocket clients + HTTP lifecycle calls, not a
+  // JSDOM-mountable dev-tool panel — /start, /active, /messages, and the WS
+  // upgrade have no inspectable page surface here. Behavior is covered by the
+  // backend session-route + ws-session integration tests (the two-client E2E).
+  // A future dev-tool session panel could replace these exemptions.
+  { method: 'POST', path: '/api/sessions/:id/start' },
+  { method: 'GET', path: '/api/sessions/:id/active' },
+  { method: 'GET', path: '/api/sessions/:id/messages' },
+  { method: 'GET', path: '/ws/session/:sessionId' },
 ]
 
 export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {

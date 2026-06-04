@@ -20,7 +20,7 @@
 // rows; the hub + sessionState use a per-run key prefix so a parallel worker
 // doesn't see this run's pub/sub or presence keys.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import type { Pool } from 'pg'
@@ -653,5 +653,695 @@ describe('ws-session route (integration)', () => {
     } finally {
       ws.terminate()
     }
+  })
+
+  // --- 404 / 409 pre-upgrade auth arms (real injectWS, real wiring) --------
+
+  it('rejects (404) when the session row does not exist', async () => {
+    // A valid ticket bound to a sessionId that has no row → wsSessionAuth loads
+    // null from repo.sessions.getById → 404 session_not_found, no socket.
+    const missingSessionId = '00000000-0000-7000-8000-0000000004a4'
+    const ticket = await mint(missingSessionId)
+    await expect(
+      connect(`/ws/session/${missingSessionId}?ticket=${ticket}`),
+    ).rejects.toThrow(/404/)
+  })
+
+  it('rejects (409) when the session row is not active', async () => {
+    // Flip the session to a non-active status; the auth handshake loads the row
+    // and 409s (session_not_active) before the upgrade.
+    await pool.query(`UPDATE sessions SET status = 'ended' WHERE id = $1`, [sessionId])
+    const ticket = await mint()
+    await expect(connect(`/ws/session/${sessionId}?ticket=${ticket}`)).rejects.toThrow(/409/)
+  })
+})
+
+// --- Connection-handler unit harness (stub deps, fake socket) -------------
+//
+// The heartbeat timers, the persistMessage reseed-retry, handleDisconnect's
+// per-step best-effort catches, the rawToString Buffer[]/ArrayBuffer decode
+// arms, parseClientFrame's malformed-frame drops, and the void-dispatch outer
+// `.catch` nets are unreachable (or only flakily reachable) through injectWS:
+// they need 30s/10s timers fast-forwarded, deep repo/Redis fault injection, a
+// fragmented/binary WS frame the public client can't emit, and a synchronous
+// view of the post-upgrade socket the harness doesn't expose.
+//
+// So this block drives the SAME registered connection handler directly. The
+// plugin body only calls `app.get(path, opts, handler)` and reads `app.log` in
+// the handlers, so a minimal fake app captures the `(socket, request)` handler;
+// we then invoke it with a controllable fake socket + a request carrying the
+// auth the (separately-tested) preHandler would have stashed. No prod change.
+
+interface FakeWsSocket {
+  send(data: string): void
+  close(code?: number, reason?: string): void
+  terminate(): void
+  ping(): void
+  on(event: string, listener: (...args: never[]) => void): void
+  // Test affordances:
+  readonly sent: string[]
+  readonly closes: { code: number | undefined; reason: string | undefined }[]
+  pingCount: number
+  terminateCount: number
+  emit(event: string, ...args: unknown[]): void
+}
+
+function makeFakeWsSocket(opts: { throwOnClose?: boolean } = {}): FakeWsSocket {
+  const listeners = new Map<string, ((...a: never[]) => void)[]>()
+  const sent: string[] = []
+  const closes: { code: number | undefined; reason: string | undefined }[] = []
+  const socket: FakeWsSocket = {
+    sent,
+    closes,
+    pingCount: 0,
+    terminateCount: 0,
+    send: (data) => {
+      sent.push(data)
+    },
+    close: (code, reason) => {
+      if (opts.throwOnClose) throw new Error('close-boom')
+      closes.push({ code, reason })
+    },
+    terminate: () => {
+      socket.terminateCount += 1
+    },
+    ping: () => {
+      socket.pingCount += 1
+    },
+    on: (event, listener) => {
+      const arr = listeners.get(event) ?? []
+      arr.push(listener)
+      listeners.set(event, arr)
+    },
+    emit: (event, ...args) => {
+      for (const l of listeners.get(event) ?? []) (l as (...a: unknown[]) => void)(...args)
+    },
+  }
+  return socket
+}
+
+type ConnHandler = (socket: FakeWsSocket, request: unknown) => void
+
+/** A pino-shaped recording logger for the fake app. */
+function makeAppLog(): { log: { error: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> } } {
+  return {
+    log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+  }
+}
+
+/** Register the plugin against a fake app, returning the captured connection
+ *  handler + the fake app (for its recording log). */
+async function captureHandler(
+  deps: WsSessionDeps,
+): Promise<{ handler: ConnHandler; appLog: ReturnType<typeof makeAppLog> }> {
+  let handler: ConnHandler | undefined
+  const appLog = makeAppLog()
+  const fakeApp = {
+    ...appLog,
+    get: (_path: string, _opts: unknown, h: ConnHandler) => {
+      handler = h
+    },
+  }
+  await wsSessionRoutes(fakeApp as never, deps)
+  if (!handler) throw new Error('connection handler not captured')
+  return { handler, appLog }
+}
+
+/** A flexible stub SessionState whose every method is a vi.fn() defaulting to a
+ *  benign resolution; individual tests override the ones they fault-inject. */
+function makeStubSessionState(): {
+  nextSeq: ReturnType<typeof vi.fn>
+  reseedSeq: ReturnType<typeof vi.fn>
+  addPresence: ReturnType<typeof vi.fn>
+  dropPresence: ReturnType<typeof vi.fn>
+  countPresence: ReturnType<typeof vi.fn>
+  getState: ReturnType<typeof vi.fn>
+  setState: ReturnType<typeof vi.fn>
+  refreshTtls: ReturnType<typeof vi.fn>
+} {
+  return {
+    nextSeq: vi.fn().mockResolvedValue(1),
+    reseedSeq: vi.fn().mockResolvedValue(undefined),
+    addPresence: vi.fn().mockResolvedValue(undefined),
+    dropPresence: vi.fn().mockResolvedValue(undefined),
+    countPresence: vi.fn().mockResolvedValue(0),
+    getState: vi.fn().mockResolvedValue(null),
+    setState: vi.fn().mockResolvedValue(undefined),
+    refreshTtls: vi.fn().mockResolvedValue(undefined),
+  }
+}
+
+/** A stub hub recording publishes; publish resolves unless overridden. */
+function makeStubHub(): {
+  register: ReturnType<typeof vi.fn>
+  deregister: ReturnType<typeof vi.fn>
+  publish: ReturnType<typeof vi.fn>
+  hasLocal: ReturnType<typeof vi.fn>
+  close: ReturnType<typeof vi.fn>
+} {
+  return {
+    register: vi.fn(),
+    deregister: vi.fn(),
+    publish: vi.fn().mockResolvedValue(undefined),
+    hasLocal: vi.fn().mockReturnValue(false),
+    close: vi.fn().mockResolvedValue(undefined),
+  }
+}
+
+/** A stub repo with only the methods the connection handlers touch. Each test
+ *  overrides the ones it needs; defaults model a clean single-member session. */
+function makeStubRepo(over: Record<string, unknown> = {}): {
+  repo: WsSessionDeps['repo']
+  sessionMessages: { append: ReturnType<typeof vi.fn>; listAfterSeq: ReturnType<typeof vi.fn> }
+} {
+  const sessionMessages = {
+    append: vi.fn().mockResolvedValue(undefined),
+    listAfterSeq: vi.fn().mockResolvedValue([]),
+  }
+  const repo = {
+    sessionParticipants: {
+      join: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    users: { getById: vi.fn().mockResolvedValue({ displayName: 'Dee' }) },
+    characters: {
+      findUserCharacterForCampaign: vi.fn().mockResolvedValue({ name: 'Char' }),
+      listForCampaign: vi.fn().mockResolvedValue([]),
+    },
+    sessionMessages,
+    campaigns: { listMembers: vi.fn().mockResolvedValue([]) },
+    ...over,
+  } as unknown as WsSessionDeps['repo']
+  return { repo, sessionMessages }
+}
+
+function makeUnitDeps(parts: {
+  repo: WsSessionDeps['repo']
+  sessionState: ReturnType<typeof makeStubSessionState>
+  hub: ReturnType<typeof makeStubHub>
+}): WsSessionDeps {
+  return {
+    repo: parts.repo,
+    sessionState: parts.sessionState as unknown as WsSessionDeps['sessionState'],
+    // The stub hub's mock-typed methods are already structurally assignable to
+    // SessionHub, so no cast is needed here (sessionState's nextSeq:Promise<number>
+    // return is not, hence its cast above).
+    hub: parts.hub,
+    suspendQueue: makeRecordingSuspendQueue(),
+    containerId: CONTAINER_ID,
+    redisRealtime: {} as unknown as Redis,
+    redisKeyPrefix: 'unit:',
+  }
+}
+
+const flush = (): Promise<void> => new Promise<void>((r) => setImmediate(r))
+
+function fakeRequest(opts: {
+  sessionId?: string
+  lastSeq?: string
+  auth?: { userId: string; campaignId: string } | undefined
+}): unknown {
+  return {
+    params: { sessionId: opts.sessionId ?? 'sess-1' },
+    query: { lastSeq: opts.lastSeq },
+    wsSessionAuth: 'auth' in opts ? opts.auth : { userId: 'u-1', campaignId: 'c-1' },
+  }
+}
+
+describe('ws-session connection handler (stub-deps unit harness)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('defensively closes the socket when wsSessionAuth is somehow absent', async () => {
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo: makeStubRepo().repo, sessionState: makeStubSessionState(), hub: makeStubHub() }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({ auth: undefined }))
+    await flush()
+    expect(socket.closes).toContainEqual({ code: 1011, reason: 'auth-missing' })
+  })
+
+  it('heartbeat: ping fires on interval, refreshes presence, and terminates on un-ponged grace; a pong clears the timer', async () => {
+    // Fake only the interval/timeout timers — leave setImmediate real so the
+    // `flush()` (which awaits the connect body's microtasks) still resolves.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    const sessionState = makeStubSessionState()
+    const { repo } = makeStubRepo()
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo, sessionState, hub: makeStubHub() }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush() // let the awaited connect body settle
+
+    // First ping interval: ping sent, presence refreshed, pong timer armed.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(socket.pingCount).toBe(1)
+    expect(sessionState.addPresence).toHaveBeenCalled()
+
+    // A pong before the grace clears the pending terminate.
+    socket.emit('pong')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(socket.terminateCount).toBe(0)
+
+    // Next ping; no pong this time → grace elapses → terminate.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(socket.pingCount).toBe(2)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(socket.terminateCount).toBe(1)
+
+    // 'close' clears both timers (no throw, no further pings).
+    socket.emit('close')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(socket.pingCount).toBe(2)
+  })
+
+  it('heartbeat: a presence-refresh failure during ping is logged-and-swallowed', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    const sessionState = makeStubSessionState()
+    // First addPresence (connect) ok; the ping-time one rejects.
+    sessionState.addPresence
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('presence transient'))
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub: makeStubHub() }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await flush()
+    expect(appLog.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session presence refresh failed',
+    )
+    socket.emit('close')
+  })
+
+  it('persistMessage: a seq-unique violation triggers ONE re-INCR + retry', async () => {
+    const sessionState = makeStubSessionState()
+    sessionState.nextSeq.mockResolvedValueOnce(5).mockResolvedValueOnce(6)
+    const { repo, sessionMessages } = makeStubRepo()
+    const uniqueErr = Object.assign(new Error('dup'), {
+      code: '23505',
+      constraint: 'idx_session_messages_session_seq_unique',
+    })
+    sessionMessages.append
+      .mockRejectedValueOnce(uniqueErr) // seq 5 collides
+      .mockResolvedValueOnce(undefined) // seq 6 succeeds
+    const hub = makeStubHub()
+    const { handler } = await captureHandler(makeUnitDeps({ repo, sessionState, hub }))
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'player_message', text: 'hi' })))
+    await flush()
+
+    expect(sessionState.nextSeq).toHaveBeenCalledTimes(2)
+    expect(sessionMessages.append).toHaveBeenCalledTimes(2)
+    // The broadcast carried the RETRY seq (6).
+    expect(hub.publish).toHaveBeenCalledWith(
+      'c-1',
+      expect.objectContaining({ type: 'player_message', seq: 6, text: 'hi' }),
+    )
+  })
+
+  it('persistMessage: a NON-unique append error propagates (frame dropped, socket alive)', async () => {
+    const sessionState = makeStubSessionState()
+    const { repo, sessionMessages } = makeStubRepo()
+    sessionMessages.append.mockRejectedValue(new Error('connection reset'))
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo, sessionState, hub: makeStubHub() }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'player_message', text: 'x' })))
+    await flush()
+    // nextSeq called once (no retry — not a unique violation), error logged.
+    expect(sessionState.nextSeq).toHaveBeenCalledTimes(1)
+    expect(appLog.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session inbound frame failed — dropped, socket kept alive',
+    )
+  })
+
+  it('inbound: rawToString decodes a Buffer[] (fragmented) and an ArrayBuffer frame', async () => {
+    const hub = makeStubHub()
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo: makeStubRepo().repo, sessionState: makeStubSessionState(), hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    // Buffer[] (a fragmented text frame `ws` would deliver with binaryType:'fragments').
+    const json = JSON.stringify({ type: 'typing_start' })
+    const half = Math.floor(json.length / 2)
+    socket.emit('message', [Buffer.from(json.slice(0, half)), Buffer.from(json.slice(half))])
+    await flush()
+
+    // ArrayBuffer (binaryType:'arraybuffer').
+    const ab = new TextEncoder().encode(JSON.stringify({ type: 'typing_stop' })).buffer
+    socket.emit('message', ab)
+    await flush()
+
+    const broadcastTypes = hub.publish.mock.calls.map((c) => (c[1] as { type: string }).type)
+    expect(broadcastTypes).toContain('typing_start')
+    expect(broadcastTypes).toContain('typing_stop')
+  })
+
+  it('inbound: drops malformed frames — non-JSON, non-object, missing/unknown type, non-string + oversized text', async () => {
+    const hub = makeStubHub()
+    const { repo, sessionMessages } = makeStubRepo()
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo, sessionState: makeStubSessionState(), hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+    const publishesBefore = hub.publish.mock.calls.length
+
+    const send = (s: string): void => {
+      socket.emit('message', Buffer.from(s))
+    }
+    send('not json{')                                  // JSON.parse throws → null
+    send(JSON.stringify(42))                            // not an object → null
+    send(JSON.stringify(null))                          // null → null
+    send(JSON.stringify({ noType: true }))              // missing type → null
+    send(JSON.stringify({ type: 'dm_invoke' }))         // not allowlisted → null
+    send(JSON.stringify({ type: 'player_message' }))    // text not a string → null
+    send(JSON.stringify({ type: 'player_message', text: 'a'.repeat(4_001) })) // oversized → null
+    await flush()
+
+    // Nothing persisted, nothing newly broadcast.
+    expect(sessionMessages.append).not.toHaveBeenCalled()
+    expect(hub.publish.mock.calls.length).toBe(publishesBefore)
+  })
+
+  it('reconnect replay: a departed author (and a null-author row) fall back to "Former player"', async () => {
+    const sessionState = makeStubSessionState()
+    const { repo } = makeStubRepo({
+      sessionMessages: {
+        append: vi.fn().mockResolvedValue(undefined),
+        // seq 3 authored by a user no longer in members/characters; seq 4 has a
+        // null author (system row). Both byline-degrade to the placeholder.
+        listAfterSeq: vi
+          .fn()
+          .mockResolvedValue([
+            { seq: 3, userId: 'departed-user', content: 'left long ago' },
+            { seq: 4, userId: null, content: 'system note' },
+          ]),
+      },
+      sessionParticipants: {
+        join: vi.fn().mockResolvedValue(undefined),
+        // A participant row whose userId isn't in the members/characters maps.
+        list: vi.fn().mockResolvedValue([{ userId: 'departed-user' }]),
+      },
+      campaigns: { listMembers: vi.fn().mockResolvedValue([]) }, // empty → no display names
+      characters: {
+        findUserCharacterForCampaign: vi.fn().mockResolvedValue({ name: 'Char' }),
+        listForCampaign: vi.fn().mockResolvedValue([]), // empty → no character names
+      },
+    })
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo, sessionState, hub: makeStubHub() }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({ lastSeq: '2' }))
+    await flush()
+
+    const reconnect = socket.sent
+      .map((s) => JSON.parse(s) as { type: string })
+      .find((f) => f.type === 'session_reconnect') as
+      | { type: 'session_reconnect'; messages: { seq?: number; displayName: string; characterName: string }[]; participants: { displayName: string }[]; mode: string }
+      | undefined
+    expect(reconnect).toBeDefined()
+    if (!reconnect) throw new Error('expected session_reconnect')
+    // Both replayed messages degrade their byline to the placeholder.
+    for (const m of reconnect.messages) {
+      expect(m.displayName).toBe('Former player')
+      expect(m.characterName).toBe('')
+    }
+    // The departed participant degrades too, and mode defaults to exploration.
+    expect(reconnect.participants[0]?.displayName).toBe('Former player')
+    expect(reconnect.mode).toBe('exploration')
+  })
+
+  it('connect fallbacks: a null user / null character resolve to empty display/character names', async () => {
+    const hub = makeStubHub()
+    const { repo } = makeStubRepo({
+      users: { getById: vi.fn().mockResolvedValue(null) }, // user?.displayName ?? ''
+      characters: {
+        findUserCharacterForCampaign: vi.fn().mockResolvedValue(null), // character?.name ?? ''
+        listForCampaign: vi.fn().mockResolvedValue([]),
+      },
+    })
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo, sessionState: makeStubSessionState(), hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+    expect(hub.publish).toHaveBeenCalledWith(
+      'c-1',
+      expect.objectContaining({ type: 'player_joined', displayName: '', characterName: '' }),
+    )
+  })
+
+  it('disconnect: each best-effort step is independently swallowed; suspend still scheduled', async () => {
+    const sessionState = makeStubSessionState()
+    sessionState.dropPresence.mockRejectedValue(new Error('drop transient'))
+    sessionState.countPresence.mockRejectedValue(new Error('count transient')) // fail-safe → empty
+    const hub = makeStubHub()
+    // player_left publish rejects; player_joined (connect) must still resolve.
+    hub.publish.mockImplementation((_c: string, frame: { type: string }) =>
+      frame.type === 'player_left'
+        ? Promise.reject(new Error('publish transient'))
+        : Promise.resolve(undefined),
+    )
+    const deps = makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub })
+    const suspendQueue = deps.suspendQueue as RecordingSuspendQueue
+    const { handler, appLog } = await captureHandler(deps)
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    socket.emit('close')
+    await flush()
+
+    expect(appLog.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session dropPresence failed (TTL will reap)',
+    )
+    expect(appLog.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session player_left publish failed',
+    )
+    expect(appLog.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session countPresence failed — scheduling suspend fail-safe',
+    )
+    // Fail-safe scheduled the suspend despite countPresence throwing.
+    expect(suspendQueue.adds.map((a) => a.sessionId)).toContain('sess-1')
+  })
+
+  it('disconnect: a scheduleSuspend failure is logged (not floated)', async () => {
+    const sessionState = makeStubSessionState()
+    sessionState.countPresence.mockResolvedValue(0) // empty → schedule
+    const deps = makeUnitDeps({
+      repo: makeStubRepo().repo,
+      sessionState,
+      hub: makeStubHub(),
+    })
+    // Make the suspend queue's add throw so scheduleSuspend rejects.
+    ;(deps.suspendQueue as RecordingSuspendQueue).add = (() =>
+      Promise.reject(new Error('queue down'))) as SuspendQueueLike['add']
+    const { handler, appLog } = await captureHandler(deps)
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    socket.emit('close')
+    await flush()
+    expect(appLog.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session scheduleSuspend failed',
+    )
+  })
+
+  it('connect failure: best-effort cleanup runs and the socket is closed (1011, connect-failed)', async () => {
+    const sessionState = makeStubSessionState()
+    const { repo } = makeStubRepo({
+      sessionParticipants: {
+        join: vi.fn().mockRejectedValue(new Error('no character')), // throws inside the guard
+        list: vi.fn().mockResolvedValue([]),
+      },
+    })
+    const hub = makeStubHub()
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo, sessionState, hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    expect(appLog.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session connect failed — closing socket',
+    )
+    expect(hub.deregister).toHaveBeenCalledWith('c-1', 'u-1')
+    expect(sessionState.dropPresence).toHaveBeenCalled()
+    expect(socket.closes).toContainEqual({ code: 1011, reason: 'connect-failed' })
+  })
+
+  it('connect failure: a throwing socket.close in the cleanup path is swallowed', async () => {
+    const { repo } = makeStubRepo({
+      sessionParticipants: {
+        join: vi.fn().mockRejectedValue(new Error('boom')),
+        list: vi.fn().mockResolvedValue([]),
+      },
+    })
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo, sessionState: makeStubSessionState(), hub: makeStubHub() }),
+    )
+    // socket.close throws — the catch's inner try/catch swallows it.
+    const socket = makeFakeWsSocket({ throwOnClose: true })
+    expect(() => {
+      handler(socket, fakeRequest({}))
+    }).not.toThrow()
+    await flush()
+    // close was attempted (threw) — no unhandled rejection floats up.
+    expect(socket.closes).toEqual([])
+  })
+
+  it('reconnect replay: mode reflects a written :state blob (not the default)', async () => {
+    const sessionState = makeStubSessionState()
+    sessionState.getState.mockResolvedValue({
+      participants: [],
+      mode: 'combat',
+      status: 'active',
+    })
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub: makeStubHub() }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({ lastSeq: '0' }))
+    await flush()
+    const reconnect = socket.sent
+      .map((s) => JSON.parse(s) as { type: string; mode?: string })
+      .find((f) => f.type === 'session_reconnect')
+    expect(reconnect?.mode).toBe('combat')
+  })
+
+  // --- The belt-and-suspenders outer .catch nets ---------------------------
+  // Each lifecycle dispatch (handleConnection / handleInbound / handleDisconnect)
+  // is void-dispatched with an outer `.catch` so NO rejection floats to the
+  // process unhandledRejection escalation. These fire only when the inner guard
+  // itself throws — we force exactly that.
+
+  it('outer net: handleConnection rejecting (its own cleanup throws) is caught + logged', async () => {
+    const { repo } = makeStubRepo({
+      sessionParticipants: {
+        join: vi.fn().mockRejectedValue(new Error('connect boom')), // enter the inner catch
+        list: vi.fn().mockResolvedValue([]),
+      },
+    })
+    const hub = makeStubHub()
+    // deregister (called in the inner failure-cleanup) throws → the inner catch
+    // re-throws → handleConnection's promise rejects → the outer .catch fires.
+    hub.deregister.mockImplementation(() => {
+      throw new Error('deregister boom')
+    })
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo, sessionState: makeStubSessionState(), hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+    expect(appLog.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session handleConnection escaped its own guard',
+    )
+    // The outer net's defensive socket.close ran.
+    expect(socket.closes).toContainEqual({ code: 1011, reason: 'connect-failed' })
+  })
+
+  it('outer net: a throwing socket.close in the outer net is itself swallowed', async () => {
+    const { repo } = makeStubRepo({
+      sessionParticipants: {
+        join: vi.fn().mockRejectedValue(new Error('connect boom')),
+        list: vi.fn().mockResolvedValue([]),
+      },
+    })
+    const hub = makeStubHub()
+    hub.deregister.mockImplementation(() => {
+      throw new Error('deregister boom') // inner catch re-throws → outer net runs
+    })
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo, sessionState: makeStubSessionState(), hub }),
+    )
+    // socket.close throws too → the outer net's inner try/catch swallows it.
+    const socket = makeFakeWsSocket({ throwOnClose: true })
+    expect(() => {
+      handler(socket, fakeRequest({}))
+    }).not.toThrow()
+    await flush()
+    expect(appLog.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session handleConnection escaped its own guard',
+    )
+    // close threw on every attempt → nothing recorded; no rejection floated.
+    expect(socket.closes).toEqual([])
+  })
+
+  it('outer net: handleInbound rejecting (its catch-time log throws once) is caught + logged', async () => {
+    const sessionState = makeStubSessionState()
+    const { repo, sessionMessages } = makeStubRepo()
+    sessionMessages.append.mockRejectedValue(new Error('persist boom')) // enter inbound's catch
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo, sessionState, hub: makeStubHub() }),
+    )
+    // The FIRST log.error (inside handleInbound's catch) throws → handleInbound
+    // rejects → the outer .catch's log.error (second call) succeeds.
+    appLog.log.error.mockImplementationOnce(() => {
+      throw new Error('logger boom')
+    })
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'player_message', text: 'x' })))
+    await flush()
+    expect(appLog.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session handleInbound escaped its guard',
+    )
+  })
+
+  it('outer net: handleDisconnect rejecting (deregister throws) is caught + logged', async () => {
+    const hub = makeStubHub()
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo: makeStubRepo().repo, sessionState: makeStubSessionState(), hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+    // hub.deregister is the FIRST (un-try'd) line of handleDisconnect — make it
+    // throw so the whole promise rejects → the outer .catch fires.
+    hub.deregister.mockImplementation(() => {
+      throw new Error('deregister boom')
+    })
+    socket.emit('close')
+    await flush()
+    expect(appLog.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session handleDisconnect escaped its guard',
+    )
   })
 })

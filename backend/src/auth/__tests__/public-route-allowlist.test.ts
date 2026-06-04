@@ -6,13 +6,14 @@ import {
 } from '../public-route-allowlist.js'
 
 describe('public-route allowlist', () => {
-  it('contains the expected 5 entries', () => {
-    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(5)
+  it('contains the expected 6 entries', () => {
+    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(6)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /health')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /webhooks/stripe')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/billing/skus')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/invites/:inviteCode/preview')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /health/ready')).toBe(true)
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /ws/session/:sessionId')).toBe(true)
   })
 
   it('allowlisted public route registers cleanly', async () => {

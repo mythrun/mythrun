@@ -160,6 +160,23 @@ function makeFakeSub(): FakeSub {
   return fake
 }
 
+/** A pino-shaped logger whose error/warn calls are recorded for assertions. */
+function makeRecordingLogger(): {
+  logger: typeof silentLogger
+  error: ReturnType<typeof vi.fn>
+  warn: ReturnType<typeof vi.fn>
+} {
+  const error = vi.fn()
+  const warn = vi.fn()
+  const logger = {
+    error,
+    warn,
+    info: vi.fn(),
+    debug: vi.fn(),
+  } as unknown as typeof silentLogger
+  return { logger, error, warn }
+}
+
 // The hub calls `redis.duplicate({...})` for its subscriber and `redis.publish`
 // for publish(); everything else lives on the duplicate. Cast through unknown —
 // this surface is structurally adequate for the hub's contract.
@@ -260,5 +277,162 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
     expect(second.sent).toEqual([payload])
 
     await hub.close()
+  })
+
+  it('logs (error) a subscriber error event without throwing', async () => {
+    const sub = makeFakeSub()
+    const { logger, error } = makeRecordingLogger()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger,
+    })
+    // The 'error' handler is warn-and-continue: it logs and lets ioredis
+    // auto-reconnect. Emitting it must not throw.
+    sub.emit('error', new Error('subscriber-boom'))
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'session-hub redis subscriber error',
+    )
+    await hub.close()
+  })
+
+  it('ignores a pmessage on a non-matching channel prefix', async () => {
+    const sub = makeFakeSub()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger: silentLogger,
+    })
+    const s = fakeSocket()
+    hub.register('cmp-nm', 'u1', s)
+    // A pmessage whose channel does NOT start with the hub's channel prefix is
+    // dropped (defensive — the pattern can't match this in practice).
+    sub.emit('pmessage', PMSG_PATTERN, 'some:other:channel', '{"type":"x"}')
+    expect(s.sent).toEqual([])
+    await hub.close()
+  })
+
+  it('drops a pmessage for a campaign with no locally-registered sockets', async () => {
+    const sub = makeFakeSub()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger: silentLogger,
+    })
+    // No socket registered for cmp-empty → users map is absent → early return.
+    sub.emit('pmessage', PMSG_PATTERN, channel('cmp-empty'), '{"type":"x"}')
+    expect(hub.hasLocal('cmp-empty')).toBe(false)
+    await hub.close()
+  })
+
+  it('deregister on an unknown campaign is a no-op (no inner map)', async () => {
+    const sub = makeFakeSub()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger: silentLogger,
+    })
+    // No map for this campaign → deregister returns early without throwing.
+    expect(() => {
+      hub.deregister('cmp-never', 'nobody')
+    }).not.toThrow()
+    await hub.close()
+  })
+
+  it('a ready event AFTER close is ignored (no resync, no re-subscribe)', async () => {
+    const sub = makeFakeSub()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger: silentLogger,
+    })
+    const s = fakeSocket()
+    hub.register('cmp-closed', 'u1', s)
+    await hub.close()
+    // psubscribe was called once at construction; a post-close 'ready' must not
+    // re-subscribe or close the (already torn-down) socket.
+    const callsBefore = sub.psubscribe.mock.calls.length
+    sub.emit('ready')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(sub.psubscribe.mock.calls.length).toBe(callsBefore)
+    expect(s.closed).toBeNull()
+  })
+
+  it('swallows a throwing ws.close during a resync teardown (logs warn, continues)', async () => {
+    const sub = makeFakeSub()
+    const { logger, warn } = makeRecordingLogger()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger,
+    })
+    // s1's close() throws; s2's must still be closed (per-socket isolation in
+    // the resync loop). The throw is logged-and-swallowed.
+    const s1: FakeSocket = {
+      ...fakeSocket(),
+      close: () => {
+        throw new Error('close-boom')
+      },
+    }
+    const s2 = fakeSocket()
+    hub.register('cmp-rt', 'u1', s1)
+    hub.register('cmp-rt', 'u2', s2)
+
+    sub.emit('ready') // initial connect — everReady guard, no teardown
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    sub.emit('ready') // reconnect — teardown; s1.close throws, s2.close runs
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'session-hub failed to close socket on resync',
+    )
+    expect(s2.closed).toEqual({ code: 1011, reason: 'redis-resync-required' })
+    expect(hub.hasLocal('cmp-rt')).toBe(false)
+
+    await hub.close()
+  })
+
+  it('close() swallows a throwing punsubscribe (logs warn, still clears + quits)', async () => {
+    const sub = makeFakeSub()
+    sub.punsubscribe = vi.fn().mockRejectedValue(new Error('punsub-boom'))
+    const { logger, warn } = makeRecordingLogger()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger,
+    })
+    const s = fakeSocket()
+    hub.register('cmp-pun', 'u1', s)
+
+    await hub.close()
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'session-hub punsubscribe failed during close',
+    )
+    // The registry was still cleared and quit was still attempted.
+    expect(hub.hasLocal('cmp-pun')).toBe(false)
+    expect(sub.quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('close() swallows a throwing quit (logs warn)', async () => {
+    const sub = makeFakeSub()
+    sub.quit = vi.fn().mockRejectedValue(new Error('quit-boom'))
+    const { logger, warn } = makeRecordingLogger()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger,
+    })
+
+    await hub.close()
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'session-hub quit failed during close',
+    )
+    expect(sub.punsubscribe).toHaveBeenCalledTimes(1)
   })
 })

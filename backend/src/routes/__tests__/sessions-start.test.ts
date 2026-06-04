@@ -261,6 +261,22 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       expect(await sessionBalance(pool, owner.userId)).toBe(2)
     })
 
+    it('active session AND a prep for the NEXT number → 409 session_already_active (precondition 3)', async () => {
+      // The plain duplicate test 409s at `prep_not_ready` (no prep for session
+      // 2). Seeding a prep for the next number lets /start get PAST the prep
+      // precondition and hit precondition 3 (an active session already exists)
+      // → the `getActiveByCampaign` 409 arm specifically.
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      expect((await postStart(app, campaignId, owner.devSub)).statusCode).toBe(200)
+      await seedPrep(pool, campaignId, 2) // next number after the active session
+
+      const second = await postStart(app, campaignId, owner.devSub)
+      expect(second.statusCode).toBe(409)
+      expect(second.json<{ code: string }>().code).toBe('session_already_active')
+      // Still exactly one debit.
+      expect(await sessionBalance(pool, owner.userId)).toBe(2)
+    })
+
     it('non-member → 403', async () => {
       const { campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
       const stranger = await seedUser(pool, scope, 1)

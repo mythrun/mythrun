@@ -145,6 +145,25 @@ describe('makeSessionState — state blob', () => {
     await redis.set(`${KEY_PREFIX}session:${cId}:state`, '{not json')
     expect(await ss.getState(cId)).toBeNull()
   })
+
+  it('getState returns null when the blob is valid JSON but not an object', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    // Valid JSON that parses to a non-object (a bare number) → fails the
+    // `typeof parsed !== 'object'` narrowing arm, treated as absent.
+    await redis.set(`${KEY_PREFIX}session:${cId}:state`, '42')
+    expect(await ss.getState(cId)).toBeNull()
+  })
+
+  it('getState returns null when the blob is an object missing a participants array', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    // Valid JSON object but `participants` is absent / not an array → fails the
+    // `Array.isArray(...participants)` narrowing arm, treated as absent.
+    await redis.set(
+      `${KEY_PREFIX}session:${cId}:state`,
+      JSON.stringify({ mode: 'exploration', status: 'active' }),
+    )
+    expect(await ss.getState(cId)).toBeNull()
+  })
 })
 
 describe('makeSessionState — refreshTtls', () => {
@@ -237,5 +256,28 @@ describe('makeSessionState — checkpoint', () => {
     }
     const result = await ss.checkpoint(cId, 's-1', store)
     expect(result.maxSeq).toBe(0)
+  })
+
+  it('checkpoints a null state when the live :state blob is corrupt JSON', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    // readRawState re-reads the live blob without re-validating; corrupt JSON
+    // falls into its catch arm → null state. The checkpoint still succeeds (a
+    // corrupt blob is the connect path's problem on restore, not here).
+    await redis.set(`${KEY_PREFIX}session:${cId}:state`, '{not json')
+
+    const writes: { sessionId: string; envelope: string }[] = []
+    const store: CheckpointStore = {
+      readMaxSeq: vi.fn(() => Promise.resolve(3)),
+      writeCheckpoint: vi.fn((sessionId: string, envelope: string) => {
+        writes.push({ sessionId, envelope })
+        return Promise.resolve()
+      }),
+    }
+
+    const result = await ss.checkpoint(cId, 's-1', store)
+    expect(result.maxSeq).toBe(3)
+    const parsed = JSON.parse(writes[0]?.envelope ?? '{}') as { maxSeq: number; state: unknown }
+    expect(parsed.maxSeq).toBe(3)
+    expect(parsed.state).toBeNull()
   })
 })
