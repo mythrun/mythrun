@@ -104,6 +104,10 @@ on import.
 | GET /api/invites/:inviteCode/preview | invite-preview | action-only |
 | POST /api/invites/:inviteCode/accept | invite-accept | action-only |
 | POST /api/sessions/:id/ws-ticket | session-ticket | action-only |
+| POST /api/sessions/:id/start | session-start | action-only |
+| GET /api/sessions/:id/active | session-active | action-only |
+| GET /api/sessions/:id/messages | session-messages | action-only |
+| GET /ws/session/:sessionId | (exempt — WS upgrade handshake, not a fetch-able HTTP endpoint; no JSDOM socket transport) | — |
 | GET /api/billing/skus | skus | action-only |
 | GET /api/billing/subscription | subscription | action-only |
 | GET /api/billing/balance | balance | action-only |

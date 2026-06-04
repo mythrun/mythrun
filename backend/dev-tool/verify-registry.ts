@@ -108,6 +108,9 @@ export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> 
   'health-live': [{ method: 'GET', path: '/health' }],
   'health-ready': [{ method: 'GET', path: '/health/ready' }],
   'session-ticket': [{ method: 'POST', path: '/api/sessions/:id/ws-ticket' }],
+  'session-start': [{ method: 'POST', path: '/api/sessions/:id/start' }],
+  'session-active': [{ method: 'GET', path: '/api/sessions/:id/active' }],
+  'session-messages': [{ method: 'GET', path: '/api/sessions/:id/messages' }],
 }
 
 // Panels that legitimately have a `mount*` export but are NOT composed
@@ -179,15 +182,15 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // page panel; E2E via MYT-64. (MYT-62 T6.)
   { method: 'GET', path: '/api/campaigns/:campaignId/prep-status' },
 
-  // MYT-65 session-runtime routes. The live multiplayer session transport is
-  // driven by real WebSocket clients + HTTP lifecycle calls, not a
-  // JSDOM-mountable dev-tool panel — /start, /active, /messages, and the WS
-  // upgrade have no inspectable page surface here. Behavior is covered by the
-  // backend session-route + ws-session integration tests (the two-client E2E).
-  // A future dev-tool session panel could replace these exemptions.
-  { method: 'POST', path: '/api/sessions/:id/start' },
-  { method: 'GET', path: '/api/sessions/:id/active' },
-  { method: 'GET', path: '/api/sessions/:id/messages' },
+  // GET /ws/session/:sessionId: the MYT-65 WebSocket-upgrade handshake. A WS
+  // upgrade is not a fetch-able HTTP endpoint — JSDOM has no socket transport,
+  // the verify harness only wraps `fetch`, and none of the three panel patterns
+  // (fetch-on-mount / event-driven / action-only) models a raw upgrade. The
+  // HTTP half of the handshake (ticket mint) IS exercised by the session-ticket
+  // panel; the live socket is covered by the backend ws-session two-client
+  // integration test. The three REST lifecycle routes (/start, /active,
+  // /messages) are NOT exempt — they now have dev-tool action panels on the
+  // System page (session-start / session-active / session-messages).
   { method: 'GET', path: '/ws/session/:sessionId' },
 ]
 
@@ -283,7 +286,14 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
     mount: mountSystemPage,
     readySelector: '[data-page]',
     errorSelector: '[data-state="error"]',
-    panels: ['health-live', 'health-ready', 'session-ticket'],
+    panels: [
+      'health-live',
+      'health-ready',
+      'session-ticket',
+      'session-start',
+      'session-active',
+      'session-messages',
+    ],
   },
 }
 

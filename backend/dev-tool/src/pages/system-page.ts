@@ -10,6 +10,9 @@ import { buildPageBody } from './_shared/page-skeleton.js'
 import { mountHealthLivePanel } from '../components/health-live-panel.js'
 import { mountHealthReadyPanel } from '../components/health-ready-panel.js'
 import { mountSessionTicketPanel } from '../components/session-ticket-panel.js'
+import { mountSessionStartPanel } from '../components/session-start-panel.js'
+import { mountSessionActivePanel } from '../components/session-active-panel.js'
+import { mountSessionMessagesPanel } from '../components/session-messages-panel.js'
 
 const SECTIONS: readonly {
   readonly id: string
@@ -18,6 +21,9 @@ const SECTIONS: readonly {
   { id: 'health-live', mount: mountHealthLivePanel },
   { id: 'health-ready', mount: mountHealthReadyPanel },
   { id: 'session-ticket', mount: mountSessionTicketPanel },
+  { id: 'session-start', mount: mountSessionStartPanel },
+  { id: 'session-active', mount: mountSessionActivePanel },
+  { id: 'session-messages', mount: mountSessionMessagesPanel },
 ]
 
 export function mountSystemPage(parent: HTMLElement): PanelHandle {
