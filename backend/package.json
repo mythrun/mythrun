@@ -34,6 +34,7 @@
     "@aws-sdk/client-cognito-identity-provider": "^3.1055.0",
     "@aws-sdk/client-secrets-manager": "^3.1055.0",
     "@fastify/rate-limit": "^10.3.0",
+    "@fastify/websocket": "^11.0.0",
     "ai": "^6.0.176",
     "aws-jwt-verify": "^5.1.1",
     "bullmq": "^5.76.8",
