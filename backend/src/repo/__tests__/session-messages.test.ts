@@ -5,6 +5,7 @@ import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
 import { createSessionsRepo } from '../sessions.js'
+import { createSessionMessagesRepo } from '../session-messages.js'
 import { createRepo } from '../index.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
@@ -143,6 +144,43 @@ describe('repo.sessionMessages (integration)', () => {
     const all = await repo.sessionMessages.listAfterSeq(sessionId, 0)
     expect(all.map((r) => r.seq)).toEqual([1, 2, 3])
     expect(all.map((r) => r.content)).toEqual(['one', 'two', 'three'])
+  })
+
+  it('maxSeq returns 0 when no messages exist, then the durable MAX(seq)', async () => {
+    // MYT-65 Task 10: the suspend checkpoint reads this DURABLE max (distinct
+    // from the live Redis :seq counter). Empty → 0; after appends → MAX(seq).
+    const repo = createRepo(pool)
+    expect(await repo.sessionMessages.maxSeq(sessionId)).toBe(0)
+
+    await repo.sessionMessages.append({
+      sessionId,
+      seq: 1,
+      userId,
+      messageType: 'player_message',
+      content: 'one',
+    })
+    await repo.sessionMessages.append({
+      sessionId,
+      seq: 5,
+      userId,
+      messageType: 'player_message',
+      content: 'five',
+    })
+    // MAX, not COUNT — a gap (seq 1 then 5) still reports 5.
+    expect(await repo.sessionMessages.maxSeq(sessionId)).toBe(5)
+  })
+
+  it('maxSeq defensively returns 0 when the query yields no row (fake pool)', async () => {
+    // `COALESCE(MAX(seq),0)::text` always returns exactly one row in real PG, so
+    // the `result.rows[0]?.max ?? 0` fallback arm is unreachable via integration.
+    // A fake pool returning zero rows exercises that defensive branch — mirrors
+    // the create/addMember fake-pool tests above + sessions.maxSessionNumber's
+    // identical idiom.
+    const fakePool = {
+      query: () => Promise.resolve({ rows: [], rowCount: 0 }),
+    } as unknown as Pool
+    const repo = createSessionMessagesRepo(fakePool)
+    expect(await repo.maxSeq('019dccef-0000-7000-8000-000000000000')).toBe(0)
   })
 
   it('composes inside repo.transaction (tx.sessionMessages.append)', async () => {

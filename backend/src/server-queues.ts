@@ -15,6 +15,11 @@ import {
 import type { WorldGenQueueLike } from './routes/campaigns.js'
 import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
 import type { SessionPrepQueueLike } from './routes/session-preps.js'
+import {
+  QUEUE_SESSION_SUSPEND,
+  type SuspendJobPayload,
+  type SuspendQueueLike,
+} from './session/session-suspend.js'
 
 /** MYT-51 T12: build the world-gen BullMQ queue + its plugin-facing
  *  adapter. Extracted from main() so the boot orchestrator stays under
@@ -128,6 +133,48 @@ export function buildSessionPrepQueue(redisBatch: Redis): {
   return { bullmqQueue, sessionPrepQueue }
 }
 
+/** MYT-65 Task 10: build the session-suspend BullMQ Queue (all-players-
+ *  disconnected → 5-min-grace → suspend). Returns the raw `bullmqQueue` (for
+ *  shutdown.close, after its Worker drains — Task 11) AND the narrow
+ *  `SuspendQueueLike` adapter the connection handler uses to schedule/cancel.
+ *
+ *  JOBID-DEDUP FOOTGUN (server-queues.ts:29-32): this queue's jobs use the
+ *  stable jobId `suspend-{sessionId}` so a re-add targets the same delayed job
+ *  and `cancelSuspend` (a `queue.remove`) clears it on reconnect. With BullMQ's
+ *  DEFAULT terminal-job retention, a `suspend-{sessionId}` job that COMPLETED
+ *  (a genuine suspend fired) would leave its jobId in the dedup set — so the
+ *  NEXT session's disconnect-driven `scheduleSuspend` for the same sessionId
+ *  (or a resumed session re-using the id) would silently no-op against the
+ *  leftover completed record. Setting `removeOnComplete: true + removeOnFail:
+ *  true` prunes the terminal job immediately so the jobId is free for a clean
+ *  re-add. (world-gen uses `{ count: 0 }`; `true` is the equivalent "keep none"
+ *  for a queue with no completed-job history needs — suspend jobs are
+ *  fire-and-forget, nothing reads their result.)
+ *
+ *  No `attempts`/backoff override: a suspend whose checkpoint write fails is
+ *  better re-driven by the NEXT all-disconnected event (which re-reads
+ *  presence) than blindly retried after a transient — the self-validating
+ *  processor makes a missed suspend self-healing. Default `attempts: 1` is
+ *  correct here. */
+export function buildSessionSuspendQueue(redisBatch: Redis): {
+  bullmqQueue: Queue
+  sessionSuspendQueue: SuspendQueueLike
+} {
+  const bullmqQueue = new Queue<SuspendJobPayload>(QUEUE_SESSION_SUSPEND, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  })
+  const sessionSuspendQueue: SuspendQueueLike = {
+    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+    getJob: (jobId) => bullmqQueue.getJob(jobId),
+    remove: (jobId) => bullmqQueue.remove(jobId),
+  }
+  return { bullmqQueue, sessionSuspendQueue }
+}
+
 // Stub queue/worker for the boot-gate-disabled fallback path. The fallback
 // never connects to Redis, so we can't construct real BullMQ handles; the
 // app-deps + shutdown contracts both expect a non-undefined value, so
@@ -162,6 +209,19 @@ export function stubCharacterCreationQueue(): CharacterCreationQueueLike & BullM
 export function stubSessionPrepQueue(): SessionPrepQueueLike & BullMqQueueShutdown {
   return {
     add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
+    close: () => Promise.resolve(),
+  }
+}
+
+// MYT-65 Task 10: session-suspend stub for the boot-gate-disabled fallback path.
+// Same rationale as the others — no Redis on that path. The WS transport is
+// unreachable on the fallback binary anyway (no live sessions without a DB), so
+// rejecting on enqueue + no-op on getJob/remove is operator-safe.
+export function stubSessionSuspendQueue(): SuspendQueueLike & BullMqQueueShutdown {
+  return {
+    add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
+    getJob: () => Promise.resolve(undefined),
+    remove: () => Promise.resolve(0),
     close: () => Promise.resolve(),
   }
 }

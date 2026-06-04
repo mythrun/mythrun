@@ -44,6 +44,21 @@ export function sessionMessagesNs(c: ClientLike) {
       )
       return result.rows.map(toSessionMessage)
     },
+
+    // MYT-65 Task 10: the DURABLE max seq — `MAX(seq)` over the persisted rows,
+    // 0 when none exist. This is the seq a suspend checkpoint records (via
+    // session-state's CheckpointStore.readMaxSeq), distinct from the live `:seq`
+    // INCR counter in Redis which sits one ahead between INCR and the row
+    // INSERT. Returns a plain `number` (COALESCE(...,0)::text → Number) — no new
+    // repo/types.ts type, matching sessions.maxSessionNumber's shape.
+    maxSeq: async (sessionId: string): Promise<number> => {
+      const result = await c.query<{ max: string }>(
+        `SELECT COALESCE(MAX(seq), 0)::text AS max
+           FROM session_messages WHERE session_id = $1`,
+        [sessionId],
+      )
+      return Number(result.rows[0]?.max ?? 0)
+    },
   }
 }
 
