@@ -6,6 +6,8 @@
 > **Parent**: `2026-04-06-production-architecture-overview.md`
 > **Depends on**: Backend Core (schema, repository), Auth & Users (JWT, WebSocket tickets, membership), Billing (session credit debit, token budget), Session Prep Pipeline (session prep generation — built before Session Runtime, invoked at session start)
 > **Scope**: Live multiplayer game sessions — WebSocket connection management, transient SessionController, FastThinker/SlowThinker/Scribe for multiplayer, DM trigger system with tiered inference, Redis session state, message ordering, reconnection protocol, session lifecycle (start/play/suspend/end).
+>
+> **Amended 2026-06-04** — §17 (Design Amendments: Agentic Orchestration & Tool-Calling) records brainstorm decisions on turn orchestration, the tool-calling contract, the Rules Lawyer (out-of-combat rules adherence), and ST-gated world-knowledge lookups. These extend §4, §6, §7, §8, and §9; they will be folded into those sections once the full agentic design locks (only the Slow Thinker job scope remains, deferred to issue brainstorming).
 
 ---
 
@@ -604,3 +606,124 @@ See the architecture overview spec section 5.2 for the complete message type tab
 | Session scheduling / calendar integration | Future |
 | In-session private messaging between players | Future (architecture supports via pub/sub channels, but no UI) |
 | Between-session world observer | Future |
+
+---
+
+## 17. Design Amendments — Agentic Orchestration & Tool-Calling (2026-06-04)
+
+> Captured during a Session Runtime design brainstorm. These decisions extend, and where noted amend, §4, §6, §7, §8, and §9. They will be folded into those sections once the full agentic design is locked — only the Slow Thinker job scope remains, deferred to issue brainstorming (see §17.8). Dating follows the World & Campaign Pipeline amendment convention.
+
+### 17.1 Turn orchestration: deterministic conductor, specialist tiers
+
+A DM turn is **conducted by deterministic code** (the SessionController), never by an LLM. ZFC: orchestration is code; reasoning is delegated. The cognitive tiers are bounded specialists — each does one job and hands back:
+
+- The SessionController runs the fixed macro sequence (trigger → ST eval, if not skipped → FT render → Scribe).
+- No LLM decides "what happens this turn." The **only** autonomy is the FT's bounded in-stream tool loop (§17.2): the FT decides *which mechanical tools it needs mid-prose*, not *what the turn is about*.
+- Rejected: ST-as-director (an LLM orchestrates the turn) and FT-as-autonomous-agent (the ignorant tier steers) — both hand the baton to an LLM and break ZFC, cost discipline, and the ignorance posture.
+
+### 17.2 Tool-calling contract
+
+**Constraint-injection principle (generalizes §10 / Principle #5 to the whole tool belt):** a tool is the authoritative source of mechanical / factual / legal truth. It returns its result as a **constraint**; the FT writes prose *informed by* the constraint but never *decides* the outcome. Failed check → the FT narrates *how* it fails, not a success. No spell slot → no spell, only the grasp for one. The resolver owns the outcome; the FT owns the telling.
+
+**Interleaved tool loop:** a turn is a multi-step generation. The FT streams prose until it needs a mechanical truth, emits a tool call, the conductor resolves it and feeds the result back, the FT continues (text → call → resolve → text → …). Resolve-before-narrate falls out for free. This is the prototype's validated `streamFtTurn` shape.
+
+**Hard per-turn iteration cap:** unlike the prototype (whose tool loop was unbounded), production caps tool-call iterations per turn (target 4–5) — a deterministic policy guard bounding worst-case round-trips and cost.
+
+**The tool belt** (all FT-called):
+
+| Tool | Resolver | Cost |
+|------|----------|------|
+| `roll_dice` | pure code (deterministic RNG) | ~0 |
+| `cast_spell` | Rules Lawyer (pure code): validate known + slot, decrement | ~0 |
+| `spend_resource` | Rules Lawyer (pure code): gold / consumable / limited feature-use — validate + decrement | ~0 |
+| `initiate_combat` | flip session to combat mode (initiative rolled mechanically) | ~0 |
+| `resolve_combat_round` | combat L1 debug shell (parse structured outcome) | ~0 |
+| `roll_skill_check` | 1 Haiku DC-table call → deterministic roll → matched outcome tier as constraint (§10) | 1 Haiku |
+| `world_fact_lookup` | gated retrieval routed through the ST (§17.4) | heavy, rare |
+
+Five of seven resolve in pure code (no LLM, no meaningful latency). Only `roll_skill_check` (cheap Haiku) and `world_fact_lookup` (heavy, deliberately rare) involve a model. The interleaved loop's real cost is *extra FT inference passes*, heavily blunted by prompt caching on the static payload — so the honest tax is latency, not dollars, and four of the likely calls resolve instantly in code.
+
+### 17.3 Rules Lawyer — out-of-combat rules adherence
+
+Players use spells, abilities, items, and gold outside combat. A **Rules Lawyer** enforces this — as a **deterministic, server-authoritative service, NOT a new LLM tier.** (ZFC: resource math is mechanical computation, like dice and movement — code, not AI. "Enough gold? subtract it" is subtraction, not judgment.)
+
+- **Interpretation** (intent → structured action) is LLM work, but it is the **FT's tool call** — the FT already interprets all player intent — e.g. `{cast: fireball, slot: 3}`. Not a separate agent.
+- **Adjudication + mutation** (legality + state change) is the deterministic Rules Lawyer service: validate against the character sheet, mutate on success, or return a structured constraint the FT narrates around on failure.
+- **In-turn synchronous** (validate → FT narrates informed by the result) — not async like the Scribe. Mirrors the combat rules engine's "pure functions, server-authoritative, AI narrates" pattern. The Rules Lawyer is effectively the **exploration-mode sibling of the combat rules engine.**
+- **Shared live character ledger:** the Rules Lawyer (exploration) and the combat engine read/write **one** live per-character mechanical-state record (HP, spell slots, gold, inventory, limited-feature uses, conditions), so resources carry seamlessly across the exploration↔combat switch. This ledger is a **new session-state component** the current spec lacks (§4 / §11 track FT history, summary, combat, usage — but no exploration-time character ledger); it is persisted to Postgres on checkpoint/end like other session state.
+
+### 17.4 World-knowledge lookups — unified, ST-gated retrieval
+
+The FT runs on a curated prep slice (`ft_context`); the full world (entities, facts tagged by `access_level`, relationships) lives in Postgres. A `world_fact_lookup` is **on-demand retrieval from that store** — the bridge from working memory (the prep) to long-term memory (the world store). Rare and costly by design; used only when a player directly queries world state the FT cannot answer from context. Neither thinker is omniscient: the FT works from `ft_context`, the ST from `sd_playbook` (secret-inclusive but still a slice); the store is the source of truth, and a lookup augments a tier's context on demand.
+
+**Unified flow (boundary maintained, no sensitivity pre-guessing):**
+
+1. Player asks about knowledge not in context but possibly in the store, and **passes the gating skill check** (§17.5). A failed check skips the lookup entirely (avoids the cost) — the FT narrates the blank.
+2. The FT emits `world_fact_lookup`.
+3. A **resolver searches the world store** for relevant knowledge (mechanism in §17.6). Because of step 4, the resolver may over-pull freely, secrets included; it must find what is *relevant*, not what is *safe*.
+4. The retrieved knowledge **in its entirety, including secret-tier facts (marked as secret), is given to the ST** — never to the FT.
+5. The **ST makes the judgment call** on what (if anything) to surface, and returns it as a **stage direction** to the FT. On a **miss** (nothing relevant in the store), the ST **invents** a tone/thread-consistent answer instead (the play-is-canon loop) — same path.
+6. The FT responds to the player, informed by the ST's relay.
+
+**Why this is the boundary:** the FT is *structurally* never on the receiving end of a retrieval — it only ever gets the ST's vetted relay (via the existing ST→FT direction channel). There is no tier filter on the retrieval to misconfigure; the single gate is the ST, which is *allowed* secrets. The FT's inbound channels stay at exactly two (player messages + ST direction). Mechanically it fits the interleaved loop: the `world_fact_lookup` resolver runs search→ST internally and returns the ST's relay as the `tool_result`; the FT does not know an ST was in the loop.
+
+**Channel-semantics widening (amends §8.2):** §8.2 frames the ST `direction` as *behavior, not information*. The lookup flow adds a second, sanctioned mode — when a player has asked a direct question and **earned the answer via a passed check**, the ST may relay **vetted information** ("yes, a fishing town two days north"), not just behavior. The Haiku leak-check (§8.2) still bounds it: the ST cannot relay more than it decided to surface. This widening is a deliberate decision, not drift.
+
+**Cost note:** the ST is invoked on *every* lookup (Opus, mid-turn). Acceptable because lookups are skill-gated and rare. A principled future optimization — skip the ST when the retrieved set is *provably* all-non-secret (a known fact post-retrieval, not a guess) — is held in reserve, not adopted, to preserve the single-path boundary.
+
+### 17.5 The two lookup channels
+
+A world-knowledge query resolves through one of two channels, each gated by an appropriate skill check rolled *before* the lookup (so a failed check avoids the cost):
+
+- **Ask the DM (narrator) directly** — the PC tries to recall or deduce. Check against the PC's relevant skill (History / Arcana / Religion / etc.); obscurity sets the DC. The relayed answer is *objective* world truth (from the store, or invented on a miss) → canonized as fact.
+- **Ask an NPC** — the PC asks a character who may or may not know. Check against the **NPC's** scores (fabricated on the fly if the NPC has no stat block yet — acceptable). The player is told only that the NPC *succeeded or failed* a check, **without revealing the roll**. The answer is *what the NPC conveys* (bounded by the NPC's knowledge per the playbook; may be partial or wrong) → canonized as "the NPC claimed X," not necessarily ground truth. *(Exact claim-vs-canon write semantics is an open Piece-1 nuance — see §17.6.)*
+
+### 17.6 The world-knowledge resolver (mechanism)
+
+The resolver behind `world_fact_lookup` (§17.4) is a **small family of curated, parameterized retrieval tools the FT picks from** — e.g. `search_lore(topic)`, `locations_near(place, radius)`, `characters_known_to(character, name?)`. Routing is the FT's reasoning (which tool + args); execution is deterministic SQL that cannot hallucinate a column. This is §17.2's constraint-injection applied to retrieval, and the TAG (Table-Augmented Generation) division of labor: the database does the exact filtering / counting / joining; the LLM only interprets and narrates ("how many gods in the pantheon" is `COUNT(*)`, never the model's vibe).
+
+**Two orthogonal axes shape a lookup:**
+
+- **Substrate** (what kind of query) — selects the retrieval mechanism.
+- **Channel** (who is asked: DM vs NPC, §17.5) — selects the gating skill check and the truth semantics of the answer.
+
+**Three substrates, one Postgres instance:**
+
+- `pgvector` — semantic lore ("what's known about the gods"); the only true vector-RAG component.
+- Recursive CTEs / `ltree` — relationship traversal ("does X know anyone named Y," faction trees); no external graph DB for one world's social graph.
+- Coordinate math / PostGIS — spatial ("settlements near here").
+
+**Curated tools are the primary path; raw text-to-SQL is a sandboxed escape hatch only** (read-only role, statement timeout, row caps, a restricted view — never base tables), reserved for genuinely long-tail queries the curated set didn't anticipate. Never the default for correctness-sensitive work — real-world text-to-SQL accuracy on joins/filters is too low to trust by default.
+
+**No tier-filtering on the resolver.** Because every result funnels to the ST (§17.4 step 4), the resolver queries *across all tiers freely* — it must find what is *relevant*, not what is *safe*. The permission boundary is the ST gate, not the query. (Row-level security stays available as optional defense-in-depth; it is not the boundary.)
+
+**Empty ≠ invent.** A zero-row result is a legitimate "none" (no settlements near an isolated city), not an automatic trigger to fabricate. The ST arbitrates genuine emptiness (relay "none") vs. a real gap worth inventing (the play-is-canon path, §17.4 step 5).
+
+**Read and write share this resolver.** The Scribe reuses these same tools at write time for entity resolution (match-vs-mint against canon via name + `pgvector` similarity) — see §17.7.
+
+### 17.7 The write-authority map
+
+Four things now mutate game state — the Rules Lawyer, the Scribe, the combat engine, and the play-is-canon loop. They sort cleanly by one organizing principle: **timing follows dependency.** State the *next action* depends on is written synchronously and authoritatively; state that only matters for *future continuity* is written async. That yields three classes.
+
+**Class 1 — Mechanical character state (in-turn, synchronous, deterministic code).** HP, spell slots, gold, inventory, limited-feature uses, conditions. Written by the **Rules Lawyer** (exploration) and the **combat engine** (combat) to **one shared live character ledger**, the instant an action resolves — because the next tool call may depend on it (you cannot async-debit a slot and then let the FT cast from it again). No LLM in this path: deterministic validation + mutation. The ledger is new session state (§4 / §11 lack it) and is persisted on checkpoint/end.
+
+**Class 2 — Narrative world state (proposed in-turn, reconciled at session end).** Entities, facts, relationships. Two proposal sources: the FT's **lightweight fact delta** (incidental named things it introduced in prose — public by construction) and **ST injections** (lookup inventions, sanctioned reveals — tier set by the ST). Both land in an ephemeral **session working set**, not durable canon. The FT and the §17.6 resolver read **working-set ∪ canon**, so a fact invented in turn 5 is visible in turn 6 with no read-after-write gap; intra-session entity resolution is small-scope and cheap. The **Scribe is a reconciler, not an extractor** (amends §9): the heavy pass — cross-canon entity resolution (match-vs-mint via the §17.6 resolver), contradiction handling, and the multi-substrate commit (relational row + relationship edges + `pgvector` embedding + coordinates) — runs **once at session end** with full context (B1). Nothing in-session needs durable canon (see the wiki note), so deferral costs nothing and buys better resolution + lower per-turn cost. The working set rides the existing 5-min checkpoint (raw facts) for crash durability.
+
+**Class 3 — Conflict adjudication (the ST, gated — the play-is-canon decision, formalized).** When a proposed fact contradicts canon, the ST adjudicates on a graduated, tier-aware ladder:
+
+- minor / peripheral → **absorb** (canonize the improvised version);
+- brushes a secret but no hard break → **steer** (nudge future narration away);
+- *fundamentally breaks a core secret* → **retcon**.
+
+A **retcon** is an open, in-fiction correction the FT delivers ("earlier I said X — correction, it's actually Z; from there…"). Its *form* is the player-facing DM voice (terse, honest, not jokey); its *content* is **ST-authored and secret-preserving** — Z removes the contradiction without revealing the secret (the FT still never learns it; an early reveal only if revelation conditions already allow). It is recorded in the append-only log as a new event superseding X, so history and "why is this canon" stay intact — which is much of *why* the log is append-only.
+
+**Prompt detection of the dangerous case.** Most reconciliation defers to session end, but core-secret breaks can't wait — a retcon's blast radius grows with every turn the false fact sits. So a **cheap per-turn secret tripwire** (the existing Haiku triage, repurposed) checks each turn's assertions against the **session prep's core secrets** (exactly what is "in play" and breakable, per §17.4); a hit escalates to the ST → retcon within a turn or two, a miss costs almost nothing. Net per-turn Scribe cost goes *down* versus the old §9 design — no per-turn Sonnet extraction, just a Haiku tripwire + a working-set append.
+
+**The player wiki + transcript search.** The wiki (sidebar, *known* facts per entity) **updates at session end**, off the hot path — so it never exposes half-reconciled or about-to-be-retconned canon. In-session lookback is a **search over the player-facing transcript** (FT prose + player messages + skill/dice/combat events — explicitly *not* the debug `st_evaluation` / `scribe_result` stream). That corpus is public by construction, so search **cannot leak a secret** (there is nothing to filter), and it is the better fit for "what did X say / what happened with Y" recall anyway. The end-of-session reconciliation produces both outputs from one pass: the wiki refresh **and** the next-session prep handoff. (Touches the UX spec: wiki cadence + the search feature.)
+
+This map amends §6 (step 4 — the per-turn Scribe becomes tripwire + working-set append), §9 (Scribe = reconciler), §11 (checkpoint the working set), and §14 (the heavy reconciliation + wiki refresh + handoff all run at session end).
+
+### 17.8 Open (deferred to issue brainstorming)
+
+- **Slow Thinker job scope** — one monolithic director vs. a family of privileged Opus calls (evaluate-turn / lookup-gate / invent-missing-fact / adjudicate-conflict-and-author-retcon). A decomposition-time decision; the tier and its inputs are settled, only the call-shape is open.
+- **NPC-claim vs. objective-canon write semantics (§17.5)** — whether an NPC's conveyed answer is written as a belief/claim or as ground truth. A write-path detail for the Scribe issue.
