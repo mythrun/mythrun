@@ -61,6 +61,21 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # MYT-65 follow-up: the session-suspend real-broker test
+      # (scheduleSuspend/cancelSuspend) exercises a live BullMQ queue on the
+      # BATCH Redis. Local runs two Redis instances (realtime 6379 + batch
+      # 6380); CI only had 6379, so the test fell back to its 6380 default and
+      # hung on a dead connection until the vitest timeout. Mirror the
+      # two-Redis topology so the batch-backed tests connect to a real server.
+      redis-batch:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -82,6 +97,7 @@ jobs:
         env:
           DATABASE_URL_TEST: postgresql://mythrun:mythrun_dev@127.0.0.1:5432/mythrun_test
           REDIS_REALTIME_URL: redis://127.0.0.1:6379
+          REDIS_BATCH_URL: redis://127.0.0.1:6380
 
       - name: Pre-flight — verify required vars are set
         run: |
