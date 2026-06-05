@@ -541,16 +541,20 @@ describe('ws-session route (integration)', () => {
     // the server's disconnect path (the same path a dropped connection takes).
     ws.terminate()
 
-    // Poll for the close handler to run (presence drop is async on the server
-    // side after the socket's 'close' event).
+    // The close handler runs async on the server in sequence: dropPresence →
+    // countPresence → (if 0) scheduleSuspend. scheduleSuspend is the LAST step,
+    // so poll for the scheduled suspend job itself. Waiting only for presence=0
+    // (an earlier step) races the later scheduleSuspend under parallel load —
+    // the presence key drops, the assert fires, but the schedule hasn't landed
+    // yet. Polling the terminal effect implies every prior step completed.
     await vi.waitFor(
-      async () => {
-        expect(await sessionState.countPresence(campaignId)).toBe(0)
+      () => {
+        expect(suspendQueue.adds.map((a) => a.sessionId)).toContain(sessionId)
       },
       { timeout: 4000, interval: 50 },
     )
-    expect(suspendQueue.adds.map((a) => a.sessionId)).toContain(sessionId)
     expect(suspendQueue.adds.map((a) => a.jobId)).toContain(`suspend-${sessionId}`)
+    expect(await sessionState.countPresence(campaignId)).toBe(0)
   })
 
   it('a throwing publish on player_message DROPS the frame but KEEPS THE SOCKET ALIVE', async () => {
