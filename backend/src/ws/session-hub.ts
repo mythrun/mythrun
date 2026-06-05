@@ -15,12 +15,19 @@
 //   (b) resync teardown CLOSES the writable WS socket (close(1011, …)),
 //       not an SSE sink. Clients reconnect + replay history.
 //
-// Pattern: `{keyPrefix}session:campaign:*`. Channel-key extraction uses
-// suffix-slice, NOT split-on-':' (the prefix contains colons).
+// The channel format (pattern, per-campaign channel, campaignId extraction)
+// is owned by contract/session-channel.ts — the turn worker publishes to the
+// exact channel this hub subscribes to, so both derive it from there.
+// Extraction is suffix-slice, NOT split-on-':' (the prefix contains colons).
 
 import type { Redis } from 'ioredis'
 import type pino from 'pino'
 import type { ServerFrame } from '../contract/session-events.js'
+import {
+  campaignIdFromChannel,
+  sessionChannel,
+  sessionChannelPattern,
+} from '../contract/session-channel.js'
 
 /**
  * The subset of `ws`'s WebSocket the hub uses. The real `@fastify/websocket`
@@ -76,8 +83,7 @@ export async function createSessionHub({
     enableOfflineQueue: true,
   })
 
-  const pattern = `${keyPrefix}session:campaign:*`
-  const channelPrefix = `${keyPrefix}session:campaign:`
+  const pattern = sessionChannelPattern(keyPrefix)
   // campaignId -> (userId -> socket). Writable registry, one socket per user.
   const registry = new Map<string, Map<string, WSLike>>()
   let closed = false
@@ -85,10 +91,6 @@ export async function createSessionHub({
   // sockets haven't missed any messages yet. Subsequent 'ready' events
   // follow a disconnect and DO need a resync teardown.
   let everReady = false
-
-  function channelFor(campaignId: string): string {
-    return `${channelPrefix}${campaignId}`
-  }
 
   sub.on('error', (err: Error) => {
     // Warn-and-continue: ioredis auto-reconnects. The 'ready'-after-disconnect
@@ -137,8 +139,11 @@ export async function createSessionHub({
   })
 
   sub.on('pmessage', (_pattern: string, channel: string, payload: string) => {
-    if (!channel.startsWith(channelPrefix)) return
-    const campaignId = channel.slice(channelPrefix.length)
+    // sessionChannel(keyPrefix, '') is the bare `{prefix}session:campaign:`
+    // prefix; reject anything that doesn't start with it. (PSUBSCRIBE already
+    // filters to the pattern, so this is belt-and-suspenders.)
+    if (!channel.startsWith(sessionChannel(keyPrefix, ''))) return
+    const campaignId = campaignIdFromChannel(keyPrefix, channel)
     const users = registry.get(campaignId)
     if (!users || users.size === 0) return
     // Send the raw payload string — it's already the JSON-stringified frame.
@@ -179,7 +184,7 @@ export async function createSessionHub({
   }
 
   async function publish(campaignId: string, frame: ServerFrame): Promise<void> {
-    await redis.publish(channelFor(campaignId), JSON.stringify(frame))
+    await redis.publish(sessionChannel(keyPrefix, campaignId), JSON.stringify(frame))
   }
 
   async function close(): Promise<void> {
