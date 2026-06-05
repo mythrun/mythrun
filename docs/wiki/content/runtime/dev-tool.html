@@ -35,7 +35,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:e5281e64ae5aa448d8b0303c4191931e490579701ebac6aad036827596c28b86 -->
+<!-- source-hash: sha256:398765efa008373b7b3332af8c52c3b0f383f81783725f7e2ce2e0aa4402894e -->
 <!-- last-ticket: MYT-62 -->
 
 <h1>Dev tool</h1>
@@ -221,7 +221,10 @@
     </tr>
     <tr>
       <td><code>System</code></td>
-      <td>Health (liveness) / Health (ready) / WS ticket.</td>
+      <td>
+        Health (liveness) / Health (ready) / WS ticket / Session start / Session active / Session
+        messages.
+      </td>
     </tr>
   </tbody>
 </table>
@@ -853,7 +856,7 @@
     <tr>
       <td><code>System</code></td>
       <td>No</td>
-      <td>Health (liveness + ready) / WS ticket.</td>
+      <td>Health (liveness + ready) / WS ticket / session start + active + messages.</td>
     </tr>
   </tbody>
 </table>
