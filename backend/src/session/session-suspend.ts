@@ -148,7 +148,7 @@ interface SuspendJobLike {
  * On a genuine all-disconnected fire:
  *   1. `checkpoint(campaignId, sessionId, store)` — Task 5's checkpoint reads
  *      the DURABLE MAX(seq) via the store and flushes the live `:state` blob
- *      into a self-describing `{kind:'myt65-checkpoint', maxSeq, state}`
+ *      into a self-describing `{kind:'myt66-checkpoint', maxSeq, state, turnState}`
  *      envelope, persisted through `store.writeCheckpoint`.
  *   2. `refreshTtls(campaignId)` — extend the Redis transport keys (~1-2h) so a
  *      quick reconnect cold-starts from live Redis rather than the checkpoint.

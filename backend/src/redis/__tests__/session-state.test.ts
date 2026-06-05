@@ -202,6 +202,56 @@ describe('makeSessionState — refreshTtls', () => {
   })
 })
 
+describe('makeSessionState — turn state', () => {
+  let redis: Redis
+
+  beforeEach(async () => {
+    redis = new IoRedisMock()
+    // ioredis-mock backs every `new IoRedisMock()` with ONE shared in-memory
+    // keyspace per process (verified), so per-test instances do NOT isolate.
+    // Flush to guarantee a clean keyspace per test — the ws-ticket test
+    // dodges this only because its keys are random nonces.
+    await redis.flushall()
+  })
+  afterEach(async () => {
+    await redis.quit()
+  })
+
+  it('loadTurnState round-trips an atomic flushTurnState', async () => {
+    const s = makeSessionState(redis, 'p:')
+    await s.flushTurnState('c1', {
+      ftHistory: [{ role: 'user', content: 'hi' }],
+      summary: 'sum',
+      usage: { input: 2, output: 3 },
+    })
+    expect(await s.loadTurnState('c1')).toEqual({
+      ftHistory: [{ role: 'user', content: 'hi' }],
+      summary: 'sum',
+      usage: { input: 2, output: 3 },
+    })
+  })
+
+  it('loadTurnState returns empties when unset', async () => {
+    expect(await makeSessionState(redis, 'p:').loadTurnState('c-none')).toEqual({
+      ftHistory: [],
+      summary: '',
+      usage: { input: 0, output: 0 },
+    })
+  })
+
+  it('flushTurnState sets a TTL on all three turn-state keys', async () => {
+    const s = makeSessionState(redis, 'p:')
+    await s.flushTurnState('c1', {
+      ftHistory: [{ role: 'assistant', content: 'ok' }],
+      summary: 's',
+      usage: { input: 1, output: 1 },
+    })
+    expect(await redis.ttl('p:session:c1:ft_history')).toBeGreaterThan(0)
+    expect(await redis.ttl('p:session:c1:summary')).toBeGreaterThan(0)
+    expect(await redis.ttl('p:session:c1:usage')).toBeGreaterThan(0)
+  })
+})
+
 describe('makeSessionState — checkpoint', () => {
   let redis: Redis
 
@@ -234,6 +284,13 @@ describe('makeSessionState — checkpoint', () => {
       }),
     }
 
+    // Seed turn-state so the widened envelope (H6) carries a non-empty turnState.
+    await ss.flushTurnState(cId, {
+      ftHistory: [{ role: 'user', content: 'I search' }],
+      summary: 'a running summary',
+      usage: { input: 5, output: 9 },
+    })
+
     const result = await ss.checkpoint(cId, 's-1', store)
     expect(result.maxSeq).toBe(7) // from the durable store, NOT the :seq counter (8)
     expect(readMaxSeq).toHaveBeenCalledWith('s-1')
@@ -241,11 +298,24 @@ describe('makeSessionState — checkpoint', () => {
     expect(writes).toHaveLength(1)
     expect(writes[0]?.sessionId).toBe('s-1')
     const parsed = JSON.parse(writes[0]?.envelope ?? '{}') as {
+      kind: string
       maxSeq: number
       state: { mode?: string } | null
+      turnState: {
+        ftHistory: { role: string; content: string }[]
+        summary: string
+        usage: { input: number; output: number }
+      }
     }
+    // H6: envelope kind bumped to myt66 and now carries the turn-state superset.
+    expect(parsed.kind).toBe('myt66-checkpoint')
     expect(parsed.maxSeq).toBe(7)
     expect(parsed.state?.mode).toBe('exploration')
+    expect(parsed.turnState).toEqual({
+      ftHistory: [{ role: 'user', content: 'I search' }],
+      summary: 'a running summary',
+      usage: { input: 5, output: 9 },
+    })
   })
 
   it('treats a 0 MAX seq (no messages yet) as 0', async () => {

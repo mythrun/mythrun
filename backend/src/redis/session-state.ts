@@ -19,6 +19,8 @@
 
 import type { Redis } from 'ioredis'
 
+import type { ConversationMessage, TokenUsage } from '../session/tiers/types.js'
+
 /**
  * Per-connection presence TTL, seconds. Each `conn:{containerId}:{userId}`
  * key carries this expiry so a CRASHED container's presence lapses
@@ -43,6 +45,19 @@ export interface SessionStateBlob {
   readonly participants: readonly string[]
   readonly mode: SessionMode
   readonly status: 'active' | 'ended' | 'crashed'
+}
+
+/**
+ * The LLM-tier turn state a worker-side `SessionController` loads at the top of
+ * a turn and flushes at the bottom (MYT-66). Backed by three Redis keys
+ * (`:ft_history`, `:summary`, `:usage`) so a reconnecting / crash-recovering
+ * container cold-starts the conversation from live Redis rather than replaying
+ * `session_messages`. The checkpoint envelope (H6) folds a snapshot of this in.
+ */
+export interface TurnState {
+  readonly ftHistory: ConversationMessage[]
+  readonly summary: string
+  readonly usage: TokenUsage
 }
 
 export interface CheckpointResult {
@@ -86,6 +101,13 @@ export interface SessionState {
   getState(campaignId: string): Promise<SessionStateBlob | null>
   /** Writes the `:state` blob (JSON), refreshing its TTL. */
   setState(campaignId: string, state: SessionStateBlob): Promise<void>
+  /** Bulk-reads the three LLM-tier turn-state keys (`:ft_history`, `:summary`,
+   *  `:usage`) via a single `MGET`, JSON-parsing each with an empty default —
+   *  an unset / corrupt key yields `[]` / `''` / `{input:0,output:0}`. */
+  loadTurnState(campaignId: string): Promise<TurnState>
+  /** Atomically writes all three turn-state keys + refreshes their TTL in one
+   *  `MULTI`, so a crash never leaves history/summary/usage partially updated. */
+  flushTurnState(campaignId: string, ts: TurnState): Promise<void>
   /** Bumps the TTL on the durable transport keys (`:seq`, `:state`) so an
    *  active session's state doesn't expire. Called on every interaction. */
   refreshTtls(campaignId: string): Promise<void>
@@ -103,9 +125,17 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   const base = (campaignId: string): string => `${keyPrefix}session:${campaignId}`
   const seqKey = (campaignId: string): string => `${base(campaignId)}:seq`
   const stateKey = (campaignId: string): string => `${base(campaignId)}:state`
+  const historyKey = (campaignId: string): string => `${base(campaignId)}:ft_history`
+  const summaryKey = (campaignId: string): string => `${base(campaignId)}:summary`
+  const usageKey = (campaignId: string): string => `${base(campaignId)}:usage`
   const connKey = (campaignId: string, containerId: string, userId: string): string =>
     `${base(campaignId)}:conn:${containerId}:${userId}`
   const connPattern = (campaignId: string): string => `${base(campaignId)}:conn:*`
+
+  // Bound once so both the returned `loadTurnState` and `checkpoint` (H6, which
+  // folds a turn-state snapshot into the envelope) share one reader.
+  const loadTurnState = (campaignId: string): Promise<TurnState> =>
+    readTurnState(redis, historyKey(campaignId), summaryKey(campaignId), usageKey(campaignId))
 
   return {
     nextSeq: async (campaignId) => redis.incr(seqKey(campaignId)),
@@ -181,6 +211,25 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
       await redis.set(stateKey(campaignId), JSON.stringify(state), 'EX', STATE_TTL)
     },
 
+    loadTurnState,
+
+    flushTurnState: async (campaignId, ts) => {
+      // First real MULTI in the repo (H3): the three turn-state writes + their
+      // TTL refresh commit atomically, so a crash mid-flush never leaves
+      // history/summary/usage out of sync. pexpire takes milliseconds, hence
+      // STATE_TTL (seconds) * 1000.
+      const ttlMs = STATE_TTL * 1000
+      await redis
+        .multi()
+        .set(historyKey(campaignId), JSON.stringify(ts.ftHistory))
+        .set(summaryKey(campaignId), ts.summary)
+        .set(usageKey(campaignId), JSON.stringify(ts.usage))
+        .pexpire(historyKey(campaignId), ttlMs)
+        .pexpire(summaryKey(campaignId), ttlMs)
+        .pexpire(usageKey(campaignId), ttlMs)
+        .exec()
+    },
+
     refreshTtls: async (campaignId) => {
       // EXPIRE is a no-op on a missing key (returns 0), so refreshing a
       // not-yet-created :state/:seq doesn't conjure it.
@@ -216,11 +265,47 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
       //   sessions) is the right home, and Task 10 is the consumer that
       //   will pin the contract.
       const state = await readRawState(redis, stateKey(campaignId))
-      const envelope = JSON.stringify({ kind: 'myt65-checkpoint', maxSeq, state })
+      // H6: the envelope now folds in the LLM-tier turn-state snapshot so a
+      // suspend reader can cold-start the conversation, not just the transport
+      // counters. `kind` bumped to myt66 — the (not-yet-written) reader parses
+      // this superset of the old myt65 shape.
+      const turnState = await loadTurnState(campaignId)
+      const envelope = JSON.stringify({ kind: 'myt66-checkpoint', maxSeq, state, turnState })
       await store.writeCheckpoint(sessionId, envelope)
 
       return { maxSeq }
     },
+  }
+}
+
+/** Bulk-read the three turn-state keys via one MGET, JSON-parsing each with an
+ *  empty default — an unset key or a corrupt blob falls back to the zero value,
+ *  so a half-initialised session still loads cleanly. Free-standing so the
+ *  `makeSessionState` closure stays lean (mirrors `readRawState`). */
+async function readTurnState(
+  redis: Redis,
+  historyKey: string,
+  summaryKey: string,
+  usageKey: string,
+): Promise<TurnState> {
+  const [rawHistory, rawSummary, rawUsage] = await redis.mget(historyKey, summaryKey, usageKey)
+  return {
+    ftHistory: parseJson<ConversationMessage[]>(rawHistory, []),
+    summary: rawSummary ?? '',
+    usage: parseJson<TokenUsage>(rawUsage, { input: 0, output: 0 }),
+  }
+}
+
+/** JSON-parse a turn-state value, falling back to `fallback` when the key is
+ *  unset (`null`/`undefined` — `mget` types its misses as either) or holds
+ *  corrupt JSON. The caller pins the element type via the `T` argument (a parse
+ *  helper, not a bare `as` on the call site). */
+function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (raw === null || raw === undefined) return fallback
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
   }
 }
 
