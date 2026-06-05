@@ -1,13 +1,14 @@
 // Declarative WebSocket wire contract for the multiplayer session transport.
 //
-// MYT-65 covers the player-chat + system-event subset ONLY: the frames a
+// MYT-65 introduced the player-chat + system-event subset: the frames a
 // client and server exchange to join a room, chat, signal typing, and replay
-// history on reconnect. The DM-turn frames from the full §5.2 protocol
-// (text_delta, dm_thinking, skill_check, dice_roll, turn_end, combat_*,
-// session_end, st_evaluation, scribe_result, reaction_window, ...) are
-// deliberately ABSENT here — they land in MYT-66 when the DM-turn streaming
-// surface is built. Adding them prematurely would let the transport accept /
-// broadcast frame types it has no handler for.
+// history on reconnect. MYT-66 adds the first DM-turn streaming frames
+// (dm_thinking, text_delta, turn_end, turn_error) as server->client only. The
+// remaining §5.2 DM-turn frames (skill_check, dice_roll, combat_*,
+// session_end, st_evaluation, scribe_result, reaction_window, ...) are still
+// deliberately ABSENT here — they land as those surfaces are built. Adding
+// them prematurely would let the transport accept / broadcast frame types it
+// has no handler for.
 //
 // Mirrors the pattern in backend/src/contract/pipeline-events.ts: a
 // `readonly string[]` allowlist + a discriminated-union payload type per
@@ -24,9 +25,9 @@
 // `auth_response`, `combat_move` are full-protocol client frames added later.
 export const CLIENT_FRAME_TYPES = ['player_message', 'typing_start', 'typing_stop'] as const
 
-// Server -> Client frame types for the MYT-65 subset. `text_delta`,
-// `dm_thinking`, `turn_end`, `combat_*`, `session_end`, etc. are DM-turn
-// frames added in MYT-66.
+// Server -> Client frame types. The MYT-65 subset plus the MYT-66 DM-turn
+// streaming frames (`dm_thinking`, `text_delta`, `turn_end`, `turn_error`).
+// `combat_*`, `session_end`, etc. are further DM-turn frames added later.
 export const SERVER_FRAME_TYPES = [
   'session_ready',
   'session_reconnect',
@@ -36,6 +37,13 @@ export const SERVER_FRAME_TYPES = [
   'typing_start',
   'typing_stop',
   'error',
+  // MYT-66 DM-turn streaming frames (server -> client only). Each carries a
+  // `turnId` (H2: stable across redeliveries; the client dedups a re-streamed
+  // turn on it). They are intra-turn / control frames and carry NO seq.
+  'dm_thinking',
+  'text_delta',
+  'turn_end',
+  'turn_error',
 ] as const
 
 // Snapshot of a connected participant, used in the reconnect replay payload.
@@ -89,6 +97,14 @@ export type ServerFrame =
       mode: 'exploration' | 'combat'
     }
   | { type: 'error'; message: string }
+  // MYT-66 DM-turn streaming frames (server -> client only). `turnId` is stable
+  // across redeliveries (H2) so the client can dedup a re-streamed turn. These
+  // are intra-turn / control frames and carry NO seq, consistent with the
+  // presence-frame rule above.
+  | { type: 'dm_thinking'; turnId: string }
+  | { type: 'text_delta'; turnId: string; text: string }
+  | { type: 'turn_end'; turnId: string }
+  | { type: 'turn_error'; turnId: string; message: string }
 
 // Tripwire over the client allowlist. Only these client frame types may
 // originate a persisted/broadcast frame; everything else (DM-turn frames,
