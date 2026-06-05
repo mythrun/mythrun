@@ -22,6 +22,7 @@ import { campaignsRoutes } from './routes/campaigns.js'
 import { campaignCharactersPlugin } from './routes/campaign-characters.js'
 import { sessionPrepsPlugin } from './routes/session-preps.js'
 import { devCreditsRoutes } from './routes/dev-credits.js'
+import { devFireTurnRoutes } from './routes/dev-fire-turn.js'
 import { devPrepProseRoutes } from './routes/dev-prep-prose.js'
 import { PIPELINE_ROUTES } from './contract/pipeline-routes.js'
 import { createPipelineSubscriber, type PipelineSubscriber } from './sse/pipeline-subscriber.js'
@@ -402,6 +403,10 @@ export const buildApp = async (
   // mythrunProseSubscriber so the shutdown handler can close it.
   if (config.env.authMode === 'bypass') {
     await app.register(devCreditsRoutes, { pool: deps.pg })
+    // MYT-66 T10 — dev-only POST /api/dev/campaigns/:campaignId/fire-turn:
+    // enqueues one session-turn job so the enqueue → worker → broadcast
+    // round-trip can be smoked without the (MYT-67) player-chat trigger path.
+    await app.register(devFireTurnRoutes, { queue: deps.sessionTurnQueue, pool: deps.pg })
     const proseSubscriber = createPipelineSubscriber(deps.redisRealtime, deps.redisKeyPrefix, pinoLog, {
       channel: 'prep',
     })

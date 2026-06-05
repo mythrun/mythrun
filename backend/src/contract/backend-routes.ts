@@ -97,6 +97,12 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'POST', path: '/api/dev/credits/grant' },
   { method: 'GET', path: '/api/dev/credits/me' },
 
+  // Dev fire-turn (AUTH_MODE=bypass only). MYT-66 T10 — enqueues one
+  // session-turn job so the enqueue → worker → broadcast round-trip can be
+  // smoked without the (MYT-67) player-chat trigger path. Absent in production
+  // (the dev block is gated on authMode === 'bypass').
+  { method: 'POST', path: '/api/dev/campaigns/:campaignId/fire-turn' },
+
   // Dev prep-prose SSE (AUTH_MODE=bypass only). MYT-62 T5 — the structural
   // enforced-ignorance control: the only route that streams sd_playbook
   // prose (off the separate prep:campaign: channel), and it is absent in
