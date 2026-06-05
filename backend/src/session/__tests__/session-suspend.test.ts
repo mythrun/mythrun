@@ -176,9 +176,13 @@ describe('scheduleSuspend / cancelSuspend — real BullMQ delayed-job + jobId de
   })
 
   afterEach(async () => {
-    // obliterate wipes ALL jobs + the queue's keyspace; force:true ignores
-    // active locks. Then close the handle + its Redis connection.
-    await queue.obliterate({ force: true })
+    // Remove the single delayed job by its (constant) jobId rather than
+    // queue.obliterate(). obliterate does a full-keyspace SCAN MATCH, which on
+    // CI's shared batch Redis — every parallel test file hits 6380 at once —
+    // blows past the 10s hook timeout. This block only ever creates the one
+    // suspend job (deduped on suspendJobId), so a targeted O(1) remove fully
+    // isolates each test without scanning. Then close the handle + connection.
+    await queue.remove(suspendJobId(sessionId))
     await queue.close()
     await connection.quit()
   })
