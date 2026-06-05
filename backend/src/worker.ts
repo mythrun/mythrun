@@ -26,6 +26,8 @@ import {
   type CharacterIntegrationJobPayload,
 } from './llm/prep/character-integration-processor.js'
 import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
+import { buildSessionTurnWorker } from './session/turn-worker.js'
+import { QUEUE_SESSION_TURN } from './session/turn-queue.js'
 import { makePipelinePublishers } from './worker/publishers.js'
 
 const HEALTH_PORT = 3001
@@ -125,19 +127,31 @@ export async function main(): Promise<void> {
     { connection: redisBatch, concurrency: CONCURRENCY_SESSION_PREP },
   )
 
+  // Session-turn (MYT-66) — the lock-fenced DM-turn conductor. Wired HERE in the
+  // dedicated worker process (NOT the API server, which only enqueues turns).
+  // Reuses the already-probed `redisBatch` for BullMQ and constructs its lock /
+  // session-state / publisher on `redisRealtime`. The builder owns the H1 timing
+  // inequality + the H8 terminal-turn_error `failed` handler.
+  const sessionTurnWorker = buildSessionTurnWorker(
+    redisBatch,
+    redisRealtime,
+    env.redisKeyPrefix,
+    logger,
+  )
+
   // Start health server last — only marks healthy once everything else is up.
   const health = await startHealthServer(HEALTH_PORT, {
     pg,
     redisBatch,
     redisRealtime,
-    workers: [worldGenWorker, campaignSetupWorker, sessionPrepWorker],
+    workers: [worldGenWorker, campaignSetupWorker, sessionPrepWorker, sessionTurnWorker],
   })
 
   logger.info(
     {
       event: 'worker.started',
       healthPort: HEALTH_PORT,
-      queues: [QUEUE_WORLD_GEN, QUEUE_CAMPAIGN_SETUP, QUEUE_SESSION_PREP],
+      queues: [QUEUE_WORLD_GEN, QUEUE_CAMPAIGN_SETUP, QUEUE_SESSION_PREP, QUEUE_SESSION_TURN],
     },
     'worker started',
   )
@@ -156,6 +170,7 @@ export async function main(): Promise<void> {
       closeWithDeadline(worldGenWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(campaignSetupWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(sessionPrepWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(sessionTurnWorker, WORKER_CLOSE_GRACE_MS),
     ])
 
     await pg.end().catch((err: unknown) => {

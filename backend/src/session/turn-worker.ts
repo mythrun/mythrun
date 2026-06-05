@@ -1,0 +1,257 @@
+// backend/src/session/turn-worker.ts
+//
+// MYT-66 Task 9 — the session-turn worker: the lock-fenced conductor that runs
+// ONE DM turn per job in the dedicated worker.ts process.
+//
+// `processTurnJob` is the BullMQ processor body. It is the cluster-coordination
+// shell around `SessionController`:
+//
+//   1. Acquire the per-session lock (Task 3). No lock → contention; return
+//      `{ran:false}` and let BullMQ's `attempts` re-run the job (the real
+//      trigger queue + retry policy is MYT-67's §8). Only ONE container drives a
+//      campaign's turn at a time.
+//   2. Heartbeat the lock on an interval. If a refresh ever fails (the lock
+//      expired and a SUCCESSOR re-acquired it — H1 stalled-resume guard), set
+//      `lockLost`. The turn then ABORTS without flushing: the winning container
+//      owns the continuation, and a never-flush abort leaves Redis at the
+//      pre-turn snapshot (the SessionController recovery invariant).
+//   3. Run the turn through SessionController (load → process → flush). The
+//      `lockLost` checkpoints around the long body mean a lost lock stops us
+//      BEFORE the flush, never after.
+//   4. On a real (non-lock-lost) error, RETHROW so BullMQ applies its retry /
+//      `attempts` policy. The terminal `turn_error` frame is published by the
+//      worker's `failed`-event handler on the FINAL attempt (H8), NOT here.
+//   5. ALWAYS clear the heartbeat + release the lock in `finally`. Release is a
+//      compare-and-delete (Task 3), so it is safe even after lock loss — it can
+//      only ever drop OUR token, never a successor's (H12.c).
+//
+// DEFERRED (scope): the plan's periodic PG checkpoint ("checkpoint if ≥5 min")
+// is NOT implemented here. `flushToRedis` (live Redis turn-state) is sufficient
+// for crash recovery, which rides BullMQ redelivery + the never-flush invariant
+// — not a checkpoint read-back. The widened envelope is already written via the
+// suspend path (Task 5). A periodic cadence needs a last-checkpoint tracker that
+// does not exist yet; it lands with the real tiers (MYT-68/69).
+
+import { Worker as BullmqWorker, type Job } from 'bullmq'
+import type { Redis } from 'ioredis'
+import { makeSessionState, type SessionState } from '../redis/session-state.js'
+import { SessionController } from './session-controller.js'
+import { createSessionLock, type SessionLock } from './session-lock.js'
+import { StubFastThinker, StubScribe, StubSlowThinker } from './tiers/stubs.js'
+import type { FastThinker, Scribe, SlowThinker } from './tiers/types.js'
+import { createTurnPublisher, type TurnPublisher } from './turn-publisher.js'
+import { QUEUE_SESSION_TURN, type TurnJobPayload } from './turn-queue.js'
+
+/** The lock for a turn was lost mid-flight (a heartbeat `extend()` failed,
+ *  meaning a successor re-acquired it). Distinguished from a real failure so the
+ *  catch arm can abort QUIETLY — the winning container owns the continuation, so
+ *  we neither flush nor publish a terminal `turn_error`. */
+export class LockLostError extends Error {
+  constructor() {
+    super('session lock lost mid-turn')
+    this.name = 'LockLostError'
+  }
+}
+
+/** Minimal pino-compatible logger surface the processor needs. */
+interface MinimalLogger {
+  warn: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
+  error: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
+}
+
+export interface TurnProcessorDeps {
+  readonly lock: SessionLock
+  readonly sessionState: SessionState
+  readonly publisher: TurnPublisher
+  readonly makeTiers: () => { st: SlowThinker; ft: FastThinker; scribe: Scribe }
+  readonly heartbeatMs: number
+  readonly logger: MinimalLogger
+}
+
+/**
+ * Run one DM turn under the per-session lock. Returns `{ran}`: `false` on
+ * contention (no lock), `true` once we acquired the lock and either completed or
+ * aborted on lock loss. A real failure rethrows (BullMQ owns the retry policy).
+ */
+export async function processTurnJob(
+  deps: TurnProcessorDeps,
+  job: { data: TurnJobPayload },
+): Promise<{ ran: boolean }> {
+  const { campaignId, turnId, triggerMessages } = job.data
+
+  const handle = await deps.lock.tryAcquire(campaignId)
+  if (handle === null) {
+    // Contention: another container holds the lock. BullMQ's `attempts` re-runs
+    // this job; the real trigger queue + retry policy is MYT-67.
+    return { ran: false }
+  }
+
+  // The flag is mutated only inside the heartbeat's async callbacks. Read it
+  // through `isLockLost()` (a function, not a bare property access): ESLint's
+  // control-flow narrowing would otherwise treat the synchronous reads below as
+  // always-false, since it cannot see the closure flip the value at runtime.
+  const lockState = { lost: false }
+  const isLockLost = (): boolean => lockState.lost
+  const heartbeat = setInterval(() => {
+    // Guard the async so no floating promise escapes the interval callback.
+    handle
+      .extend()
+      .then((ok) => {
+        if (!ok) lockState.lost = true
+      })
+      .catch((err: unknown) => {
+        // A failed refresh is treated as a lost lock — we can no longer prove we
+        // hold it, so abort the turn rather than risk a two-holder flush.
+        lockState.lost = true
+        deps.logger.warn({ err, campaignId, turnId }, 'turn lock heartbeat failed')
+      })
+  }, deps.heartbeatMs)
+
+  try {
+    await deps.publisher.dmThinking(campaignId, turnId)
+    const controller = new SessionController(
+      { sessionState: deps.sessionState, ...deps.makeTiers(), publisher: deps.publisher },
+      campaignId,
+      turnId,
+    )
+    await controller.loadFromRedis()
+    if (isLockLost()) throw new LockLostError()
+    await controller.processDmTurn([...triggerMessages])
+    if (isLockLost()) throw new LockLostError()
+    await controller.flushToRedis()
+    return { ran: true }
+  } catch (err) {
+    if (err instanceof LockLostError || isLockLost()) {
+      // The lock was re-acquired by a successor: do NOT flush (the recovery
+      // invariant leaves Redis at the pre-turn snapshot) and do NOT publish
+      // turn_error (the winning container owns the continuation). It ran but
+      // aborted.
+      deps.logger.warn({ campaignId, turnId }, 'turn aborted: session lock lost mid-turn')
+      return { ran: true }
+    }
+    // A real failure: rethrow so BullMQ applies its retry / `attempts` policy.
+    // The terminal turn_error frame is published by the worker's `failed`-event
+    // handler on the final attempt (H8), not here.
+    throw err
+  } finally {
+    clearInterval(heartbeat)
+    // Compare-and-delete: safe even after lock loss (only drops OUR token).
+    await handle.release()
+  }
+}
+
+/** BullMQ lock duration. Held below the session lock TTL so the session lock is
+ *  the binding mutex (H1): `lockDuration(30s) < sessionLockTtl(45s) ≈
+ *  stalledInterval(30s)`. A stalled job is reclaimed AFTER the session lock has
+ *  expired, so the reclaiming worker can cleanly re-acquire. */
+const TURN_LOCK_DURATION_MS = 30_000
+const TURN_STALLED_INTERVAL_MS = 30_000
+const TURN_MAX_STALLED_COUNT = 3
+const TURN_CONCURRENCY = 5
+const SESSION_LOCK_TTL_MS = 45_000
+const TURN_HEARTBEAT_MS = 15_000
+
+/**
+ * Build the session-turn BullMQ Worker for the dedicated worker.ts process.
+ *
+ * IMPORTANT: this runs in worker.ts, NOT the API server. worker.ts has already
+ * waitFor-probed `redisBatch` (the shared BullMQ connection) and `redisRealtime`
+ * — so this builder REUSES `redisBatch` as the Worker connection (no new BullMQ
+ * client, no second ping-probe) and constructs the processor deps on
+ * `redisRealtime`.
+ *
+ * The tiers are the MYT-66 stubs; the real Anthropic-backed tiers land in
+ * MYT-68/69.
+ */
+export function buildSessionTurnWorker(
+  redisBatch: Redis,
+  redisRealtime: Redis,
+  redisKeyPrefix: string,
+  logger: MinimalLogger,
+): BullmqWorker<TurnJobPayload> {
+  const publisher = createTurnPublisher(redisRealtime, redisKeyPrefix)
+  const deps: TurnProcessorDeps = {
+    lock: createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS),
+    sessionState: makeSessionState(redisRealtime, redisKeyPrefix),
+    publisher,
+    makeTiers: () => ({
+      st: new StubSlowThinker(),
+      ft: new StubFastThinker(),
+      scribe: new StubScribe(),
+    }),
+    heartbeatMs: TURN_HEARTBEAT_MS,
+    logger,
+  }
+
+  const worker = new BullmqWorker<TurnJobPayload>(
+    QUEUE_SESSION_TURN,
+    (job) => processTurnJob(deps, job),
+    {
+      connection: redisBatch,
+      concurrency: TURN_CONCURRENCY,
+      lockDuration: TURN_LOCK_DURATION_MS,
+      stalledInterval: TURN_STALLED_INTERVAL_MS,
+      maxStalledCount: TURN_MAX_STALLED_COUNT,
+    },
+  )
+
+  // H8 — terminal turn_error. On the FINAL exhausted attempt of a turn that
+  // THREW (a real failure rethrown out of `processTurnJob`), publish a
+  // turn_error frame so the player's client stops waiting on a turn that will
+  // never complete. Lock-lost aborts never reach here (they return `{ran:true}`).
+  //
+  // KNOWN GAP (deferred → MYT-67, bead myth-tvnb): this `'failed'` JS listener
+  // covers ONLY the throw-then-`attempts`-exhausted terminal. It does NOT fire
+  // for the `maxStalledCount`-exhaustion terminal — when a worker crashes
+  // mid-flight and the job is reclaimed `maxStalledCount` times, BullMQ
+  // transitions stalled→failed INSIDE the `moveStalledJobsToWait` Lua script and
+  // emits only a `'stalled'` event, never the per-worker `'failed'` JS event
+  // this listener subscribes to. So a turn whose holder crashes 3× terminally
+  // fails with NO turn_error. Closing that gap needs a `QueueEvents('session-turn')`
+  // subscriber (broker-side events), which MYT-67's trigger queue owns.
+  worker.on('failed', (job: Job<TurnJobPayload> | undefined, err: Error) => {
+    publishTerminalTurnError(publisher, job, logger, err)
+  })
+
+  return worker
+}
+
+/** Narrow view of the fields the terminal-failure gate reads — a real BullMQ
+ *  `Job` or a `{ attemptsMade, opts, data }` fake both satisfy it, so the H8
+ *  boundary is unit-testable without a broker. */
+export interface TerminalFailureJob {
+  readonly attemptsMade: number
+  readonly opts: { readonly attempts?: number }
+  readonly data: TurnJobPayload
+}
+
+/**
+ * H8 terminal-failure gate. Publishes a `turn_error` frame IFF `job` is defined
+ * AND its retries are exhausted (`attemptsMade >= opts.attempts ?? 1`). The
+ * publish promise is `void`+`.catch`-guarded so no floating promise escapes the
+ * `'failed'` handler. Extracted + exported so the H8 boundary can be unit-tested
+ * directly (no broker, no real Worker).
+ */
+export function publishTerminalTurnError(
+  publisher: TurnPublisher,
+  job: TerminalFailureJob | undefined,
+  logger: MinimalLogger,
+  err?: unknown,
+): void {
+  if (job === undefined) return
+  if (job.attemptsMade < (job.opts.attempts ?? 1)) return
+  // Guard the publish promise so no floating promise escapes the handler.
+  void publisher
+    .turnError(job.data.campaignId, job.data.turnId, 'The turn failed. Please try again.')
+    .catch((publishErr: unknown) => {
+      logger.error(
+        {
+          err: publishErr,
+          original: err,
+          campaignId: job.data.campaignId,
+          turnId: job.data.turnId,
+        },
+        'failed to publish terminal turn_error',
+      )
+    })
+}
