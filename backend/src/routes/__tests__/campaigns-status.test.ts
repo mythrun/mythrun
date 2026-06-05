@@ -32,6 +32,7 @@ import {
   noopWorldGenQueue,
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
+  noopSessionTurnQueue,
 } from '../../__tests__/helpers/stub-deps.js'
 import {
   cleanupTestScope,
@@ -81,6 +82,7 @@ describe('campaigns status routes', () => {
       worldGenQueue: noopWorldGenQueue(),
       sessionPrepQueue: noopSessionPrepQueue(),
       sessionSuspendQueue: noopSessionSuspendQueue(),
+      sessionTurnQueue: noopSessionTurnQueue(),
     }
     app = await buildApp(
       deps,

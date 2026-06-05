@@ -34,6 +34,7 @@ import {
   noopWorldGenQueue,
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
+  noopSessionTurnQueue,
 } from '../../__tests__/helpers/stub-deps.js'
 import {
   cleanupTestScope,
@@ -84,6 +85,7 @@ describe('GET /api/campaigns/:campaignId/prep-status (MYT-62 T6)', () => {
       worldGenQueue: noopWorldGenQueue(),
       sessionPrepQueue: noopSessionPrepQueue(),
       sessionSuspendQueue: noopSessionSuspendQueue(),
+      sessionTurnQueue: noopSessionTurnQueue(),
     }
     app = await buildApp(
       deps,

@@ -18,6 +18,7 @@ import type { AppDeps } from '../../app-deps.js'
 import type { WorldGenQueueLike } from '../../routes/campaigns.js'
 import type { SessionPrepQueueLike } from '../../routes/session-preps.js'
 import type { SuspendQueueLike } from '../../session/session-suspend.js'
+import type { TurnQueueLike } from '../../session/turn-queue.js'
 import { createRepo } from '../../repo/index.js'
 
 export interface StubDepsOverrides {
@@ -86,6 +87,22 @@ export function noopSessionSuspendQueue(): SuspendQueueLike {
   }
 }
 
+/**
+ * Hand-rolled no-op session-turn queue (MYT-66 Task 8). Mirrors the other noop
+ * queues — suffices for buildApp callers that don't drive the turn-enqueue
+ * path; tests that exercise enqueueTurn build their own spy.
+ *
+ * Like noopSessionSuspendQueue, `TurnQueueLike.add` is BullMQ's real
+ * `Queue['add']` signature (returns a `Promise<Job>`), which a no-op can't
+ * honestly construct; the resolved-undefined stub is cast through `unknown` at
+ * the single function boundary — none of these buildApp callers read the Job.
+ */
+export function noopSessionTurnQueue(): TurnQueueLike {
+  return {
+    add: (() => Promise.resolve(undefined)) as unknown as TurnQueueLike['add'],
+  }
+}
+
 export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
   // Promise.resolve / Promise.reject form (not `async () =>`) avoids the
   // @typescript-eslint/require-await lint on stubs that don't internally
@@ -103,5 +120,6 @@ export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
     worldGenQueue: overrides.worldGenQueue ?? noopWorldGenQueue(),
     sessionPrepQueue: noopSessionPrepQueue(),
     sessionSuspendQueue: noopSessionSuspendQueue(),
+    sessionTurnQueue: noopSessionTurnQueue(),
   }
 }

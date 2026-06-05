@@ -38,6 +38,7 @@ import {
   noopWorldGenQueue,
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
+  noopSessionTurnQueue,
 } from './helpers/stub-deps.js'
 
 const classifyProfanityMock = vi.mocked(classifyProfanity)
@@ -88,6 +89,7 @@ describe('onboarding routes (integration)', () => {
       worldGenQueue: noopWorldGenQueue(),
       sessionPrepQueue: noopSessionPrepQueue(),
       sessionSuspendQueue: noopSessionSuspendQueue(),
+      sessionTurnQueue: noopSessionTurnQueue(),
     }
     app = await buildApp(
       deps,

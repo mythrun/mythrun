@@ -18,6 +18,7 @@ import {
   noopWorldGenQueue,
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
+  noopSessionTurnQueue,
 } from '../../__tests__/helpers/stub-deps.js'
 
 function buildDeps(pgQuery: () => Promise<unknown>): AppDeps {
@@ -36,6 +37,7 @@ function buildDeps(pgQuery: () => Promise<unknown>): AppDeps {
     worldGenQueue: noopWorldGenQueue(),
     sessionPrepQueue: noopSessionPrepQueue(),
     sessionSuspendQueue: noopSessionSuspendQueue(),
+    sessionTurnQueue: noopSessionTurnQueue(),
   }
 }
 

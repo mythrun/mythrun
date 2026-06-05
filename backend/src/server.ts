@@ -49,10 +49,12 @@ import {
   buildCharacterCreationQueue,
   buildSessionPrepQueue,
   buildSessionSuspendQueue,
+  buildSessionTurnQueue,
   stubWorldGenQueue,
   stubCharacterCreationQueue,
   stubSessionPrepQueue,
   stubSessionSuspendQueue,
+  stubSessionTurnQueue,
 } from './server-queues.js'
 import type { Logger as PinoLogger } from 'pino'
 
@@ -263,19 +265,26 @@ async function buildSessionSuspendWorker(
  *  MYT-65 Task 11: the session-suspend worker + queue are drained on the same
  *  up-front-of-the-chain principle (worker before queue) so a checkpoint write
  *  that's mid-flight at shutdown finishes before the queue's Redis bookkeeping
- *  is released. */
+ *  is released.
+ *
+ *  MYT-66 Task 8: the raw session-turn queue is closed here too (its Redis
+ *  bookkeeping released after the prep/suspend pairs). The turn WORKER is wired
+ *  in Task 9 (worker.ts), not the API server, so only the queue is drained here
+ *  — there is no in-process turn worker to close on this path. */
 function withSessionPrepShutdown(
   inner: ShutdownHandler,
   worker: Worker,
   queue: Queue,
   suspendWorker: Worker,
   suspendQueue: Queue,
+  turnQueue: Queue,
 ): ShutdownHandler {
   return async (signal) => {
     await worker.close()
     await queue.close()
     await suspendWorker.close()
     await suspendQueue.close()
+    await turnQueue.close()
     await inner(signal)
   }
 }
@@ -307,6 +316,7 @@ async function fallbackStart(): Promise<void> {
   const stubCharacterQueue = stubCharacterCreationQueue()
   const stubSessionPrep = stubSessionPrepQueue()
   const stubSessionSuspend = stubSessionSuspendQueue()
+  const stubSessionTurn = stubSessionTurnQueue()
   const stubDeps: AppDeps = {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
@@ -317,6 +327,7 @@ async function fallbackStart(): Promise<void> {
     characterCreationQueue: stubCharacterQueue,
     sessionPrepQueue: stubSessionPrep,
     sessionSuspendQueue: stubSessionSuspend,
+    sessionTurnQueue: stubSessionTurn,
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
@@ -444,6 +455,11 @@ export async function main(): Promise<void> {
     // AppDeps so the WS route can schedule/cancel suspends).
     const { bullmqQueue: bullmqSessionSuspendQueue, sessionSuspendQueue } =
       buildSessionSuspendQueue(rTBRef)
+    // MYT-66 T8: session-turn queue (raw closed at shutdown; adapter into
+    // AppDeps so the controller/trigger route can enqueue turns). The turn
+    // WORKER is wired in worker.ts (Task 9), not here.
+    const { bullmqQueue: bullmqSessionTurnQueue, sessionTurnQueue } =
+      buildSessionTurnQueue(rTBRef)
 
     const app = await buildApp(
       {
@@ -456,6 +472,7 @@ export async function main(): Promise<void> {
         characterCreationQueue,
         sessionPrepQueue,
         sessionSuspendQueue,
+        sessionTurnQueue,
       },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
@@ -504,6 +521,7 @@ export async function main(): Promise<void> {
     const handleShutdown = withSessionPrepShutdown(
       innerShutdown, sessionPrepWorker, bullmqSessionPrepQueue,
       sessionSuspendWorker, bullmqSessionSuspendQueue,
+      bullmqSessionTurnQueue,
     )
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

@@ -47,6 +47,7 @@ import {
   noopWorldGenQueue,
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
+  noopSessionTurnQueue,
 } from '../../__tests__/helpers/stub-deps.js'
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 import {
@@ -92,6 +93,7 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
         worldGenQueue: noopWorldGenQueue(),
         sessionPrepQueue: noopSessionPrepQueue(),
         sessionSuspendQueue: noopSessionSuspendQueue(),
+        sessionTurnQueue: noopSessionTurnQueue(),
       }
       app = await buildApp(
         deps,
@@ -294,5 +296,6 @@ function makeStubDepsForRealMode(): AppDeps {
     worldGenQueue: noopWorldGenQueue(),
     sessionPrepQueue: noopSessionPrepQueue(),
     sessionSuspendQueue: noopSessionSuspendQueue(),
+    sessionTurnQueue: noopSessionTurnQueue(),
   }
 }

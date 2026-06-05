@@ -5,6 +5,7 @@ import type { WorldGenQueueLike } from './routes/campaigns.js'
 import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
 import type { SessionPrepQueueLike } from './routes/session-preps.js'
 import type { SuspendQueueLike } from './session/session-suspend.js'
+import type { TurnQueueLike } from './session/turn-queue.js'
 
 export interface AppDeps {
   pg: Pool
@@ -43,4 +44,11 @@ export interface AppDeps {
    *  closed at shutdown in server.ts. Required — the WS transport is a boot
    *  invariant of the gated binary. */
   sessionSuspendQueue: SuspendQueueLike
+  /** MYT-66 Task 8: BullMQ Queue handle for `session-turn` jobs (built on
+   *  redisBatch in server.ts). Threaded into the session controller / trigger
+   *  route so a player-driven turn can `enqueueTurn`. Typed as the minimal
+   *  TurnQueueLike contract (add only); the raw BullMQ Queue is closed at
+   *  shutdown in server.ts. Required — the session transport is a boot
+   *  invariant of the gated binary, mirroring sessionSuspendQueue. */
+  sessionTurnQueue: TurnQueueLike
 }

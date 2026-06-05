@@ -20,6 +20,11 @@ import {
   type SuspendJobPayload,
   type SuspendQueueLike,
 } from './session/session-suspend.js'
+import {
+  QUEUE_SESSION_TURN,
+  type TurnJobPayload,
+  type TurnQueueLike,
+} from './session/turn-queue.js'
 
 /** MYT-51 T12: build the world-gen BullMQ queue + its plugin-facing
  *  adapter. Extracted from main() so the boot orchestrator stays under
@@ -175,6 +180,38 @@ export function buildSessionSuspendQueue(redisBatch: Redis): {
   return { bullmqQueue, sessionSuspendQueue }
 }
 
+/** MYT-66 Task 8: build the session-turn BullMQ Queue (player-driven turn →
+ *  worker → broadcast). Returns the raw `bullmqQueue` (for shutdown.close,
+ *  after its Worker drains — Task 9, in worker.ts) AND the narrow
+ *  `TurnQueueLike` adapter the controller/trigger route uses to enqueue.
+ *
+ *  Job-options policy mirrors buildSessionSuspendQueue's terminal-job pruning
+ *  (`removeOnComplete: true + removeOnFail: true`) so completed/failed turn
+ *  jobs don't accumulate in Redis — nothing reads a turn job's result, the
+ *  broadcast is the side effect. Unlike suspend, turns carry NO custom jobId
+ *  (H10): the per-session mutex is the session lock, not jobId-dedup, so each
+ *  turn must land as a distinct job. `attempts: 3` (vs suspend's default 1) so
+ *  a transient worker crash mid-turn retries — the session lock makes the
+ *  retry safe (a redelivered job re-acquires the lock and carries the same
+ *  stable turnId in its payload, H2). */
+export function buildSessionTurnQueue(redisBatch: Redis): {
+  bullmqQueue: Queue
+  sessionTurnQueue: TurnQueueLike
+} {
+  const bullmqQueue = new Queue<TurnJobPayload>(QUEUE_SESSION_TURN, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      removeOnComplete: true,
+      removeOnFail: true,
+      attempts: 3,
+    },
+  })
+  const sessionTurnQueue: TurnQueueLike = {
+    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+  }
+  return { bullmqQueue, sessionTurnQueue }
+}
+
 // Stub queue/worker for the boot-gate-disabled fallback path. The fallback
 // never connects to Redis, so we can't construct real BullMQ handles; the
 // app-deps + shutdown contracts both expect a non-undefined value, so
@@ -222,6 +259,17 @@ export function stubSessionSuspendQueue(): SuspendQueueLike & BullMqQueueShutdow
     add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
     getJob: () => Promise.resolve(undefined),
     remove: () => Promise.resolve(0),
+    close: () => Promise.resolve(),
+  }
+}
+
+// MYT-66 Task 8: session-turn stub for the boot-gate-disabled fallback path.
+// Same rationale as the others — no Redis on that path, so reject on enqueue.
+// The session transport is unreachable on the fallback binary anyway (no live
+// sessions without a DB), so rejecting on `add` is operator-safe.
+export function stubSessionTurnQueue(): TurnQueueLike & BullMqQueueShutdown {
+  return {
+    add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
     close: () => Promise.resolve(),
   }
 }
