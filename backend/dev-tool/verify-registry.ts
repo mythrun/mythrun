@@ -192,6 +192,13 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // /messages) are NOT exempt — they now have dev-tool action panels on the
   // System page (session-start / session-active / session-messages).
   { method: 'GET', path: '/ws/session/:sessionId' },
+
+  // POST /api/dev/campaigns/:campaignId/fire-turn: the MYT-66 dev-only turn
+  // trigger — a curl-able poke that enqueues one session-turn job for manual
+  // smoke. Provisionally exempt; the dev-tool-verifier re-evaluates at close-out
+  // and may instead add a "fire a turn" action panel on the System page (as it
+  // did for the MYT-65 session lifecycle routes).
+  { method: 'POST', path: '/api/dev/campaigns/:campaignId/fire-turn' },
 ]
 
 export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {

@@ -220,6 +220,43 @@ describe('SessionController', () => {
     expect(reloaded.summary).toBe('applied even without intervene')
   })
 
+  it('APPENDS a new summaryUpdate onto an existing summary (newline-joined), not overwriting it', async () => {
+    // applyEvaluation's append branch: when the controller loads a session that
+    // ALREADY has a running summary (a later turn), a fresh summaryUpdate is
+    // newline-joined onto it rather than replacing it. Seed a prior summary into
+    // Redis so loadFromRedis hydrates a non-empty `this.summary` before the ST's
+    // update arrives.
+    await sessionState.flushTurnState(CAMPAIGN, {
+      ftHistory: [],
+      summary: 'turn one summary',
+      usage: { input: 0, output: 0 },
+    })
+
+    const recorder: Recorder = { order: [] }
+    const capturedCtx: { value?: FtTurnContext } = {}
+    const st = recordingSt(recorder, {
+      intervene: false,
+      summaryUpdate: 'turn two summary',
+    })
+    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
+    const scribe = recordingScribe(recorder, { resolved: false })
+    const publisher = fakePublisher(recorder, [])
+
+    const controller = new SessionController(
+      { sessionState, st, ft, scribe, publisher },
+      CAMPAIGN,
+      TURN,
+    )
+    await controller.loadFromRedis()
+    await controller.processDmTurn([TRIGGER])
+    await controller.flushToRedis()
+
+    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
+    // Both summaries present, newline-joined in order (old\nnew) — the prior
+    // summary was NOT overwritten.
+    expect(reloaded.summary).toBe('turn one summary\nturn two summary')
+  })
+
   it('injects ST direction into the last user message AND appends summary when intervene is true', async () => {
     const recorder: Recorder = { order: [] }
     const capturedCtx: { value?: FtTurnContext } = {}

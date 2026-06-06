@@ -52,6 +52,7 @@ vi.mock('../worker/health-server.js', () => ({
 interface FakeWorker {
   name: string
   close: ReturnType<typeof vi.fn>
+  on: ReturnType<typeof vi.fn>
 }
 const workerInstances: FakeWorker[] = []
 
@@ -60,6 +61,7 @@ vi.mock('bullmq', () => ({
     const instance: FakeWorker = {
       name,
       close: vi.fn(() => Promise.resolve()),
+      on: vi.fn(),
     }
     workerInstances.push(instance)
     return instance
@@ -91,10 +93,10 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
-    // Wait for startup: workers registered, health server up. Three workers:
-    // world-gen, campaign-setup, session-prep (MYT-61 T4).
+    // Wait for startup: workers registered, health server up. Four workers:
+    // world-gen, campaign-setup, session-prep (MYT-61 T4), session-turn (MYT-66).
     await vi.waitFor(() => {
-      expect(workerInstances).toHaveLength(3)
+      expect(workerInstances).toHaveLength(4)
     })
     expect(batchPingMock).toHaveBeenCalledTimes(1)
     expect(realtimePingMock).toHaveBeenCalledTimes(1)

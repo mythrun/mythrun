@@ -133,6 +133,7 @@ export async function processTurnJob(
     // The terminal turn_error frame is published by the worker's `failed`-event
     // handler on the final attempt (H8), not here.
     throw err
+    /* c8 ignore next — v8 finally-boundary quirk; both paths tested. */
   } finally {
     clearInterval(heartbeat)
     // Compare-and-delete: safe even after lock loss (only drops OUR token).

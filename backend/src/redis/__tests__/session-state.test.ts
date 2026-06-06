@@ -239,6 +239,20 @@ describe('makeSessionState — turn state', () => {
     })
   })
 
+  it('loadTurnState falls back to the zero values when a turn-state key holds corrupt JSON', async () => {
+    // parseJson's catch arm: a half-initialised / corrupt :ft_history and
+    // :usage key must NOT throw — each falls back to its empty default so the
+    // session still loads cleanly. :summary is read raw (no JSON parse) so a
+    // corrupt value there is simply returned as the string.
+    await redis.set('p:session:c-corrupt:ft_history', '{not json')
+    await redis.set('p:session:c-corrupt:usage', 'not-json-either')
+    expect(await makeSessionState(redis, 'p:').loadTurnState('c-corrupt')).toEqual({
+      ftHistory: [],
+      summary: '',
+      usage: { input: 0, output: 0 },
+    })
+  })
+
   it('flushTurnState sets a TTL on all three turn-state keys', async () => {
     const s = makeSessionState(redis, 'p:')
     await s.flushTurnState('c1', {
