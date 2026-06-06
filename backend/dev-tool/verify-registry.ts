@@ -111,6 +111,9 @@ export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> 
   'session-start': [{ method: 'POST', path: '/api/sessions/:id/start' }],
   'session-active': [{ method: 'GET', path: '/api/sessions/:id/active' }],
   'session-messages': [{ method: 'GET', path: '/api/sessions/:id/messages' }],
+  'fire-turn': [
+    { method: 'POST', path: '/api/dev/campaigns/:campaignId/fire-turn' },
+  ],
 }
 
 // Panels that legitimately have a `mount*` export but are NOT composed
@@ -193,12 +196,6 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // System page (session-start / session-active / session-messages).
   { method: 'GET', path: '/ws/session/:sessionId' },
 
-  // POST /api/dev/campaigns/:campaignId/fire-turn: the MYT-66 dev-only turn
-  // trigger — a curl-able poke that enqueues one session-turn job for manual
-  // smoke. Provisionally exempt; the dev-tool-verifier re-evaluates at close-out
-  // and may instead add a "fire a turn" action panel on the System page (as it
-  // did for the MYT-65 session lifecycle routes).
-  { method: 'POST', path: '/api/dev/campaigns/:campaignId/fire-turn' },
 ]
 
 export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
@@ -300,6 +297,7 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
       'session-start',
       'session-active',
       'session-messages',
+      'fire-turn',
     ],
   },
 }

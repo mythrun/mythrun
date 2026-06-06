@@ -117,6 +117,7 @@ on import.
 | POST /api/billing/upgrade-tier | upgrade-tier | action-only |
 | POST /api/dev/credits/grant | dev-credits-grant | action-only |
 | GET /api/dev/credits/me | dev-credits-me | action-only |
+| POST /api/dev/campaigns/:campaignId/fire-turn | fire-turn | action-only |
 | POST /webhooks/stripe | (exempt — Stripe-signed consumer, no human UI possible) | — |
 
 Routes that intentionally have no UI panel live in `EXEMPT_ROUTES` in
