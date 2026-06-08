@@ -72,11 +72,11 @@ await dmTriggerQueue.add(
 )
 ```
 
-**How it actually behaves (verified against BullMQ 5.76.8 Lua, corrected from the v1 draft):** the reset is **`replace`-driven** — on each `add`, BullMQ `ZREM`s the still-delayed job and re-adds a fresh one, resetting the countdown. `delay` sets the countdown; `ttl` keeps the dedup key alive across the window. `extend` is **inert** in the `replace` path and is **not** used (the v1 draft wrongly attributed the reset to an `extend`+`replace` combination). **`DEDUP_TTL_MS` MUST be > `QUIET_WINDOW_MS` + worker pickup latency** (e.g. `QUIET_WINDOW_MS + 4000`), so the dedup key never expires before the delayed job matures — otherwise a late activity pulse spawns a *second* independent debounce job and coalescing silently breaks.
+**How it actually behaves (verified against BullMQ 5.76.8 Lua, corrected from the v1 draft):** the reset is **`replace`-driven** — on each `add`, BullMQ `ZREM`s the still-delayed job and re-adds a fresh one, resetting the countdown. `delay` sets the countdown; `ttl` keeps the dedup key alive across the window. `extend` is **inert** in the `replace` path and is **not** used (the v1 draft wrongly attributed the reset to an `extend`+`replace` combination). **`DEDUP_TTL_MS` MUST exceed the *longest* delay the job can carry + worker pickup latency.** The longest delay is the dead-air re-arm (≈ `DEAD_AIR_MS`, §4.3), so `DEDUP_TTL_MS = DEAD_AIR_MS + 4000` — otherwise the dedup key expires before a long-delayed (dead-air) job matures, and a late activity pulse spawns a *second* independent debounce job, silently breaking coalescing.
 
 **The maturity-boundary race (real, must be handled):** if an activity pulse arrives in the narrow window *after* the delayed job has promoted to `wait`/`active` but *before* the worker runs, the `ZREM` finds nothing and the new `add` is dropped (creates no new delayed job). The §4.3 re-validation guard catches the resulting too-early fire — **and on detecting it, the worker MUST re-arm the debounce** (`add` a fresh delayed job for the remaining quiet), not merely exit. A bare exit would strand the trigger until the next activity, silently swallowing a DM beat when the player then goes quiet.
 
-**Max-wait ceiling (anti-starvation):** a single player who holds a typing indicator alive (idle in the compose box, laggy client) would otherwise reset the debounce forever and starve the whole table of any DM response. The server stamps `first-unresponded-at:{campaignId}` (ms) on the *first* activity after a turn (cleared at turn flush). The reschedule clamps the effective delay so the job matures no later than `firstUnrespondedAt + MAX_QUIET_EXTENSION_MS` (e.g. 30s) **regardless of ongoing typing**. This is the standard max-debounce cap.
+**Max-wait ceiling (anti-starvation):** a single player who holds a typing indicator alive (idle in the compose box, laggy client) would otherwise reset the debounce forever and starve the whole table of any DM response. The server stamps `first-unresponded-at:{campaignId}` (ms) on the *first* activity after a turn (cleared at turn flush). The reschedule clamps the effective delay so the job matures no later than `firstUnrespondedAt + MAX_QUIET_EXTENSION_MS` (e.g. 30s) **regardless of ongoing typing**. This is the standard max-debounce cap. (It caps a *continuous-typing* hold; the separate **dead-air ceiling** — §4.3 — handles *total silence*: ~60s with no message or typing forces a proactive step-in.)
 
 **Rejected alternatives** (recorded so we don't revisit): Redis keyspace-expiry notifications (fire-and-forget pub/sub — a worker reconnect silently drops the fire; lazy expiry, not at T=0); in-instance `setTimeout` + lock-elected owner (hand-rolls exactly-once, owner death strands the timer). **Implementation note:** use the per-`add` `deduplication` option (or `job.changeDelay`), **never** `upsertJobScheduler` (a known-buggy recurring-scheduler surface — BullMQ #3430/#3063/#3378).
 
@@ -87,22 +87,38 @@ The new `dm-trigger` BullMQ worker (in `worker.ts`) has its own timing config �
 When the debounce job matures (sustained quiet), the worker:
 
 1. **Re-validate quiet** — read `last-activity:{campaignId}`; if `now − lastActivity < QUIET_WINDOW_MS`, a reset landed in the promote→pickup window — **re-arm the debounce** (§4.2) and exit. (Explicit fast-path skips this — see §4.5.) *Clock note:* the stamp (server) and read (worker) are different Node clocks; the `QUIET_WINDOW_MS` margin (seconds) tolerates normal ECS skew. Documented assumption, not a precise guard.
-2. **Determine mode & batch boundary.** Resolve the campaign's accepted-member count (§4.5) and the responded-seq watermark `last-responded-seq:{campaignId}` (0 if unset). Read player messages with `seq ∈ (lastRespondedSeq, currentMaxSeq]` from `repo.sessionMessages` (capped at `MAX_BATCH`), mapped to `TriggerMessage[]` (resolving `characterName`). **This same batch is both the classifier input and the turn's `triggerMessages`** — decision and execution can never diverge. Empty batch → exit (nothing to respond to).
-3. **Decide:**
+2. **Determine mode & batch boundary.** Resolve the campaign's accepted-member count (§4.5) and the responded-seq watermark `last-responded-seq:{campaignId}` (0 if unset). Read player messages with `seq ∈ (lastRespondedSeq, currentMaxSeq]` from `repo.sessionMessages` (capped at `MAX_BATCH`), mapped to `TriggerMessage[]` (resolving `characterName`). **This same batch is both the classifier input and the turn's `triggerMessages`** — decision and execution can never diverge. Empty batch → exit (nothing to respond to). **This empty-batch exit *is* the no-monologue guard:** a proactive open (drift or dead-air, below) can only fire when an unresponded player message exists — once a turn consumes the batch, `last-responded-seq` advances, so the DM never steps in twice with no intervening player message.
+3. **Decide** (in order):
+   - **Dead-air ceiling** — if `secondsSinceLastActivity ≥ DEAD_AIR_S` (~60s of *total* silence — no message **or** typing), **open a proactive turn, skipping the classifier.** A 60s-dead-air step-in is a deterministic policy threshold (like a rate limit or the max-wait cap), not a semantic judgment — the ST authors the actual beat. The non-empty batch from step 2 is the no-monologue guard, so this can't fire back-to-back with no intervening player message. Decision: `kind:'auto'`, `classification:{intent:'proactive', complexity:'high'}`.
    - **Explicit pending** (`dm-trigger:{campaignId}:explicit` flag set by `@dm`/`dm_invoke`) → skip the classifier, force respond, clear the flag.
    - **Solo** (accepted members === 1) → skip the classifier, respond.
-   - **Auto** (multiplayer) → call the Haiku classifier (§4.4) over the batch.
+   - **Auto** (multiplayer) → call the Haiku classifier (§4.4) over the full `DmTriggerContext` (batch + last DM output + the pacing signal `turnsSinceLastDmBeat`/`secondsSinceLastDmBeat`, computed here + the public scene-grounding slot). The classifier may open the turn reactively *or* proactively (drift re-grounding). **On a sit-back / no-turn decision, re-arm the debounce to fire at the dead-air mark** (`delay = DEAD_AIR_MS − sinceLastActivity`), so the 60s backstop still fires if the silence persists; any new activity reschedules it back to the normal `QUIET_WINDOW` (§4.2).
 4. **Guard against an in-flight turn, then enqueue.** Check `dm_responding:{campaignId}` (set by the `session-turn` worker while a turn runs). **If a turn is in flight → do NOT enqueue** (the post-turn quiet re-fire drains it — §4.7). Else, **re-validate the active session as the last step** (`repo.sessions.getActiveByCampaign`; None → exit — guards the session-ended-mid-window race), then enqueue one `session-turn` job (§4.6).
 
 ### 4.4 The Haiku DM-trigger classifier (real)
 
-A real Anthropic Haiku call — ZFC: the "should the DM respond, and how hard a turn is this" judgment is delegated to a model, never a heuristic.
+A real Anthropic Haiku call — ZFC: the "should the DM take a turn now, and how heavy a turn" judgment is delegated to a model, never a heuristic.
 
-- **Public-by-construction input type.** The classifier's input is a `DmTriggerContext` whose shape carries only public-tier material — the player-message batch (attributed to character names) + an optional **public** running-summary string. Modeled on `FtTurnContext` (MYT-66): **enforced ignorance is structural, not a convention** — a secret has nowhere to live on the type. The running summary is a classifier input **only if** it is guaranteed public-tier; while the ST is stubbed it is empty/public, and the type forbids wiring any ST/Scribe secret material in later. The classifier decides *whether* to respond, never *what* the response is.
-- **Prompt template** `backend/src/llm/prompts/dm-trigger-classifier.txt` (file, not inline). The contract is specified here, not deferred: (a) the **complexity rubric** with exemplars (e.g. "order an ale" → low; "interrogate the captured NPC" → high — these map to the §17 skip-ST cost lever); (b) **confidence anchoring** so 0.8 means the same thing across calls (what high vs low confidence is pinned to); (c) the **last DM turn's output** is included so the model can distinguish "players are mid-side-conversation" from "players are waiting on the DM"; (d) **empty / all-addressed-to-other-players** batches → `shouldRespond:false`.
-- **Zod schema** `backend/src/llm/schemas/dm-trigger-classification.ts`: `{ shouldRespond: boolean; complexity: 'low'|'high'; confidence: number; reason: string }`. Free-prose `reason` gets a `.min()` floor, no `.max()` (LLM-schema convention).
+**The decision is three-way, not binary** (the "make the DM feel alive" requirement). Given the recent table activity, the classifier decides:
+- **Respond** — players addressed the DM or a world response is expected → open a turn (reactive).
+- **Sit back** — grounded, engaged player-to-player RP → stay out of the way, no turn. Good RP is not an interruption opportunity.
+- **Step in** — the players are still RP-ing among themselves but it has **drifted** (gone in circles, turned meta/ungrounded, or the scene has gone slack with no one driving it) → open a turn **proactively** so the DM can re-ground them. The *content* (an NPC approaches, an event) is the ST's call (MYT-69); the classifier only decides to open the turn.
+
+The sit-back-vs-step-in call is a **coarse** read — the classifier opens the turn; the ST makes the fine intervene-or-stay-silent decision and authors any world beat, with the every-N-turns ST floor (MYT-69) as the backstop. The *quality* of the read (telling good RP from drift) is an **eval-harness** concern, not a smoke concern: MYT-67 builds the mechanism + framing, the smoke verifies a proactive open *can* fire (plumbing), and tuning happens against the eval harness.
+
+Separately, a **hard dead-air ceiling** (§4.3) forces a proactive step-in after ~60s of *total* silence (no message or typing) **without** invoking the classifier — a deterministic "keep the table alive" backstop, gated by the same no-monologue guard (it only fires when an unresponded player message exists, so the DM never monologues).
+
+- **Public-by-construction input type.** The classifier's input is a `DmTriggerContext` carrying only public-tier material — **enforced ignorance is structural** (modeled on `FtTurnContext`; a secret has nowhere to live on the type):
+  - the **player-message batch** (character-attributed) — the `(lastRespondedSeq, max]` slice (§4.3);
+  - the **last DM turn's player-facing output** — to tell "reacting to / waiting on the DM" from "talking among themselves";
+  - a **pacing signal** — `turnsSinceLastDmBeat` + `secondsSinceLastDmBeat` (computed now from seqs + watermark + timestamps) — the primary drift/slack cue ("the table's been on its own for 8 messages / 90s");
+  - an optional **public scene-grounding** string — what the current scene/situation is, so "drifted" has something to be drifted *from*. Empty while ST/Scribe are stubbed (this issue); fills in at MYT-69/73. Empty → the classifier judges drift from the batch + pacing alone (weaker, but available).
+
+  The scene-grounding + summary slots are public-tier ONLY; the type forbids wiring ST/Scribe secret material in later. The classifier decides *whether* to open a turn, never *what* the DM says.
+- **Prompt template** `backend/src/llm/prompts/dm-trigger-classifier.txt` (file, not inline). The contract, specified (not deferred): (a) the **respond / sit-back / step-in** rubric with exemplars (addressed-the-DM → respond; lively in-world banter advancing a scene → sit back; several exchanges of out-of-character or circular chatter with the world untouched → step in); (b) the **complexity** rubric (light reaction → low; a beat needing the ST → high), mapping to the §5 skip-ST lever; (c) **confidence anchoring** so the §5 0.8 threshold means the same thing across calls; (d) an **empty / all-addressed-to-other-players** batch with no drift signal → no turn.
+- **Zod schema** `backend/src/llm/schemas/dm-trigger-classification.ts`: `{ shouldRespond: boolean; intent: 'reactive' | 'proactive'; complexity: 'low' | 'high'; confidence: number; reason: string }`. `intent` distinguishes a response from a proactive re-grounding (drives the routing below). Free-prose `reason` gets a `.min()` floor, no `.max()` (LLM-schema convention).
 - **Repair posture:** the schema is trivially small, and §9 is fail-closed, so the classifier **skips the Sonnet repair** (`generateObject`'s default) — a malformed parse falls straight to the §9 fail-closed path (no DM this cycle, re-driven on next activity). This keeps the hot path Haiku-only and makes §4.4 and §9 consistent.
-- **Routing** (spec §5): `shouldRespond=false` & `confidence>CONFIDENCE_FLOOR` → no turn. `true` & `low` & `>floor` → turn with a *skip-ST* hint. `true` & `high` → full ST→FT hint. `confidence<floor` → escalate (treat as high). The routing decision lives here; it is plumbed onto the turn payload (§4.6) and **consumed by MYT-68/69** — the MYT-66 stub conductor ignores it.
+- **Routing** (spec §5): `shouldRespond=false` → no turn. `true` & `intent='reactive'` & `complexity='low'` & `confidence>CONFIDENCE_FLOOR` → turn with a *skip-ST* hint. **A `proactive` open ALWAYS routes through the ST and never skips it** — the ST owns whether/what to inject, and the enforced-ignorant FT cannot invent a world beat on its own. Everything else that opens a turn → full ST→FT; `confidence<floor` → escalate (treat as high). The routing is plumbed onto the turn payload (§4.6), consumed by MYT-68/69; the stub conductor ignores it.
 - Runs through the single Anthropic abstraction layer with the model from config (no hardcoded model name).
 
 ### 4.5 Trigger modes (server-side detection)
@@ -122,7 +138,7 @@ interface TurnJobPayload {
   // … existing: campaignId, sessionId, turnId, triggerMessages
   trigger: {
     kind: 'explicit' | 'solo' | 'auto'
-    classification?: { complexity: 'low' | 'high'; confidence: number } // present for 'auto'
+    classification?: { intent: 'reactive' | 'proactive'; complexity: 'low' | 'high'; confidence: number } // present for 'auto'
   }
 }
 ```
@@ -186,8 +202,9 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 | `TYPING_HEARTBEAT_S` | 3 | client refresh cadence |
 | `TYPING_TTL_S` | 8 | > 2× heartbeat; crash self-heal |
 | `QUIET_WINDOW_MS` | 4000 | room-to-type (auto/solo); tune to feel. Explicit bypasses it entirely (§4.5). |
-| `DEDUP_TTL_MS` | `QUIET_WINDOW_MS + 4000` | **must exceed window + pickup** (§4.2) |
-| `MAX_QUIET_EXTENSION_MS` | 30000 | anti-starvation ceiling (§4.2) |
+| `DEDUP_TTL_MS` | `DEAD_AIR_MS + 4000` | **must exceed the longest delay (dead-air) + pickup** (§4.2) |
+| `MAX_QUIET_EXTENSION_MS` | 30000 | continuous-typing cap (§4.2); distinct from `DEAD_AIR_S` |
+| `DEAD_AIR_S` | 60 | total-silence backstop → forced proactive step-in (§4.3) |
 | `MAX_BATCH` | (plan) | classifier/turn batch cap |
 | dm-trigger worker `lockDuration`/`stalledInterval`/`maxStalledCount` | (plan) | > Haiku timeout (§4.3) |
 | `HAIKU_CLASSIFY_TIMEOUT_MS` | < `lockDuration` | per-call timeout |
@@ -198,9 +215,11 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 
 ## 8. Data flow
 
-**Auto (multiplayer):** `player_message`/`typing_start` (any container) → server: refresh typing state; stamp last-activity + first-unresponded; reschedule debounce → [repeated reschedules while typing] → [quiet for window, bounded by ceiling] → debounce matures → dm-trigger worker: re-validate (re-arm if late-reset) → build `(lastRespondedSeq, max]` batch → Haiku classify → shouldRespond & not `dm_responding` & active session → enqueue `session-turn{kind:'auto', classification}` → session-turn worker (MYT-66): lock → set `dm_responding` → `dm_thinking` → stub conductor → record `last-responded-seq` at flush → `turn_end` → clear flag + release.
+**Auto (multiplayer):** `player_message`/`typing_start` (any container) → server: refresh typing state; stamp last-activity + first-unresponded; reschedule debounce → [repeated reschedules while typing] → [quiet for window, bounded by ceiling] → debounce matures → dm-trigger worker: re-validate (re-arm if late-reset) → build `(lastRespondedSeq, max]` batch + pacing signal → Haiku classify (respond / sit-back / step-in) → shouldRespond & not `dm_responding` & active session → enqueue `session-turn{kind:'auto', classification}` → session-turn worker (MYT-66): lock → set `dm_responding` → `dm_thinking` → stub conductor → record `last-responded-seq` at flush → `turn_end` → clear flag + release.
 
 **Solo:** as auto; worker sees accepted-members===1 → skip classifier.
+
+**Dead-air step-in:** table goes fully silent → debounce matures (classifier sits back) → worker re-arms to the dead-air mark → still silent at ~60s → forced proactive step-in (skip classifier, `intent:proactive`) — but only if the batch is non-empty (unresponded player messages exist), so never back-to-back.
 
 **Explicit:** frame → server: rate-limit → if no turn in flight: allocate `turnId`, **broadcast `dm_thinking{turnId}` immediately** (input locks everywhere), build batch from the watermark, enqueue `session-turn{kind:'explicit'}` **directly** (bypass the dm-trigger queue) → worker runs it. If a turn is in flight: set the `…:explicit` flag → the `session-turn` worker drains it **immediately** on release (§4.7).
 
@@ -248,7 +267,8 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 
 - **Explicit semantics → immediate preempt** (Miklos): `@dm`/`dm_invoke` fires the DM instantly and ices out the room — the "everyone be quiet, I have a question" gesture. No floor; response as fast as possible; input locked the instant the invoke lands via an immediate server-side `dm_thinking` (§4.5).
 - **Sustained classifier outage → no fallback** (Miklos): a Haiku outage is an Anthropic outage; the turn would fail anyway, so failing "open" is pointless. Keep only the distinguishable error metric for diagnosis (§9).
-- **Tuning constants** (`QUIET_WINDOW_MS` 4s, `MAX_QUIET_EXTENSION_MS` 30s, `MAX_BATCH`, dm-trigger worker timing): ship the defaults, tune to feel — confirmed.
+- **Dead-air ceiling → forced step-in** (Miklos): ~60s of total silence (no message or typing) forces a proactive step-in, skipping the classifier — *except* never back-to-back (the no-monologue guard: only fires when an unresponded player message exists) (§4.3).
+- **Tuning constants** (`QUIET_WINDOW_MS` 4s, `MAX_QUIET_EXTENSION_MS` 30s, `DEAD_AIR_S` 60s, `MAX_BATCH`, dm-trigger worker timing): ship the defaults, tune to feel — confirmed.
 
 ## 14. File-level change map (informs the plan)
 
@@ -285,3 +305,5 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 0 strict SHOWSTOPPERS; all findings NIT, fixed inline. Key changes from v1: **dropped the `session-turn` dedup id** (kept H10; coordination via the `dm_responding` flag — §4.7); **specified the message-batch watermark** (§4.3/§4.7); **moved the `dm_trigger` debug frame off the player transport** (§4.9); **typed the classifier input public-by-construction** (§4.4); **fixed the solo predicate** to accepted-members (§4.5); **added the max-wait anti-starvation ceiling** (§4.2); **re-arm on the maturity-boundary race** (§4.2/§4.3); **`QueueEvents` idempotency latch + dedicated connection + shutdown** (§4.8); **dm-trigger worker timing + per-call Haiku timeout** (§4.3); **corrected the BullMQ mechanics** (`replace`-driven, `ttl > delay`; `extend` dropped — §4.2); **explicit rate limit** (§4.5); **fail-closed observability** (§9); **shared config module** (§7); plus the smaller doc/operability nits.
 
 **Post-gate refinements (2026-06-08, §13):** explicit invoke is an **immediate hard preempt** — the server emits `dm_thinking` instantly and enqueues the `session-turn` directly, bypassing the dm-trigger queue (drained immediately if a turn is in flight); no floor. The sustained-outage **fail-open fallback was dropped** (an Anthropic outage breaks the turn too — metric-only).
+
+Added the **proactive "keep the DM alive" dimension** to the classifier (respond / sit-back / step-in) with a pacing signal + scene-grounding input + an `intent` field; a proactive open always routes through the ST (§4.4/§5). Added a **hard dead-air ceiling** (~60s total silence → forced proactive step-in, skipping the classifier), with the watermark's empty-batch exit as the **no-monologue guard** (never back-to-back); `DEDUP_TTL_MS` raised to exceed the dead-air delay (§4.2/§4.3).
