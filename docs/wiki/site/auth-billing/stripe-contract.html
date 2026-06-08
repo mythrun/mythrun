@@ -607,9 +607,10 @@
   Both rules are registered under the <code>mythrun</code> plugin namespace in
   <code>eslint.config.js</code> at <code>error</code> severity, so a violation fails
   <code>pnpm lint</code> in CI. A config-wiring smoke test under
-  <code>backend/eslint-rules/__tests__/</code> spawns a child eslint pointed at a banned-pattern
-  fixture and expects a non-zero exit with the rule name in the output — catches the failure mode
-  where a rule ships but isn't registered.
+  <code>backend/eslint-rules/__tests__/</code> resolves the project flat-config for a backend source
+  path via ESLint's <code>calculateConfigForFile</code> and asserts the rule is registered and
+  active — catching the failure mode where a rule ships but isn't wired into the config (the rule's
+  firing logic is covered separately by RuleTester).
 </p>
 
 <aside class="wiki-rationale">
