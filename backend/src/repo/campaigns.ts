@@ -413,6 +413,20 @@ export function campaignsNs(c: ClientLike) {
       return row ? toCampaignMember(row) : null
     },
 
+    /**
+     * MYT-67 T6 (spec §4.5): accepted-only member count for the solo gate.
+     * `listMembers` does NOT filter `invite_accepted`, so this dedicated count
+     * is needed. The accepted predicate `AND invite_accepted = true` mirrors
+     * `listByUser`. Returns 0 for an unknown campaign (COUNT over no rows).
+     */
+    countAcceptedMembers: async (campaignId: string): Promise<number> => {
+      const { rows } = await c.query<{ n: string }>(
+        `SELECT COUNT(*)::int AS n FROM campaign_members WHERE campaign_id = $1 AND invite_accepted = true`,
+        [campaignId],
+      )
+      return rows[0]?.n != null ? Number(rows[0].n) : 0
+    },
+
     getOwner: async (campaignId: string): Promise<CampaignMember | null> => {
       const result = await c.query<CampaignMemberDbRow>(
         `SELECT * FROM campaign_members WHERE campaign_id = $1 AND role = 'owner'`,
