@@ -31,6 +31,7 @@ import { sessionChannelPattern } from '../../contract/session-channel.js'
 import type { ServerFrame } from '../../contract/session-events.js'
 import { makeSessionState } from '../../redis/session-state.js'
 import { createSessionLock } from '../session-lock.js'
+import { makeTriggerState } from '../trigger-state.js'
 import { createTurnPublisher } from '../turn-publisher.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
 import { processTurnJob } from '../turn-worker.js'
@@ -78,6 +79,7 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
     const sessionState = makeSessionState(realtime, KEY_PREFIX)
     const publisher = createTurnPublisher(realtime, KEY_PREFIX)
     const lock = createSessionLock(realtime, KEY_PREFIX, SESSION_LOCK_TTL_MS)
+    const triggerState = makeTriggerState(realtime, KEY_PREFIX)
 
     // Second realtime client PSUBSCRIBEs the channel pattern and collects the
     // frames the worker's publisher emits. `pmessage` fires (pattern, channel,
@@ -111,6 +113,10 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
           {
             lock,
             sessionState,
+            triggerState,
+            // The explicit-drain producer — references the same `queue` built
+            // below in this `beforeAll` (resolved lazily at job-run time).
+            sessionTurnQueue: { add: (name, data, opts) => queue.add(name, data, opts) },
             publisher,
             makeTiers: () => ({
               st: new StubSlowThinker(),
@@ -144,6 +150,9 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
       `${KEY_PREFIX}session:${campaignId}:ft_history`,
       `${KEY_PREFIX}session:${campaignId}:summary`,
       `${KEY_PREFIX}session:${campaignId}:usage`,
+      // MYT-67 §4.7 keys the worker now writes.
+      `${KEY_PREFIX}session:${campaignId}:dm_responding`,
+      `${KEY_PREFIX}session:${campaignId}:responded-seq`,
     )
     await subscriber.quit()
     await realtime.quit()

@@ -7,8 +7,9 @@ import { SessionController } from '../session-controller.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
 import type { TriggerMessage } from '../tiers/types.js'
 import type { SessionLock, SessionLockHandle } from '../session-lock.js'
+import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import type { TurnPublisher } from '../turn-publisher.js'
-import type { TurnJobPayload } from '../turn-queue.js'
+import { TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
 import {
   buildSessionTurnWorker,
   processTurnJob,
@@ -41,6 +42,10 @@ interface CapturedWorker {
 }
 const captured: { worker: CapturedWorker | null } = { worker: null }
 
+// Every `add(name, data)` the builder's explicit-drain `Queue` receives, so the
+// buildSessionTurnWorker drain path is assertable without a broker.
+const capturedQueueAdds: { name: string; data: TurnJobPayload }[] = []
+
 vi.mock('bullmq', () => ({
   Worker: vi.fn().mockImplementation((_name: string, processor: ProcessorFn) => {
     const handlers = new Map<string, FailedHandler>()
@@ -54,6 +59,14 @@ vi.mock('bullmq', () => ({
     captured.worker = { processor, handlers }
     return instance
   }),
+  // The builder constructs ONE `Queue` for the explicit drain. Mock it as a thin
+  // recorder so `new Queue(...)` doesn't touch a real connection.
+  Queue: vi.fn().mockImplementation(() => ({
+    add: (name: string, data: TurnJobPayload) => {
+      capturedQueueAdds.push({ name, data })
+      return Promise.resolve(undefined)
+    },
+  })),
 }))
 
 // processTurnJob is UNIT-tested with INJECTED fakes (a fake SessionLock, a
@@ -150,14 +163,38 @@ function makeTiers(): ReturnType<TurnProcessorDeps['makeTiers']> {
   return { st: new StubSlowThinker(), ft: new StubFastThinker(), scribe: new StubScribe() }
 }
 
+/** Records the `(name, data, opts)` of every enqueued explicit-drain follow-up
+ *  turn so the §4.7 drain assertions read the payload off a plain array. */
+interface QueueCall {
+  readonly name: string
+  readonly data: TurnJobPayload
+}
+
+function recordingTurnQueue(calls: QueueCall[]): TurnQueueLike {
+  const add = vi.fn((name: string, data: TurnJobPayload): Promise<never> => {
+    calls.push({ name, data })
+    // The real `add` resolves to a BullMQ `Job`; the worker discards it, so a
+    // resolved sentinel is enough.
+    return Promise.resolve(undefined as never)
+  })
+  return { add }
+}
+
+/** A no-op trigger queue for the paths that never drain (the default case). */
+function inertTurnQueue(): TurnQueueLike {
+  return recordingTurnQueue([])
+}
+
 describe('processTurnJob', () => {
   let redis: Redis
   let sessionState: SessionState
+  let triggerState: TriggerState
 
   beforeEach(async () => {
     redis = new IoRedisMock()
     await redis.flushall()
     sessionState = makeSessionState(redis, KEY_PREFIX)
+    triggerState = makeTriggerState(redis, KEY_PREFIX)
   })
   afterEach(async () => {
     await redis.quit()
@@ -172,6 +209,8 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -205,6 +244,8 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(null),
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -244,6 +285,8 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -292,6 +335,8 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
       heartbeatMs: 5,
@@ -328,6 +373,8 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: new StubSlowThinker(), ft, scribe: new StubScribe() }),
       heartbeatMs: 10_000,
@@ -366,6 +413,8 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
       heartbeatMs: 5,
@@ -385,6 +434,215 @@ describe('processTurnJob', () => {
     // The lock-lost branch warns and still releases in finally.
     expect(silentLogger.warn).toHaveBeenCalled()
     expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('sets dm_responding during the turn body and clears it after release (§4.7)', async () => {
+    // The drain guard: the worker flags `dm_responding` while a turn runs so the
+    // dm-trigger worker won't enqueue a colliding turn, then clears it on
+    // release. Observe "set during the body" by reading the flag inside the
+    // publisher's dmThinking (which runs AFTER setResponding, inside the body),
+    // and "cleared after" by reading it once processTurnJob resolves.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    let respondingDuringBody: boolean | null = null
+    // Override dmThinking (which runs in the body, AFTER setResponding) to snapshot
+    // the flag — typed via spread so no `any` cast is needed.
+    const publisher: TurnPublisher = {
+      ...recordingPublisher(calls),
+      dmThinking: vi.fn(async (): Promise<void> => {
+        respondingDuringBody = await triggerState.isResponding(CAMPAIGN)
+        calls.order.push('dm_thinking')
+      }),
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher,
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // dm_responding was live while the turn body ran…
+    expect(respondingDuringBody).toBe(true)
+    // …and is cleared once the turn (and its finally) completes.
+    expect(await triggerState.isResponding(CAMPAIGN)).toBe(false)
+  })
+
+  it('advances the responded-seq watermark to maxConsumedSeq after a successful flush (§4.7)', async () => {
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const job = payload()
+    ;(job.data as { maxConsumedSeq: number }).maxConsumedSeq = 7
+
+    const result = await processTurnJob(deps, job)
+
+    expect(result).toEqual({ ran: true })
+    // The watermark advanced to the batch's max consumed seq, so the next
+    // trigger batch starts at (7, …].
+    expect(await triggerState.respondedSeq(CAMPAIGN)).toBe(7)
+  })
+
+  it('does NOT advance the watermark when the turn aborts on lock loss (§4.7)', async () => {
+    // A lock-lost abort never flushes, so it must also never advance the
+    // watermark — the winning container owns the continuation + the watermark.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: false, release })
+
+    const slowSt = new StubSlowThinker()
+    vi.spyOn(slowSt, 'evaluate').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({ intervene: false })
+          }, 40)
+        }),
+    )
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
+      heartbeatMs: 5,
+      logger: silentLogger,
+    }
+
+    const job = payload()
+    ;(job.data as { maxConsumedSeq: number }).maxConsumedSeq = 9
+
+    const result = await processTurnJob(deps, job)
+
+    expect(result).toEqual({ ran: true })
+    // Never flushed → watermark stays at the unset default (0).
+    expect(await triggerState.respondedSeq(CAMPAIGN)).toBe(0)
+    // …but dm_responding is still cleared in finally so the campaign isn't wedged.
+    expect(await triggerState.isResponding(CAMPAIGN)).toBe(false)
+  })
+
+  it('drains a pending explicit summon on release: enqueues exactly one explicit follow-up turn (§4.7)', async () => {
+    // An @dm landed while this turn was in flight → the server set the explicit
+    // flag. On release the worker takes-and-clears it and enqueues one explicit
+    // follow-up, so the summon is honored the instant the current turn ends.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const queueCalls: QueueCall[] = []
+
+    // Seed the explicit-pending flag (as the server would on an in-flight @dm).
+    await triggerState.setExplicitPending(CAMPAIGN)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      triggerState,
+      sessionTurnQueue: recordingTurnQueue(queueCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const job = payload()
+    ;(job.data as { maxConsumedSeq: number }).maxConsumedSeq = 4
+
+    const result = await processTurnJob(deps, job)
+
+    expect(result).toEqual({ ran: true })
+    // Exactly one explicit follow-up was enqueued.
+    expect(queueCalls).toHaveLength(1)
+    expect(queueCalls[0]?.name).toBe(TURN_JOB_NAME)
+    const drained = queueCalls[0]?.data
+    expect(drained?.campaignId).toBe(CAMPAIGN)
+    expect(drained?.sessionId).toBe(SESSION)
+    expect(drained?.trigger.kind).toBe('explicit')
+    expect(drained?.maxConsumedSeq).toBe(4)
+    expect(drained?.triggerMessages).toEqual([])
+    // A fresh turnId was minted for the follow-up (not the just-finished turn's).
+    expect(drained?.turnId).not.toBe(TURN)
+    expect(typeof drained?.turnId).toBe('string')
+
+    // The flag is take-once: a second drain check sees nothing.
+    expect(await triggerState.takeExplicitPending(CAMPAIGN)).toBe(false)
+  })
+
+  it('does NOT drain when no explicit summon is pending: no follow-up enqueued (§4.7)', async () => {
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const queueCalls: QueueCall[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      triggerState,
+      sessionTurnQueue: recordingTurnQueue(queueCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(queueCalls).toHaveLength(0)
+  })
+
+  it('a drain-enqueue failure is swallowed and does not mask the turn outcome (§4.7)', async () => {
+    // The explicit-drain is in its own try/catch: if enqueue throws, the turn
+    // still resolves {ran:true} (it succeeded) and the failure is logged, never
+    // rethrown — a drain hiccup must not retry an already-flushed turn.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await triggerState.setExplicitPending(CAMPAIGN)
+
+    const boom = new Error('queue unreachable')
+    const failingQueue = {
+      add: vi.fn((): Promise<never> => Promise.reject(boom)),
+    } as unknown as TurnQueueLike
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      triggerState,
+      sessionTurnQueue: failingQueue,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    // The turn itself succeeded; the drain failure didn't surface.
+    expect(result).toEqual({ ran: true })
+    expect(silentLogger.error).toHaveBeenCalled()
   })
 })
 
@@ -410,22 +668,25 @@ function terminalFailureJob(attemptsMade: number, attempts: number): TerminalFai
   }
 }
 
+/** A claim fn that always wins the latch (the single-publisher case). */
+const alwaysClaim = (): Promise<boolean> => Promise.resolve(true)
+
 describe('publishTerminalTurnError', () => {
-  it('does NOT publish on a non-final attempt (retries remain)', () => {
+  it('does NOT publish on a non-final attempt (retries remain)', async () => {
     const calls = newCalls()
     const publisher = recordingPublisher(calls)
 
-    publishTerminalTurnError(publisher, terminalFailureJob(1, 3), silentLogger)
+    await publishTerminalTurnError(publisher, terminalFailureJob(1, 3), silentLogger, alwaysClaim)
 
     expect(calls.order).toEqual([])
     expect(calls.turnErrorArgs).toEqual([])
   })
 
-  it('publishes once with the job campaignId/turnId on the final exhausted attempt', () => {
+  it('publishes once with the job campaignId/turnId on the final exhausted attempt', async () => {
     const calls = newCalls()
     const publisher = recordingPublisher(calls)
 
-    publishTerminalTurnError(publisher, terminalFailureJob(3, 3), silentLogger)
+    await publishTerminalTurnError(publisher, terminalFailureJob(3, 3), silentLogger, alwaysClaim)
 
     expect(calls.order).toEqual(['turn_error'])
     expect(calls.turnErrorArgs).toHaveLength(1)
@@ -434,19 +695,19 @@ describe('publishTerminalTurnError', () => {
     expect(typeof calls.turnErrorArgs[0]?.message).toBe('string')
   })
 
-  it('does nothing when job is undefined', () => {
+  it('does nothing when job is undefined', async () => {
     const calls = newCalls()
     const publisher = recordingPublisher(calls)
 
-    publishTerminalTurnError(publisher, undefined, silentLogger)
+    await publishTerminalTurnError(publisher, undefined, silentLogger, alwaysClaim)
 
     expect(calls.order).toEqual([])
     expect(calls.turnErrorArgs).toEqual([])
   })
 
-  it('treats an absent opts.attempts as 1 (publishes when attemptsMade reaches the default)', () => {
-    // Branch L242 `opts.attempts ?? 1`: a job whose opts omit `attempts`
-    // defaults the cap to 1, so a single made attempt is already terminal.
+  it('treats an absent opts.attempts as 1 (publishes when attemptsMade reaches the default)', async () => {
+    // Branch `opts.attempts ?? 1`: a job whose opts omit `attempts` defaults the
+    // cap to 1, so a single made attempt is already terminal.
     const calls = newCalls()
     const publisher = recordingPublisher(calls)
     const job: TerminalFailureJob = {
@@ -462,17 +723,56 @@ describe('publishTerminalTurnError', () => {
       },
     }
 
-    publishTerminalTurnError(publisher, job, silentLogger)
+    await publishTerminalTurnError(publisher, job, silentLogger, alwaysClaim)
 
     expect(calls.order).toEqual(['turn_error'])
     expect(calls.turnErrorArgs).toHaveLength(1)
   })
 
+  it('publishes exactly ONCE across two calls for the same turnId (§4.8 SET-NX latch)', async () => {
+    // The cross-container idempotency latch: the JS `failed` listener AND the
+    // broker-side QueueEvents can both fire a terminal for one turn. A shared
+    // `claim(turnId)` SET-NX gates the publish — exactly one path wins. Modeled
+    // here with a stateful fake claim that returns true once then false.
+    const calls = newCalls()
+    const publisher = recordingPublisher(calls)
+    let claimed = false
+    const claim = vi.fn((): Promise<boolean> => {
+      if (claimed) return Promise.resolve(false)
+      claimed = true
+      return Promise.resolve(true)
+    })
+
+    const job = terminalFailureJob(3, 3)
+    // First terminal path wins the latch and publishes.
+    await publishTerminalTurnError(publisher, job, silentLogger, claim)
+    // Second terminal path for the SAME turnId loses the latch → no publish.
+    await publishTerminalTurnError(publisher, job, silentLogger, claim)
+
+    expect(claim).toHaveBeenCalledTimes(2)
+    expect(claim).toHaveBeenCalledWith(TURN)
+    // Despite two terminal invocations, only one turn_error went out.
+    expect(calls.order).toEqual(['turn_error'])
+    expect(calls.turnErrorArgs).toHaveLength(1)
+  })
+
+  it('does NOT call claim when the job is non-terminal (gate precedes the latch)', async () => {
+    // The attempts-exhausted gate runs BEFORE the latch claim, so a non-final
+    // attempt never consumes the SET-NX latch (which would wrongly suppress the
+    // real terminal publish later).
+    const calls = newCalls()
+    const publisher = recordingPublisher(calls)
+    const claim = vi.fn((): Promise<boolean> => Promise.resolve(true))
+
+    await publishTerminalTurnError(publisher, terminalFailureJob(1, 3), silentLogger, claim)
+
+    expect(claim).not.toHaveBeenCalled()
+    expect(calls.order).toEqual([])
+  })
+
   it('logs (does not throw) when the terminal turn_error publish itself rejects', async () => {
-    // The `.catch` arm (L247-255): publisher.turnError rejects. The handler must
-    // swallow it into logger.error so no unhandled rejection escapes the
-    // 'failed' listener. We await a microtask flush so the rejected promise's
-    // catch has run before asserting.
+    // The `.catch` arm: publisher.turnError rejects. The handler must swallow it
+    // into logger.error so no unhandled rejection escapes the 'failed' listener.
     const logger = { warn: vi.fn(), error: vi.fn() }
     const publishErr = new Error('realtime redis unreachable')
     const publisher: TurnPublisher = {
@@ -484,11 +784,7 @@ describe('publishTerminalTurnError', () => {
     }
     const original = new Error('the underlying turn failure')
 
-    publishTerminalTurnError(publisher, terminalFailureJob(3, 3), logger, original)
-
-    // Flush the microtask queue so the rejected turnError's `.catch` runs.
-    await Promise.resolve()
-    await Promise.resolve()
+    await publishTerminalTurnError(publisher, terminalFailureJob(3, 3), logger, alwaysClaim, original)
 
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -516,6 +812,7 @@ describe('buildSessionTurnWorker', () => {
 
   beforeEach(async () => {
     captured.worker = null
+    capturedQueueAdds.length = 0
     redisBatch = new IoRedisMock()
     redisRealtime = new IoRedisMock()
     await redisRealtime.flushall()
@@ -548,6 +845,29 @@ describe('buildSessionTurnWorker', () => {
       { role: 'user', content: TRIGGER.text, characterName: TRIGGER.characterName },
       { role: 'assistant', content: '(the DM responds.)' },
     ])
+    // The §4.7 watermark advanced (proving triggerState was wired into the deps).
+    expect(await makeTriggerState(redisRealtime, 'bw:').respondedSeq(CAMPAIGN)).toBe(0)
+  })
+
+  it('wires triggerState + sessionTurnQueue: an in-flight explicit summon drains on release (§4.7)', async () => {
+    const logger = { warn: vi.fn(), error: vi.fn() }
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger)
+
+    const cap = captured.worker
+    if (cap === null) throw new Error('Worker constructor was not captured')
+
+    // Seed the explicit-pending flag on the SAME keyspace the builder's
+    // triggerState reads (redisRealtime), as the server would on an in-flight @dm.
+    await makeTriggerState(redisRealtime, 'bw:').setExplicitPending(CAMPAIGN)
+
+    const result = await cap.processor(payload())
+    expect(result).toEqual({ ran: true })
+
+    // The drain enqueued exactly one explicit follow-up on the builder's Queue.
+    expect(capturedQueueAdds).toHaveLength(1)
+    expect(capturedQueueAdds[0]?.data.trigger.kind).toBe('explicit')
+    expect(capturedQueueAdds[0]?.data.campaignId).toBe(CAMPAIGN)
+    expect(capturedQueueAdds[0]?.data.triggerMessages).toEqual([])
   })
 
   it("registers a 'failed' handler that delegates to publishTerminalTurnError", async () => {

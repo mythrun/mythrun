@@ -32,15 +32,17 @@
 // suspend path (Task 5). A periodic cadence needs a last-checkpoint tracker that
 // does not exist yet; it lands with the real tiers (MYT-68/69).
 
-import { Worker as BullmqWorker, type Job } from 'bullmq'
+import { Queue, Worker as BullmqWorker, type Job } from 'bullmq'
+import { randomUUID } from 'node:crypto'
 import type { Redis } from 'ioredis'
 import { makeSessionState, type SessionState } from '../redis/session-state.js'
 import { SessionController } from './session-controller.js'
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from './tiers/stubs.js'
 import type { FastThinker, Scribe, SlowThinker } from './tiers/types.js'
+import { makeTriggerState, type TriggerState } from './trigger-state.js'
 import { createTurnPublisher, type TurnPublisher } from './turn-publisher.js'
-import { QUEUE_SESSION_TURN, type TurnJobPayload } from './turn-queue.js'
+import { enqueueTurn, QUEUE_SESSION_TURN, type TurnJobPayload, type TurnQueueLike } from './turn-queue.js'
 
 /** The lock for a turn was lost mid-flight (a heartbeat `extend()` failed,
  *  meaning a successor re-acquired it). Distinguished from a real failure so the
@@ -62,6 +64,16 @@ interface MinimalLogger {
 export interface TurnProcessorDeps {
   readonly lock: SessionLock
   readonly sessionState: SessionState
+  /** MYT-67 §4.7 — the DM-trigger coordination state. The processor sets/clears
+   *  the `dm_responding` drain guard around the turn body, advances the
+   *  `last-responded-seq` watermark at flush, and drains a pending explicit
+   *  summon on release. */
+  readonly triggerState: TriggerState
+  /** MYT-67 §4.7 — the `session-turn` producer used ONLY for the explicit drain:
+   *  if an `@dm` landed while this turn was in flight, the worker enqueues one
+   *  explicit follow-up turn on release so the summon fires the instant the
+   *  current turn ends. */
+  readonly sessionTurnQueue: TurnQueueLike
   readonly publisher: TurnPublisher
   readonly makeTiers: () => { st: SlowThinker; ft: FastThinker; scribe: Scribe }
   readonly heartbeatMs: number
@@ -77,14 +89,18 @@ export async function processTurnJob(
   deps: TurnProcessorDeps,
   job: { data: TurnJobPayload },
 ): Promise<{ ran: boolean }> {
-  const { campaignId, turnId, triggerMessages } = job.data
+  const { campaignId, sessionId, turnId, triggerMessages } = job.data
 
   const handle = await deps.lock.tryAcquire(campaignId)
   if (handle === null) {
-    // Contention: another container holds the lock. BullMQ's `attempts` re-runs
-    // this job; the real trigger queue + retry policy is MYT-67.
+    // Contention: another container holds the lock. The debounce re-drives this
+    // (§4.7) rather than blind BullMQ `attempts`.
     return { ran: false }
   }
+
+  // §4.7 — mark a turn in flight (token = the lock token) so the dm-trigger
+  // worker won't enqueue a colliding turn while we run. Cleared in `finally`.
+  await deps.triggerState.setResponding(campaignId, handle.token)
 
   // The flag is mutated only inside the heartbeat's async callbacks. Read it
   // through `isLockLost()` (a function, not a bare property access): ESLint's
@@ -119,6 +135,10 @@ export async function processTurnJob(
     await controller.processDmTurn([...triggerMessages])
     if (isLockLost()) throw new LockLostError()
     await controller.flushToRedis()
+    // §4.7 — the batch is responded: advance the watermark so the next trigger
+    // batch starts at `(maxConsumedSeq, …]`. Only on a real (flushed) success —
+    // a lock-lost abort never flushes, so it must never advance the watermark.
+    await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
     return { ran: true }
   } catch (err) {
     if (err instanceof LockLostError || isLockLost()) {
@@ -138,6 +158,33 @@ export async function processTurnJob(
     clearInterval(heartbeat)
     // Compare-and-delete: safe even after lock loss (only drops OUR token).
     await handle.release()
+    // §4.7 — clear the drain guard so the dm-trigger worker can enqueue the next
+    // turn. Done AFTER release so the lock is the binding mutex right up to here.
+    await deps.triggerState.clearResponding(campaignId)
+    // §4.7 — explicit drain: if an `@dm` landed while this turn was in flight,
+    // the server set the explicit-pending flag. Take-and-clear it and enqueue
+    // ONE explicit follow-up so the summon fires the instant this turn ends.
+    // Guarded in its OWN try/catch: a drain hiccup must never mask the turn
+    // outcome (it would re-run an already-flushed turn via BullMQ `attempts`).
+    try {
+      if (await deps.triggerState.takeExplicitPending(campaignId)) {
+        await enqueueTurn(deps.sessionTurnQueue, {
+          campaignId,
+          sessionId,
+          turnId: randomUUID(),
+          // The explicit follow-up re-reads its batch on run; an empty seed is
+          // type-correct and keeps the drain minimal.
+          triggerMessages: [],
+          maxConsumedSeq: job.data.maxConsumedSeq,
+          trigger: { kind: 'explicit' },
+        })
+      }
+    } catch (drainErr) {
+      deps.logger.error(
+        { err: drainErr, campaignId, turnId },
+        'failed to drain pending explicit summon',
+      )
+    }
   }
 }
 
@@ -171,9 +218,19 @@ export function buildSessionTurnWorker(
   logger: MinimalLogger,
 ): BullmqWorker<TurnJobPayload> {
   const publisher = createTurnPublisher(redisRealtime, redisKeyPrefix)
+  const triggerState = makeTriggerState(redisRealtime, redisKeyPrefix)
+
+  // §4.7 — the explicit-drain producer. Build the BullMQ `Queue` ONCE (on the
+  // shared BullMQ connection `redisBatch`, like every other producer) and reuse
+  // it; a fresh `new Queue(...)` per enqueue would leak a client per drain.
+  const turnQueue = new Queue<TurnJobPayload>(QUEUE_SESSION_TURN, { connection: redisBatch })
+  const sessionTurnQueue: TurnQueueLike = { add: (n, d, o) => turnQueue.add(n, d, o) }
+
   const deps: TurnProcessorDeps = {
     lock: createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS),
     sessionState: makeSessionState(redisRealtime, redisKeyPrefix),
+    triggerState,
+    sessionTurnQueue,
     publisher,
     makeTiers: () => ({
       st: new StubSlowThinker(),
@@ -211,7 +268,17 @@ export function buildSessionTurnWorker(
   // fails with NO turn_error. Closing that gap needs a `QueueEvents('session-turn')`
   // subscriber (broker-side events), which MYT-67's trigger queue owns.
   worker.on('failed', (job: Job<TurnJobPayload> | undefined, err: Error) => {
-    publishTerminalTurnError(publisher, job, logger, err)
+    // §4.8 — gate the publish on the cross-container SET-NX latch so exactly one
+    // `turn_error` ships per terminal turn regardless of how many containers (or
+    // which path: this JS listener vs the broker-side QueueEvents) fire. Guarded
+    // as a floating promise — nothing in the 'failed' callback may reject.
+    void publishTerminalTurnError(
+      publisher,
+      job,
+      logger,
+      (turnId) => triggerState.claimTurnErrorPublish(turnId),
+      err,
+    )
   })
 
   return worker
@@ -226,33 +293,48 @@ export interface TerminalFailureJob {
   readonly data: TurnJobPayload
 }
 
+/** The §4.8 cross-container idempotency latch: a `SET NX` keyed by `turnId` that
+ *  returns true IFF THIS caller won (it should publish). Bound to
+ *  `TriggerState.claimTurnErrorPublish` in `buildSessionTurnWorker`; injected as
+ *  a param so `publishTerminalTurnError` stays broker-free + unit-testable. */
+export type TurnErrorPublishClaim = (turnId: string) => Promise<boolean>
+
 /**
- * H8 terminal-failure gate. Publishes a `turn_error` frame IFF `job` is defined
- * AND its retries are exhausted (`attemptsMade >= opts.attempts ?? 1`). The
- * publish promise is `void`+`.catch`-guarded so no floating promise escapes the
- * `'failed'` handler. Extracted + exported so the H8 boundary can be unit-tested
- * directly (no broker, no real Worker).
+ * H8 / §4.8 terminal-failure gate. Publishes a `turn_error` frame IFF `job` is
+ * defined, its retries are exhausted (`attemptsMade >= opts.attempts ?? 1`), AND
+ * `claim(turnId)` wins the cross-container SET-NX latch — so exactly one
+ * `turn_error` ships per terminal turn even when both the JS `failed` listener
+ * and the broker-side `QueueEvents` fire across containers. The attempts gate
+ * runs BEFORE the latch claim, so a non-final attempt never consumes the latch.
+ * The publish is `.catch`-guarded so no rejection escapes the `'failed'` handler.
+ * Extracted + exported so the boundary is unit-testable (no broker, no Worker).
  */
-export function publishTerminalTurnError(
+export async function publishTerminalTurnError(
   publisher: TurnPublisher,
   job: TerminalFailureJob | undefined,
   logger: MinimalLogger,
+  claim: TurnErrorPublishClaim,
   err?: unknown,
-): void {
+): Promise<void> {
   if (job === undefined) return
   if (job.attemptsMade < (job.opts.attempts ?? 1)) return
-  // Guard the publish promise so no floating promise escapes the handler.
-  void publisher
-    .turnError(job.data.campaignId, job.data.turnId, 'The turn failed. Please try again.')
-    .catch((publishErr: unknown) => {
-      logger.error(
-        {
-          err: publishErr,
-          original: err,
-          campaignId: job.data.campaignId,
-          turnId: job.data.turnId,
-        },
-        'failed to publish terminal turn_error',
-      )
-    })
+  // §4.8 — only the latch winner publishes (cross-container dedup).
+  if (!(await claim(job.data.turnId))) return
+  try {
+    await publisher.turnError(
+      job.data.campaignId,
+      job.data.turnId,
+      'The turn failed. Please try again.',
+    )
+  } catch (publishErr: unknown) {
+    logger.error(
+      {
+        err: publishErr,
+        original: err,
+        campaignId: job.data.campaignId,
+        turnId: job.data.turnId,
+      },
+      'failed to publish terminal turn_error',
+    )
+  }
 }

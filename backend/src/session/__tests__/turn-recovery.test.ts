@@ -37,6 +37,7 @@ import { sessionChannelPattern } from '../../contract/session-channel.js'
 import type { ServerFrame } from '../../contract/session-events.js'
 import { makeSessionState, type SessionState } from '../../redis/session-state.js'
 import { createSessionLock, type SessionLock } from '../session-lock.js'
+import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import { createTurnPublisher, type TurnPublisher } from '../turn-publisher.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
 import type {
@@ -47,7 +48,7 @@ import type {
   TurnEmit,
 } from '../tiers/types.js'
 import { processTurnJob, type TurnProcessorDeps } from '../turn-worker.js'
-import type { TurnJobPayload } from '../turn-queue.js'
+import type { TurnJobPayload, TurnQueueLike } from '../turn-queue.js'
 
 const REDIS_REALTIME_URL = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
 
@@ -67,6 +68,13 @@ const TRIGGER: TriggerMessage = { userId: 'u1', characterName: 'Mara', text: 'I 
 const silentLogger = {
   warn: (): void => undefined,
   error: (): void => undefined,
+}
+
+// The explicit-drain producer. No `@dm` is pending in this recovery flow, so the
+// worker's `takeExplicitPending` is always false → `add` is never called; an
+// inert no-op stub satisfies the dep without a broker.
+const inertTurnQueue: TurnQueueLike = {
+  add: () => Promise.resolve(undefined as never),
 }
 
 function payload(): { data: TurnJobPayload } {
@@ -131,6 +139,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
   let sessionState: SessionState
   let publisher: TurnPublisher
   let lock: SessionLock
+  let triggerState: TriggerState
   const received: CollectedFrame[] = []
 
   beforeAll(async () => {
@@ -139,6 +148,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
     sessionState = makeSessionState(realtime, KEY_PREFIX)
     publisher = createTurnPublisher(realtime, KEY_PREFIX)
     lock = createSessionLock(realtime, KEY_PREFIX, SESSION_LOCK_TTL_MS)
+    triggerState = makeTriggerState(realtime, KEY_PREFIX)
 
     // A second realtime client PSUBSCRIBEs the channel pattern and records every
     // frame the publisher emits, so the turn_end assertion is a genuine
@@ -172,6 +182,9 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       `${KEY_PREFIX}session:${CAMPAIGN}:ft_history`,
       `${KEY_PREFIX}session:${CAMPAIGN}:summary`,
       `${KEY_PREFIX}session:${CAMPAIGN}:usage`,
+      // MYT-67 §4.7 keys the worker now writes.
+      `${KEY_PREFIX}session:${CAMPAIGN}:dm_responding`,
+      `${KEY_PREFIX}session:${CAMPAIGN}:responded-seq`,
     )
   })
 
@@ -180,6 +193,8 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
     const depsA: TurnProcessorDeps = {
       lock,
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue,
       publisher,
       makeTiers: () => ({
         st: new StubSlowThinker(),
@@ -210,6 +225,8 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
     const depsB: TurnProcessorDeps = {
       lock,
       sessionState,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue,
       publisher,
       makeTiers: () => ({
         st: new StubSlowThinker(),
