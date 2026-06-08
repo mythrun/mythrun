@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime</div>
         <article>
@@ -365,14 +365,16 @@
   <code
     >{ pg: Pool, redisRealtime: Redis, redisBatch: Redis, redisKeyPrefix: string, repo: Repo }</code
   >
-  plus the three BullMQ producer-queue handles (<code>worldGenQueue</code>,
-  <code>characterCreationQueue</code>, <code>sessionPrepQueue</code>) that
-  <code>server-queues.ts</code> builds at boot and the enqueue routes call <code>.add()</code> on.
-  <code>Repo</code> is the closure-factory bundle from
-  <a href="../data/repository.html">the repository layer</a> — composed over the same
-  <code>pg</code> by <code>server.ts</code> on both boot paths. <code>redisKeyPrefix</code> is the
-  <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code> namespace envelope every Redis-keyed subsystem
-  prepends to its own keys; today only the
+  plus the BullMQ producer-queue handles (<code>worldGenQueue</code>,
+  <code>characterCreationQueue</code>, <code>sessionPrepQueue</code>,
+  <code>sessionSuspendQueue</code>, and the MYT-66 <code>sessionTurnQueue</code>) that
+  <code>server-queues.ts</code> builds at boot and the enqueue routes call <code>.add()</code> on —
+  the API process produces session-turn jobs that the
+  <a href="./session-turn.html">worker-side turn worker</a> consumes. <code>Repo</code> is the
+  closure-factory bundle from <a href="../data/repository.html">the repository layer</a> — composed
+  over the same <code>pg</code> by <code>server.ts</code> on both boot paths.
+  <code>redisKeyPrefix</code> is the <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code> namespace
+  envelope every Redis-keyed subsystem prepends to its own keys; today only the
   <a href="../auth-billing/access-control-ws-ticket.html">WS ticket store</a> consumes it, but
   staging and production share a single ElastiCache cluster, so the prefix is mandatory the moment
   any key lands. <code>authOpts</code> drives
@@ -631,8 +633,10 @@
   <a href="./worker.html">Worker</a> page. The short version: it loads the same
   <code>loadEnv</code> contract the API uses, opens its own pg pool and both Redis clients (with a
   BullMQ-compatible ioredis factory at <code>redis/bullmq-client.ts</code> for the batch side),
-  registers three BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
-  <code>QUEUE_CAMPAIGN_SETUP</code>, and <code>QUEUE_SESSION_PREP</code>, and binds a Fastify
+  registers four BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
+  <code>QUEUE_CAMPAIGN_SETUP</code>, <code>QUEUE_SESSION_PREP</code>, and the MYT-66
+  <code>QUEUE_SESSION_TURN</code> (the lock-fenced <a href="./session-turn.html">DM-turn</a>
+  conductor), and binds a Fastify
   <code>/health</code> server on <code>127.0.0.1:3001</code> that the ECS container
   <code>healthCheck</code> probes. Graceful shutdown drains the workers within a
   <code>100s</code> deadline (under the task's 120s <code>stopTimeout</code>) and falls back to a
@@ -1111,10 +1115,11 @@
       <td>
         <code
           >AppDeps { pg, redisRealtime, redisBatch, redisKeyPrefix, repo, worldGenQueue,
-          characterCreationQueue?, sessionPrepQueue }</code
+          characterCreationQueue?, sessionPrepQueue, sessionSuspendQueue, sessionTurnQueue }</code
         >
-        — the three BullMQ producer-queue handles are built at boot in
-        <code>server-queues.ts</code> and threaded onto the shape;
+        — the BullMQ producer-queue handles are built at boot in
+        <code>server-queues.ts</code> and threaded onto the shape (<code>sessionTurnQueue</code> is
+        the MYT-66 <a href="./session-turn.html">DM-turn</a> producer);
         <code>ShutdownClients</code> (re-exported from <code>app.ts</code>).
       </td>
     </tr>
@@ -1214,9 +1219,10 @@
       <td><code>src/worker.ts</code></td>
       <td>
         <code>main()</code> — entry-point-guarded BullMQ worker boot: opens pg + both Redis clients,
-        registers two <code>Worker</code> instances on the batch Redis, starts the Fastify
-        <code>/health</code> probe on <code>:3001</code>, and threads bounded shutdown through
-        <code>closeWithDeadline</code>. See <a href="./worker.html">Worker</a>.
+        registers four <code>Worker</code> instances (world-gen / campaign-setup / session-prep /
+        session-turn) on the batch Redis, starts the Fastify <code>/health</code> probe on
+        <code>:3001</code>, and threads bounded shutdown through <code>closeWithDeadline</code>. See
+        <a href="./worker.html">Worker</a> and <a href="./session-turn.html">Session turn</a>.
       </td>
     </tr>
     <tr>

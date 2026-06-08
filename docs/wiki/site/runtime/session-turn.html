@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session turn · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="session-turn">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session turn</div>
+        <article>
+<h1>Session turn</h1>
+
+<p class="lead">
+  The DM-turn execution engine: a transient <code>SessionController</code> that, per turn, acquires
+  a per-session distributed lock, loads turn state from Redis, runs the fixed ST → FT → Scribe macro
+  sequence as deterministic code, flushes state back, and releases the lock — surviving a mid-turn
+  container crash by re-running on another worker from clean state. The cognitive tiers are stubbed
+  here behind stable interfaces; MYT-68 / 69 / 73 each swap one stub for a real Anthropic-backed
+  implementation against the seams defined here.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="3092pt" height="324pt"
+ viewBox="14.00 14.00 3078.00 309.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 305.4)">
+<title>session_turn</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-291 3059.3,-291 3059.3,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_batch</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="283.51,-164 283.51,-242 493.42,-242 493.42,-164 283.51,-164"/>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-228.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_worker</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="671.44,-157 671.44,-279 2118.35,-279 2118.35,-157 671.44,-157"/>
+<text xml:space="preserve" text-anchor="middle" x="1394.89" y="-265.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker process &#160;— &#160;node dist/worker.js</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_realtime</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="2218.35,-8 2218.35,-244 2441.46,-244 2441.46,-8 2218.35,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-230.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_api</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="2601.48,-173 2601.48,-251 2824.59,-251 2824.59,-173 2601.48,-173"/>
+<text xml:space="preserve" text-anchor="middle" x="2713.04" y="-237.1" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task)</text>
+</g>
+<!-- trigger -->
+<g id="node1" class="node">
+<title>trigger</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="183.5,-227.04 0,-227.04 0,-156.96 183.5,-156.96 183.5,-227.04"/>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-208.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">trigger</text>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-195.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev fire&#45;turn route ·</text>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-182.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> MYT&#45;67 player chat)</text>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-168.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueTurn(payload)</text>
+</g>
+<!-- q_turn -->
+<g id="node2" class="node">
+<title>q_turn</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="493.42,-220.44 283.51,-220.44 283.51,-163.56 493.42,-163.56 493.42,-220.44"/>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-201.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: session&#45;turn</text>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-188.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no custom jobId · attempts</text>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-175.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">maxStalledCount 3</text>
+</g>
+<!-- trigger&#45;&gt;q_turn -->
+<g id="edge1" class="edge">
+<title>trigger&#45;&gt;q_turn</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M183.98,-192C212.52,-192 244.37,-192 274.23,-192"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="274.2,-194.45 281.2,-192 274.2,-189.55 274.2,-194.45"/>
+<text xml:space="preserve" text-anchor="middle" x="233.51" y="-195" font-family="Courier,monospace" font-size="10.00">add job</text>
+</g>
+<!-- proc -->
+<g id="node3" class="node">
+<title>proc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="894.55,-227.04 671.44,-227.04 671.44,-156.96 894.55,-156.96 894.55,-227.04"/>
+<text xml:space="preserve" text-anchor="middle" x="783" y="-208.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processTurnJob</text>
+<text xml:space="preserve" text-anchor="middle" x="783" y="-195.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">tryAcquire lock → heartbeat</text>
+<text xml:space="preserve" text-anchor="middle" x="783" y="-182.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">load → process → flush</text>
+<text xml:space="preserve" text-anchor="middle" x="783" y="-168.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">release in finally</text>
+</g>
+<!-- q_turn&#45;&gt;proc -->
+<g id="edge2" class="edge">
+<title>q_turn&#45;&gt;proc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M494.14,-192C545.88,-192 608.57,-192 662.21,-192"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="661.93,-194.45 668.93,-192 661.93,-189.55 661.93,-194.45"/>
+<text xml:space="preserve" text-anchor="middle" x="582.43" y="-207" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<text xml:space="preserve" text-anchor="middle" x="582.43" y="-195" font-family="Courier,monospace" font-size="10.00">+ stalled redelivery</text>
+</g>
+<!-- ctrl -->
+<g id="node4" class="node">
+<title>ctrl</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1268.08,-216.44 1018.56,-216.44 1018.56,-159.56 1268.08,-159.56 1268.08,-216.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1143.32" y="-197.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionController (transient)</text>
+<text xml:space="preserve" text-anchor="middle" x="1143.32" y="-184.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">loadFromRedis → processDmTurn</text>
+<text xml:space="preserve" text-anchor="middle" x="1143.32" y="-171.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ flushToRedis · GC&#39;d per turn</text>
+</g>
+<!-- proc&#45;&gt;ctrl -->
+<g id="edge4" class="edge">
+<title>proc&#45;&gt;ctrl</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M894.92,-190.76C931.13,-190.36 971.71,-189.9 1009.37,-189.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1009.07,-191.94 1016.05,-189.41 1009.02,-187.04 1009.07,-191.94"/>
+<text xml:space="preserve" text-anchor="middle" x="956.56" y="-193.36" font-family="Courier,monospace" font-size="10.00">new + drive</text>
+</g>
+<!-- pub -->
+<g id="node6" class="node">
+<title>pub</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2118.35,-236.04 1849.03,-236.04 1849.03,-165.96 2118.35,-165.96 2118.35,-236.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1983.69" y="-217.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">TurnPublisher</text>
+<text xml:space="preserve" text-anchor="middle" x="1983.69" y="-204.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PUBLISH dm_thinking /</text>
+<text xml:space="preserve" text-anchor="middle" x="1983.69" y="-191.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;text_delta / turn_end / turn_error</text>
+<text xml:space="preserve" text-anchor="middle" x="1983.69" y="-177.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessionChannel(prefix, cId)</text>
+</g>
+<!-- proc&#45;&gt;pub -->
+<g id="edge8" class="edge">
+<title>proc&#45;&gt;pub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M895.14,-213.75C934.03,-220.49 978.08,-227.15 1018.56,-231 1320.55,-259.74 1398.45,-263.9 1701.01,-242 1746.39,-238.71 1795.56,-232.49 1839.93,-225.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1840.09,-228.32 1846.65,-224.85 1839.36,-223.47 1840.09,-228.32"/>
+<text xml:space="preserve" text-anchor="middle" x="1363.09" y="-258.92" font-family="Courier,monospace" font-size="10.00">dm_thinking / turn_end</text>
+</g>
+<!-- lock -->
+<g id="node7" class="node">
+<title>lock</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2441.46,-64.44 2218.35,-64.44 2218.35,-7.56 2441.46,-7.56 2441.46,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:lock:{cId}</text>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SET NX PX (token)</text>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Lua compare&#45;extend / &#45;release</text>
+</g>
+<!-- proc&#45;&gt;lock -->
+<g id="edge3" class="edge">
+<title>proc&#45;&gt;lock</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M832.83,-156.36C899.33,-111.44 1023.73,-40 1142.32,-40 1142.32,-40 1142.32,-40 1984.69,-40 2059.19,-40 2142.75,-39.05 2208.88,-38.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2208.91,-40.53 2215.87,-37.97 2208.83,-35.63 2208.91,-40.53"/>
+<text xml:space="preserve" text-anchor="middle" x="1579.56" y="-55" font-family="Courier,monospace" font-size="10.00">tryAcquire / extend</text>
+<text xml:space="preserve" text-anchor="middle" x="1579.56" y="-43" font-family="Courier,monospace" font-size="10.00">/ release (compare&#45;and&#45;delete)</text>
+</g>
+<!-- tiers -->
+<g id="node5" class="node">
+<title>tiers</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1701.01,-227.04 1458.1,-227.04 1458.1,-156.96 1701.01,-156.96 1701.01,-227.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1579.56" y="-208.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">conductor (deterministic)</text>
+<text xml:space="preserve" text-anchor="middle" x="1579.56" y="-195.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ST.evaluate → FT.render(emit)</text>
+<text xml:space="preserve" text-anchor="middle" x="1579.56" y="-182.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ turn_end → async Scribe</text>
+<text xml:space="preserve" text-anchor="middle" x="1579.56" y="-168.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(tiers STUBBED — MYT&#45;68/69/73)</text>
+</g>
+<!-- ctrl&#45;&gt;tiers -->
+<g id="edge5" class="edge">
+<title>ctrl&#45;&gt;tiers</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1268.75,-189.15C1325.13,-189.67 1391.77,-190.28 1448.77,-190.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1448.64,-193.25 1455.66,-190.87 1448.68,-188.35 1448.64,-193.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1363.09" y="-193.59" font-family="Courier,monospace" font-size="10.00">conductor</text>
+</g>
+<!-- turnstate -->
+<g id="node8" class="node">
+<title>turnstate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2424.96,-150.44 2234.86,-150.44 2234.86,-93.56 2424.96,-93.56 2424.96,-150.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-131.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:ft_history</text>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-118.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;:summary · :usage</text>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-105.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">MGET load · MULTI flush</text>
+</g>
+<!-- ctrl&#45;&gt;turnstate -->
+<g id="edge6" class="edge">
+<title>ctrl&#45;&gt;turnstate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1268.74,-166.18C1326.19,-157.02 1395.42,-147.29 1458.1,-142 1734.74,-118.63 2062.46,-118.5 2225.71,-120.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2225.47,-122.73 2232.5,-120.36 2225.53,-117.83 2225.47,-122.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1775.02" y="-140.95" font-family="Courier,monospace" font-size="10.00">load (MGET)</text>
+<text xml:space="preserve" text-anchor="middle" x="1775.02" y="-128.95" font-family="Courier,monospace" font-size="10.00">flush (MULTI)</text>
+</g>
+<!-- tiers&#45;&gt;pub -->
+<g id="edge7" class="edge">
+<title>tiers&#45;&gt;pub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1701.75,-194.71C1745.21,-195.68 1794.6,-196.79 1839.72,-197.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1839.52,-200.25 1846.57,-197.95 1839.63,-195.35 1839.52,-200.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1775.02" y="-200.31" font-family="Courier,monospace" font-size="10.00">emit text_delta</text>
+</g>
+<!-- channel -->
+<g id="node9" class="node">
+<title>channel</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2418.36,-222.84 2241.46,-222.84 2241.46,-179.16 2418.36,-179.16 2418.36,-222.84"/>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-204.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:campaign:{cId}</text>
+<text xml:space="preserve" text-anchor="middle" x="2329.91" y="-191.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(PUBLISH frame JSON)</text>
+</g>
+<!-- pub&#45;&gt;channel -->
+<g id="edge9" class="edge">
+<title>pub&#45;&gt;channel</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2118.76,-201C2156.52,-201 2196.86,-201 2231.99,-201"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2231.99,-203.45 2238.99,-201 2231.99,-198.55 2231.99,-203.45"/>
+<text xml:space="preserve" text-anchor="middle" x="2168.35" y="-204" font-family="Courier,monospace" font-size="10.00">PUBLISH</text>
+</g>
+<!-- hub -->
+<g id="node10" class="node">
+<title>hub</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2824.59,-229.44 2601.48,-229.44 2601.48,-172.56 2824.59,-172.56 2824.59,-229.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2713.04" y="-210.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionHub</text>
+<text xml:space="preserve" text-anchor="middle" x="2713.04" y="-197.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PSUBSCRIBE session:campaign:*</text>
+<text xml:space="preserve" text-anchor="middle" x="2713.04" y="-184.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fan out to local sockets</text>
+</g>
+<!-- channel&#45;&gt;hub -->
+<g id="edge10" class="edge">
+<title>channel&#45;&gt;hub</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2418.83,-201C2470.37,-201 2536.19,-201 2592.41,-201"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2592.17,-203.45 2599.17,-201 2592.17,-198.55 2592.17,-203.45"/>
+<text xml:space="preserve" text-anchor="middle" x="2521.47" y="-216" font-family="Courier,monospace" font-size="10.00">pmessage</text>
+<text xml:space="preserve" text-anchor="middle" x="2521.47" y="-204" font-family="Courier,monospace" font-size="10.00">(every container)</text>
+</g>
+<!-- client -->
+<g id="node11" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3055.3,-222.84 2924.6,-222.84 2924.6,-179.16 3055.3,-179.16 3055.3,-222.84"/>
+<text xml:space="preserve" text-anchor="middle" x="2989.95" y="-204.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
+<text xml:space="preserve" text-anchor="middle" x="2989.95" y="-191.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dedup on turnId</text>
+</g>
+<!-- hub&#45;&gt;client -->
+<g id="edge11" class="edge">
+<title>hub&#45;&gt;client</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2825.06,-201C2855.58,-201 2887.91,-201 2915.71,-201"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2915.38,-203.45 2922.38,-201 2915.38,-198.55 2915.38,-203.45"/>
+<text xml:space="preserve" text-anchor="middle" x="2874.6" y="-204" font-family="Courier,monospace" font-size="10.00">ws.send</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  A DM turn does not run inline on the WebSocket connection. It runs as a BullMQ job on a dedicated
+  <code>session-turn</code> queue, processed by a fourth Worker in the
+  <a href="./worker.html">worker process</a> — never the API process. A trigger enqueues a job
+  (<code>enqueueTurn</code>); the worker acquires the lock, drives a transient
+  <code>SessionController</code> through the conductor, and publishes the streamed frames to the
+  per-campaign Redis channel that the API containers'
+  <a href="./session-transport.html">SessionHub</a> already fans out to live sockets. MYT-66 adds
+  the <em>publisher</em> on the worker side of the same publish → subscribe → fan-out path the
+  transport built; the worker holds no socket of its own.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The turn runs in a BullMQ job in the worker process, not inline on the socket</strong> —
+  two properties fall out for free. BullMQ's stalled-job redelivery gives per-job crash recovery (a
+  worker dies → the job re-runs on another), which is exactly the recovery the turn needs; and
+  running in the worker process means an API container crash — which drops WebSocket sockets — never
+  takes an in-flight turn down with it, and the turn worker never shares a process with a live
+  <code>SessionHub</code>. The cost is one enqueue → dequeue hop (tens of ms) before streaming
+  begins, negligible against a multi-second LLM turn.
+</aside>
+
+<p>
+  The worker process holds two Redis clients for this: the BullMQ-tuned <em>batch</em> client
+  carries the <code>session-turn</code> queue, and a <em>realtime</em> client carries the lock, the
+  turn-state reads/writes, and the frame publishing. The lock lives next to the session state it
+  guards.
+</p>
+
+<h2 id="the-transient-sessioncontroller">The transient SessionController</h2>
+
+<p>
+  A <code>SessionController</code> exists for the life of one turn and is garbage-collected after —
+  never long-lived. Its three-method lifecycle (<code>loadFromRedis</code> →
+  <code>processDmTurn</code> → <code>flushToRedis</code>) is driven by the worker. It is a thin
+  orchestration shell (Zero Framework Cognition): it makes no judgment calls. It loads the turn's
+  in-memory state, sequences the tiers, and flushes the mutated state — every reasoning call lives
+  behind an injected tier seam.
+</p>
+
+<p>
+  <code>loadFromRedis</code> performs one bulk read: the three LLM-tier keys
+  (<code>:ft_history</code>, <code>:summary</code>, <code>:usage</code>) via a single
+  <code>MGET</code>, plus the participant roster from the existing <code>:state</code> blob. Between
+  load and flush the controller mutates <strong>only its in-memory copy</strong> — it issues no
+  direct Redis writes of its own. <code>flushToRedis</code> is the single atomic write at the end.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The recovery invariant: nothing durable is written before flush</strong> — because the
+  controller only ever mutates in-memory state until the final atomic flush, a crash mid-turn leaves
+  Redis at the exact pre-turn snapshot. There is nothing to undo. A redelivered job re-runs the
+  whole turn from clean state, and (with stub tiers) the re-run is byte-identical. This is what
+  makes BullMQ's at-least-once delivery safe and deterministic here. Streamed
+  <code>text_delta</code> frames are <em>not</em> durable state — they are transport, at-least-once,
+  deduplicated client-side by <code>turnId</code> (see below).
+</aside>
+
+<h2 id="the-conductor-deterministic-code-never-an-llm">The conductor: deterministic code, never an LLM</h2>
+
+<p>
+  <code>processDmTurn</code> is the conductor — the fixed macro sequence. Orchestration is code;
+  reasoning is delegated to bounded tier specialists injected into the controller:
+</p>
+
+<ol>
+  <li>
+    <strong>ST evaluate</strong> — <code>st.evaluate(ctx)</code> returns an
+    <code>StEvaluation</code>. Any <code>summaryUpdate</code> is appended to the running summary
+    in-memory (decoupled from <code>intervene</code>); the ST's token usage is accumulated.
+  </li>
+  <li>
+    <strong>FT render</strong> — each trigger message is appended to <code>ft_history</code> as a
+    <code>user</code> message. When the ST chose to intervene with a <code>direction</code>, that
+    direction is fused onto the <em>last</em> trigger's content as a bracketed
+    <code>[DM direction: …]</code> constraint. <code>ft.render(ctx, emit)</code> streams
+    <code>text_delta</code> frames through <code>emit</code> and returns an
+    <code>AssistantMessage</code>, which is appended to history. The controller then publishes
+    <code>turn_end</code>.
+  </li>
+  <li>
+    <strong>Scribe</strong> — <code>scribe.extract(ctx)</code> fires async and non-blocking after
+    <code>turn_end</code>; its errors are caught, logged, and never fail the turn.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>The stage direction is a constraint, and the FT never learns why</strong> — when the ST
+  intervenes, only the <code>direction</code> text reaches the FT, fused onto the player's last
+  message. The FT renders prose under the constraint but is never told the ST intervened or why.
+  This is enforced ignorance at the turn level: the FT's view is the public conversation plus a
+  constraint, nothing about plot or intent.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Scribe is fire-and-forget, behind a promise wrapper that also catches sync throws</strong>
+  — the Scribe extracts world-state deltas off the critical path, so its failure must never fail the
+  player's turn. The controller wraps the call in
+  <code>Promise.resolve().then(() =&gt; scribe.extract(ctx)).catch(...)</code>: the
+  <code>.then</code> wrapper captures a <em>synchronous</em> throw (a non-async Scribe that throws
+  before returning its promise) into the same <code>.catch</code> as a rejection, so neither
+  escapes. The real per-turn Scribe (tripwire + working-set append) is MYT-73; MYT-66 only
+  establishes the async-after-<code>turn_end</code> seam.
+</aside>
+
+<h2 id="the-tier-stub-boundary-and-structural-enforced-ignorance">The tier-stub boundary, and structural enforced ignorance</h2>
+
+<p>
+  The tier seam is defined once in <code>tiers/types.ts</code> and is the contract MYT-68 / 69 / 73
+  build against. The FT and ST both read an <code>FtTurnContext</code> — and that type is
+  <strong>public by construction</strong>: every field on it (campaign id, trigger messages,
+  conversation history, running summary, participant ids, usage counters, a reserved
+  <code>workingSet</code>) is FT-safe. Secrets simply have nowhere to live on this type.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Secrets reach the ST via constructor deps, never through <code>TurnContext</code></strong>
+  — enforced ignorance (CLAUDE.md non-negotiable #1) is made structural here, not a field-discipline
+  convention. The ST's secret material (the <code>sd_playbook</code>, NPC secrets, narrative
+  threads) is loaded from its constructor dependencies; the controller never threads it through the
+  context the FT also reads. Adding a secret to the ST's view is then a compile-time-isolated change
+  that <em>cannot</em> reach <code>FastThinker.render</code> — the type system is the boundary. If
+  you ever feel the urge to add a plot field to <code>FtTurnContext</code> so the FT can "see a
+  little more," that is the bug the type exists to prevent.
+</aside>
+
+<p>
+  The controller takes its three tiers by constructor injection, so a later issue swaps
+  <code>new StubSlowThinker()</code> for <code>new RealSlowThinker(deps)</code> with no conductor
+  change. The drop-in holds cleanly for the ST and Scribe; the
+  <code>FastThinker.render</code> signature is flagged <em>provisional</em> — MYT-68's in-stream
+  tool loop will add a tool-resolve callback and widen <code>emit</code>. The MYT-66 stubs make the
+  whole pipeline run deterministically end-to-end without spending tokens: the ST never intervenes,
+  the FT emits one canned <code>text_delta</code> (<code>"(the DM considers the scene…)"</code>)
+  then returns one canned line, the Scribe is a no-op. That is what lets the crash-recovery test
+  assert a <em>complete</em> turn with no model calls.
+</p>
+
+<h2 id="the-distributed-lock">The distributed lock</h2>
+
+<p>
+  <code>session-lock.ts</code> is a first-party per-session lock — one container drives a campaign's
+  turn at a time. It implements Redis's documented distributed-lock pattern on the existing
+  <code>ioredis</code> dependency: <code>SET key &lt;token&gt; NX PX &lt;ttl&gt;</code> to acquire
+  (a random per-acquisition token), a Lua compare-and-<code>PEXPIRE</code> to extend, and a Lua
+  compare-and-<code>DEL</code> to release. Both Lua bodies check the token before acting,
+  atomically, so a handle can only ever touch <em>its own</em> lock.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A first-party lock, no new dependency</strong> — no third-party lock library cleared the
+  repo's dependency bar (the well-known ones are abandoned betas or non-industry-standard small-org
+  packages). The Redis-documented <code>SET NX PX</code> + Lua pattern on the ioredis client we
+  already ship adds no package and keeps the correctness requirement (compare-before-delete) visible
+  at the call site.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >Single-instance is sufficient because this is coordination, not a safety-critical mutex</strong
+  >
+  — the consequence of a (rare) double-acquire under a pathological pause is bounded: two turns
+  briefly streaming for one session, absorbed by the clean-retry / never-flush-on-crash design. We
+  are not guarding a financial invariant, so the multi-instance Redlock guarantee (and its
+  well-known criticisms) is irrelevant. Lock expiry is judged on the single Redis server clock, so
+  worker-to-worker clock skew never affects it.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The lock's TTL + heartbeat <em>is</em> the liveness signal — there is no break-stale
+    step</strong
+  >
+  — the worker extends the lock on a timer while the turn runs. A crashed holder simply stops
+  extending; the lock atomically expires within its TTL; the next worker acquires the now-free key
+  with a plain <code>SET NX</code>. A manual "break a stale lock" step would be a race window (two
+  workers both observe "stale" and both break-then-acquire); atomic TTL expiry avoids it entirely.
+  The legacy <code>dm_responding</code> flag survives only as a UI cue, never consulted to decide
+  ownership.
+</aside>
+
+<h2 id="the-lock-fenced-worker-and-crash-recovery">The lock-fenced worker and crash recovery</h2>
+
+<p>
+  <code>processTurnJob</code> is the BullMQ processor — the cluster-coordination shell around the
+  controller. It runs in five movements:
+</p>
+
+<ol>
+  <li>
+    <code>tryAcquire</code> the session lock. On <code>null</code> (a turn is already running for
+    this session), return <code>{ ran: false }</code> and let BullMQ's <code>attempts</code> re-run
+    the job later — the deliberately minimal placeholder for the real trigger-queue + drain
+    semantics of MYT-67.
+  </li>
+  <li>
+    Start a heartbeat (<code>setInterval</code>, every 15 s) that extends the lock. If an extend
+    ever returns <code>false</code> — the lock expired and a successor re-acquired it — set a
+    <code>lockLost</code> flag.
+  </li>
+  <li>
+    Publish <code>dm_thinking</code>, construct the <code>SessionController</code>, and run
+    <code>load → process → flush</code>. The <code>lockLost</code> flag is re-checked before
+    <code>processDmTurn</code> and again before <code>flushToRedis</code>, so a lost lock stops the
+    turn <em>before</em> the flush, never after.
+  </li>
+  <li>
+    On a lock-lost abort, return without flushing or publishing <code>turn_error</code> — the
+    winning container owns the continuation. On a <em>real</em> error, rethrow so BullMQ applies its
+    retry policy.
+  </li>
+  <li>
+    In a <code>finally</code>, clear the heartbeat and release the lock. Release is a
+    compare-and-delete, so it is safe even after lock loss — it can only ever drop the worker's own
+    token, never a successor's.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>The heartbeat — not the TTL — is the primary double-run guard</strong> — three coordinated
+  facts give the concurrency property. (1) A <em>live</em> worker keeps extending its lock every ~15
+  s, so even a spurious BullMQ redelivery of a still-alive worker's job fails its
+  <code>tryAcquire</code> against the live-held lock. (2) A <em>crashed</em> worker stops extending,
+  so the lock expires within its TTL; the TTL (45 s) is sized so the redelivered job's acquire
+  succeeds on the first try rather than burning retry backoff. (3) A
+  <em>stalled-then-resumed</em> worker that missed both its BullMQ job-lock renewal and the
+  session-lock heartbeat finds the lock re-acquired; its next extend returns <code>false</code>, it
+  aborts, and its frames are dropped at the publisher. The pinned inequality is
+  <code>bullmq.lockDuration (30 s) &lt; sessionLockTtl (45 s) ≈ stalledInterval (30 s)</code>.
+  Honest worst-case takeover after a crash is ~30–45 s (TTL expiry + redelivery), not instant.
+</aside>
+
+<h2 id="cross-process-frame-publishing-and-the-turnid-fence">Cross-process frame publishing and the turnId fence</h2>
+
+<p>
+  The worker has no in-memory socket registry, so it streams a turn by <code>PUBLISH</code>ing the
+  DM-turn frames — <code>dm_thinking</code>, <code>text_delta</code>, <code>turn_end</code>,
+  <code>turn_error</code> — to the per-campaign channel. The <code>SessionHub</code> in every API
+  container <code>PSUBSCRIBE</code>s the pattern and fans each frame out to its locally-registered
+  sockets. The FT streams through a <code>TurnEmit</code> closure the publisher binds to one
+  (campaign, turn); the tier seam itself stays frame-agnostic (a plain
+  <code>(text) =&gt; Promise&lt;void&gt;</code>), so MYT-68 can widen the emit without dragging the
+  wire contract into every tier.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Both sides derive the channel string from one helper, so a wrong channel can't silently fan out
+    to nobody</strong
+  >
+  — a Redis <code>publish</code> to a channel no one subscribes to returns <code>0</code> and throws
+  nothing, so a drifted channel literal would be an invisible failure. The channel format
+  (<code>{keyPrefix}session:campaign:{campaignId}</code>) is extracted into
+  <code>contract/session-channel.ts</code>; both the <code>SessionHub</code> subscriber and the turn
+  publisher derive it there. Because the prefix itself contains colons, campaign-id extraction is a
+  suffix-slice, never a split-on-<code>':'</code>. The integration test round-trips a
+  worker-published frame through a <em>real</em> <code>SessionHub</code> subscriber, so a
+  wrong-channel regression fails loud.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >A stable <code>turnId</code> rides every frame so an at-least-once re-stream dedups
+    cleanly</strong
+  >
+  — the <code>turnId</code> is allocated once by the trigger at enqueue and lives in the job
+  payload, so it is constant across a BullMQ redelivery (a redelivered job carries the same data).
+  The client rule: a <code>dm_thinking</code> with a <code>turnId</code> already seen replaces the
+  prior partial render for that turn. So a retried turn (or a stalled worker's late frames) dedups
+  rather than double-rendering. With stub tiers the re-stream is byte-identical; the field is what
+  makes MYT-68's non-deterministic FT safe to retry.
+</aside>
+
+<h2 id="turn-state-the-atomic-flush-and-the-shared-checkpoint-envelope">Turn state, the atomic flush, and the shared checkpoint envelope</h2>
+
+<p>
+  The turn's LLM-tier state lives in three Redis keys added to the
+  <a href="./session-transport.html">session-state</a> module — <code>:ft_history</code>,
+  <code>:summary</code>, <code>:usage</code>. <code>loadTurnState</code> bulk-reads them with a
+  single <code>MGET</code>, JSON-parsing each with an empty default (an unset or corrupt key yields
+  <code>[]</code> / <code>''</code> / <code>{input:0,output:0}</code>).
+  <code>flushTurnState</code> writes all three plus a TTL refresh in one <code>MULTI</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Flush is one atomic <code>MULTI</code>, not a pipeline of independent <code>SET</code>s</strong
+  >
+  — a mid-flush failure across three separate writes could leave torn state (new history, stale
+  usage) that a retry would then double-append. The single transaction makes the flush
+  all-or-nothing. Usage is accumulated only in the in-memory copy and persisted solely by the flush,
+  so a retry is usage-safe by contract.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>MYT-66 writes a widened checkpoint envelope but builds no read-back</strong> — in-session
+  crash recovery rides BullMQ redelivery + the never-flush invariant, which needs no checkpoint
+  read. So MYT-66 does not yet deliver "recover turn state from Postgres after a full Redis loss" —
+  that loader is a later issue. The envelope shares the
+  <code>sessions.st_running_summary</code> column with the
+  <a href="./session-transport.html#read-the-checkpoint">suspend writer</a>: MYT-66 bumps the
+  envelope <code>kind</code> to a superset the suspend reader still parses, the two writers are
+  last-writer-wins, and the versioning discipline is fixed here once for the future ledger field
+  (MYT-70).
+</aside>
+
+<h2 id="the-producer-and-the-dev-fire-turn-trigger">The producer and the dev fire-turn trigger</h2>
+
+<p>
+  <code>enqueueTurn</code> is the thin BullMQ producer: it adds one job carrying
+  <code>{ campaignId, sessionId, turnId, triggerMessages }</code> with
+  <strong>no custom jobId</strong>. The per-session mutex is the lock, not a jobId-dedup — so unlike
+  the suspend queue, turns must each land as a distinct job rather than collapse onto a shared id.
+  The <code>session-turn</code> queue handle is threaded through
+  <code>AppDeps</code> (<code>sessionTurnQueue</code>) the same way the suspend queue is, built on
+  <code>redisBatch</code> in <code>server.ts</code> and closed at shutdown.
+</p>
+
+<p>
+  MYT-66 ships only a minimal trigger to drive its end-to-end test: a dev-only
+  <code>POST /api/dev/campaigns/:campaignId/fire-turn</code>. It resolves the campaign's active
+  session (no active session → <code>409 no_active_session</code>, so a smoke caller starts one
+  first), allocates a <code>turnId</code>, enqueues a single fixed-identity trigger, and returns
+  <code>202 { turnId }</code>. The real player-chat trigger path — mapping a member to their
+  character and the trigger modes — is MYT-67.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The fire-turn route is gated twice, bypass-only</strong> — the plugin registers no route
+  unless <code>AUTH_MODE === 'bypass'</code>, and <code>app.ts</code>'s wiring gates the register on
+  the same condition (defense in depth, mirroring <code>dev-credits.ts</code>). A production boot
+  never reaches the handler. The <a href="./dev-tool.html">dev tool</a> drives it from a fire-turn
+  action panel on the System page.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="fire-a-dm-turn-end-to-end">Fire a DM turn end-to-end locally</h3>
+<ol>
+  <li>
+    Bring up the data plane and both processes: <code>pnpm db:up</code>,
+    <code>pnpm dev</code> (API), and <code>pnpm --filter @mythrun/backend dev:worker</code> (the
+    worker that hosts the turn worker).
+  </li>
+  <li>
+    Start a session for the campaign first: <code>POST /api/sessions/:campaignId/start</code> (the
+    fire-turn route 409s without an active session). Open a WebSocket to
+    <code>GET /ws/session/:sessionId</code> so you can watch the frames.
+  </li>
+  <li>
+    <code>POST /api/dev/campaigns/:campaignId/fire-turn</code> with
+    <code>{ "triggerText": "…" }</code>. Expect <code>202 { turnId }</code>, then on the socket:
+    <code>dm_thinking</code> → one <code>text_delta</code> (the canned stub line) →
+    <code>turn_end</code>, all carrying that <code>turnId</code>.
+  </li>
+  <li>
+    Confirm Redis turn state flushed: the <code>session:{campaignId}:ft_history</code> key now holds
+    the trigger + the canned assistant line; <code>session:lock:{campaignId}</code> is gone
+    (released).
+  </li>
+</ol>
+
+<h3 id="diagnose-a-turn-that-never-completes">Diagnose a turn that never completes</h3>
+<ol>
+  <li>
+    Check the lock key <code>session:lock:{campaignId}</code>. A present key with a live TTL means a
+    worker holds the turn; a present key whose TTL is counting down with no frames arriving suggests
+    a crashed holder — it will free within the TTL (≤45 s) and BullMQ will redeliver.
+  </li>
+  <li>
+    Inspect the <code>session-turn</code> queue depth and the job's <code>attemptsMade</code>. A job
+    retrying repeatedly with <code>{ ran: false }</code> means it keeps losing the acquire race —
+    another turn is in flight for the same session.
+  </li>
+  <li>
+    A turn that threw and exhausted its <code>attempts</code> publishes a
+    <code>turn_error</code> frame (the worker's <code>failed</code>-event handler, on the final
+    attempt). Note the known gap: the <code>maxStalledCount</code>-exhaustion terminal (a holder
+    that crashes 3× in a row) does <em>not</em> fire that handler — BullMQ transitions stalled →
+    failed inside its own Lua script and emits only a <code>stalled</code> event. Closing that needs
+    a broker-side <code>QueueEvents</code> subscriber, owned by MYT-67 (tracked in bead myth-tvnb).
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The turn worker is the fourth Worker registered in the <a href="./worker.html">worker process</a>,
+  on its own <code>session-turn</code> queue. It publishes through the per-campaign channel that
+  <a href="./session-transport.html">session transport</a>'s <code>SessionHub</code> subscribes to —
+  both deriving the channel from <code>contract/session-channel.ts</code> — and adds the
+  <code>dm_thinking</code> / <code>text_delta</code> / <code>turn_end</code> /
+  <code>turn_error</code>
+  frames to that page's wire contract. Turn state extends the session-state Redis module the
+  transport owns, and the checkpoint envelope is shared with its suspend writer. The
+  <a href="./dev-tool.html">dev tool</a> drives the fire-turn trigger from the System page; the
+  <code>session-turn</code> queue handle is threaded through the
+  <a href="./index.html">backend</a>'s <code>AppDeps</code>. The stubbed tiers are the seams the
+  real Fast Thinker (MYT-68), Slow Thinker (MYT-69), and Scribe (MYT-73) implement.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="server-frames-added-server-client-only">Server frames added (server → client only)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Frame</th>
+      <th>Shape</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>dm_thinking</code></td>
+      <td><code>{ type, turnId }</code></td>
+      <td>Turn start (the "DM is responding…" cue). No seq.</td>
+    </tr>
+    <tr>
+      <td><code>text_delta</code></td>
+      <td><code>{ type, turnId, text }</code></td>
+      <td>One FT prose chunk — the only streamed content frame. No seq.</td>
+    </tr>
+    <tr>
+      <td><code>turn_end</code></td>
+      <td><code>{ type, turnId }</code></td>
+      <td>Turn complete. No seq.</td>
+    </tr>
+    <tr>
+      <td><code>turn_error</code></td>
+      <td><code>{ type, turnId, message }</code></td>
+      <td>Terminal failure after retries exhausted, so the client stops waiting. No seq.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="redis-keys-realtime-cluster">Redis keys (realtime cluster)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key (under <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>)</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:lock:{campaignId}</code></td>
+      <td>
+        <code>SET NX PX</code> token (randomUUID), TTL 45 s; Lua compare-extend / compare-delete.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:ft_history</code></td>
+      <td>
+        The conversation the FT sees. JSON array; <code>MGET</code> load / <code>MULTI</code> flush.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:summary</code></td>
+      <td>Running summary, maintained by the ST. JSON string.</td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:usage</code></td>
+      <td>Accumulated token usage <code>{ input, output }</code>.</td>
+    </tr>
+    <tr>
+      <td><code>session:campaign:{campaignId}</code> (channel)</td>
+      <td>
+        Pub/sub channel the worker publishes frames to; the hub <code>PSUBSCRIBE</code>s the
+        pattern.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="tuning-constants-turn-worker-ts">Tuning constants (turn-worker.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>BullMQ <code>lockDuration</code></td>
+      <td>30 s</td>
+      <td>Held below the session-lock TTL so the session lock is the binding mutex.</td>
+    </tr>
+    <tr>
+      <td>BullMQ <code>stalledInterval</code></td>
+      <td>30 s</td>
+      <td>≈ session-lock TTL so a stalled job is reclaimed after the lock has freed.</td>
+    </tr>
+    <tr>
+      <td>BullMQ <code>maxStalledCount</code></td>
+      <td>3</td>
+      <td>Bounds retry storms on a repeatedly-crashing holder.</td>
+    </tr>
+    <tr>
+      <td>session-lock TTL</td>
+      <td>45 s</td>
+      <td>A crashed holder's lock frees within this window.</td>
+    </tr>
+    <tr>
+      <td>heartbeat interval</td>
+      <td>15 s</td>
+      <td>Comfortably under the TTL so a brief GC pause doesn't drop the lock.</td>
+    </tr>
+    <tr>
+      <td>concurrency</td>
+      <td>5</td>
+      <td>Turns processed in parallel by the worker (across distinct sessions).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="files">Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/session-controller.ts</code></td>
+      <td>
+        <code>SessionController</code> — the transient conductor (<code>loadFromRedis</code> /
+        <code>processDmTurn</code> / <code>flushToRedis</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/turn-worker.ts</code></td>
+      <td>
+        <code>processTurnJob</code>, <code>buildSessionTurnWorker</code>,
+        <code>publishTerminalTurnError</code> (H8 gate), <code>LockLostError</code>; the tuning
+        constants.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/session-lock.ts</code></td>
+      <td>
+        <code>createSessionLock</code>, <code>SessionLock</code> / <code>SessionLockHandle</code> —
+        <code>tryAcquire</code> / <code>extend</code> / <code>release</code> over the Lua scripts.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/turn-publisher.ts</code></td>
+      <td>
+        <code>createTurnPublisher</code>, <code>TurnPublisher</code> — <code>dmThinking</code> /
+        <code>textDelta</code> / <code>turnEnd</code> / <code>turnError</code> /
+        <code>emitFor</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/turn-queue.ts</code></td>
+      <td>
+        <code>enqueueTurn</code>, <code>QUEUE_SESSION_TURN</code>, <code>TURN_JOB_NAME</code>,
+        <code>TurnJobPayload</code> / <code>TurnQueueLike</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/tiers/types.ts</code></td>
+      <td>
+        <code>FtTurnContext</code> (public-by-construction), <code>SlowThinker</code> /
+        <code>FastThinker</code> / <code>Scribe</code> interfaces, <code>TurnEmit</code>,
+        <code>StEvaluation</code> / <code>AssistantMessage</code> / <code>ScribeResult</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/tiers/stubs.ts</code></td>
+      <td>
+        <code>StubSlowThinker</code> / <code>StubFastThinker</code> / <code>StubScribe</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/contract/session-channel.ts</code></td>
+      <td>
+        <code>sessionChannel</code> / <code>sessionChannelPattern</code> /
+        <code>campaignIdFromChannel</code> — the single source of truth for the pub/sub channel
+        format.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/routes/dev-fire-turn.ts</code></td>
+      <td>
+        <code>devFireTurnRoutes</code> — the bypass-only <code>POST .../fire-turn</code> trigger.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/session/session-controller.ts</code>,
+  <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/session/session-lock.ts</code>,
+  <code>backend/src/session/turn-publisher.ts</code>,
+  <code>backend/src/session/turn-queue.ts</code>, <code>backend/src/session/tiers/</code>,
+  <code>backend/src/contract/session-channel.ts</code>,
+  <code>backend/src/routes/dev-fire-turn.ts</code>. Design spec:
+  <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-transient-sessioncontroller">The transient SessionController</a></li><li style="padding-left:0"><a href="#the-conductor-deterministic-code-never-an-llm">The conductor: deterministic code, never an LLM</a></li><li style="padding-left:0"><a href="#the-tier-stub-boundary-and-structural-enforced-ignorance">The tier-stub boundary, and structural enforced ignorance</a></li><li style="padding-left:0"><a href="#the-distributed-lock">The distributed lock</a></li><li style="padding-left:0"><a href="#the-lock-fenced-worker-and-crash-recovery">The lock-fenced worker and crash recovery</a></li><li style="padding-left:0"><a href="#cross-process-frame-publishing-and-the-turnid-fence">Cross-process frame publishing and the turnId fence</a></li><li style="padding-left:0"><a href="#turn-state-the-atomic-flush-and-the-shared-checkpoint-envelope">Turn state, the atomic flush, and the shared checkpoint envelope</a></li><li style="padding-left:0"><a href="#the-producer-and-the-dev-fire-turn-trigger">The producer and the dev fire-turn trigger</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#fire-a-dm-turn-end-to-end">Fire a DM turn end-to-end locally</a></li><li style="padding-left:12px"><a href="#diagnose-a-turn-that-never-completes">Diagnose a turn that never completes</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#server-frames-added-server-client-only">Server frames added (server → client only)</a></li><li style="padding-left:12px"><a href="#redis-keys-realtime-cluster">Redis keys (realtime cluster)</a></li><li style="padding-left:12px"><a href="#tuning-constants-turn-worker-ts">Tuning constants (turn-worker.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

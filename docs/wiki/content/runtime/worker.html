@@ -8,22 +8,24 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
 <!-- source: docs/specs/2026-04-10-infrastructure-devops.md -->
-<!-- source-hash: sha256:d10cb1874e39b2db3d93bb3e5c54a3a1d724d3ca0ebfa9523b4ca4cc73c3d27e -->
-<!-- last-ticket: MYT-62 -->
+<!-- source: backend/src/session/turn-worker.ts -->
+<!-- source-hash: sha256:6c9f6cc9c36d27e187033dbe20cf3162f07f5798b665c9fcab0d7f1f8b4e9ccc -->
+<!-- last-ticket: MYT-66 -->
 
 <h1>Worker</h1>
 
 <p class="lead">
   The async-execution half of the backend. A second ECS Fargate service running
-  <code>node dist/worker.js</code> with three BullMQ Workers — <code>world-gen</code> (concurrency
-  3), <code>campaign-setup</code> (concurrency 5), and <code>session-prep</code> (concurrency 3) —
-  all consuming from <code>redisBatch</code>. Phase 0 shipped stub processors that logged job
-  receipt and marked complete. The real prep-stage processors landed across MYT-51 (world-gen),
-  MYT-52 (streaming entity / edge events), MYT-53 (per-player character creation), MYT-54
-  (campaign-scoped character integration), and MYT-61 (session prep). The shape locked in at Phase 0
-  so each later stage was a coverage edit, not a service-topology change. The stub-processor file
-  was retired in MYT-55 once the dedicated worker container caught up to the same wiring the API
-  container already used.
+  <code>node dist/worker.js</code> with four BullMQ Workers — <code>world-gen</code> (concurrency
+  3), <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), and
+  the MYT-66 <code>session-turn</code> worker (concurrency 5) — all consuming from
+  <code>redisBatch</code>. Phase 0 shipped stub processors that logged job receipt and marked
+  complete. The real prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming
+  entity / edge events), MYT-53 (per-player character creation), MYT-54 (campaign-scoped character
+  integration), and MYT-61 (session prep); the <code>session-turn</code> worker — the lock-fenced
+  DM-turn conductor — joined in MYT-66. The shape locked in at Phase 0 so each later stage was a
+  coverage edit, not a service-topology change. The stub-processor file was retired in MYT-55 once
+  the dedicated worker container caught up to the same wiring the API container already used.
 </p>
 
 <!-- @diagram: runtime/worker -->
@@ -50,14 +52,38 @@
 <p>
   The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
   <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
-  data plane, and then registers three BullMQ <code>Worker</code> instances against
+  data plane, and then registers four BullMQ <code>Worker</code> instances against
   <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3),
-  <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5), and
-  <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61). Queue
-  names and concurrency caps live in <code>backend/src/worker/bullmq-config.ts</code> — the single
-  source of truth so the API-side <code>Queue</code> producers and the worker-side
-  <code>Worker</code> consumers can't drift.
+  <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5),
+  <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61), and
+  <code>QUEUE_SESSION_TURN</code> (<code>session-turn</code>, concurrency 5, added in MYT-66). Queue
+  names and concurrency caps for the prep workers live in
+  <code>backend/src/worker/bullmq-config.ts</code> — the single source of truth so the API-side
+  <code>Queue</code> producers and the worker-side <code>Worker</code> consumers can't drift; the
+  session-turn worker's own queue name and tuning constants live alongside its processor in
+  <code>session/turn-worker.ts</code>.
 </p>
+
+<p>
+  The <code>session-turn</code> worker is built by <code>buildSessionTurnWorker</code> and is shaped
+  differently from the three prep workers. It is the only one that needs <em>two</em> Redis sides at
+  once: it reuses the already-probed <code>redisBatch</code> as its BullMQ connection (no new
+  client, no second ping-probe) and constructs its per-session lock, session-state I/O, and frame
+  publisher on <code>redisRealtime</code>. The full story — the transient
+  <code>SessionController</code>, the deterministic ST → FT → Scribe conductor, the distributed
+  lock, and the crash-recovery model — lives on the
+  <a href="./session-turn.html">session turn</a> page; this worker is where it is registered to run.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The turn worker runs here, not in the API process</strong> — the prep workers and the turn
+  worker share the same crash-isolation rationale, but the turn worker has an extra one. A DM turn
+  streams to live WebSocket sockets the API process owns; running the turn in the API process would
+  couple a mid-turn crash to the sockets it streams to. Keeping the turn in the dedicated worker
+  means an API container crash drops sockets without killing the turn, and the turn worker never
+  shares a process with a live <code>SessionHub</code>. It publishes frames cross-process to the
+  per-campaign Redis channel the API containers fan out.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A queue per stage, not one shared queue</strong> — world-generation, campaign-setup, and
@@ -120,12 +146,14 @@
 <p>
   ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
   <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
-  new probes from going green during teardown), then runs <code>worker.close()</code> on all three
+  new probes from going green during teardown), then runs <code>worker.close()</code> on all four
   BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
   force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
-  After both close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish out,
-  then <code>process.exit(0)</code>.
+  For the session-turn worker that stall recovery is not just a shutdown nicety but the load-bearing
+  crash-recovery path (a force-closed turn re-runs on another worker from clean state). After both
+  close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish out, then
+  <code>process.exit(0)</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -307,8 +335,11 @@
   live in <code>backend/src/contract/pipeline-jobs.ts</code> — the same contract file the
   <a href="./dev-tool.html">dev tool</a>'s ship gate enforces coverage against. The
   <a href="./session-prep.html">session-prep</a> worker is the third <code>Worker</code> registered
-  here, on its own queue. Streaming-cost attribution joins to the <code>pipeline_runs</code> table
-  introduced in MYT-43.
+  here, on its own queue; the <a href="./session-turn.html">session-turn</a> worker is the fourth,
+  the only one that also reads and writes <code>redisRealtime</code> (its per-session lock, turn
+  state, and DM-turn frame publishing) and the only one whose stalled-job recovery is a load-bearing
+  product behavior rather than a teardown safety net. Streaming-cost attribution joins to the
+  <code>pipeline_runs</code> table introduced in MYT-43.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -331,7 +362,16 @@
       <td>
         <code>QUEUE_WORLD_GEN</code>, <code>QUEUE_CAMPAIGN_SETUP</code>,
         <code>QUEUE_SESSION_PREP</code>, <code>CONCURRENCY_WORLD_GEN = 3</code>,
-        <code>CONCURRENCY_CAMPAIGN_SETUP = 5</code>, <code>CONCURRENCY_SESSION_PREP = 3</code>.
+        <code>CONCURRENCY_CAMPAIGN_SETUP = 5</code>, <code>CONCURRENCY_SESSION_PREP = 3</code>. The
+        <code>session-turn</code> queue name + tuning constants live with its processor in
+        <code>session/turn-worker.ts</code>, not here.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/session/turn-worker.ts</code></td>
+      <td>
+        <code>buildSessionTurnWorker</code> — the fourth Worker (concurrency 5). The lock-fenced
+        DM-turn conductor; documented on the <a href="./session-turn.html">session turn</a> page.
       </td>
     </tr>
     <tr>
@@ -394,6 +434,10 @@
       <td>Concurrency: <code>session-prep</code></td>
       <td>3</td>
     </tr>
+    <tr>
+      <td>Concurrency: <code>session-turn</code></td>
+      <td>5</td>
+    </tr>
   </tbody>
 </table>
 
@@ -401,9 +445,10 @@
 
 <p>
   <code>backend/src/worker.ts</code>, <code>backend/src/worker/</code>,
-  <code>backend/src/redis/bullmq-client.ts</code>, <code>backend/src/llm/middleware.ts</code>,
-  <code>infra/modules/serving/main.tf</code>, <code>.github/workflows/deploy.yml</code>. Design
-  spec: <code>docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md</code>; parent specs:
+  <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/redis/bullmq-client.ts</code>,
+  <code>backend/src/llm/middleware.ts</code>, <code>infra/modules/serving/main.tf</code>,
+  <code>.github/workflows/deploy.yml</code>. Design spec:
+  <code>docs/superpowers/specs/2026-05-12-myt-49-bullmq-worker-design.md</code>; parent specs:
   <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code> and
   <code>docs/specs/2026-04-10-infrastructure-devops.md</code>.
 </p>

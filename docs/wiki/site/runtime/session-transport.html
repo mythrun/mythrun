@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html" class="active">Session transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html" class="active">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session transport</div>
         <article>
@@ -32,8 +32,10 @@
   The live multiplayer layer: a ticket-authed WebSocket per player, a cross-container fan-out hub
   modeled on the SSE pipeline subscriber, ordered persist-then-broadcast chat, sequence-based
   reconnection replay, and a crash-safe TTL-presence model that suspends an empty session through a
-  self-validating BullMQ job. This is the transport floor the DM-turn streaming surface (MYT-66+)
-  builds on; it carries player chat and system-presence frames only.
+  self-validating BullMQ job. This is the transport floor the
+  <a href="./session-turn.html">DM-turn pipeline</a> builds on: it carries player chat and presence
+  frames, and its <code>SessionHub</code> fan-out is also the path the turn worker streams
+  <code>dm_thinking</code> / <code>text_delta</code> / <code>turn_end</code> frames through.
 </p>
 
 <figure class="wiki-diagram">
@@ -619,7 +621,10 @@
 <p>
   The transport runs across many ECS tasks, and two players in the same campaign may be connected to
   different containers. The <code>SessionHub</code> bridges them with Redis pub/sub — one channel
-  per campaign, <code>session:campaign:{campaignId}</code>. Each API process holds one
+  per campaign, <code>session:campaign:{campaignId}</code>, derived from the shared
+  <code>contract/session-channel.ts</code> helper (the same helper the
+  <a href="./session-turn.html">turn worker</a>'s publisher consumes, so a worker in another process
+  can't publish to a channel the hub doesn't subscribe to). Each API process holds one
   <em>dedicated</em> <code>PSUBSCRIBE</code>'d Redis client (a <code>duplicate()</code> of
   <code>redisRealtime</code>) and an in-memory writable registry,
   <code>Map&lt;campaignId, Map&lt;userId, socket&gt;&gt;</code>. When any container publishes a
@@ -633,9 +638,9 @@
 <aside class="wiki-rationale">
   <strong>A dedicated subscriber client, not the shared realtime one</strong> — once an ioredis
   client enters subscriber mode it rejects almost all other commands, so the
-  <code>PSUBSCRIBE</code> client must be separate from the one the route uses to
-  <code>publish</code>, <code>INCR</code>, and rate-limit. The same split the pipeline subscriber
-  makes. The initial <code>psubscribe</code> is awaited before
+  <code>PSUBSCRIBE</code> client must be separate from the one the route (or the cross-process turn
+  worker) uses to <code>publish</code>, <code>INCR</code>, and rate-limit. The same split the
+  pipeline subscriber makes. The initial <code>psubscribe</code> is awaited before
   <code>createSessionHub</code> returns, so a <code>publish</code> immediately after construction is
   reliably delivered.
 </aside>
@@ -735,20 +740,26 @@
 <p>
   <code>contract/session-events.ts</code> is the declarative wire contract — a client-frame
   allowlist, a server-frame allowlist, and discriminated-union payload types per direction,
-  mirroring <code>pipeline-events.ts</code>. MYT-65 ships the player-chat-and-presence subset only.
-  The DM-turn frames from the full protocol — <code>text_delta</code>, <code>dm_thinking</code>,
-  <code>skill_check</code>, <code>dice_roll</code>, <code>turn_end</code>, <code>combat_*</code>,
-  <code>session_end</code>, and the rest — are deliberately absent.
+  mirroring <code>pipeline-events.ts</code>. MYT-65 shipped the player-chat-and-presence subset.
+  MYT-66 adds the first DM-turn frames as <strong>server → client only</strong>:
+  <code>dm_thinking</code>, <code>text_delta</code>, <code>turn_end</code>, and
+  <code>turn_error</code>, each carrying a <code>turnId</code> and no seq. The
+  <a href="./session-turn.html">turn worker</a> publishes them; this transport's hub fans them out.
+  The rest of the full protocol — <code>skill_check</code>, <code>dice_roll</code>,
+  <code>combat_*</code>, <code>session_end</code>, <code>st_evaluation</code>,
+  <code>scribe_result</code>, and the rest — is still deliberately absent until its surface is
+  built.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The contract is the allowlist, so unbuilt frames can't be broadcast</strong> — the
-  <code>classifyClientFrame</code> tripwire rejects any client frame type not in
-  <code>CLIENT_FRAME_TYPES</code> at the transport boundary. Adding the DM-turn frame types to the
-  contract before MYT-66 builds their handlers would let the transport accept and broadcast frames
-  it has no handler for. Keeping the contract scoped to what's implemented is the same
-  structural-gate discipline the pipeline subscriber uses (ZFC structural exception — not LLM
-  cognition).
+  <strong>The contract grows only as handlers ship, so unbuilt frames can't be broadcast</strong> —
+  the <code>classifyClientFrame</code> tripwire rejects any client frame type not in
+  <code>CLIENT_FRAME_TYPES</code> at the transport boundary. The server-frame allowlist plays the
+  same role on the outbound side: a frame type is added only when something produces it. MYT-66
+  added the four DM-turn frames precisely because the turn worker now produces them; the
+  still-unbuilt combat / skill-check frames stay out so the contract never advertises a frame with
+  nothing behind it. Same structural-gate discipline the pipeline subscriber uses (ZFC structural
+  exception — not LLM cognition).
 </aside>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -826,8 +837,10 @@
   <code>sessions</code>, <code>session_messages</code>, and
   <code>session_participants</code> through
   <a href="../data/repository.html">the repository layer</a>; see the
-  <a href="../data/schema.html">schema</a> for those tables. The DM-turn streaming surface (MYT-66+)
-  extends the wire contract and the connect path on top of this transport.
+  <a href="../data/schema.html">schema</a> for those tables. The
+  <a href="./session-turn.html">DM-turn pipeline</a> extends the wire contract with the
+  server-streamed turn frames and publishes them through this transport's <code>SessionHub</code>;
+  it also adds the per-turn LLM-tier keys to the session-state module documented here.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -853,7 +866,10 @@
       <td>
         <code>session_ready</code>, <code>session_reconnect</code>, <code>player_joined</code>,
         <code>player_left</code>, <code>player_message</code> (the only frame with a
-        <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>, <code>error</code>.
+        <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>, <code>error</code>,
+        plus the MYT-66 DM-turn frames <code>dm_thinking</code> / <code>text_delta</code> /
+        <code>turn_end</code> / <code>turn_error</code> (each carries a <code>turnId</code>, no seq;
+        published by the <a href="./session-turn.html">turn worker</a>).
       </td>
     </tr>
   </tbody>
@@ -978,9 +994,19 @@
     <tr>
       <td><code>src/contract/session-events.ts</code></td>
       <td>
-        <code>CLIENT_FRAME_TYPES</code> / <code>SERVER_FRAME_TYPES</code> allowlists,
-        <code>ClientFrame</code> / <code>ServerFrame</code> unions,
-        <code>classifyClientFrame</code> tripwire.
+        <code>CLIENT_FRAME_TYPES</code> / <code>SERVER_FRAME_TYPES</code> allowlists (the latter now
+        carries the MYT-66 DM-turn frames), <code>ClientFrame</code> /
+        <code>ServerFrame</code> unions, <code>classifyClientFrame</code> tripwire.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/contract/session-channel.ts</code></td>
+      <td>
+        <code>sessionChannel</code> / <code>sessionChannelPattern</code> /
+        <code>campaignIdFromChannel</code> — the single source of truth for the
+        <code>session:campaign:{campaignId}</code> pub/sub channel format, consumed by both the hub
+        and the cross-process <a href="./session-turn.html">turn publisher</a> (extracted in
+        MYT-66).
       </td>
     </tr>
     <tr>
@@ -1019,7 +1045,8 @@
   <code>backend/src/routes/ws-session.ts</code>, <code>backend/src/ws/session-hub.ts</code>,
   <code>backend/src/redis/session-state.ts</code>,
   <code>backend/src/session/session-suspend.ts</code>,
-  <code>backend/src/contract/session-events.ts</code>, <code>backend/src/routes/sessions.ts</code>,
+  <code>backend/src/contract/session-events.ts</code>,
+  <code>backend/src/contract/session-channel.ts</code>, <code>backend/src/routes/sessions.ts</code>,
   <code>backend/src/repo/session-messages.ts</code>,
   <code>backend/src/repo/session-participants.ts</code>,
   <code>backend/migrations/023_session_messages_unique_seq.sql</code>.

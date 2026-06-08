@@ -1,0 +1,74 @@
+digraph session_turn {
+  // The DM-turn pipeline. A trigger enqueues a session-turn job on redisBatch;
+  // the session-turn worker (in the dedicated worker.ts process) acquires the
+  // per-session distributed lock, runs a transient SessionController through
+  // the deterministic ST → FT → Scribe conductor (tiers stubbed in MYT-66),
+  // flushes turn state in one atomic MULTI, and releases the lock. The worker
+  // holds no socket: it PUBLISHes dm_thinking / text_delta / turn_end frames to
+  // the per-campaign channel, which the API containers' SessionHub fans out to
+  // the live WebSockets. A crashed worker stops the heartbeat → the lock
+  // expires → BullMQ redelivers the still-unflushed job to another worker,
+  // which re-runs from clean Redis state (the never-flush-on-crash invariant).
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  trigger [label="trigger\n(dev fire-turn route ·\n MYT-67 player chat)\nenqueueTurn(payload)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_batch {
+    label="redisBatch";
+    style="dotted";
+    q_turn [label="queue: session-turn\nno custom jobId · attempts\nmaxStalledCount 3"];
+  }
+
+  subgraph cluster_worker {
+    label="Worker process  —  node dist/worker.js";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    proc [label="processTurnJob\ntryAcquire lock → heartbeat\nload → process → flush\nrelease in finally", color="ember", fontcolor="ember"];
+    ctrl [label="SessionController (transient)\nloadFromRedis → processDmTurn\n→ flushToRedis · GC'd per turn"];
+    tiers [label="conductor (deterministic)\nST.evaluate → FT.render(emit)\n→ turn_end → async Scribe\n(tiers STUBBED — MYT-68/69/73)"];
+    pub  [label="TurnPublisher\nPUBLISH dm_thinking /\n  text_delta / turn_end / turn_error\nsessionChannel(prefix, cId)"];
+  }
+
+  subgraph cluster_realtime {
+    label="Redis (realtime cluster)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    lock  [label="session:lock:{cId}\nSET NX PX (token)\nLua compare-extend / -release"];
+    turnstate [label="session:{cId}:ft_history\n  :summary · :usage\nMGET load · MULTI flush"];
+    channel [label="session:campaign:{cId}\n(PUBLISH frame JSON)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_api {
+    label="API process  (per ECS task)";
+    style="dashed";
+    hub [label="SessionHub\nPSUBSCRIBE session:campaign:*\nfan out to local sockets"];
+  }
+
+  client [label="player / SPA\ndedup on turnId", color="ember", fontcolor="ember"];
+
+  // Enqueue → dequeue
+  trigger -> q_turn  [label="add job"];
+  q_turn  -> proc    [label="BLPOP-style\n+ stalled redelivery"];
+
+  // Lock fence
+  proc -> lock [label="tryAcquire / extend\n/ release (compare-and-delete)"];
+
+  // Run the turn
+  proc -> ctrl  [label="new + drive"];
+  ctrl -> tiers [label="conductor"];
+  ctrl -> turnstate [label="load (MGET)\nflush (MULTI)"];
+
+  // Streaming frames (cross-process)
+  tiers   -> pub     [label="emit text_delta"];
+  proc    -> pub     [label="dm_thinking / turn_end", style=dashed];
+  pub     -> channel [label="PUBLISH"];
+  channel -> hub     [label="pmessage\n(every container)", color="ember"];
+  hub     -> client  [label="ws.send"];
+}

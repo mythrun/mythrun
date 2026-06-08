@@ -35,8 +35,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:398765efa008373b7b3332af8c52c3b0f383f81783725f7e2ce2e0aa4402894e -->
-<!-- last-ticket: MYT-62 -->
+<!-- source-hash: sha256:d130e3e27a36ef9ab15ac46b8d86c1b93eb1615956edad82049da526a63d4d90 -->
+<!-- last-ticket: MYT-66 -->
 
 <h1>Dev tool</h1>
 
@@ -223,7 +223,7 @@
       <td><code>System</code></td>
       <td>
         Health (liveness) / Health (ready) / WS ticket / Session start / Session active / Session
-        messages.
+        messages / Fire turn (dev-only DM-turn trigger).
       </td>
     </tr>
   </tbody>
@@ -493,14 +493,26 @@
   <code>backend/dev-tool/verify-registry.ts</code>, enforced by the vitest test). The pipeline
   contracts' exempt object is now empty: every route, event, and job has a real coverage entry. (The
   <code>session-prep</code> job left it when MYT-62 shipped its prose-pane driver.) The verifier's
-  <code>EXEMPT_ROUTES</code> currently lists four entries:
+  <code>EXEMPT_ROUTES</code> currently lists six entries:
   <code>POST /webhooks/stripe</code> (signature-verified consumer, no human UI),
   <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel + the dev
   tool's self-bootstrap), <code>GET /api/users/check-username</code> (same shape, embedded in the
-  register probe-helper), and <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> (the live
-  prep-prose SSE — consumed by the wire-log drawer's prose pane, which is header chrome rather than
-  a JSDOM-mountable page panel, so it can't be credited to a <code>PAGE_REGISTRY</code> panel).
+  register probe-helper), <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> and
+  <code>GET /api/campaigns/:campaignId/prep-status</code> (the two live prep SSE streams — consumed
+  by the wire-log drawer, which is header chrome rather than a JSDOM-mountable page panel), and
+  <code>GET /ws/session/:sessionId</code> (a raw WebSocket upgrade, which none of the three
+  fetch-based panel patterns can model).
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The fire-turn route is panel-credited, not exempted</strong> — MYT-66's dev-only
+  <code>POST /api/dev/campaigns/:campaignId/fire-turn</code> trigger was provisionally added to
+  <code>EXEMPT_ROUTES</code> while the route landed, then removed once the verifier built an
+  action-only <a href="./session-turn.html">fire-turn</a> panel on the System page (the same call it
+  made for the MYT-65 session-lifecycle routes). A curl-able dev poke <em>is</em> driveable from a
+  two-input + button panel, so the route earns real coverage rather than an exemption — the exempt
+  list stays reserved for routes that genuinely can't have a UI surface.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The prose route is exempt, not panel-credited</strong> — the route-exhaustion invariant
@@ -856,7 +868,10 @@
     <tr>
       <td><code>System</code></td>
       <td>No</td>
-      <td>Health (liveness + ready) / WS ticket / session start + active + messages.</td>
+      <td>
+        Health (liveness + ready) / WS ticket / session start + active + messages / fire turn
+        (dev-only DM-turn trigger).
+      </td>
     </tr>
   </tbody>
 </table>

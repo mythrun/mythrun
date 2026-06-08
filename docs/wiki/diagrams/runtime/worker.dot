@@ -1,8 +1,10 @@
 digraph worker {
   // The worker. A second ECS Fargate service that runs node dist/worker.js
-  // and pulls jobs from three BullMQ queues on redisBatch. Health server on
+  // and pulls jobs from four BullMQ queues on redisBatch. Health server on
   // 127.0.0.1:3001 is what ECS probes. Real prep-stage processors land across
-  // MYT-51 onward; session-prep (MYT-61) is the third queue/worker.
+  // MYT-51 onward; session-prep (MYT-61) is the third queue/worker; the
+  // session-turn worker (MYT-66) is the fourth — the lock-fenced DM-turn
+  // conductor that also reads/writes redisRealtime (lock + state + publish).
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -14,7 +16,7 @@ digraph worker {
     color="ember";
     fontcolor="ember";
 
-    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep')"];
+    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep' |\n  'session-turn')"];
   }
 
   subgraph cluster_redis {
@@ -24,6 +26,7 @@ digraph worker {
     q_world    [label="queue: world-gen"];
     q_campaign [label="queue: campaign-setup"];
     q_prep     [label="queue: session-prep"];
+    q_turn     [label="queue: session-turn", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_worker {
@@ -37,23 +40,26 @@ digraph worker {
     w_world    [label="BullmqWorker\nworld-gen\nconcurrency 3"];
     w_camp     [label="BullmqWorker\ncampaign-setup\nconcurrency 5"];
     w_prep     [label="BullmqWorker\nsession-prep\nconcurrency 3", color="ember", fontcolor="ember"];
+    w_turn     [label="buildSessionTurnWorker\nsession-turn\nconcurrency 5\nlock + state + publish\non redisRealtime", color="ember", fontcolor="ember"];
     health     [label="worker/health-server.ts\nGET /health on 127.0.0.1:3001\nprobes: pg + redisBatch +\nredisRealtime + isRunning()"];
     bullmq_redis [label="redis/bullmq-client.ts\nmaxRetriesPerRequest: null\n(BullMQ requirement)"];
   }
 
   ecs   [label="ECS healthCheck\ncurl :3001/health every 30s\nstopTimeout=120s"];
   pg    [label="Postgres\npool max=4"];
-  realtime [label="redisRealtime\nPUBLISH stage-* /\n  per-fact events"];
+  realtime [label="redisRealtime\nPUBLISH stage-* / per-fact events\nsession lock + turn state +\nDM-turn frames (MYT-66)"];
 
   // API enqueues
   queue_producer -> q_world;
   queue_producer -> q_campaign;
   queue_producer -> q_prep;
+  queue_producer -> q_turn;
 
   // Worker consumes
   q_world    -> w_world  [label="BLPOP-style"];
   q_campaign -> w_camp   [label="BLPOP-style"];
   q_prep     -> w_prep   [label="BLPOP-style"];
+  q_turn     -> w_turn   [label="BLPOP-style\n+ stalled redelivery", color="ember"];
 
   // Worker shape
   cfg     -> w_world  [style=dashed, label="queue name + concurrency"];
@@ -62,9 +68,14 @@ digraph worker {
   entry   -> w_world  [style=dashed, label="register"];
   entry   -> w_camp   [style=dashed];
   entry   -> w_prep   [style=dashed];
+  entry   -> w_turn   [style=dashed];
   bullmq_redis -> w_world [style=dashed, label="connection"];
   bullmq_redis -> w_camp  [style=dashed];
   bullmq_redis -> w_prep  [style=dashed];
+  bullmq_redis -> w_turn  [style=dashed];
+
+  // Turn worker also drives redisRealtime (lock + state + frame publish)
+  w_turn -> realtime [style=dashed, label="lock + state +\nDM-turn frames", color="ember"];
 
   // Health + ECS probe
   entry  -> health [style=dashed, label="start last"];
@@ -73,5 +84,6 @@ digraph worker {
   health -> w_world     [label="isRunning()", style=dotted];
   health -> w_camp      [label="isRunning()", style=dotted];
   health -> w_prep      [label="isRunning()", style=dotted];
+  health -> w_turn      [label="isRunning()", style=dotted];
   health -> realtime    [label="PING", style=dotted];
 }

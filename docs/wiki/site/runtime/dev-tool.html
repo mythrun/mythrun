@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html" class="active">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html" class="active">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Dev tool</div>
         <article>
@@ -650,7 +650,7 @@
       <td><code>System</code></td>
       <td>
         Health (liveness) / Health (ready) / WS ticket / Session start / Session active / Session
-        messages.
+        messages / Fire turn (dev-only DM-turn trigger).
       </td>
     </tr>
   </tbody>
@@ -920,14 +920,26 @@
   <code>backend/dev-tool/verify-registry.ts</code>, enforced by the vitest test). The pipeline
   contracts' exempt object is now empty: every route, event, and job has a real coverage entry. (The
   <code>session-prep</code> job left it when MYT-62 shipped its prose-pane driver.) The verifier's
-  <code>EXEMPT_ROUTES</code> currently lists four entries:
+  <code>EXEMPT_ROUTES</code> currently lists six entries:
   <code>POST /webhooks/stripe</code> (signature-verified consumer, no human UI),
   <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel + the dev
   tool's self-bootstrap), <code>GET /api/users/check-username</code> (same shape, embedded in the
-  register probe-helper), and <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> (the live
-  prep-prose SSE — consumed by the wire-log drawer's prose pane, which is header chrome rather than
-  a JSDOM-mountable page panel, so it can't be credited to a <code>PAGE_REGISTRY</code> panel).
+  register probe-helper), <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> and
+  <code>GET /api/campaigns/:campaignId/prep-status</code> (the two live prep SSE streams — consumed
+  by the wire-log drawer, which is header chrome rather than a JSDOM-mountable page panel), and
+  <code>GET /ws/session/:sessionId</code> (a raw WebSocket upgrade, which none of the three
+  fetch-based panel patterns can model).
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The fire-turn route is panel-credited, not exempted</strong> — MYT-66's dev-only
+  <code>POST /api/dev/campaigns/:campaignId/fire-turn</code> trigger was provisionally added to
+  <code>EXEMPT_ROUTES</code> while the route landed, then removed once the verifier built an
+  action-only <a href="./session-turn.html">fire-turn</a> panel on the System page (the same call it
+  made for the MYT-65 session-lifecycle routes). A curl-able dev poke <em>is</em> driveable from a
+  two-input + button panel, so the route earns real coverage rather than an exemption — the exempt
+  list stays reserved for routes that genuinely can't have a UI surface.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The prose route is exempt, not panel-credited</strong> — the route-exhaustion invariant
@@ -1283,7 +1295,10 @@
     <tr>
       <td><code>System</code></td>
       <td>No</td>
-      <td>Health (liveness + ready) / WS ticket / session start + active + messages.</td>
+      <td>
+        Health (liveness + ready) / WS ticket / session start + active + messages / fire turn
+        (dev-only DM-turn trigger).
+      </td>
     </tr>
   </tbody>
 </table>
