@@ -159,6 +159,8 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
       sessionId,
       turnId,
       triggerMessages: [{ userId: 'u1', characterName: 'Mara', text: 'I look around' }],
+      maxConsumedSeq: 0,
+      trigger: { kind: 'explicit' },
     })
     publishedJobId = (job as { id?: string }).id
 

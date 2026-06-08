@@ -19,6 +19,25 @@ export interface TurnJobPayload {
   readonly sessionId: string
   readonly turnId: string
   readonly triggerMessages: readonly TriggerMessage[]
+  /** The seq watermark this turn consumes up to (MYT-67 §4.6). The worker
+   *  advances `last-responded-seq` to this value after a successful flush, so
+   *  the next trigger batch starts at `(maxConsumedSeq, …]`. Set by the
+   *  producer (dm-trigger worker / explicit path / dev-fire-turn) from the
+   *  batch's max seq; redelivery-stable since it rides the payload. */
+  readonly maxConsumedSeq: number
+  /** Why this turn fired (MYT-67 §4.6). `kind` is the decision source; the
+   *  optional `classification` is present only for the `auto` path (the Haiku
+   *  DM-trigger classifier's verdict) — `explicit`/`solo`/dead-air turns carry
+   *  no classification. Metadata only: it does NOT cross the tier boundary into
+   *  any Fast Thinker call. */
+  readonly trigger: {
+    readonly kind: 'explicit' | 'solo' | 'auto'
+    readonly classification?: {
+      readonly intent: 'reactive' | 'proactive'
+      readonly complexity: 'low' | 'high'
+      readonly confidence: number
+    }
+  }
 }
 
 /** The narrow producer surface the controller needs: just `add`. The raw

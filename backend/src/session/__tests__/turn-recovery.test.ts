@@ -76,6 +76,8 @@ function payload(): { data: TurnJobPayload } {
       sessionId: SESSION,
       turnId: TURN,
       triggerMessages: [TRIGGER],
+      maxConsumedSeq: 0,
+      trigger: { kind: 'explicit' },
     },
   }
 }

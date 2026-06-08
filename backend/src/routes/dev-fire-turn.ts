@@ -101,6 +101,12 @@ export const devFireTurnRoutes: FastifyPluginAsync<DevFireTurnRoutesOpts> = asyn
         sessionId: session.id,
         turnId,
         triggerMessages: [trigger],
+        // MYT-67 §4.6 metadata. This is the dev/explicit poke, so kind:'explicit'
+        // with no classification. maxConsumedSeq is a placeholder here — MYT-67
+        // T17 replaces it with the real `repo.sessionMessages.maxSeq(sessionId)`
+        // read; the dev poke carries a single synthetic trigger with no seq.
+        maxConsumedSeq: 0,
+        trigger: { kind: 'explicit' },
       })
 
       return reply.code(202).send({ turnId })

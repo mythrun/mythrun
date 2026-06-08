@@ -211,6 +211,9 @@ describe('POST /api/dev/campaigns/:campaignId/fire-turn (MYT-66 T10)', () => {
           sessionId: ACTIVE_SESSION.id,
           turnId: body.turnId,
           triggerMessages: [{ userId: 'dev', characterName: 'Dev', text: 'I open the door' }],
+          // MYT-67 §4.6 metadata (dev poke → explicit, placeholder watermark).
+          maxConsumedSeq: 0,
+          trigger: { kind: 'explicit' },
         })
       } finally {
         await app.close()

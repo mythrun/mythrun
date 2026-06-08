@@ -75,6 +75,8 @@ function payload(): { data: TurnJobPayload } {
       sessionId: SESSION,
       turnId: TURN,
       triggerMessages: [TRIGGER],
+      maxConsumedSeq: 0,
+      trigger: { kind: 'explicit' },
     },
   }
 }
@@ -397,7 +399,14 @@ function terminalFailureJob(attemptsMade: number, attempts: number): TerminalFai
   return {
     attemptsMade,
     opts: { attempts },
-    data: { campaignId: CAMPAIGN, sessionId: SESSION, turnId: TURN, triggerMessages: [TRIGGER] },
+    data: {
+      campaignId: CAMPAIGN,
+      sessionId: SESSION,
+      turnId: TURN,
+      triggerMessages: [TRIGGER],
+      maxConsumedSeq: 0,
+      trigger: { kind: 'explicit' },
+    },
   }
 }
 
@@ -443,7 +452,14 @@ describe('publishTerminalTurnError', () => {
     const job: TerminalFailureJob = {
       attemptsMade: 1,
       opts: {}, // no `attempts` → nullish-coalesces to 1
-      data: { campaignId: CAMPAIGN, sessionId: SESSION, turnId: TURN, triggerMessages: [TRIGGER] },
+      data: {
+        campaignId: CAMPAIGN,
+        sessionId: SESSION,
+        turnId: TURN,
+        triggerMessages: [TRIGGER],
+        maxConsumedSeq: 0,
+        trigger: { kind: 'explicit' },
+      },
     }
 
     publishTerminalTurnError(publisher, job, silentLogger)

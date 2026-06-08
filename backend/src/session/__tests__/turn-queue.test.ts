@@ -11,11 +11,11 @@
 // (NEVER `queue.obliterate()` — its full-keyspace SCAN times out on CI's shared
 // batch Redis).
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Redis } from 'ioredis'
 import { Queue } from 'bullmq'
 import { createBullmqRedisClient } from '../../redis/bullmq-client.js'
-import { enqueueTurn, TURN_JOB_NAME, type TurnJobPayload } from '../turn-queue.js'
+import { enqueueTurn, TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
 
 describe('enqueueTurn — real BullMQ waiting-job producer', () => {
   // Dev batch Redis (6380) is the production queue Redis. Unique queue name
@@ -55,6 +55,8 @@ describe('enqueueTurn — real BullMQ waiting-job producer', () => {
     triggerMessages: [
       { userId: 'userA', characterName: 'Aria', text: 'I draw my blade.' },
     ],
+    maxConsumedSeq: 0,
+    trigger: { kind: 'explicit' },
   }
 
   it('adds exactly one waiting job whose payload round-trips (incl. turnId)', async () => {
@@ -67,5 +69,39 @@ describe('enqueueTurn — real BullMQ waiting-job producer', () => {
     expect(stored).toBeDefined()
     expect(stored?.name).toBe(TURN_JOB_NAME)
     expect(stored?.data).toEqual(payload)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MYT-67 T10 — trigger metadata + maxConsumedSeq watermark forwarding.
+//
+// `enqueueTurn` must forward the FULL payload (now carrying `trigger` +
+// `maxConsumedSeq`, spec §4.6) unchanged to `queue.add(TURN_JOB_NAME, payload)`,
+// with NO third options arg (H10: no custom jobId / dedup). A recording fake
+// asserts the exact arg shape without a real broker.
+// ---------------------------------------------------------------------------
+describe('enqueueTurn — trigger metadata forwarding (MYT-67 T10)', () => {
+  it('forwards the trigger+maxConsumedSeq payload with no options arg (H10)', async () => {
+    const add = vi.fn(() => Promise.resolve({ id: 'job-1' }))
+    const fake = { add } as unknown as TurnQueueLike
+
+    const triggerPayload: TurnJobPayload = {
+      campaignId: 'c-auto',
+      sessionId: 's-auto',
+      turnId: 't-auto',
+      triggerMessages: [{ userId: 'u1', characterName: 'Mara', text: 'still here?' }],
+      maxConsumedSeq: 7,
+      trigger: {
+        kind: 'auto',
+        classification: { intent: 'proactive', complexity: 'high', confidence: 1 },
+      },
+    }
+
+    await enqueueTurn(fake, triggerPayload)
+
+    expect(add).toHaveBeenCalledTimes(1)
+    expect(add).toHaveBeenCalledWith(TURN_JOB_NAME, triggerPayload)
+    // H10: exactly two args — no third options arg (no jobId / dedup).
+    expect(add.mock.calls[0]).toHaveLength(2)
   })
 })
