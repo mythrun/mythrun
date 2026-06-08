@@ -35,7 +35,7 @@ Both live in Redis/BullMQ (shared), so they are correct no matter which containe
 
 | Concern | Runs in | Why |
 |---|---|---|
-| Observe typing/message frames; refresh typing state; reschedule the debounce job; explicit/solo fast-path | **API server** (`ws-session.ts` inbound handler) | The frame arrives here, at exactly one container per frame (the player's own connection). Single ingestion point → no double-scheduling. |
+| Observe typing/message frames; refresh typing state; reschedule the debounce job (auto/solo); **explicit: immediate `dm_thinking` + direct `session-turn` enqueue, bypassing the dm-trigger queue** | **API server** (`ws-session.ts` inbound handler) | The frame arrives here, at exactly one container per frame (the player's own connection). Single ingestion point → no double-scheduling. |
 | Mature the quiet window; re-validate; classify; build the batch; enqueue the turn | **Worker** (`worker.ts` process, new `dm-trigger` BullMQ worker) | LLM work + turn enqueue belong off the request path, in the existing worker process that holds the Anthropic client and Redis. |
 | Run the turn (lock + conductor); record the responded-seq watermark; set/clear the `dm_responding` flag | **Worker** (`session-turn` worker, MYT-66) | Extends MYT-66 with the watermark + responding flag (§4.7). |
 
@@ -109,7 +109,7 @@ A real Anthropic Haiku call — ZFC: the "should the DM respond, and how hard a 
 
 Mechanical/structural checks, ZFC-compliant (no semantic analysis):
 
-- **Explicit:** a new `dm_invoke` client frame, or a `player_message` whose trimmed `text` starts with the literal `@dm`/`@DM`. → set the `…:explicit` flag + reschedule the debounce with **`delay: EXPLICIT_FLOOR_MS`** (a short floor, e.g. 1000ms — *not* 0). The floor (a) still gives an actively-typing *peer* a beat (the summoner being done ≠ the room being done — avoids cutting a peer off), and (b) avoids the `delay:0`/same-id replace race against a near-matured auto job. Note: `delay` is never truly "instant" — it is one queue hop + worker pickup; the floor makes the semantics explicit. **Rate-limited** per campaign + per user (this is the first WS frame that triggers real spend; an unbounded `@dm` is a cost + griefing surface). Rate-limit is policy enforcement → deterministic code (a legitimate ZFC exception).
+- **Explicit:** a new `dm_invoke` client frame, or a `player_message` whose trimmed `text` starts with the literal `@dm`/`@DM`. → **fires the DM immediately — no quiet window, no classifier, no floor.** This is the "everyone be quiet, I have a question for the DM" gesture: it deliberately ices out the room, and the response must be as fast as we can make it. The server **bypasses the `dm-trigger` queue entirely** (no debounce hop): it allocates the `turnId`, **immediately broadcasts `dm_thinking{turnId}` to all clients** so every client greys its input *instantly* — the lock lands before any enqueue/lock latency — then builds the turn batch from the watermark (§4.3; frozen at invoke — since input is now locked, nothing contaminates it) and enqueues the `session-turn` directly (the dev `fire-turn` path already enqueues directly). If a turn is already in flight (`dm_responding` set), it instead sets the `…:explicit` flag, drained **immediately** after the current turn (no quiet window — §4.7); input is already locked by the in-flight turn. The worker's own later `dm_thinking` for the same `turnId` is a client no-op (dedup on `turnId`). **Rate-limited** per campaign + per user (the first WS frame that triggers real spend; an unbounded `@dm` is a cost + griefing surface — policy enforcement, a legitimate ZFC exception). The actual input *lock* is the frontend greying on `dm_thinking` (Frontend milestone); the backend keeps persisting any message that races the lock (never lost — it feeds the next turn's batch), it just never contaminates the in-flight explicit answer.
 - **Solo:** decided in the worker (§4.3) from the **accepted**-member count — `invite_accepted = true` only (a pending invite does NOT make a solo game multiplayer). Add/usе a `countActiveMembers` repo method with that predicate; do not use the unfiltered `listMembers().length`.
 - **Auto:** the default — reschedule the debounce with `delay: QUIET_WINDOW_MS`.
 
@@ -138,6 +138,7 @@ Mechanism — **the `session-turn` queue keeps MYT-66's no-dedup contract (H10);
 - The `session-turn` worker sets a `dm_responding:{campaignId}` flag (TTL ≈ lock TTL, heartbeat-refreshed) while a turn runs, and **records `last-responded-seq:{campaignId}` = the max consumed `seq` at flush**, then clears `dm_responding` + `first-unresponded-at` on release.
 - The `dm-trigger` worker checks `dm_responding` before enqueuing (§4.3 step 4). **In flight → it does not enqueue.** New player activity during the turn reschedules the debounce job; after the turn (flag cleared) and a fresh quiet window, the debounce matures → the worker builds the batch from the *new* watermark → enqueues one follow-up. If players were quiet during the turn, no follow-up fires (correct — nothing new to say).
 - This is runtime-spec §6 step 1 ("if lock held: queue trigger") + step 6 ("drain queue"), realized as: the debounce *is* the queued trigger, and the post-turn re-mature *is* the drain. The lock serializes any residual race (two enqueues slipping past the flag check); the loser returns `{ran:false}` and is re-driven by the debounce, not by blind BullMQ `attempts`.
+- **Explicit during an in-flight turn is the exception that drains *immediately*** (not via the quiet window): the `…:explicit` flag set by the server is checked by the `session-turn` worker on release — if set, it enqueues the explicit follow-up turn right away (clearing the flag), so the summon is honored the instant the current turn ends. Input stays locked across the brief turn boundary.
 
 ### 4.8 Terminal `turn_error` via `QueueEvents` (closes `myth-tvnb`)
 
@@ -184,9 +185,8 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 |---|---|---|
 | `TYPING_HEARTBEAT_S` | 3 | client refresh cadence |
 | `TYPING_TTL_S` | 8 | > 2× heartbeat; crash self-heal |
-| `QUIET_WINDOW_MS` | 4000 | room-to-type; tune to feel |
+| `QUIET_WINDOW_MS` | 4000 | room-to-type (auto/solo); tune to feel. Explicit bypasses it entirely (§4.5). |
 | `DEDUP_TTL_MS` | `QUIET_WINDOW_MS + 4000` | **must exceed window + pickup** (§4.2) |
-| `EXPLICIT_FLOOR_MS` | 1000 | explicit fast-path floor (§4.5) |
 | `MAX_QUIET_EXTENSION_MS` | 30000 | anti-starvation ceiling (§4.2) |
 | `MAX_BATCH` | (plan) | classifier/turn batch cap |
 | dm-trigger worker `lockDuration`/`stalledInterval`/`maxStalledCount` | (plan) | > Haiku timeout (§4.3) |
@@ -202,13 +202,13 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 
 **Solo:** as auto; worker sees accepted-members===1 → skip classifier.
 
-**Explicit:** frame → server: set explicit flag; reschedule `delay: EXPLICIT_FLOOR_MS`; rate-limit → worker: explicit flag → skip classifier → clear flag → (drain-guard) enqueue.
+**Explicit:** frame → server: rate-limit → if no turn in flight: allocate `turnId`, **broadcast `dm_thinking{turnId}` immediately** (input locks everywhere), build batch from the watermark, enqueue `session-turn{kind:'explicit'}` **directly** (bypass the dm-trigger queue) → worker runs it. If a turn is in flight: set the `…:explicit` flag → the `session-turn` worker drains it **immediately** on release (§4.7).
 
 **In-flight drain:** activity during a turn reschedules the debounce; the worker's enqueue is gated by `dm_responding`; after the turn + quiet, the debounce matures → one follow-up on the fresh watermark (§4.7).
 
 ## 9. Error handling
 
-- **Classifier failure** (timeout/transient/auth/malformed): catch → *no trigger* this cycle (fail-closed) + structured-log **distinguishably** (a `classifier_error` metric/log separable from a normal `shouldRespond:false`, so a dashboard can alarm on a sustained error rate — otherwise a Haiku outage silently darkens every multiplayer DM while solo/explicit still work). Re-driven on next activity. **Product decision flagged for review:** whether, after K consecutive classifier failures on a campaign, to fail *open* to solo-style "respond on quiet" (so an expectant quiet table isn't left hanging) vs. metric-only. Default: metric-only + the fallback held in reserve.
+- **Classifier failure** (timeout/transient/auth/malformed): catch → *no trigger* this cycle (fail-closed) + a structured-log/metric **distinguishable** from a normal `shouldRespond:false`, so a transient/auth blip is diagnosable. Re-driven on next activity. There is **no fail-open fallback**: a *sustained* Haiku failure is an Anthropic-API outage, in which case the FT/ST turn the classifier would trigger is down too (same API) — failing "open" would only enqueue a turn that immediately fails into `turn_error`. The per-cycle fail-closed + the existing `turn_error` path are the whole story; the metric exists for diagnosis, not a fallback.
 - **No active session:** worker exits (§4.3 step 4, re-validated last).
 - **Dropped/crashed client mid-typing:** typing key TTL + `handleDisconnect` clear; max-wait ceiling bounds a stuck typer (§4.2); cannot wedge the trigger.
 - **Lock contention:** the loser returns `{ran:false}` and is re-driven by the debounce (§4.7), not blind retry.
@@ -244,12 +244,11 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 - **§6 (steps 1/6):** the trigger queues via the `dm-trigger` debounce; the lock is the mutex (H10 preserved); "drain" is the post-turn re-mature (§4.7).
 - **§15:** add `dm_invoke` (client). `dm_trigger` is dev-only (not a player frame).
 
-## 13. Open questions / product decisions for the review gate
+## 13. Resolved at the review gate (2026-06-08)
 
-- `QUIET_WINDOW_MS` / `EXPLICIT_FLOOR_MS` / `MAX_QUIET_EXTENSION_MS` final values — ship the defaults, tune to feel.
-- **Explicit semantics:** floor (give a typing peer a beat — default) vs. true immediate preempt. 
-- **Sustained classifier outage:** metric-only (default) vs. fail-open-to-respond after K failures.
-- `MAX_BATCH` size + the dm-trigger worker timing constants (plan detail, but pinned in config).
+- **Explicit semantics → immediate preempt** (Miklos): `@dm`/`dm_invoke` fires the DM instantly and ices out the room — the "everyone be quiet, I have a question" gesture. No floor; response as fast as possible; input locked the instant the invoke lands via an immediate server-side `dm_thinking` (§4.5).
+- **Sustained classifier outage → no fallback** (Miklos): a Haiku outage is an Anthropic outage; the turn would fail anyway, so failing "open" is pointless. Keep only the distinguishable error metric for diagnosis (§9).
+- **Tuning constants** (`QUIET_WINDOW_MS` 4s, `MAX_QUIET_EXTENSION_MS` 30s, `MAX_BATCH`, dm-trigger worker timing): ship the defaults, tune to feel — confirmed.
 
 ## 14. File-level change map (informs the plan)
 
@@ -261,14 +260,15 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 - `backend/src/llm/schemas/dm-trigger-classification.ts` — Zod schema.
 - `backend/src/llm/prompts/dm-trigger-classifier.txt` — prompt template (rubric + anchoring + last-turn + empty-batch).
 - `backend/src/session/dm-trigger-config.ts` — the shared config constants (§7).
+- `backend/src/session/turn-batch.ts` — shared `(lastRespondedSeq, maxSeq]` → `TriggerMessage[]` builder, used by both the dm-trigger worker (auto/solo) and the server explicit path.
 - `backend/src/session/session-turn-queue-events.ts` — `QueueEvents` subscriber (dedicated connection + SET-NX latch).
 - `backend/dev-tool/src/components/dm-trigger-panel.ts` — dev-tool panel (built by the verifier).
 
 **Modified:**
 - `backend/src/contract/session-events.ts` — `dm_invoke` (client). (No `dm_trigger` on the player union.)
-- `backend/src/routes/ws-session.ts` — inbound handler: typing-state writes, debounce reschedule (after persist, log-on-fail), explicit detection + rate limit, disconnect clear.
+- `backend/src/routes/ws-session.ts` — inbound handler: typing-state writes, debounce reschedule (after persist, log-on-fail) for auto/solo, explicit detection + rate limit + immediate `dm_thinking` + direct `session-turn` enqueue (or set explicit-pending if a turn is in flight), disconnect clear.
 - `backend/src/session/turn-queue.ts` — `TurnJobPayload.trigger` field. **No dedup id (H10).**
-- `backend/src/session/turn-worker.ts` — read `trigger` (plumb); set/clear `dm_responding`; record `last-responded-seq` at flush; SET-NX latch in `publishTerminalTurnError`; re-drive (not blind retry) on lock loss.
+- `backend/src/session/turn-worker.ts` — read `trigger` (plumb); set/clear `dm_responding`; record `last-responded-seq` at flush; **drain the `…:explicit` flag immediately on release** (§4.7); SET-NX latch in `publishTerminalTurnError`; re-drive (not blind retry) on lock loss.
 - `backend/src/routes/dev-fire-turn.ts` — set `trigger.kind='explicit'`.
 - `backend/src/server-queues.ts` / `app-deps.ts` / `server.ts` — wire the `dm-trigger` queue producer into the WS route deps.
 - `backend/src/worker.ts` — register the `dm-trigger` worker (5th) + the `QueueEvents` subscriber (+ its connection in shutdown).
@@ -282,4 +282,6 @@ A single config module imported by **both** `ws-session.ts` (server) and `dm-tri
 
 ## 16. Round-1 blind-review resolutions (Mythological creatures)
 
-0 strict SHOWSTOPPERS; all findings NIT, fixed inline. Key changes from v1: **dropped the `session-turn` dedup id** (kept H10; coordination via the `dm_responding` flag — §4.7); **specified the message-batch watermark** (§4.3/§4.7); **moved the `dm_trigger` debug frame off the player transport** (§4.9); **typed the classifier input public-by-construction** (§4.4); **fixed the solo predicate** to accepted-members (§4.5); **added the max-wait anti-starvation ceiling** (§4.2); **re-arm on the maturity-boundary race** (§4.2/§4.3); **`QueueEvents` idempotency latch + dedicated connection + shutdown** (§4.8); **dm-trigger worker timing + per-call Haiku timeout** (§4.3); **corrected the BullMQ mechanics** (`replace`-driven, `ttl > delay`; `extend` dropped — §4.2); **explicit floor instead of `delay:0` + rate limit** (§4.5); **fail-closed observability + flagged fallback** (§9); **shared config module** (§7); plus the smaller doc/operability nits.
+0 strict SHOWSTOPPERS; all findings NIT, fixed inline. Key changes from v1: **dropped the `session-turn` dedup id** (kept H10; coordination via the `dm_responding` flag — §4.7); **specified the message-batch watermark** (§4.3/§4.7); **moved the `dm_trigger` debug frame off the player transport** (§4.9); **typed the classifier input public-by-construction** (§4.4); **fixed the solo predicate** to accepted-members (§4.5); **added the max-wait anti-starvation ceiling** (§4.2); **re-arm on the maturity-boundary race** (§4.2/§4.3); **`QueueEvents` idempotency latch + dedicated connection + shutdown** (§4.8); **dm-trigger worker timing + per-call Haiku timeout** (§4.3); **corrected the BullMQ mechanics** (`replace`-driven, `ttl > delay`; `extend` dropped — §4.2); **explicit rate limit** (§4.5); **fail-closed observability** (§9); **shared config module** (§7); plus the smaller doc/operability nits.
+
+**Post-gate refinements (2026-06-08, §13):** explicit invoke is an **immediate hard preempt** — the server emits `dm_thinking` instantly and enqueues the `session-turn` directly, bypassing the dm-trigger queue (drained immediately if a turn is in flight); no floor. The sustained-outage **fail-open fallback was dropped** (an Anthropic outage breaks the turn too — metric-only).
