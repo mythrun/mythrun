@@ -20,10 +20,17 @@
 // `inFlightResponse`; both are DM-turn / combat surfaces (MYT-66+) and are
 // omitted from this subset.
 
-// Client -> Server frame types (the only types a client may originate in
-// MYT-65). `dm_invoke`, `roll_complete`, `end_session`, `combat_action`,
-// `auth_response`, `combat_move` are full-protocol client frames added later.
-export const CLIENT_FRAME_TYPES = ['player_message', 'typing_start', 'typing_stop'] as const
+// Client -> Server frame types. The MYT-65 subset (`player_message`,
+// `typing_start`, `typing_stop`) plus the MYT-67 explicit `dm_invoke` summon —
+// the "@DM button" that asks the DM to take a turn (no payload fields).
+// `roll_complete`, `end_session`, `combat_action`, `auth_response`,
+// `combat_move` are further full-protocol client frames added later.
+export const CLIENT_FRAME_TYPES = [
+  'player_message',
+  'typing_start',
+  'typing_stop',
+  'dm_invoke',
+] as const
 
 // Server -> Client frame types. The MYT-65 subset plus the MYT-66 DM-turn
 // streaming frames (`dm_thinking`, `text_delta`, `turn_end`, `turn_error`).
@@ -60,6 +67,9 @@ export type ClientFrame =
   | { type: 'player_message'; text: string }
   | { type: 'typing_start' }
   | { type: 'typing_stop' }
+  // MYT-67: explicit "@DM button" summon — asks the DM to take a turn. Carries
+  // no payload fields (the summon itself is the whole signal).
+  | { type: 'dm_invoke' }
 
 // Server -> Client payloads. Discriminated on `type`.
 //

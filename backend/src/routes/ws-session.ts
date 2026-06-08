@@ -505,6 +505,13 @@ async function handleInbound(
       return
     }
 
+    // MYT-67 T13: an explicit @DM summon must NOT fall through to the
+    // player_message persist path (it carries no `text`). The turn-trigger
+    // wiring for dm_invoke lands in T14; for now drop it so the union narrows
+    // to `player_message` below and a summon is never persisted/broadcast as a
+    // chat message.
+    if (frame.type === 'dm_invoke') return
+
     // player_message — PERSIST-THEN-BROADCAST with a server-assigned seq.
     const text = frame.text
     const seq = await persistMessage(ctx, sessionId, campaignId, userId, text)
@@ -628,7 +635,7 @@ function rawToString(raw: WsRawData): string {
  *  An oversized player_message `text` (untrusted input) is dropped + logged.
  *  `log` is the per-connection logger so a dropped-for-size frame is
  *  diagnosable (the other drops are benign garbage; size is worth a breadcrumb). */
-function parseClientFrame(raw: WsRawData, log: FastifyBaseLogger): ClientFrame | null {
+export function parseClientFrame(raw: WsRawData, log: FastifyBaseLogger): ClientFrame | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(rawToString(raw))
@@ -644,6 +651,9 @@ function parseClientFrame(raw: WsRawData, log: FastifyBaseLogger): ClientFrame |
   }
   const type = (parsed as { type: string }).type
   if (!classifyClientFrame(type)) return null
+  // MYT-67: the explicit "@DM button" summon carries no payload fields, so the
+  // allowlist pass is the whole validation — accept it as-is.
+  if (type === 'dm_invoke') return { type: 'dm_invoke' }
   if (type === 'player_message') {
     const text = (parsed as { text?: unknown }).text
     // A player_message must carry a string `text`; a malformed one drops.
