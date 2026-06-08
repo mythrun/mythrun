@@ -8,6 +8,10 @@ const databaseUrl = process.env.WIKI_DATABASE_URL ?? process.env.DATABASE_URL ??
 const here = dirname(fileURLToPath(import.meta.url))
 const migrationsDir = resolve(here, '../../../../backend/migrations')
 
+// extractSchema applies the backend migrations (incl. `CREATE EXTENSION
+// pgcrypto`) to the shared DB. This file must not run concurrently with
+// applyMigrations.test.ts — see that file's header for the pg_extension race;
+// the wiki `test` script enforces it via `--no-file-parallelism`.
 describe.skipIf(databaseUrl === '')('extractSchema (integration)', () => {
   it('returns metadata for every application table, with cluster assignments', async () => {
     const meta = await extractSchema({

@@ -8,8 +8,8 @@
     "check": "tsx --env-file-if-exists=../../.env.worktree build.ts --check",
     "accept-drift": "tsx --env-file-if-exists=../../.env.worktree build.ts --accept-drift",
     "dev": "tsx --env-file-if-exists=../../.env.worktree dev.ts",
-    "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest",
+    "test": "vitest run --passWithNoTests --no-file-parallelism",
+    "test:watch": "vitest --no-file-parallelism",
     "lint": "eslint . --no-error-on-unmatched-pattern",
     "typecheck": "tsc --noEmit"
   },

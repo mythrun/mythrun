@@ -9,6 +9,16 @@ const databaseUrl = process.env.WIKI_DATABASE_URL ?? process.env.DATABASE_URL
 const here = dirname(fileURLToPath(import.meta.url))
 const migrationsDir = resolve(here, '../../../../backend/migrations')
 
+// This file and schemaExtractor.test.ts both apply the backend migrations to the
+// SAME database (WIKI_DATABASE_URL/DATABASE_URL). Migration 001 runs
+// `CREATE EXTENSION IF NOT EXISTS pgcrypto`, which writes the database-global
+// `pg_extension` catalog — not the per-test schema. Two of those running
+// concurrently race ("duplicate key value violates pg_extension_name_index"),
+// which fires on a FRESH database (CI's Postgres service) but not a warm one
+// (local mythrun_dev already has pgcrypto, so the statement no-ops). The wiki
+// `test` script runs with `--no-file-parallelism` (package.json) so these two
+// integration files never execute concurrently. If you re-enable file
+// parallelism, give each DB-applying file its own database first.
 describe.skipIf(databaseUrl === undefined)('applyMigrations (integration)', () => {
   let pool: Pool
   let client: PoolClient
