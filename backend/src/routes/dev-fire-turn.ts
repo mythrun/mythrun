@@ -92,6 +92,11 @@ export const devFireTurnRoutes: FastifyPluginAsync<DevFireTurnRoutesOpts> = asyn
       // real player-chat trigger path that maps a member to their character.
       const trigger: TriggerMessage = { userId: 'dev', characterName: 'Dev', text: triggerText }
 
+      // §4.6 maxConsumedSeq watermark: the durable MAX(seq) of the active
+      // session's messages at enqueue time (0 when none). The worker uses this
+      // to detect player messages that arrived after the turn was queued.
+      const maxConsumedSeq = await repo.sessionMessages.maxSeq(session.id)
+
       // turnId (H2) is allocated here at enqueue and rides the payload, so it is
       // stable across a BullMQ redelivery. No custom jobId (H10): the session
       // lock is the per-session mutex, so turns must each land as a distinct job.
@@ -102,10 +107,9 @@ export const devFireTurnRoutes: FastifyPluginAsync<DevFireTurnRoutesOpts> = asyn
         turnId,
         triggerMessages: [trigger],
         // MYT-67 §4.6 metadata. This is the dev/explicit poke, so kind:'explicit'
-        // with no classification. maxConsumedSeq is a placeholder here — MYT-67
-        // T17 replaces it with the real `repo.sessionMessages.maxSeq(sessionId)`
-        // read; the dev poke carries a single synthetic trigger with no seq.
-        maxConsumedSeq: 0,
+        // with no classification. maxConsumedSeq is the real watermark read
+        // above; the dev poke carries a single synthetic trigger with no seq.
+        maxConsumedSeq,
         trigger: { kind: 'explicit' },
       })
 

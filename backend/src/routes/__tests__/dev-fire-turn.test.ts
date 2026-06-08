@@ -15,14 +15,19 @@ import type { Pool } from 'pg'
 import type { Session } from '../../repo/types.js'
 import type { TurnJobPayload, TurnQueueLike } from '../../session/turn-queue.js'
 
-// Mock the repo factory so dev-fire-turn.ts uses our stub. Only
-// sessions.getActiveByCampaign is exercised by the route.
+// Mock the repo factory so dev-fire-turn.ts uses our stub. The route reads
+// sessions.getActiveByCampaign (active-session resolution) and
+// sessionMessages.maxSeq (the §4.6 maxConsumedSeq watermark).
 const getActiveByCampaignMock = vi.fn()
+const maxSeqMock = vi.fn()
 
 vi.mock('../../repo/index.js', () => ({
   createRepo: () => ({
     sessions: {
       getActiveByCampaign: getActiveByCampaignMock,
+    },
+    sessionMessages: {
+      maxSeq: maxSeqMock,
     },
   }),
 }))
@@ -75,6 +80,7 @@ describe('POST /api/dev/campaigns/:campaignId/fire-turn (MYT-66 T10)', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
     getActiveByCampaignMock.mockReset()
+    maxSeqMock.mockReset()
   })
 
   // -------------------------------------------------------------------------
@@ -126,6 +132,9 @@ describe('POST /api/dev/campaigns/:campaignId/fire-turn (MYT-66 T10)', () => {
   describe('handler (AUTH_MODE=bypass)', () => {
     beforeEach(() => {
       vi.stubEnv('AUTH_MODE', 'bypass')
+      // Default watermark: no prior messages. Tests that exercise the enqueue
+      // override this to assert the real value rides the payload.
+      maxSeqMock.mockResolvedValue(0)
     })
 
     it('400 invalid_body when triggerText is missing', async () => {
@@ -188,6 +197,9 @@ describe('POST /api/dev/campaigns/:campaignId/fire-turn (MYT-66 T10)', () => {
 
     it('202 with a turnId and enqueues exactly one job with the dev trigger', async () => {
       getActiveByCampaignMock.mockResolvedValue(ACTIVE_SESSION)
+      // The route reads the active session's durable max seq as the §4.6
+      // maxConsumedSeq watermark — assert the real value rides the payload.
+      maxSeqMock.mockResolvedValue(5)
       const calls: QueueCall[] = []
       const app = await buildTestApp(recordingQueue(calls))
       try {
@@ -205,14 +217,16 @@ describe('POST /api/dev/campaigns/:campaignId/fire-turn (MYT-66 T10)', () => {
         // enqueued, carrying the resolved sessionId, the request-allocated
         // turnId, and the fixed dev trigger identity.
         expect(getActiveByCampaignMock).toHaveBeenCalledWith('c-fire-1')
+        // The watermark is read for the resolved active session.
+        expect(maxSeqMock).toHaveBeenCalledWith(ACTIVE_SESSION.id)
         expect(calls).toHaveLength(1)
         expect(calls[0]?.payload).toEqual({
           campaignId: 'c-fire-1',
           sessionId: ACTIVE_SESSION.id,
           turnId: body.turnId,
           triggerMessages: [{ userId: 'dev', characterName: 'Dev', text: 'I open the door' }],
-          // MYT-67 §4.6 metadata (dev poke → explicit, placeholder watermark).
-          maxConsumedSeq: 0,
+          // MYT-67 §4.6 metadata (dev poke → explicit, real maxSeq watermark).
+          maxConsumedSeq: 5,
           trigger: { kind: 'explicit' },
         })
       } finally {
