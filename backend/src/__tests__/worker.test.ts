@@ -52,9 +52,10 @@ vi.mock('../db/postgres.js', () => ({
 }))
 
 const healthCloseMock = vi.fn(() => Promise.resolve())
+const startHealthServerMock = vi.fn(() => Promise.resolve({ close: healthCloseMock }))
 
 vi.mock('../worker/health-server.js', () => ({
-  startHealthServer: vi.fn(() => Promise.resolve({ close: healthCloseMock })),
+  startHealthServer: startHealthServerMock,
 }))
 
 interface FakeWorker {
@@ -81,7 +82,7 @@ const queueEventsInstances: FakeQueueEvents[] = []
 // (buildSessionTurnWorker already constructed a `new Queue(...)`, so the prior
 // mock — Worker-only — actually threw at boot; this closes that gap too.)
 vi.mock('bullmq', () => ({
-  Worker: vi.fn().mockImplementation((name: string) => {
+  Worker: vi.fn((name: string) => {
     const instance: FakeWorker = {
       name,
       close: vi.fn(() => Promise.resolve()),
@@ -90,12 +91,12 @@ vi.mock('bullmq', () => ({
     workerInstances.push(instance)
     return instance
   }),
-  Queue: vi.fn().mockImplementation((name: string) => ({
+  Queue: vi.fn((name: string) => ({
     name,
     add: vi.fn(() => Promise.resolve()),
     close: vi.fn(() => Promise.resolve()),
   })),
-  QueueEvents: vi.fn().mockImplementation(() => {
+  QueueEvents: vi.fn(() => {
     const instance: FakeQueueEvents = {
       close: vi.fn(() => Promise.resolve()),
       on: vi.fn(),
@@ -148,6 +149,8 @@ describe('worker.main()', () => {
     expect(batchPingMock).toHaveBeenCalledTimes(1)
     expect(realtimePingMock).toHaveBeenCalledTimes(1)
     expect(pgQueryMock).toHaveBeenCalledWith('SELECT 1')
+    // Default health port when WORKER_HEALTH_PORT is unset.
+    expect(startHealthServerMock).toHaveBeenCalledWith(3001, expect.anything())
 
     process.emit('SIGTERM', 'SIGTERM' as NodeJS.Signals)
 
@@ -167,5 +170,24 @@ describe('worker.main()', () => {
     expect(pgEndMock).toHaveBeenCalledTimes(1)
     expect(batchQuitMock).toHaveBeenCalledTimes(1)
     expect(realtimeQuitMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('honors WORKER_HEALTH_PORT (local-dev escape hatch for a :3001 collision)', async () => {
+    vi.stubEnv('WORKER_HEALTH_PORT', '3901')
+    const { main } = await import('../worker.js')
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    void main() // never awaited — main blocks forever on Promise<never>
+
+    await vi.waitFor(() => {
+      expect(startHealthServerMock).toHaveBeenCalled()
+    })
+    expect(startHealthServerMock).toHaveBeenCalledWith(3901, expect.anything())
+
+    process.emit('SIGTERM', 'SIGTERM' as NodeJS.Signals)
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(0)
+    })
+    vi.unstubAllEnvs()
   })
 })

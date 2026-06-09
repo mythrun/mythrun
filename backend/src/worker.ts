@@ -33,7 +33,17 @@ import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
 
+/** Default worker health-server port. Overridable via WORKER_HEALTH_PORT for
+ *  local dev, where :3001 can collide with an unrelated process (the env var
+ *  is read at main() time in resolveHealthPort, not module load). ECS keeps
+ *  the default — no task-def change needed. */
 const HEALTH_PORT = 3001
+
+/** Local-dev escape hatch for the health-server bind (see HEALTH_PORT). */
+export function resolveHealthPort(): number {
+  const raw = process.env.WORKER_HEALTH_PORT
+  return raw !== undefined && raw !== '' ? Number(raw) : HEALTH_PORT
+}
 const WORKER_PG_POOL_SIZE = 4
 // Reserve ~20s headroom under ECS stopTimeout=120s for pg + Redis cleanup.
 const WORKER_CLOSE_GRACE_MS = 100_000
@@ -170,7 +180,8 @@ export async function main(): Promise<void> {
   )
 
   // Start health server last — only marks healthy once everything else is up.
-  const health = await startHealthServer(HEALTH_PORT, {
+  const healthPort = resolveHealthPort()
+  const health = await startHealthServer(healthPort, {
     pg,
     redisBatch,
     redisRealtime,
@@ -186,7 +197,7 @@ export async function main(): Promise<void> {
   logger.info(
     {
       event: 'worker.started',
-      healthPort: HEALTH_PORT,
+      healthPort,
       queues: [
         QUEUE_WORLD_GEN,
         QUEUE_CAMPAIGN_SETUP,
