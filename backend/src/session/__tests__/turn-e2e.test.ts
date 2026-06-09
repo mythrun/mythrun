@@ -34,8 +34,23 @@ import { createSessionLock } from '../session-lock.js'
 import { makeTriggerState } from '../trigger-state.js'
 import { createTurnPublisher } from '../turn-publisher.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
-import { processTurnJob } from '../turn-worker.js'
+import { processTurnJob, type TurnWorkerRepo } from '../turn-worker.js'
 import { enqueueTurn, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
+
+// A fresh-run in-memory repo for the E2E: no durable rows, empty transcript, a
+// no-op DM append (the round-trip is asserted on the published frames, not PG),
+// and stub roster/session/prep/character reads.
+const e2eRepo: TurnWorkerRepo = {
+  sessionMessages: {
+    turnRowsExist: () => Promise.resolve(false),
+    listFtContextRows: () => Promise.resolve([]),
+    appendDmTurn: () => Promise.resolve(),
+  },
+  campaigns: { listMembersBasic: () => Promise.resolve([]) },
+  sessions: { getById: () => Promise.resolve({ sessionNumber: 1 }) },
+  sessionPreps: { getBy: () => Promise.resolve(null) },
+  characters: { findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }) },
+}
 
 const REDIS_BATCH_URL = process.env.REDIS_BATCH_URL ?? 'redis://127.0.0.1:6380'
 const REDIS_REALTIME_URL = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
@@ -113,6 +128,7 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
           {
             lock,
             sessionState,
+            repo: e2eRepo,
             triggerState,
             // The explicit-drain producer — references the same `queue` built
             // below in this `beforeAll` (resolved lazily at job-run time).

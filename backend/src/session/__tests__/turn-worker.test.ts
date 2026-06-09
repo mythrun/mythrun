@@ -1,5 +1,6 @@
 import IoRedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
+import type { Pool } from 'pg'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeSessionState, type SessionState } from '../../redis/session-state.js'
 import { sessionChannelPattern } from '../../contract/session-channel.js'
@@ -10,12 +11,16 @@ import type { SessionLock, SessionLockHandle } from '../session-lock.js'
 import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import type { TurnPublisher } from '../turn-publisher.js'
 import { TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
+import { UnrecoverableError } from 'bullmq'
 import {
   buildSessionTurnWorker,
+  makeLatchedEmitter,
   processTurnJob,
   publishTerminalTurnError,
+  reloadFtContext,
   type TerminalFailureJob,
   type TurnProcessorDeps,
+  type TurnWorkerRepo,
 } from '../turn-worker.js'
 
 // `buildSessionTurnWorker` is boot-wiring around `new BullmqWorker(...)`. To
@@ -67,6 +72,10 @@ vi.mock('bullmq', () => ({
       return Promise.resolve(undefined)
     },
   })),
+  // The §5 latch-terminal arm throws `UnrecoverableError`; the processor + tests
+  // both reference it, so the mock must export a real throwable subclass (not a
+  // bare vi.fn) so `instanceof` checks hold.
+  UnrecoverableError: class UnrecoverableError extends Error {},
 }))
 
 // processTurnJob is UNIT-tested with INJECTED fakes (a fake SessionLock, a
@@ -180,6 +189,40 @@ function makeTiers(): ReturnType<TurnProcessorDeps['makeTiers']> {
   return { st: new StubSlowThinker(), ft: new StubFastThinker(), scribe: new StubScribe() }
 }
 
+/** A minimal in-memory `TurnWorkerRepo`. Overrides let a test set
+ *  `turnRowsExist`/`wasTurnEmitted`-adjacent behavior, the member roster, etc.
+ *  Defaults: no durable rows, empty transcript, no roster, no prep, no
+ *  participant character — the fresh-run path against the stub tiers. */
+function fakeRepo(overrides?: {
+  turnRowsExist?: boolean
+  members?: readonly { user_id: string; display_name: string }[]
+  session?: { sessionNumber: number } | null
+  ftContext?: string | null
+  appendDmTurn?: (input: unknown) => Promise<void>
+}): TurnWorkerRepo {
+  const session = overrides?.session === undefined ? { sessionNumber: 1 } : overrides.session
+  const prep = overrides?.ftContext == null ? null : { ftContext: overrides.ftContext }
+  return {
+    sessionMessages: {
+      turnRowsExist: () => Promise.resolve(overrides?.turnRowsExist ?? false),
+      listFtContextRows: () => Promise.resolve([]),
+      appendDmTurn: overrides?.appendDmTurn ?? ((): Promise<void> => Promise.resolve()),
+    },
+    campaigns: {
+      listMembersBasic: () => Promise.resolve(overrides?.members ?? []),
+    },
+    sessions: {
+      getById: () => Promise.resolve(session),
+    },
+    sessionPreps: {
+      getBy: () => Promise.resolve(prep),
+    },
+    characters: {
+      findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
+    },
+  }
+}
+
 /** Records the `(name, data, opts)` of every enqueued explicit-drain follow-up
  *  turn so the §4.7 drain assertions read the payload off a plain array. */
 interface QueueCall {
@@ -226,6 +269,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -261,6 +305,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(null),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -305,6 +350,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -355,6 +401,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -396,6 +443,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -439,6 +487,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -488,6 +537,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher,
@@ -513,6 +563,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -552,6 +603,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       publisher: recordingPublisher(calls),
@@ -587,6 +639,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: recordingTurnQueue(queueCalls),
       publisher: recordingPublisher(calls),
@@ -627,6 +680,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: recordingTurnQueue(queueCalls),
       publisher: recordingPublisher(calls),
@@ -659,6 +713,7 @@ describe('processTurnJob', () => {
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: failingQueue,
       publisher: recordingPublisher(calls),
@@ -672,6 +727,438 @@ describe('processTurnJob', () => {
     // The turn itself succeeded; the drain failure didn't surface.
     expect(result).toEqual({ ran: true })
     expect(silentLogger.error).toHaveBeenCalled()
+  })
+
+  // ── §5 converge: turnRowsExist → true ────────────────────────────────────
+  it('converges a durable turn: no render, advances the watermark, publishes turn_end (§5)', async () => {
+    // PG rows already exist for this turnId (a re-run after a crash AFTER the
+    // commit). The turn IS durable — converge to completion rather than
+    // re-render: advance the watermark + publish turn_end + return. NEVER
+    // re-render (no dm_thinking / text_delta) and NEVER turn_error.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    // A tier factory that THROWS if reached — a converge must never touch tiers.
+    const exploding: TurnProcessorDeps['makeTiers'] = () => {
+      throw new Error('makeTiers must not be called on the converge path')
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: true }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers: exploding,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const job = payload()
+    ;(job.data as { maxConsumedSeq: number }).maxConsumedSeq = 5
+
+    const result = await processTurnJob(deps, job)
+
+    expect(result).toEqual({ ran: true })
+    // No render: dm_thinking / text_delta never fired; turn_end is the only frame.
+    expect(calls.order).toEqual(['turn_end'])
+    expect(calls.order).not.toContain('dm_thinking')
+    expect(calls.order).not.toContain('text_delta')
+    expect(calls.order).not.toContain('turn_error')
+    // The watermark advanced so the batch isn't double-answered on the next run.
+    expect(await triggerState.respondedSeq(CAMPAIGN)).toBe(5)
+    // The lock was released in finally.
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  // ── §5 latch-terminal: emitted but not committed ─────────────────────────
+  it('terminal when frames streamed but nothing committed: turn_error once, throws UnrecoverableError (§5)', async () => {
+    // Frames were broadcast (the emitted-anything latch is set) but no PG rows
+    // committed. A retry would re-stream DIVERGENT prose + re-roll under the
+    // same turnId — so this is terminal: publish turn_error (claim-gated) and
+    // throw UnrecoverableError to skip the remaining BullMQ attempts. No render.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    // Seed the §5 emitted-anything latch for THIS turnId (as a prior streamed
+    // attempt would have via the latched emitter), with no durable rows.
+    await triggerState.markTurnEmitted(TURN)
+
+    const exploding: TurnProcessorDeps['makeTiers'] = () => {
+      throw new Error('makeTiers must not be called on the terminal path')
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: false }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers: exploding,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    await expect(processTurnJob(deps, payload())).rejects.toBeInstanceOf(UnrecoverableError)
+
+    // turn_error published exactly once (claim-gated), no render.
+    expect(calls.order).toEqual(['turn_error'])
+    expect(calls.turnErrorArgs).toHaveLength(1)
+    expect(calls.turnErrorArgs[0]?.turnId).toBe(TURN)
+    expect(calls.order).not.toContain('dm_thinking')
+    expect(calls.order).not.toContain('text_delta')
+    // The lock was released in finally despite the throw.
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('latch-terminal claim is gated: a second container loses the claim and publishes no turn_error (§4.8/§5)', async () => {
+    // The terminal turn_error publish is claim-gated. Pre-claim the latch (as a
+    // sibling container would), then run: the SET-NX claim loses, so NO
+    // turn_error ships, but the run is still terminal (UnrecoverableError).
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await triggerState.markTurnEmitted(TURN)
+    // A sibling already won the latch.
+    await triggerState.claimTurnErrorPublish(TURN)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: false }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    await expect(processTurnJob(deps, payload())).rejects.toBeInstanceOf(UnrecoverableError)
+
+    // The claim was lost → no turn_error from this container.
+    expect(calls.order).not.toContain('turn_error')
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  // ── fresh-run lifecycle ORDER ────────────────────────────────────────────
+  it('fresh run drives the lifecycle in order: dm_thinking → load → process → persist → flush → watermark → turn_end', async () => {
+    // A recorder threaded through the fakes pins the v2 turn lifecycle order:
+    // dm_thinking (publisher) → loadFromRedis → processDmTurn → persistTurn
+    // (appendDmTurn) → flushToRedis (flushTurnState) → setRespondedSeq → turnEnd.
+    const order: string[] = []
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    // Spy the controller methods to record their order (they still run their
+    // real bodies over the fakes).
+    const loadSpy = vi
+      .spyOn(SessionController.prototype, 'loadFromRedis')
+      .mockImplementation((): Promise<void> => {
+        order.push('load')
+        return Promise.resolve()
+      })
+    const processSpy = vi
+      .spyOn(SessionController.prototype, 'processDmTurn')
+      .mockImplementation((): Promise<void> => {
+        order.push('process')
+        return Promise.resolve()
+      })
+    const persistSpy = vi
+      .spyOn(SessionController.prototype, 'persistTurn')
+      .mockImplementation((): Promise<void> => {
+        order.push('persist')
+        return Promise.resolve()
+      })
+    const flushSpy = vi
+      .spyOn(SessionController.prototype, 'flushToRedis')
+      .mockImplementation((): Promise<void> => {
+        order.push('flush')
+        return Promise.resolve()
+      })
+
+    // A publisher whose frames + a triggerState whose setRespondedSeq record
+    // into the same order array.
+    const publisher: TurnPublisher = {
+      ...recordingPublisher(newCalls()),
+      dmThinking: vi.fn((): Promise<void> => {
+        order.push('dm_thinking')
+        return Promise.resolve()
+      }),
+      turnEnd: vi.fn((): Promise<void> => {
+        order.push('turn_end')
+        return Promise.resolve()
+      }),
+    }
+    const recordingTrigger: TriggerState = {
+      ...triggerState,
+      setRespondedSeq: vi.fn((campaignId: string, seq: number): Promise<void> => {
+        order.push('watermark')
+        return triggerState.setRespondedSeq(campaignId, seq)
+      }),
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: false }),
+      triggerState: recordingTrigger,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher,
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(order).toEqual([
+      'dm_thinking',
+      'load',
+      'process',
+      'persist',
+      'flush',
+      'watermark',
+      'turn_end',
+    ])
+
+    loadSpy.mockRestore()
+    processSpy.mockRestore()
+    persistSpy.mockRestore()
+    flushSpy.mockRestore()
+  })
+
+  // ── lock lost AFTER render, BEFORE persist ───────────────────────────────
+  it('lock lost during processDmTurn aborts before persist: appendDmTurn never called, no turn_end (§3.7 lock-gate)', async () => {
+    // The §3.7 lock-gate: the heartbeat flips lockLost during a slow
+    // processDmTurn, so the post-process checkpoint throws LockLostError BEFORE
+    // persistTurn — appendDmTurn is never reached and no turn_end fires.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: false, release })
+
+    const appendDmTurn = vi.fn((): Promise<void> => Promise.resolve())
+
+    // A slow ST so the tiny heartbeat fires (flipping lockLost) DURING
+    // processDmTurn, before its post-process lock-gate checkpoint.
+    const slowSt = new StubSlowThinker()
+    vi.spyOn(slowSt, 'evaluate').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({ intervene: false })
+          }, 40)
+        }),
+    )
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: false, appendDmTurn }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
+      heartbeatMs: 5,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // Aborted before the durable write — appendDmTurn never ran, no turn_end.
+    expect(appendDmTurn).not.toHaveBeenCalled()
+    expect(calls.order).not.toContain('turn_end')
+    expect(calls.order).not.toContain('turn_error')
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  // ── per-turn context resolution from the :state blob ─────────────────────
+  it('resolves ftContext + worldTone from the :state blob when present (no PG re-load)', async () => {
+    // When the :state blob carries ftContext + worldTone, the worker uses them
+    // and does NOT re-read the prep from PG. Capture what makeTiers receives.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await sessionState.setState(CAMPAIGN, {
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+      ftContext: 'PREP DOC FROM BLOB',
+      worldTone: 'grim',
+    })
+
+    let seenTone: string | null = null
+    const getBySpy = vi.fn()
+    const repo = fakeRepo({ turnRowsExist: false })
+    repo.sessionPreps.getBy = getBySpy.mockResolvedValue(null) as never
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers: (turn) => {
+        seenTone = turn.worldTone
+        return { st: new StubSlowThinker(), ft: new StubFastThinker(), scribe: new StubScribe() }
+      },
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(seenTone).toBe('grim')
+    // The prep was NOT re-read from PG (ftContext came from the blob).
+    expect(getBySpy).not.toHaveBeenCalled()
+  })
+
+  it('builds the displayNames map from a non-empty campaign roster and completes the turn', async () => {
+    // Exercises the userId → display_name map construction (the
+    // listMembersBasic .map callback) on a non-empty roster. The stub tiers
+    // don't read the map's contents, so the observable effect is the turn
+    // completing through persist (appendDmTurn fired) with the roster present
+    // — the controller received a populated map without erroring.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    const appendDmTurn = vi.fn((): Promise<void> => Promise.resolve())
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({
+        turnRowsExist: false,
+        members: [
+          { user_id: 'u1', display_name: 'Mara' },
+          { user_id: 'u2', display_name: 'Theo' },
+        ],
+        appendDmTurn,
+      }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The turn ran to the durability point: the stub FT's rendered line was
+    // appended (persistTurn) and turn_end shipped — with the roster mapped.
+    expect(appendDmTurn).toHaveBeenCalledTimes(1)
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// makeLatchedEmitter — the §5 set-before-publish ordering, unit-tested directly.
+// ---------------------------------------------------------------------------
+
+describe('makeLatchedEmitter', () => {
+  it('marks the latch BEFORE the first inner emit, and only once', async () => {
+    const order: string[] = []
+    const inner: TurnEmitter = {
+      emitText: (): Promise<void> => {
+        order.push('inner.emitText')
+        return Promise.resolve()
+      },
+      emitSkillCheck: (): Promise<void> => {
+        order.push('inner.emitSkillCheck')
+        return Promise.resolve()
+      },
+      emitDiceRoll: (): Promise<void> => {
+        order.push('inner.emitDiceRoll')
+        return Promise.resolve()
+      },
+    }
+    const mark = vi.fn((): Promise<void> => {
+      order.push('mark')
+      return Promise.resolve()
+    })
+
+    const latched = makeLatchedEmitter(inner, mark)
+    await latched.emitText('a')
+    await latched.emitText('b')
+    await latched.emitDiceRoll({ count: 1, sides: 6, results: [3], total: 3 })
+
+    // The FIRST emit marks BEFORE publishing; subsequent emits don't re-mark.
+    expect(order).toEqual(['mark', 'inner.emitText', 'inner.emitText', 'inner.emitDiceRoll'])
+    expect(mark).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks before the first inner emit when the first frame is a skill_check', async () => {
+    const order: string[] = []
+    const inner: TurnEmitter = {
+      emitText: (): Promise<void> => Promise.resolve(),
+      emitSkillCheck: (): Promise<void> => {
+        order.push('inner.emitSkillCheck')
+        return Promise.resolve()
+      },
+      emitDiceRoll: (): Promise<void> => Promise.resolve(),
+    }
+    const mark = vi.fn((): Promise<void> => {
+      order.push('mark')
+      return Promise.resolve()
+    })
+
+    const latched = makeLatchedEmitter(inner, mark)
+    await latched.emitSkillCheck({
+      characterName: 'Mara',
+      skill: 'Stealth',
+      context: 'sneaking',
+      roll: 12,
+      roll2: null,
+      rollType: 'normal',
+      modifier: 3,
+      total: 15,
+      dc: 12,
+      outcomeTier: 'success',
+      constraint: 'She slips past.',
+    })
+
+    expect(order).toEqual(['mark', 'inner.emitSkillCheck'])
+    expect(mark).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// reloadFtContext — the §3.10 PG fallback for ftContext, unit-tested directly.
+// ---------------------------------------------------------------------------
+
+describe('reloadFtContext', () => {
+  it('reads the session row → prep ftContext when the prep exists', async () => {
+    const repo = fakeRepo({ session: { sessionNumber: 2 }, ftContext: 'PREP DOC FROM PG' })
+    const result = await reloadFtContext(repo, CAMPAIGN, SESSION, silentLogger)
+    expect(result).toBe('PREP DOC FROM PG')
+  })
+
+  it('returns "" + warns when the prep row is absent', async () => {
+    const logger = { warn: vi.fn(), error: vi.fn() }
+    const repo = fakeRepo({ session: { sessionNumber: 2 }, ftContext: null })
+    const result = await reloadFtContext(repo, CAMPAIGN, SESSION, logger)
+    expect(result).toBe('')
+    expect(logger.warn).toHaveBeenCalled()
+  })
+
+  it('returns "" + warns when the session row is absent', async () => {
+    const logger = { warn: vi.fn(), error: vi.fn() }
+    const repo = fakeRepo({ session: null })
+    const result = await reloadFtContext(repo, CAMPAIGN, SESSION, logger)
+    expect(result).toBe('')
+    expect(logger.warn).toHaveBeenCalled()
   })
 })
 
@@ -843,6 +1330,24 @@ describe('publishTerminalTurnError', () => {
 // handler) are exercised without a broker.
 // ---------------------------------------------------------------------------
 
+/** A fake `pg.Pool` for the builder tests: the builder calls `createRepo(pool)`
+ *  (no queries at construction). `query` is routed so the §5 converge probe
+ *  (`turnRowsExist` → `SELECT 1 … LIMIT 1`) reports a durable turn — the
+ *  processor then converges (turn_end + watermark) WITHOUT constructing/​running
+ *  the now-REAL SonnetFastThinker, so no real LLM call fires in a unit test. Any
+ *  other query resolves empty. Cast to `Pool` (the builder only ever calls
+ *  `.query`). */
+function convergePool(): Pool {
+  const query = (text: string): Promise<{ rows: unknown[]; rowCount: number }> => {
+    // turnRowsExist: `SELECT 1 FROM session_messages WHERE turn_id = $1 LIMIT 1`.
+    if (text.includes('FROM session_messages') && text.includes('turn_id')) {
+      return Promise.resolve({ rows: [{ '?column?': 1 }], rowCount: 1 })
+    }
+    return Promise.resolve({ rows: [], rowCount: 0 })
+  }
+  return { query } as unknown as Pool
+}
+
 describe('buildSessionTurnWorker', () => {
   let redisBatch: Redis
   let redisRealtime: Redis
@@ -860,35 +1365,35 @@ describe('buildSessionTurnWorker', () => {
     vi.clearAllMocks()
   })
 
-  it('runs a turn through the captured processor (exercising the stub makeTiers) and flushes state', async () => {
+  it('runs a turn through the captured processor (converge path) and advances the watermark', async () => {
+    // The builder now wires the REAL SonnetFastThinker via makeTiers, so a
+    // FRESH-RUN turn would hit the real LLM — not a unit test. We instead drive
+    // the §5 converge path: a fake pool reports the turnId already durable in PG,
+    // so the processor converges (turn_end + watermark) WITHOUT constructing or
+    // running the FT. This still exercises the builder's deps wiring (lock,
+    // triggerState, repo, publisher) and the makeTiers closure is not reached —
+    // the real-FT render is covered by the E2E smoke, not here.
     const logger = { warn: vi.fn(), error: vi.fn() }
-    const worker = buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger)
+    const worker = buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
     expect(worker).not.toBeNull()
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')
 
-    // The session lock is acquired against redisRealtime via SET NX — a fresh
-    // ioredis-mock keyspace means tryAcquire succeeds, so the processor runs a
-    // full turn through the real stub tiers (makeTiers closure, L178-181).
-    const result = await cap.processor(payload())
+    const job = payload()
+    ;(job.data as { maxConsumedSeq: number }).maxConsumedSeq = 3
+
+    const result = await cap.processor(job)
     expect(result).toEqual({ ran: true })
 
-    // The turn ran end-to-end (result {ran:true} above), proving makeTiers
-    // wired the real stubs into the controller. ft_history retired — PG-direct
-    // (MYT-68 §3.7); the flushed turn state now carries only summary/usage,
-    // left at zero by the stub tiers.
-    const ss = makeSessionState(redisRealtime, 'bw:')
-    const ts = await ss.loadTurnState(CAMPAIGN)
-    expect(ts.summary).toBe('')
-    expect(ts.usage).toEqual({ input: 0, output: 0 })
-    // The §4.7 watermark advanced (proving triggerState was wired into the deps).
-    expect(await makeTriggerState(redisRealtime, 'bw:').respondedSeq(CAMPAIGN)).toBe(0)
+    // The §4.7 watermark advanced to maxConsumedSeq (proving triggerState was
+    // wired into the deps and the converge arm advanced it).
+    expect(await makeTriggerState(redisRealtime, 'bw:').respondedSeq(CAMPAIGN)).toBe(3)
   })
 
   it('wires triggerState + sessionTurnQueue: an in-flight explicit summon drains on release (§4.7)', async () => {
     const logger = { warn: vi.fn(), error: vi.fn() }
-    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger)
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')
@@ -909,7 +1414,7 @@ describe('buildSessionTurnWorker', () => {
 
   it("registers a 'failed' handler that delegates to publishTerminalTurnError", async () => {
     const logger = { warn: vi.fn(), error: vi.fn() }
-    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger)
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')
@@ -937,7 +1442,7 @@ describe('buildSessionTurnWorker', () => {
 
   it("the 'failed' handler is a no-op on a non-terminal job (retries remain)", () => {
     const logger = { warn: vi.fn(), error: vi.fn() }
-    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger)
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')

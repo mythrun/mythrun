@@ -1,58 +1,65 @@
 // backend/src/session/turn-worker.ts
 //
-// MYT-66 Task 9 — the session-turn worker: the lock-fenced conductor that runs
-// ONE DM turn per job in the dedicated worker.ts process.
+// MYT-68 Task 15 — the session-turn worker (v2): the lock-fenced conductor that
+// runs ONE DM turn per job, now wired to the REAL FastThinker and carrying the
+// converge / latch-terminal / lock-gate turn lifecycle (spec §5 / §3.7).
 //
 // `processTurnJob` is the BullMQ processor body. It is the cluster-coordination
 // shell around `SessionController`:
 //
-//   1. Acquire the per-session lock (Task 3). No lock → contention; return
-//      `{ran:false}` and let BullMQ's `attempts` re-run the job (the real
-//      trigger queue + retry policy is MYT-67's §8). Only ONE container drives a
-//      campaign's turn at a time.
+//   1. Acquire the per-session lock (MYT-66 Task 3). No lock → contention;
+//      return `{ran:false}` and let the debounce re-drive (§4.7). Only ONE
+//      container drives a campaign's turn at a time.
 //   2. Heartbeat the lock on an interval. If a refresh ever fails (the lock
 //      expired and a SUCCESSOR re-acquired it — H1 stalled-resume guard), set
 //      `lockLost`. The turn then ABORTS without flushing: the winning container
-//      owns the continuation, and a never-flush abort leaves Redis at the
-//      pre-turn snapshot (the SessionController recovery invariant).
-//   3. Run the turn through SessionController (load → process → flush). The
-//      `lockLost` checkpoints around the long body mean a lost lock stops us
-//      BEFORE the flush, never after.
+//      owns the continuation, and a never-flush abort leaves Postgres + Redis at
+//      the pre-turn snapshot (the SessionController recovery invariant).
+//   3. §5 DECISION ORDER (below) on ANY run (fresh OR re-run), evaluated AFTER
+//      the lock is held and `dm_responding` is set, BEFORE any rendering:
+//
+//        a. PG rows exist for this turnId → the turn IS durable. CONVERGE to
+//           completion: advance the watermark + publish turn_end + return.
+//           NEVER turn_error — clients would discard prose the transcript keeps,
+//           and the stuck watermark would double-answer the batch.
+//        b. Frames were broadcast but nothing committed → a retry would
+//           re-stream DIVERGENT prose + re-roll dice under the same turnId.
+//           TERMINAL: publish turn_error via the SET-NX claim, throw
+//           UnrecoverableError (skips remaining BullMQ attempts). No render.
+//        c. Fresh run → render the turn through SessionController, gating the
+//           PG commit on the lock (§3.7 lock-gate: lost lock stops us BEFORE
+//           the flush, never after).
 //   4. On a real (non-lock-lost) error, RETHROW so BullMQ applies its retry /
-//      `attempts` policy. The terminal `turn_error` frame is published by the
-//      worker's `failed`-event handler on the FINAL attempt (H8), NOT here.
+//      `attempts` policy. The terminal `turn_error` frame on attempts-exhaustion
+//      is published by the worker's `failed`-event handler (H8), NOT here.
 //   5. ALWAYS clear the heartbeat + release the lock in `finally`. Release is a
 //      compare-and-delete (Task 3), so it is safe even after lock loss — it can
 //      only ever drop OUR token, never a successor's (H12.c).
 //
-// DEFERRED (scope): the plan's periodic PG checkpoint ("checkpoint if ≥5 min")
-// is NOT implemented here. `flushToRedis` (live Redis turn-state) is sufficient
-// for crash recovery, which rides BullMQ redelivery + the never-flush invariant
-// — not a checkpoint read-back. The widened envelope is already written via the
-// suspend path (Task 5). A periodic cadence needs a last-checkpoint tracker that
-// does not exist yet; it lands with the real tiers (MYT-68/69).
+// THE FT IS NOW REAL (MYT-68): the production builder constructs a
+// `SonnetFastThinker` per turn with that turn's scoped skill-check `mech`
+// projection (ONLY `findSessionParticipantCharacterByName`, §8 — never the whole
+// repo), the resolved `worldTone`, and the latched emitter the worker owns. The
+// ST + Scribe remain stubs until MYT-69. Per-turn context (ftContext, display
+// names, world tone) is resolved here from the `:state` blob with a PG re-load
+// fallback (§3.10).
 
-import { Queue, Worker as BullmqWorker, type Job } from 'bullmq'
+import { Queue, UnrecoverableError, Worker as BullmqWorker, type Job } from 'bullmq'
 import { randomUUID } from 'node:crypto'
 import type { Redis } from 'ioredis'
+import type { Pool } from 'pg'
+import { createRepo } from '../repo/index.js'
 import { makeSessionState, type SessionState } from '../redis/session-state.js'
 import { SessionController, type TranscriptStore } from './session-controller.js'
 import { createSessionLock, type SessionLock } from './session-lock.js'
-import { StubFastThinker, StubScribe, StubSlowThinker } from './tiers/stubs.js'
-import type { FastThinker, Scribe, SlowThinker } from './tiers/types.js'
+import { SonnetFastThinker } from './tiers/fast-thinker.js'
+import { buildFtTools } from './tiers/ft-tools.js'
+import { StubScribe, StubSlowThinker } from './tiers/stubs.js'
+import type { FastThinker, Scribe, SlowThinker, TurnEmitter } from './tiers/types.js'
+import type { MechanicalReads } from './skill-check.js'
 import { makeTriggerState, type TriggerState } from './trigger-state.js'
 import { createTurnPublisher, type TurnPublisher } from './turn-publisher.js'
 import { enqueueTurn, QUEUE_SESSION_TURN, type TurnJobPayload, type TurnQueueLike } from './turn-queue.js'
-
-/** MYT-68 interim (T15): a no-op TranscriptStore so the rewritten controller's
- *  construction signature is satisfied without the real session_messages repo
- *  wiring (which T15 threads in properly). `listFtContextRows` returns no rows
- *  (the in-memory FT history starts empty, matching the old controller); the
- *  per-turn append is a no-op (no durable transcript yet). */
-const INTERIM_EMPTY_TRANSCRIPT: TranscriptStore = {
-  listFtContextRows: () => Promise.resolve([]),
-  appendDmTurn: () => Promise.resolve(),
-}
 
 /** The lock for a turn was lost mid-flight (a heartbeat `extend()` failed,
  *  meaning a successor re-acquired it). Distinguished from a real failure so the
@@ -71,13 +78,48 @@ interface MinimalLogger {
   error: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
 }
 
+/** The narrow repo surface the worker reads — the §3.7 idempotency probe +
+ *  transcript I/O (passed through to the controller's TranscriptStore), the
+ *  display-name roster, the session-row → session-number read, the prep
+ *  ft_context read, and the scoped skill-check mechanical projection. Defining
+ *  the worker's needs as a narrow interface (rather than the full `Repo`) keeps
+ *  the in-memory test fakes small and makes the §8 scoping explicit. The real
+ *  `createRepo(pool)` structurally satisfies it. */
+export interface TurnWorkerRepo {
+  readonly sessionMessages: TranscriptStore & {
+    turnRowsExist(turnId: string): Promise<boolean>
+  }
+  readonly campaigns: {
+    listMembersBasic(
+      campaignId: string,
+    ): Promise<readonly { user_id: string; display_name: string }[]>
+  }
+  readonly sessions: {
+    getById(id: string): Promise<{ sessionNumber: number } | null>
+  }
+  readonly sessionPreps: {
+    getBy(campaignId: string, sessionNumber: number): Promise<{ ftContext: string } | null>
+  }
+  readonly characters: Pick<MechanicalReads, 'findSessionParticipantCharacterByName'>
+}
+
+/** Per-turn arguments the tiers factory needs. The emitter is passed IN (the
+ *  worker owns the latch wiring); the FT streams every frame through it. */
+export interface TierTurnArgs {
+  readonly sessionId: string
+  readonly worldTone: string
+  readonly emitter: TurnEmitter
+}
+
 export interface TurnProcessorDeps {
   readonly lock: SessionLock
   readonly sessionState: SessionState
+  readonly repo: TurnWorkerRepo
   /** MYT-67 §4.7 — the DM-trigger coordination state. The processor sets/clears
    *  the `dm_responding` drain guard around the turn body, advances the
-   *  `last-responded-seq` watermark at flush, and drains a pending explicit
-   *  summon on release. */
+   *  `last-responded-seq` watermark at flush, drains a pending explicit summon
+   *  on release, runs the §5 emitted-anything latch, and gates the §4.8 terminal
+   *  turn_error publish. */
   readonly triggerState: TriggerState
   /** MYT-67 §4.7 — the `session-turn` producer used ONLY for the explicit drain:
    *  if an `@dm` landed while this turn was in flight, the worker enqueues one
@@ -85,21 +127,87 @@ export interface TurnProcessorDeps {
    *  current turn ends. */
   readonly sessionTurnQueue: TurnQueueLike
   readonly publisher: TurnPublisher
-  readonly makeTiers: () => { st: SlowThinker; ft: FastThinker; scribe: Scribe }
+  /** Per-turn tier factory. Takes the resolved per-turn args (the latched
+   *  emitter is passed IN so tests can fake the tiers while the worker owns the
+   *  latch wiring; the controller receives the SAME emitter via its deps). */
+  readonly makeTiers: (turn: TierTurnArgs) => { st: SlowThinker; ft: FastThinker; scribe: Scribe }
   readonly heartbeatMs: number
   readonly logger: MinimalLogger
 }
 
 /**
+ * §3.10 — resolve the enforced-ignorance-safe prep doc (session_preps.ft_context)
+ * when the `:state` blob doesn't carry it (a session started before the prep
+ * wiring parked it on the blob, or an evicted blob). Reads the session row for
+ * its session_number → `sessionPreps.getBy` → `.ftContext`. Absent → '' with a
+ * LOUD warn (a turn with no prep context is degraded but must not crash).
+ * Exported so the fallback is directly unit-testable.
+ */
+export async function reloadFtContext(
+  repo: TurnWorkerRepo,
+  campaignId: string,
+  sessionId: string,
+  logger?: MinimalLogger,
+): Promise<string> {
+  const session = await repo.sessions.getById(sessionId)
+  if (session === null) {
+    logger?.warn({ campaignId, sessionId }, 'reloadFtContext: no session row; ft_context defaults to empty')
+    return ''
+  }
+  const prep = await repo.sessionPreps.getBy(campaignId, session.sessionNumber)
+  if (prep === null) {
+    logger?.warn(
+      { campaignId, sessionId, sessionNumber: session.sessionNumber },
+      'reloadFtContext: no session_prep row; ft_context defaults to empty',
+    )
+    return ''
+  }
+  return prep.ftContext
+}
+
+/**
+ * §5 emitted-anything latch wrapper: wrap an inner emitter so the FIRST emit of
+ * ANY kind awaits `markEmitted` BEFORE the inner publish (set-before-publish — a
+ * set-AFTER leaves a crash window where a re-run can re-stream divergent prose
+ * without `wasTurnEmitted` ever tripping). The mark fires exactly once (a local
+ * boolean), then every subsequent emit passes straight through. Exported so the
+ * set-before-publish ordering is directly unit-testable.
+ */
+export function makeLatchedEmitter(inner: TurnEmitter, markEmitted: () => Promise<void>): TurnEmitter {
+  let marked = false
+  const ensureMarked = async (): Promise<void> => {
+    if (marked) return
+    marked = true
+    await markEmitted()
+  }
+  return {
+    emitText: async (text) => {
+      await ensureMarked()
+      await inner.emitText(text)
+    },
+    emitSkillCheck: async (payload) => {
+      await ensureMarked()
+      await inner.emitSkillCheck(payload)
+    },
+    emitDiceRoll: async (payload) => {
+      await ensureMarked()
+      await inner.emitDiceRoll(payload)
+    },
+  }
+}
+
+/**
  * Run one DM turn under the per-session lock. Returns `{ran}`: `false` on
- * contention (no lock), `true` once we acquired the lock and either completed or
- * aborted on lock loss. A real failure rethrows (BullMQ owns the retry policy).
+ * contention (no lock), `true` once we acquired the lock and either completed,
+ * converged a durable turn, or aborted on lock loss. A real failure rethrows
+ * (BullMQ owns the retry policy); the §5 latch-terminal throws
+ * `UnrecoverableError` (no further BullMQ attempts).
  */
 export async function processTurnJob(
   deps: TurnProcessorDeps,
   job: { data: TurnJobPayload },
 ): Promise<{ ran: boolean }> {
-  const { campaignId, sessionId, turnId, triggerMessages } = job.data
+  const { campaignId, sessionId, turnId } = job.data
 
   const handle = await deps.lock.tryAcquire(campaignId)
   if (handle === null) {
@@ -134,47 +242,98 @@ export async function processTurnJob(
   }, deps.heartbeatMs)
 
   try {
+    // ── §5 decision order on ANY run (fresh OR re-run) ──────────────────────
+
+    // 1. PG rows exist for this turnId → the turn IS durable. CONVERGE to
+    //    completion: advance the watermark, publish turn_end, return. Never
+    //    turn_error (clients would discard prose the transcript keeps, and the
+    //    stuck watermark would double-answer the batch). Runs under the lock —
+    //    we hold it from `tryAcquire` above.
+    if (await deps.repo.sessionMessages.turnRowsExist(turnId)) {
+      deps.logger.warn({ campaignId, turnId }, 'turn already durable in PG; converging to turn_end')
+      await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
+      await deps.publisher.turnEnd(campaignId, turnId)
+      return { ran: true }
+    }
+
+    // 2. Frames were broadcast but nothing committed → a retry would re-stream
+    //    DIVERGENT prose + re-roll dice under the same turnId. Terminal: publish
+    //    turn_error via the §4.8 SET-NX claim (cross-container dedup), then throw
+    //    UnrecoverableError so BullMQ skips the remaining attempts. No render.
+    if (await deps.triggerState.wasTurnEmitted(turnId)) {
+      deps.logger.warn(
+        { campaignId, turnId },
+        'turn streamed frames but never committed; terminal (no divergent re-stream under one turnId)',
+      )
+      if (await deps.triggerState.claimTurnErrorPublish(turnId)) {
+        await deps.publisher.turnError(campaignId, turnId, 'The turn failed. Please try again.')
+      }
+      throw new UnrecoverableError(
+        'turn already streamed; terminal (no divergent re-stream under one turnId)',
+      )
+    }
+
+    // 3. Fresh run.
     await deps.publisher.dmThinking(campaignId, turnId)
-    // MYT-68 interim (T15): the controller's construction signature changed to
-    // the PG-direct model (sessionId arg; emitter/transcript/displayNames/
-    // ftContext/allocSeq deps; no publisher; processDmTurn takes maxConsumedSeq;
-    // turn_end + persist moved out of the controller). T15 rewrites this worker
-    // properly (real session_messages transcript, resolved ftContext, display
-    // names). This interim wiring keeps behavior identical: an empty transcript
-    // (so the in-memory history starts empty, as the old controller did), the
-    // FT streams through the publisher's latched emitter, persistTurn is a
-    // no-op against the stub store, flushToRedis carries summary/usage, and the
-    // worker publishes turn_end after persist+flush (it moved off the controller).
+
+    // Resolve per-turn context from the `:state` blob, with a PG re-load
+    // fallback for ftContext (§3.10) and the campaign roster for display names.
+    const state = await deps.sessionState.getState(campaignId)
+    const ftContext =
+      state?.ftContext ?? (await reloadFtContext(deps.repo, campaignId, sessionId, deps.logger))
+    const worldTone = state?.worldTone ?? ''
+    const displayNames = new Map(
+      (await deps.repo.campaigns.listMembersBasic(campaignId)).map((m) => [
+        m.user_id,
+        m.display_name,
+      ]),
+    )
+
+    // The latched emitter (§5): the FIRST frame of any kind marks the
+    // emitted-anything latch BEFORE publishing, so a crash between mark and
+    // publish still trips `wasTurnEmitted` on retry.
+    const emitter = makeLatchedEmitter(deps.publisher.emitFor(campaignId, turnId), () =>
+      deps.triggerState.markTurnEmitted(turnId),
+    )
+
+    const tiers = deps.makeTiers({ sessionId, worldTone, emitter })
+
     const controller = new SessionController(
       {
         sessionState: deps.sessionState,
-        ...deps.makeTiers(),
-        emitter: deps.publisher.emitFor(campaignId, turnId),
-        transcript: INTERIM_EMPTY_TRANSCRIPT,
-        displayNames: new Map(),
-        ftContext: '',
+        ...tiers,
+        emitter,
+        transcript: deps.repo.sessionMessages,
+        displayNames,
+        ftContext,
         allocSeq: () => deps.sessionState.nextSeq(campaignId),
+        logger: deps.logger,
       },
       campaignId,
       sessionId,
       turnId,
     )
-    void triggerMessages
+
     await controller.loadFromRedis()
     if (isLockLost()) throw new LockLostError()
     await controller.processDmTurn(job.data.maxConsumedSeq)
+    // §3.7 lock-gate: re-check the lock BEFORE the (durable) PG commit, so a lost
+    // lock stops us BEFORE persisting, never after.
     if (isLockLost()) throw new LockLostError()
     await controller.persistTurn()
     await controller.flushToRedis()
-    // MYT-68 interim (T15): turn_end moved off the controller — the worker now
-    // publishes it, only AFTER persist+flush (and below, the watermark advance).
-    await deps.publisher.turnEnd(campaignId, turnId)
     // §4.7 — the batch is responded: advance the watermark so the next trigger
     // batch starts at `(maxConsumedSeq, …]`. Only on a real (flushed) success —
     // a lock-lost abort never flushes, so it must never advance the watermark.
     await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
+    // turn_end is the WORKER's, published only AFTER persist + flush + watermark
+    // (so a client never sees turn_end for a turn that did not durably land).
+    await deps.publisher.turnEnd(campaignId, turnId)
     return { ran: true }
   } catch (err) {
+    // The §5 latch-terminal is deliberate, not a failure to swallow — let it
+    // propagate so BullMQ skips the remaining attempts.
+    if (err instanceof UnrecoverableError) throw err
     if (err instanceof LockLostError || isLockLost()) {
       // The lock was re-acquired by a successor: do NOT flush (the recovery
       // invariant leaves Redis at the pre-turn snapshot) and do NOT publish
@@ -237,22 +396,27 @@ const TURN_HEARTBEAT_MS = 15_000
  * Build the session-turn BullMQ Worker for the dedicated worker.ts process.
  *
  * IMPORTANT: this runs in worker.ts, NOT the API server. worker.ts has already
- * waitFor-probed `redisBatch` (the shared BullMQ connection) and `redisRealtime`
- * — so this builder REUSES `redisBatch` as the Worker connection (no new BullMQ
- * client, no second ping-probe) and constructs the processor deps on
- * `redisRealtime`.
+ * waitFor-probed `redisBatch` (the shared BullMQ connection), `redisRealtime`,
+ * and the pg `pool` — so this builder REUSES `redisBatch` as the Worker
+ * connection (no new BullMQ client, no second ping-probe), constructs the
+ * processor deps on `redisRealtime`, and builds ONE `createRepo(pool)` for the
+ * §3.7 transcript I/O + per-turn context resolution.
  *
- * The tiers are the MYT-66 stubs; the real Anthropic-backed tiers land in
- * MYT-68/69.
+ * The FastThinker is now REAL (MYT-68): `makeTiers` constructs a fresh
+ * `SonnetFastThinker` per turn with that turn's scoped skill-check `mech`
+ * projection + resolved world tone + latched emitter. ST + Scribe remain stubs
+ * until MYT-69.
  */
 export function buildSessionTurnWorker(
   redisBatch: Redis,
   redisRealtime: Redis,
   redisKeyPrefix: string,
   logger: MinimalLogger,
+  pool: Pool,
 ): BullmqWorker<TurnJobPayload> {
   const publisher = createTurnPublisher(redisRealtime, redisKeyPrefix)
   const triggerState = makeTriggerState(redisRealtime, redisKeyPrefix)
+  const repo = createRepo(pool)
 
   // §4.7 — the explicit-drain producer. Build the BullMQ `Queue` ONCE (on the
   // shared BullMQ connection `redisBatch`, like every other producer) and reuse
@@ -263,14 +427,32 @@ export function buildSessionTurnWorker(
   const deps: TurnProcessorDeps = {
     lock: createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS),
     sessionState: makeSessionState(redisRealtime, redisKeyPrefix),
+    repo,
     triggerState,
     sessionTurnQueue,
     publisher,
-    makeTiers: () => ({
-      st: new StubSlowThinker(),
-      ft: new StubFastThinker(),
-      scribe: new StubScribe(),
-    }),
+    // The real FastThinker, constructed per turn with the scoped skill-check
+    // mechanical projection (§8 — ONLY findSessionParticipantCharacterByName,
+    // never the whole repo), the turn's world tone, and the worker-owned latched
+    // emitter. ST + Scribe stay stubs until MYT-69.
+    /* c8 ignore start -- real-FT construction: invoking it spends Sonnet tokens;
+       wiring is exercised by the §10 real-Anthropic E2E smoke (T19), and the
+       converge-path builder tests prove the surrounding wiring */
+    makeTiers: ({ sessionId, worldTone }) => {
+      const mech: MechanicalReads = {
+        findSessionParticipantCharacterByName: (sid, name) =>
+          repo.characters.findSessionParticipantCharacterByName(sid, name),
+      }
+      return {
+        st: new StubSlowThinker(),
+        scribe: new StubScribe(),
+        ft: new SonnetFastThinker({
+          tools: buildFtTools({ mech, sessionId, worldTone, logger }, undefined),
+          logger,
+        }),
+      }
+    },
+    /* c8 ignore stop */
     heartbeatMs: TURN_HEARTBEAT_MS,
     logger,
   }

@@ -47,8 +47,24 @@ import type {
   TriggerMessage,
   TurnEmitter,
 } from '../tiers/types.js'
-import { processTurnJob, type TurnProcessorDeps } from '../turn-worker.js'
+import { processTurnJob, type TurnProcessorDeps, type TurnWorkerRepo } from '../turn-worker.js'
 import type { TurnJobPayload, TurnQueueLike } from '../turn-queue.js'
+
+// A fresh-run in-memory repo: no durable rows (so both A and B take the
+// fresh-run path), an empty transcript (the stub tiers don't read it), a no-op
+// DM append, and stub roster/session/prep/character reads. The recovery
+// invariant is asserted on Redis turn-state, not PG, so the append is inert.
+const recoveryRepo: TurnWorkerRepo = {
+  sessionMessages: {
+    turnRowsExist: () => Promise.resolve(false),
+    listFtContextRows: () => Promise.resolve([]),
+    appendDmTurn: () => Promise.resolve(),
+  },
+  campaigns: { listMembersBasic: () => Promise.resolve([]) },
+  sessions: { getById: () => Promise.resolve({ sessionNumber: 1 }) },
+  sessionPreps: { getBy: () => Promise.resolve(null) },
+  characters: { findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }) },
+}
 
 const REDIS_REALTIME_URL = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
 
@@ -98,6 +114,14 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * renders slowly (60ms) so A's 5ms heartbeat fires during the render, observes
  * the key gone (`extend()` → false), and flips `lockLost`. A then aborts at the
  * post-`processDmTurn` checkpoint — BEFORE the flush — so it NEVER flushes.
+ *
+ * MYT-68 §5: A renders WITHOUT emitting any player-visible frame before it
+ * aborts. This models the crash-recovery case where the holder dies BEFORE
+ * streaming anything — so the §5 emitted-anything latch (`markTurnEmitted`)
+ * stays UNSET and the redelivered B takes the clean fresh-run recovery path
+ * rather than the latch-terminal (no-divergent-re-stream) path. A turn that DID
+ * stream a frame before dying is the latch-terminal case, covered directly in
+ * turn-worker.test.ts.
  */
 class LockKillingFastThinker implements FastThinker {
   constructor(
@@ -107,12 +131,13 @@ class LockKillingFastThinker implements FastThinker {
 
   async render(_ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> {
     void _ctx
+    void emit
     // Simulate the holder's lock expiring mid-turn: drop the real lock key so
     // A's next heartbeat extend() finds nothing to refresh.
     await this.realtime.del(this.lockKey)
     // Slow render so the 5ms heartbeat fires (and flips lockLost) before render
-    // returns. A would have flushed had it completed; it must not get there.
-    await emit.emitText('(A is mid-render when its lock expires…)')
+    // returns. A would have flushed had it completed; it must not get there. No
+    // emit() before the abort → the §5 latch stays unset → B recovers cleanly.
     await sleep(60)
     return { role: 'assistant', parts: [{ kind: 'text', text: '(A would have responded.)' }] }
   }
@@ -193,6 +218,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
     const depsA: TurnProcessorDeps = {
       lock,
       sessionState,
+      repo: recoveryRepo,
       triggerState,
       sessionTurnQueue: inertTurnQueue,
       publisher,
@@ -228,6 +254,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
     const depsB: TurnProcessorDeps = {
       lock,
       sessionState,
+      repo: recoveryRepo,
       triggerState,
       sessionTurnQueue: inertTurnQueue,
       publisher,

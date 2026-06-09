@@ -140,6 +140,7 @@ export async function main(): Promise<void> {
     redisRealtime,
     env.redisKeyPrefix,
     logger,
+    pg,
   )
 
   // DM-trigger (MYT-67 §4.3) — the ordered decision shell that runs when the
