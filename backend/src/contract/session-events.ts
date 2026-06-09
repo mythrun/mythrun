@@ -3,12 +3,14 @@
 // MYT-65 introduced the player-chat + system-event subset: the frames a
 // client and server exchange to join a room, chat, signal typing, and replay
 // history on reconnect. MYT-66 adds the first DM-turn streaming frames
-// (dm_thinking, text_delta, turn_end, turn_error) as server->client only. The
-// remaining §5.2 DM-turn frames (skill_check, dice_roll, combat_*,
-// session_end, st_evaluation, scribe_result, reaction_window, ...) are still
-// deliberately ABSENT here — they land as those surfaces are built. Adding
-// them prematurely would let the transport accept / broadcast frame types it
-// has no handler for.
+// (dm_thinking, text_delta, turn_end, turn_error) as server->client only.
+// MYT-68 adds the DM-turn mechanical frames (skill_check, dice_roll,
+// dm_message) the FastThinker tool loop emits — live-streamed during a turn
+// and replayed from session_messages rows on reconnect. The remaining §5.2
+// DM-turn frames (combat_*, session_end, st_evaluation, scribe_result,
+// reaction_window, ...) are still deliberately ABSENT here — they land as
+// those surfaces are built. Adding them prematurely would let the transport
+// accept / broadcast frame types it has no handler for.
 //
 // Mirrors the pattern in backend/src/contract/pipeline-events.ts: a
 // `readonly string[]` allowlist + a discriminated-union payload type per
@@ -32,8 +34,9 @@ export const CLIENT_FRAME_TYPES = [
   'dm_invoke',
 ] as const
 
-// Server -> Client frame types. The MYT-65 subset plus the MYT-66 DM-turn
-// streaming frames (`dm_thinking`, `text_delta`, `turn_end`, `turn_error`).
+// Server -> Client frame types. The MYT-65 subset, the MYT-66 DM-turn
+// streaming frames (`dm_thinking`, `text_delta`, `turn_end`, `turn_error`),
+// and the MYT-68 mechanical frames (`skill_check`, `dice_roll`, `dm_message`).
 // `combat_*`, `session_end`, etc. are further DM-turn frames added later.
 export const SERVER_FRAME_TYPES = [
   'session_ready',
@@ -51,6 +54,16 @@ export const SERVER_FRAME_TYPES = [
   'text_delta',
   'turn_end',
   'turn_error',
+  // MYT-68 DM-turn mechanical frames. Live-streamed during a turn (no seq,
+  // like text_delta) AND replayed from session_messages rows on reconnect
+  // (then carrying the row's seq). `dm_message` is replay-only: the
+  // consolidated DM prose row (live prose streams as text_delta).
+  // `roll_complete` is deliberately NOT added to CLIENT_FRAME_TYPES — no
+  // server handler exists (spec §3.8); it lands with the frontend
+  // roll-animation issue.
+  'skill_check',
+  'dice_roll',
+  'dm_message',
 ] as const
 
 // Snapshot of a connected participant, used in the reconnect replay payload.
@@ -115,6 +128,35 @@ export type ServerFrame =
   | { type: 'text_delta'; turnId: string; text: string }
   | { type: 'turn_end'; turnId: string }
   | { type: 'turn_error'; turnId: string; message: string }
+  // MYT-68 DM-turn mechanical frames. Live-streamed during a turn (no seq) and
+  // replayed from session_messages rows on reconnect (carrying the row's seq).
+  | {
+      type: 'skill_check'
+      turnId: string
+      seq?: number // present only on reconnect replay (persisted row)
+      characterName: string
+      skill: string
+      context: string
+      roll: number
+      roll2: number | null
+      rollType: 'normal' | 'advantage' | 'disadvantage'
+      modifier: number
+      total: number
+      dc: number
+      outcomeTier: 'fail' | 'success' | 'great_success'
+      constraint: string
+    }
+  | {
+      type: 'dice_roll'
+      turnId: string
+      seq?: number
+      count: number
+      sides: number
+      results: number[]
+      total: number
+    }
+  // Replay-only: one consolidated DM prose row (live prose = text_delta).
+  | { type: 'dm_message'; seq: number; turnId: string; text: string }
 
 // Tripwire over the client allowlist. Only these client frame types may
 // originate a persisted/broadcast frame; everything else (DM-turn frames,

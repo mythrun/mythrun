@@ -25,4 +25,16 @@ describe('session-events contract', () => {
       expect(classifyClientFrame(t)).toBe(false) // never an inbound client frame
     }
   })
+
+  describe('MYT-68 DM-turn frames', () => {
+    it('server allowlist gains skill_check / dice_roll / dm_message', () => {
+      expect(SERVER_FRAME_TYPES).toContain('skill_check')
+      expect(SERVER_FRAME_TYPES).toContain('dice_roll')
+      expect(SERVER_FRAME_TYPES).toContain('dm_message')
+    })
+    it('roll_complete stays OFF the live client allowlist (no handler — spec §3.8)', () => {
+      expect(CLIENT_FRAME_TYPES).not.toContain('roll_complete')
+      expect(classifyClientFrame('roll_complete')).toBe(false)
+    })
+  })
 })
