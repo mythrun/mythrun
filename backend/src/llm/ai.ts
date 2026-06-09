@@ -38,12 +38,20 @@
 import {
   generateText as sdkGenerateText,
   streamObject as sdkStreamObject,
+  streamText as sdkStreamText,
   Output,
+  tool,
+  stepCountIs,
   wrapLanguageModel,
   type DeepPartial,
   type LanguageModel,
   type LanguageModelUsage,
+  type ModelMessage,
+  type PrepareStepFunction,
+  type StopCondition,
   type StreamObjectResult,
+  type TextStreamPart,
+  type ToolSet,
 } from 'ai'
 import type { LanguageModelV3Middleware } from '@ai-sdk/provider'
 import { z } from 'zod'
@@ -58,8 +66,11 @@ import type { WorldGenStage } from './prep/streaming-extractor.js'
 // can't usefully proxy (raw type aliases, `wrapLanguageModel` for models.ts
 // boot wiring, etc.). Inline `from 'ai'` imports in product code are a
 // Phase-3 lint violation.
-export { Output, wrapLanguageModel }
+export { Output, wrapLanguageModel, tool, stepCountIs }
 export type { LanguageModel, LanguageModelUsage, LanguageModelV3Middleware }
+// MYT-68 — FT tool-loop surface. Re-exported so product code (the FT runner)
+// never reaches into `'ai'` directly; the Phase-3 lint rule forbids that.
+export type { ModelMessage, StopCondition, PrepareStepFunction, TextStreamPart, ToolSet }
 
 // Default fallback for the repair call's required `stage` arg when the
 // caller didn't supply a recognizable WorldGenStage in providerOptions.
@@ -140,6 +151,10 @@ export interface GenerateObjectOpts<T> {
   readonly timeoutMs?: number
   /** Hard output ceiling; session-prep needs it or the SDK default truncates. */
   readonly maxOutputTokens?: number
+  /** Optional EXTERNAL abort (e.g. the FT turn's signal threaded into the
+   *  nested skill-check DC call). Combined with the internal timeout via
+   *  AbortSignal.any — whichever fires first aborts. */
+  readonly abortSignal?: AbortSignal
 }
 
 export interface GenerateObjectResult<T> {
@@ -534,7 +549,10 @@ export async function generateObject<T>(
       model: opts.model,
       output: Output.object<T>({ schema: opts.schema }),
       prompt: opts.prompt,
-      abortSignal: timeout.signal,
+      abortSignal:
+        opts.abortSignal !== undefined
+          ? AbortSignal.any([timeout.signal, opts.abortSignal])
+          : timeout.signal,
       ...(opts.system !== undefined ? { system: opts.system } : {}),
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
@@ -717,4 +735,89 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
     timeout.cancel()
   }
   /* c8 ignore stop */
+}
+
+export interface StreamTextWithToolsOpts {
+  readonly model: LanguageModel
+  /** Full message array INCLUDING the system-role message — passed as a
+   *  message (not the `system:` param) so it can carry the per-message
+   *  anthropic cacheControl breakpoint (call-level providerOptions is
+   *  silently inert for cache_control on this provider). */
+  readonly messages: ModelMessage[]
+  readonly tools: ToolSet
+  readonly stopWhen: StopCondition<ToolSet> | StopCondition<ToolSet>[]
+  /** Typed against the SDK's own `prepareStep` parameter rather than a bare
+   *  `PrepareStepFunction<ToolSet>` alias: under our `exactOptionalPropertyTypes`
+   *  tsconfig, `ToolSet` (whose tool values allow `outputSchema?: undefined`)
+   *  does not satisfy `PrepareStepFunction`'s `Record<string, Tool>` constraint,
+   *  so referencing the alias directly fails to compile. The SDK's parameter
+   *  type is the authoritative shape callers must produce anyway. */
+  readonly prepareStep?: NonNullable<Parameters<typeof sdkStreamText>[0]['prepareStep']>
+  readonly callSite: string
+  /** Per-TURN budget (whole loop). Surfaces as an in-band `abort` part —
+   *  the CONSUMER throws LlmTimeoutError on it; nothing here throws. */
+  readonly timeoutMs?: number
+  /** mythrun log bindings ONLY — never cacheControl (see messages note). */
+  readonly providerOptions?: unknown
+  readonly maxOutputTokens?: number
+}
+
+export interface StreamTextWithToolsResult {
+  readonly fullStream: AsyncIterable<TextStreamPart<ToolSet>>
+  /** FINAL step's usage — its inputTokens is the context-fill signal. */
+  readonly stepUsage: Promise<LanguageModelUsage>
+  /** Cumulative usage across ALL steps — the spend-attribution number. A
+   *  5-step turn billed off stepUsage would under-count ~4 Sonnet passes. */
+  readonly totalUsage: Promise<LanguageModelUsage>
+}
+
+/**
+ * MYT-68 — the FT tool-loop wrapper. Deliberately NO repair chain (prose, not
+ * structured output; malformed tool inputs surface as tool-error parts the
+ * model recovers from). Error/abort surface as IN-BAND fullStream parts (the
+ * for-await never throws — verified against the ai@6 dist); the consumer owns
+ * converting them to thrown Mythrun errors. The usage promises are
+ * pre-handled: on a zero-step failure both REJECT, and an FT that threw out
+ * of its consume loop must not leave an unhandled rejection to kill the
+ * worker.
+ */
+export function streamTextWithTools(opts: StreamTextWithToolsOpts): StreamTextWithToolsResult {
+  const timeout = createTimeoutSignal(opts.timeoutMs)
+  const result = sdkStreamText({
+    model: opts.model,
+    messages: opts.messages,
+    tools: opts.tools,
+    stopWhen: opts.stopWhen,
+    abortSignal: timeout.signal,
+    ...(opts.prepareStep !== undefined ? { prepareStep: opts.prepareStep } : {}),
+    ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+    ...(opts.providerOptions !== undefined
+      ? {
+          providerOptions: opts.providerOptions as NonNullable<
+            Parameters<typeof sdkStreamText>[0]['providerOptions']
+          >,
+        }
+      : {}),
+  })
+  // The SDK exposes usage / totalUsage as PromiseLike; normalize to Promise so
+  // the result type is a plain Promise and `.catch` is available.
+  const stepUsage = Promise.resolve(result.usage)
+  const totalUsage = Promise.resolve(result.totalUsage)
+  // Pre-attach handlers (guarded promises): the originals still reject for
+  // consumers who await them; these no-op catches only mark them handled.
+  // Cancel the timeout timer once the final step settles either way.
+  void stepUsage.then(
+    () => {
+      timeout.cancel()
+    },
+    () => {
+      timeout.cancel()
+    },
+  )
+  void totalUsage.catch(() => undefined)
+  return {
+    fullStream: result.fullStream,
+    stepUsage,
+    totalUsage,
+  }
 }
