@@ -890,6 +890,8 @@ function makeStubTriggerState(): WsSessionDeps['triggerState'] {
     setExplicitPending: vi.fn().mockResolvedValue(undefined),
     takeExplicitPending: vi.fn().mockResolvedValue(false),
     claimTurnErrorPublish: vi.fn().mockResolvedValue(true),
+    markTurnEmitted: vi.fn().mockResolvedValue(undefined),
+    wasTurnEmitted: vi.fn().mockResolvedValue(false),
   }
 }
 

@@ -17,6 +17,7 @@
 //   session:{cId}:dm_responding        "a turn is in flight" drain guard (§4.7)
 //   session:{cId}:dm-trigger-explicit  explicit-pending flag, drained on release (§4.7)
 //   turn-error-published:{turnId}      SET NX idempotency latch (§4.8)
+//   turn:{turnId}:emitted              SET NX emitted-anything latch (§5)
 //
 // `keyPrefix` already ends in `:` (config/env.ts `redisKeyPrefix`), matching
 // the session-state.ts precedent.
@@ -36,6 +37,12 @@ const DM_RESPONDING_TTL_MS = 45_000
  *  listener and the broker-side `QueueEvents` could both fire for one terminal
  *  turn. 60s comfortably covers that. */
 const TURN_ERROR_LATCH_TTL_S = 60
+
+/** TTL (seconds) on the §5 emitted-anything latch. 1h comfortably outlives the
+ *  longest a turn (incl. BullMQ retry/stalled-reclaim) could be re-dispatched —
+ *  past that, a re-run can't credibly re-stream the same turnId, so the latch is
+ *  free to lapse rather than leak a key per turn on a long-lived process. */
+const TURN_EMITTED_LATCH_TTL_S = 3600
 
 export interface TriggerState {
   /** Set/refresh this user's typing key with a TTL (`TYPING_TTL_S`). The
@@ -85,6 +92,12 @@ export interface TriggerState {
    *  `turn_error`), false if another path/container already claimed it — so
    *  exactly one `turn_error` ships per terminal turn cluster-wide. */
   claimTurnErrorPublish(turnId: string): Promise<boolean>
+  /** §5 emitted-anything latch: SET NX keyed by turnId, set by the emitter
+   *  BEFORE the first frame publish (set-after leaves a crash window that
+   *  re-streams divergent prose), checked at job START (a stalled-reclaimed
+   *  job doesn't arrive via a failure path). Cross-container by construction. */
+  markTurnEmitted(turnId: string): Promise<void>
+  wasTurnEmitted(turnId: string): Promise<boolean>
 }
 
 export function makeTriggerState(redis: Redis, keyPrefix: string): TriggerState {
@@ -98,6 +111,7 @@ export function makeTriggerState(redis: Redis, keyPrefix: string): TriggerState 
   const respondingKey = (campaignId: string): string => `${base(campaignId)}:dm_responding`
   const explicitKey = (campaignId: string): string => `${base(campaignId)}:dm-trigger-explicit`
   const latchKey = (turnId: string): string => `${keyPrefix}turn-error-published:${turnId}`
+  const emittedKey = (turnId: string): string => `${keyPrefix}turn:${turnId}:emitted`
 
   // The `typing:` segment length, so listTyping can slice the userId suffix off
   // a matched key without a fragile index calc at the call site.
@@ -191,6 +205,15 @@ export function makeTriggerState(redis: Redis, keyPrefix: string): TriggerState 
       const res = await redis.set(latchKey(turnId), '1', 'EX', TURN_ERROR_LATCH_TTL_S, 'NX')
       return res === 'OK'
     },
+
+    markTurnEmitted: async (turnId) => {
+      // SET NX + EX: idempotent (a re-mark no-ops on the existing key) and
+      // self-GC'ing. The emitter calls this BEFORE its first frame publish so a
+      // crash between mark and publish still trips `wasTurnEmitted` on retry.
+      await redis.set(emittedKey(turnId), '1', 'EX', TURN_EMITTED_LATCH_TTL_S, 'NX')
+    },
+
+    wasTurnEmitted: async (turnId) => (await redis.exists(emittedKey(turnId))) === 1,
   }
 }
 

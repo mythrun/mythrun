@@ -38,6 +38,16 @@ describe('trigger-state', () => {
     expect(await s.claimTurnErrorPublish('turn-1')).toBe(true)
     expect(await s.claimTurnErrorPublish('turn-1')).toBe(false)
   })
+  it('emitted-anything latch marks + reads per turnId, idempotent, with TTL', async () => {
+    const { s, redis } = mkWithRedis()
+    expect(await s.wasTurnEmitted('t1')).toBe(false) // unseen → false
+    await s.markTurnEmitted('t1')
+    expect(await s.wasTurnEmitted('t1')).toBe(true)
+    await s.markTurnEmitted('t1') // double-mark is idempotent — no throw
+    expect(await s.wasTurnEmitted('t1')).toBe(true)
+    // Key carries a TTL (GC'd so a long-lived process doesn't leak a key/turn).
+    expect(await redis.ttl('t:turn:t1:emitted')).toBeGreaterThan(0)
+  })
   it('falls back to 0 / null when the raw key holds a non-numeric value', async () => {
     // No public setter writes a non-number, so plant garbage at the exact keys
     // (`t:session:{cid}:responded-seq` / `…:first-unresponded`) directly on the
