@@ -35,6 +35,8 @@ function msg(partial: Partial<SessionMessage> & { seq: number }): SessionMessage
     messageType: 'player_message',
     content: `text ${String(partial.seq)}`,
     createdAt: new Date(),
+    turnId: null,
+    turnOrdinal: null,
     ...partial,
   }
 }

@@ -196,4 +196,153 @@ describe('repo.sessionMessages (integration)', () => {
     )
     expect(m).toMatchObject({ sessionId, seq: 1, content: 'in tx' })
   })
+
+  // ─── MYT-68 §3.7 PG-direct transcript ──────────────────────────────────────
+
+  it('appendDmTurn inserts rows with ordinals 0..n-1 + the given seqs', async () => {
+    const repo = createRepo(pool)
+    const turnId = '019dccef-1111-7000-8000-000000000001'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'The lock looks old.' },
+        { kind: 'skill_check', content: JSON.stringify({ toolCallId: 'c1', input: {}, output: {} }) },
+        { kind: 'dm_text', content: 'You slip past.' },
+      ],
+      seqs: [10, 11, 12],
+    })
+
+    const res = await pool.query<{
+      seq: number
+      message_type: string
+      content: string
+      turn_ordinal: number
+      turn_id: string
+      user_id: string | null
+    }>(
+      `SELECT seq, message_type, content, turn_ordinal, turn_id, user_id
+         FROM session_messages WHERE turn_id = $1 ORDER BY turn_ordinal ASC`,
+      [turnId],
+    )
+    expect(res.rows.map((r) => r.turn_ordinal)).toEqual([0, 1, 2])
+    expect(res.rows.map((r) => r.seq)).toEqual([10, 11, 12])
+    expect(res.rows.map((r) => r.message_type)).toEqual(['dm_text', 'skill_check', 'dm_text'])
+    expect(res.rows.map((r) => r.content)).toEqual([
+      'The lock looks old.',
+      JSON.stringify({ toolCallId: 'c1', input: {}, output: {} }),
+      'You slip past.',
+    ])
+    // DM rows carry no author.
+    expect(res.rows.every((r) => r.user_id === null)).toBe(true)
+  })
+
+  it('appendDmTurn is idempotent on (turn_id, turn_ordinal) — a re-run inserts nothing', async () => {
+    const repo = createRepo(pool)
+    const turnId = '019dccef-1111-7000-8000-000000000002'
+    const input = {
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'one' },
+        { kind: 'dm_text', content: 'two' },
+      ],
+      seqs: [20, 21],
+    }
+    expect(await repo.sessionMessages.turnRowsExist(turnId)).toBe(false)
+    await repo.sessionMessages.appendDmTurn(input)
+    expect(await repo.sessionMessages.turnRowsExist(turnId)).toBe(true)
+
+    const count = async () =>
+      Number(
+        (
+          await pool.query<{ n: string }>(
+            `SELECT COUNT(*)::text AS n FROM session_messages WHERE turn_id = $1`,
+            [turnId],
+          )
+        ).rows[0]?.n ?? '0',
+      )
+    expect(await count()).toBe(2)
+
+    // A BullMQ re-run re-appends the SAME turn — ON CONFLICT DO NOTHING, row
+    // count unchanged. Fresh seqs would otherwise UNIQUE-collide; the conflict
+    // arbiter is (turn_id, turn_ordinal), so the first commit wins.
+    await repo.sessionMessages.appendDmTurn({ ...input, seqs: [22, 23] })
+    expect(await count()).toBe(2)
+  })
+
+  it('appendDmTurn throws on a rows/seqs length mismatch', async () => {
+    const repo = createRepo(pool)
+    await expect(
+      repo.sessionMessages.appendDmTurn({
+        sessionId,
+        turnId: '019dccef-1111-7000-8000-000000000003',
+        rows: [{ kind: 'dm_text', content: 'a' }],
+        seqs: [30, 31],
+      }),
+    ).rejects.toThrow()
+  })
+
+  it('appendDmTurn is a no-op on empty rows', async () => {
+    const repo = createRepo(pool)
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-1111-7000-8000-000000000004',
+      rows: [],
+      seqs: [],
+    })
+    expect(await repo.sessionMessages.maxSeq(sessionId)).toBe(0)
+  })
+
+  it('listFtContextRows returns player rows up to the watermark + ALL DM rows, seq ASC', async () => {
+    const repo = createRepo(pool)
+    const turnId = '019dccef-2222-7000-8000-000000000001'
+
+    // player seq 1, 2
+    await repo.sessionMessages.append({ sessionId, seq: 1, userId, messageType: 'player_message', content: 'p1' })
+    await repo.sessionMessages.append({ sessionId, seq: 2, userId, messageType: 'player_message', content: 'p2' })
+    // DM rows seq 3, 4 (turn tA)
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'dm3' },
+        { kind: 'dm_text', content: 'dm4' },
+      ],
+      seqs: [3, 4],
+    })
+    // player seq 5 (the watermark)
+    await repo.sessionMessages.append({ sessionId, seq: 5, userId, messageType: 'player_message', content: 'p5' })
+    // player seq 6 ABOVE the watermark — must be excluded
+    await repo.sessionMessages.append({ sessionId, seq: 6, userId, messageType: 'player_message', content: 'p6' })
+    // a DM row at seq 7 (raced past the next-batch player seqs) — must be included
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-2222-7000-8000-000000000002',
+      rows: [{ kind: 'dm_text', content: 'dm7' }],
+      seqs: [7],
+    })
+
+    const rows = await repo.sessionMessages.listFtContextRows(sessionId, 5)
+    expect(rows.map((r) => r.seq)).toEqual([1, 2, 3, 4, 5, 7])
+    expect(rows.map((r) => r.content)).toEqual(['p1', 'p2', 'dm3', 'dm4', 'p5', 'dm7'])
+    // player seq 6 (> watermark) excluded; dm7 (> watermark) included.
+    expect(rows.some((r) => r.content === 'p6')).toBe(false)
+  })
+
+  it('listFtContextRows isolates by session — another session never bleeds in', async () => {
+    const repo = createRepo(pool)
+    const sessions = createSessionsRepo(pool)
+    const campaigns = createCampaignsRepo(pool)
+    const worlds = createWorldsRepo(pool)
+    const world = await worlds.create({ createdBy: userId, name: scope.worldName(1), concept: 'Other world.' })
+    const campaign = await campaigns.create({ worldId: world.id, createdBy: userId, name: scope.campaignName(1) })
+    const other = await sessions.create({ campaignId: campaign.id, sessionNumber: 1 })
+
+    await repo.sessionMessages.append({ sessionId, seq: 1, userId, messageType: 'player_message', content: 'mine' })
+    await repo.sessionMessages.append({ sessionId: other.id, seq: 1, userId, messageType: 'player_message', content: 'theirs' })
+
+    const rows = await repo.sessionMessages.listFtContextRows(sessionId, 10)
+    expect(rows.map((r) => r.content)).toEqual(['mine'])
+  })
 })

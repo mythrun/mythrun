@@ -59,6 +59,70 @@ export function sessionMessagesNs(c: ClientLike) {
       )
       return Number(result.rows[0]?.max ?? 0)
     },
+
+    /** §3.7 single-piece context read: player rows up to the consumed
+     *  watermark + ALL DM rows (their seqs can exceed an early next-batch
+     *  player seq when chat raced the prior turn's end), seq ASC. */
+    listFtContextRows: async (sessionId: string, maxPlayerSeq: number): Promise<SessionMessage[]> => {
+      const result = await c.query<SessionMessageDbRow>(
+        `SELECT * FROM session_messages
+          WHERE session_id = $1
+            AND ((message_type = 'player_message' AND seq <= $2)
+                 OR message_type IN ('dm_text','skill_check','dice_roll'))
+          ORDER BY seq ASC`,
+        [sessionId, maxPlayerSeq],
+      )
+      return result.rows.map(toSessionMessage)
+    },
+
+    // §3.7 idempotency probe: have any rows for this turn already committed?
+    // A BullMQ re-run reads this before re-emitting so a fully-persisted turn
+    // is not re-rendered.
+    turnRowsExist: async (turnId: string): Promise<boolean> => {
+      const result = await c.query(
+        `SELECT 1 FROM session_messages WHERE turn_id = $1 LIMIT 1`,
+        [turnId],
+      )
+      return (result.rowCount ?? 0) > 0
+    },
+
+    /** §3.7 atomic per-turn DM append: ONE multi-VALUES INSERT (single
+     *  statement = atomic; all rows or none), idempotent via ON CONFLICT
+     *  (turn_id, turn_ordinal) DO NOTHING. Seqs are allocated by the caller
+     *  (Redis :seq INCR) BEFORE the insert, in row order. turn_ordinal is
+     *  passed explicitly (i = 0..n-1). user_id is NULL for DM rows. */
+    appendDmTurn: async (input: {
+      sessionId: string
+      turnId: string
+      rows: readonly { kind: string; content: string }[]
+      seqs: readonly number[]
+    }): Promise<void> => {
+      if (input.rows.length !== input.seqs.length) {
+        throw new Error(
+          `sessionMessages.appendDmTurn: rows/seqs length mismatch (${input.rows.length} vs ${input.seqs.length})`,
+        )
+      }
+      if (input.rows.length === 0) return
+
+      // $1 = session_id (shared by every row); per-row params follow. Each
+      // tuple is (id, seq, message_type, content, turn_ordinal); user_id is a
+      // literal NULL and turn_id is shared via $2. turn_ordinal is passed
+      // EXPLICITLY (the row index i) — no window-function tricks.
+      const values: unknown[] = [input.sessionId, input.turnId]
+      const tuples = input.rows.map((row, i) => {
+        const base = values.length
+        values.push(uuidv7(), input.seqs[i], row.kind, row.content, i)
+        return `($${base + 1}, $1, $${base + 2}, NULL, $${base + 3}, $${base + 4}, $2, $${base + 5})`
+      })
+
+      await c.query(
+        `INSERT INTO session_messages
+           (id, session_id, seq, user_id, message_type, content, turn_id, turn_ordinal)
+         VALUES ${tuples.join(', ')}
+         ON CONFLICT (turn_id, turn_ordinal) WHERE turn_id IS NOT NULL DO NOTHING`,
+        values,
+      )
+    },
   }
 }
 

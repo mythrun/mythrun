@@ -211,6 +211,11 @@ export interface SessionMessage {
   readonly messageType: string
   readonly content: string
   readonly createdAt: Date
+  /** MYT-68 §3.7 (migration 024): groups one DM turn's rows; null for player
+   *  rows. turn_ordinal is the 0..n-1 in-turn order. The (turn_id, turn_ordinal)
+   *  partial unique index makes the per-turn append idempotent. */
+  readonly turnId: string | null
+  readonly turnOrdinal: number | null
 }
 
 export interface AppendMessageInput {

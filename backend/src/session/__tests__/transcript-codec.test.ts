@@ -1,0 +1,156 @@
+import { describe, expect, it } from 'vitest'
+import {
+  assistantToRows,
+  rowsToConversation,
+  TranscriptCorruptError,
+  DM_MESSAGE_TYPES,
+} from '../transcript-codec.js'
+import type { AssistantMessage } from '../tiers/types.js'
+import type { SessionMessage } from '../../repo/types.js'
+
+const row = (o: Partial<SessionMessage>): SessionMessage => ({
+  id: 'id',
+  sessionId: 's',
+  seq: 1,
+  userId: null,
+  messageType: 'dm_text',
+  content: '',
+  createdAt: new Date(0),
+  turnId: 't1',
+  turnOrdinal: 0,
+  ...o,
+})
+
+const names = new Map([['u1', 'Arin']])
+
+describe('assistantToRows', () => {
+  it('maps text + tool pair into ordered rows; matches call/result on toolCallId', () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'The lock looks old.' },
+        { kind: 'tool_call', toolCallId: 'c1', toolName: 'roll_skill_check', input: { skill: 'Stealth' } },
+        { kind: 'tool_result', toolCallId: 'c1', toolName: 'roll_skill_check', output: { total: 17 } },
+        { kind: 'text', text: 'You slip past.' },
+      ],
+    }
+    expect(assistantToRows(assistant)).toEqual([
+      { kind: 'dm_text', content: 'The lock looks old.' },
+      {
+        kind: 'skill_check',
+        content: JSON.stringify({ toolCallId: 'c1', input: { skill: 'Stealth' }, output: { total: 17 } }),
+      },
+      { kind: 'dm_text', content: 'You slip past.' },
+    ])
+  })
+  it('DROPS a dangling tool_call with no result (cap edge, §3.6)', () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'Hmm.' },
+        { kind: 'tool_call', toolCallId: 'c9', toolName: 'roll_dice', input: {} },
+      ],
+    }
+    expect(assistantToRows(assistant)).toEqual([{ kind: 'dm_text', content: 'Hmm.' }])
+  })
+  it('throws TranscriptCorruptError on an unknown tool name with a matching result', () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'tool_call', toolCallId: 'cx', toolName: 'cast_spell', input: {} },
+        { kind: 'tool_result', toolCallId: 'cx', toolName: 'cast_spell', output: {} },
+      ],
+    }
+    expect(() => assistantToRows(assistant)).toThrow(TranscriptCorruptError)
+  })
+})
+
+describe('rowsToConversation', () => {
+  it('round-trips deterministically (the §3.9 byte-stability requirement)', () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'A' },
+        { kind: 'tool_call', toolCallId: 'c1', toolName: 'roll_dice', input: { count: 1, sides: 6 } },
+        { kind: 'tool_result', toolCallId: 'c1', toolName: 'roll_dice', output: { results: [4], total: 4 } },
+        { kind: 'text', text: 'B' },
+      ],
+    }
+    const rows = assistantToRows(assistant).map((r, i) =>
+      row({ messageType: r.kind, content: r.content, seq: 10 + i, turnOrdinal: i, turnId: 'tX' }),
+    )
+    const conv = rowsToConversation(rows, names)
+    expect(conv).toHaveLength(1)
+    expect(conv[0]).toEqual({ v: 1, role: 'assistant', parts: assistant.parts })
+    expect(JSON.stringify(rowsToConversation(rows, names))).toBe(JSON.stringify(conv))
+  })
+  it('maps player rows with attribution and groups DM rows by turnId', () => {
+    const rows = [
+      row({ messageType: 'player_message', content: 'I sneak in', seq: 1, userId: 'u1', turnId: null, turnOrdinal: null }),
+      row({ messageType: 'dm_text', content: 'Roll it.', seq: 2, turnId: 't1', turnOrdinal: 0 }),
+      row({ messageType: 'player_message', content: 'ok', seq: 3, userId: 'u1', turnId: null, turnOrdinal: null }),
+    ]
+    const conv = rowsToConversation(rows, names)
+    expect(conv.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+    expect(conv[0]).toMatchObject({ characterName: 'Arin', parts: [{ kind: 'text', text: 'I sneak in' }] })
+  })
+  it('groups two turnIds into two separate assistant messages', () => {
+    const rows = [
+      row({ messageType: 'dm_text', content: 'First.', seq: 1, turnId: 't1', turnOrdinal: 0 }),
+      row({ messageType: 'dm_text', content: 'Still first.', seq: 2, turnId: 't1', turnOrdinal: 1 }),
+      row({ messageType: 'dm_text', content: 'Second.', seq: 3, turnId: 't2', turnOrdinal: 0 }),
+    ]
+    const conv = rowsToConversation(rows, names)
+    expect(conv).toHaveLength(2)
+    expect(conv[0]).toEqual({
+      v: 1,
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'First.' },
+        { kind: 'text', text: 'Still first.' },
+      ],
+    })
+    expect(conv[1]).toEqual({
+      v: 1,
+      role: 'assistant',
+      parts: [{ kind: 'text', text: 'Second.' }],
+    })
+  })
+  it('ignores a foreign message_type row (e.g. system)', () => {
+    const rows = [
+      row({ messageType: 'player_message', content: 'hi', seq: 1, userId: 'u1', turnId: null, turnOrdinal: null }),
+      row({ messageType: 'system', content: 'session resumed', seq: 2, userId: null, turnId: null, turnOrdinal: null }),
+      row({ messageType: 'dm_text', content: 'Welcome back.', seq: 3, turnId: 't1', turnOrdinal: 0 }),
+    ]
+    const conv = rowsToConversation(rows, names)
+    expect(conv.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(conv[0]).toMatchObject({ parts: [{ kind: 'text', text: 'hi' }] })
+    expect(conv[1]).toMatchObject({ parts: [{ kind: 'text', text: 'Welcome back.' }] })
+  })
+  it('falls back to userId then Player when no display name maps', () => {
+    const rows = [
+      row({ messageType: 'player_message', content: 'a', seq: 1, userId: 'unknown-id', turnId: null, turnOrdinal: null }),
+      row({ messageType: 'player_message', content: 'b', seq: 2, userId: null, turnId: null, turnOrdinal: null }),
+    ]
+    const conv = rowsToConversation(rows, names)
+    expect(conv[0]).toMatchObject({ characterName: 'unknown-id' })
+    expect(conv[1]).toMatchObject({ characterName: 'Player' })
+  })
+  it('throws TranscriptCorruptError on an unparseable roll row (crash-loud, §3.7)', () => {
+    const rows = [row({ messageType: 'skill_check', content: 'not-json', seq: 42 })]
+    expect(() => rowsToConversation(rows, names)).toThrow(TranscriptCorruptError)
+    // The message carries the row locator — findable in a huge transcript.
+    expect(() => rowsToConversation(rows, names)).toThrow('(seq 42)')
+  })
+  it('throws TranscriptCorruptError on a roll row missing toolCallId', () => {
+    const rows = [
+      row({ messageType: 'skill_check', content: JSON.stringify({ input: {}, output: {} }), seq: 7 }),
+    ]
+    expect(() => rowsToConversation(rows, names)).toThrow(TranscriptCorruptError)
+    expect(() => rowsToConversation(rows, names)).toThrow('(seq 7)')
+  })
+})
+
+it('DM_MESSAGE_TYPES is the closed kind set', () => {
+  expect(DM_MESSAGE_TYPES).toEqual(['dm_text', 'skill_check', 'dice_roll'])
+})

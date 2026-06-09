@@ -398,6 +398,8 @@ describe('makeDmTriggerDeps — forwarding closures', () => {
       messageType: 'player_message',
       content,
       createdAt: new Date(0),
+      turnId: null,
+      turnOrdinal: null,
     }
   }
 
