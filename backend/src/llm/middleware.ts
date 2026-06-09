@@ -22,6 +22,11 @@ interface LogBindings extends MythrunContext {
   readonly inputTokens?: number | undefined
   readonly outputTokens?: number | undefined
   readonly totalTokens?: number | undefined
+  /** Prompt-cache hits (MYT-68 §3.9): the FT's full-transcript-every-turn
+   *  design is affordable only while this stays high on turn ≥2 — logged so
+   *  cache regressions are visible (a mis-placed breakpoint is silent
+   *  otherwise: no error, just full input price). */
+  readonly cacheReadTokens?: number | undefined
   readonly finishReason?: string | undefined
   readonly err?: unknown
   readonly reason?: string | undefined
@@ -64,6 +69,7 @@ interface StreamTelemetry {
   inputTokens?: number | undefined
   outputTokens?: number | undefined
   totalTokens?: number | undefined
+  cacheReadTokens?: number | undefined
   finishReason?: string | undefined
 }
 
@@ -97,6 +103,7 @@ function wrapModelStream(
       inputTokens: telemetry.inputTokens,
       outputTokens: telemetry.outputTokens,
       totalTokens: telemetry.totalTokens,
+      cacheReadTokens: telemetry.cacheReadTokens,
       finishReason: telemetry.finishReason,
       latencyMs: Date.now() - start,
       ...ctx,
@@ -141,6 +148,7 @@ function wrapModelStream(
           telemetry.inputTokens = value.usage.inputTokens.total
           telemetry.outputTokens = value.usage.outputTokens.total
           telemetry.totalTokens = sumTokens(telemetry.inputTokens, telemetry.outputTokens)
+          telemetry.cacheReadTokens = value.usage.inputTokens.cacheRead
           telemetry.finishReason = value.finishReason.unified
           // Content-policy filter is terminal (MYT-52 §7.2): translate the
           // finishReason into a thrown LlmContentFilteredError so the stage
@@ -267,6 +275,7 @@ export function logAndNormalizeMiddleware(modelId: string): LanguageModelV3Middl
         inputTokens,
         outputTokens,
         totalTokens: sumTokens(inputTokens, outputTokens),
+        cacheReadTokens: result.usage.inputTokens.cacheRead,
         latencyMs: Date.now() - start,
         finishReason: result.finishReason.unified,
         ...ctx,

@@ -59,6 +59,7 @@ describe('logAndNormalizeMiddleware', () => {
       inputTokens: 47,
       outputTokens: 8,
       totalTokens: 55,
+      cacheReadTokens: 0,
       finishReason: 'stop',
     })
     const latencyMs = (obj as { latencyMs: unknown }).latencyMs
