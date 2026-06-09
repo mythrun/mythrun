@@ -36,6 +36,7 @@ import {
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
+  noopDmTriggerQueue,
 } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -165,6 +166,7 @@ describe('invite routes (integration)', () => {
       sessionPrepQueue: noopSessionPrepQueue(),
       sessionSuspendQueue: noopSessionSuspendQueue(),
       sessionTurnQueue: noopSessionTurnQueue(),
+      dmTriggerQueue: noopDmTriggerQueue(),
     }
     app = await buildApp(
       deps,

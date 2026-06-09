@@ -50,7 +50,7 @@ import IoredisMock from 'ioredis-mock'
 import { createRepo } from '../repo/index.js'
 import { _resetSkuCacheForTests } from '../billing/sku-cache.js'
 import { makeStubEnv } from './helpers/stub-env.js'
-import { noopSessionSuspendQueue, noopSessionTurnQueue } from './helpers/stub-deps.js'
+import { noopSessionSuspendQueue, noopSessionTurnQueue, noopDmTriggerQueue } from './helpers/stub-deps.js'
 
 function makeStubDeps(): AppDeps {
   const pool = {} as Pool
@@ -68,6 +68,7 @@ function makeStubDeps(): AppDeps {
     sessionPrepQueue: { add: (): Promise<unknown> => Promise.resolve(undefined) },
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
+    dmTriggerQueue: noopDmTriggerQueue(),
   }
 }
 

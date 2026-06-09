@@ -48,6 +48,7 @@ import {
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
+  noopDmTriggerQueue,
 } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -86,6 +87,7 @@ describe('rate-limit per-sub key derivation (POST /api/users/register)', () => {
       sessionPrepQueue: noopSessionPrepQueue(),
       sessionSuspendQueue: noopSessionSuspendQueue(),
       sessionTurnQueue: noopSessionTurnQueue(),
+      dmTriggerQueue: noopDmTriggerQueue(),
     }
     app = await buildApp(
       deps,

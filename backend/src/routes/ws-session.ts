@@ -1,4 +1,12 @@
 // backend/src/routes/ws-session.ts
+/* eslint-disable max-lines -- The full WS connection lifecycle (pre-upgrade
+ * auth handshake, connect + reconnect-replay, heartbeat, per-frame inbound
+ * routing, disconnect cleanup) lives in one plugin module by design: one
+ * registration site, shared module-scope helpers (ConnCtx, persistMessage,
+ * parseClientFrame) and a single error-boundary contract. MYT-67 added the
+ * inbound DM-trigger branching; the heavier trigger ACTIONS were extracted to
+ * ws-trigger-actions.ts, but the per-frame branch logic + the WsSessionDeps
+ * surface are the route's irreducible core. Mirrors billing.ts / campaigns.ts. */
 //
 // MYT-65 Task 7 — the multiplayer WebSocket session transport route.
 //
@@ -45,8 +53,17 @@ import type { Repo } from '../repo/index.js'
 import type { SessionState } from '../redis/session-state.js'
 import type { SessionHub } from '../ws/session-hub.js'
 import type { SuspendQueueLike } from '../session/session-suspend.js'
+import type { TriggerState } from '../session/trigger-state.js'
+import type { TurnPublisher } from '../session/turn-publisher.js'
+import type { DmTriggerQueueLike } from '../session/dm-trigger-queue.js'
+import type { TurnQueueLike } from '../session/turn-queue.js'
 import { consumeWsTicket } from '../auth/ws-ticket.js'
 import { scheduleSuspend, cancelSuspend } from '../session/session-suspend.js'
+import {
+  isExplicitText,
+  rescheduleQuietWindow,
+  runExplicitTrigger,
+} from './ws-trigger-actions.js'
 import {
   classifyClientFrame,
   type ClientFrame,
@@ -97,6 +114,25 @@ export interface WsSessionDeps {
    *  `ws:ticket:` sub-prefix to address the ticket store — identical to the
    *  mint route's `${redisKeyPrefix}ws:ticket:` keying. */
   readonly redisKeyPrefix: string
+  /** MYT-67 §4.2: the DM-trigger debounce producer. On any inbound activity
+   *  (typing heartbeat / player_message in the auto+solo path) the inbound
+   *  handler reschedules the per-campaign quiet-window debounce on this queue —
+   *  after the message is persisted+broadcast, so a reschedule failure never
+   *  loses the message (it logs at WARN, doesn't throw). */
+  readonly dmTriggerQueue: DmTriggerQueueLike
+  /** MYT-67 §4.5: the session-turn producer. The EXPLICIT path (`@dm` /
+   *  `dm_invoke`) enqueues a turn DIRECTLY here, bypassing the dm-trigger
+   *  debounce queue — the summon ices out the room and fires immediately. */
+  readonly sessionTurnQueue: TurnQueueLike
+  /** MYT-67: all the DM-trigger Redis state (typing keys, last-activity,
+   *  first-unresponded anchor, responded-seq watermark, dm_responding flag,
+   *  explicit-pending flag). The inbound handler writes the activity/typing
+   *  keys and reads the watermark + responding flag on the explicit path. */
+  readonly triggerState: TriggerState
+  /** MYT-67 §4.5: the cross-process turn-frame publisher. The EXPLICIT path
+   *  broadcasts `dm_thinking{turnId}` IMMEDIATELY (before any enqueue/lock
+   *  latency) so every client greys its input the instant the summon lands. */
+  readonly turnPublisher: TurnPublisher
 }
 
 /** Heartbeat: ping every 30s; a socket that hasn't ponged 10s after a ping is
@@ -486,7 +522,7 @@ function startHeartbeat(
  *  payload) must DROP that frame and KEEP THE SOCKET ALIVE — it must never kill
  *  the connection or float a rejection to the process handler. So the whole
  *  body is try/catch'd; the worst case is one lost message, logged. */
-async function handleInbound(
+export async function handleInbound(
   ctx: ConnCtx,
   userId: string,
   campaignId: string,
@@ -495,22 +531,42 @@ async function handleInbound(
   displayName: string,
   characterName: string,
 ): Promise<void> {
-  const { hub } = ctx.deps
+  const { hub, triggerState } = ctx.deps
+  // One clock read per frame: the typing/activity stamps, the max-wait clamp,
+  // and the explicit-path batch boundary must all reason about the same `now`.
+  const now = Date.now()
   try {
     const frame = parseClientFrame(raw, ctx.app.log)
     if (!frame) return
 
-    if (frame.type === 'typing_start' || frame.type === 'typing_stop') {
+    if (frame.type === 'typing_start') {
+      // §4.1 typing display + §4.2 quiet-window reschedule. The typing key is
+      // the "someone's still composing" gate; arming first-unresponded + the
+      // debounce reschedule starts/extends the quiet window. The reschedule
+      // runs AFTER the typing/activity writes; a queue failure logs at WARN and
+      // never throws (a sustained outage is observable, not silently swallowed).
+      await triggerState.markTyping(campaignId, userId)
+      await triggerState.stampActivity(campaignId, now)
+      await triggerState.armFirstUnresponded(campaignId, now)
+      await rescheduleQuietWindow(ctx.deps, ctx.app.log, campaignId, now)
       await hub.publish(campaignId, { type: frame.type, userId, displayName })
       return
     }
 
-    // MYT-67 T13: an explicit @DM summon must NOT fall through to the
-    // player_message persist path (it carries no `text`). The turn-trigger
-    // wiring for dm_invoke lands in T14; for now drop it so the union narrows
-    // to `player_message` below and a summon is never persisted/broadcast as a
-    // chat message.
-    if (frame.type === 'dm_invoke') return
+    if (frame.type === 'typing_stop') {
+      // A best-effort fast-path "done composing" (§4.1); the authoritative stop
+      // is the typing key's TTL expiry. No reschedule — a stop is not activity.
+      await triggerState.clearTyping(campaignId, userId)
+      await hub.publish(campaignId, { type: frame.type, userId, displayName })
+      return
+    }
+
+    if (frame.type === 'dm_invoke') {
+      // §4.5 EXPLICIT summon (carries no text — never persisted/broadcast as a
+      // chat message). Fires the DM immediately, bypassing the debounce queue.
+      await runExplicitTrigger(ctx.deps, ctx.app.log, userId, campaignId, sessionId)
+      return
+    }
 
     // player_message — PERSIST-THEN-BROADCAST with a server-assigned seq.
     const text = frame.text
@@ -523,6 +579,20 @@ async function handleInbound(
       characterName,
       text,
     })
+
+    // §4.1/§4.2: a send implies "done typing" (clear the key), then stamp the
+    // activity + arm the max-wait anchor. An `@dm`-prefixed message is the
+    // EXPLICIT gesture (same as `dm_invoke`); everything else reschedules the
+    // quiet-window debounce. All trigger writes run AFTER persist+broadcast so a
+    // queue/Redis failure never loses the message.
+    await triggerState.clearTyping(campaignId, userId)
+    await triggerState.stampActivity(campaignId, now)
+    await triggerState.armFirstUnresponded(campaignId, now)
+    if (isExplicitText(text)) {
+      await runExplicitTrigger(ctx.deps, ctx.app.log, userId, campaignId, sessionId)
+    } else {
+      await rescheduleQuietWindow(ctx.deps, ctx.app.log, campaignId, now)
+    }
   } catch (err) {
     // Drop the frame, keep the socket alive. A persisted-but-not-broadcast
     // message (publish threw after append succeeded) is recoverable: the client
@@ -588,10 +658,17 @@ async function handleDisconnect(
   campaignId: string,
   sessionId: string,
 ): Promise<void> {
-  const { sessionState, hub, suspendQueue, containerId } = ctx.deps
+  const { sessionState, hub, suspendQueue, containerId, triggerState } = ctx.deps
   const log = ctx.app.log
 
   hub.deregister(campaignId, userId)
+
+  // §4.1: clear this user's typing key on disconnect (best-effort, like the
+  // other steps). The key carries a TTL so an un-cleared key self-heals; this
+  // is the fast-path so the indicator doesn't linger until expiry.
+  await triggerState.clearTyping(campaignId, userId).catch((err: unknown) => {
+    log.warn({ err, campaignId, userId }, 'ws-session clearTyping on disconnect failed (TTL will reap)')
+  })
 
   await sessionState.dropPresence(campaignId, containerId, userId).catch((err: unknown) => {
     log.warn({ err, campaignId, userId }, 'ws-session dropPresence failed (TTL will reap)')

@@ -33,6 +33,7 @@ import {
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
+  noopDmTriggerQueue,
 } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -86,6 +87,7 @@ describe('rate-limit cross-worker enforcement', () => {
       sessionPrepQueue: noopSessionPrepQueue(),
       sessionSuspendQueue: noopSessionSuspendQueue(),
       sessionTurnQueue: noopSessionTurnQueue(),
+      dmTriggerQueue: noopDmTriggerQueue(),
     }
     const depsB: AppDeps = { ...depsA, redisRealtime: redisB }
 

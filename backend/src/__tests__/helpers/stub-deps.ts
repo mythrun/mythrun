@@ -19,6 +19,7 @@ import type { WorldGenQueueLike } from '../../routes/campaigns.js'
 import type { SessionPrepQueueLike } from '../../routes/session-preps.js'
 import type { SuspendQueueLike } from '../../session/session-suspend.js'
 import type { TurnQueueLike } from '../../session/turn-queue.js'
+import type { DmTriggerQueueLike } from '../../session/dm-trigger-queue.js'
 import { createRepo } from '../../repo/index.js'
 
 export interface StubDepsOverrides {
@@ -103,6 +104,20 @@ export function noopSessionTurnQueue(): TurnQueueLike {
   }
 }
 
+/**
+ * Hand-rolled no-op dm-trigger queue (MYT-67 §4.2). Mirrors the other noop
+ * queues — suffices for buildApp callers that don't drive the WS inbound
+ * trigger path; tests that exercise the debounce reschedule build their own
+ * spy. Like the others, `DmTriggerQueueLike.add` is BullMQ's real `Queue['add']`
+ * signature (returns a `Promise<Job>`), which a no-op can't honestly construct;
+ * the resolved-undefined stub is cast through `unknown` at the single boundary.
+ */
+export function noopDmTriggerQueue(): DmTriggerQueueLike {
+  return {
+    add: (() => Promise.resolve(undefined)) as unknown as DmTriggerQueueLike['add'],
+  }
+}
+
 export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
   // Promise.resolve / Promise.reject form (not `async () =>`) avoids the
   // @typescript-eslint/require-await lint on stubs that don't internally
@@ -121,5 +136,6 @@ export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
     sessionPrepQueue: noopSessionPrepQueue(),
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
+    dmTriggerQueue: noopDmTriggerQueue(),
   }
 }

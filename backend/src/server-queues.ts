@@ -25,6 +25,8 @@ import {
   type TurnJobPayload,
   type TurnQueueLike,
 } from './session/turn-queue.js'
+import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
+import type { DmTriggerPayload, DmTriggerQueueLike } from './session/dm-trigger-queue.js'
 
 /** MYT-51 T12: build the world-gen BullMQ queue + its plugin-facing
  *  adapter. Extracted from main() so the boot orchestrator stays under
@@ -193,7 +195,16 @@ export function buildSessionSuspendQueue(redisBatch: Redis): {
  *  turn must land as a distinct job. `attempts: 3` (vs suspend's default 1) so
  *  a transient worker crash mid-turn retries — the session lock makes the
  *  retry safe (a redelivered job re-acquires the lock and carries the same
- *  stable turnId in its payload, H2). */
+ *  stable turnId in its payload, H2).
+ *
+ *  MYT-67 §4.8: `removeOnFail` is `{ age: 120 }` (NOT `true`) — a terminally-
+ *  failed turn job is RETAINED for ~2 minutes rather than pruned immediately,
+ *  so the `QueueEvents('session-turn')` subscriber can read the failed job (and
+ *  the `maxStalledCount`-exhaustion terminal it reports) to publish the terminal
+ *  `turn_error`. `true` would race the subscriber: the broker event fires, but
+ *  the job is already gone before the subscriber's handler reads it. The 120s
+ *  window comfortably covers the subscriber's BRPOP → handler latency; the job
+ *  is then GC'd by age, so failed turns still don't accumulate in Redis. */
 export function buildSessionTurnQueue(redisBatch: Redis): {
   bullmqQueue: Queue
   sessionTurnQueue: TurnQueueLike
@@ -202,7 +213,7 @@ export function buildSessionTurnQueue(redisBatch: Redis): {
     connection: redisBatch,
     defaultJobOptions: {
       removeOnComplete: true,
-      removeOnFail: true,
+      removeOnFail: { age: 120 },
       attempts: 3,
     },
   })
@@ -210,6 +221,37 @@ export function buildSessionTurnQueue(redisBatch: Redis): {
     add: (name, data, opts) => bullmqQueue.add(name, data, opts),
   }
   return { bullmqQueue, sessionTurnQueue }
+}
+
+/** MYT-67 §4.2: build the dm-trigger BullMQ Queue (the quiet-window debounce
+ *  decision queue, kept cleanly separate from the session-turn execution
+ *  queue). Returns the raw `bullmqQueue` (for shutdown.close, after its Worker
+ *  drains — worker.ts) AND the narrow `DmTriggerQueueLike` adapter the WS
+ *  inbound handler uses to reschedule the per-campaign debounce.
+ *
+ *  Job-options policy diverges from session-turn on ONE axis: `attempts: 1`
+ *  (NOT 3). A debounce evaluation is a re-derivable decision — on a transient
+ *  failure it must NOT blind-retry (a re-run could double-classify +
+ *  double-enqueue a turn); the next activity pulse re-arms the debounce and
+ *  re-drives the decision cleanly (§4.3). `removeOnComplete/removeOnFail: true`
+ *  prunes terminal jobs — nothing reads a decision job's result, and the
+ *  per-campaign coalescing is the dedup id, not a retained job. */
+export function buildDmTriggerQueue(redisBatch: Redis): {
+  bullmqQueue: Queue
+  dmTriggerQueue: DmTriggerQueueLike
+} {
+  const bullmqQueue = new Queue<DmTriggerPayload>(QUEUE_DM_TRIGGER, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      removeOnComplete: true,
+      removeOnFail: true,
+      attempts: 1,
+    },
+  })
+  const dmTriggerQueue: DmTriggerQueueLike = {
+    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+  }
+  return { bullmqQueue, dmTriggerQueue }
 }
 
 // Stub queue/worker for the boot-gate-disabled fallback path. The fallback
@@ -268,6 +310,17 @@ export function stubSessionSuspendQueue(): SuspendQueueLike & BullMqQueueShutdow
 // The session transport is unreachable on the fallback binary anyway (no live
 // sessions without a DB), so rejecting on `add` is operator-safe.
 export function stubSessionTurnQueue(): TurnQueueLike & BullMqQueueShutdown {
+  return {
+    add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
+    close: () => Promise.resolve(),
+  }
+}
+
+// MYT-67 §4.2: dm-trigger stub for the boot-gate-disabled fallback path. Same
+// rationale as stubSessionTurnQueue — no Redis on that path, so reject on
+// enqueue. The session transport is unreachable on the fallback binary anyway
+// (no live sessions without a DB), so rejecting on `add` is operator-safe.
+export function stubDmTriggerQueue(): DmTriggerQueueLike & BullMqQueueShutdown {
   return {
     add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
     close: () => Promise.resolve(),

@@ -30,6 +30,8 @@ import { createConnectionCounter } from './sse/connection-counter.js'
 import { wsSessionRoutes, WS_MAX_PAYLOAD_BYTES } from './routes/ws-session.js'
 import { createSessionHub, type SessionHub } from './ws/session-hub.js'
 import { makeSessionState } from './redis/session-state.js'
+import { makeTriggerState } from './session/trigger-state.js'
+import { createTurnPublisher } from './session/turn-publisher.js'
 import type { Logger as PinoLogger } from 'pino'
 
 export interface AppConfig {
@@ -321,6 +323,14 @@ export const buildApp = async (
     redisRealtime: deps.redisRealtime,
     redisKeyPrefix: deps.redisKeyPrefix,
     containerId,
+    // MYT-67: the DM-trigger surface. The debounce queue (auto/solo quiet
+    // window) + the session-turn queue (explicit direct-enqueue) + the trigger
+    // Redis state + the cross-process turn publisher (immediate `dm_thinking`
+    // on an explicit summon) all thread into the inbound handler.
+    dmTriggerQueue: deps.dmTriggerQueue,
+    sessionTurnQueue: deps.sessionTurnQueue,
+    triggerState: makeTriggerState(deps.redisRealtime, deps.redisKeyPrefix),
+    turnPublisher: createTurnPublisher(deps.redisRealtime, deps.redisKeyPrefix),
   })
 
   // MYT-50: pipeline status surface. The subscriber owns a DEDICATED

@@ -6,6 +6,7 @@ import type { CharacterCreationQueueLike } from './routes/campaign-characters.js
 import type { SessionPrepQueueLike } from './routes/session-preps.js'
 import type { SuspendQueueLike } from './session/session-suspend.js'
 import type { TurnQueueLike } from './session/turn-queue.js'
+import type { DmTriggerQueueLike } from './session/dm-trigger-queue.js'
 
 export interface AppDeps {
   pg: Pool
@@ -51,4 +52,12 @@ export interface AppDeps {
    *  shutdown in server.ts. Required — the session transport is a boot
    *  invariant of the gated binary, mirroring sessionSuspendQueue. */
   sessionTurnQueue: TurnQueueLike
+  /** MYT-67 §4.2: BullMQ Queue handle for `dm-trigger` jobs (built on
+   *  redisBatch in server.ts). Threaded into the WS session route so the
+   *  inbound handler can reschedule the per-campaign quiet-window debounce on
+   *  every activity pulse (typing heartbeat / player_message). Typed as the
+   *  minimal DmTriggerQueueLike contract (add only); the raw BullMQ Queue is
+   *  closed at shutdown in server.ts. Required — the session transport is a
+   *  boot invariant of the gated binary, mirroring sessionTurnQueue. */
+  dmTriggerQueue: DmTriggerQueueLike
 }

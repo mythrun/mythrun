@@ -50,11 +50,13 @@ import {
   buildSessionPrepQueue,
   buildSessionSuspendQueue,
   buildSessionTurnQueue,
+  buildDmTriggerQueue,
   stubWorldGenQueue,
   stubCharacterCreationQueue,
   stubSessionPrepQueue,
   stubSessionSuspendQueue,
   stubSessionTurnQueue,
+  stubDmTriggerQueue,
 } from './server-queues.js'
 import type { Logger as PinoLogger } from 'pino'
 
@@ -270,7 +272,11 @@ async function buildSessionSuspendWorker(
  *  MYT-66 Task 8: the raw session-turn queue is closed here too (its Redis
  *  bookkeeping released after the prep/suspend pairs). The turn WORKER is wired
  *  in Task 9 (worker.ts), not the API server, so only the queue is drained here
- *  — there is no in-process turn worker to close on this path. */
+ *  — there is no in-process turn worker to close on this path.
+ *
+ *  MYT-67 §4.2: the raw dm-trigger queue is closed here too (same principle —
+ *  the dm-trigger WORKER is wired in worker.ts, not the API server, so only the
+ *  queue's Redis bookkeeping is released here). */
 function withSessionPrepShutdown(
   inner: ShutdownHandler,
   worker: Worker,
@@ -278,6 +284,7 @@ function withSessionPrepShutdown(
   suspendWorker: Worker,
   suspendQueue: Queue,
   turnQueue: Queue,
+  dmTriggerQueue: Queue,
 ): ShutdownHandler {
   return async (signal) => {
     await worker.close()
@@ -285,6 +292,7 @@ function withSessionPrepShutdown(
     await suspendWorker.close()
     await suspendQueue.close()
     await turnQueue.close()
+    await dmTriggerQueue.close()
     await inner(signal)
   }
 }
@@ -317,6 +325,7 @@ async function fallbackStart(): Promise<void> {
   const stubSessionPrep = stubSessionPrepQueue()
   const stubSessionSuspend = stubSessionSuspendQueue()
   const stubSessionTurn = stubSessionTurnQueue()
+  const stubDmTrigger = stubDmTriggerQueue()
   const stubDeps: AppDeps = {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
@@ -328,6 +337,7 @@ async function fallbackStart(): Promise<void> {
     sessionPrepQueue: stubSessionPrep,
     sessionSuspendQueue: stubSessionSuspend,
     sessionTurnQueue: stubSessionTurn,
+    dmTriggerQueue: stubDmTrigger,
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
@@ -460,6 +470,11 @@ export async function main(): Promise<void> {
     // WORKER is wired in worker.ts (Task 9), not here.
     const { bullmqQueue: bullmqSessionTurnQueue, sessionTurnQueue } =
       buildSessionTurnQueue(rTBRef)
+    // MYT-67 §4.2: dm-trigger queue (raw closed at shutdown; adapter into
+    // AppDeps so the WS inbound handler can reschedule the quiet-window
+    // debounce). The dm-trigger WORKER is wired in worker.ts, not here.
+    const { bullmqQueue: bullmqDmTriggerQueue, dmTriggerQueue } =
+      buildDmTriggerQueue(rTBRef)
 
     const app = await buildApp(
       {
@@ -473,6 +488,7 @@ export async function main(): Promise<void> {
         sessionPrepQueue,
         sessionSuspendQueue,
         sessionTurnQueue,
+        dmTriggerQueue,
       },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
@@ -521,7 +537,7 @@ export async function main(): Promise<void> {
     const handleShutdown = withSessionPrepShutdown(
       innerShutdown, sessionPrepWorker, bullmqSessionPrepQueue,
       sessionSuspendWorker, bullmqSessionSuspendQueue,
-      bullmqSessionTurnQueue,
+      bullmqSessionTurnQueue, bullmqDmTriggerQueue,
     )
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

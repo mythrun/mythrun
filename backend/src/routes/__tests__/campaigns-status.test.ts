@@ -33,6 +33,7 @@ import {
   noopSessionPrepQueue,
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
+  noopDmTriggerQueue,
 } from '../../__tests__/helpers/stub-deps.js'
 import {
   cleanupTestScope,
@@ -83,6 +84,7 @@ describe('campaigns status routes', () => {
       sessionPrepQueue: noopSessionPrepQueue(),
       sessionSuspendQueue: noopSessionSuspendQueue(),
       sessionTurnQueue: noopSessionTurnQueue(),
+      dmTriggerQueue: noopDmTriggerQueue(),
     }
     app = await buildApp(
       deps,

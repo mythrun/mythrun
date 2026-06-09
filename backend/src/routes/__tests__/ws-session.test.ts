@@ -41,10 +41,24 @@ import { createCharactersRepo } from '../../repo/characters.js'
 import { createSessionsRepo } from '../../repo/sessions.js'
 import { createSessionHub, type SessionHub } from '../../ws/session-hub.js'
 import { makeSessionState } from '../../redis/session-state.js'
+import { makeTriggerState } from '../../session/trigger-state.js'
+import { createTurnPublisher } from '../../session/turn-publisher.js'
 import { mintWsTicket } from '../../auth/ws-ticket.js'
 import type { ServerFrame } from '../../contract/session-events.js'
 import type { SuspendQueueLike } from '../../session/session-suspend.js'
+import type { TurnQueueLike } from '../../session/turn-queue.js'
+import type { DmTriggerQueueLike } from '../../session/dm-trigger-queue.js'
 import { wsSessionRoutes, type WsSessionDeps } from '../ws-session.js'
+
+/** A no-op session-turn / dm-trigger producer for the integration suite. The
+ *  existing connect/persist/disconnect tests don't assert on a turn enqueue;
+ *  the explicit-trigger path is unit-covered in ws-session-trigger.test.ts. */
+function noopTurnQueue(): TurnQueueLike {
+  return { add: (() => Promise.resolve(undefined)) as unknown as TurnQueueLike['add'] }
+}
+function noopDmTriggerQueueLocal(): DmTriggerQueueLike {
+  return { add: (() => Promise.resolve(undefined)) as unknown as DmTriggerQueueLike['add'] }
+}
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const redisUrl = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
@@ -289,6 +303,10 @@ describe('ws-session route (integration)', () => {
       containerId: CONTAINER_ID,
       redisRealtime: redis,
       redisKeyPrefix: KEY_PREFIX,
+      dmTriggerQueue: noopDmTriggerQueueLocal(),
+      sessionTurnQueue: noopTurnQueue(),
+      triggerState: makeTriggerState(redis, KEY_PREFIX),
+      turnPublisher: createTurnPublisher(redis, KEY_PREFIX),
     }
     await app.register(wsSessionRoutes, deps)
     await app.ready()
@@ -363,6 +381,10 @@ describe('ws-session route (integration)', () => {
       containerId: CONTAINER_ID,
       redisRealtime: throwingRedis,
       redisKeyPrefix: KEY_PREFIX,
+      dmTriggerQueue: noopDmTriggerQueueLocal(),
+      sessionTurnQueue: noopTurnQueue(),
+      triggerState: makeTriggerState(redis, KEY_PREFIX),
+      turnPublisher: createTurnPublisher(redis, KEY_PREFIX),
     })
     await throwApp.ready()
     try {
@@ -508,8 +530,10 @@ describe('ws-session route (integration)', () => {
     const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}`)
     try {
       await collectFrames(ws, 2)
-      // A DM-turn frame type is NOT in CLIENT_FRAME_TYPES → dropped.
-      ws.send(JSON.stringify({ type: 'dm_invoke', text: 'should be ignored' }))
+      // A server-only DM-turn frame type (`dm_thinking`) is NOT in
+      // CLIENT_FRAME_TYPES → dropped. (`dm_invoke` is now a real client frame —
+      // see the explicit-trigger unit suite — so it can't be the drop probe.)
+      ws.send(JSON.stringify({ type: 'dm_thinking', turnId: 'should-be-ignored' }))
       // typing_start IS valid → it broadcasts with no seq, no persist; we use
       // it as a "did the prior frame get dropped?" probe: only the typing
       // frame should come back.
@@ -589,6 +613,10 @@ describe('ws-session route (integration)', () => {
       containerId: CONTAINER_ID,
       redisRealtime: redis,
       redisKeyPrefix: KEY_PREFIX,
+      dmTriggerQueue: noopDmTriggerQueueLocal(),
+      sessionTurnQueue: noopTurnQueue(),
+      triggerState: makeTriggerState(redis, KEY_PREFIX),
+      turnPublisher: createTurnPublisher(redis, KEY_PREFIX),
     })
     await throwApp.ready()
     const ticket = await mint()
@@ -839,6 +867,44 @@ function makeStubRepo(over: Record<string, unknown> = {}): {
   return { repo, sessionMessages }
 }
 
+/** A benign stub TriggerState — every method resolves to a no-op default. The
+ *  connection-handler unit harness exercises connect/persist/disconnect/
+ *  heartbeat paths that now also touch the trigger-state writes; none of those
+ *  tests assert on trigger behavior (that's ws-session-trigger.test.ts), so a
+ *  resolve-everything stub keeps them passing without a real Redis. */
+function makeStubTriggerState(): WsSessionDeps['triggerState'] {
+  return {
+    markTyping: vi.fn().mockResolvedValue(undefined),
+    listTyping: vi.fn().mockResolvedValue([]),
+    clearTyping: vi.fn().mockResolvedValue(undefined),
+    stampActivity: vi.fn().mockResolvedValue(undefined),
+    lastActivityMs: vi.fn().mockResolvedValue(null),
+    armFirstUnresponded: vi.fn().mockResolvedValue(undefined),
+    firstUnrespondedMs: vi.fn().mockResolvedValue(null),
+    clearFirstUnresponded: vi.fn().mockResolvedValue(undefined),
+    setRespondedSeq: vi.fn().mockResolvedValue(undefined),
+    respondedSeq: vi.fn().mockResolvedValue(0),
+    setResponding: vi.fn().mockResolvedValue(undefined),
+    isResponding: vi.fn().mockResolvedValue(false),
+    clearResponding: vi.fn().mockResolvedValue(undefined),
+    setExplicitPending: vi.fn().mockResolvedValue(undefined),
+    takeExplicitPending: vi.fn().mockResolvedValue(false),
+    claimTurnErrorPublish: vi.fn().mockResolvedValue(true),
+  }
+}
+
+/** A benign stub TurnPublisher — every method resolves. Same rationale as
+ *  makeStubTriggerState: the unit harness doesn't drive the explicit path. */
+function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
+  return {
+    dmThinking: vi.fn().mockResolvedValue(undefined),
+    textDelta: vi.fn().mockResolvedValue(undefined),
+    turnEnd: vi.fn().mockResolvedValue(undefined),
+    turnError: vi.fn().mockResolvedValue(undefined),
+    emitFor: vi.fn().mockReturnValue(() => Promise.resolve(undefined)),
+  }
+}
+
 function makeUnitDeps(parts: {
   repo: WsSessionDeps['repo']
   sessionState: ReturnType<typeof makeStubSessionState>
@@ -855,6 +921,10 @@ function makeUnitDeps(parts: {
     containerId: CONTAINER_ID,
     redisRealtime: {} as unknown as Redis,
     redisKeyPrefix: 'unit:',
+    dmTriggerQueue: { add: (() => Promise.resolve(undefined)) as unknown as DmTriggerQueueLike['add'] },
+    sessionTurnQueue: { add: (() => Promise.resolve(undefined)) as unknown as TurnQueueLike['add'] },
+    triggerState: makeStubTriggerState(),
+    turnPublisher: makeStubTurnPublisher(),
   }
 }
 
@@ -1038,7 +1108,7 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     send(JSON.stringify(42))                            // not an object → null
     send(JSON.stringify(null))                          // null → null
     send(JSON.stringify({ noType: true }))              // missing type → null
-    send(JSON.stringify({ type: 'dm_invoke' }))         // not allowlisted → null
+    send(JSON.stringify({ type: 'dm_thinking' }))       // server-only type, not allowlisted → null
     send(JSON.stringify({ type: 'player_message' }))    // text not a string → null
     send(JSON.stringify({ type: 'player_message', text: 'a'.repeat(4_001) })) // oversized → null
     await flush()
