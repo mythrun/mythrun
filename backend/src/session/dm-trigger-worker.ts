@@ -258,6 +258,56 @@ async function loadSummary(deps: DmTriggerProcessorDeps, campaignId: string): Pr
   return summary
 }
 
+/** The constructed collaborators `makeDmTriggerDeps` wraps into a
+ *  `DmTriggerProcessorDeps`. Kept narrow (only the surfaces the forwarding
+ *  closures touch) so a unit test can pass recording fakes and assert each thin
+ *  closure delegates to the right producer/builder with the right arguments. */
+export interface DmTriggerDepsParts {
+  readonly triggerState: TriggerStateReads
+  readonly repo: RepoReads
+  readonly sessionState: SessionStateReads
+  readonly dmTriggerQueue: DmTriggerQueueLike
+  readonly sessionTurnQueue: TurnQueueLike
+  readonly classify: (ctx: DmTriggerContext) => Promise<DmTriggerClassification>
+  // Property-style (not method-style) so `parts.randomTurnId` / `parts.now` are
+  // plain function values the forwarder can hold without an unbound-this hazard.
+  readonly randomTurnId: () => string
+  readonly now: () => number
+  readonly logger: MinimalLogger
+}
+
+/**
+ * Assemble the `DmTriggerProcessorDeps` from the constructed collaborators. The
+ * three forwarding closures (`buildTurnBatch` → the shared batch builder over the
+ * repo; `enqueueTurn` / `rescheduleDebounce` → the two BullMQ producers) live
+ * here, split out of `buildDmTriggerWorker` so they are invoked — and thus
+ * covered — by a direct unit test with recording fakes, rather than only through
+ * the full boot path. Pure wiring: no IO of its own.
+ *
+ * `repo` is typed `Repo` because `buildTurnBatch` reads several repo namespaces;
+ * the worker's own reads stay through the narrow `RepoReads` slice.
+ */
+export function makeDmTriggerDeps(repo: Repo, parts: DmTriggerDepsParts): DmTriggerProcessorDeps {
+  const { dmTriggerQueue, sessionTurnQueue } = parts
+  return {
+    triggerState: parts.triggerState,
+    repo: parts.repo,
+    sessionState: parts.sessionState,
+    buildTurnBatch: (campaignId, sessionId, lastRespondedSeq) =>
+      buildTurnBatch(repo, campaignId, sessionId, lastRespondedSeq),
+    classify: parts.classify,
+    enqueueTurn: async (payload) => {
+      await enqueueTurnProducer(sessionTurnQueue, payload)
+    },
+    rescheduleDebounce: async (campaignId, delayMs) => {
+      await rescheduleDebounceProducer(dmTriggerQueue, campaignId, delayMs)
+    },
+    randomTurnId: parts.randomTurnId,
+    now: parts.now,
+    logger: parts.logger,
+  }
+}
+
 /**
  * Build the dm-trigger BullMQ Worker for the dedicated worker.ts process.
  *
@@ -285,23 +335,17 @@ export function buildDmTriggerWorker(
     connection: redisBatch,
   })
 
-  const deps: DmTriggerProcessorDeps = {
+  const deps = makeDmTriggerDeps(repo, {
     triggerState,
     repo,
     sessionState,
-    buildTurnBatch: (campaignId, sessionId, lastRespondedSeq) =>
-      buildTurnBatch(repo, campaignId, sessionId, lastRespondedSeq),
+    dmTriggerQueue,
+    sessionTurnQueue,
     classify: classifyDmTrigger,
-    enqueueTurn: async (payload) => {
-      await enqueueTurnProducer(sessionTurnQueue, payload)
-    },
-    rescheduleDebounce: async (campaignId, delayMs) => {
-      await rescheduleDebounceProducer(dmTriggerQueue, campaignId, delayMs)
-    },
     randomTurnId: () => randomUUID(),
     now: () => Date.now(),
     logger,
-  }
+  })
 
   return new BullmqWorker<DmTriggerPayload>(
     QUEUE_DM_TRIGGER,

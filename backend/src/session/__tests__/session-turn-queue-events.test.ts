@@ -22,6 +22,7 @@
 
 import IoRedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
+import { Job } from 'bullmq'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sessionChannel, sessionChannelPattern } from '../../contract/session-channel.js'
 import type { ServerFrame } from '../../contract/session-events.js'
@@ -223,6 +224,28 @@ describe('buildSessionTurnQueueEvents', () => {
 
     expect(received).toEqual([])
     expect(logger.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs an error (and never rejects) when the Job.fromId fetch throws', async () => {
+    // The floating-promise guard wraps `handleFailed` in `.catch`. handleFailed
+    // awaits `Job.fromId`, so a fetch rejection is the realistic way to reach the
+    // catch arm — assert it routes to logger.error with the jobId and does not
+    // escape the callback.
+    const logger = recordingLogger()
+    ;(Job.fromId as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('redis read failed'))
+    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger)
+
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'boom', failedReason: 'stalled' })
+    await tick()
+
+    expect(received).toEqual([])
+    expect(logger.error).toHaveBeenCalledTimes(1)
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'boom' }),
+      'failed to handle session-turn broker failed event',
+    )
   })
 
   it('close() closes the queueEvents subscriber, its connection, and the queue handle', async () => {

@@ -2,6 +2,13 @@ import { describe, it, expect } from 'vitest'
 import IoRedisMock from 'ioredis-mock'
 import { makeTriggerState } from '../trigger-state.js'
 const mk = () => makeTriggerState(new IoRedisMock(), 't:')
+// Same factory, but hands back the underlying redis so a test can plant a raw
+// (non-numeric) value the public setters never write — exercising the
+// parse-or-default falses in respondedSeq + firstUnrespondedMs.
+const mkWithRedis = () => {
+  const redis = new IoRedisMock()
+  return { s: makeTriggerState(redis, 't:'), redis }
+}
 
 describe('trigger-state', () => {
   it('tracks typing presence with refresh + clear', async () => {
@@ -30,5 +37,15 @@ describe('trigger-state', () => {
     const s = mk()
     expect(await s.claimTurnErrorPublish('turn-1')).toBe(true)
     expect(await s.claimTurnErrorPublish('turn-1')).toBe(false)
+  })
+  it('falls back to 0 / null when the raw key holds a non-numeric value', async () => {
+    // No public setter writes a non-number, so plant garbage at the exact keys
+    // (`t:session:{cid}:responded-seq` / `…:first-unresponded`) directly on the
+    // mock — hits the `Number.isFinite(n) ? n : 0` / `: null` parse-fallbacks.
+    const { s, redis } = mkWithRedis()
+    await redis.set('t:session:c1:responded-seq', 'garbage')
+    await redis.set('t:session:c1:first-unresponded', 'garbage')
+    expect(await s.respondedSeq('c1')).toBe(0)
+    expect(await s.firstUnrespondedMs('c1')).toBeNull()
   })
 })
