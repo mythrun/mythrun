@@ -1200,6 +1200,8 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
         : Promise.resolve(undefined),
     )
     const deps = makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub })
+    // clearTyping is also a best-effort disconnect step (§4.1) — make it reject too.
+    ;(deps.triggerState.clearTyping as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('typing transient'))
     const suspendQueue = deps.suspendQueue as RecordingSuspendQueue
     const { handler, appLog } = await captureHandler(deps)
     const socket = makeFakeWsSocket()
@@ -1209,6 +1211,10 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     socket.emit('close')
     await flush()
 
+    expect(appLog.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session clearTyping on disconnect failed (TTL will reap)',
+    )
     expect(appLog.log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.any(Error) as unknown }),
       'ws-session dropPresence failed (TTL will reap)',
