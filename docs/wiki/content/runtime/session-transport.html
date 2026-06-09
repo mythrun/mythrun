@@ -9,8 +9,8 @@
 <!-- source: backend/src/repo/session-participants.ts -->
 <!-- source: backend/src/repo/session-participants-errors.ts -->
 <!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
-<!-- source-hash: sha256:0f55c956dcf357a3a581be32b7b69ec8cd42f84eec5e67fbc3112946eed1ab66 -->
-<!-- last-ticket: MYT-66 -->
+<!-- source-hash: sha256:2c720b405e0929b1899fb845cf3d8ac169598f5f89cff72647045ae39f13516e -->
+<!-- last-ticket: MYT-67 -->
 
 <h1>Session transport</h1>
 
@@ -190,10 +190,23 @@
   >
   + <code>classifyClientFrame</code>): non-JSON, a missing <code>type</code>, or a type not on the
   <code>CLIENT_FRAME_TYPES</code> allowlist (<code>player_message</code>, <code>typing_start</code>,
-  <code>typing_stop</code>) is silently dropped. A <code>typing_*</code> frame broadcasts
-  immediately with no sequence and no persistence. A <code>player_message</code> goes through
-  persist-then-broadcast: assign a server-ordered <code>seq</code> via Redis <code>INCR</code>,
-  append it to <code>session_messages</code>, then publish the frame through the hub.
+  <code>typing_stop</code>, and the MYT-67 <code>dm_invoke</code> summon) is silently dropped. A
+  <code>typing_*</code> frame broadcasts immediately with no sequence and no persistence. A
+  <code>player_message</code> goes through persist-then-broadcast: assign a server-ordered
+  <code>seq</code> via Redis <code>INCR</code>, append it to <code>session_messages</code>, then
+  publish the frame through the hub.
+</p>
+
+<p>
+  The inbound handler is also the server side of the
+  <a href="./dm-trigger.html">DM trigger</a> system. Past the persist-and-broadcast, it writes the
+  per-campaign trigger state (the typing key, the last-activity stamp, the max-wait anchor) and
+  reschedules the quiet-window debounce that decides when the DM responds — <em>after</em> the
+  message is persisted and broadcast, so a queue failure logs at <code>warn</code> and never loses
+  the message. A <code>dm_invoke</code> frame (or an <code>@dm</code>-prefixed message) is the
+  explicit summon: it carries no chat text, is never persisted, and fires the DM immediately rather
+  than waiting on the window. The mechanics of all of that live on the
+  <a href="./dm-trigger.html">DM trigger</a> page; this transport is where the frames are observed.
 </p>
 
 <aside class="wiki-rationale">
@@ -355,7 +368,12 @@
   <code>dm_thinking</code>, <code>text_delta</code>, <code>turn_end</code>, and
   <code>turn_error</code>, each carrying a <code>turnId</code> and no seq. The
   <a href="./session-turn.html">turn worker</a> publishes them; this transport's hub fans them out.
-  The rest of the full protocol — <code>skill_check</code>, <code>dice_roll</code>,
+  MYT-67 adds one <strong>client → server</strong> frame, <code>dm_invoke</code> (the explicit "@DM
+  button" summon, no payload fields) — and deliberately adds <em>no</em> server frame: the trigger
+  decision rides a dev-only structured log, never the player transport, because the hub fans every
+  published frame to all sockets with no audience filter and a <code>dm_trigger</code> frame would
+  leak the classifier's reasoning to players (see <a href="./dm-trigger.html">DM trigger</a>). The
+  rest of the full protocol — <code>skill_check</code>, <code>dice_roll</code>,
   <code>combat_*</code>, <code>session_end</code>, <code>st_evaluation</code>,
   <code>scribe_result</code>, and the rest — is still deliberately absent until its surface is
   built.
@@ -450,7 +468,11 @@
   <a href="../data/schema.html">schema</a> for those tables. The
   <a href="./session-turn.html">DM-turn pipeline</a> extends the wire contract with the
   server-streamed turn frames and publishes them through this transport's <code>SessionHub</code>;
-  it also adds the per-turn LLM-tier keys to the session-state module documented here.
+  it also adds the per-turn LLM-tier keys to the session-state module documented here. The
+  <a href="./dm-trigger.html">DM trigger</a> system hangs off this inbound handler: it observes the
+  typing and message frames here, writes its own trigger-state Redis keys, and reschedules the
+  quiet-window debounce that decides when a DM turn fires — and adds the <code>dm_invoke</code>
+  client frame to the contract.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -468,7 +490,8 @@
       <td>Client → server</td>
       <td>
         <code>player_message</code> (carries <code>text</code>), <code>typing_start</code>,
-        <code>typing_stop</code>. Anything else is dropped at the boundary.
+        <code>typing_stop</code>, and <code>dm_invoke</code> (MYT-67 explicit summon, no payload).
+        Anything else is dropped at the boundary.
       </td>
     </tr>
     <tr>
@@ -574,7 +597,10 @@
       <td><code>src/routes/ws-session.ts</code></td>
       <td>
         <code>wsSessionRoutes</code> plugin (the upgrade route + handshake + connection lifecycle),
-        <code>WS_MAX_PAYLOAD_BYTES</code>.
+        <code>WS_MAX_PAYLOAD_BYTES</code>. The inbound handler also writes the
+        <a href="./dm-trigger.html">DM-trigger</a> typing / activity state and reschedules the
+        quiet-window debounce (the explicit / auto branching is delegated to
+        <code>ws-trigger-actions.ts</code>).
       </td>
     </tr>
     <tr>
@@ -604,8 +630,9 @@
     <tr>
       <td><code>src/contract/session-events.ts</code></td>
       <td>
-        <code>CLIENT_FRAME_TYPES</code> / <code>SERVER_FRAME_TYPES</code> allowlists (the latter now
-        carries the MYT-66 DM-turn frames), <code>ClientFrame</code> /
+        <code>CLIENT_FRAME_TYPES</code> (now also <code>dm_invoke</code>) /
+        <code>SERVER_FRAME_TYPES</code> (carries the MYT-66 DM-turn frames; no
+        <code>dm_trigger</code> frame) allowlists, <code>ClientFrame</code> /
         <code>ServerFrame</code> unions, <code>classifyClientFrame</code> tripwire.
       </td>
     </tr>

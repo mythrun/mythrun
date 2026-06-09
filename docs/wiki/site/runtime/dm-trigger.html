@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DM trigger · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="dm-trigger">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/dm-trigger.html" class="active">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › DM trigger</div>
+        <article>
+<h1>DM trigger</h1>
+
+<p class="lead">
+  The system that decides <em>when</em> the AI DM responds — and enqueues exactly one DM turn per
+  decision. A typing-gated quiet window: the DM fires only after the table has gone quiet (no one
+  typing, no new message) for a few seconds, so it never cuts a player off mid-thought. The window
+  is a cross-container BullMQ debounce job; on maturity a dedicated worker re-validates the quiet,
+  builds the unresponded-message batch, and decides three ways — respond, sit back, or step in — via
+  a real Haiku classifier, with explicit summons, solo games, and a dead-air ceiling as
+  deterministic short-circuits around it.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1927pt" height="647pt"
+ viewBox="14.00 14.00 1913.00 632.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 628.4)">
+<title>dm_trigger</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-614 1894.64,-614 1894.64,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_api</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="740.65,-259 740.65,-435 1415.7,-435 1415.7,-259 740.65,-259"/>
+<text xml:space="preserve" text-anchor="middle" x="1078.17" y="-421.1" font-family="Courier,monospace" font-size="11.00">API process &#160;(ws&#45;session inbound handler)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_state</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1610.02,-439 1610.02,-589 1872.74,-589 1872.74,-439 1610.02,-439"/>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-575.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime) — trigger&#45;state.ts</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_batch</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1600.12,-94 1600.12,-244 1882.64,-244 1882.64,-94 1600.12,-94"/>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-230.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_worker</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-112 8,-259 1442.1,-259 1442.1,-112 8,-112"/>
+<text xml:space="preserve" text-anchor="middle" x="725.05" y="-245.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker process — dm&#45;trigger worker</text>
+</g>
+<!-- client -->
+<g id="node1" class="node">
+<title>client</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="586.53,-407.44 376.62,-407.44 376.62,-350.56 586.53,-350.56 586.53,-407.44"/>
+<text xml:space="preserve" text-anchor="middle" x="481.58" y="-388.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
+<text xml:space="preserve" text-anchor="middle" x="481.58" y="-375.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">typing_start heartbeats</text>
+<text xml:space="preserve" text-anchor="middle" x="481.58" y="-362.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player_message · dm_invoke</text>
+</g>
+<!-- inbound -->
+<g id="node2" class="node">
+<title>inbound</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="950.56,-414.04 740.65,-414.04 740.65,-343.96 950.56,-343.96 950.56,-414.04"/>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-395.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleInbound</text>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-382.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">markTyping · stampActivity</text>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-369.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">armFirstUnresponded</text>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-355.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(after persist+broadcast)</text>
+</g>
+<!-- client&#45;&gt;inbound -->
+<g id="edge1" class="edge">
+<title>client&#45;&gt;inbound</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M586.81,-379C632.13,-379 685.34,-379 731.62,-379"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="731.36,-381.45 738.36,-379 731.36,-376.55 731.36,-381.45"/>
+<text xml:space="preserve" text-anchor="middle" x="658.64" y="-382" font-family="Courier,monospace" font-size="10.00">frames</text>
+</g>
+<!-- autopath -->
+<g id="node3" class="node">
+<title>autopath</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1415.7,-315.44 1185.99,-315.44 1185.99,-258.56 1415.7,-258.56 1415.7,-315.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-296.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">auto / solo</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-283.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rescheduleQuietWindow</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-270.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">clampQuietDelay (max&#45;wait cap)</text>
+</g>
+<!-- inbound&#45;&gt;autopath -->
+<g id="edge4" class="edge">
+<title>inbound&#45;&gt;autopath</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M951.15,-357.78C1018.48,-344.11 1106.3,-326.29 1176.95,-311.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1177.33,-314.37 1183.7,-310.57 1176.36,-309.57 1177.33,-314.37"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.57" y="-346.95" font-family="Courier,monospace" font-size="10.00">auto/solo</text>
+</g>
+<!-- explicit -->
+<g id="node4" class="node">
+<title>explicit</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1415.7,-414.04 1185.99,-414.04 1185.99,-343.96 1415.7,-343.96 1415.7,-414.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-395.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">explicit (@dm / dm_invoke)</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-382.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">rate&#45;limit → dm_thinking NOW</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-369.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">build batch → enqueue DIRECT</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-355.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(or set explicit&#45;pending)</text>
+</g>
+<!-- inbound&#45;&gt;explicit -->
+<g id="edge5" class="edge">
+<title>inbound&#45;&gt;explicit</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M951.15,-379C1018.48,-379 1106.3,-379 1176.95,-379"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1176.67,-381.45 1183.67,-379 1176.67,-376.55 1176.67,-381.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.57" y="-382" font-family="Courier,monospace" font-size="10.00">@dm / dm_invoke</text>
+</g>
+<!-- typing -->
+<g id="node5" class="node">
+<title>typing</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1872.74,-567.84 1610.02,-567.84 1610.02,-524.16 1872.74,-524.16 1872.74,-567.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-549.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:typing:{user}</text>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-536.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">EX 8 · expiry = authoritative stop</text>
+</g>
+<!-- inbound&#45;&gt;typing -->
+<g id="edge2" class="edge">
+<title>inbound&#45;&gt;typing</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M940.12,-414.64C964.19,-423.19 990.19,-431.9 1014.56,-439 1213.6,-496.97 1452.93,-524.48 1600.87,-536.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1600.61,-539.26 1607.79,-537.4 1601.02,-534.38 1600.61,-539.26"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-522.93" font-family="Courier,monospace" font-size="10.00">set/clear</text>
+</g>
+<!-- activity -->
+<g id="node6" class="node">
+<title>activity</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1869.44,-495.44 1613.32,-495.44 1613.32,-438.56 1869.44,-438.56 1869.44,-495.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-476.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">last&#45;activity · first&#45;unresponded</text>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-463.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">responded&#45;seq · dm_responding</text>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-450.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dm&#45;trigger&#45;explicit</text>
+</g>
+<!-- inbound&#45;&gt;activity -->
+<g id="edge3" class="edge">
+<title>inbound&#45;&gt;activity</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M950.95,-398.16C1011.65,-408.69 1089.73,-421.15 1159.58,-429 1311.18,-446.03 1485.97,-456.19 1603.87,-461.66"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1603.69,-464.1 1610.8,-461.98 1603.92,-459.21 1603.69,-464.1"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-455.79" font-family="Courier,monospace" font-size="10.00">stamp</text>
+</g>
+<!-- debounce -->
+<g id="node7" class="node">
+<title>debounce</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1882.64,-150.44 1600.12,-150.44 1600.12,-93.56 1882.64,-93.56 1882.64,-150.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-131.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: dm&#45;trigger</text>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-118.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">replace&#45;mode debounce</text>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-105.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">delay = QUIET_WINDOW · ttl &gt; dead&#45;air</text>
+</g>
+<!-- autopath&#45;&gt;debounce -->
+<g id="edge6" class="edge">
+<title>autopath&#45;&gt;debounce</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1416.38,-261.31C1425.09,-259.22 1433.75,-257.1 1442.1,-255 1498.89,-240.71 1522.98,-256.05 1569.12,-220 1591.23,-202.72 1578.26,-182.59 1600.12,-165 1604.52,-161.46 1609.21,-158.21 1614.1,-155.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1614.98,-157.55 1619.84,-151.95 1612.55,-153.3 1614.98,-157.55"/>
+<text xml:space="preserve" text-anchor="middle" x="1521.11" y="-252.01" font-family="Courier,monospace" font-size="10.00">add (replace)</text>
+</g>
+<!-- q_turn -->
+<g id="node8" class="node">
+<title>q_turn</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1862.84,-222.84 1619.92,-222.84 1619.92,-179.16 1862.84,-179.16 1862.84,-222.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-204.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: session&#45;turn</text>
+<text xml:space="preserve" text-anchor="middle" x="1741.38" y="-191.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(execution — see Session turn)</text>
+</g>
+<!-- explicit&#45;&gt;q_turn -->
+<g id="edge7" class="edge">
+<title>explicit&#45;&gt;q_turn</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1416.19,-379.27C1465.02,-375.78 1521.58,-366.82 1569.12,-346 1629.84,-319.41 1685.5,-264.11 1716.01,-230.01"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1717.77,-231.72 1720.56,-224.85 1714.09,-228.47 1717.77,-231.72"/>
+<text xml:space="preserve" text-anchor="middle" x="1521.11" y="-375.04" font-family="Courier,monospace" font-size="10.00">enqueue DIRECT</text>
+</g>
+<!-- revalidate -->
+<g id="node9" class="node">
+<title>revalidate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="290.52,-182.04 8,-182.04 8,-111.96 290.52,-111.96 290.52,-182.04"/>
+<text xml:space="preserve" text-anchor="middle" x="149.26" y="-163.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">processDmTriggerJob</text>
+<text xml:space="preserve" text-anchor="middle" x="149.26" y="-150.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">1. re&#45;validate quiet (re&#45;arm if early)</text>
+<text xml:space="preserve" text-anchor="middle" x="149.26" y="-137.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">2. build (respondedSeq, max] batch</text>
+<text xml:space="preserve" text-anchor="middle" x="149.26" y="-123.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#160;empty → exit (no&#45;monologue guard)</text>
+</g>
+<!-- debounce&#45;&gt;revalidate -->
+<g id="edge8" class="edge">
+<title>debounce&#45;&gt;revalidate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1677.63,-92.93C1593.85,-56.85 1439.94,0 1301.84,0 480.58,0 480.58,0 480.58,0 375.56,0 266.73,-62.78 203.92,-106.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="202.69,-104.16 198.36,-110.19 205.5,-108.18 202.69,-104.16"/>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-15" font-family="Courier,monospace" font-size="10.00">matures</text>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-3" font-family="Courier,monospace" font-size="10.00">(quiet window)</text>
+</g>
+<!-- revalidate&#45;&gt;activity -->
+<g id="edge9" class="edge">
+<title>revalidate&#45;&gt;activity</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M158.04,-182.77C183.54,-289.44 275.07,-598 480.58,-598 480.58,-598 480.58,-598 1301.84,-598 1310.49,-598 1510.09,-537.44 1637,-498.68"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1637.53,-501.07 1643.51,-496.69 1636.1,-496.39 1637.53,-501.07"/>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-601" font-family="Courier,monospace" font-size="10.00">lastActivity · respondedSeq</text>
+</g>
+<!-- decide -->
+<g id="node10" class="node">
+<title>decide</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="609.64,-171.44 353.52,-171.44 353.52,-114.56 609.64,-114.56 609.64,-171.44"/>
+<text xml:space="preserve" text-anchor="middle" x="481.58" y="-152.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">3. decide (in order):</text>
+<text xml:space="preserve" text-anchor="middle" x="481.58" y="-139.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dead&#45;air 60s → proactive step&#45;in</text>
+<text xml:space="preserve" text-anchor="middle" x="481.58" y="-126.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">explicit&#45;pending → solo → auto</text>
+</g>
+<!-- revalidate&#45;&gt;decide -->
+<g id="edge10" class="edge">
+<title>revalidate&#45;&gt;decide</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M290.82,-145.3C308.56,-145.08 326.67,-144.86 344.34,-144.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="344.18,-147.1 351.15,-144.57 344.12,-142.2 344.18,-147.1"/>
+</g>
+<!-- decide&#45;&gt;debounce -->
+<g id="edge14" class="edge">
+<title>decide&#45;&gt;debounce</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M602.49,-113.83C636.28,-106.89 673.22,-100.48 707.64,-97 1020.76,-65.33 1389.86,-88.82 1591.07,-106.74"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1590.64,-109.16 1597.83,-107.34 1591.08,-104.28 1590.64,-109.16"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.57" y="-96.87" font-family="Courier,monospace" font-size="10.00">sit&#45;back → re&#45;arm</text>
+<text xml:space="preserve" text-anchor="middle" x="1071.57" y="-84.87" font-family="Courier,monospace" font-size="10.00">to dead&#45;air mark</text>
+</g>
+<!-- classify -->
+<g id="node11" class="node">
+<title>classify</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="983.56,-168.44 707.64,-168.44 707.64,-111.56 983.56,-111.56 983.56,-168.44"/>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-149.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Haiku classifier (auto only)</text>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-136.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">respond / sit&#45;back / step&#45;in</text>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-123.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">shouldRespond · intent · complexity</text>
+</g>
+<!-- decide&#45;&gt;classify -->
+<g id="edge11" class="edge">
+<title>decide&#45;&gt;classify</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M610.22,-141.94C638.75,-141.71 669.23,-141.45 698.44,-141.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="698.26,-143.66 705.24,-141.15 698.22,-138.76 698.26,-143.66"/>
+<text xml:space="preserve" text-anchor="middle" x="658.64" y="-144.68" font-family="Courier,monospace" font-size="10.00">auto</text>
+</g>
+<!-- enqueue -->
+<g id="node12" class="node">
+<title>enqueue</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1442.1,-229.44 1159.58,-229.44 1159.58,-172.56 1442.1,-172.56 1442.1,-229.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-210.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">4. drain guard (dm_responding?)</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-197.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in&#45;flight → exit · else enqueue ONE</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-184.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ structured&#45;log the decision</text>
+</g>
+<!-- decide&#45;&gt;enqueue -->
+<g id="edge13" class="edge">
+<title>decide&#45;&gt;enqueue</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M610.11,-168.64C641.85,-174.2 675.89,-179.47 707.64,-183 857.77,-199.69 1030.53,-203.16 1150.55,-203.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1150.29,-205.53 1157.29,-203.07 1150.28,-200.63 1150.29,-205.53"/>
+<text xml:space="preserve" text-anchor="middle" x="845.6" y="-203.6" font-family="Courier,monospace" font-size="10.00">dead&#45;air / explicit / solo</text>
+</g>
+<!-- classify&#45;&gt;enqueue -->
+<g id="edge12" class="edge">
+<title>classify&#45;&gt;enqueue</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M984.13,-158.51C1036.67,-165.58 1096.82,-173.68 1150.42,-180.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1149.9,-183.29 1157.16,-181.8 1150.55,-178.44 1149.9,-183.29"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.57" y="-180.76" font-family="Courier,monospace" font-size="10.00">shouldRespond?</text>
+</g>
+<!-- enqueue&#45;&gt;activity -->
+<g id="edge15" class="edge">
+<title>enqueue&#45;&gt;activity</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1390.54,-230.09C1407.91,-236.66 1425.79,-244.07 1442.1,-252 1543.88,-301.49 1647.75,-385.55 1701.99,-432.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1700.1,-434.16 1706.99,-436.91 1703.32,-430.47 1700.1,-434.16"/>
+<text xml:space="preserve" text-anchor="middle" x="1521.11" y="-327.25" font-family="Courier,monospace" font-size="10.00">isResponding?</text>
+</g>
+<!-- enqueue&#45;&gt;q_turn -->
+<g id="edge16" class="edge">
+<title>enqueue&#45;&gt;q_turn</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1442.71,-201C1496.56,-201 1557.69,-201 1610.47,-201"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1610.39,-203.45 1617.39,-201 1610.39,-198.55 1610.39,-203.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1521.11" y="-204" font-family="Courier,monospace" font-size="10.00">add session&#45;turn</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  This page owns the <em>decision</em> — whether and when a turn fires. The
+  <a href="./session-turn.html">session turn</a> page owns the <em>execution</em> — the lock-fenced
+  conductor that runs a turn once one is enqueued. The two are deliberately separate queues:
+  <code>dm-trigger</code> (decide) and <code>session-turn</code> (execute). The trigger system never
+  touches the lock or the conductor; it only ever lands at most one <code>session-turn</code> job.
+</p>
+
+<p>
+  The whole design rests on one model: the trigger is gated on
+  <em>"is anyone still composing?"</em>, not on raw message arrival. Two concerns ride the same
+  client activity — typing heartbeats and player messages. First, a per-member
+  <strong>typing display state</strong> (who is typing), a Redis key with a TTL. Second, the
+  <strong>quiet-window trigger timer</strong>, a resettable BullMQ debounce job per campaign. Both
+  live in Redis / BullMQ, so they are correct no matter which API container a player is connected
+  to.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>"Stopped typing" is a timeout, not an event — and there are no in-process timers</strong>
+  — every robust chat system (XEP-0085, Matrix, Ably, Stream, Discord, Slack) treats the end of
+  typing as a server-side TTL, never a client-sent "stop", because a client can crash mid-compose
+  and never send the final frame. A periodic client heartbeat keeps the indicator alive; the
+  indicator dies by TTL expiry. Mythrun adopts that and extends it: the same activity that refreshes
+  the typing key also resets the server-authoritative quiet-window timer that fires the DM. The
+  timer is a shared BullMQ job, not a <code>setTimeout</code> on one container — so there is no
+  leader election and no "owner death strands the timer" failure mode. A worker restart mid-window
+  leaves the delayed job in Redis; it still matures exactly once.
+</aside>
+
+<h2 id="the-server-side-observe-activity-reschedule-the-debounce">The server side: observe activity, reschedule the debounce</h2>
+
+<p>
+  The <a href="./session-transport.html">transport</a>'s inbound handler is the single ingestion
+  point — each frame arrives at exactly one container (the player's own connection), so there is no
+  double-scheduling. On a <code>typing_start</code> heartbeat or a <code>player_message</code>, the
+  handler writes the trigger state (<code>markTyping</code>, <code>stampActivity</code>,
+  <code>armFirstUnresponded</code>) and then reschedules the per-campaign debounce —
+  <code>rescheduleQuietWindow</code> in <code>ws-trigger-actions.ts</code>. A
+  <code>player_message</code>
+  also clears the sender's typing key (a send implies "done"), so the common path starts the quiet
+  window immediately on send.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The reschedule runs after persist + broadcast, and a failure logs at warn</strong> — the
+  durable message is the source of truth, so it is written and fanned out before the trigger side
+  effects. A debounce reschedule that fails (a queue outage) is logged at <code>warn</code> and
+  swallowed — never thrown — because the message is already safe; but it is <em>logged</em>, not
+  silently dropped like a malformed frame, so a sustained outage is observable rather than a silent
+  never-fires.
+</aside>
+
+<p>
+  The debounce itself is one BullMQ delayed job per campaign in
+  <strong>replace-mode</strong> deduplication (<code>rescheduleDebounce</code> in
+  <code>dm-trigger-queue.ts</code>). Every <code>add</code> with the stable per-campaign dedup id
+  <code>dm-trigger:{campaignId}</code> removes the still-delayed job and re-adds a fresh one,
+  resetting the countdown. So a burst of player messages collapses onto a single evaluation that
+  fires only after <code>QUIET_WINDOW_MS</code> of quiet. The dedup <code>ttl</code> keeps the key
+  alive across the whole window so concurrent producers (from any container) keep landing on the
+  same id.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The dedup TTL must exceed the longest delay the job can carry</strong> — the longest delay
+  a debounce job carries is the dead-air re-arm (≈ <code>DEAD_AIR_MS</code>, below), so
+  <code>DEDUP_TTL_MS = DEAD_AIR_MS + 4s</code>. If the dedup key expired before a long-delayed job
+  matured, a late activity pulse would spawn a <em>second</em> independent debounce job and silently
+  break coalescing. The reset is driven purely by <code>replace: true</code> — verified against
+  BullMQ's Lua; the recurring-scheduler surface (<code>upsertJobScheduler</code>) is deliberately
+  avoided as a known-buggy path.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A max-wait ceiling, so one idle typer can't starve the table</strong> — a single player
+  who holds a typing indicator alive (idle in the compose box, a laggy client) would otherwise reset
+  the debounce forever and starve everyone of any DM response.
+  <code>armFirstUnresponded</code> stamps the first activity after a turn (<code>SET NX</code>,
+  first-writer-wins), and <code>clampQuietDelay</code> clamps every reschedule so the job matures no
+  later than <code>firstUnresponded + MAX_QUIET_EXTENSION_MS</code> (30s) regardless of ongoing
+  typing. This caps a <em>continuous-typing</em> hold; the separate dead-air ceiling handles
+  <em>total silence</em>.
+</aside>
+
+<h2 id="the-worker-side-re-validate-batch-decide-drain-guard">The worker side: re-validate, batch, decide, drain-guard</h2>
+
+<p>
+  When the debounce matures, the <code>dm-trigger</code> worker —
+  <code>processDmTriggerJob</code> in <code>dm-trigger-worker.ts</code>, the fifth Worker in the
+  <a href="./worker.html">worker process</a> — runs an ordered decision shell. It is pure
+  orchestration (Zero Framework Cognition): every reasoning call is delegated to the Haiku
+  classifier, and the rest is mechanical re-validation, batch assembly, and policy short-circuits.
+  It takes all dependencies as injected params, so the whole decision tree is unit-testable with
+  plain fakes.
+</p>
+
+<ol>
+  <li>
+    <strong>Re-validate quiet.</strong> Read <code>last-activity</code>; if a reset landed in the
+    narrow window after the job promoted to active but before the worker ran (<code
+      >sinceLastActivity &lt; QUIET_WINDOW_MS</code
+    >), the worker matured too early. It <strong>re-arms</strong> the debounce for the remaining
+    quiet and exits — never a bare exit.
+  </li>
+  <li>
+    <strong>Build the batch.</strong> Resolve the active session (none → exit, closing the
+    session-ended-mid-window race) and the responded-seq watermark, then build the
+    <code>(lastRespondedSeq, maxSeq]</code> slice of <em>player</em> messages from
+    <code>turn-batch.ts</code>. An empty batch exits.
+  </li>
+  <li>
+    <strong>Decide, in order:</strong> the dead-air ceiling, an explicit-pending summon, a solo
+    game, then the auto classifier.
+  </li>
+  <li>
+    <strong>Drain-guard and enqueue.</strong> If a turn is already in flight (<code
+      >dm_responding</code
+    >
+    set), do <em>not</em> enqueue — the post-turn re-mature drains it. Otherwise enqueue one
+    <code>session-turn</code> carrying the freshly-built batch and structured-log the decision.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>The empty-batch exit is the no-monologue guard</strong> — the same batch is both the
+  classifier input and the turn's <code>triggerMessages</code>, so decision and execution can never
+  diverge. And because a proactive open (drift re-grounding, or the dead-air ceiling) can only fire
+  when an unresponded player message exists, once a turn consumes the batch the watermark advances
+  and the DM can never step in twice with no intervening player message. The guard is what makes
+  "keep the table alive" safe — the DM never monologues.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Re-arm on the maturity-boundary race, never a bare exit</strong> — if an activity pulse
+  arrives after the delayed job promoted but before the worker ran, BullMQ's replace finds nothing
+  to remove and the new <code>add</code> is dropped, creating no fresh job. The re-validation guard
+  catches the resulting too-early fire — and on catching it the worker re-arms the debounce for the
+  remaining quiet. A bare exit there would strand the trigger until the next activity, silently
+  swallowing a DM beat when the player then goes quiet.
+</aside>
+
+<h2 id="the-three-short-circuits-and-the-classifier">The three short-circuits and the classifier</h2>
+
+<p>
+  The decision runs four branches in order. The first three are mechanical / policy short-circuits
+  that skip the Haiku call; only the fourth is a model judgment.
+</p>
+
+<ul>
+  <li>
+    <strong>Dead-air ceiling.</strong> If the table has been totally silent — no message
+    <em>or</em> typing — for <code>DEAD_AIR_MS</code> (≈60s), open a proactive turn
+    <em>without</em> the classifier. A 60s dead-air step-in is a deterministic policy threshold,
+    like a rate limit; the Slow Thinker authors the actual beat. The non-empty batch is the
+    no-monologue guard, so this can't fire back-to-back.
+  </li>
+  <li>
+    <strong>Explicit pending.</strong> An <code>@dm</code> / <code>dm_invoke</code> that landed
+    while a turn was in flight set a flag; <code>takeExplicitPending</code> (a <code>GETDEL</code>)
+    drains it once, forcing a respond.
+  </li>
+  <li>
+    <strong>Solo.</strong> A campaign with exactly one <strong>accepted</strong> member always gets
+    a DM beat, no classifier. The count uses <code>countAcceptedMembers</code> (<code
+      >invite_accepted = true</code
+    >
+    only) — a pending invite does not make a solo game multiplayer.
+  </li>
+  <li>
+    <strong>Auto.</strong> The default in multiplayer — call the real Haiku classifier over the
+    public table context.
+  </li>
+</ul>
+
+<p>
+  The classifier (<code>dm-trigger-classifier.ts</code>) is a real Anthropic Haiku call through the
+  single LLM abstraction (model from config, never hardcoded) — ZFC: the "should the DM take a turn,
+  and how heavy" judgment is delegated to a model, never a heuristic. Its decision is
+  <strong>three-way</strong>, the "make the DM feel alive" requirement:
+</p>
+
+<ul>
+  <li>
+    <strong>Respond</strong> — a player addressed the DM, addressed an NPC, or took an action the
+    world should answer ("I check the stall's wares", "I try to pick the lock"). Open a turn
+    reactively.
+  </li>
+  <li>
+    <strong>Sit back</strong> — grounded, engaged player-to-player roleplay advancing a scene. Stay
+    out of the way; good RP is not an interruption opportunity. No turn.
+  </li>
+  <li>
+    <strong>Step in</strong> — the players are still talking among themselves but the scene has
+    <em>drifted</em> (gone in circles, turned meta, gone slack). Open a turn proactively so the DM
+    can re-ground them.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The classifier opens the door; it never decides what the DM says</strong> — the
+  sit-back-vs-step-in call is a coarse read. The classifier only decides to open a turn; the Slow
+  Thinker (MYT-69) makes the fine intervene-or-stay-silent call and authors any world beat. The
+  <em>quality</em> of the read (telling good RP from drift) is an eval-harness concern: this issue
+  builds the mechanism, and the smoke verifies a proactive open <em>can</em> fire; tuning happens
+  against the eval harness.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The classifier input is public by construction</strong> — enforced ignorance (CLAUDE.md
+  non-negotiable #1) is structural here, not field discipline. The
+  <code>DmTriggerContext</code> type carries only table-visible material: the attributed
+  player-message batch, the DM's last <em>player-facing</em> line, two pacing counters (<code
+    >turnsSinceLastDmBeat</code
+  >
+  / <code>secondsSinceLastDmBeat</code>), and an optional public scene-grounding line. A secret has
+  nowhere to live on the type, so there is no path for plot or hidden NPC motive to reach this call.
+  While the Slow Thinker and Scribe are stubbed, the only public scene material available is the
+  running summary — used for both the last-DM-output and scene-grounding slots; both fill in for
+  real at MYT-69 / 73, but the type forbids wiring secret material in later.
+</aside>
+
+<p>
+  On a <code>shouldRespond=false</code> verdict, the worker re-arms the debounce to the dead-air
+  mark (<code>delay = DEAD_AIR_MS − sinceLastActivity</code>) so the 60s backstop still fires if the
+  silence persists; any new activity reschedules it back to the normal quiet window. The verdict's
+  <code>intent</code> (reactive vs proactive) and <code>complexity</code> (low vs high) ride the
+  turn payload as the skip-ST routing hint that MYT-68 / 69 consume; a proactive open always routes
+  through the Slow Thinker (the enforced-ignorant Fast Thinker can't invent a world beat). The
+  <code>confidence</code> anchors the <code>CONFIDENCE_FLOOR</code> (0.8) escalation. The free-prose
+  <code>reason</code> is debug-only — it is structured-logged, never plumbed onto the payload and
+  never sent to a player.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Fail-closed, no fail-open fallback</strong> — a classifier failure (timeout, transient,
+  auth, malformed parse) means no turn this cycle, re-driven on the next activity, with a metric
+  distinguishable from a normal <code>shouldRespond:false</code> for diagnosis. There is no "default
+  to firing" fallback: a <em>sustained</em> Haiku failure is an Anthropic-API outage, in which case
+  the FT / ST turn the classifier would trigger is down too (same API) — firing anyway would only
+  enqueue a turn that immediately fails into <code>turn_error</code>. Because the schema is
+  trivially small and the posture is fail-closed, the classifier skips the Sonnet repair's fail-open
+  default and lets a malformed parse fall straight to the fail-closed path.
+</aside>
+
+<h2 id="the-explicit-summon-an-immediate-hard-preempt">The explicit summon: an immediate hard preempt</h2>
+
+<p>
+  An <code>@dm</code>-prefixed message or a <code>dm_invoke</code> frame is the "everyone be quiet,
+  I have a question for the DM" gesture — it deliberately ices out the room and must fire as fast as
+  possible. It bypasses the <code>dm-trigger</code> queue entirely.
+  <code>runExplicitTrigger</code> (<code>ws-trigger-actions.ts</code>) rate-limits the summon per
+  campaign + user, then — if no turn is in flight — allocates the <code>turnId</code>,
+  <strong>broadcasts <code>dm_thinking</code> immediately</strong> so every client greys its input
+  ahead of any enqueue or lock latency, builds the batch from the watermark (frozen at invoke), and
+  enqueues the <code>session-turn</code> directly. If a turn <em>is</em> in flight, it instead sets
+  the explicit-pending flag, drained the instant the current turn releases.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The <code>@dm</code> prefix and <code>dm_invoke</code> are structural, not semantic</strong
+  >
+  — detecting the summon is a literal prefix check and a frame-type check, both mechanical (the ZFC
+  structural carve-out). The rate limit is policy enforcement, another carve-out: the explicit path
+  is the first WS frame that triggers real LLM spend, so an unbounded <code>@dm</code> is a cost and
+  griefing surface. Over the ceiling, the summon is dropped and logged. None of this is the
+  classifier — the classifier judges only the auto path.
+</aside>
+
+<h2 id="collision-and-drain-the-lock-is-the-mutex">Collision and drain: the lock is the mutex</h2>
+
+<p>
+  The invariant is at most one <code>session-turn</code> in flight per campaign, and triggers
+  arriving during a turn produce at most one coherent follow-up — never a backlog of stale replies.
+  The coordination is the <code>dm_responding</code> flag plus the session lock,
+  <strong>not</strong> a queue-level dedup id: the <code>session-turn</code> queue keeps its
+  no-dedup, lock-is-the-mutex contract unchanged.
+</p>
+
+<p>
+  The <a href="./session-turn.html">session-turn worker</a> sets <code>dm_responding</code> while a
+  turn runs and records <code>last-responded-seq</code> = the max consumed seq at flush, then clears
+  the flag on release. The <code>dm-trigger</code> worker checks <code>dm_responding</code> before
+  enqueuing; in-flight, it does not enqueue. New activity during the turn reschedules the debounce;
+  after the turn (flag cleared) and a fresh quiet window, the debounce matures, the worker builds
+  the batch from the <em>new</em> watermark, and enqueues one follow-up. If players were quiet
+  during the turn, no follow-up fires — correct, nothing new to say.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The debounce <em>is</em> the queued trigger; the post-turn re-mature <em>is</em> the
+    drain</strong
+  >
+  — the runtime spec's "if lock held, queue the trigger; on release, drain the queue" is realized
+  without a literal queue. The lock serializes any residual race (two enqueues slipping past the
+  flag check); the loser returns <code>{ ran: false }</code> and is re-driven by the debounce, not
+  by blind BullMQ <code>attempts</code>. The one exception is an explicit summon during an in-flight
+  turn: the session-turn worker checks the explicit-pending flag on release and enqueues the
+  follow-up <em>immediately</em>, so the summon is honored the instant the current turn ends.
+</aside>
+
+<h2 id="the-terminal-turn-error-subscriber">The terminal turn_error subscriber</h2>
+
+<p>
+  MYT-67 also closes a gap left in the <a href="./session-turn.html">turn worker</a>: a turn whose
+  holder crashes terminally (<code>maxStalledCount</code> exhausted) was failed by BullMQ
+  <em>inside</em> a Lua script, emitting only a broker-side event — never the per-worker
+  <code>on('failed')</code> JS event — so the player's client would wait forever on a turn that will
+  never complete. <code>session-turn-queue-events.ts</code> adds a
+  <code>QueueEvents('session-turn')</code> subscriber that listens for the broker
+  <code>failed</code> event and publishes the terminal <code>turn_error</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A dedicated blocking connection and a cross-container idempotency latch</strong> —
+  <code>QueueEvents</code> <code>BRPOP</code>s a Redis stream, so it gets its own
+  <code>duplicate()</code>d ioredis connection, never the BullMQ Worker's (a blocking command would
+  stall every command multiplexed onto a shared connection). And because <em>both</em> publishers —
+  the in-process JS listener and the broker-side <code>QueueEvents</code>, which fires on every
+  worker container — could publish, each guards on a shared <code>SET NX</code> latch
+  (<code>turn-error-published:{turnId}</code>) before publishing, so exactly one
+  <code>turn_error</code>
+  goes out per terminal turn regardless of path or container count. The subscriber's connection is
+  torn down on SIGTERM, so no connection leaks per deploy.
+</aside>
+
+<h2 id="observability-a-dev-signal-never-the-player-transport">Observability: a dev signal, never the player transport</h2>
+
+<p>
+  The trigger decision is surfaced for debugging as a <strong>structured pino log</strong> —
+  <code>{ kind, shouldRespond, intent?, confidence?, reason?, campaignId, at }</code>. It is
+  deliberately <em>not</em> a player-facing frame: <code>dm_trigger</code> is not in the
+  <a href="./session-transport.html">transport</a>'s server-frame union, because the hub fans every
+  published frame to all player sockets with no audience filter — a <code>dm_trigger</code> frame
+  there would leak the classifier's <code>reason</code> and <code>confidence</code> to players. The
+  player-visible signal that a turn fired is the existing <code>dm_thinking</code> frame.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="watch-a-trigger-decision-locally">Watch a DM trigger decision fire locally</h3>
+<ol>
+  <li>
+    Bring up the data plane and both processes — <code>pnpm db:up</code>,
+    <code>pnpm dev</code> (API), and <code>pnpm --filter @mythrun/backend dev:worker</code> (the
+    worker that hosts the dm-trigger worker). Start a session (<code
+      >POST /api/sessions/:campaignId/start</code
+    >) and open a WebSocket.
+  </li>
+  <li>
+    Send a <code>typing_start</code> heartbeat, then a <code>player_message</code>. Watch the worker
+    log: after <code>QUIET_WINDOW_MS</code> of quiet the debounce matures and the worker emits a
+    <code>dm-trigger decision</code> log line with <code>kind</code>, <code>shouldRespond</code>,
+    and (for auto) the classifier's <code>intent</code> / <code>confidence</code> /
+    <code>reason</code>.
+  </li>
+  <li>
+    On a respond / step-in / solo / explicit decision, a <code>dm_thinking</code> frame appears on
+    the socket — the <a href="./session-turn.html">turn</a> fired. A sit-back decision logs
+    <code>shouldRespond:false</code> and re-arms toward the dead-air mark, no
+    <code>dm_thinking</code>.
+  </li>
+  <li>
+    Send <code>{ "type": "dm_invoke" }</code> (or a message starting <code>@dm</code>): the
+    <code>dm_thinking</code> frame appears <em>immediately</em>, bypassing the quiet window and the
+    classifier.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-dm-that-never-fires">Diagnose a DM that never fires (or fires too eagerly)</h3>
+<ol>
+  <li>
+    Inspect the <code>dm-trigger</code> queue for a delayed job (dedup id
+    <code>dm-trigger:{campaignId}</code>). A present delayed job means a quiet window is counting
+    down; its absence after activity means either it matured already or a reschedule failed — grep
+    the API logs for <code>ws-session debounce reschedule failed</code> (the warn on a queue
+    outage).
+  </li>
+  <li>
+    Check the trigger-state keys for the campaign: <code>last-activity</code> (the re-validation
+    stamp), <code>responded-seq</code> (the batch watermark — an unexpectedly high value means the
+    next batch starts past recent messages), <code>dm_responding</code> (a turn is in flight, so the
+    worker is gating enqueues), and <code>first-unresponded</code> (the max-wait anchor). A
+    lingering <code>dm_responding</code> with no live turn lapses on its own (TTL ≈ lock TTL).
+  </li>
+  <li>
+    A DM that fires on a sustained-typing hold confirms the max-wait ceiling: the debounce matured
+    at
+    <code>first-unresponded + MAX_QUIET_EXTENSION_MS</code> despite ongoing typing. That is by
+    design.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The server side lives in the <a href="./session-transport.html">session transport</a>'s inbound
+  handler, which writes the typing / activity state and reschedules the debounce — and adds the
+  <code>dm_invoke</code> client frame to the wire contract. The worker side is the fifth Worker in
+  the <a href="./worker.html">worker process</a>, alongside the <code>QueueEvents</code> subscriber
+  that closes the turn worker's terminal-error gap. A decision enqueues a
+  <code>session-turn</code> job that the <a href="./session-turn.html">session turn</a> page's
+  lock-fenced conductor executes; that worker in turn sets <code>dm_responding</code> and records
+  the <code>last-responded-seq</code> watermark this page's drain logic depends on. The classifier
+  runs through the <a href="./llm.html">LLM client</a>'s single abstraction with the Haiku model
+  from config. Member counts come from <a href="../data/repository.html">the repository layer</a>'s
+  <code>countAcceptedMembers</code>.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="config-constants-dm-trigger-config-ts">Config constants (dm-trigger-config.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Default</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>TYPING_HEARTBEAT_S</code></td>
+      <td>3</td>
+      <td>Client typing-refresh cadence (the frontend will honor it later).</td>
+    </tr>
+    <tr>
+      <td><code>TYPING_TTL_S</code></td>
+      <td>8</td>
+      <td>Typing-key TTL; &gt; 2× heartbeat so a single dropped heartbeat doesn't flicker.</td>
+    </tr>
+    <tr>
+      <td><code>QUIET_WINDOW_MS</code></td>
+      <td>4000</td>
+      <td>Required quiet before the DM fires (auto / solo). Explicit bypasses it.</td>
+    </tr>
+    <tr>
+      <td><code>DEDUP_TTL_MS</code></td>
+      <td><code>DEAD_AIR_MS + 4000</code></td>
+      <td>Dedup-key lifetime; must exceed the longest delay (the dead-air re-arm) + pickup.</td>
+    </tr>
+    <tr>
+      <td><code>MAX_QUIET_EXTENSION_MS</code></td>
+      <td>30000</td>
+      <td>Continuous-typing cap — the debounce can't push past this from first-unresponded.</td>
+    </tr>
+    <tr>
+      <td><code>DEAD_AIR_MS</code></td>
+      <td>60000</td>
+      <td>Total-silence backstop → forced proactive step-in, skipping the classifier.</td>
+    </tr>
+    <tr>
+      <td><code>MAX_BATCH</code></td>
+      <td>30</td>
+      <td>Cap on the most-recent player messages carried into the classifier / turn batch.</td>
+    </tr>
+    <tr>
+      <td><code>CONFIDENCE_FLOOR</code></td>
+      <td>0.8</td>
+      <td>Below this, an auto verdict escalates (treated as high).</td>
+    </tr>
+    <tr>
+      <td><code>HAIKU_CLASSIFY_TIMEOUT_MS</code></td>
+      <td>60000</td>
+      <td>
+        Per-call classifier timeout; held under the worker <code>lockDuration</code> so a hung call
+        can't outlive the job lock.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        worker <code>lockDuration</code> / <code>stalledInterval</code> /
+        <code>maxStalledCount</code> / concurrency
+      </td>
+      <td>90s / 90s / 1 / 5</td>
+      <td>The dm-trigger worker's own BullMQ timing — separate from the session-turn worker's.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="redis-keys-realtime-cluster-trigger-state-ts">Redis keys (realtime cluster — trigger-state.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key (under <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>)</th>
+      <th>Shape / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{cId}:typing:{userId}</code></td>
+      <td>
+        <code>"1"</code>, <code>EX 8</code>. Per-member typing display; expiry is the authoritative
+        stop.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:last-activity</code></td>
+      <td>ms epoch. The maturity re-validation guard.</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:first-unresponded</code></td>
+      <td>ms epoch, <code>SET NX</code> (first-only). The max-wait ceiling anchor.</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:responded-seq</code></td>
+      <td>
+        int watermark; set at turn flush. The batch starts at <code>(responded-seq, max]</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:dm_responding</code></td>
+      <td>
+        flag, <code>PX</code> ≈ lock TTL, heartbeat-refreshed. "A turn is in flight" drain guard.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:dm-trigger-explicit</code></td>
+      <td>flag, drained via <code>GETDEL</code> on release. Explicit summon pending.</td>
+    </tr>
+    <tr>
+      <td><code>turn-error-published:{turnId}</code></td>
+      <td>
+        flag, <code>SET NX EX 60</code>. The cross-container terminal-error idempotency latch.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="files">Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/dm-trigger-config.ts</code></td>
+      <td>
+        The shared config constants — imported by both the server and the worker so the timings
+        can't drift.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/dm-trigger-queue.ts</code></td>
+      <td>
+        <code>rescheduleDebounce</code>, <code>clampQuietDelay</code>, <code>dedupId</code>,
+        <code>DmTriggerPayload</code> / <code>DmTriggerQueueLike</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/dm-trigger-worker.ts</code></td>
+      <td>
+        <code>processDmTriggerJob</code> (the ordered decision),
+        <code>buildDmTriggerWorker</code> (boot wiring).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/trigger-state.ts</code></td>
+      <td>
+        <code>makeTriggerState</code> — all the DM-trigger Redis keys (typing, activity, watermark,
+        flags, the error latch).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/turn-batch.ts</code></td>
+      <td>
+        <code>buildTurnBatch</code> — the <code>(lastRespondedSeq, max]</code> →
+        <code>TriggerMessage[]</code> builder, shared by the worker and the explicit path.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/session-turn-queue-events.ts</code></td>
+      <td>
+        <code>buildSessionTurnQueueEvents</code> — the broker-side terminal
+        <code>turn_error</code> subscriber (dedicated connection + latch).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/routes/ws-trigger-actions.ts</code></td>
+      <td>
+        <code>isExplicitText</code>, <code>rescheduleQuietWindow</code>,
+        <code>runExplicitTrigger</code> — the trigger side effects the inbound handler delegates to.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/dm-trigger-classifier.ts</code></td>
+      <td>
+        <code>classifyDmTrigger</code>, <code>DmTriggerContext</code> (public-by-construction).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/schemas/dm-trigger-classification.ts</code></td>
+      <td>
+        <code>DmTriggerClassificationSchema</code> —
+        <code>{ shouldRespond, intent, complexity, confidence, reason }</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/prompts/session/dm-trigger-classifier.txt</code></td>
+      <td>
+        The respond / sit-back / step-in rubric with exemplars, the complexity rubric, and
+        confidence anchoring.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/session/dm-trigger-config.ts</code>,
+  <code>backend/src/session/dm-trigger-queue.ts</code>,
+  <code>backend/src/session/dm-trigger-worker.ts</code>,
+  <code>backend/src/session/trigger-state.ts</code>, <code>backend/src/session/turn-batch.ts</code>,
+  <code>backend/src/session/session-turn-queue-events.ts</code>,
+  <code>backend/src/routes/ws-trigger-actions.ts</code>,
+  <code>backend/src/llm/dm-trigger-classifier.ts</code>,
+  <code>backend/src/llm/schemas/dm-trigger-classification.ts</code>,
+  <code>backend/src/llm/prompts/session/dm-trigger-classifier.txt</code>. Design spec:
+  <code>docs/superpowers/specs/2026-06-08-myt-67-dm-trigger-system-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-server-side-observe-activity-reschedule-the-debounce">The server side: observe activity, reschedule the debounce</a></li><li style="padding-left:0"><a href="#the-worker-side-re-validate-batch-decide-drain-guard">The worker side: re-validate, batch, decide, drain-guard</a></li><li style="padding-left:0"><a href="#the-three-short-circuits-and-the-classifier">The three short-circuits and the classifier</a></li><li style="padding-left:0"><a href="#the-explicit-summon-an-immediate-hard-preempt">The explicit summon: an immediate hard preempt</a></li><li style="padding-left:0"><a href="#collision-and-drain-the-lock-is-the-mutex">Collision and drain: the lock is the mutex</a></li><li style="padding-left:0"><a href="#the-terminal-turn-error-subscriber">The terminal turn_error subscriber</a></li><li style="padding-left:0"><a href="#observability-a-dev-signal-never-the-player-transport">Observability: a dev signal, never the player transport</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-trigger-decision-locally">Watch a DM trigger decision fire locally</a></li><li style="padding-left:12px"><a href="#diagnose-a-dm-that-never-fires">Diagnose a DM that never fires (or fires too eagerly)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#config-constants-dm-trigger-config-ts">Config constants (dm-trigger-config.ts)</a></li><li style="padding-left:12px"><a href="#redis-keys-realtime-cluster-trigger-state-ts">Redis keys (realtime cluster — trigger-state.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

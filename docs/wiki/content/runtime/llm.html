@@ -3,8 +3,8 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:f56e4e657be0caaa476f17f07e87c2d03d0bfc27ba5ab5daea5abd88f4c059e1 -->
-<!-- last-ticket: MYT-62 -->
+<!-- source-hash: sha256:a09be7a77b5e23aca857ab61cafa9dbdc5ca9f9c80aed34f01d84e3cb099d0c8 -->
+<!-- last-ticket: MYT-67 -->
 
 <h1>LLM client</h1>
 
@@ -20,10 +20,11 @@
   paint-job validator, the eight world-gen stage handlers (concept_intake, vocabulary_intake,
   world_and_factions, locations_and_npcs, entity_relationships, entity_consolidation,
   starting_situation, random_tables, coherence_pass), the structured-output repair chain plus its
-  companion per-item drop-on-fail gate on the streaming stages, and — newest, built ahead of the
-  flow that will call it — the
-  <a href="#the-session-prep-generation-stage">session-prep generation stage</a>. Everything heavier
-  (provider mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
+  companion per-item drop-on-fail gate on the streaming stages, the
+  <a href="#the-session-prep-generation-stage">session-prep generation stage</a>, and — newest — the
+  <a href="./dm-trigger.html">DM-trigger classifier</a>, a cheap Haiku <code>generateObject</code>
+  call that decides whether the AI DM should take a turn. Everything heavier (provider mechanics,
+  retries, structured-output validation) is delegated to Vercel AI SDK v6.
 </p>
 
 <!-- @diagram: runtime/llm -->

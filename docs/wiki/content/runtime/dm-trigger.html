@@ -1,0 +1,656 @@
+<!-- source: backend/src/session/dm-trigger-config.ts -->
+<!-- source: backend/src/session/dm-trigger-queue.ts -->
+<!-- source: backend/src/session/dm-trigger-worker.ts -->
+<!-- source: backend/src/session/trigger-state.ts -->
+<!-- source: backend/src/session/turn-batch.ts -->
+<!-- source: backend/src/session/session-turn-queue-events.ts -->
+<!-- source: backend/src/routes/ws-trigger-actions.ts -->
+<!-- source: backend/src/llm/dm-trigger-classifier.ts -->
+<!-- source: backend/src/llm/schemas/dm-trigger-classification.ts -->
+<!-- source: backend/src/llm/prompts/session/dm-trigger-classifier.txt -->
+<!-- source: docs/superpowers/specs/2026-06-08-myt-67-dm-trigger-system-design.md -->
+<!-- source-hash: sha256:a23b2da6e489819371094caedcda56327752a28b3964bb20e72a0597e4cec922 -->
+<!-- last-ticket: MYT-67 -->
+
+<h1>DM trigger</h1>
+
+<p class="lead">
+  The system that decides <em>when</em> the AI DM responds — and enqueues exactly one DM turn per
+  decision. A typing-gated quiet window: the DM fires only after the table has gone quiet (no one
+  typing, no new message) for a few seconds, so it never cuts a player off mid-thought. The window
+  is a cross-container BullMQ debounce job; on maturity a dedicated worker re-validates the quiet,
+  builds the unresponded-message batch, and decides three ways — respond, sit back, or step in — via
+  a real Haiku classifier, with explicit summons, solo games, and a dead-air ceiling as
+  deterministic short-circuits around it.
+</p>
+
+<!-- @diagram: runtime/dm-trigger -->
+
+<h2>How it fits together</h2>
+
+<p>
+  This page owns the <em>decision</em> — whether and when a turn fires. The
+  <a href="./session-turn.html">session turn</a> page owns the <em>execution</em> — the lock-fenced
+  conductor that runs a turn once one is enqueued. The two are deliberately separate queues:
+  <code>dm-trigger</code> (decide) and <code>session-turn</code> (execute). The trigger system never
+  touches the lock or the conductor; it only ever lands at most one <code>session-turn</code> job.
+</p>
+
+<p>
+  The whole design rests on one model: the trigger is gated on
+  <em>"is anyone still composing?"</em>, not on raw message arrival. Two concerns ride the same
+  client activity — typing heartbeats and player messages. First, a per-member
+  <strong>typing display state</strong> (who is typing), a Redis key with a TTL. Second, the
+  <strong>quiet-window trigger timer</strong>, a resettable BullMQ debounce job per campaign. Both
+  live in Redis / BullMQ, so they are correct no matter which API container a player is connected
+  to.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>"Stopped typing" is a timeout, not an event — and there are no in-process timers</strong>
+  — every robust chat system (XEP-0085, Matrix, Ably, Stream, Discord, Slack) treats the end of
+  typing as a server-side TTL, never a client-sent "stop", because a client can crash mid-compose
+  and never send the final frame. A periodic client heartbeat keeps the indicator alive; the
+  indicator dies by TTL expiry. Mythrun adopts that and extends it: the same activity that refreshes
+  the typing key also resets the server-authoritative quiet-window timer that fires the DM. The
+  timer is a shared BullMQ job, not a <code>setTimeout</code> on one container — so there is no
+  leader election and no "owner death strands the timer" failure mode. A worker restart mid-window
+  leaves the delayed job in Redis; it still matures exactly once.
+</aside>
+
+<h2>The server side: observe activity, reschedule the debounce</h2>
+
+<p>
+  The <a href="./session-transport.html">transport</a>'s inbound handler is the single ingestion
+  point — each frame arrives at exactly one container (the player's own connection), so there is no
+  double-scheduling. On a <code>typing_start</code> heartbeat or a <code>player_message</code>, the
+  handler writes the trigger state (<code>markTyping</code>, <code>stampActivity</code>,
+  <code>armFirstUnresponded</code>) and then reschedules the per-campaign debounce —
+  <code>rescheduleQuietWindow</code> in <code>ws-trigger-actions.ts</code>. A
+  <code>player_message</code>
+  also clears the sender's typing key (a send implies "done"), so the common path starts the quiet
+  window immediately on send.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The reschedule runs after persist + broadcast, and a failure logs at warn</strong> — the
+  durable message is the source of truth, so it is written and fanned out before the trigger side
+  effects. A debounce reschedule that fails (a queue outage) is logged at <code>warn</code> and
+  swallowed — never thrown — because the message is already safe; but it is <em>logged</em>, not
+  silently dropped like a malformed frame, so a sustained outage is observable rather than a silent
+  never-fires.
+</aside>
+
+<p>
+  The debounce itself is one BullMQ delayed job per campaign in
+  <strong>replace-mode</strong> deduplication (<code>rescheduleDebounce</code> in
+  <code>dm-trigger-queue.ts</code>). Every <code>add</code> with the stable per-campaign dedup id
+  <code>dm-trigger:{campaignId}</code> removes the still-delayed job and re-adds a fresh one,
+  resetting the countdown. So a burst of player messages collapses onto a single evaluation that
+  fires only after <code>QUIET_WINDOW_MS</code> of quiet. The dedup <code>ttl</code> keeps the key
+  alive across the whole window so concurrent producers (from any container) keep landing on the
+  same id.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The dedup TTL must exceed the longest delay the job can carry</strong> — the longest delay
+  a debounce job carries is the dead-air re-arm (≈ <code>DEAD_AIR_MS</code>, below), so
+  <code>DEDUP_TTL_MS = DEAD_AIR_MS + 4s</code>. If the dedup key expired before a long-delayed job
+  matured, a late activity pulse would spawn a <em>second</em> independent debounce job and silently
+  break coalescing. The reset is driven purely by <code>replace: true</code> — verified against
+  BullMQ's Lua; the recurring-scheduler surface (<code>upsertJobScheduler</code>) is deliberately
+  avoided as a known-buggy path.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A max-wait ceiling, so one idle typer can't starve the table</strong> — a single player
+  who holds a typing indicator alive (idle in the compose box, a laggy client) would otherwise reset
+  the debounce forever and starve everyone of any DM response.
+  <code>armFirstUnresponded</code> stamps the first activity after a turn (<code>SET NX</code>,
+  first-writer-wins), and <code>clampQuietDelay</code> clamps every reschedule so the job matures no
+  later than <code>firstUnresponded + MAX_QUIET_EXTENSION_MS</code> (30s) regardless of ongoing
+  typing. This caps a <em>continuous-typing</em> hold; the separate dead-air ceiling handles
+  <em>total silence</em>.
+</aside>
+
+<h2>The worker side: re-validate, batch, decide, drain-guard</h2>
+
+<p>
+  When the debounce matures, the <code>dm-trigger</code> worker —
+  <code>processDmTriggerJob</code> in <code>dm-trigger-worker.ts</code>, the fifth Worker in the
+  <a href="./worker.html">worker process</a> — runs an ordered decision shell. It is pure
+  orchestration (Zero Framework Cognition): every reasoning call is delegated to the Haiku
+  classifier, and the rest is mechanical re-validation, batch assembly, and policy short-circuits.
+  It takes all dependencies as injected params, so the whole decision tree is unit-testable with
+  plain fakes.
+</p>
+
+<ol>
+  <li>
+    <strong>Re-validate quiet.</strong> Read <code>last-activity</code>; if a reset landed in the
+    narrow window after the job promoted to active but before the worker ran (<code
+      >sinceLastActivity &lt; QUIET_WINDOW_MS</code
+    >), the worker matured too early. It <strong>re-arms</strong> the debounce for the remaining
+    quiet and exits — never a bare exit.
+  </li>
+  <li>
+    <strong>Build the batch.</strong> Resolve the active session (none → exit, closing the
+    session-ended-mid-window race) and the responded-seq watermark, then build the
+    <code>(lastRespondedSeq, maxSeq]</code> slice of <em>player</em> messages from
+    <code>turn-batch.ts</code>. An empty batch exits.
+  </li>
+  <li>
+    <strong>Decide, in order:</strong> the dead-air ceiling, an explicit-pending summon, a solo
+    game, then the auto classifier.
+  </li>
+  <li>
+    <strong>Drain-guard and enqueue.</strong> If a turn is already in flight (<code
+      >dm_responding</code
+    >
+    set), do <em>not</em> enqueue — the post-turn re-mature drains it. Otherwise enqueue one
+    <code>session-turn</code> carrying the freshly-built batch and structured-log the decision.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>The empty-batch exit is the no-monologue guard</strong> — the same batch is both the
+  classifier input and the turn's <code>triggerMessages</code>, so decision and execution can never
+  diverge. And because a proactive open (drift re-grounding, or the dead-air ceiling) can only fire
+  when an unresponded player message exists, once a turn consumes the batch the watermark advances
+  and the DM can never step in twice with no intervening player message. The guard is what makes
+  "keep the table alive" safe — the DM never monologues.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Re-arm on the maturity-boundary race, never a bare exit</strong> — if an activity pulse
+  arrives after the delayed job promoted but before the worker ran, BullMQ's replace finds nothing
+  to remove and the new <code>add</code> is dropped, creating no fresh job. The re-validation guard
+  catches the resulting too-early fire — and on catching it the worker re-arms the debounce for the
+  remaining quiet. A bare exit there would strand the trigger until the next activity, silently
+  swallowing a DM beat when the player then goes quiet.
+</aside>
+
+<h2>The three short-circuits and the classifier</h2>
+
+<p>
+  The decision runs four branches in order. The first three are mechanical / policy short-circuits
+  that skip the Haiku call; only the fourth is a model judgment.
+</p>
+
+<ul>
+  <li>
+    <strong>Dead-air ceiling.</strong> If the table has been totally silent — no message
+    <em>or</em> typing — for <code>DEAD_AIR_MS</code> (≈60s), open a proactive turn
+    <em>without</em> the classifier. A 60s dead-air step-in is a deterministic policy threshold,
+    like a rate limit; the Slow Thinker authors the actual beat. The non-empty batch is the
+    no-monologue guard, so this can't fire back-to-back.
+  </li>
+  <li>
+    <strong>Explicit pending.</strong> An <code>@dm</code> / <code>dm_invoke</code> that landed
+    while a turn was in flight set a flag; <code>takeExplicitPending</code> (a <code>GETDEL</code>)
+    drains it once, forcing a respond.
+  </li>
+  <li>
+    <strong>Solo.</strong> A campaign with exactly one <strong>accepted</strong> member always gets
+    a DM beat, no classifier. The count uses <code>countAcceptedMembers</code> (<code
+      >invite_accepted = true</code
+    >
+    only) — a pending invite does not make a solo game multiplayer.
+  </li>
+  <li>
+    <strong>Auto.</strong> The default in multiplayer — call the real Haiku classifier over the
+    public table context.
+  </li>
+</ul>
+
+<p>
+  The classifier (<code>dm-trigger-classifier.ts</code>) is a real Anthropic Haiku call through the
+  single LLM abstraction (model from config, never hardcoded) — ZFC: the "should the DM take a turn,
+  and how heavy" judgment is delegated to a model, never a heuristic. Its decision is
+  <strong>three-way</strong>, the "make the DM feel alive" requirement:
+</p>
+
+<ul>
+  <li>
+    <strong>Respond</strong> — a player addressed the DM, addressed an NPC, or took an action the
+    world should answer ("I check the stall's wares", "I try to pick the lock"). Open a turn
+    reactively.
+  </li>
+  <li>
+    <strong>Sit back</strong> — grounded, engaged player-to-player roleplay advancing a scene. Stay
+    out of the way; good RP is not an interruption opportunity. No turn.
+  </li>
+  <li>
+    <strong>Step in</strong> — the players are still talking among themselves but the scene has
+    <em>drifted</em> (gone in circles, turned meta, gone slack). Open a turn proactively so the DM
+    can re-ground them.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The classifier opens the door; it never decides what the DM says</strong> — the
+  sit-back-vs-step-in call is a coarse read. The classifier only decides to open a turn; the Slow
+  Thinker (MYT-69) makes the fine intervene-or-stay-silent call and authors any world beat. The
+  <em>quality</em> of the read (telling good RP from drift) is an eval-harness concern: this issue
+  builds the mechanism, and the smoke verifies a proactive open <em>can</em> fire; tuning happens
+  against the eval harness.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The classifier input is public by construction</strong> — enforced ignorance (CLAUDE.md
+  non-negotiable #1) is structural here, not field discipline. The
+  <code>DmTriggerContext</code> type carries only table-visible material: the attributed
+  player-message batch, the DM's last <em>player-facing</em> line, two pacing counters (<code
+    >turnsSinceLastDmBeat</code
+  >
+  / <code>secondsSinceLastDmBeat</code>), and an optional public scene-grounding line. A secret has
+  nowhere to live on the type, so there is no path for plot or hidden NPC motive to reach this call.
+  While the Slow Thinker and Scribe are stubbed, the only public scene material available is the
+  running summary — used for both the last-DM-output and scene-grounding slots; both fill in for
+  real at MYT-69 / 73, but the type forbids wiring secret material in later.
+</aside>
+
+<p>
+  On a <code>shouldRespond=false</code> verdict, the worker re-arms the debounce to the dead-air
+  mark (<code>delay = DEAD_AIR_MS − sinceLastActivity</code>) so the 60s backstop still fires if the
+  silence persists; any new activity reschedules it back to the normal quiet window. The verdict's
+  <code>intent</code> (reactive vs proactive) and <code>complexity</code> (low vs high) ride the
+  turn payload as the skip-ST routing hint that MYT-68 / 69 consume; a proactive open always routes
+  through the Slow Thinker (the enforced-ignorant Fast Thinker can't invent a world beat). The
+  <code>confidence</code> anchors the <code>CONFIDENCE_FLOOR</code> (0.8) escalation. The free-prose
+  <code>reason</code> is debug-only — it is structured-logged, never plumbed onto the payload and
+  never sent to a player.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Fail-closed, no fail-open fallback</strong> — a classifier failure (timeout, transient,
+  auth, malformed parse) means no turn this cycle, re-driven on the next activity, with a metric
+  distinguishable from a normal <code>shouldRespond:false</code> for diagnosis. There is no "default
+  to firing" fallback: a <em>sustained</em> Haiku failure is an Anthropic-API outage, in which case
+  the FT / ST turn the classifier would trigger is down too (same API) — firing anyway would only
+  enqueue a turn that immediately fails into <code>turn_error</code>. Because the schema is
+  trivially small and the posture is fail-closed, the classifier skips the Sonnet repair's fail-open
+  default and lets a malformed parse fall straight to the fail-closed path.
+</aside>
+
+<h2>The explicit summon: an immediate hard preempt</h2>
+
+<p>
+  An <code>@dm</code>-prefixed message or a <code>dm_invoke</code> frame is the "everyone be quiet,
+  I have a question for the DM" gesture — it deliberately ices out the room and must fire as fast as
+  possible. It bypasses the <code>dm-trigger</code> queue entirely.
+  <code>runExplicitTrigger</code> (<code>ws-trigger-actions.ts</code>) rate-limits the summon per
+  campaign + user, then — if no turn is in flight — allocates the <code>turnId</code>,
+  <strong>broadcasts <code>dm_thinking</code> immediately</strong> so every client greys its input
+  ahead of any enqueue or lock latency, builds the batch from the watermark (frozen at invoke), and
+  enqueues the <code>session-turn</code> directly. If a turn <em>is</em> in flight, it instead sets
+  the explicit-pending flag, drained the instant the current turn releases.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The <code>@dm</code> prefix and <code>dm_invoke</code> are structural, not semantic</strong
+  >
+  — detecting the summon is a literal prefix check and a frame-type check, both mechanical (the ZFC
+  structural carve-out). The rate limit is policy enforcement, another carve-out: the explicit path
+  is the first WS frame that triggers real LLM spend, so an unbounded <code>@dm</code> is a cost and
+  griefing surface. Over the ceiling, the summon is dropped and logged. None of this is the
+  classifier — the classifier judges only the auto path.
+</aside>
+
+<h2>Collision and drain: the lock is the mutex</h2>
+
+<p>
+  The invariant is at most one <code>session-turn</code> in flight per campaign, and triggers
+  arriving during a turn produce at most one coherent follow-up — never a backlog of stale replies.
+  The coordination is the <code>dm_responding</code> flag plus the session lock,
+  <strong>not</strong> a queue-level dedup id: the <code>session-turn</code> queue keeps its
+  no-dedup, lock-is-the-mutex contract unchanged.
+</p>
+
+<p>
+  The <a href="./session-turn.html">session-turn worker</a> sets <code>dm_responding</code> while a
+  turn runs and records <code>last-responded-seq</code> = the max consumed seq at flush, then clears
+  the flag on release. The <code>dm-trigger</code> worker checks <code>dm_responding</code> before
+  enqueuing; in-flight, it does not enqueue. New activity during the turn reschedules the debounce;
+  after the turn (flag cleared) and a fresh quiet window, the debounce matures, the worker builds
+  the batch from the <em>new</em> watermark, and enqueues one follow-up. If players were quiet
+  during the turn, no follow-up fires — correct, nothing new to say.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The debounce <em>is</em> the queued trigger; the post-turn re-mature <em>is</em> the
+    drain</strong
+  >
+  — the runtime spec's "if lock held, queue the trigger; on release, drain the queue" is realized
+  without a literal queue. The lock serializes any residual race (two enqueues slipping past the
+  flag check); the loser returns <code>{ ran: false }</code> and is re-driven by the debounce, not
+  by blind BullMQ <code>attempts</code>. The one exception is an explicit summon during an in-flight
+  turn: the session-turn worker checks the explicit-pending flag on release and enqueues the
+  follow-up <em>immediately</em>, so the summon is honored the instant the current turn ends.
+</aside>
+
+<h2>The terminal turn_error subscriber</h2>
+
+<p>
+  MYT-67 also closes a gap left in the <a href="./session-turn.html">turn worker</a>: a turn whose
+  holder crashes terminally (<code>maxStalledCount</code> exhausted) was failed by BullMQ
+  <em>inside</em> a Lua script, emitting only a broker-side event — never the per-worker
+  <code>on('failed')</code> JS event — so the player's client would wait forever on a turn that will
+  never complete. <code>session-turn-queue-events.ts</code> adds a
+  <code>QueueEvents('session-turn')</code> subscriber that listens for the broker
+  <code>failed</code> event and publishes the terminal <code>turn_error</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A dedicated blocking connection and a cross-container idempotency latch</strong> —
+  <code>QueueEvents</code> <code>BRPOP</code>s a Redis stream, so it gets its own
+  <code>duplicate()</code>d ioredis connection, never the BullMQ Worker's (a blocking command would
+  stall every command multiplexed onto a shared connection). And because <em>both</em> publishers —
+  the in-process JS listener and the broker-side <code>QueueEvents</code>, which fires on every
+  worker container — could publish, each guards on a shared <code>SET NX</code> latch
+  (<code>turn-error-published:{turnId}</code>) before publishing, so exactly one
+  <code>turn_error</code>
+  goes out per terminal turn regardless of path or container count. The subscriber's connection is
+  torn down on SIGTERM, so no connection leaks per deploy.
+</aside>
+
+<h2>Observability: a dev signal, never the player transport</h2>
+
+<p>
+  The trigger decision is surfaced for debugging as a <strong>structured pino log</strong> —
+  <code>{ kind, shouldRespond, intent?, confidence?, reason?, campaignId, at }</code>. It is
+  deliberately <em>not</em> a player-facing frame: <code>dm_trigger</code> is not in the
+  <a href="./session-transport.html">transport</a>'s server-frame union, because the hub fans every
+  published frame to all player sockets with no audience filter — a <code>dm_trigger</code> frame
+  there would leak the classifier's <code>reason</code> and <code>confidence</code> to players. The
+  player-visible signal that a turn fired is the existing <code>dm_thinking</code> frame.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="watch-a-trigger-decision-locally">Watch a DM trigger decision fire locally</h3>
+<ol>
+  <li>
+    Bring up the data plane and both processes — <code>pnpm db:up</code>,
+    <code>pnpm dev</code> (API), and <code>pnpm --filter @mythrun/backend dev:worker</code> (the
+    worker that hosts the dm-trigger worker). Start a session (<code
+      >POST /api/sessions/:campaignId/start</code
+    >) and open a WebSocket.
+  </li>
+  <li>
+    Send a <code>typing_start</code> heartbeat, then a <code>player_message</code>. Watch the worker
+    log: after <code>QUIET_WINDOW_MS</code> of quiet the debounce matures and the worker emits a
+    <code>dm-trigger decision</code> log line with <code>kind</code>, <code>shouldRespond</code>,
+    and (for auto) the classifier's <code>intent</code> / <code>confidence</code> /
+    <code>reason</code>.
+  </li>
+  <li>
+    On a respond / step-in / solo / explicit decision, a <code>dm_thinking</code> frame appears on
+    the socket — the <a href="./session-turn.html">turn</a> fired. A sit-back decision logs
+    <code>shouldRespond:false</code> and re-arms toward the dead-air mark, no
+    <code>dm_thinking</code>.
+  </li>
+  <li>
+    Send <code>{ "type": "dm_invoke" }</code> (or a message starting <code>@dm</code>): the
+    <code>dm_thinking</code> frame appears <em>immediately</em>, bypassing the quiet window and the
+    classifier.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-dm-that-never-fires">Diagnose a DM that never fires (or fires too eagerly)</h3>
+<ol>
+  <li>
+    Inspect the <code>dm-trigger</code> queue for a delayed job (dedup id
+    <code>dm-trigger:{campaignId}</code>). A present delayed job means a quiet window is counting
+    down; its absence after activity means either it matured already or a reschedule failed — grep
+    the API logs for <code>ws-session debounce reschedule failed</code> (the warn on a queue
+    outage).
+  </li>
+  <li>
+    Check the trigger-state keys for the campaign: <code>last-activity</code> (the re-validation
+    stamp), <code>responded-seq</code> (the batch watermark — an unexpectedly high value means the
+    next batch starts past recent messages), <code>dm_responding</code> (a turn is in flight, so the
+    worker is gating enqueues), and <code>first-unresponded</code> (the max-wait anchor). A
+    lingering <code>dm_responding</code> with no live turn lapses on its own (TTL ≈ lock TTL).
+  </li>
+  <li>
+    A DM that fires on a sustained-typing hold confirms the max-wait ceiling: the debounce matured
+    at
+    <code>first-unresponded + MAX_QUIET_EXTENSION_MS</code> despite ongoing typing. That is by
+    design.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The server side lives in the <a href="./session-transport.html">session transport</a>'s inbound
+  handler, which writes the typing / activity state and reschedules the debounce — and adds the
+  <code>dm_invoke</code> client frame to the wire contract. The worker side is the fifth Worker in
+  the <a href="./worker.html">worker process</a>, alongside the <code>QueueEvents</code> subscriber
+  that closes the turn worker's terminal-error gap. A decision enqueues a
+  <code>session-turn</code> job that the <a href="./session-turn.html">session turn</a> page's
+  lock-fenced conductor executes; that worker in turn sets <code>dm_responding</code> and records
+  the <code>last-responded-seq</code> watermark this page's drain logic depends on. The classifier
+  runs through the <a href="./llm.html">LLM client</a>'s single abstraction with the Haiku model
+  from config. Member counts come from <a href="../data/repository.html">the repository layer</a>'s
+  <code>countAcceptedMembers</code>.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>Config constants (dm-trigger-config.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Default</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>TYPING_HEARTBEAT_S</code></td>
+      <td>3</td>
+      <td>Client typing-refresh cadence (the frontend will honor it later).</td>
+    </tr>
+    <tr>
+      <td><code>TYPING_TTL_S</code></td>
+      <td>8</td>
+      <td>Typing-key TTL; &gt; 2× heartbeat so a single dropped heartbeat doesn't flicker.</td>
+    </tr>
+    <tr>
+      <td><code>QUIET_WINDOW_MS</code></td>
+      <td>4000</td>
+      <td>Required quiet before the DM fires (auto / solo). Explicit bypasses it.</td>
+    </tr>
+    <tr>
+      <td><code>DEDUP_TTL_MS</code></td>
+      <td><code>DEAD_AIR_MS + 4000</code></td>
+      <td>Dedup-key lifetime; must exceed the longest delay (the dead-air re-arm) + pickup.</td>
+    </tr>
+    <tr>
+      <td><code>MAX_QUIET_EXTENSION_MS</code></td>
+      <td>30000</td>
+      <td>Continuous-typing cap — the debounce can't push past this from first-unresponded.</td>
+    </tr>
+    <tr>
+      <td><code>DEAD_AIR_MS</code></td>
+      <td>60000</td>
+      <td>Total-silence backstop → forced proactive step-in, skipping the classifier.</td>
+    </tr>
+    <tr>
+      <td><code>MAX_BATCH</code></td>
+      <td>30</td>
+      <td>Cap on the most-recent player messages carried into the classifier / turn batch.</td>
+    </tr>
+    <tr>
+      <td><code>CONFIDENCE_FLOOR</code></td>
+      <td>0.8</td>
+      <td>Below this, an auto verdict escalates (treated as high).</td>
+    </tr>
+    <tr>
+      <td><code>HAIKU_CLASSIFY_TIMEOUT_MS</code></td>
+      <td>60000</td>
+      <td>
+        Per-call classifier timeout; held under the worker <code>lockDuration</code> so a hung call
+        can't outlive the job lock.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        worker <code>lockDuration</code> / <code>stalledInterval</code> /
+        <code>maxStalledCount</code> / concurrency
+      </td>
+      <td>90s / 90s / 1 / 5</td>
+      <td>The dm-trigger worker's own BullMQ timing — separate from the session-turn worker's.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Redis keys (realtime cluster — trigger-state.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key (under <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>)</th>
+      <th>Shape / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{cId}:typing:{userId}</code></td>
+      <td>
+        <code>"1"</code>, <code>EX 8</code>. Per-member typing display; expiry is the authoritative
+        stop.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:last-activity</code></td>
+      <td>ms epoch. The maturity re-validation guard.</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:first-unresponded</code></td>
+      <td>ms epoch, <code>SET NX</code> (first-only). The max-wait ceiling anchor.</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:responded-seq</code></td>
+      <td>
+        int watermark; set at turn flush. The batch starts at <code>(responded-seq, max]</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:dm_responding</code></td>
+      <td>
+        flag, <code>PX</code> ≈ lock TTL, heartbeat-refreshed. "A turn is in flight" drain guard.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:dm-trigger-explicit</code></td>
+      <td>flag, drained via <code>GETDEL</code> on release. Explicit summon pending.</td>
+    </tr>
+    <tr>
+      <td><code>turn-error-published:{turnId}</code></td>
+      <td>
+        flag, <code>SET NX EX 60</code>. The cross-container terminal-error idempotency latch.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/dm-trigger-config.ts</code></td>
+      <td>
+        The shared config constants — imported by both the server and the worker so the timings
+        can't drift.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/dm-trigger-queue.ts</code></td>
+      <td>
+        <code>rescheduleDebounce</code>, <code>clampQuietDelay</code>, <code>dedupId</code>,
+        <code>DmTriggerPayload</code> / <code>DmTriggerQueueLike</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/dm-trigger-worker.ts</code></td>
+      <td>
+        <code>processDmTriggerJob</code> (the ordered decision),
+        <code>buildDmTriggerWorker</code> (boot wiring).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/trigger-state.ts</code></td>
+      <td>
+        <code>makeTriggerState</code> — all the DM-trigger Redis keys (typing, activity, watermark,
+        flags, the error latch).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/turn-batch.ts</code></td>
+      <td>
+        <code>buildTurnBatch</code> — the <code>(lastRespondedSeq, max]</code> →
+        <code>TriggerMessage[]</code> builder, shared by the worker and the explicit path.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/session-turn-queue-events.ts</code></td>
+      <td>
+        <code>buildSessionTurnQueueEvents</code> — the broker-side terminal
+        <code>turn_error</code> subscriber (dedicated connection + latch).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/routes/ws-trigger-actions.ts</code></td>
+      <td>
+        <code>isExplicitText</code>, <code>rescheduleQuietWindow</code>,
+        <code>runExplicitTrigger</code> — the trigger side effects the inbound handler delegates to.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/dm-trigger-classifier.ts</code></td>
+      <td>
+        <code>classifyDmTrigger</code>, <code>DmTriggerContext</code> (public-by-construction).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/schemas/dm-trigger-classification.ts</code></td>
+      <td>
+        <code>DmTriggerClassificationSchema</code> —
+        <code>{ shouldRespond, intent, complexity, confidence, reason }</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/prompts/session/dm-trigger-classifier.txt</code></td>
+      <td>
+        The respond / sit-back / step-in rubric with exemplars, the complexity rubric, and
+        confidence anchoring.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/session/dm-trigger-config.ts</code>,
+  <code>backend/src/session/dm-trigger-queue.ts</code>,
+  <code>backend/src/session/dm-trigger-worker.ts</code>,
+  <code>backend/src/session/trigger-state.ts</code>, <code>backend/src/session/turn-batch.ts</code>,
+  <code>backend/src/session/session-turn-queue-events.ts</code>,
+  <code>backend/src/routes/ws-trigger-actions.ts</code>,
+  <code>backend/src/llm/dm-trigger-classifier.ts</code>,
+  <code>backend/src/llm/schemas/dm-trigger-classification.ts</code>,
+  <code>backend/src/llm/prompts/session/dm-trigger-classifier.txt</code>. Design spec:
+  <code>docs/superpowers/specs/2026-06-08-myt-67-dm-trigger-system-design.md</code>.
+</p>

@@ -1,10 +1,13 @@
 digraph worker {
   // The worker. A second ECS Fargate service that runs node dist/worker.js
-  // and pulls jobs from four BullMQ queues on redisBatch. Health server on
+  // and pulls jobs from five BullMQ queues on redisBatch. Health server on
   // 127.0.0.1:3001 is what ECS probes. Real prep-stage processors land across
   // MYT-51 onward; session-prep (MYT-61) is the third queue/worker; the
   // session-turn worker (MYT-66) is the fourth — the lock-fenced DM-turn
-  // conductor that also reads/writes redisRealtime (lock + state + publish).
+  // conductor; the dm-trigger worker (MYT-67) is the fifth — the DM-trigger
+  // decision shell. Both also read/write redisRealtime (lock / state / publish /
+  // trigger coordination). A QueueEvents('session-turn') subscriber publishes the
+  // broker-side terminal turn_error on a dedicated blocking connection.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -16,7 +19,7 @@ digraph worker {
     color="ember";
     fontcolor="ember";
 
-    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep' |\n  'session-turn')"];
+    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep' |\n  'session-turn' | 'dm-trigger')"];
   }
 
   subgraph cluster_redis {
@@ -27,6 +30,7 @@ digraph worker {
     q_campaign [label="queue: campaign-setup"];
     q_prep     [label="queue: session-prep"];
     q_turn     [label="queue: session-turn", color="ember", fontcolor="ember"];
+    q_trig     [label="queue: dm-trigger\n(debounce — see dm-trigger)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_worker {
@@ -41,6 +45,8 @@ digraph worker {
     w_camp     [label="BullmqWorker\ncampaign-setup\nconcurrency 5"];
     w_prep     [label="BullmqWorker\nsession-prep\nconcurrency 3", color="ember", fontcolor="ember"];
     w_turn     [label="buildSessionTurnWorker\nsession-turn\nconcurrency 5\nlock + state + publish\non redisRealtime", color="ember", fontcolor="ember"];
+    w_trig     [label="buildDmTriggerWorker\ndm-trigger\nconcurrency 5\nre-validate → batch → classify\n→ enqueue session-turn", color="ember", fontcolor="ember"];
+    qevents    [label="QueueEvents('session-turn')\nbroker failed → turn_error\ndedicated BRPOP connection", color="ember", fontcolor="ember"];
     health     [label="worker/health-server.ts\nGET /health on 127.0.0.1:3001\nprobes: pg + redisBatch +\nredisRealtime + isRunning()"];
     bullmq_redis [label="redis/bullmq-client.ts\nmaxRetriesPerRequest: null\n(BullMQ requirement)"];
   }
@@ -54,12 +60,16 @@ digraph worker {
   queue_producer -> q_campaign;
   queue_producer -> q_prep;
   queue_producer -> q_turn;
+  queue_producer -> q_trig;
 
   // Worker consumes
   q_world    -> w_world  [label="BLPOP-style"];
   q_campaign -> w_camp   [label="BLPOP-style"];
   q_prep     -> w_prep   [label="BLPOP-style"];
   q_turn     -> w_turn   [label="BLPOP-style\n+ stalled redelivery", color="ember"];
+  q_trig     -> w_trig   [label="matures\n(quiet window)", color="ember"];
+  w_trig     -> q_turn   [label="enqueue\nsession-turn", color="ember"];
+  q_turn     -> qevents  [label="broker failed", style=dotted, color="ember"];
 
   // Worker shape
   cfg     -> w_world  [style=dashed, label="queue name + concurrency"];
@@ -69,13 +79,17 @@ digraph worker {
   entry   -> w_camp   [style=dashed];
   entry   -> w_prep   [style=dashed];
   entry   -> w_turn   [style=dashed];
+  entry   -> w_trig   [style=dashed];
+  entry   -> qevents  [style=dashed, label="register +\nclose on SIGTERM"];
   bullmq_redis -> w_world [style=dashed, label="connection"];
   bullmq_redis -> w_camp  [style=dashed];
   bullmq_redis -> w_prep  [style=dashed];
   bullmq_redis -> w_turn  [style=dashed];
+  bullmq_redis -> w_trig  [style=dashed];
 
-  // Turn worker also drives redisRealtime (lock + state + frame publish)
+  // Turn + trigger workers also drive redisRealtime (lock / state / publish / coordination)
   w_turn -> realtime [style=dashed, label="lock + state +\nDM-turn frames", color="ember"];
+  w_trig -> realtime [style=dashed, label="trigger state +\nclassifier", color="ember"];
 
   // Health + ECS probe
   entry  -> health [style=dashed, label="start last"];
@@ -85,5 +99,6 @@ digraph worker {
   health -> w_camp      [label="isRunning()", style=dotted];
   health -> w_prep      [label="isRunning()", style=dotted];
   health -> w_turn      [label="isRunning()", style=dotted];
+  health -> w_trig      [label="isRunning()", style=dotted];
   health -> realtime    [label="PING", style=dotted];
 }

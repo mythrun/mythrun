@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:95298fb3d315fbf29f62bd4736aea6c19af7c7795862bf2443429e6f562fdbeb -->
-<!-- last-ticket: MYT-65 -->
+<!-- source-hash: sha256:e4bd28083e32c5d04fe9d412a51d91c912ca9626a5bd6dd504041131c423e655 -->
+<!-- last-ticket: MYT-67 -->
 
 <h1>Repository layer</h1>
 
@@ -490,15 +490,20 @@
 
 <p>
   <strong><code>campaigns</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>listByUser</code>, <code>update</code>, plus four membership methods:
-  <code>addMember</code>, <code>getMembership</code>, <code>getOwner</code>,
-  <code>listMembers</code>. <code>listByUser</code> joins <code>campaign_members</code> directly in
-  SQL to filter to "campaigns I'm a member of with an accepted invite." <code>addMember</code> uses
+  <code>listByUser</code>, <code>update</code>, plus the membership methods: <code>addMember</code>,
+  <code>getMembership</code>, <code>getOwner</code>, <code>listMembers</code>, and the MYT-67
+  <code>countAcceptedMembers</code>. <code>listByUser</code> joins
+  <code>campaign_members</code> directly in SQL to filter to "campaigns I'm a member of with an
+  accepted invite." <code>addMember</code> uses
   <code>INSERT … ON CONFLICT (campaign_id, user_id) DO NOTHING RETURNING *</code> so a re-add is
   idempotent — when the conflict swallows the row, the method falls through to a follow-up
   <code>SELECT</code> and returns the existing membership. <code>listMembers</code> joins
   <code>users</code> for username + display_name and filters out suspended accounts so a banned
-  member doesn't surface in another player's roster.
+  member doesn't surface in another player's roster. <code>countAcceptedMembers</code> counts only
+  <code>invite_accepted = true</code> rows — the
+  <a href="../runtime/dm-trigger.html">DM trigger</a>'s solo-vs-multiplayer gate needs the accepted
+  count, not the unfiltered <code>listMembers</code>
+  length, so a pending invite doesn't make a solo game look multiplayer.
 </p>
 
 <aside class="wiki-rationale">

@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session turn</div>
         <article>
@@ -422,8 +422,9 @@
   extending; the lock atomically expires within its TTL; the next worker acquires the now-free key
   with a plain <code>SET NX</code>. A manual "break a stale lock" step would be a race window (two
   workers both observe "stale" and both break-then-acquire); atomic TTL expiry avoids it entirely.
-  The legacy <code>dm_responding</code> flag survives only as a UI cue, never consulted to decide
-  ownership.
+  The lock — never the <code>dm_responding</code> flag — decides turn ownership; that flag is the
+  <a href="./dm-trigger.html">DM trigger</a> system's drain guard (MYT-67 sets it on acquire, clears
+  it on release, so the trigger worker won't enqueue a colliding turn), not an ownership mutex.
 </aside>
 
 <h2 id="the-lock-fenced-worker-and-crash-recovery">The lock-fenced worker and crash recovery</h2>
@@ -436,9 +437,10 @@
 <ol>
   <li>
     <code>tryAcquire</code> the session lock. On <code>null</code> (a turn is already running for
-    this session), return <code>{ ran: false }</code> and let BullMQ's <code>attempts</code> re-run
-    the job later — the deliberately minimal placeholder for the real trigger-queue + drain
-    semantics of MYT-67.
+    this session), return <code>{ ran: false }</code>; the loser is re-driven by the
+    <a href="./dm-trigger.html">DM trigger</a> debounce, not by blind BullMQ <code>attempts</code>.
+    On acquire, set the <code>dm_responding</code> flag (token = the lock token) so the trigger
+    worker won't enqueue a colliding turn while this one runs (MYT-67 §4.7).
   </li>
   <li>
     Start a heartbeat (<code>setInterval</code>, every 15 s) that extends the lock. If an extend
@@ -449,7 +451,9 @@
     Publish <code>dm_thinking</code>, construct the <code>SessionController</code>, and run
     <code>load → process → flush</code>. The <code>lockLost</code> flag is re-checked before
     <code>processDmTurn</code> and again before <code>flushToRedis</code>, so a lost lock stops the
-    turn <em>before</em> the flush, never after.
+    turn <em>before</em> the flush, never after. Only on a real (flushed) success does the worker
+    advance the <code>last-responded-seq</code> watermark to the job's <code>maxConsumedSeq</code> —
+    a lock-lost abort never flushes, so it must never advance the watermark.
   </li>
   <li>
     On a lock-lost abort, return without flushing or publishing <code>turn_error</code> — the
@@ -457,9 +461,13 @@
     retry policy.
   </li>
   <li>
-    In a <code>finally</code>, clear the heartbeat and release the lock. Release is a
+    In a <code>finally</code>, clear the heartbeat, release the lock, then clear
+    <code>dm_responding</code> so the trigger worker can enqueue the next turn. Release is a
     compare-and-delete, so it is safe even after lock loss — it can only ever drop the worker's own
-    token, never a successor's.
+    token, never a successor's. The <code>finally</code> also drains a pending explicit summon: if
+    an <code>@dm</code> landed while this turn was in flight,
+    <code>takeExplicitPending</code> enqueues one explicit follow-up immediately (in its own
+    try/catch, so a drain hiccup never masks the turn outcome).
   </li>
 </ol>
 
@@ -555,7 +563,7 @@
 
 <p>
   <code>enqueueTurn</code> is the thin BullMQ producer: it adds one job carrying
-  <code>{ campaignId, sessionId, turnId, triggerMessages }</code> with
+  <code>{ campaignId, sessionId, turnId, triggerMessages, maxConsumedSeq, trigger }</code> with
   <strong>no custom jobId</strong>. The per-session mutex is the lock, not a jobId-dedup — so unlike
   the suspend queue, turns must each land as a distinct job rather than collapse onto a shared id.
   The <code>session-turn</code> queue handle is threaded through
@@ -564,12 +572,28 @@
 </p>
 
 <p>
-  MYT-66 ships only a minimal trigger to drive its end-to-end test: a dev-only
-  <code>POST /api/dev/campaigns/:campaignId/fire-turn</code>. It resolves the campaign's active
-  session (no active session → <code>409 no_active_session</code>, so a smoke caller starts one
-  first), allocates a <code>turnId</code>, enqueues a single fixed-identity trigger, and returns
-  <code>202 { turnId }</code>. The real player-chat trigger path — mapping a member to their
-  character and the trigger modes — is MYT-67.
+  The <code>maxConsumedSeq</code> and <code>trigger</code> fields are the MYT-67 additions. The
+  <a href="./dm-trigger.html">DM trigger</a> system populates them: <code>maxConsumedSeq</code> is
+  the watermark this turn consumes up to (the worker advances <code>last-responded-seq</code> to it
+  at flush, so the next batch starts at <code>(maxConsumedSeq, …]</code> and a deferred follow-up
+  never replays stale messages); <code>trigger.kind</code> is the decision source (<code
+    >explicit</code
+  >
+  / <code>solo</code> / <code>auto</code>) and the optional <code>trigger.classification</code> is
+  the Haiku verdict for the <code>auto</code> path. Both are metadata only — they never cross the
+  tier boundary into a Fast Thinker call, and the stub conductor ignores them. MYT-68 / 69 read
+  <code>trigger.classification</code> for the skip-ST routing.
+</p>
+
+<p>
+  The dev-only <code>POST /api/dev/campaigns/:campaignId/fire-turn</code> is the manual poke. It
+  resolves the campaign's active session (no active session → <code>409 no_active_session</code>, so
+  a smoke caller starts one first), reads the durable <code>MAX(seq)</code> for
+  <code>maxConsumedSeq</code>, allocates a <code>turnId</code>, enqueues a single fixed-identity
+  trigger with <code>trigger.kind: 'explicit'</code>, and returns <code>202 { turnId }</code>. The
+  real player-chat trigger path — the trigger modes, the typing-gated quiet window, and mapping a
+  member to their messages — is the <a href="./dm-trigger.html">DM trigger</a> system (MYT-67); this
+  dev route stays as the deterministic manual poke.
 </p>
 
 <aside class="wiki-rationale">
@@ -622,10 +646,14 @@
   <li>
     A turn that threw and exhausted its <code>attempts</code> publishes a
     <code>turn_error</code> frame (the worker's <code>failed</code>-event handler, on the final
-    attempt). Note the known gap: the <code>maxStalledCount</code>-exhaustion terminal (a holder
-    that crashes 3× in a row) does <em>not</em> fire that handler — BullMQ transitions stalled →
-    failed inside its own Lua script and emits only a <code>stalled</code> event. Closing that needs
-    a broker-side <code>QueueEvents</code> subscriber, owned by MYT-67 (tracked in bead myth-tvnb).
+    attempt). The <code>maxStalledCount</code>-exhaustion terminal (a holder that crashes
+    repeatedly) does <em>not</em> fire that JS handler — BullMQ transitions stalled → failed inside
+    its own Lua script and emits only a broker-side event. MYT-67 closes that gap with a
+    <code>QueueEvents('session-turn')</code> subscriber (on a dedicated blocking connection) that
+    publishes the terminal <code>turn_error</code> too; both publishers guard on a shared
+    <code>SET NX</code> latch (<code>turn-error-published:{turnId}</code>) so exactly one frame
+    ships per terminal turn regardless of path or container. See the
+    <a href="./dm-trigger.html">DM trigger</a> page.
   </li>
 </ol>
 
@@ -643,7 +671,12 @@
   <a href="./dev-tool.html">dev tool</a> drives the fire-turn trigger from the System page; the
   <code>session-turn</code> queue handle is threaded through the
   <a href="./index.html">backend</a>'s <code>AppDeps</code>. The stubbed tiers are the seams the
-  real Fast Thinker (MYT-68), Slow Thinker (MYT-69), and Scribe (MYT-73) implement.
+  real Fast Thinker (MYT-68), Slow Thinker (MYT-69), and Scribe (MYT-73) implement. Upstream, the
+  <a href="./dm-trigger.html">DM trigger</a> system decides <em>when</em> a turn fires and is what
+  enqueues these jobs (other than the dev poke); this worker sets the
+  <code>dm_responding</code> flag and records the <code>last-responded-seq</code> watermark that the
+  trigger's drain logic depends on, and the trigger system's <code>QueueEvents</code> subscriber
+  closes this worker's terminal-error gap.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -782,9 +815,10 @@
     <tr>
       <td><code>src/session/turn-worker.ts</code></td>
       <td>
-        <code>processTurnJob</code>, <code>buildSessionTurnWorker</code>,
-        <code>publishTerminalTurnError</code> (H8 gate), <code>LockLostError</code>; the tuning
-        constants.
+        <code>processTurnJob</code> (now also sets/clears <code>dm_responding</code>, advances the
+        <code>last-responded-seq</code> watermark at flush, and drains the explicit-pending flag on
+        release), <code>buildSessionTurnWorker</code>, <code>publishTerminalTurnError</code> (H8 +
+        the §4.8 SET-NX latch claim), <code>LockLostError</code>; the tuning constants.
       </td>
     </tr>
     <tr>
@@ -806,7 +840,8 @@
       <td><code>src/session/turn-queue.ts</code></td>
       <td>
         <code>enqueueTurn</code>, <code>QUEUE_SESSION_TURN</code>, <code>TURN_JOB_NAME</code>,
-        <code>TurnJobPayload</code> / <code>TurnQueueLike</code>.
+        <code>TurnJobPayload</code> (now with <code>maxConsumedSeq</code> +
+        <code>trigger</code> metadata; still no jobId — H10) / <code>TurnQueueLike</code>.
       </td>
     </tr>
     <tr>

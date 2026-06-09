@@ -1,0 +1,78 @@
+digraph dm_trigger {
+  // The DM-trigger decision system — "WHEN does the AI DM respond?" The server
+  // (ws-session) observes typing heartbeats + player messages and, on any
+  // activity, reschedules a per-campaign BullMQ debounce job (replace-mode) so
+  // the DM only fires after the table has gone QUIET for a window — never cutting
+  // a player off mid-thought. When the debounce matures, the dm-trigger worker
+  // re-validates quiet, builds the (lastRespondedSeq, max] message batch, decides
+  // three-way via the Haiku classifier (or skips it: dead-air / explicit / solo),
+  // checks the dm_responding drain guard, and enqueues at most one session-turn.
+  // EXPLICIT (@dm / dm_invoke) bypasses the debounce entirely: the server greys
+  // every input via an immediate dm_thinking and enqueues the turn directly.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.85;
+
+  client [label="player / SPA\ntyping_start heartbeats\nplayer_message · dm_invoke", color="ember", fontcolor="ember"];
+
+  subgraph cluster_api {
+    label="API process  (ws-session inbound handler)";
+    style="dashed";
+
+    inbound [label="handleInbound\nmarkTyping · stampActivity\narmFirstUnresponded\n(after persist+broadcast)"];
+    autopath [label="auto / solo\nrescheduleQuietWindow\nclampQuietDelay (max-wait cap)"];
+    explicit [label="explicit (@dm / dm_invoke)\nrate-limit → dm_thinking NOW\nbuild batch → enqueue DIRECT\n(or set explicit-pending)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_state {
+    label="Redis (realtime) — trigger-state.ts";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    typing [label="session:{cId}:typing:{user}\nEX 8 · expiry = authoritative stop"];
+    activity [label="last-activity · first-unresponded\nresponded-seq · dm_responding\ndm-trigger-explicit"];
+  }
+
+  subgraph cluster_batch {
+    label="redisBatch";
+    style="dotted";
+    debounce [label="queue: dm-trigger\nreplace-mode debounce\ndelay = QUIET_WINDOW · ttl > dead-air"];
+    q_turn [label="queue: session-turn\n(execution — see Session turn)"];
+  }
+
+  subgraph cluster_worker {
+    label="Worker process — dm-trigger worker";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    revalidate [label="processDmTriggerJob\n1. re-validate quiet (re-arm if early)\n2. build (respondedSeq, max] batch\n   empty → exit (no-monologue guard)"];
+    decide [label="3. decide (in order):\ndead-air 60s → proactive step-in\nexplicit-pending → solo → auto", color="ember", fontcolor="ember"];
+    classify [label="Haiku classifier (auto only)\nrespond / sit-back / step-in\nshouldRespond · intent · complexity"];
+    enqueue [label="4. drain guard (dm_responding?)\nin-flight → exit · else enqueue ONE\n+ structured-log the decision"];
+  }
+
+  // Activity → debounce reschedule
+  client -> inbound [label="frames"];
+  inbound -> typing [label="set/clear", style=dashed];
+  inbound -> activity [label="stamp", style=dashed];
+  inbound -> autopath [label="auto/solo"];
+  inbound -> explicit [label="@dm / dm_invoke"];
+  autopath -> debounce [label="add (replace)"];
+
+  // Explicit fast-path bypasses the debounce
+  explicit -> q_turn [label="enqueue DIRECT", color="ember"];
+
+  // Maturity → decision
+  debounce -> revalidate [label="matures\n(quiet window)"];
+  revalidate -> activity [label="lastActivity · respondedSeq", style=dashed];
+  revalidate -> decide;
+  decide -> classify [label="auto"];
+  classify -> enqueue [label="shouldRespond?"];
+  decide -> enqueue [label="dead-air / explicit / solo"];
+  decide -> debounce [label="sit-back → re-arm\nto dead-air mark", style=dashed];
+  enqueue -> activity [label="isResponding?", style=dashed];
+  enqueue -> q_turn [label="add session-turn", color="ember"];
+}

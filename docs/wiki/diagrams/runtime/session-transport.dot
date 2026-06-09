@@ -23,7 +23,7 @@ digraph session_transport {
 
     auth   [label="wsSessionAuth (preHandler)\nconsumeWsTicket → payload | null\nticket.sessionId == :sessionId\nsessions.getById → active?\nre-check campaign_members\n(campaignId = SESSION ROW)"];
     conn   [label="handleConnection\nparticipants.join\naddPresence + hub.register\ncancelSuspend\nsession_ready | session_reconnect"];
-    inbound [label="handleInbound\nparse + classify frame\nplayer_message: persist→broadcast\ntyping_*: broadcast (no seq)"];
+    inbound [label="handleInbound\nparse + classify frame\nplayer_message: persist→broadcast\ntyping_* / dm_invoke\n→ DM trigger (see dm-trigger)"];
     heart  [label="heartbeat\nping 30s · terminate at +10s\nrefresh presence TTL"];
     disc   [label="handleDisconnect\ndropPresence · deregister\nplayer_left · scheduleSuspend\nif countPresence == 0"];
     hub    [label="SessionHub\nMap<campaignId, Map<userId, ws>>\nPSUBSCRIBE session:campaign:*\nresync-close on reconnect", color="ember", fontcolor="ember"];

@@ -9,23 +9,28 @@
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
 <!-- source: docs/specs/2026-04-10-infrastructure-devops.md -->
 <!-- source: backend/src/session/turn-worker.ts -->
-<!-- source-hash: sha256:6c9f6cc9c36d27e187033dbe20cf3162f07f5798b665c9fcab0d7f1f8b4e9ccc -->
-<!-- last-ticket: MYT-66 -->
+<!-- source: backend/src/session/dm-trigger-worker.ts -->
+<!-- source: backend/src/session/session-turn-queue-events.ts -->
+<!-- source-hash: sha256:d53fa65c80c9461c21bc790306053d4bfb6467b1bc3499c83bd027cf7be3359f -->
+<!-- last-ticket: MYT-67 -->
 
 <h1>Worker</h1>
 
 <p class="lead">
   The async-execution half of the backend. A second ECS Fargate service running
-  <code>node dist/worker.js</code> with four BullMQ Workers — <code>world-gen</code> (concurrency
-  3), <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), and
-  the MYT-66 <code>session-turn</code> worker (concurrency 5) — all consuming from
-  <code>redisBatch</code>. Phase 0 shipped stub processors that logged job receipt and marked
-  complete. The real prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming
-  entity / edge events), MYT-53 (per-player character creation), MYT-54 (campaign-scoped character
-  integration), and MYT-61 (session prep); the <code>session-turn</code> worker — the lock-fenced
-  DM-turn conductor — joined in MYT-66. The shape locked in at Phase 0 so each later stage was a
-  coverage edit, not a service-topology change. The stub-processor file was retired in MYT-55 once
-  the dedicated worker container caught up to the same wiring the API container already used.
+  <code>node dist/worker.js</code> with five BullMQ Workers — <code>world-gen</code> (concurrency
+  3), <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), the
+  MYT-66 <code>session-turn</code> worker (concurrency 5), and the MYT-67
+  <code>dm-trigger</code> worker (concurrency 5) — all consuming from <code>redisBatch</code>, plus
+  a <code>QueueEvents('session-turn')</code> subscriber on a dedicated blocking connection. Phase 0
+  shipped stub processors that logged job receipt and marked complete. The real prep-stage
+  processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
+  (per-player character creation), MYT-54 (campaign-scoped character integration), and MYT-61
+  (session prep); the <code>session-turn</code> worker — the lock-fenced DM-turn conductor — joined
+  in MYT-66, and the <code>dm-trigger</code> decision worker in MYT-67. The shape locked in at Phase
+  0 so each later stage was a coverage edit, not a service-topology change. The stub-processor file
+  was retired in MYT-55 once the dedicated worker container caught up to the same wiring the API
+  container already used.
 </p>
 
 <!-- @diagram: runtime/worker -->
@@ -52,17 +57,39 @@
 <p>
   The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
   <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
-  data plane, and then registers four BullMQ <code>Worker</code> instances against
+  data plane, and then registers five BullMQ <code>Worker</code> instances against
   <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3),
   <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5),
-  <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61), and
-  <code>QUEUE_SESSION_TURN</code> (<code>session-turn</code>, concurrency 5, added in MYT-66). Queue
+  <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61),
+  <code>QUEUE_SESSION_TURN</code> (<code>session-turn</code>, concurrency 5, added in MYT-66), and
+  <code>QUEUE_DM_TRIGGER</code> (<code>dm-trigger</code>, concurrency 5, added in MYT-67). Queue
   names and concurrency caps for the prep workers live in
   <code>backend/src/worker/bullmq-config.ts</code> — the single source of truth so the API-side
   <code>Queue</code> producers and the worker-side <code>Worker</code> consumers can't drift; the
-  session-turn worker's own queue name and tuning constants live alongside its processor in
-  <code>session/turn-worker.ts</code>.
+  session-turn and dm-trigger workers' own queue names and tuning constants live alongside their
+  processors in <code>session/turn-worker.ts</code> and <code>session/dm-trigger-config.ts</code>.
 </p>
+
+<p>
+  The <code>dm-trigger</code> worker is the <a href="./dm-trigger.html">DM trigger</a> system's
+  decision half — it runs when a per-campaign quiet-window debounce matures and decides whether the
+  AI DM takes a turn. Like the turn worker it builds its own repo over the pg <code>Pool</code> and
+  reads coordination state on <code>redisRealtime</code>, with its producers riding the shared
+  <code>redisBatch</code>; its decision logic lives wholly on its own page.
+  <code>worker.ts</code> also constructs the MYT-67
+  <code>QueueEvents('session-turn')</code> subscriber — the broker-side terminal
+  <code>turn_error</code> publisher that closes the <code>maxStalledCount</code>-exhaustion gap the
+  per-worker <code>on('failed')</code> listener can't see.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The QueueEvents subscriber needs explicit shutdown; the workers don't leak</strong> — the
+  subscriber <code>duplicate()</code>s <code>redisBatch</code> for a dedicated
+  <code>BRPOP</code> blocking connection, which <code>redisBatch.quit()</code> does
+  <em>not</em> cover. So its <code>close()</code> is added to the SIGTERM teardown explicitly —
+  skipping it would leak one Redis connection per deploy. The five Workers each share or own
+  connections the existing <code>quit()</code> calls already drain.
+</aside>
 
 <p>
   The <code>session-turn</code> worker is built by <code>buildSessionTurnWorker</code> and is shaped
@@ -146,14 +173,16 @@
 <p>
   ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
   <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
-  new probes from going green during teardown), then runs <code>worker.close()</code> on all four
+  new probes from going green during teardown), then runs <code>worker.close()</code> on all five
   BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
   force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
   For the session-turn worker that stall recovery is not just a shutdown nicety but the load-bearing
-  crash-recovery path (a force-closed turn re-runs on another worker from clean state). After both
-  close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish out, then
-  <code>process.exit(0)</code>.
+  crash-recovery path (a force-closed turn re-runs on another worker from clean state). The
+  <code>QueueEvents('session-turn')</code> subscriber is then closed explicitly (its dedicated
+  blocking connection isn't covered by the <code>redisBatch.quit()</code> below). After the workers
+  and the subscriber close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish
+  out, then <code>process.exit(0)</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -286,7 +315,7 @@
   </li>
   <li>
     Curl <code>http://127.0.0.1:3001/health</code>. A 200 with <code>{ "status": "ok" }</code> means
-    pg + both Redises + both BullMQ workers are healthy.
+    pg + both Redises + all five BullMQ workers are healthy.
   </li>
 </ol>
 
@@ -336,10 +365,15 @@
   <a href="./dev-tool.html">dev tool</a>'s ship gate enforces coverage against. The
   <a href="./session-prep.html">session-prep</a> worker is the third <code>Worker</code> registered
   here, on its own queue; the <a href="./session-turn.html">session-turn</a> worker is the fourth,
-  the only one that also reads and writes <code>redisRealtime</code> (its per-session lock, turn
-  state, and DM-turn frame publishing) and the only one whose stalled-job recovery is a load-bearing
-  product behavior rather than a teardown safety net. Streaming-cost attribution joins to the
-  <code>pipeline_runs</code> table introduced in MYT-43.
+  the only one whose stalled-job recovery is a load-bearing product behavior rather than a teardown
+  safety net; and the <a href="./dm-trigger.html">dm-trigger</a> worker is the fifth, the
+  <a href="./dm-trigger.html">DM trigger</a> system's decision half. Both the session-turn and
+  dm-trigger workers read and write <code>redisRealtime</code> (the per-session lock, turn / trigger
+  state, and DM-turn frame publishing) on top of the shared <code>redisBatch</code> queues — the
+  dm-trigger worker also makes the real Haiku classifier call through the
+  <a href="./llm.html">LLM client</a>. The <code>QueueEvents('session-turn')</code> subscriber
+  registered alongside them publishes the terminal <code>turn_error</code> the JS listener can't.
+  Streaming-cost attribution joins to the <code>pipeline_runs</code> table introduced in MYT-43.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -372,6 +406,20 @@
       <td>
         <code>buildSessionTurnWorker</code> — the fourth Worker (concurrency 5). The lock-fenced
         DM-turn conductor; documented on the <a href="./session-turn.html">session turn</a> page.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/session/dm-trigger-worker.ts</code></td>
+      <td>
+        <code>buildDmTriggerWorker</code> — the fifth Worker (concurrency 5). The
+        <a href="./dm-trigger.html">DM trigger</a> decision shell; documented on that page.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/session/session-turn-queue-events.ts</code></td>
+      <td>
+        <code>buildSessionTurnQueueEvents</code> — the broker-side terminal <code>turn_error</code>
+        subscriber on a dedicated blocking connection; closed explicitly on SIGTERM.
       </td>
     </tr>
     <tr>
@@ -436,6 +484,10 @@
     </tr>
     <tr>
       <td>Concurrency: <code>session-turn</code></td>
+      <td>5</td>
+    </tr>
+    <tr>
+      <td>Concurrency: <code>dm-trigger</code></td>
       <td>5</td>
     </tr>
   </tbody>
