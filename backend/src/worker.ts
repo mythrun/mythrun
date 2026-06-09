@@ -28,6 +28,9 @@ import {
 import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
 import { buildSessionTurnWorker } from './session/turn-worker.js'
 import { QUEUE_SESSION_TURN } from './session/turn-queue.js'
+import { buildDmTriggerWorker } from './session/dm-trigger-worker.js'
+import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events.js'
+import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
 
 const HEALTH_PORT = 3001
@@ -139,19 +142,57 @@ export async function main(): Promise<void> {
     logger,
   )
 
+  // DM-trigger (MYT-67 §4.3) — the ordered decision shell that runs when the
+  // quiet-window debounce matures and enqueues at most one `session-turn`. Wired
+  // HERE in the dedicated worker process. Takes the pg `Pool` (it builds its own
+  // repo internally) plus both Redis connections; its `Queue` producers ride the
+  // shared `redisBatch`, so they need no extra teardown beyond `redisBatch.quit()`.
+  const dmTriggerWorker = buildDmTriggerWorker(
+    redisBatch,
+    redisRealtime,
+    env.redisKeyPrefix,
+    pg,
+    logger,
+  )
+
+  // Session-turn QueueEvents subscriber (MYT-67 §4.8) — the broker-side terminal
+  // `turn_error` publisher that closes the `maxStalledCount`-exhaustion gap the
+  // per-worker `on('failed')` listener can't see. It `duplicate()`s `redisBatch`
+  // for a dedicated BRPOP blocking connection, so its `close()` MUST run on
+  // shutdown (handled below) — that connection is NOT torn down by
+  // `redisBatch.quit()`.
+  const sessionTurnEvents = buildSessionTurnQueueEvents(
+    redisBatch,
+    redisRealtime,
+    env.redisKeyPrefix,
+    logger,
+  )
+
   // Start health server last — only marks healthy once everything else is up.
   const health = await startHealthServer(HEALTH_PORT, {
     pg,
     redisBatch,
     redisRealtime,
-    workers: [worldGenWorker, campaignSetupWorker, sessionPrepWorker, sessionTurnWorker],
+    workers: [
+      worldGenWorker,
+      campaignSetupWorker,
+      sessionPrepWorker,
+      sessionTurnWorker,
+      dmTriggerWorker,
+    ],
   })
 
   logger.info(
     {
       event: 'worker.started',
       healthPort: HEALTH_PORT,
-      queues: [QUEUE_WORLD_GEN, QUEUE_CAMPAIGN_SETUP, QUEUE_SESSION_PREP, QUEUE_SESSION_TURN],
+      queues: [
+        QUEUE_WORLD_GEN,
+        QUEUE_CAMPAIGN_SETUP,
+        QUEUE_SESSION_PREP,
+        QUEUE_SESSION_TURN,
+        QUEUE_DM_TRIGGER,
+      ],
     },
     'worker started',
   )
@@ -171,7 +212,15 @@ export async function main(): Promise<void> {
       closeWithDeadline(campaignSetupWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(sessionPrepWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(sessionTurnWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(dmTriggerWorker, WORKER_CLOSE_GRACE_MS),
     ])
+
+    // Tear down the session-turn QueueEvents subscriber's dedicated blocking
+    // connection (the duplicate()d redisBatch) — it is NOT covered by
+    // redisBatch.quit() below, so skipping this leaks a connection per deploy.
+    await sessionTurnEvents.close().catch((err: unknown) => {
+      logger.error({ err }, 'session-turn queue-events close failed')
+    })
 
     await pg.end().catch((err: unknown) => {
       logger.error({ err }, 'pg pool end failed')

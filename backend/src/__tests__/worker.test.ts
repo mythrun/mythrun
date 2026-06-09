@@ -14,10 +14,18 @@ const batchQuitMock = vi.fn((): Promise<string> => Promise.resolve('OK'))
 const realtimePingMock = vi.fn((): Promise<string> => Promise.resolve('PONG'))
 const realtimeQuitMock = vi.fn((): Promise<string> => Promise.resolve('OK'))
 
+// buildSessionTurnQueueEvents (MYT-67 T12) calls `redisBatch.duplicate()` for
+// the QueueEvents BRPOP stream's dedicated blocking connection. The duplicate
+// gets its own `.quit()` in SessionTurnQueueEvents.close(); the mock returns a
+// fake bearing the same shape so the boot path doesn't throw.
+const batchDuplicateQuitMock = vi.fn((): Promise<string> => Promise.resolve('OK'))
+const batchDuplicateMock = vi.fn(() => ({ quit: batchDuplicateQuitMock }))
+
 vi.mock('../redis/bullmq-client.js', () => ({
   createBullmqRedisClient: () => ({
     ping: batchPingMock,
     quit: batchQuitMock,
+    duplicate: batchDuplicateMock,
   }),
 }))
 
@@ -56,6 +64,22 @@ interface FakeWorker {
 }
 const workerInstances: FakeWorker[] = []
 
+interface FakeQueueEvents {
+  close: ReturnType<typeof vi.fn>
+  on: ReturnType<typeof vi.fn>
+}
+const queueEventsInstances: FakeQueueEvents[] = []
+
+// The bullmq mock now also covers Queue + QueueEvents, which the two new MYT-67
+// builders construct:
+//   - buildDmTriggerWorker (T9) makes two `new Queue(...)` producers (dm-trigger,
+//     session-turn) on the shared redisBatch — a fake `.add`/`.close` suffices.
+//   - buildSessionTurnQueueEvents (T12) makes one `new QueueEvents(...)` on a
+//     `duplicate()`d connection plus a job-fetch `new Queue(...)`. The QueueEvents
+//     needs `.on('failed', ...)` at build time and `.close()` on shutdown; we
+//     capture instances so the test can assert close() runs on SIGTERM.
+// (buildSessionTurnWorker already constructed a `new Queue(...)`, so the prior
+// mock — Worker-only — actually threw at boot; this closes that gap too.)
 vi.mock('bullmq', () => ({
   Worker: vi.fn().mockImplementation((name: string) => {
     const instance: FakeWorker = {
@@ -64,6 +88,19 @@ vi.mock('bullmq', () => ({
       on: vi.fn(),
     }
     workerInstances.push(instance)
+    return instance
+  }),
+  Queue: vi.fn().mockImplementation((name: string) => ({
+    name,
+    add: vi.fn(() => Promise.resolve()),
+    close: vi.fn(() => Promise.resolve()),
+  })),
+  QueueEvents: vi.fn().mockImplementation(() => {
+    const instance: FakeQueueEvents = {
+      close: vi.fn(() => Promise.resolve()),
+      on: vi.fn(),
+    }
+    queueEventsInstances.push(instance)
     return instance
   }),
 }))
@@ -78,7 +115,10 @@ describe('worker.main()', () => {
     pgQueryMock.mockClear()
     pgEndMock.mockClear()
     healthCloseMock.mockClear()
+    batchDuplicateMock.mockClear()
+    batchDuplicateQuitMock.mockClear()
     workerInstances.length = 0
+    queueEventsInstances.length = 0
   })
 
   afterEach(() => {
@@ -93,11 +133,18 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
-    // Wait for startup: workers registered, health server up. Four workers:
-    // world-gen, campaign-setup, session-prep (MYT-61 T4), session-turn (MYT-66).
+    // Wait for startup: workers registered, health server up. Five workers:
+    // world-gen, campaign-setup, session-prep (MYT-61 T4), session-turn (MYT-66),
+    // dm-trigger (MYT-67 T9, added in T16).
     await vi.waitFor(() => {
-      expect(workerInstances).toHaveLength(4)
+      expect(workerInstances).toHaveLength(5)
     })
+    // The dm-trigger worker is the fifth, on QUEUE_DM_TRIGGER ('dm-trigger').
+    expect(workerInstances.map((w) => w.name)).toContain('dm-trigger')
+    // T16 also wires the session-turn QueueEvents subscriber (MYT-67 T12) — one
+    // QueueEvents on a duplicate()d blocking connection.
+    expect(queueEventsInstances).toHaveLength(1)
+    expect(batchDuplicateMock).toHaveBeenCalledTimes(1)
     expect(batchPingMock).toHaveBeenCalledTimes(1)
     expect(realtimePingMock).toHaveBeenCalledTimes(1)
     expect(pgQueryMock).toHaveBeenCalledWith('SELECT 1')
@@ -112,6 +159,11 @@ describe('worker.main()', () => {
     for (const w of workerInstances) {
       expect(w.close).toHaveBeenCalled()
     }
+    // The QueueEvents subscriber's dedicated blocking connection MUST be torn
+    // down on SIGTERM (sessionTurnEvents.close() → queueEvents.close() + its
+    // duplicate().quit()), else a connection leaks per deploy (§4.8).
+    expect(queueEventsInstances[0]?.close).toHaveBeenCalledTimes(1)
+    expect(batchDuplicateQuitMock).toHaveBeenCalledTimes(1)
     expect(pgEndMock).toHaveBeenCalledTimes(1)
     expect(batchQuitMock).toHaveBeenCalledTimes(1)
     expect(realtimeQuitMock).toHaveBeenCalledTimes(1)
