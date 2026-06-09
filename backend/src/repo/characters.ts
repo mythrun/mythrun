@@ -373,6 +373,40 @@ export function charactersNs(c: ClientLike) {
       return characterId
     },
 
+    /** MYT-68 §3.5 step 1 — resolve a skill-check roller from the SESSION
+     *  roster (session_participants carries character_id; a campaign member
+     *  who never joined isn't rollable). Exact match on normalized name —
+     *  closed-set structural validation, NO fuzzy matching (ZFC). */
+    findSessionParticipantCharacterByName: async (
+      sessionId: string,
+      characterName: string,
+    ): Promise<
+      | {
+          outcome: 'found'
+          character: Character
+          skills: readonly { skill_name: string; proficiency_level: string }[]
+        }
+      | { outcome: 'not_found' }
+      | { outcome: 'ambiguous' }
+    > => {
+      const matches = await c.query<CharacterDbRow>(
+        `SELECT ch.* FROM session_participants sp
+           JOIN characters ch ON ch.id = sp.character_id
+          WHERE sp.session_id = $1
+            AND lower(trim(ch.name)) = lower(trim($2))`,
+        [sessionId, characterName],
+      )
+      const [row, ...rest] = matches.rows
+      if (!row) return { outcome: 'not_found' }
+      if (rest.length > 0) return { outcome: 'ambiguous' }
+      const character = toCharacter(row)
+      const skills = await c.query<{ skill_name: string; proficiency_level: string }>(
+        `SELECT skill_name, proficiency_level FROM character_skills WHERE character_id = $1`,
+        [character.id],
+      )
+      return { outcome: 'found', character, skills: skills.rows }
+    },
+
     // myth-gp2c Cluster C: link a PC's freshly-created entity to its characters
     // row during character-integration (pass 4). characters has no campaign_id
     // column (dropped in migration 009); the (campaign, user) → character_id

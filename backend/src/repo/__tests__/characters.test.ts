@@ -9,6 +9,8 @@ import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
 import { createCharactersRepo } from '../characters.js'
+import { createSessionsRepo } from '../sessions.js'
+import { createSessionParticipantsRepo } from '../session-participants.js'
 import type { ClientLike } from '../_types.js'
 import {
   CharacterAlreadyInCampaignError,
@@ -19,9 +21,20 @@ import { createTestPool } from './_helpers/test-pool.js'
 
 // myth-5jdo: characters.user_id is RESTRICT-FK to users — must delete
 // characters owned by scope users BEFORE cleanupTestScope's user delete.
-// Per-test cleanup wrapper that removes the scope's characters first,
-// then delegates to the shared helper.
+// MYT-68 Task 9: session_participants.character_id is a RESTRICT-FK to
+// characters, so participant rows pinning this scope's characters must go
+// before the characters delete. Per-test cleanup wrapper that removes the
+// scope's participant rows, then its characters, then delegates to the
+// shared helper.
 async function cleanupCharactersScope(p: Pool, scope: TestScope): Promise<void> {
+  await p.query(
+    `DELETE FROM session_participants
+       WHERE character_id IN (
+         SELECT id FROM characters
+          WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)
+       )`,
+    [`${scope.id}%`],
+  )
   await p.query(
     `DELETE FROM characters
        WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
@@ -600,6 +613,163 @@ describe('repo.characters', () => {
         [campaignId, userId],
       )
       expect(await characters.listCampaignCharacters(campaignId)).toEqual([])
+    })
+  })
+
+  // MYT-68 Task 9 (spec §3.5 step 1): resolve a skill-check roller from the
+  // SESSION roster (session_participants), exact match on normalized name.
+  // A campaign member who never joined the session isn't rollable; matches
+  // are session-scoped; duplicate normalized names resolve to 'ambiguous'.
+  describe('findSessionParticipantCharacterByName', () => {
+    // Helper: create a named character owned by `ownerId`, join it to a
+    // session as a participant. Mirrors how session-participants.test.ts seeds
+    // a roster (replaceSubTables to integrate the PC, then a participant row).
+    // We insert the participant directly because sessionParticipants.join
+    // resolves the character via campaign_characters (one PC per user per
+    // campaign) — for the duplicate-name case we need two characters in one
+    // session, which the direct insert allows.
+    async function seedRosterCharacter(opts: {
+      ownerId: string
+      campaignId: string
+      sessionId: string
+      name: string
+      skills?: readonly { name: string; proficiencyLevel: 'expertise' | 'proficient' | 'none' }[]
+    }): Promise<string> {
+      const characters = createCharactersRepo(pool)
+      const { uuidv7 } = await import('../uuidv7.js')
+      const characterId = await characters.replaceSubTables({
+        campaignId: opts.campaignId,
+        userId: opts.ownerId,
+        name: opts.name,
+        level: 2,
+        class: 'rogue',
+        species: 'human',
+        background: 'criminal',
+        str: 10,
+        dex: 16,
+        con: 12,
+        int: 13,
+        wis: 11,
+        cha: 14,
+        hitPoints: 14,
+        maxHitPoints: 14,
+        armorClass: 13,
+        proficiencyBonus: 2,
+        skills: (opts.skills ?? []).map((s) => ({ name: s.name, proficiencyLevel: s.proficiencyLevel })),
+        features: [],
+        equipment: [],
+        spells: [],
+      })
+      await pool.query(
+        `INSERT INTO session_participants (id, session_id, user_id, character_id)
+         VALUES ($1, $2, $3, $4)`,
+        [uuidv7(), opts.sessionId, opts.ownerId, characterId],
+      )
+      return characterId
+    }
+
+    it("resolves a joined participant's character by messy casing/whitespace, with skills", async () => {
+      const sessions = createSessionsRepo(pool)
+      const characters = createCharactersRepo(pool)
+      const session = await sessions.create({ campaignId, sessionNumber: 1 })
+
+      const arinId = await seedRosterCharacter({
+        ownerId: userId,
+        campaignId,
+        sessionId: session.id,
+        name: 'Arin',
+        skills: [
+          { name: 'Stealth', proficiencyLevel: 'expertise' },
+          { name: 'Perception', proficiencyLevel: 'proficient' },
+        ],
+      })
+
+      const result = await characters.findSessionParticipantCharacterByName(session.id, '  aRiN ')
+      expect(result.outcome).toBe('found')
+      if (result.outcome !== 'found') throw new Error('expected found')
+      expect(result.character.id).toBe(arinId)
+      expect(result.character.name).toBe('Arin')
+      expect([...result.skills].sort((a, b) => a.skill_name.localeCompare(b.skill_name))).toEqual([
+        { skill_name: 'Perception', proficiency_level: 'proficient' },
+        { skill_name: 'Stealth', proficiency_level: 'expertise' },
+      ])
+    })
+
+    it('returns not_found for a campaign member whose character never joined the session', async () => {
+      const sessions = createSessionsRepo(pool)
+      const characters = createCharactersRepo(pool)
+      const session = await sessions.create({ campaignId, sessionNumber: 1 })
+
+      // Integrate a PC for the campaign member but DON'T add a participant row.
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await characters.create(client, { userId, ...baseCharacterInput, name: 'Ghost' })
+        await client.query('COMMIT')
+      } finally {
+        client.release()
+      }
+
+      const result = await characters.findSessionParticipantCharacterByName(session.id, 'Ghost')
+      expect(result).toEqual({ outcome: 'not_found' })
+    })
+
+    it("returns ambiguous when two participants' characters share a normalized name", async () => {
+      const users = createUsersRepo(pool)
+      const sessions = createSessionsRepo(pool)
+      const characters = createCharactersRepo(pool)
+      const session = await sessions.create({ campaignId, sessionNumber: 1 })
+
+      const second = await users.create(pool, {
+        cognitoSub: scope.userSub(1),
+        username: scope.username(1),
+        displayName: scope.displayName(1),
+      })
+
+      await seedRosterCharacter({ ownerId: userId, campaignId, sessionId: session.id, name: 'Arin' })
+      await seedRosterCharacter({
+        ownerId: second.id,
+        campaignId,
+        sessionId: session.id,
+        name: 'arin ',
+      })
+
+      const result = await characters.findSessionParticipantCharacterByName(session.id, 'Arin')
+      expect(result).toEqual({ outcome: 'ambiguous' })
+    })
+
+    it('is session-scoped — a participant in a different session does not match', async () => {
+      const sessions = createSessionsRepo(pool)
+      const characters = createCharactersRepo(pool)
+      // idx_sessions_one_active permits at most one 'active' session per
+      // campaign; make sessionB 'ended' so both can coexist. Session status
+      // is irrelevant to roster resolution — the join is purely on session_id.
+      const sessionA = await sessions.create({ campaignId, sessionNumber: 1 })
+      const sessionB = await sessions.create({ campaignId, sessionNumber: 2, status: 'ended' })
+
+      await seedRosterCharacter({ ownerId: userId, campaignId, sessionId: sessionA.id, name: 'Arin' })
+
+      const result = await characters.findSessionParticipantCharacterByName(sessionB.id, 'Arin')
+      expect(result).toEqual({ outcome: 'not_found' })
+    })
+
+    it('returns found with an empty skills array when the character has no skills', async () => {
+      const sessions = createSessionsRepo(pool)
+      const characters = createCharactersRepo(pool)
+      const session = await sessions.create({ campaignId, sessionNumber: 1 })
+
+      const id = await seedRosterCharacter({
+        ownerId: userId,
+        campaignId,
+        sessionId: session.id,
+        name: 'Skilless',
+      })
+
+      const result = await characters.findSessionParticipantCharacterByName(session.id, 'Skilless')
+      expect(result.outcome).toBe('found')
+      if (result.outcome !== 'found') throw new Error('expected found')
+      expect(result.character.id).toBe(id)
+      expect(result.skills).toEqual([])
     })
   })
 })
