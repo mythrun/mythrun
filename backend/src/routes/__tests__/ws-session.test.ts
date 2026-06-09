@@ -423,6 +423,375 @@ describe('ws-session route (integration)', () => {
     }
   })
 
+  it('MYT-68 §3.5: a join appends the character to the FT roster (no dup on re-join)', async () => {
+    // The roster lives on the :state blob, which /start would have written. Here
+    // there's no /start, so seed an empty-participants blob first; the join path
+    // then read-modify-writes the character name in.
+    const sessionState = makeSessionState(redis, KEY_PREFIX)
+    await sessionState.setState(campaignId, {
+      participants: [],
+      mode: 'exploration',
+      status: 'active',
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}`)
+    try {
+      await collectFrames(ws, 2) // drain session_ready + player_joined
+      // The owner's integrated character (sheetInput.name) is now on the roster.
+      await vi.waitFor(
+        async () => {
+          const blob = await sessionState.getState(campaignId)
+          expect(blob?.participants).toEqual([sheetInput.name])
+        },
+        { timeout: 4000, interval: 50 },
+      )
+    } finally {
+      ws.terminate()
+    }
+
+    // A re-join by the SAME character does not duplicate the roster entry.
+    const ticket2 = await mint()
+    const ws2 = await connect(`/ws/session/${sessionId}?ticket=${ticket2}`)
+    try {
+      await collectFrames(ws2, 2)
+      // Give the read-modify-write a beat, then assert no duplication.
+      await vi.waitFor(
+        async () => {
+          const blob = await sessionState.getState(campaignId)
+          expect(blob?.participants).toEqual([sheetInput.name])
+        },
+        { timeout: 4000, interval: 50 },
+      )
+    } finally {
+      ws2.terminate()
+    }
+  })
+
+  it('MYT-68 §3.7: reconnect replay reconstructs dm_message + skill_check frames; a corrupt row is dropped', async () => {
+    const repo = createRepo(pool)
+    // A player message at seq 1, then a DM turn (dm_text + skill_check + a
+    // CORRUPT skill_check) at seqs 2/3/4. appendDmTurn writes them with a shared
+    // turn_id in ordinal order.
+    await repo.sessionMessages.append({
+      sessionId,
+      seq: 1,
+      userId,
+      messageType: 'player_message',
+      content: 'I search the altar.',
+    })
+    const turnId = '01900000-0000-7000-8000-0000000000aa'
+    const skillOutput = {
+      character_name: sheetInput.name,
+      skill: 'Investigation',
+      context: 'searching the altar',
+      roll: 14,
+      roll2: null,
+      roll_type: 'normal',
+      modifier: 3,
+      total: 17,
+      dc: 12,
+      outcome_tier: 'success',
+      constraint: 'You find a hidden catch beneath the lip of the stone.',
+    }
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'The altar is cold beneath your fingers.' },
+        {
+          kind: 'skill_check',
+          content: JSON.stringify({ toolCallId: 'tc-1', input: {}, output: skillOutput }),
+        },
+        // Corrupt: non-JSON content → must be dropped, the rest intact.
+        { kind: 'skill_check', content: 'not-json{' },
+      ],
+      seqs: [2, 3, 4],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      expect(first?.type).toBe('session_reconnect')
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+
+      // The corrupt seq-4 row was dropped; the other three replay in seq order.
+      expect(first.messages.map((m) => m.type)).toEqual([
+        'player_message',
+        'dm_message',
+        'skill_check',
+      ])
+      const [playerFrame, dmFrame, skillFrame] = first.messages
+      expect(playerFrame).toMatchObject({ type: 'player_message', seq: 1, text: 'I search the altar.' })
+      expect(dmFrame).toMatchObject({
+        type: 'dm_message',
+        seq: 2,
+        turnId,
+        text: 'The altar is cold beneath your fingers.',
+      })
+      expect(skillFrame).toMatchObject({
+        type: 'skill_check',
+        seq: 3,
+        turnId,
+        characterName: sheetInput.name,
+        skill: 'Investigation',
+        context: 'searching the altar',
+        roll: 14,
+        roll2: null,
+        rollType: 'normal',
+        modifier: 3,
+        total: 17,
+        dc: 12,
+        outcomeTier: 'success',
+        constraint: 'You find a hidden catch beneath the lip of the stone.',
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-68 §3.7: reconnect replay reconstructs a dice_roll frame', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-0000000000bb'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        {
+          kind: 'dice_roll',
+          content: JSON.stringify({
+            toolCallId: 'tc-d1',
+            input: { count: 2, sides: 6 },
+            // count/sides absent on output → fall back to input.
+            output: { results: [3, 5], total: 8 },
+          }),
+        },
+      ],
+      seqs: [1],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages).toHaveLength(1)
+      expect(first.messages[0]).toMatchObject({
+        type: 'dice_roll',
+        seq: 1,
+        turnId,
+        count: 2,
+        sides: 6,
+        results: [3, 5],
+        total: 8,
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-68 §3.7: a skill_check row with valid JSON but an ill-typed field is dropped, rest intact', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-0000000000cc'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'The lock resists.' },
+        {
+          kind: 'skill_check',
+          // Parses fine, but roll_type is not in the union and roll is a string
+          // → the field-validation arm drops it.
+          content: JSON.stringify({
+            toolCallId: 'tc-bad',
+            input: {},
+            output: {
+              character_name: sheetInput.name,
+              skill: 'Sleight of Hand',
+              context: 'picking the lock',
+              roll: '14',
+              roll2: null,
+              roll_type: 'bogus',
+              modifier: 3,
+              total: 17,
+              dc: 12,
+              outcome_tier: 'success',
+              constraint: 'unused',
+            },
+          }),
+        },
+      ],
+      seqs: [1, 2],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // The ill-typed skill_check dropped; the dm_text frame replays intact.
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message'])
+      expect(first.messages[0]).toMatchObject({ type: 'dm_message', seq: 1, turnId })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-68 §3.7: a dice_roll row with unparseable content is dropped, rest intact', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-0000000000dd'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'The dice clatter.' },
+        { kind: 'dice_roll', content: 'not-json{' },
+      ],
+      seqs: [1, 2],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message'])
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-68 §3.7: a dice_roll row with valid JSON but an ill-typed field is dropped, rest intact', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-0000000000ee'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'A single die skitters off the table.' },
+        {
+          kind: 'dice_roll',
+          // Parses fine, but results holds a non-number and count is absent
+          // from BOTH output and input → the field-validation arm drops it.
+          content: JSON.stringify({
+            toolCallId: 'tc-bad-dice',
+            input: { sides: 6 },
+            output: { sides: 6, results: [3, 'five'], total: 8 },
+          }),
+        },
+      ],
+      seqs: [1, 2],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message'])
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-68 §3.7: replay branch sweep — null turnIds, all roll-type/outcome unions, output-carried dice fields, non-object content', async () => {
+    // Plain `append` writes rows with a NULL turn_id (only appendDmTurn sets
+    // it), exercising every `row.turnId ?? ''` fallback. The valid rows sweep
+    // the union members the other tests don't (advantage / disadvantage,
+    // great_success / fail, roll2 as a number, count/sides carried on output);
+    // the corrupt rows sweep parseDmRowContent's non-object arm and asRecord's
+    // non-object-output arm.
+    const repo = createRepo(pool)
+    const skill = (over: Record<string, unknown>): string =>
+      JSON.stringify({
+        toolCallId: 'tc-s',
+        input: {},
+        output: {
+          character_name: sheetInput.name,
+          skill: 'Athletics',
+          context: 'climbing',
+          roll: 11,
+          roll2: 18,
+          roll_type: 'advantage',
+          modifier: 2,
+          total: 20,
+          dc: 15,
+          outcome_tier: 'great_success',
+          constraint: 'You crest the wall in one clean pull.',
+          ...over,
+        },
+      })
+    const rows: { type: string; content: string }[] = [
+      { type: 'dm_text', content: 'A lone DM line with no turn.' }, // null turnId → ''
+      { type: 'skill_check', content: skill({}) }, // advantage + great_success + roll2 number
+      { type: 'skill_check', content: skill({ roll_type: 'disadvantage', outcome_tier: 'fail' }) },
+      {
+        type: 'dice_roll',
+        // count/sides carried on OUTPUT (no input fallback needed).
+        content: JSON.stringify({ toolCallId: 'tc-d', input: {}, output: { count: 1, sides: 20, results: [13], total: 13 } }),
+      },
+      { type: 'skill_check', content: '42' }, // valid JSON, not an object → drop
+      {
+        type: 'skill_check',
+        // Parses to an object but output is a string → asRecord null → drop.
+        content: JSON.stringify({ toolCallId: 'tc-x', input: {}, output: 'nope' }),
+      },
+      // An unmapped messageType (a future row kind) → the default arm drops it.
+      { type: 'st_evaluation', content: 'not a replayable row kind' },
+    ]
+    for (const [i, row] of rows.entries()) {
+      await repo.sessionMessages.append({
+        sessionId,
+        seq: i + 1,
+        userId: null,
+        messageType: row.type,
+        content: row.content,
+      })
+    }
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // The two corrupt rows (seqs 5, 6) + the unmapped row kind (seq 7)
+      // dropped; the four valid frames replay with null turn_id degraded to ''.
+      expect(first.messages.map((m) => m.type)).toEqual([
+        'dm_message',
+        'skill_check',
+        'skill_check',
+        'dice_roll',
+      ])
+      expect(first.messages[0]).toMatchObject({ type: 'dm_message', seq: 1, turnId: '' })
+      expect(first.messages[1]).toMatchObject({
+        type: 'skill_check',
+        seq: 2,
+        turnId: '',
+        roll2: 18,
+        rollType: 'advantage',
+        outcomeTier: 'great_success',
+      })
+      expect(first.messages[2]).toMatchObject({
+        type: 'skill_check',
+        seq: 3,
+        rollType: 'disadvantage',
+        outcomeTier: 'fail',
+      })
+      expect(first.messages[3]).toMatchObject({
+        type: 'dice_roll',
+        seq: 4,
+        turnId: '',
+        count: 1,
+        sides: 20,
+        results: [13],
+        total: 13,
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
   it('reconnect with ?lastSeq=N → session_reconnect replaying only seq > N (Task 8)', async () => {
     // Seed three persisted player_message rows (seq 1,2,3) directly via the
     // repo — the transcript a prior, now-dropped, socket would have written.
@@ -1132,12 +1501,14 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
       sessionMessages: {
         append: vi.fn().mockResolvedValue(undefined),
         // seq 3 authored by a user no longer in members/characters; seq 4 has a
-        // null author (system row). Both byline-degrade to the placeholder.
+        // null author (anomalous player row). Both byline-degrade to the
+        // placeholder. messageType is REQUIRED since the MYT-68 replay switch —
+        // a row without it falls to the default arm and is dropped entirely.
         listAfterSeq: vi
           .fn()
           .mockResolvedValue([
-            { seq: 3, userId: 'departed-user', content: 'left long ago' },
-            { seq: 4, userId: null, content: 'system note' },
+            { seq: 3, userId: 'departed-user', content: 'left long ago', messageType: 'player_message' },
+            { seq: 4, userId: null, content: 'system note', messageType: 'player_message' },
           ]),
       },
       sessionParticipants: {
@@ -1165,7 +1536,10 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
       | undefined
     expect(reconnect).toBeDefined()
     if (!reconnect) throw new Error('expected session_reconnect')
-    // Both replayed messages degrade their byline to the placeholder.
+    // Both replayed messages degrade their byline to the placeholder. The
+    // length assert guards against the replay switch silently dropping them
+    // (an empty array would vacuously pass the loop below).
+    expect(reconnect.messages).toHaveLength(2)
     for (const m of reconnect.messages) {
       expect(m.displayName).toBe('Former player')
       expect(m.characterName).toBe('')

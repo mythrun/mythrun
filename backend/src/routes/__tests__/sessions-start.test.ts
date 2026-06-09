@@ -106,6 +106,15 @@ async function setCampaignStatus(pool: Pool, campaignId: string, status: string)
   await pool.query(`UPDATE campaigns SET status = $2 WHERE id = $1`, [campaignId, status])
 }
 
+/** Set the tone on the campaign's world (seeded worlds carry a NULL tone). */
+async function setWorldTone(pool: Pool, campaignId: string, tone: string): Promise<void> {
+  await pool.query(
+    `UPDATE worlds SET tone = $2
+      WHERE id = (SELECT world_id FROM campaigns WHERE id = $1)`,
+    [campaignId, tone],
+  )
+}
+
 async function addMember(pool: Pool, campaignId: string, user: SeededUser): Promise<void> {
   await pool.query(
     `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
@@ -244,11 +253,40 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       expect(active?.sessionNumber).toBe(1)
       expect(active?.status).toBe('active')
 
-      // Redis session state was initialized.
+      // Redis session state was initialized — including the MYT-68 ftContext
+      // (from the seeded prep) + worldTone (the seeded world has a NULL tone →
+      // empty string).
       const blob = await makeSessionState(redis, KEY_PREFIX).getState(campaignId)
-      expect(blob).toEqual({ participants: [], mode: 'exploration', status: 'active' })
+      expect(blob).toEqual({
+        participants: [],
+        mode: 'exploration',
+        status: 'active',
+        ftContext: 'FT-CONTEXT',
+        worldTone: '',
+      })
     })
 
+    it('MYT-68: a non-null world tone is threaded onto the state blob', async () => {
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      await setWorldTone(pool, campaignId, 'hushed, lantern-lit, melancholy')
+
+      expect((await postStart(app, campaignId, owner.devSub)).statusCode).toBe(200)
+      const blob = await makeSessionState(redis, KEY_PREFIX).getState(campaignId)
+      expect(blob).toEqual({
+        participants: [],
+        mode: 'exploration',
+        status: 'active',
+        ftContext: 'FT-CONTEXT',
+        worldTone: 'hushed, lantern-lit, melancholy',
+      })
+    })
+
+    // NOTE on the fail-soft `prep === null` warn branch: it can't be reached
+    // through the HTTP flow — precondition 2 (`existsFor`) 409s `prep_not_ready`
+    // first (the 'no session prep …' test below proves it). The getBy read is a
+    // second, narrower window (the row could vanish between the two reads), so
+    // the warn arm is a defensive narrow-race net, c8-ignored in the route like
+    // its sibling unreachable guards.
     it('duplicate /start while one is active → 409; NO second debit', async () => {
       const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
 

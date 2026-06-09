@@ -50,6 +50,7 @@ import type {
 } from 'fastify'
 import type { Redis } from 'ioredis'
 import type { Repo } from '../repo/index.js'
+import type { SessionMessage } from '../repo/types.js'
 import type { SessionState } from '../redis/session-state.js'
 import type { SessionHub } from '../ws/session-hub.js'
 import type { SuspendQueueLike } from '../session/session-suspend.js'
@@ -343,6 +344,21 @@ async function handleConnection(
     // A returning player cancels any pending all-disconnected suspend.
     await cancelSuspend(suspendQueue, sessionId)
 
+    // MYT-68 §3.5 step 1 — maintain the FT's prompt roster. Read-modify-write
+    // (a lost-update race between two simultaneous joins costs one name until
+    // the next join; the skill-check RESOLVER reads session_participants, not
+    // this list, so correctness never depends on it). No removal on leave — a
+    // departed character is still in the scene.
+    if (characterName !== '') {
+      const state = await sessionState.getState(campaignId)
+      if (state !== null && !state.participants.includes(characterName)) {
+        await sessionState.setState(campaignId, {
+          ...state,
+          participants: [...state.participants, characterName],
+        })
+      }
+    }
+
     if (lastSeq !== null) {
       // Reconnect: send the replay frame DIRECTLY (synchronous socket.send)
       // BEFORE broadcasting player_joined. The direct send is guaranteed to
@@ -457,19 +473,14 @@ async function buildReconnectFrame(
     characterName: characterByUser.get(p.userId) ?? '',
   }))
 
-  const messages: ServerFrame[] = rows.map((row) => {
-    // userId is nullable on session_messages (system/DM rows carry null), but
-    // only player_message rows are persisted in MYT-65 and those always carry
-    // the authoring user. A null author resolves to the same placeholder.
-    const authorId = row.userId
-    return {
-      type: 'player_message',
-      seq: row.seq,
-      userId: authorId ?? '',
-      displayName: (authorId ? displayByUser.get(authorId) : undefined) ?? DEPARTED_AUTHOR_NAME,
-      characterName: (authorId ? characterByUser.get(authorId) : undefined) ?? '',
-      text: row.content,
-    }
+  // §3.7 reconnect replay: each persisted row → its ServerFrame. player_message
+  // rows map by author (MYT-65); the MYT-68 DM-turn mechanical rows (dm_text /
+  // skill_check / dice_roll) reconstruct from their JSON content. A row that
+  // doesn't map (unknown messageType, or a corrupt DM-row blob) yields null and
+  // is dropped — replay degrades GRACEFULLY (drop one frame, keep the rest).
+  const messages: ServerFrame[] = rows.flatMap((row) => {
+    const frame = rowToReplayFrame(row, displayByUser, characterByUser, ctx.app.log)
+    return frame === null ? [] : [frame]
   })
 
   return {
@@ -477,6 +488,162 @@ async function buildReconnectFrame(
     messages,
     participants,
     mode: state?.mode ?? 'exploration',
+  }
+}
+
+/** Map one persisted `session_messages` row to its reconnect-replay
+ *  ServerFrame, or null to DROP it (graceful degradation).
+ *
+ *   - `player_message` → a `player_message` frame, byline resolved through the
+ *     two campaign-wide name maps (a departed author → the placeholder).
+ *   - `dm_text` → a `dm_message` frame (the consolidated DM prose row).
+ *   - `skill_check` / `dice_roll` → reconstructed from the row's JSON content
+ *     `{toolCallId, input, output}`. On a parse failure or a missing/ill-typed
+ *     field the row is DROPPED + logged — a player-facing replay drops one
+ *     corrupt frame rather than breaking the whole reconnect.
+ *   - any other messageType → dropped.
+ */
+function rowToReplayFrame(
+  row: SessionMessage,
+  displayByUser: ReadonlyMap<string, string>,
+  characterByUser: ReadonlyMap<string, string>,
+  log: FastifyBaseLogger,
+): ServerFrame | null {
+  switch (row.messageType) {
+    case 'player_message': {
+      // userId is nullable on session_messages (system/DM rows carry null), but
+      // a player_message row always carries its authoring user. A null author
+      // (data anomaly) resolves to the same placeholder.
+      const authorId = row.userId
+      return {
+        type: 'player_message',
+        seq: row.seq,
+        userId: authorId ?? '',
+        displayName: (authorId ? displayByUser.get(authorId) : undefined) ?? DEPARTED_AUTHOR_NAME,
+        characterName: (authorId ? characterByUser.get(authorId) : undefined) ?? '',
+        text: row.content,
+      }
+    }
+    case 'dm_text':
+      return { type: 'dm_message', seq: row.seq, turnId: row.turnId ?? '', text: row.content }
+    case 'skill_check':
+      return parseSkillCheckRow(row, log)
+    case 'dice_roll':
+      return parseDiceRollRow(row, log)
+    default:
+      return null
+  }
+}
+
+/** The persisted DM-row content shape: `{toolCallId, input, output}` where
+ *  `output` is the snake_case tool output. We read it through narrow accessors
+ *  rather than a Zod schema — this is a transport-replay reconstruction, and a
+ *  malformed blob DROPS the frame (it does not fail loud like the FT context).
+ *  See session/transcript-codec.ts for the canonical row codec over the SAME
+ *  shape — deliberately the opposite failure posture (crash-loud for the FT
+ *  history rebuild vs drop-graceful here for player-facing replay). */
+function parseDmRowContent(content: string): { input: unknown; output: unknown } | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const obj = parsed as { input?: unknown; output?: unknown }
+  return { input: obj.input, output: obj.output }
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : null
+}
+
+/** Reconstruct a `skill_check` frame from a persisted row's JSON content. The
+ *  output is the snake_case skill-check tool output; we map each field to the
+ *  frame's camelCase + validate the discriminated-union members
+ *  (rollType / outcomeTier). Any missing or ill-typed field → null (drop). */
+function parseSkillCheckRow(
+  row: SessionMessage,
+  log: FastifyBaseLogger,
+): Extract<ServerFrame, { type: 'skill_check' }> | null {
+  const parsed = parseDmRowContent(row.content)
+  const output = parsed ? asRecord(parsed.output) : null
+  if (output === null) {
+    log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt skill_check row')
+    return null
+  }
+  const rollType = output.roll_type
+  const outcomeTier = output.outcome_tier
+  if (
+    typeof output.character_name !== 'string' ||
+    typeof output.skill !== 'string' ||
+    typeof output.context !== 'string' ||
+    typeof output.roll !== 'number' ||
+    !(typeof output.roll2 === 'number' || output.roll2 === null) ||
+    (rollType !== 'normal' && rollType !== 'advantage' && rollType !== 'disadvantage') ||
+    typeof output.modifier !== 'number' ||
+    typeof output.total !== 'number' ||
+    typeof output.dc !== 'number' ||
+    (outcomeTier !== 'fail' && outcomeTier !== 'success' && outcomeTier !== 'great_success') ||
+    typeof output.constraint !== 'string'
+  ) {
+    log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt skill_check row')
+    return null
+  }
+  return {
+    type: 'skill_check',
+    turnId: row.turnId ?? '',
+    seq: row.seq,
+    characterName: output.character_name,
+    skill: output.skill,
+    context: output.context,
+    roll: output.roll,
+    roll2: output.roll2,
+    rollType,
+    modifier: output.modifier,
+    total: output.total,
+    dc: output.dc,
+    outcomeTier,
+    constraint: output.constraint,
+  }
+}
+
+/** Reconstruct a `dice_roll` frame from a persisted row's JSON content. count
+ *  and sides fall back to the `input` block when absent on `output` (the dice
+ *  tool echoes the request in input). results/total come from output. Any
+ *  missing or ill-typed field → null (drop). */
+function parseDiceRollRow(
+  row: SessionMessage,
+  log: FastifyBaseLogger,
+): Extract<ServerFrame, { type: 'dice_roll' }> | null {
+  const parsed = parseDmRowContent(row.content)
+  const output = parsed ? asRecord(parsed.output) : null
+  const input = parsed ? asRecord(parsed.input) : null
+  if (output === null) {
+    log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt dice_roll row')
+    return null
+  }
+  const count = typeof output.count === 'number' ? output.count : input?.count
+  const sides = typeof output.sides === 'number' ? output.sides : input?.sides
+  const results = output.results
+  if (
+    typeof count !== 'number' ||
+    typeof sides !== 'number' ||
+    !Array.isArray(results) ||
+    !results.every((r): r is number => typeof r === 'number') ||
+    typeof output.total !== 'number'
+  ) {
+    log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt dice_roll row')
+    return null
+  }
+  return {
+    type: 'dice_roll',
+    turnId: row.turnId ?? '',
+    seq: row.seq,
+    count,
+    sides,
+    results,
+    total: output.total,
   }
 }
 

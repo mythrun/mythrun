@@ -300,11 +300,44 @@ async function handleSessionStart(
   }
 
   // 4. Initialize Redis session state. A new session starts fresh: the `:seq`
-  //    counter is unset (nextSeq returns 1), so no reseed.
+  //    counter is unset (nextSeq returns 1), so no reseed. Park the FT's prep
+  //    context + the world tone on the blob (MYT-68 §3.10) so a turn worker
+  //    reads them without a PG round-trip.
+  //
+  //    FAIL-SOFT on a missing prep: a session whose prep stage never ran (or
+  //    whose row was deleted) must still START — the FastThinker degrades to
+  //    transcript-only grounding. We log LOUDLY at WARN rather than 409, since
+  //    precondition 2 (existsFor) already guards the normal flow; this read is
+  //    a second, narrower window (the row could vanish between the two reads).
+  const prep = await repo.sessionPreps.getBy(campaignId, sessionNumber)
+  /* c8 ignore start — precondition 2 (`existsFor`) 409s before this read on a
+     missing prep, so `prep === null` is only reachable in the narrow race where
+     the row is deleted between existsFor and getBy. The fail-soft warn is the
+     defensive net for that window; unreachable through the HTTP flow. */
+  if (prep === null) {
+    log.warn({ campaignId, sessionId, sessionNumber }, 'session_start.no_prep_ft_context')
+  }
+  /* c8 ignore stop */
+  // World tone is a non-plot, player-facing field — `getToneAndEra` is the
+  // tier-neutral minimal read (NOT `worlds.getById`, which re-exposes the
+  // plot-bearing columns the enforced-ignorance boundary forbids in a
+  // turn-worker-facing path). Absent world / null tone → ''.
+  const worldId = await repo.campaigns.getWorldId(campaignId)
+  /* c8 ignore start — `worldId === null` is unreachable: precondition 1 loaded
+     the campaign row, and campaigns.world_id is NOT NULL (migration 001). The
+     guard keeps the type narrow without a non-null assertion. */
+  const world = worldId === null ? null : await repo.worlds.getToneAndEra(worldId)
+  /* c8 ignore stop */
   await sessionState.setState(campaignId, {
     participants: [],
     mode: 'exploration',
     status: 'active',
+    /* c8 ignore start — the `: {}` arm pairs with the narrow-race warn above:
+       precondition 2 (`existsFor`) guarantees the prep row through the HTTP
+       flow, so `prep === null` here is only the vanished-between-reads window. */
+    ...(prep !== null ? { ftContext: prep.ftContext } : {}),
+    /* c8 ignore stop */
+    worldTone: world?.tone ?? '',
   })
 
   return reply.code(200).send({ sessionId })
