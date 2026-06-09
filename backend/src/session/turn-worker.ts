@@ -36,13 +36,23 @@ import { Queue, Worker as BullmqWorker, type Job } from 'bullmq'
 import { randomUUID } from 'node:crypto'
 import type { Redis } from 'ioredis'
 import { makeSessionState, type SessionState } from '../redis/session-state.js'
-import { SessionController } from './session-controller.js'
+import { SessionController, type TranscriptStore } from './session-controller.js'
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from './tiers/stubs.js'
 import type { FastThinker, Scribe, SlowThinker } from './tiers/types.js'
 import { makeTriggerState, type TriggerState } from './trigger-state.js'
 import { createTurnPublisher, type TurnPublisher } from './turn-publisher.js'
 import { enqueueTurn, QUEUE_SESSION_TURN, type TurnJobPayload, type TurnQueueLike } from './turn-queue.js'
+
+/** MYT-68 interim (T15): a no-op TranscriptStore so the rewritten controller's
+ *  construction signature is satisfied without the real session_messages repo
+ *  wiring (which T15 threads in properly). `listFtContextRows` returns no rows
+ *  (the in-memory FT history starts empty, matching the old controller); the
+ *  per-turn append is a no-op (no durable transcript yet). */
+const INTERIM_EMPTY_TRANSCRIPT: TranscriptStore = {
+  listFtContextRows: () => Promise.resolve([]),
+  appendDmTurn: () => Promise.resolve(),
+}
 
 /** The lock for a turn was lost mid-flight (a heartbeat `extend()` failed,
  *  meaning a successor re-acquired it). Distinguished from a real failure so the
@@ -125,16 +135,40 @@ export async function processTurnJob(
 
   try {
     await deps.publisher.dmThinking(campaignId, turnId)
+    // MYT-68 interim (T15): the controller's construction signature changed to
+    // the PG-direct model (sessionId arg; emitter/transcript/displayNames/
+    // ftContext/allocSeq deps; no publisher; processDmTurn takes maxConsumedSeq;
+    // turn_end + persist moved out of the controller). T15 rewrites this worker
+    // properly (real session_messages transcript, resolved ftContext, display
+    // names). This interim wiring keeps behavior identical: an empty transcript
+    // (so the in-memory history starts empty, as the old controller did), the
+    // FT streams through the publisher's latched emitter, persistTurn is a
+    // no-op against the stub store, flushToRedis carries summary/usage, and the
+    // worker publishes turn_end after persist+flush (it moved off the controller).
     const controller = new SessionController(
-      { sessionState: deps.sessionState, ...deps.makeTiers(), publisher: deps.publisher },
+      {
+        sessionState: deps.sessionState,
+        ...deps.makeTiers(),
+        emitter: deps.publisher.emitFor(campaignId, turnId),
+        transcript: INTERIM_EMPTY_TRANSCRIPT,
+        displayNames: new Map(),
+        ftContext: '',
+        allocSeq: () => deps.sessionState.nextSeq(campaignId),
+      },
       campaignId,
+      sessionId,
       turnId,
     )
+    void triggerMessages
     await controller.loadFromRedis()
     if (isLockLost()) throw new LockLostError()
-    await controller.processDmTurn([...triggerMessages])
+    await controller.processDmTurn(job.data.maxConsumedSeq)
     if (isLockLost()) throw new LockLostError()
+    await controller.persistTurn()
     await controller.flushToRedis()
+    // MYT-68 interim (T15): turn_end moved off the controller — the worker now
+    // publishes it, only AFTER persist+flush (and below, the watermark advance).
+    await deps.publisher.turnEnd(campaignId, turnId)
     // §4.7 — the batch is responded: advance the watermark so the next trigger
     // batch starts at `(maxConsumedSeq, …]`. Only on a real (flushed) success —
     // a lock-lost abort never flushes, so it must never advance the watermark.

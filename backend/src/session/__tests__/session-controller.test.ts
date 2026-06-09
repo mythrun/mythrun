@@ -1,101 +1,138 @@
-import IoRedisMock from 'ioredis-mock'
-import type { Redis } from 'ioredis'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { makeSessionState, type SessionState } from '../../redis/session-state.js'
-import { SessionController, type SessionControllerDeps } from '../session-controller.js'
+// backend/src/session/__tests__/session-controller.test.ts
+//
+// MYT-68 Task 14 — the SessionController v2 (PG-direct turn model) suite.
+//
+// The transcript now lives ONLY in session_messages. The controller loads the
+// WHOLE FT context via `transcript.listFtContextRows(sessionId, maxConsumedSeq)`
+// and maps it through the real `rowsToConversation` codec (§3.7). It no longer
+// appends a trigger batch (the payload's triggerMessages serve only the MYT-67
+// classifier, which the controller never sees), and it no longer publishes
+// `turn_end` (that moved to the worker, after persist+flush+watermark). The
+// single PG append in `persistTurn` is the durability point.
+//
+// Everything below is exercised against in-memory fakes — no Redis-mock for the
+// turn-state writes (a recording fake SessionState proves `flushToRedis` writes
+// exactly {summary, usage}), and an in-memory TranscriptStore captures the
+// listFtContextRows query + the appendDmTurn payload.
+
+import { describe, expect, it, vi } from 'vitest'
+import { rowsToConversation } from '../transcript-codec.js'
+import {
+  fuseDirectionIntoLastUserMessage,
+  SessionController,
+  type SessionControllerDeps,
+  type TranscriptStore,
+} from '../session-controller.js'
+import type { SessionMessage } from '../../repo/types.js'
+import type { SessionState, TurnState } from '../../redis/session-state.js'
 import type {
   AssistantMessage,
+  ConversationMessage,
   FastThinker,
   FtTurnContext,
   Scribe,
   ScribeResult,
   SlowThinker,
   StEvaluation,
-  TokenUsage,
-  TriggerMessage,
   TurnEmitter,
 } from '../tiers/types.js'
-import type { TurnPublisher } from '../turn-publisher.js'
 
-/** Pull the text of a v2 ConversationMessage's first content part — the user
- *  messages this suite appends are single text-part messages. */
+const CAMPAIGN = 'c-ctrl-1'
+const SESSION = 's-ctrl-1'
+const TURN = 't-ctrl-1'
+const FT_CONTEXT = 'the enforced-ignorance-safe prep doc'
+
+const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
+  ['u1', 'Mara'],
+  ['u2', 'Bram'],
+])
+
+/** Text of a ConversationMessage's first content part (the user/DM messages
+ *  this suite inspects are single-text-part), or undefined. */
 function firstTextPart(msg: FtTurnContext['ftHistory'][number] | undefined): string | undefined {
   const part = msg?.parts[0]
-  return part !== undefined && part.kind === 'text' ? part.text : undefined
+  return part?.kind === 'text' ? part.text : undefined
 }
 
-const KEY_PREFIX = 'test:use1:'
-const CAMPAIGN = 'c-ctrl-1'
-const TURN = 't-ctrl-1'
-
-const TRIGGER: TriggerMessage = { userId: 'u1', characterName: 'Mara', text: 'I search the room' }
-
 // ---------------------------------------------------------------------------
-// Recording fakes. Each records the global call order into a shared array so a
-// single assertion proves the conductor sequence (ST → FT → Scribe) and the
-// turnEnd-before-scribe-resolves ordering.
+// Fixtures. session_messages rows that listFtContextRows returns; the real
+// codec maps them, so the expected ftHistory is always built via the SAME
+// `rowsToConversation` call on the SAME fixture — never hand-written.
 // ---------------------------------------------------------------------------
 
-interface Recorder {
-  readonly order: string[]
-}
-
-function recordingSt(recorder: Recorder, evaluation: StEvaluation): SlowThinker {
+function row(partial: Partial<SessionMessage> & { seq: number; messageType: string; content: string }): SessionMessage {
   return {
-    evaluate: vi.fn((): Promise<StEvaluation> => {
-      recorder.order.push('st')
-      return Promise.resolve(evaluation)
+    id: `m-${String(partial.seq)}`,
+    sessionId: SESSION,
+    userId: partial.userId ?? null,
+    turnId: partial.turnId ?? null,
+    turnOrdinal: partial.turnOrdinal ?? null,
+    createdAt: new Date(0),
+    ...partial,
+  }
+}
+
+const PLAYER_ROW = row({ seq: 1, userId: 'u1', messageType: 'player_message', content: 'I search the room' })
+
+/** Two-message fixture: an earlier DM turn, then the player's current message. */
+const HISTORY_ROWS: readonly SessionMessage[] = [
+  row({ seq: 1, turnId: 'prior', turnOrdinal: 0, messageType: 'dm_text', content: 'You stand in the hall.' }),
+  PLAYER_ROW,
+]
+
+// ---------------------------------------------------------------------------
+// In-memory fakes.
+// ---------------------------------------------------------------------------
+
+interface AppendCapture {
+  sessionId: string
+  turnId: string
+  rows: readonly { kind: string; content: string }[]
+  seqs: readonly number[]
+}
+
+function fakeTranscript(
+  rows: readonly SessionMessage[],
+  capture: { listArgs?: { sessionId: string; maxPlayerSeq: number }; append?: AppendCapture },
+): TranscriptStore {
+  return {
+    listFtContextRows: vi.fn((sessionId: string, maxPlayerSeq: number): Promise<SessionMessage[]> => {
+      capture.listArgs = { sessionId, maxPlayerSeq }
+      return Promise.resolve([...rows])
+    }),
+    appendDmTurn: vi.fn((input: AppendCapture): Promise<void> => {
+      capture.append = input
+      return Promise.resolve()
     }),
   }
 }
 
-function recordingFt(
-  recorder: Recorder,
-  message: AssistantMessage,
-  capturedCtx: { value?: FtTurnContext },
-): FastThinker {
+function fakeSt(evaluation: StEvaluation): SlowThinker {
+  return { evaluate: vi.fn((): Promise<StEvaluation> => Promise.resolve(evaluation)) }
+}
+
+function fakeFt(message: AssistantMessage, captured: { ctx?: FtTurnContext }): FastThinker {
   return {
     render: vi.fn(async (ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> => {
-      recorder.order.push('ft')
-      capturedCtx.value = ctx
-      // The FT seam streams text through the emit it is handed; exercise it so
-      // the controller wiring of publisher.emitFor is covered end to end.
+      captured.ctx = ctx
       await emit.emitText('chunk')
       return message
     }),
   }
 }
 
-function recordingScribe(recorder: Recorder, gate: { resolved: boolean }): Scribe {
-  return {
-    extract: vi.fn((): Promise<ScribeResult> => {
-      recorder.order.push('scribe')
-      gate.resolved = true
-      return Promise.resolve({ workingSetDeltas: [] })
-    }),
-  }
+function fakeScribe(): Scribe {
+  return { extract: vi.fn((): Promise<ScribeResult> => Promise.resolve({ workingSetDeltas: [] })) }
 }
 
-function throwingScribe(): Scribe {
-  return {
-    extract: vi.fn((): Promise<ScribeResult> => Promise.reject(new Error('scribe boom'))),
-  }
+function rejectingScribe(): Scribe {
+  return { extract: vi.fn((): Promise<ScribeResult> => Promise.reject(new Error('scribe boom'))) }
 }
 
-/** A Scribe whose `extract` throws SYNCHRONOUSLY (before returning a promise) —
- *  models a future non-async implementation. The controller's fire-and-forget
- *  wrapper must capture this into the same `.catch`, so it never escapes the
- *  turn. */
-function synchronouslyThrowingScribe(): Scribe {
+/** Records every emitText so a test can assert the FT (and ONLY the FT) drove
+ *  the emitter — there is no turn_end emission anywhere in the controller. */
+function recordingEmitter(emitted: string[]): TurnEmitter {
   return {
-    extract: vi.fn((): Promise<ScribeResult> => {
-      throw new Error('sync scribe boom')
-    }),
-  }
-}
-
-function fakePublisher(recorder: Recorder, emitted: string[]): TurnPublisher {
-  const emit: TurnEmitter = {
     emitText: (text: string): Promise<void> => {
       emitted.push(text)
       return Promise.resolve()
@@ -103,17 +140,41 @@ function fakePublisher(recorder: Recorder, emitted: string[]): TurnPublisher {
     emitSkillCheck: vi.fn((): Promise<void> => Promise.resolve()),
     emitDiceRoll: vi.fn((): Promise<void> => Promise.resolve()),
   }
+}
+
+/** A recording SessionState: only loadTurnState/getState/flushTurnState are
+ *  exercised by the controller; the rest throw so an accidental call is loud. */
+function fakeSessionState(opts: {
+  turnState?: TurnState
+  participants?: readonly string[]
+  flushed: { value?: TurnState }
+}): SessionState {
+  const unused = (name: string) => (): never => {
+    throw new Error(`SessionState.${name} must not be called by the controller`)
+  }
   return {
-    dmThinking: vi.fn((): Promise<void> => Promise.resolve()),
-    textDelta: vi.fn((): Promise<void> => Promise.resolve()),
-    skillCheck: vi.fn((): Promise<void> => Promise.resolve()),
-    diceRoll: vi.fn((): Promise<void> => Promise.resolve()),
-    turnEnd: vi.fn((): Promise<void> => {
-      recorder.order.push('turnEnd')
+    loadTurnState: vi.fn((): Promise<TurnState> =>
+      Promise.resolve(opts.turnState ?? { summary: '', usage: { input: 0, output: 0 } }),
+    ),
+    getState: vi.fn((): Promise<ReturnType<SessionState['getState']> extends Promise<infer T> ? T : never> =>
+      Promise.resolve(
+        opts.participants === undefined
+          ? null
+          : { participants: opts.participants, mode: 'exploration', status: 'active' },
+      ),
+    ),
+    flushTurnState: vi.fn((_campaignId: string, ts: TurnState): Promise<void> => {
+      opts.flushed.value = ts
       return Promise.resolve()
     }),
-    turnError: vi.fn((): Promise<void> => Promise.resolve()),
-    emitFor: vi.fn((): TurnEmitter => emit),
+    nextSeq: unused('nextSeq'),
+    reseedSeq: unused('reseedSeq'),
+    addPresence: unused('addPresence'),
+    dropPresence: unused('dropPresence'),
+    countPresence: unused('countPresence'),
+    setState: unused('setState'),
+    refreshTtls: unused('refreshTtls'),
+    checkpoint: unused('checkpoint'),
   }
 }
 
@@ -123,308 +184,295 @@ const ASSISTANT: AssistantMessage = {
   usage: { input: 5, output: 7 },
 }
 
-function makeDeps(overrides: Partial<SessionControllerDeps>, base: {
-  sessionState: SessionState
-  st: SlowThinker
-  ft: FastThinker
-  scribe: Scribe
-  publisher: TurnPublisher
-}): SessionControllerDeps {
-  return { ...base, ...overrides }
+/** A scripted seq allocator: returns START, START+1, START+2, … in call order.
+ *  Lets a test assert seqs are allocated SEQUENTIALLY (order matters). */
+function scriptedAllocSeq(start: number): () => Promise<number> {
+  let next = start
+  return (): Promise<number> => Promise.resolve(next++)
 }
 
-describe('SessionController', () => {
-  let redis: Redis
-  let sessionState: SessionState
+interface BuildOpts {
+  rows?: readonly SessionMessage[]
+  evaluation?: StEvaluation
+  assistant?: AssistantMessage
+  scribe?: Scribe
+  turnState?: TurnState
+  participants?: readonly string[]
+  ftContext?: string
+  allocStart?: number
+  logger?: { warn: ReturnType<typeof vi.fn> }
+}
 
-  beforeEach(async () => {
-    redis = new IoRedisMock()
-    await redis.flushall()
-    sessionState = makeSessionState(redis, KEY_PREFIX)
-  })
-  afterEach(async () => {
-    await redis.quit()
-  })
+function build(opts: BuildOpts = {}): {
+  controller: SessionController
+  capturedFtCtx: { ctx?: FtTurnContext }
+  transcriptCapture: { listArgs?: { sessionId: string; maxPlayerSeq: number }; append?: AppendCapture }
+  emitted: string[]
+  flushed: { value?: TurnState }
+  emitter: TurnEmitter
+  deps: SessionControllerDeps
+} {
+  const capturedFtCtx: { ctx?: FtTurnContext } = {}
+  const transcriptCapture: { listArgs?: { sessionId: string; maxPlayerSeq: number }; append?: AppendCapture } = {}
+  const emitted: string[] = []
+  const flushed: { value?: TurnState } = {}
 
-  it('runs the conductor in order ST → FT → Scribe, turnEnd before scribe resolves', async () => {
-    const recorder: Recorder = { order: [] }
-    const gate = { resolved: false }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const st = recordingSt(recorder, { intervene: false })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = recordingScribe(recorder, gate)
-    const publisher = fakePublisher(recorder, [])
+  const emitter = recordingEmitter(emitted)
+  const deps: SessionControllerDeps = {
+    sessionState: fakeSessionState({
+      ...(opts.turnState !== undefined ? { turnState: opts.turnState } : {}),
+      ...(opts.participants !== undefined ? { participants: opts.participants } : {}),
+      flushed,
+    }),
+    st: fakeSt(opts.evaluation ?? { intervene: false }),
+    ft: fakeFt(opts.assistant ?? ASSISTANT, capturedFtCtx),
+    scribe: opts.scribe ?? fakeScribe(),
+    emitter,
+    transcript: fakeTranscript(opts.rows ?? HISTORY_ROWS, transcriptCapture),
+    displayNames: DISPLAY_NAMES,
+    ftContext: opts.ftContext ?? FT_CONTEXT,
+    allocSeq: scriptedAllocSeq(opts.allocStart ?? 100),
+    ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
+  }
 
-    const controller = new SessionController(
-      { sessionState, st, ft, scribe, publisher },
-      CAMPAIGN,
-      TURN,
-    )
+  const controller = new SessionController(deps, CAMPAIGN, SESSION, TURN)
+  return { controller, capturedFtCtx, transcriptCapture, emitted, flushed, emitter, deps }
+}
+
+describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
+  it('loads the WHOLE FT context via listFtContextRows(sessionId, maxConsumedSeq) and hands the codec output to the FT', async () => {
+    const { controller, capturedFtCtx, transcriptCapture } = build()
     await controller.loadFromRedis()
-    await controller.processDmTurn([TRIGGER])
+    await controller.processDmTurn(7)
 
-    // turnEnd must be recorded before scribe — scribe is fire-and-forget and
-    // must not gate the turn's completion.
-    const turnEndIdx = recorder.order.indexOf('turnEnd')
-    expect(recorder.order.slice(0, turnEndIdx + 1)).toEqual(['st', 'ft', 'turnEnd'])
-    // Let the fire-and-forget scribe settle, then confirm it ran last.
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(recorder.order).toEqual(['st', 'ft', 'turnEnd', 'scribe'])
-    expect(gate.resolved).toBe(true)
+    // The query was scoped to this session + the consumed watermark.
+    expect(transcriptCapture.listArgs).toEqual({ sessionId: SESSION, maxPlayerSeq: 7 })
+    // ctx.ftHistory is EXACTLY rowsToConversation's output on the same fixture —
+    // no extra trigger batch appended by the controller.
+    const expected = rowsToConversation(HISTORY_ROWS, DISPLAY_NAMES)
+    expect(capturedFtCtx.ctx?.ftHistory).toEqual(expected)
   })
 
-  it('appends trigger as a user message then the assistant message; usage sums tiers', async () => {
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const st = recordingSt(recorder, { intervene: false, usage: { input: 3, output: 2 } })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = recordingScribe(recorder, { resolved: false })
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      { sessionState, st, ft, scribe, publisher },
-      CAMPAIGN,
-      TURN,
-    )
+  it('fuses an ST direction onto the LAST user message in-memory only (never persisted)', async () => {
+    const { controller, capturedFtCtx, transcriptCapture } = build({
+      evaluation: { intervene: true, direction: 'D', summaryUpdate: 'x' },
+    })
     await controller.loadFromRedis()
-    await controller.processDmTurn([TRIGGER])
+    await controller.processDmTurn(1)
+    await controller.persistTurn()
+
+    // The last user message's single text part ends with the fused direction.
+    const history = capturedFtCtx.ctx?.ftHistory ?? []
+    const lastUser = [...history].reverse().find((m) => m.role === 'user')
+    expect(firstTextPart(lastUser)).toBe('I search the room\n\n[DM direction: D]')
+
+    // Earlier (DM) message untouched.
+    const firstAssistant = history.find((m) => m.role === 'assistant')
+    expect(firstTextPart(firstAssistant)).toBe('You stand in the hall.')
+
+    // The direction never reaches what persistTurn writes (DM rows only, no
+    // mention of the direction).
+    const writtenContents = (transcriptCapture.append?.rows ?? []).map((r) => r.content)
+    expect(writtenContents.join('\n')).not.toContain('DM direction')
+  })
+
+  it('fusion on a MULTI-PART last user message suffixes the first text part and preserves the rest verbatim', () => {
+    // The §3.7 codec only ever produces single-text-part user messages, so this
+    // shape is unreachable through processDmTurn — the exported pure function is
+    // exercised directly to pin the multi-part preservation arm.
+    const trailing = { kind: 'text', text: 'a second part' } as const
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'Earlier narration.' }] },
+      {
+        v: 1,
+        role: 'user',
+        parts: [{ kind: 'text', text: 'I open the chest' }, trailing],
+        characterName: 'Mara',
+      },
+    ]
+
+    expect(fuseDirectionIntoLastUserMessage(history, 'D')).toBe(true)
+
+    const fused = history[1]
+    expect(fused?.parts).toHaveLength(2)
+    expect(fused?.parts[0]).toEqual({ kind: 'text', text: 'I open the chest\n\n[DM direction: D]' })
+    // The trailing part is preserved verbatim (same value, untouched).
+    expect(fused?.parts[1]).toEqual(trailing)
+    // The earlier (assistant) message is untouched.
+    expect(firstTextPart(history[0])).toBe('Earlier narration.')
+  })
+
+  it('fusion returns false on a history with no user message (caller owns the warn)', () => {
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'Only the DM has spoken.' }] },
+    ]
+    expect(fuseDirectionIntoLastUserMessage(history, 'D')).toBe(false)
+    // Nothing was mutated.
+    expect(firstTextPart(history[0])).toBe('Only the DM has spoken.')
+  })
+
+  it('passes the injected ftContext through and exposes NO runningSummary key', async () => {
+    const { controller, capturedFtCtx } = build({ ftContext: 'INJECTED' })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    expect(capturedFtCtx.ctx?.ftContext).toBe('INJECTED')
+    expect('runningSummary' in (capturedFtCtx.ctx ?? {})).toBe(false)
+  })
+
+  it('emits NO turn_end: only the FT drives the injected emitter; there is no publisher dep', async () => {
+    const { controller, emitted, deps } = build()
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    // The only emission is the FT fake's own 'chunk'; the controller never emits
+    // anything itself (no turn_end, no other frame).
+    expect(emitted).toEqual(['chunk'])
+    // Type-level: there is no `publisher` on the deps surface at all.
+    expect('publisher' in deps).toBe(false)
+  })
+
+  it('persistTurn appends the codec rows with sequentially-allocated seqs, in order', async () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'first' },
+        { kind: 'tool_call', toolCallId: 'tc1', toolName: 'roll_dice', input: { sides: 20 } },
+        { kind: 'tool_result', toolCallId: 'tc1', toolName: 'roll_dice', output: { total: 14 } },
+        { kind: 'text', text: 'second' },
+      ],
+      usage: { input: 1, output: 2 },
+    }
+    const { controller, transcriptCapture } = build({ assistant, allocStart: 100 })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.persistTurn()
+
+    const append = transcriptCapture.append
+    expect(append?.sessionId).toBe(SESSION)
+    expect(append?.turnId).toBe(TURN)
+    // text → dm_text, tool_call+tool_result pair → ONE dice_roll row, text → dm_text.
+    expect(append?.rows.map((r) => r.kind)).toEqual(['dm_text', 'dice_roll', 'dm_text'])
+    // Seqs allocated sequentially from the scripted allocator: [100, 101, 102].
+    expect(append?.seqs).toEqual([100, 101, 102])
+  })
+
+  it('persistTurn is a no-op when the assistant produced no rows (empty parts)', async () => {
+    const empty: AssistantMessage = { role: 'assistant', parts: [], usage: { input: 0, output: 0 } }
+    const { controller, transcriptCapture } = build({ assistant: empty })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.persistTurn()
+
+    // No payload captured — the fake records every appendDmTurn call into
+    // `capture.append`, so its absence proves the append was never invoked.
+    expect(transcriptCapture.append).toBeUndefined()
+  })
+
+  it('persistTurn before processDmTurn is a programmer error (throws)', async () => {
+    const { controller } = build()
+    await controller.loadFromRedis()
+    await expect(controller.persistTurn()).rejects.toThrow()
+  })
+
+  it('flushToRedis writes exactly {summary, usage}', async () => {
+    const { controller, flushed } = build({
+      evaluation: { intervene: false, summaryUpdate: 'turn summary', usage: { input: 3, output: 2 } },
+    })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
     await controller.flushToRedis()
 
-    // ft_history retired from Redis — PG-direct (MYT-68 §3.7). The appended
-    // shape is asserted on the live in-memory array the FT saw (the controller
-    // mutates it in place, pushing the assistant message after render returns).
-    expect(capturedCtx.value?.ftHistory).toEqual([
-      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'I search the room' }], characterName: 'Mara' },
-      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'The room is silent.' }] },
-    ])
-    // ST usage {3,2} + FT usage {5,7} = {8,9}.
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
-    expect(reloaded.usage).toEqual<TokenUsage>({ input: 8, output: 9 })
+    // ST usage {3,2} + FT usage {5,7} = {8,9}; summary is the lone update.
+    expect(flushed.value).toEqual<TurnState>({
+      summary: 'turn summary',
+      usage: { input: 8, output: 9 },
+    })
+    // Exactly those two keys — no stray ftHistory / participants leakage.
+    expect(Object.keys(flushed.value ?? {}).sort()).toEqual(['summary', 'usage'])
   })
 
-  it('applies summaryUpdate but does NOT inject direction when intervene is false', async () => {
-    // The running-summary update is DECOUPLED from `intervene` (runtime spec §6
-    // step 2): summaryUpdate is applied whenever present. Only the stage
-    // `direction` is gated on intervene. This stub carries both; we assert the
-    // summary IS updated while the direction is NOT fused into the user message.
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const st = recordingSt(recorder, {
-      intervene: false,
-      direction: 'ignored',
-      summaryUpdate: 'applied even without intervene',
-    })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = recordingScribe(recorder, { resolved: false })
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      { sessionState, st, ft, scribe, publisher },
-      CAMPAIGN,
-      TURN,
-    )
-    await controller.loadFromRedis()
-    await controller.processDmTurn([TRIGGER])
-    await controller.flushToRedis()
-
-    // ft_history retired from Redis — PG-direct (MYT-68 §3.7); inspect the
-    // live in-memory user message the FT saw.
-    const userText = firstTextPart(capturedCtx.value?.ftHistory[0])
-    // No direction text fused into the user message (direction IS gated).
-    expect(userText).toBe('I search the room')
-    expect(userText).not.toContain('ignored')
-    // Summary IS updated despite intervene:false (summary is NOT gated).
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
-    expect(reloaded.summary).toBe('applied even without intervene')
-  })
-
-  it('APPENDS a new summaryUpdate onto an existing summary (newline-joined), not overwriting it', async () => {
-    // applyEvaluation's append branch: when the controller loads a session that
-    // ALREADY has a running summary (a later turn), a fresh summaryUpdate is
-    // newline-joined onto it rather than replacing it. Seed a prior summary into
-    // Redis so loadFromRedis hydrates a non-empty `this.summary` before the ST's
-    // update arrives.
-    await sessionState.flushTurnState(CAMPAIGN, {
-      summary: 'turn one summary',
-      usage: { input: 0, output: 0 },
-    })
-
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const st = recordingSt(recorder, {
-      intervene: false,
-      summaryUpdate: 'turn two summary',
-    })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = recordingScribe(recorder, { resolved: false })
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      { sessionState, st, ft, scribe, publisher },
-      CAMPAIGN,
-      TURN,
-    )
-    await controller.loadFromRedis()
-    await controller.processDmTurn([TRIGGER])
-    await controller.flushToRedis()
-
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
-    // Both summaries present, newline-joined in order (old\nnew) — the prior
-    // summary was NOT overwritten.
-    expect(reloaded.summary).toBe('turn one summary\nturn two summary')
-  })
-
-  it('injects ST direction into the last user message AND appends summary when intervene is true', async () => {
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const st = recordingSt(recorder, {
-      intervene: true,
-      direction: 'be terse',
-      summaryUpdate: 'x',
-    })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = recordingScribe(recorder, { resolved: false })
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      { sessionState, st, ft, scribe, publisher },
-      CAMPAIGN,
-      TURN,
-    )
-    await controller.loadFromRedis()
-    await controller.processDmTurn([TRIGGER])
-    await controller.flushToRedis()
-
-    // ft_history retired from Redis — PG-direct (MYT-68 §3.7); inspect the
-    // live in-memory user message the FT saw.
-    const liveUser = capturedCtx.value?.ftHistory[0]
-    // Direction must be present in the (sole) user message's content.
-    expect(liveUser?.role).toBe('user')
-    expect(firstTextPart(liveUser)).toContain('I search the room')
-    expect(firstTextPart(liveUser)).toContain('be terse')
-    // Summary appended.
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
-    expect(reloaded.summary).toContain('x')
-    // The FT must have seen the direction-injected history, not the bare one.
-    // (The captured ftHistory is the live array reference, which the controller
-    // mutates in place — so we locate the user message, not `.at(-1)`, since the
-    // assistant message gets pushed onto that same array after render returns.)
-    const userMsg = capturedCtx.value?.ftHistory.find((m) => m.role === 'user')
-    expect(firstTextPart(userMsg)).toContain('be terse')
-  })
-
-  it('does not throw out of processDmTurn when the Scribe rejects', async () => {
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
+  it('does not throw out of processDmTurn when the Scribe rejects; logger.warn is called', async () => {
     const warn = vi.fn()
-    const st = recordingSt(recorder, { intervene: false })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = throwingScribe()
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      makeDeps({ logger: { warn } }, { sessionState, st, ft, scribe, publisher }),
-      CAMPAIGN,
-      TURN,
-    )
+    const { controller } = build({ scribe: rejectingScribe(), logger: { warn } })
     await controller.loadFromRedis()
 
-    await expect(controller.processDmTurn([TRIGGER])).resolves.toBeUndefined()
-    // Let the rejected fire-and-forget settle and confirm the swallow logged.
+    await expect(controller.processDmTurn(1)).resolves.toBeUndefined()
+    // Let the fire-and-forget rejection settle.
     await Promise.resolve()
     await Promise.resolve()
     expect(warn).toHaveBeenCalled()
   })
 
-  it('does not throw out of processDmTurn when the Scribe throws SYNCHRONOUSLY', async () => {
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const warn = vi.fn()
-    const st = recordingSt(recorder, { intervene: false })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = synchronouslyThrowingScribe()
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      makeDeps({ logger: { warn } }, { sessionState, st, ft, scribe, publisher }),
-      CAMPAIGN,
-      TURN,
-    )
+  it('propagates TranscriptCorruptError from the codec out of processDmTurn (crash-loud)', async () => {
+    // A roll row with non-JSON content makes rowsToConversation throw.
+    const corrupt: readonly SessionMessage[] = [
+      row({ seq: 1, turnId: 'prior', turnOrdinal: 0, messageType: 'dice_roll', content: 'not json' }),
+    ]
+    const { controller } = build({ rows: corrupt })
     await controller.loadFromRedis()
+    await expect(controller.processDmTurn(1)).rejects.toThrow(/transcript corrupt/)
+  })
 
-    // A SYNCHRONOUS throw inside extract() must be captured by the wrapper, not
-    // propagate out of processDmTurn.
-    await expect(controller.processDmTurn([TRIGGER])).resolves.toBeUndefined()
-    await Promise.resolve()
-    await Promise.resolve()
+  it('applyEvaluation: a fresh summaryUpdate APPENDS onto an existing summary (newline-joined), not overwriting', async () => {
+    const { controller, flushed } = build({
+      turnState: { summary: 'turn one summary', usage: { input: 0, output: 0 } },
+      evaluation: { intervene: false, summaryUpdate: 'turn two summary' },
+    })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.flushToRedis()
+
+    expect(flushed.value?.summary).toBe('turn one summary\nturn two summary')
+  })
+
+  it('applyEvaluation: summaryUpdate sets the summary when none exists yet', async () => {
+    const { controller, flushed } = build({
+      evaluation: { intervene: false, summaryUpdate: 'first summary' },
+    })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.flushToRedis()
+
+    expect(flushed.value?.summary).toBe('first summary')
+  })
+
+  it('skips direction fusion (with a warn) when the batch holds no user message', async () => {
+    const warn = vi.fn()
+    // DM-only rows: no player_message, so rowsToConversation yields no user msg.
+    const dmOnly: readonly SessionMessage[] = [
+      row({ seq: 1, turnId: 'prior', turnOrdinal: 0, messageType: 'dm_text', content: 'You wait.' }),
+    ]
+    const { controller, capturedFtCtx } = build({
+      rows: dmOnly,
+      evaluation: { intervene: true, direction: 'be terse' },
+      logger: { warn },
+    })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    // No user message to fuse onto → nothing carries the direction; warn fired.
+    const hasDirection = (capturedFtCtx.ctx?.ftHistory ?? []).some((m) =>
+      m.parts.some((p) => p.kind === 'text' && p.text.includes('be terse')),
+    )
+    expect(hasDirection).toBe(false)
     expect(warn).toHaveBeenCalled()
   })
 
-  it('round-trips mutated state through load → process → flush → reload', async () => {
-    // Seed pre-existing turn state + participants so load actually carries them.
-    // ft_history is no longer seeded through Redis — PG-direct (MYT-68 §3.7);
-    // the controller starts its in-memory transcript empty (T14 loads it from
-    // session_messages). summary/usage still round-trip through Redis.
-    await sessionState.flushTurnState(CAMPAIGN, {
-      summary: 'prior summary',
-      usage: { input: 100, output: 200 },
-    })
-    await sessionState.setState(CAMPAIGN, {
-      participants: ['Mara', 'Bram'],
-      mode: 'exploration',
-      status: 'active',
-    })
-
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const st = recordingSt(recorder, { intervene: false, usage: { input: 1, output: 1 } })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = recordingScribe(recorder, { resolved: false })
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      { sessionState, st, ft, scribe, publisher },
-      CAMPAIGN,
-      TURN,
-    )
+  it('defaults participants to [] (and workingSet to []) when no :state blob is set', async () => {
+    const { controller, capturedFtCtx } = build()
     await controller.loadFromRedis()
-    // The loaded participants must reach the tiers via the context.
-    await controller.processDmTurn([TRIGGER])
-    await controller.flushToRedis()
+    await controller.processDmTurn(1)
 
-    expect(capturedCtx.value?.participants).toEqual(['Mara', 'Bram'])
-
-    // ft_history retired from Redis — PG-direct (MYT-68 §3.7). The in-memory
-    // transcript starts empty this turn, so it holds only the freshly-appended
-    // user + assistant messages (no Redis-seeded "Earlier.").
-    expect(capturedCtx.value?.ftHistory).toEqual([
-      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'I search the room' }], characterName: 'Mara' },
-      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'The room is silent.' }] },
-    ])
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
-    expect(reloaded.summary).toBe('prior summary')
-    // 100/200 prior + ST 1/1 + FT 5/7 = 106/208.
-    expect(reloaded.usage).toEqual<TokenUsage>({ input: 106, output: 208 })
+    expect(capturedFtCtx.ctx?.participants).toEqual([])
+    expect(capturedFtCtx.ctx?.workingSet).toEqual([])
   })
 
-  it('defaults participants to [] when no :state blob is set', async () => {
-    const recorder: Recorder = { order: [] }
-    const capturedCtx: { value?: FtTurnContext } = {}
-    const st = recordingSt(recorder, { intervene: false })
-    const ft = recordingFt(recorder, ASSISTANT, capturedCtx)
-    const scribe = recordingScribe(recorder, { resolved: false })
-    const publisher = fakePublisher(recorder, [])
-
-    const controller = new SessionController(
-      { sessionState, st, ft, scribe, publisher },
-      CAMPAIGN,
-      TURN,
-    )
+  it('carries loaded participants into the FT context', async () => {
+    const { controller, capturedFtCtx } = build({ participants: ['Mara', 'Bram'] })
     await controller.loadFromRedis()
-    await controller.processDmTurn([TRIGGER])
+    await controller.processDmTurn(1)
 
-    expect(capturedCtx.value?.participants).toEqual([])
-    expect(capturedCtx.value?.workingSet).toEqual([])
+    expect(capturedFtCtx.ctx?.participants).toEqual(['Mara', 'Bram'])
   })
 })

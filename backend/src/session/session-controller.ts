@@ -1,21 +1,35 @@
 // backend/src/session/session-controller.ts
 //
-// MYT-66 Task 7 — the transient, deterministic turn conductor.
+// MYT-68 Task 14 — the transient, deterministic turn conductor (PG-direct).
 //
 // One SessionController exists for the life of ONE DM turn on the worker. It is
 // a thin orchestration shell (Zero Framework Cognition): it makes no judgment
-// calls — it loads the turn's in-memory state from Redis, sequences the tiers
-// (Slow Thinker → Fast Thinker → Scribe), and flushes the mutated state back.
-// Every reasoning call lives behind the injected tier seams (`tiers/types.ts`).
+// calls — it reconstructs the turn's in-memory FT history from session_messages
+// (§3.7), sequences the tiers (Slow Thinker → Fast Thinker → Scribe), persists
+// the rendered DM turn as ONE atomic PG append, and flushes the small turn
+// state (summary/usage) back to Redis. Every reasoning call lives behind the
+// injected tier seams (`tiers/types.ts`).
 //
-// THE RECOVERY INVARIANT: between `loadFromRedis()` and `flushToRedis()` the
-// controller mutates ONLY its in-memory copy of the turn state — it issues NO
-// direct Redis writes of its own. A crash mid-turn therefore leaves Redis at
-// the pre-turn snapshot; the only state mutation is the single atomic
-// `flushTurnState` MULTI at the end. (Streaming text_delta frames go out via
-// the publisher, but those are transport, not turn state.)
+// THE RECOVERY INVARIANT (rewritten for the PG-direct model):
+//
+//   load → (in-memory only) → persistTurn → flushToRedis → [worker: turn_end]
+//
+// Between `loadFromRedis()`/`processDmTurn()` and `persistTurn()` the controller
+// mutates ONLY its in-memory state (the reconstructed history, the running
+// summary, the usage accumulator, the rendered assistant message) — it issues
+// NO durable write of its own. `persistTurn()` is the SINGLE durability point: a
+// ONE-statement, atomic, idempotent-on-turnId PG append (ON CONFLICT
+// (turn_id, turn_ordinal) DO NOTHING in the repo). `flushToRedis()` then carries
+// only the small {summary, usage} turn state. A crash BEFORE `persistTurn`
+// therefore leaves both Postgres and Redis at the pre-turn snapshot — nothing to
+// undo; BullMQ redelivery re-runs the turn cleanly. The `turn_end` frame is the
+// WORKER's (Task 15): it is published only AFTER persist + flush + the trigger
+// watermark advance, so a client never sees turn_end for a turn that did not
+// durably land.
 
+import type { SessionMessage } from '../repo/types.js'
 import type { SessionState, SessionStateBlob } from '../redis/session-state.js'
+import { assistantToRows, rowsToConversation } from './transcript-codec.js'
 import type {
   AssistantMessage,
   ConversationMessage,
@@ -25,9 +39,8 @@ import type {
   SlowThinker,
   StEvaluation,
   TokenUsage,
-  TriggerMessage,
+  TurnEmitter,
 } from './tiers/types.js'
-import type { TurnPublisher } from './turn-publisher.js'
 
 /** A pino logger is structurally compatible; only `warn` is needed here so the
  *  controller stays decoupled from the full Logger surface (mirrors the
@@ -36,12 +49,39 @@ interface MinimalLogger {
   warn: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
 }
 
+/** The session_messages access the controller needs, narrowed to the two
+ *  methods it uses so the worker can bind a repo (or a tx) without exposing the
+ *  whole surface. Mirrors `repo.sessionMessages.{listFtContextRows,appendDmTurn}`. */
+export interface TranscriptStore {
+  /** §3.7 single-piece context read: player rows ≤ the consumed watermark ∪ ALL
+   *  DM rows, seq ASC. Returns the WHOLE FT context — there is no separate batch. */
+  listFtContextRows(sessionId: string, maxPlayerSeq: number): Promise<SessionMessage[]>
+  /** §3.7 atomic per-turn DM append (one multi-VALUES INSERT, idempotent on
+   *  (turn_id, turn_ordinal)). Seqs are caller-allocated, in row order. */
+  appendDmTurn(input: {
+    sessionId: string
+    turnId: string
+    rows: readonly { kind: string; content: string }[]
+    seqs: readonly number[]
+  }): Promise<void>
+}
+
 export interface SessionControllerDeps {
   readonly sessionState: SessionState
   readonly st: SlowThinker
   readonly ft: FastThinker
   readonly scribe: Scribe
-  readonly publisher: TurnPublisher
+  /** The latched frame emitter the worker builds (Task 15): the FT streams every
+   *  player-visible frame through it. The controller never emits itself. */
+  readonly emitter: TurnEmitter
+  readonly transcript: TranscriptStore
+  /** userId → display name, for the codec's player-row attribution. */
+  readonly displayNames: ReadonlyMap<string, string>
+  /** The enforced-ignorance-safe prep doc (session_preps.ft_context), resolved
+   *  by the worker (`:state` blob → PG re-load, §3.10). */
+  readonly ftContext: string
+  /** Allocates the next server-ordered seq (bound to `sessionState.nextSeq`). */
+  readonly allocSeq: () => Promise<number>
   readonly logger?: MinimalLogger
 }
 
@@ -50,30 +90,33 @@ const ZERO_USAGE: TokenUsage = { input: 0, output: 0 }
 export class SessionController {
   private readonly deps: SessionControllerDeps
   private readonly campaignId: string
+  private readonly sessionId: string
   private readonly turnId: string
 
-  // In-memory turn state, mutated between load and flush (the recovery
-  // invariant). `participants` comes from the `:state` blob and is read-only
-  // for the turn (the FT/ST see it via the context).
-  // MYT-68 interim: loaded from session_messages in T14 (no longer Redis).
-  private ftHistory: ConversationMessage[] = []
+  // In-memory turn state, mutated between load and persist (the recovery
+  // invariant). `history` is reconstructed from session_messages each turn (no
+  // longer Redis). `participants` comes from the `:state` blob and is read-only
+  // for the turn. `assistant` is null until the FT renders it — persisting
+  // before processDmTurn runs is a programmer error.
+  private history: ConversationMessage[] = []
   private summary = ''
   private usage: TokenUsage = ZERO_USAGE
   private participants: readonly string[] = []
+  private assistant: AssistantMessage | null = null
 
-  constructor(deps: SessionControllerDeps, campaignId: string, turnId: string) {
+  constructor(deps: SessionControllerDeps, campaignId: string, sessionId: string, turnId: string) {
     this.deps = deps
     this.campaignId = campaignId
+    this.sessionId = sessionId
     this.turnId = turnId
   }
 
-  /** Hydrate the in-memory turn state from Redis: the three LLM-tier keys via
-   *  `loadTurnState`, and the participant roster from the `:state` blob. */
+  /** Hydrate the small in-memory turn state from Redis: the running summary +
+   *  usage via `loadTurnState`, and the participant roster from the `:state`
+   *  blob. The FT history is NOT loaded here — it is reconstructed from
+   *  session_messages in `processDmTurn` (PG-direct, §3.7). */
   async loadFromRedis(): Promise<void> {
     const turnState = await this.deps.sessionState.loadTurnState(this.campaignId)
-    // MYT-68 interim: ftHistory is loaded from session_messages in T14 (it no
-    // longer round-trips through Redis — §3.7 PG-direct). Stays the in-memory
-    // [] start for now so the turn loop still appends/flushes coherently.
     this.summary = turnState.summary
     this.usage = turnState.usage
 
@@ -81,21 +124,24 @@ export class SessionController {
     this.participants = state === null ? [] : state.participants
   }
 
-  /** Sequence one DM turn: ST evaluate → append triggers (with optional
-   *  direction injection) → FT render → turnEnd → fire-and-forget Scribe. */
-  async processDmTurn(triggerMessages: TriggerMessage[]): Promise<void> {
-    const ctx = this.buildContext()
+  /** Sequence one DM turn (no durable writes): reconstruct the FT history from
+   *  session_messages → ST evaluate → apply evaluation (summary + usage) →
+   *  optionally fuse the stage direction onto the last user message (in-memory
+   *  only) → FT render → fire-and-forget Scribe. The `turn_end` frame is the
+   *  worker's, published only after persist + flush + watermark. */
+  async processDmTurn(maxConsumedSeq: number): Promise<void> {
+    // §3.7: reconstruct the WHOLE FT context from session_messages. The codec
+    // THROWS TranscriptCorruptError on an incoherent row — let it propagate
+    // (crash-loud; the worker owns the terminal turn handling).
+    const rows = await this.deps.transcript.listFtContextRows(this.sessionId, maxConsumedSeq)
+    this.history = rowsToConversation(rows, this.deps.displayNames)
 
-    const evaluation = await this.deps.st.evaluate(ctx)
+    const evaluation = await this.deps.st.evaluate(this.buildContext())
     this.applyEvaluation(evaluation)
-    this.appendTriggers(triggerMessages, evaluation)
+    this.fuseDirection(evaluation)
 
-    const ctxAfterTriggers = this.buildContext()
-    const emit = this.deps.publisher.emitFor(this.campaignId, this.turnId)
-    const assistant = await this.deps.ft.render(ctxAfterTriggers, emit)
-    this.appendAssistant(assistant)
-
-    await this.deps.publisher.turnEnd(this.campaignId, this.turnId)
+    this.assistant = await this.deps.ft.render(this.buildContext(), this.deps.emitter)
+    this.usage = addUsage(this.usage, this.assistant.usage)
 
     // Fire-and-forget (H12): the Scribe extracts world-state deltas off the
     // critical path. Its failure must NEVER throw out of the turn — swallow and
@@ -103,13 +149,44 @@ export class SessionController {
     // throw (a non-async Scribe that throws before returning its promise) into
     // the same `.catch`, so neither a rejection nor a sync throw escapes. `void`
     // marks the deliberate non-await so no floating-promise lint.
+    const scribeCtx = this.buildContext()
     void Promise.resolve()
-      .then(() => this.deps.scribe.extract(ctxAfterTriggers))
+      .then(() => this.deps.scribe.extract(scribeCtx))
       .catch((err: unknown) => this.deps.logger?.warn({ err }, 'scribe.extract failed'))
   }
 
-  /** Flush the mutated in-memory turn state back to Redis in one atomic MULTI
-   *  (the only Redis write this controller performs). */
+  /** The single durability point: encode the rendered assistant message to DM
+   *  rows (§3.7 codec), allocate one seq per row SEQUENTIALLY (order matters —
+   *  turn_ordinal mirrors row order), and append them in ONE atomic, idempotent
+   *  PG INSERT. An empty render (no rows) is a no-op. Calling before
+   *  `processDmTurn` has rendered the assistant is a programmer error. */
+  async persistTurn(): Promise<void> {
+    if (this.assistant === null) {
+      throw new Error('SessionController.persistTurn called before processDmTurn rendered the assistant')
+    }
+    const rows = assistantToRows(this.assistant)
+    if (rows.length === 0) return
+
+    // Allocate seqs SEQUENTIALLY (one per row, awaited in order) — the Redis
+    // INCR is the server's ordering authority, and the rows' turn_ordinal
+    // mirrors this allocation order. (A `while` rather than an index loop: the
+    // body never reads the index, and `prefer-for-of` rejects the index form.)
+    const seqs: number[] = []
+    while (seqs.length < rows.length) {
+      seqs.push(await this.deps.allocSeq())
+    }
+
+    await this.deps.transcript.appendDmTurn({
+      sessionId: this.sessionId,
+      turnId: this.turnId,
+      rows,
+      seqs,
+    })
+  }
+
+  /** Flush the small in-memory turn state back to Redis: {summary, usage} only.
+   *  The transcript is durable in Postgres (persistTurn); Redis carries no
+   *  FT history as of MYT-68 (§3.7). */
   async flushToRedis(): Promise<void> {
     await this.deps.sessionState.flushTurnState(this.campaignId, {
       summary: this.summary,
@@ -120,10 +197,8 @@ export class SessionController {
   private buildContext(): FtTurnContext {
     return {
       campaignId: this.campaignId,
-      // TODO(MYT-68/T15): interim '' — the worker rewrite threads the real
-      // session_preps.ft_context value; '' is a silently-valid placeholder.
-      ftContext: '',
-      ftHistory: this.ftHistory,
+      ftContext: this.deps.ftContext,
+      ftHistory: this.history,
       participants: this.participants,
       usage: this.usage,
       workingSet: [],
@@ -133,7 +208,7 @@ export class SessionController {
   /** Apply the ST's evaluation: append ANY summary update (the running-summary
    *  is decoupled from `intervene` per the runtime spec §6 step 2 / MYT-66
    *  design §5 — only the stage `direction` is gated on `intervene`, in
-   *  `appendTriggers`) and accumulate its token usage (H12.a). */
+   *  `fuseDirection`) and accumulate its token usage (H12.a). */
   private applyEvaluation(evaluation: StEvaluation): void {
     if (evaluation.summaryUpdate !== undefined) {
       this.summary = this.summary === ''
@@ -143,31 +218,52 @@ export class SessionController {
     this.usage = addUsage(this.usage, evaluation.usage)
   }
 
-  /** Append each trigger as a `user` ConversationMessage. When the ST chose to
-   *  intervene with a direction, fuse it onto the LAST user message's content
-   *  so the FT renders under the stage direction (enforced ignorance holds: the
-   *  direction is a constraint, the FT never learns WHY it was injected). */
-  private appendTriggers(triggerMessages: readonly TriggerMessage[], evaluation: StEvaluation): void {
-    const direction =
-      evaluation.intervene && evaluation.direction !== undefined ? evaluation.direction : null
-
-    triggerMessages.forEach((trigger, index) => {
-      const isLast = index === triggerMessages.length - 1
-      const content =
-        direction !== null && isLast ? `${trigger.text}\n\n[DM direction: ${direction}]` : trigger.text
-      this.ftHistory.push({
-        v: 1,
-        role: 'user',
-        parts: [{ kind: 'text', text: content }],
-        characterName: trigger.characterName,
-      })
-    })
+  /** When the ST chose to intervene with a direction, fuse it onto the LAST user
+   *  message in the reconstructed history (in-memory ONLY; directions are
+   *  per-turn ephemera, never persisted — §3.7). Enforced ignorance holds: the
+   *  direction is a constraint, the FT never learns WHY it was injected. With no
+   *  user message in the batch (an empty-batch edge), skip with a warn. */
+  private fuseDirection(evaluation: StEvaluation): void {
+    if (!evaluation.intervene || evaluation.direction === undefined) return
+    if (!fuseDirectionIntoLastUserMessage(this.history, evaluation.direction)) {
+      this.deps.logger?.warn(
+        { campaignId: this.campaignId, turnId: this.turnId },
+        'ST direction with no user message to fuse onto; skipping fusion',
+      )
+    }
   }
+}
 
-  private appendAssistant(assistant: AssistantMessage): void {
-    this.ftHistory.push({ v: 1, role: 'assistant', parts: assistant.parts })
-    this.usage = addUsage(this.usage, assistant.usage)
-  }
+/**
+ * Fuse a stage direction onto the LAST user message in `history` (in place):
+ * its FIRST text part becomes `${text}\n\n[DM direction: ${direction}]`; every
+ * other part is preserved verbatim. Returns false (fusing nothing) when the
+ * history holds no user message — the caller owns the warn.
+ *
+ * Exported as a pure function so the multi-part preservation arm is directly
+ * unit-testable: the §3.7 codec only ever produces SINGLE-text-part user
+ * messages, so a multi-part last user message is unreachable through
+ * `processDmTurn` — but this function must stay correct if that shape ever
+ * changes, and the test pins it.
+ */
+export function fuseDirectionIntoLastUserMessage(
+  history: ConversationMessage[],
+  direction: string,
+): boolean {
+  const lastUserIndex = history.findLastIndex((message) => message.role === 'user')
+  if (lastUserIndex === -1) return false
+
+  const target = history[lastUserIndex]
+  /* c8 ignore next 2 -- noUncheckedIndexedAccess narrowing; lastUserIndex comes
+     from findLastIndex so the element exists */
+  if (target === undefined) return false
+  const fusedParts = target.parts.map((part, index) =>
+    index === 0 && part.kind === 'text'
+      ? ({ kind: 'text', text: `${part.text}\n\n[DM direction: ${direction}]` } as const)
+      : part,
+  )
+  history[lastUserIndex] = { ...target, parts: fusedParts }
+  return true
 }
 
 /** Sum a tier's optional usage onto the running total. A tier that omits usage
