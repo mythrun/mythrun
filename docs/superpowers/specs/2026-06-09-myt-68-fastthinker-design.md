@@ -1,9 +1,9 @@
 # MYT-68 — FastThinker, Tool-Calling Framework & Skill Checks
 
-> **Status:** Design — approved in brainstorm 2026-06-09, pending blind review.
+> **Status:** Design — approved in brainstorm 2026-06-09; hardened by blind review round 1 (Ocean, 4 lenses, 0 showstoppers — see §13). Pending user-review gate.
 > **Issue:** MYT-68 (Session Runtime + Combat L1 milestone, 4th issue).
-> **Builds on:** MYT-66 (the SessionController conductor + the *stubbed* FastThinker seam `render(ctx, emit)`; the `FtTurnContext` public-by-construction type; the turn-publisher) and MYT-67 (the DM trigger that fires turns + plumbs `trigger.classification` onto the payload).
-> **Spec refs:** Multiplayer Session Runtime §7 (FastThinker multiplayer), §10 (skill checks), §17.2 (tool-calling contract); Backend Core §10 (prototype ports). Architecture overview (FT = Sonnet).
+> **Builds on:** MYT-66 (the SessionController conductor + the *stubbed* FastThinker seam `render(ctx, emit)`; the `FtTurnContext` public-by-construction type at `tiers/types.ts`; the turn-publisher; the recovery invariant) and MYT-67 (the DM trigger that fires turns + plumbs `trigger.classification` onto the payload, with `triggerMessages[]` attributed by `{userId, characterName, text}`).
+> **Spec refs:** Multiplayer Session Runtime §7 (FastThinker multiplayer), §10 (skill checks), §12 (sequence numbers — *unbuilt*, see §3.7), §17.2 (tool-calling contract); Backend Core §10 (prototype ports). Architecture overview (FT = Sonnet).
 > **Tiers stubbed:** ST (`evaluate`) and Scribe (`extract`) remain MYT-66 stubs; real ST direction is MYT-69. This issue makes the **FastThinker** real.
 
 ---
@@ -20,20 +20,20 @@ A DM turn's FastThinker pass is a **multi-step generation** conducted by the Ver
 
 ```ts
 streamText({
-  model: SONNET,
-  system,                       // ported ft-system.txt (public-tier)
-  messages,                     // ftHistory (multi-part) + character-attributed trigger batch + ST direction
-  tools,                        // the registry: roll_dice, roll_skill_check (extensible)
-  stopWhen: stepCountIs(FT_MAX_TOOL_STEPS),   // hard per-turn cap (§17.2)
-  prepareStep,                  // final step → { toolChoice: 'none' } (clean prose close)
-  abortSignal,                  // per-call timeout
-  providerOptions,              // anthropic.cacheControl + mythrun log bindings
+  model: SONNET,                              // wrapped with logAndNormalizeMiddleware
+  system,                                     // multiplayer ft-system.txt (public-tier)
+  messages,                                   // ftHistory (multi-part) + character-attributed trigger batch + ST direction
+  tools,                                      // the registry: roll_dice, roll_skill_check (extensible)
+  stopWhen: stepCountIs(FT_MAX_TOOL_STEPS),   // hard per-turn cap (§3.6)
+  prepareStep,                                // final step → { toolChoice: 'none' } (clean prose close)
+  abortSignal,                                // per-turn timeout (§6)
+  providerOptions,                            // anthropic.cacheControl + mythrun log bindings
 })
 ```
 
 The SDK feeds each tool result back to the model and continues until it stops (no more tool calls) or the cap fires. **Constraint-injection (§17.2):** each tool returns the authoritative mechanical/factual truth; the FT writes prose *informed by* it but never *decides* the outcome — a failed check → the FT narrates *how* it fails. That discipline lives in the FT system prompt + the tool-result shape, not in code.
 
-**Why the SDK loop (not a hand-rolled one):** verified against `ai@6` — `streamText` + `tool()` + `stopWhen: stepCountIs` + `prepareStep` (per-step `toolChoice`/`activeTools`) + the typed `fullStream` (text-delta / tool-call / tool-result parts) + `providerOptions.anthropic.cacheControl` + `abortSignal` cover **every** requirement, including the cap's graceful final-prose pass. Re-implementing the loop is strictly more bug surface for no capability gain. (The prototype hand-rolled it only because it predated the SDK's tool loop.)
+**Why the SDK loop (not a hand-rolled one):** verified against `ai@6.0.176` — `streamText` + `tool()` + `stopWhen: stepCountIs` + `prepareStep` (per-step `toolChoice`/`activeTools`) + the typed `fullStream` (text-delta / tool-call / tool-result / **error** parts) + `providerOptions.anthropic.cacheControl` + `abortSignal` cover **every** requirement, including the cap's graceful final-prose pass. The SDK calls the model's `doStream` once per step; our `logAndNormalizeMiddleware` wraps each call independently (own `terminated` flag, each step terminating with a `finish` part of `finishReason` `tool-calls`/`stop`), so per-step cost logging + the `mythrun` context bindings flow on every step (verified in `middleware.ts`; re-asserted in the smoke, §10). Re-implementing the loop is strictly more bug surface for no capability gain.
 
 ## 3. Components
 
@@ -51,8 +51,8 @@ export interface StreamTextWithToolsOpts {
   readonly stopWhen: StopCondition            // stepCountIs(N)
   readonly prepareStep?: PrepareStepFunction
   readonly callSite: string
-  readonly timeoutMs?: number                 // default per-FT-turn budget; abortSignal
-  readonly providerOptions?: unknown
+  readonly timeoutMs?: number                 // per-TURN budget; abortSignal (§6)
+  readonly providerOptions?: unknown          // house style (cast internally); carries anthropic.cacheControl + mythrun bindings
   readonly maxOutputTokens?: number
 }
 export interface StreamTextWithToolsResult {
@@ -63,134 +63,149 @@ export interface StreamTextWithToolsResult {
 export function streamTextWithTools(opts: StreamTextWithToolsOpts): StreamTextWithToolsResult
 ```
 
-- **NO repair chain** (it's prose, not structured output — repair is `generateObject`'s concern).
-- Timeout via `createTimeoutSignal` (the myth-4omh per-call guard) → SDK `abortSignal`; abort → `LlmTimeoutError` (terminal=false → BullMQ retry, consistent with the turn worker).
-- Errors mapped via `mapToMythrunError`; the wrapped model carries `logAndNormalizeMiddleware` (cost/latency per step + the `providerOptions.mythrun.{campaignId,sessionId,stage}` bindings — the FT threads them).
-- Lives in `ai.ts` alongside the other call wrappers (consistent home; the header's "no stream-gating/persistence" scope still holds — the wrapper just exposes the stream, the FT does the gating/persistence).
+- **NO output-repair chain** (it's prose, not structured output — repair is `generateObject`'s concern). **Malformed tool-call inputs** are a distinct concern: a strict Zod `inputSchema` rejection surfaces as a `tool-error` part the model recovers from on its next step (the SDK default). We do **not** wire `experimental_repairToolCall` in MYT-68 — the model's own re-call is sufficient for two simple tools; revisit if the smoke shows repeated malformed calls.
+- Timeout via `createTimeoutSignal` (the myth-4omh per-call guard) → SDK `abortSignal`; abort → `LlmTimeoutError`. The abort posture interacts with the loop + the recovery model — see §5 (an abort *after* any frame has been broadcast is terminal, not silently retried).
+- Errors mapped via `mapToMythrunError`; the wrapped model carries `logAndNormalizeMiddleware`.
+- Lives in `ai.ts` alongside the other call wrappers. The wrapper exposes the stream + the resolved multi-part `response.messages` + `usage`; the FT does the gating/persistence.
 
 ### 3.2 The FastThinker implementation — `src/session/tiers/fast-thinker.ts`
 
-Implements the (widened) `FastThinker` interface. Constructor deps (injected — testable): the tool resolvers (the dice engine, the skill-check resolver), `repo` (for character lookup), the model config, the prompt loader.
+Implements the (widened) `FastThinker` interface. Constructor deps (injected — testable): the skill-check resolver (which itself holds the dice engine + the `repo`), the model config, the prompt loader.
 
 `render(ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage>`:
-1. **Build the system prompt** — `loadPrompt('session', 'ft-system', { …public vars: tone, participants, … })` (ported `ft-system.txt`).
-2. **Build the messages** — from `ctx.ftHistory` (now multi-part, §3.5) + the trigger batch attributed by **character name** (§7: `Arin: "…"` lines) + the ST `direction` fused onto the batch (the controller already does the fusion; format reconciled in §8).
-3. **Build the tool set** — the registry (§3.3); each tool's `execute` closes over `emit` + `ctx` (so it can emit the roll frame + resolve the roller).
+1. **Build the system prompt** — `loadPrompt('session', 'ft-system', vars)` with the var contract in §7 (multiplayer-attributed; public-tier).
+2. **Build the messages** — from `ctx.ftHistory` (now multi-part, §3.7) + the trigger batch attributed by **character name** (§7) + the ST `direction` fused onto the batch (the controller already does the fusion; format reconciled in §7). ST is stubbed in MYT-68 → no direction is injected this issue.
+3. **Build the tool set** — the registry (§3.3); each tool's `execute` closes over `emit` + `ctx` (so it can emit the roll frame + resolve the roller against the participant roster).
 4. **Run the loop** — `streamTextWithTools({ model: SONNET, system, messages, tools, stopWhen: stepCountIs(FT_MAX_TOOL_STEPS), prepareStep })`.
-5. **Consume `fullStream`** — `text-delta` → `emit.emitText(delta)`; tool execution emits its frame inside the resolver. Accumulate the assistant turn.
-6. **Return** the multi-part `AssistantMessage` (from `response.messages`) for the conductor to persist.
+5. **Consume `fullStream` — with explicit error handling and serial emit ordering:**
+   - `text-delta` → `await emit.emitText(delta)`.
+   - **`error` parts MUST be handled** — an in-band `error` part (or a mapped error thrown by the middleware) is rethrown as a Mythrun-typed error; the loop does not silently end and mark the turn complete (refutes the naïve `for await` that ignores error parts — see §5). The wrapped model's middleware already converts a stream `error` into `controller.error(mapped)`, so the `for await` *will* throw; the FT must let it propagate (not swallow it).
+   - **Serial ordering invariant (load-bearing):** the consume loop `await`s each `emit.*` call **before advancing the iterator**. Tool `execute` emits its frame (and awaits the publish) before returning the tool result. This guarantees the worker publishes `skill_check`/`dice_roll` *before* the dependent narration `text_delta`. The implementation MUST NOT fire-and-forget the publishes (see §3.8 / §13).
+6. **Return** the multi-part `AssistantMessage` (built from `response.messages`) for the conductor to persist into `ftHistory`.
 
 ### 3.3 The tool registry — `src/session/tiers/ft-tools.ts`
 
 Extensible. MYT-68 wires two tools as `tool({ description, inputSchema, execute })`; the other five (§17.2) register here when their resolvers land (MYT-70/72/75).
 
-- **`roll_dice`** — `inputSchema: { count, sides }`. `execute`: `rollDice(count, sides)` (deterministic, §3.4) → emits a `dice_roll` frame → returns `{ results, total }`. For non-skill rolls (damage, wild magic).
-- **`roll_skill_check`** — `inputSchema: { character_name, skill, context, advantage?, disadvantage? }`. The resolver (§3.5).
+- **`roll_dice`** — `inputSchema: { count: z.int().min(1).max(100), sides: z enum of the standard die set {2,4,6,8,10,12,20,100} }`. `execute`: `rollDice(count, sides)` (deterministic, §3.4) → awaits emit of a `dice_roll` frame → returns `{ results, total }`. Bounds are enforced **in code** (Zod + a defensive clamp in the engine) — an unbounded `count` would stall the worker (it holds the session lock); out-of-range rejects to a `tool-error` the model narrates around. For non-skill rolls (damage, wild magic).
+- **`roll_skill_check`** — `inputSchema: { character_name, skill, context, advantage?, disadvantage? }`. The resolver (§3.5). `character_name` is matched against the **session participant roster** (a closed known set), not used as a free-text DB key — see §3.5 step 1.
 
 ### 3.4 The dice engine — `src/session/dice/engine.ts` (ported, Principle #4)
 
-Pure functions over `crypto.randomInt` (the LLM never generates a random number): `rollD20WithType(type)`, `rollDice(count, sides)`, `calculateModifier(score)`, `proficiencyBonusByLevel(level)`. Deterministic + unit-testable (seedable/injectable RNG for tests).
+Pure functions over `crypto.randomInt` (the LLM never generates a random number): `rollD20WithType(type)` returning the **kept** roll for advantage/disadvantage (roll twice, keep higher/lower), `rollDice(count, sides)` (with a defensive bound), `calculateModifier(score) = floor((score-10)/2)`, `proficiencyBonusByLevel(level)` (used for character *generation/validation*, **not** the live skill-check path — see §3.5 step 2). Deterministic + unit-testable (injectable RNG for tests).
 
-### 3.5 `roll_skill_check` resolver (Principle #5)
+### 3.5 `roll_skill_check` resolver (Principle #5) — `src/session/skill-check.ts`
 
 The full pre-gen-DC-table flow:
-1. **Resolve the roller** — `character_name` → the campaign's character (via `repo.characters`; the production `characters` + `character_skills` tables carry ability scores + `proficiency_bonus` + per-skill `proficiency_level`). A lookup by `(campaignId, character_name)` is needed — add a thin `repo.characters` method if absent.
-2. **Compute the modifier** — `SKILL_ABILITIES[skill]` (ported map) → ability mod + (proficient ? proficiency_bonus : 0; expertise → 2×). Mechanical (ZFC-exempt computation).
-3. **Pre-generate the DC table** — one Haiku call: `generateObject({ model: HAIKU, schema: SkillCheckResultSchema, system: loadPrompt('session','skill-check', {…}) })` → `{ dc, outcomes: { fail, success, great_success } }` (ported template + schema). The outcomes are *narrative constraints*, not dialogue.
-4. **Roll** — `rollD20WithType(advantage|disadvantage|normal)` + modifier → `total` (deterministic).
+1. **Resolve the roller from the participant roster (not a free-text DB key).** `character_name` is normalized (trim + case-fold) and matched **exactly** against `ctx.participants` (the session's known character names — a closed set). The matched participant maps to a character record via the `campaign_characters` join (note: `characters.campaign_id` was dropped in migration 009; resolution goes through `campaign_characters` for `ctx.campaignId`). Matching against a closed known set is structural validation (ZFC-exempt) — **no fuzzy matching** (that would be the local string-intelligence ZFC forbids). **No match or ambiguous match** (two participants share a name — no schema uniqueness prevents it) → fail-soft error-constraint (§5), never a throw.
+2. **Compute the modifier — read the per-skill proficiency level (DIVERGES FROM THE PROTOTYPE).** `SKILL_ABILITIES[skill]` (ported map; normalize the skill key) → ability modifier from the character's ability score. Then read `character_skills.proficiency_level` for the requested skill: `none → +0`, `proficient → +proficiency_bonus`, `expertise → +2×proficiency_bonus`. **The prototype flattens this to a boolean (`proficient ? +PB : 0`) and has no expertise path — do NOT port that math.** Use the stored `characters.proficiency_bonus` column (authoritative); `proficiencyBonusByLevel` is for generation only. A dedicated **expertise unit test** is required (the prototype has none). Mechanical computation (ZFC-exempt). An **unknown/unmapped skill** (the FT is free-text; it will eventually emit a string outside the 18-skill map) → fail-soft error-constraint (§5), never a throw.
+3. **Pre-generate the DC table** — one Haiku call: `generateObject({ model: HAIKU, schema: SkillCheckResultSchema, system: loadPrompt('session','skill-check', {…}), timeoutMs, abortSignal: <threaded from the FT turn> })` → `{ dc, outcomes: { fail, success, great_success } }` (ported template + schema). The outcomes are *narrative constraints*, not dialogue. The FT turn's abortSignal is **threaded into this nested call** so a turn abort cancels the in-flight DC call (no orphaned spend). DC-table failure (or abort) → fail-soft (§5).
+4. **Roll** — `rollD20WithType(type)` where `type` resolves per 5e: `advantage && disadvantage → normal` (they cancel), else `advantage → advantage`, `disadvantage → disadvantage`, else `normal`. (The prototype lets advantage silently win when both are true — that is not RAW; fix it.) Add the modifier → `total` (deterministic). **No nat-1/nat-20 auto-fail/crit on ability checks** (RAW: crits apply only to attack rolls); the tier is purely `total` vs `dc`.
 5. **Match the tier** — `total ≥ dc+5 → great_success`; `≥ dc → success`; else `fail`. The matched `outcomes[tier]` string is the **constraint**.
-6. **Emit + return** — emit a `skill_check` frame (roll, modifier, total, dc, tier, constraint); return `{ outcome_tier, constraint, roll, total, dc }` as the tool result. The FT narrates informed by `constraint`.
+6. **Emit + return** — await emit of a `skill_check` frame (roll, kept-roll detail, modifier, total, dc, tier, constraint); return `{ outcome_tier, constraint, roll, total, dc }` as the tool result. The FT narrates informed by `constraint`.
 
 ### 3.6 The cap
 
-`FT_MAX_TOOL_STEPS = 5` (config). `stopWhen: stepCountIs(FT_MAX_TOOL_STEPS)`. `prepareStep`: on the final allowed step (`stepNumber === FT_MAX_TOOL_STEPS - 1`) return `{ toolChoice: 'none' }` → the model must close with prose, never a dangling tool call.
+`FT_MAX_TOOL_STEPS = 5` (config). `stopWhen: stepCountIs(FT_MAX_TOOL_STEPS)` stops *after* N steps. `prepareStep` returns `{ toolChoice: 'none' }` on the final step so the model must close with prose, never a dangling tool call. **Precise semantics:** the model gets up to `FT_MAX_TOOL_STEPS − 1` tool-calling steps + 1 guaranteed prose-close step (the forced step counts as the Nth). The smoke (§10) asserts the **boundary** — that the second-to-last step may call a tool and the last step is gated to prose — rather than just "stops at 5."
 
 ### 3.7 Seam widening (the MYT-66 H5 / H12.f points)
 
-- **`TurnEmit` → `TurnEmitter`** — widen the frame-agnostic emit from `(text) => Promise<void>` to a small object: `{ emitText(text), emitSkillCheck(frame), emitDiceRoll(frame) }`. The conductor binds it via the turn-publisher (§3.8). The seam stays frame-shape-light (the emitter methods take plain data; the publisher maps to wire frames).
-- **`ConversationMessage.content` → multi-part** — widen from `string` to support text + tool-use + tool-result blocks (or store the SDK's `ModelMessage` shape), so `ftHistory` holds the real interleaved turns. Needed for coherent multi-turn FT context + correct prompt caching. The MYT-66 H12.f flag explicitly anticipated this.
-- **`FastThinker.render`** — `emit` becomes the `TurnEmitter`; resolvers are constructor deps (not render args).
-- **`appendAssistant` / `flushTurnState`** (session-controller / session-state) — persist the multi-part assistant turn into `ftHistory`. The **player transcript** (the reconnect-replay corpus: prose + roll events) is a *separate* representation and stays as-is — `ftHistory` is the FT's internal context, not the transcript.
+- **`TurnEmit` → `TurnEmitter`** — widen the frame-agnostic emit from `(text) => Promise<void>` to a small object: `{ emitText(text), emitSkillCheck(frame), emitDiceRoll(frame) }`, each returning `Promise<void>`. The conductor binds it via the turn-publisher (§3.8).
+- **`ConversationMessage.content` → multi-part, with a Mythrun-owned versioned shape.** Widen from `string` to a multi-part content (text + tool-call + tool-result blocks). **Do NOT persist the raw SDK `ModelMessage` shape** into `ftHistory`: that durable Redis blob (and the MYT-65 suspend/checkpoint envelope that folds in `loadTurnState`) would then couple to the `ai` package's serialization, and an `ai` minor bump could make live-session `ftHistory` / checkpoints unparseable on reconnect/cold-start. Define a small Mythrun-owned multi-part type with a schema version; map to/from SDK messages at the FT boundary. Bump the checkpoint envelope's contract version (or `kind`) so the (still-unbuilt) cold-start reader fails loud, not silent, on an old shape.
+- **`FastThinker.render`** — `emit` becomes the `TurnEmitter`; the skill-check resolver is a constructor dep.
+- **Persistence + the transcript gap (corrected from the draft).** `flushTurnState` persists the multi-part assistant turn into `ftHistory` (the FT's internal context, for multi-turn continuity). **The player-facing transcript is a separate, currently player-only corpus:** verified, `session_messages` holds only `player_message` rows and reconnect replay (`buildReconnectFrame`) replays only those — **DM prose + roll events are NOT yet persisted anywhere durable**, so a mid-session reconnect will not show prior DM turns, and the §17.7 in-session-lookback corpus does not exist yet. This is a pre-existing gap inherited from MYT-65/66 (the §12 server-assigned-sequence model was never built), *surfaced* by MYT-68 producing the first DM output. **Scope decision (surface to user, §12):** MYT-68 does not change the transcript/reconnect model; DM-output persistence + the seq model are owned by a dedicated transcript/seq issue. MYT-68's earlier draft wrongly stated the transcript "stays as-is (prose + roll events)" — it has neither; this spec corrects that.
 
 ### 3.8 Contract frames + client-side gating
 
 Add to `contract/session-events.ts`:
-- **Server frames** `skill_check` + `dice_roll` (mirror the prototype's `SkillCheckMessageSchema` / `DiceRollSchema` shapes) → `SERVER_FRAME_TYPES` + `ServerFrame`.
-- **Client frame** `roll_complete` → `CLIENT_FRAME_TYPES` + `ClientFrame` + `parseClientFrame` (contract only — see gating).
-- `turn-publisher.ts` gains `skillCheck(campaignId, turnId, frame)` + `diceRoll(...)`; `emitFor` returns the `TurnEmitter`. The SessionHub fan-out is frame-type-agnostic (confirm) so the new frames flow to clients.
+- **Server frames** `skill_check` + `dice_roll` (mirror the prototype's `SkillCheckMessageSchema` / `DiceRollSchema` shapes) → `SERVER_FRAME_TYPES` + `ServerFrame`. The SessionHub fan-out is frame-type-agnostic (confirm), so these flow to clients.
+- **`roll_complete` is NOT added to the live client allowlist in MYT-68.** The existing gate is `classifyClientFrame` (a boolean allowlist tripwire), not `parseClientFrame` (the draft misnamed it). Adding `roll_complete` to `CLIENT_FRAME_TYPES` with no server handler would make the transport *accept* a frame nothing consumes — exactly what the contract file's header warns against. It is documented as a **deferred** frame (owned by the frontend roll-animation issue) and added to the allowlist only when a handler exists.
 
-**Gating is client-side** (decided): the worker emits the `skill_check`/`dice_roll` frame **then** the dependent narration `text_delta`, in order. The frontend (later milestone) plays the dice animation and reveals the buffered narration locally. MYT-68 builds **no** server-side `waitingForRoll` buffer and **no** cross-process `roll_complete` ack — the lock is never held for an animation, no absent-ack stall. `roll_complete` is added to the contract for the frontend but has no server-side handler in this issue (per-client reveal, not globally synced — a deliberate amendment to §10's server-side model, justified by the cross-process architecture + the deferred frontend).
+**Gating is client-side** (decided). The worker emits the `skill_check`/`dice_roll` frame **then** the dependent narration `text_delta`, in order (the §3.2 serial-emit invariant + the publisher's single-connection awaited PUBLISH guarantee cross-process order; frames carry no seq today, so arrival order is the only ordering — hence the invariant is load-bearing). The frontend (later milestone) plays the dice animation and reveals the buffered narration locally.
+
+**This is an explicit amendment to runtime §10's server-side synchronized-reveal model** (`waitingForRoll` buffers continuation deltas server-side; the first client's `roll_complete` unblocks *everyone*). Rationale: a cross-process session lock cannot be held pending a human animation ack (it would stall the worker + the queue). The accepted tradeoff: roll-animation reveal becomes **per-client**, not globally synchronized — different clients may see the outcome beat at slightly different times. The roll *result* is identical for all clients (deterministic, resolved once); only the animation timing desyncs. Consequence to document for the (deferred) frontend: `turn_end` now fires at model speed, *before* a client finishes animating — the client treats `turn_end` as "stream complete," not "turn visually done," and continues local reveal after the animation. (MYT-68 builds **no** server-side buffer + **no** cross-process ack.)
 
 ### 3.9 Prompt caching (the §17.2 cost lever)
 
-`providerOptions.anthropic.cacheControl: { type: 'ephemeral' }` on the **static prefix** — the system prompt + the stable `ft_context` head (running summary, participants). The growing tool-result tail is **not** cached. This blunts the cost of the extra inference passes the interleaved loop incurs.
+`providerOptions.anthropic.cacheControl: { type: 'ephemeral' }` with a **sliding breakpoint**, matching the prototype's validated approach (not static-prefix-only): place ephemeral breakpoints on (a) the system prompt + stable head, and (b) the **last settled message** (end of the prior turn / second-to-last message), so each of the up-to-5 steps re-uses the cached prefix-through-the-last-stable-turn rather than re-paying full input cost on the accumulating tool-result tail. Anthropic allows up to 4 breakpoints; the growing in-turn tail past the last breakpoint is uncached.
 
 ## 4. Data flow
 
 ```
 trigger fires turn (MYT-67) → conductor.processDmTurn:
-  ST.evaluate (stub → {intervene:false})
+  ST.evaluate (stub → {intervene:false})       // no direction injected in MYT-68
   ft.render(ctx, emitter):
-    build system (ft-system.txt) + messages (ftHistory + attributed batch + direction) + tools
+    build system (ft-system.txt, §7 var contract) + messages (ftHistory + attributed batch) + tools
     streamTextWithTools loop (Sonnet):
-      text-delta ─emit.emitText→ text_delta frame (worker → Redis → hub → clients)
-      [tool-call roll_skill_check] → resolver: resolve character → modifier → Haiku DC table → roll → tier
-        → emit.emitSkillCheck(frame)  +  return constraint
+      text-delta ─await emit.emitText→ text_delta frame (worker → Redis → hub → clients)
+      [tool-call roll_skill_check] → resolver: resolve roller from participants → modifier (per-skill level)
+        → Haiku DC table (abort-threaded) → roll (kept-roll) → tier
+        → await emit.emitSkillCheck(frame)  +  return constraint
       [SDK feeds constraint back] → FT continues narration (text-delta) informed by it
+      error part → throw mapped error (NOT silently complete)
       … up to FT_MAX_TOOL_STEPS; final step toolChoice:'none' → prose close
     return multi-part AssistantMessage
-  conductor.appendAssistant (multi-part) → flushToRedis → turnEnd
+  conductor.appendAssistant (multi-part) → flushToRedis (ftHistory only) → turnEnd
 ```
 
 ## 5. Error handling
 
-- **Per-call timeout** wraps the FT turn (`abortSignal`); abort → `LlmTimeoutError` → rethrow → BullMQ retry (turn-worker policy). A mid-loop failure after some `text_delta` already emitted → terminal `turn_error` (the recovery invariant: the conductor mutates only in-memory until the final flush, so no partial state persists; the already-broadcast deltas are the client's to discard on `turn_error`).
-- **Skill-check Haiku (DC-table) failure** → **fail-soft**: the resolver returns a neutral fallback constraint (a default DC + generic fail/success/great outcomes) so the turn completes with degraded-but-coherent prose, rather than failing the whole turn on one sub-call. Logged.
-- **Unknown / unresolvable `character_name`** in `roll_skill_check` → the resolver returns an error-shaped constraint the FT narrates around (no crash).
+The error model is written against how `ai@6` actually surfaces failures (a `for await` over `fullStream` does **not** throw on an in-band `error` part unless the consumer/middleware makes it):
+
+- **In-stream provider error** — `logAndNormalizeMiddleware` converts a stream `error` part into `controller.error(mapped)` (verified, `middleware.ts:158-162`), so the FT's `for await` throws. The FT must let it propagate. **Never** let an `error` part fall through and end the loop "normally" (which would mark a truncated turn as a successful `turn_end`).
+- **Per-turn timeout** (`abortSignal`); abort → `LlmTimeoutError`.
+- **Retry vs. divergent re-stream (the turnId hazard).** The turn-worker rethrows non-lock-lost errors → BullMQ retries the job. The recovery invariant keeps Redis at the pre-turn snapshot, so a retry re-runs the FT from scratch — but Sonnet is non-deterministic and `roll_*` re-rolls, so a retry would re-stream **divergent prose + divergent rolls under the same `turnId`**. Decision: **a failure AFTER any frame (text/skill/dice) has been broadcast for a `turnId` is terminal** — publish `turn_error` for that turnId, do **not** silently retry a partially-streamed turn. A failure **before any frame emitted** is safe to retry (nothing was shown). The worker distinguishes the two via an "emitted-anything" latch on the turn (mirrors MYT-67's `claimTurnErrorPublish` latch pattern). The client discards partial content on `turn_error`.
+- **Tool-execute throws → resolvers must be TOTAL.** An uncaught throw in a resolver becomes a `tool-error` part the SDK feeds back, and the loop **continues** — which for a skill check would let the model narrate an outcome with **no roll** (a #4/#5 violation). Therefore every resolver is `try/catch`-total and returns a **structured error constraint** ("the check could not be resolved — do not narrate a definite outcome"), and the ft-system prompt instructs the model how to handle an error constraint without inventing a result.
+- **Fail-soft enumeration (the skill-check resolver never throws mid-turn):** (a) **DC-table Haiku failure or abort** → a neutral fallback `{ dc: <fixed default>, outcomes: { fail, success, great_success } }` of **tier-neutral** templates ("the attempt clearly fails / clearly succeeds / succeeds remarkably"); the deterministic roll + tier-match **still execute** against the fallback DC, so #5's "roll then match" holds. (b) **Unknown / ambiguous `character_name`** → error constraint. (c) **Unknown / unmapped `skill`** → error constraint. (d) **`roll_dice` out-of-range** → `tool-error` the model narrates around. All logged.
 - **Cap hit mid-intent** → `prepareStep` already forced a prose close; no dangling tool call.
 
 ## 6. Config constants
 
 | Constant | Default | Notes |
 |---|---|---|
-| `FT_MODEL` | `SONNET` | config constant; swappable for an Opus eval (§ brainstorm) |
-| `FT_MAX_TOOL_STEPS` | 5 | the §17.2 per-turn cap (`stepCountIs`) |
-| `FT_TURN_TIMEOUT_MS` | (per-turn budget) | the abortSignal timeout; tune |
+| `FT_MODEL` | `SONNET` | config constant; swappable for an Opus eval |
+| `FT_MAX_TOOL_STEPS` | 5 | the §3.6 per-turn cap (`stepCountIs`); model gets N−1 tool-calling steps + 1 prose close |
+| `FT_TURN_TIMEOUT_MS` | sized for the worst case | **per-turn** budget covering up to `FT_MAX_TOOL_STEPS` Sonnet passes **+** the nested Haiku DC calls, serially: target ≈ `FT_MAX_TOOL_STEPS × p95(Sonnet stream) + (#checks) × p95(Haiku DC)`. One `abortSignal` for the whole loop in MYT-68 (per-step abort would need a fresh signal per iteration — a wrapper change deferred). At `TURN_CONCURRENCY=5`/worker, too-generous a budget pins slots under a Sonnet slowdown — tune against the smoke. |
 | `SKILL_CHECK_MODEL` | `HAIKU` | the DC-table tier |
 
-## 7. Ports (validated in mythrun-v5; rewritten against production)
+## 7. Ports + the multiplayer prompt rewrite (validated in mythrun-v5; rewritten against production)
 
 | Asset | → production location |
 |---|---|
-| `ft-system.txt` | `src/llm/prompts/session/ft-system.txt` (loaded via `loadPrompt('session','ft-system',vars)`) |
+| `ft-system.txt` | `src/llm/prompts/session/ft-system.txt` — a **multiplayer rewrite**, not a verbatim port (see below) |
 | `skill-check.txt` | `src/llm/prompts/session/skill-check.txt` |
 | `SkillCheckResultSchema` | `src/llm/schemas/skill-check.ts` |
 | dice engine | `src/session/dice/engine.ts` |
 | `SKILL_ABILITIES` map | with the skill-check resolver |
 
-**Direction-format reconciliation:** the controller fuses `[DM direction: …]`; the prototype `ft-system.txt` expects `[STAGE]…[/STAGE]`. Align the **prompt** to the controller's `[DM direction: …]` format (one source of truth; the controller is shipped). The ported prompt already encodes Principles #1 (don't reveal what the character can't know), #4 (never roll yourself), #5 (call the tool, then narrate the result).
+**`ft-system.txt` is a rewrite, not a port.** The prototype prompt is single-player (`{{character_name}}` singular, `{{ft_context}}` prep slice, `{{npc_seeds}}`, a "Strong Start" opening, `[STAGE]…[/STAGE]`). The production prompt:
+- **Var contract (maps to `FtTurnContext`):** participants (the multiplayer character roster + attribution — character name → speaking player), `runningSummary` (the FT's grounding), and the tool protocol ("call `roll_skill_check`/`roll_dice`, then narrate the returned constraint; never decide an outcome yourself; never roll yourself"). It encodes Principle #1 (never reveal what the character can't know) and the error-constraint handling (§5).
+- **Direction + attribution format reconciliation:** the shipped controller fuses `[DM direction: …]` (appended to the last trigger). Align the prompt to that delimiter **and** to the controller's actual attribution rendering (`characterName` per message — not the prototype's `Arin (Player 1):` form). One source of truth = the shipped controller. (Latent in MYT-68: ST is stubbed, so the direction channel emits nothing until MYT-69; smoke re-validates the pairing then.)
+- **Prep/world context (`ft_context`) is OUT of MYT-68 scope (surface to user, §12).** `FtTurnContext` carries no curated prep slice today (`workingSet` is reserved + empty, H9); the FT narrates from `runningSummary` + `triggerMessages` + `ftHistory`. Wiring a prep-context slice (from `session_preps`/`prose_kernels`) into the FT context is deferred to a follow-up (likely with the ST in MYT-69). **Risk acknowledged** (`project_session_prep_confab_failure_mode`): the running summary must be sufficient grounding; a thin summary invites public-fact confabulation. The smoke watches for it; richer prep grounding is the follow-up's job.
 
 ## 8. Non-negotiables check
 
-- **Enforced ignorance (#1):** the FT input is `FtTurnContext` (public-by-construction; secrets have nowhere to live). The system prompt reinforces it. The FT never receives `sd_playbook`/secrets. ✓
-- **ZFC (#2):** the loop is *mechanical orchestration* (the SDK's deterministic tool loop is plumbing, like BullMQ — not delegated reasoning); the FT *prose* is the model's job; the dice + skill math are deterministic code; the DC-table judgment is delegated to Haiku. No heuristics/keyword-routing. ✓
-- **LLM never rolls (#4):** all rolls in `dice/engine.ts` via `crypto.randomInt`. ✓
-- **Skill-check DC tables (#5):** Haiku pre-generates DC + 3 outcomes → roll → matched tier injected as a constraint → the FT writes prose informed by it. ✓
-- **Prose quality is the product (#7):** Sonnet FT, the ported voice-validated `ft-system.txt`, sensory/distinct-NPC prompting. ✓
+- **Enforced ignorance (#1) — scoped precisely:**
+  - **Context channel:** the FT input is `FtTurnContext` (public-by-construction; secrets have nowhere to live — verified, `tiers/types.ts`). MYT-68 adds **no** secret-bearing field. ✓
+  - **Direction channel:** the fused `[DM direction: …]` carries ST output verbatim. Its safety (the ST must not emit secrets; runtime §17.4's vetted-relay + the "Haiku leak-check" it cites as "§8.2" — **a dangling reference; runtime §8 has no such subsection**) is **MYT-69's responsibility**, not MYT-68's. This issue freezes the FT-side consumption format but does not own the direction's content bound; the §8 ✓ above is scoped to the context channel. (Filed note: fix the dangling §8.2 reference in the runtime spec when MYT-69 defines the leak-check.)
+- **ZFC (#2):** the loop is *mechanical orchestration* (the SDK's deterministic tool loop is plumbing, like BullMQ — not delegated reasoning); the FT *prose* is the model's job; the dice + skill math + tier-matching + roster name-match (closed-set exact match) are deterministic code; the DC-table judgment is delegated to Haiku. No heuristics/keyword-routing/fuzzy-matching. ✓
+- **LLM never rolls (#4):** all rolls in `dice/engine.ts` via `crypto.randomInt`; the FT calls the tool. ✓
+- **Skill-check DC tables (#5):** Haiku pre-generates DC + 3 outcomes → roll → matched tier injected as a constraint → the FT writes prose informed by it (even on the fail-soft fallback). ✓
+- **Prose quality is the product (#7):** Sonnet FT, the voice-validated prompt rewritten for multiplayer, sensory/distinct-NPC prompting. ✓
 
 ## 9. Scope / deferred
 
-**In:** the SDK tool loop + the `streamTextWithTools` wrapper; the cap; the FastThinker impl; the extensible tool registry + `roll_dice` + `roll_skill_check` (+ the dice engine + the DC-table); the seam widening (`TurnEmitter`, multi-part `ConversationMessage`, multi-part persistence); the `skill_check`/`dice_roll`/`roll_complete` contract frames; prompt caching; the ported prompts/schema.
+**In:** the SDK tool loop + the `streamTextWithTools` wrapper; the cap; the FastThinker impl; the extensible tool registry + `roll_dice` + `roll_skill_check` (+ the dice engine + the DC-table + the participant-roster resolver); the seam widening (`TurnEmitter`, Mythrun-owned multi-part `ConversationMessage`, multi-part `ftHistory` persistence + checkpoint version bump); the `skill_check`/`dice_roll` contract frames; the error model (§5); sliding prompt caching; the multiplayer prompt rewrite.
 
-**Deferred (register into the same framework later):** `cast_spell` / `spend_resource` (Rules Lawyer + character ledger, MYT-70); `initiate_combat` / `resolve_combat_round` (Combat L1, MYT-75); `world_fact_lookup` (ST-gated retrieval, MYT-72). Real ST `direction` (MYT-69). Server-side synchronized roll gating (deferred / client-side per §3.8). The roll-animation *frontend* (Frontend milestone).
+**Deferred:** `cast_spell`/`spend_resource` + the live character ledger (MYT-70); `initiate_combat`/`resolve_combat_round` (MYT-75); `world_fact_lookup` (ST-gated, MYT-72). Real ST `direction` + the direction-channel leak-check (MYT-69). DM-output transcript persistence + the §12 server-assigned sequence model + §17.7 lookback corpus (a dedicated transcript/seq issue). `roll_complete` + server-synchronized roll gating + the roll-animation frontend (Frontend milestone). FT prep-context wiring (follow-up, §7).
 
 ## 10. Testing
 
-- **Unit (mock the `'ai'` SDK boundary** — `vi.mock('ai')`, per the repo convention; NOT the `ai.ts` wrapper): the FT loop over scripted `fullStream` parts (text-delta + tool-call + tool-result); the cap (assert the loop stops at `FT_MAX_TOOL_STEPS`); `prepareStep` forces `toolChoice:'none'` on the final step; the multi-part assistant persistence.
-- **Dice engine:** deterministic with an injected RNG; the modifier + tier-matching math (great/success/fail boundaries) is exhaustively unit-tested.
-- **Skill-check resolver:** mocked Haiku DC table + a fake character (ability score + proficiency) → assert the modifier, the roll, the matched tier, the constraint, the emitted frame; the fail-soft fallback on Haiku error.
-- **Contract:** the new frames' shapes; `roll_complete` parses.
-- **dev-tool / smoke:** MYT-68 adds no REST route (the FT runs in the worker, fired by the trigger) — the dev `fire-turn` route already drives a turn; the dev-tool gate skips. **Real-Anthropic E2E smoke (required):** drive a turn (via the dev `fire-turn` poke against a real session) and assert the FT streams real prose, calls `roll_skill_check` (the `skill_check` frame appears + the narration reflects the outcome tier), and `roll_dice` works — wire-level (SSE/log + DB), real Sonnet + real Haiku.
+- **Unit (mock the `'ai'` SDK boundary** — `vi.mock('ai')`, per the repo convention; NOT the `ai.ts` wrapper): the FT loop over scripted `fullStream` parts (text-delta + tool-call + tool-result + **error**); assert an `error` part throws (not a silent `turn_end`); the cap **boundary** (second-to-last step may tool-call, last step gated to prose via `prepareStep`); the serial-emit ordering (skill_check/dice_roll emitted+awaited before the dependent text_delta); the multi-part assistant persistence round-trips through the Mythrun-owned shape.
+- **Dice engine:** deterministic with an injected RNG; the modifier math, the kept-roll for advantage/disadvantage, `advantage && disadvantage → normal`, the bound on `count`, and the tier-matching boundaries (great/success/fail).
+- **Skill-check resolver:** mocked Haiku DC table + a fake participant character → assert the modifier **including a dedicated expertise case** (`expertise → 2×PB`), the roll, the matched tier, the constraint, the emitted frame; the fail-soft fallback (DC-table failure/abort, unknown character, ambiguous character, unknown skill) each returns an error/neutral constraint and **never throws**; the abort threads into the Haiku call.
+- **Contract:** the new server frames' shapes; `roll_complete` is *not* in the live client allowlist.
+- **Real-Anthropic E2E smoke (required, wire-level):** drive a turn (via the dev `fire-turn` poke against a real session) and assert the FT streams real Sonnet prose, calls `roll_skill_check` (the `skill_check` frame appears **before** the outcome narration, and the narration reflects the outcome tier), `roll_dice` works, and — explicitly — that the multi-step loop composes with `logAndNormalizeMiddleware` (per-step `llm.call` logs, no spurious truncation error) and the cap boundary holds. Real Sonnet + real Haiku, SSE/log + DB inspection. (No new REST route; the dev-tool gate skips.)
 
 ## 11. File-level change map (informs the plan)
 
@@ -198,24 +213,44 @@ trigger fires turn (MYT-67) → conductor.processDmTurn:
 - `src/llm/ai.ts` — add `streamTextWithTools` (modify).
 - `src/session/tiers/fast-thinker.ts` — the real FastThinker.
 - `src/session/tiers/ft-tools.ts` — the tool registry + `roll_dice` + `roll_skill_check` tool defs.
-- `src/session/skill-check.ts` — the `roll_skill_check` resolver (DC table + roll + tier).
+- `src/session/skill-check.ts` — the resolver (roster resolution + per-skill modifier + DC table + roll + tier).
 - `src/session/dice/engine.ts` — deterministic dice (ported).
 - `src/llm/schemas/skill-check.ts` — `SkillCheckResultSchema` (ported).
-- `src/llm/prompts/session/ft-system.txt` + `skill-check.txt` (ported, direction-format reconciled).
+- `src/llm/prompts/session/ft-system.txt` (multiplayer rewrite) + `skill-check.txt` (ported).
 
 **Modified:**
-- `src/session/tiers/types.ts` — widen `TurnEmit` → `TurnEmitter`; `ConversationMessage.content` → multi-part; `FastThinker.render` signature.
+- `src/session/tiers/types.ts` — widen `TurnEmit` → `TurnEmitter`; `ConversationMessage.content` → Mythrun-owned multi-part (versioned); `FastThinker.render` signature.
 - `src/session/turn-publisher.ts` — `skillCheck`/`diceRoll` + `emitFor` returns the `TurnEmitter`.
-- `src/contract/session-events.ts` — `skill_check`/`dice_roll` server frames + `roll_complete` client frame + `parseClientFrame`.
-- `src/session/session-controller.ts` — wire the real FT (it already calls `ft.render`); multi-part `appendAssistant`; the emitter.
-- `src/session/turn-worker.ts` — `makeTiers` returns the real `FastThinker` (Sonnet) instead of `StubFastThinker` (constructor deps: repo, dice, skill-check resolver, model config).
-- `src/redis/session-state.ts` — `flushTurnState` persists multi-part `ftHistory`.
-- `src/repo/characters.ts` — a `(campaignId, character_name)` → character lookup if absent.
+- `src/contract/session-events.ts` — `skill_check`/`dice_roll` server frames.
+- `src/session/session-controller.ts` — wire the real FT (it already calls `ft.render`); multi-part `appendAssistant`; the emitter; the "emitted-anything" latch for §5.
+- `src/session/turn-worker.ts` — `makeTiers` returns the real `FastThinker` (Sonnet); the terminal-after-first-frame retry posture (§5).
+- `src/redis/session-state.ts` — `flushTurnState` persists multi-part `ftHistory`; checkpoint envelope version bump.
+- `src/repo/characters.ts` — a participant-scoped `(campaignId, character_name)` resolution via the `campaign_characters` join (+ ability scores + `character_skills.proficiency_level`).
 
 ## 12. Open questions / resolved decisions
 
-- **FT model:** Sonnet (resolved; config-swappable for an Opus eval).
-- **Loop mechanism:** SDK auto-loop (resolved; verified the SDK covers every requirement).
-- **Tool scope:** loop + `roll_dice` + `roll_skill_check` + extensible registry (resolved).
-- **Roll gating:** client-side (resolved; server-side synced gating deferred).
-- **Plan-time details:** the exact `ConversationMessage` multi-part shape (align to the SDK `ModelMessage`?); the `FT_TURN_TIMEOUT_MS` value; whether the character-by-name lookup needs a new repo method or composes existing ones.
+**Resolved:** FT model = Sonnet (config-swappable). Loop = SDK auto-loop (every requirement verified, incl. middleware multi-step composition). Tool scope = loop + `roll_dice` + `roll_skill_check` + extensible registry. Roll gating = client-side (server-synced deferred). Character resolution = participant-roster exact match (not free-text DB key). Expertise = per-skill `proficiency_level` (diverges from prototype). Retry = terminal-after-first-frame. Multi-part `ConversationMessage` = Mythrun-owned versioned shape. Caching = sliding breakpoint.
+
+**Two scope decisions to confirm at the user-review gate:**
+1. **DM-output transcript persistence (Orca-C2).** MYT-68 currently does **not** persist DM prose + roll events to the player transcript (only `ftHistory` for FT continuity), so a mid-session reconnect won't show prior DM turns — a pre-existing MYT-65/66 gap MYT-68 merely surfaces. Default: defer to a dedicated transcript/seq issue. Confirm, or pull a scoped version of it into MYT-68.
+2. **FT prep/world context (Manta-I2).** MYT-68's FT narrates from `runningSummary` + history, with no curated prep slice wired (confab risk acknowledged). Default: defer prep-context wiring to a follow-up (likely MYT-69). Confirm, or pull it into MYT-68.
+
+**Plan-time detail:** the exact Mythrun multi-part `ConversationMessage` schema + the `FT_TURN_TIMEOUT_MS` value (set against the smoke).
+
+## 13. Blind review round 1 (Ocean) — applied revisions
+
+4 reviewers (LLM-orchestration / enforced-ignorance+ZFC / game-mechanics / concurrency+streaming+persistence). **0 showstoppers** under the strict rubric — all four affirmed the core architecture (SDK loop as plumbing, constraint-injection, type-level enforced ignorance, deterministic dice, Haiku DC-table). Every Critical fired on an error/retry path, was a doc/framing error, or was an unverified hypothesis the smoke catches. Substantive findings folded into the spec (they change interfaces, so pinned at design time):
+
+- **Error model rewritten to SDK reality** (§3.2 step 5, §5): `fullStream` error parts must propagate (not silently complete); resolvers must be total (tool-execute throw → `tool-error` continues the loop); terminal-after-first-frame retry posture (no divergent re-stream under one turnId); fail-soft enumeration expanded (DC failure/abort, unknown/ambiguous character, unknown skill, dice OOR).
+- **Character resolution** (§3.5 step 1, §3.3): resolve the roller from the participant roster (closed-set exact match, ZFC-clean), not a free-text DB key on a dropped `campaign_id` column; ambiguous/no-match → fail-soft.
+- **Expertise math** (§3.5 step 2): read per-skill `proficiency_level` (`expertise → 2×PB`); explicit DIVERGES-FROM-PROTOTYPE warning + a required expertise test.
+- **Dice hardening** (§3.3, §3.4, §3.5 step 4): bound `roll_dice` inputs in code; kept-roll for adv/dis; `advantage && disadvantage → normal`; no nat-1/20 auto-crit on ability checks.
+- **Middleware multi-step composition** (§2, §10): verified `logAndNormalizeMiddleware` wraps each `doStream`/step independently and each step emits a `finish` part → no spurious truncation; per-step cost + `mythrun` bindings flow; re-asserted in the smoke.
+- **Cap precision** (§3.6): N−1 tool-calling steps + 1 forced prose close; smoke asserts the boundary.
+- **Caching** (§3.9): sliding ephemeral breakpoint (per prototype), not static-prefix-only.
+- **Durable shape** (§3.7): Mythrun-owned versioned multi-part `ConversationMessage`, not raw SDK `ModelMessage`; checkpoint envelope version bump.
+- **Contract hygiene** (§3.8): `roll_complete` NOT added to the live allowlist (no handler); `classifyClientFrame` (not `parseClientFrame`); the client-side-gating decision marked as an explicit §10 amendment with the per-client-reveal tradeoff stated.
+- **Timeout** (§6): per-turn budget sized for the whole loop + nested Haiku calls; abort threaded into the Haiku resolver call.
+- **Enforced-ignorance scoping** (§8): the ✓ scoped to the context channel; the direction-channel bound (+ the dangling runtime §8.2 leak-check ref) is MYT-69's.
+- **Prompt** (§7): `ft-system.txt` is a multiplayer rewrite with an explicit var contract, not a verbatim port; attribution-format reconciled.
+- **Transcript gap corrected** (§3.7, §12): the draft's "transcript stays as-is (prose + roll events)" was false — it holds neither; corrected + surfaced as a scope decision.
