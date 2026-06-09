@@ -8,8 +8,11 @@
 //   session:{cId}:conn:{cont}:{user}   per-connection presence (TTL)
 //   session:{cId}:state                {participants, mode, status} JSON blob
 //
-// The LLM-tier keys (ft_history / summary / combat) and the distributed
-// lock are OUT — they belong to MYT-66+ (see the MYT-65 design spec
+// The LLM-tier turn-state keys are `:summary` and `:usage`. As of MYT-68 the
+// FT transcript is PG-direct (reconstructed from session_messages — §3.7), so
+// the former `:ft_history` Redis key is RETIRED; only summary/usage remain
+// here. The distributed lock + combat keys are still OUT — they belong to
+// MYT-66+ (see the MYT-65 design spec
 // docs/superpowers/specs/2026-06-04-myt-65-ws-transport-design.md §"Redis
 // state (MYT-65 subset)").
 //
@@ -19,7 +22,7 @@
 
 import type { Redis } from 'ioredis'
 
-import type { ConversationMessage, TokenUsage } from '../session/tiers/types.js'
+import type { TokenUsage } from '../session/tiers/types.js'
 
 /**
  * Per-connection presence TTL, seconds. Each `conn:{containerId}:{userId}`
@@ -45,17 +48,23 @@ export interface SessionStateBlob {
   readonly participants: readonly string[]
   readonly mode: SessionMode
   readonly status: 'active' | 'ended' | 'crashed'
+  /** MYT-68: the enforced-ignorance-safe prep doc (session_preps.ft_context),
+   *  parked on the state blob so a turn worker reads it without a PG round-trip.
+   *  Optional — absent on sessions started before the prep wiring lands. */
+  readonly ftContext?: string
+  /** MYT-68: the world's tonal register, threaded into FT prompting. */
+  readonly worldTone?: string
 }
 
 /**
  * The LLM-tier turn state a worker-side `SessionController` loads at the top of
- * a turn and flushes at the bottom (MYT-66). Backed by three Redis keys
- * (`:ft_history`, `:summary`, `:usage`) so a reconnecting / crash-recovering
- * container cold-starts the conversation from live Redis rather than replaying
- * `session_messages`. The checkpoint envelope (H6) folds a snapshot of this in.
+ * a turn and flushes at the bottom (MYT-66). Backed by two Redis keys
+ * (`:summary`, `:usage`). As of MYT-68 the FT transcript is PG-direct
+ * (reconstructed from `session_messages` — §3.7), so the former `:ft_history`
+ * key is RETIRED and no longer round-trips through here. The checkpoint
+ * envelope (H6) folds a snapshot of what remains in.
  */
 export interface TurnState {
-  readonly ftHistory: ConversationMessage[]
   readonly summary: string
   readonly usage: TokenUsage
 }
@@ -101,12 +110,12 @@ export interface SessionState {
   getState(campaignId: string): Promise<SessionStateBlob | null>
   /** Writes the `:state` blob (JSON), refreshing its TTL. */
   setState(campaignId: string, state: SessionStateBlob): Promise<void>
-  /** Bulk-reads the three LLM-tier turn-state keys (`:ft_history`, `:summary`,
-   *  `:usage`) via a single `MGET`, JSON-parsing each with an empty default —
-   *  an unset / corrupt key yields `[]` / `''` / `{input:0,output:0}`. */
+  /** Bulk-reads the two LLM-tier turn-state keys (`:summary`, `:usage`) via a
+   *  single `MGET`, JSON-parsing each with an empty default — an unset /
+   *  corrupt key yields `''` / `{input:0,output:0}`. */
   loadTurnState(campaignId: string): Promise<TurnState>
-  /** Atomically writes all three turn-state keys + refreshes their TTL in one
-   *  `MULTI`, so a crash never leaves history/summary/usage partially updated. */
+  /** Atomically writes both turn-state keys + refreshes their TTL in one
+   *  `MULTI`, so a crash never leaves summary/usage partially updated. */
   flushTurnState(campaignId: string, ts: TurnState): Promise<void>
   /** Bumps the TTL on the durable transport keys (`:seq`, `:state`) so an
    *  active session's state doesn't expire. Called on every interaction. */
@@ -125,7 +134,6 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   const base = (campaignId: string): string => `${keyPrefix}session:${campaignId}`
   const seqKey = (campaignId: string): string => `${base(campaignId)}:seq`
   const stateKey = (campaignId: string): string => `${base(campaignId)}:state`
-  const historyKey = (campaignId: string): string => `${base(campaignId)}:ft_history`
   const summaryKey = (campaignId: string): string => `${base(campaignId)}:summary`
   const usageKey = (campaignId: string): string => `${base(campaignId)}:usage`
   const connKey = (campaignId: string, containerId: string, userId: string): string =>
@@ -135,7 +143,7 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   // Bound once so both the returned `loadTurnState` and `checkpoint` (H6, which
   // folds a turn-state snapshot into the envelope) share one reader.
   const loadTurnState = (campaignId: string): Promise<TurnState> =>
-    readTurnState(redis, historyKey(campaignId), summaryKey(campaignId), usageKey(campaignId))
+    readTurnState(redis, summaryKey(campaignId), usageKey(campaignId))
 
   return {
     nextSeq: async (campaignId) => redis.incr(seqKey(campaignId)),
@@ -204,6 +212,11 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
         participants: blob.participants,
         mode: blob.mode,
         status: blob.status,
+        // Pass the optional MYT-68 fields through only when they are present
+        // as strings (under exactOptionalPropertyTypes we omit the key
+        // entirely rather than set it to undefined).
+        ...(typeof blob.ftContext === 'string' ? { ftContext: blob.ftContext } : {}),
+        ...(typeof blob.worldTone === 'string' ? { worldTone: blob.worldTone } : {}),
       }
     },
 
@@ -214,17 +227,15 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
     loadTurnState,
 
     flushTurnState: async (campaignId, ts) => {
-      // First real MULTI in the repo (H3): the three turn-state writes + their
-      // TTL refresh commit atomically, so a crash mid-flush never leaves
-      // history/summary/usage out of sync. pexpire takes milliseconds, hence
-      // STATE_TTL (seconds) * 1000.
+      // First real MULTI in the repo (H3): both turn-state writes + their TTL
+      // refresh commit atomically, so a crash mid-flush never leaves
+      // summary/usage out of sync. pexpire takes milliseconds, hence STATE_TTL
+      // (seconds) * 1000. (ft_history is gone — PG-direct as of MYT-68.)
       const ttlMs = STATE_TTL * 1000
       await redis
         .multi()
-        .set(historyKey(campaignId), JSON.stringify(ts.ftHistory))
         .set(summaryKey(campaignId), ts.summary)
         .set(usageKey(campaignId), JSON.stringify(ts.usage))
-        .pexpire(historyKey(campaignId), ttlMs)
         .pexpire(summaryKey(campaignId), ttlMs)
         .pexpire(usageKey(campaignId), ttlMs)
         .exec()
@@ -265,12 +276,16 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
       //   sessions) is the right home, and Task 10 is the consumer that
       //   will pin the contract.
       const state = await readRawState(redis, stateKey(campaignId))
-      // H6: the envelope now folds in the LLM-tier turn-state snapshot so a
-      // suspend reader can cold-start the conversation, not just the transport
-      // counters. `kind` bumped to myt66 — the (not-yet-written) reader parses
-      // this superset of the old myt65 shape.
+      // H6: the envelope folds in the LLM-tier turn-state snapshot so a suspend
+      // reader can cold-start the conversation, not just the transport
+      // counters.
       const turnState = await loadTurnState(campaignId)
-      const envelope = JSON.stringify({ kind: 'myt66-checkpoint', maxSeq, state, turnState })
+      // `kind` bumped to myt68 — the turn-state shape shed `ftHistory` (the
+      // FT transcript is now PG-direct), so the (not-yet-written) checkpoint
+      // reader MUST fail loud on the old myt66 shape rather than read a
+      // missing field. This superset of the old transport-only myt65 shape
+      // still carries {state, maxSeq}.
+      const envelope = JSON.stringify({ kind: 'myt68-checkpoint', maxSeq, state, turnState })
       await store.writeCheckpoint(sessionId, envelope)
 
       return { maxSeq }
@@ -278,19 +293,17 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   }
 }
 
-/** Bulk-read the three turn-state keys via one MGET, JSON-parsing each with an
+/** Bulk-read the two turn-state keys via one MGET, JSON-parsing each with an
  *  empty default — an unset key or a corrupt blob falls back to the zero value,
  *  so a half-initialised session still loads cleanly. Free-standing so the
  *  `makeSessionState` closure stays lean (mirrors `readRawState`). */
 async function readTurnState(
   redis: Redis,
-  historyKey: string,
   summaryKey: string,
   usageKey: string,
 ): Promise<TurnState> {
-  const [rawHistory, rawSummary, rawUsage] = await redis.mget(historyKey, summaryKey, usageKey)
+  const [rawSummary, rawUsage] = await redis.mget(summaryKey, usageKey)
   return {
-    ftHistory: parseJson<ConversationMessage[]>(rawHistory, []),
     summary: rawSummary ?? '',
     usage: parseJson<TokenUsage>(rawUsage, { input: 0, output: 0 }),
   }

@@ -13,9 +13,16 @@ import type {
   StEvaluation,
   TokenUsage,
   TriggerMessage,
-  TurnEmit,
+  TurnEmitter,
 } from '../tiers/types.js'
 import type { TurnPublisher } from '../turn-publisher.js'
+
+/** Pull the text of a v2 ConversationMessage's first content part — the user
+ *  messages this suite appends are single text-part messages. */
+function firstTextPart(msg: FtTurnContext['ftHistory'][number] | undefined): string | undefined {
+  const part = msg?.parts[0]
+  return part !== undefined && part.kind === 'text' ? part.text : undefined
+}
 
 const KEY_PREFIX = 'test:use1:'
 const CAMPAIGN = 'c-ctrl-1'
@@ -48,12 +55,12 @@ function recordingFt(
   capturedCtx: { value?: FtTurnContext },
 ): FastThinker {
   return {
-    render: vi.fn(async (ctx: FtTurnContext, emit: TurnEmit): Promise<AssistantMessage> => {
+    render: vi.fn(async (ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> => {
       recorder.order.push('ft')
       capturedCtx.value = ctx
       // The FT seam streams text through the emit it is handed; exercise it so
       // the controller wiring of publisher.emitFor is covered end to end.
-      await emit('chunk')
+      await emit.emitText('chunk')
       return message
     }),
   }
@@ -88,25 +95,31 @@ function synchronouslyThrowingScribe(): Scribe {
 }
 
 function fakePublisher(recorder: Recorder, emitted: string[]): TurnPublisher {
-  const emit: TurnEmit = (text: string): Promise<void> => {
-    emitted.push(text)
-    return Promise.resolve()
+  const emit: TurnEmitter = {
+    emitText: (text: string): Promise<void> => {
+      emitted.push(text)
+      return Promise.resolve()
+    },
+    emitSkillCheck: vi.fn((): Promise<void> => Promise.resolve()),
+    emitDiceRoll: vi.fn((): Promise<void> => Promise.resolve()),
   }
   return {
     dmThinking: vi.fn((): Promise<void> => Promise.resolve()),
     textDelta: vi.fn((): Promise<void> => Promise.resolve()),
+    skillCheck: vi.fn((): Promise<void> => Promise.resolve()),
+    diceRoll: vi.fn((): Promise<void> => Promise.resolve()),
     turnEnd: vi.fn((): Promise<void> => {
       recorder.order.push('turnEnd')
       return Promise.resolve()
     }),
     turnError: vi.fn((): Promise<void> => Promise.resolve()),
-    emitFor: vi.fn((): TurnEmit => emit),
+    emitFor: vi.fn((): TurnEmitter => emit),
   }
 }
 
 const ASSISTANT: AssistantMessage = {
   role: 'assistant',
-  content: 'The room is silent.',
+  parts: [{ kind: 'text', text: 'The room is silent.' }],
   usage: { input: 5, output: 7 },
 }
 
@@ -178,12 +191,15 @@ describe('SessionController', () => {
     await controller.processDmTurn([TRIGGER])
     await controller.flushToRedis()
 
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
-    expect(reloaded.ftHistory).toEqual([
-      { role: 'user', content: 'I search the room', characterName: 'Mara' },
-      { role: 'assistant', content: 'The room is silent.' },
+    // ft_history retired from Redis — PG-direct (MYT-68 §3.7). The appended
+    // shape is asserted on the live in-memory array the FT saw (the controller
+    // mutates it in place, pushing the assistant message after render returns).
+    expect(capturedCtx.value?.ftHistory).toEqual([
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'I search the room' }], characterName: 'Mara' },
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'The room is silent.' }] },
     ])
     // ST usage {3,2} + FT usage {5,7} = {8,9}.
+    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
     expect(reloaded.usage).toEqual<TokenUsage>({ input: 8, output: 9 })
   })
 
@@ -212,11 +228,14 @@ describe('SessionController', () => {
     await controller.processDmTurn([TRIGGER])
     await controller.flushToRedis()
 
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
+    // ft_history retired from Redis — PG-direct (MYT-68 §3.7); inspect the
+    // live in-memory user message the FT saw.
+    const userText = firstTextPart(capturedCtx.value?.ftHistory[0])
     // No direction text fused into the user message (direction IS gated).
-    expect(reloaded.ftHistory[0]?.content).toBe('I search the room')
-    expect(reloaded.ftHistory[0]?.content).not.toContain('ignored')
+    expect(userText).toBe('I search the room')
+    expect(userText).not.toContain('ignored')
     // Summary IS updated despite intervene:false (summary is NOT gated).
+    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
     expect(reloaded.summary).toBe('applied even without intervene')
   })
 
@@ -227,7 +246,6 @@ describe('SessionController', () => {
     // Redis so loadFromRedis hydrates a non-empty `this.summary` before the ST's
     // update arrives.
     await sessionState.flushTurnState(CAMPAIGN, {
-      ftHistory: [],
       summary: 'turn one summary',
       usage: { input: 0, output: 0 },
     })
@@ -278,19 +296,22 @@ describe('SessionController', () => {
     await controller.processDmTurn([TRIGGER])
     await controller.flushToRedis()
 
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
+    // ft_history retired from Redis — PG-direct (MYT-68 §3.7); inspect the
+    // live in-memory user message the FT saw.
+    const liveUser = capturedCtx.value?.ftHistory[0]
     // Direction must be present in the (sole) user message's content.
-    expect(reloaded.ftHistory[0]?.role).toBe('user')
-    expect(reloaded.ftHistory[0]?.content).toContain('I search the room')
-    expect(reloaded.ftHistory[0]?.content).toContain('be terse')
+    expect(liveUser?.role).toBe('user')
+    expect(firstTextPart(liveUser)).toContain('I search the room')
+    expect(firstTextPart(liveUser)).toContain('be terse')
     // Summary appended.
+    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
     expect(reloaded.summary).toContain('x')
     // The FT must have seen the direction-injected history, not the bare one.
     // (The captured ftHistory is the live array reference, which the controller
     // mutates in place — so we locate the user message, not `.at(-1)`, since the
     // assistant message gets pushed onto that same array after render returns.)
     const userMsg = capturedCtx.value?.ftHistory.find((m) => m.role === 'user')
-    expect(userMsg?.content).toContain('be terse')
+    expect(firstTextPart(userMsg)).toContain('be terse')
   })
 
   it('does not throw out of processDmTurn when the Scribe rejects', async () => {
@@ -342,8 +363,10 @@ describe('SessionController', () => {
 
   it('round-trips mutated state through load → process → flush → reload', async () => {
     // Seed pre-existing turn state + participants so load actually carries them.
+    // ft_history is no longer seeded through Redis — PG-direct (MYT-68 §3.7);
+    // the controller starts its in-memory transcript empty (T14 loads it from
+    // session_messages). summary/usage still round-trip through Redis.
     await sessionState.flushTurnState(CAMPAIGN, {
-      ftHistory: [{ role: 'assistant', content: 'Earlier.' }],
       summary: 'prior summary',
       usage: { input: 100, output: 200 },
     })
@@ -372,12 +395,14 @@ describe('SessionController', () => {
 
     expect(capturedCtx.value?.participants).toEqual(['Mara', 'Bram'])
 
-    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
-    expect(reloaded.ftHistory).toEqual([
-      { role: 'assistant', content: 'Earlier.' },
-      { role: 'user', content: 'I search the room', characterName: 'Mara' },
-      { role: 'assistant', content: 'The room is silent.' },
+    // ft_history retired from Redis — PG-direct (MYT-68 §3.7). The in-memory
+    // transcript starts empty this turn, so it holds only the freshly-appended
+    // user + assistant messages (no Redis-seeded "Earlier.").
+    expect(capturedCtx.value?.ftHistory).toEqual([
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'I search the room' }], characterName: 'Mara' },
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'The room is silent.' }] },
     ])
+    const reloaded = await sessionState.loadTurnState(CAMPAIGN)
     expect(reloaded.summary).toBe('prior summary')
     // 100/200 prior + ST 1/1 + FT 5/7 = 106/208.
     expect(reloaded.usage).toEqual<TokenUsage>({ input: 106, output: 208 })

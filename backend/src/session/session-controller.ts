@@ -55,6 +55,7 @@ export class SessionController {
   // In-memory turn state, mutated between load and flush (the recovery
   // invariant). `participants` comes from the `:state` blob and is read-only
   // for the turn (the FT/ST see it via the context).
+  // MYT-68 interim: loaded from session_messages in T14 (no longer Redis).
   private ftHistory: ConversationMessage[] = []
   private summary = ''
   private usage: TokenUsage = ZERO_USAGE
@@ -70,7 +71,9 @@ export class SessionController {
    *  `loadTurnState`, and the participant roster from the `:state` blob. */
   async loadFromRedis(): Promise<void> {
     const turnState = await this.deps.sessionState.loadTurnState(this.campaignId)
-    this.ftHistory = [...turnState.ftHistory]
+    // MYT-68 interim: ftHistory is loaded from session_messages in T14 (it no
+    // longer round-trips through Redis — §3.7 PG-direct). Stays the in-memory
+    // [] start for now so the turn loop still appends/flushes coherently.
     this.summary = turnState.summary
     this.usage = turnState.usage
 
@@ -81,13 +84,13 @@ export class SessionController {
   /** Sequence one DM turn: ST evaluate → append triggers (with optional
    *  direction injection) → FT render → turnEnd → fire-and-forget Scribe. */
   async processDmTurn(triggerMessages: TriggerMessage[]): Promise<void> {
-    const ctx = this.buildContext(triggerMessages)
+    const ctx = this.buildContext()
 
     const evaluation = await this.deps.st.evaluate(ctx)
     this.applyEvaluation(evaluation)
     this.appendTriggers(triggerMessages, evaluation)
 
-    const ctxAfterTriggers = this.buildContext(triggerMessages)
+    const ctxAfterTriggers = this.buildContext()
     const emit = this.deps.publisher.emitFor(this.campaignId, this.turnId)
     const assistant = await this.deps.ft.render(ctxAfterTriggers, emit)
     this.appendAssistant(assistant)
@@ -109,18 +112,18 @@ export class SessionController {
    *  (the only Redis write this controller performs). */
   async flushToRedis(): Promise<void> {
     await this.deps.sessionState.flushTurnState(this.campaignId, {
-      ftHistory: this.ftHistory,
       summary: this.summary,
       usage: this.usage,
     })
   }
 
-  private buildContext(triggerMessages: readonly TriggerMessage[]): FtTurnContext {
+  private buildContext(): FtTurnContext {
     return {
       campaignId: this.campaignId,
-      triggerMessages,
+      // TODO(MYT-68/T15): interim '' — the worker rewrite threads the real
+      // session_preps.ft_context value; '' is a silently-valid placeholder.
+      ftContext: '',
       ftHistory: this.ftHistory,
-      runningSummary: this.summary,
       participants: this.participants,
       usage: this.usage,
       workingSet: [],
@@ -152,12 +155,17 @@ export class SessionController {
       const isLast = index === triggerMessages.length - 1
       const content =
         direction !== null && isLast ? `${trigger.text}\n\n[DM direction: ${direction}]` : trigger.text
-      this.ftHistory.push({ role: 'user', content, characterName: trigger.characterName })
+      this.ftHistory.push({
+        v: 1,
+        role: 'user',
+        parts: [{ kind: 'text', text: content }],
+        characterName: trigger.characterName,
+      })
     })
   }
 
   private appendAssistant(assistant: AssistantMessage): void {
-    this.ftHistory.push({ role: 'assistant', content: assistant.content })
+    this.ftHistory.push({ v: 1, role: 'assistant', parts: assistant.parts })
     this.usage = addUsage(this.usage, assistant.usage)
   }
 }

@@ -45,7 +45,7 @@ import type {
   FastThinker,
   FtTurnContext,
   TriggerMessage,
-  TurnEmit,
+  TurnEmitter,
 } from '../tiers/types.js'
 import { processTurnJob, type TurnProcessorDeps } from '../turn-worker.js'
 import type { TurnJobPayload, TurnQueueLike } from '../turn-queue.js'
@@ -105,16 +105,16 @@ class LockKillingFastThinker implements FastThinker {
     private readonly lockKey: string,
   ) {}
 
-  async render(_ctx: FtTurnContext, emit: TurnEmit): Promise<AssistantMessage> {
+  async render(_ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> {
     void _ctx
     // Simulate the holder's lock expiring mid-turn: drop the real lock key so
     // A's next heartbeat extend() finds nothing to refresh.
     await this.realtime.del(this.lockKey)
     // Slow render so the 5ms heartbeat fires (and flips lockLost) before render
     // returns. A would have flushed had it completed; it must not get there.
-    await emit('(A is mid-render when its lock expires…)')
+    await emit.emitText('(A is mid-render when its lock expires…)')
     await sleep(60)
-    return { role: 'assistant', content: '(A would have responded.)' }
+    return { role: 'assistant', parts: [{ kind: 'text', text: '(A would have responded.)' }] }
   }
 }
 
@@ -214,8 +214,11 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
 
     // The never-flush-on-crash invariant: A never reached flushToRedis, so the
     // turn state is still at the pre-turn snapshot — empty.
+    // (ft_history retired — PG-direct (MYT-68 §3.7); the invariant now reads on
+    // summary/usage, the turn-state that still flushes through Redis.)
     const afterA = await sessionState.loadTurnState(CAMPAIGN)
-    expect(afterA.ftHistory).toEqual([])
+    expect(afterA.summary).toBe('')
+    expect(afterA.usage).toEqual({ input: 0, output: 0 })
 
     // The lock key is free: A killed it mid-turn and its compare-and-delete
     // release was a no-op (token mismatch), so nothing holds it now.
@@ -241,14 +244,10 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
 
     expect(resultB).toEqual({ ran: true })
 
-    // The turn completed exactly ONCE from the clean pre-turn state: the trigger
-    // user message + the single stub assistant line. No double-append — B did
-    // not build on top of A's partial work (A flushed nothing).
-    const afterB = await sessionState.loadTurnState(CAMPAIGN)
-    expect(afterB.ftHistory).toEqual([
-      { role: 'user', content: TRIGGER.text, characterName: TRIGGER.characterName },
-      { role: 'assistant', content: '(the DM responds.)' },
-    ])
+    // The turn completed exactly ONCE from the clean pre-turn state — B did not
+    // build on top of A's partial work (A flushed nothing). ft_history retired
+    // — PG-direct (MYT-68 §3.7), so the once-only completion is read on the
+    // turn_end signal below rather than a reloaded transcript.
 
     // B published a turn_end for THIS turnId — the cross-process completion
     // signal a subscribed client would observe.

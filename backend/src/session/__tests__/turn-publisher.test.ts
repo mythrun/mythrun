@@ -99,15 +99,86 @@ describe('createTurnPublisher', () => {
     expect(msg?.frame).toEqual({ type: 'turn_error', turnId: TURN, message: 'the weave frayed' })
   })
 
-  it('emitFor returns a bound TurnEmit that publishes text_delta frames', async () => {
+  it('skillCheck publishes a skill_check frame built field-by-field (no live seq)', async () => {
     const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
-    const emit = pub.emitFor(CAMPAIGN, TURN)
-    await emit('first')
-    await emit('second')
+    await pub.skillCheck(CAMPAIGN, TURN, {
+      characterName: 'Mara',
+      skill: 'Perception',
+      context: 'searching the shelf',
+      roll: 14,
+      roll2: null,
+      rollType: 'normal',
+      modifier: 3,
+      total: 17,
+      dc: 12,
+      outcomeTier: 'success',
+      constraint: 'You spot the hidden latch.',
+    })
     await tick()
 
-    expect(received).toHaveLength(2)
-    expect(received.map((m) => m.frame)).toEqual([
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'skill_check',
+      turnId: TURN,
+      characterName: 'Mara',
+      skill: 'Perception',
+      context: 'searching the shelf',
+      roll: 14,
+      roll2: null,
+      rollType: 'normal',
+      modifier: 3,
+      total: 17,
+      dc: 12,
+      outcomeTier: 'success',
+      constraint: 'You spot the hidden latch.',
+    })
+  })
+
+  it('diceRoll publishes a dice_roll frame carrying the results (no live seq)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.diceRoll(CAMPAIGN, TURN, { count: 2, sides: 6, results: [3, 5], total: 8 })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'dice_roll',
+      turnId: TURN,
+      count: 2,
+      sides: 6,
+      results: [3, 5],
+      total: 8,
+    })
+  })
+
+  it('emitFor returns a bound TurnEmitter that publishes via each method', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    const emit = pub.emitFor(CAMPAIGN, TURN)
+    await emit.emitText('first')
+    await emit.emitText('second')
+    await emit.emitDiceRoll({ count: 1, sides: 20, results: [11], total: 11 })
+    await emit.emitSkillCheck({
+      characterName: 'Bram',
+      skill: 'Athletics',
+      context: 'vaulting the wall',
+      roll: 9,
+      roll2: 15,
+      rollType: 'advantage',
+      modifier: 2,
+      total: 17,
+      dc: 13,
+      outcomeTier: 'success',
+      constraint: 'You clear the wall.',
+    })
+    await tick()
+
+    expect(received).toHaveLength(4)
+    expect(received.map((m) => m.frame.type)).toEqual([
+      'text_delta',
+      'text_delta',
+      'dice_roll',
+      'skill_check',
+    ])
+    expect(received.slice(0, 2).map((m) => m.frame)).toEqual([
       { type: 'text_delta', turnId: TURN, text: 'first' },
       { type: 'text_delta', turnId: TURN, text: 'second' },
     ])

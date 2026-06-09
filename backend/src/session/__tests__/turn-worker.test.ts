@@ -5,7 +5,7 @@ import { makeSessionState, type SessionState } from '../../redis/session-state.j
 import { sessionChannelPattern } from '../../contract/session-channel.js'
 import { SessionController } from '../session-controller.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
-import type { TriggerMessage } from '../tiers/types.js'
+import type { TriggerMessage, TurnEmitter } from '../tiers/types.js'
 import type { SessionLock, SessionLockHandle } from '../session-lock.js'
 import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import type { TurnPublisher } from '../turn-publisher.js'
@@ -120,21 +120,38 @@ function recordingPublisher(calls: PublisherCalls): TurnPublisher {
       calls.order.push('turn_end')
       return Promise.resolve()
     }),
+    skillCheck: vi.fn((): Promise<void> => {
+      calls.order.push('skill_check')
+      return Promise.resolve()
+    }),
+    diceRoll: vi.fn((): Promise<void> => {
+      calls.order.push('dice_roll')
+      return Promise.resolve()
+    }),
     turnError: vi.fn((campaignId: string, turnId: string, message: string): Promise<void> => {
       calls.order.push('turn_error')
       calls.turnErrorArgs.push({ campaignId, turnId, message })
       return Promise.resolve()
     }),
-    emitFor: vi.fn(
-      (campaignId: string, turnId: string): ((text: string) => Promise<void>) =>
-        (_text: string): Promise<void> => {
-          void campaignId
-          void turnId
+    emitFor: vi.fn((campaignId: string, turnId: string): TurnEmitter => {
+      void campaignId
+      void turnId
+      return {
+        emitText: (_text: string): Promise<void> => {
           void _text
           calls.order.push('text_delta')
           return Promise.resolve()
         },
-    ),
+        emitSkillCheck: (): Promise<void> => {
+          calls.order.push('skill_check')
+          return Promise.resolve()
+        },
+        emitDiceRoll: (): Promise<void> => {
+          calls.order.push('dice_roll')
+          return Promise.resolve()
+        },
+      }
+    }),
   }
 }
 
@@ -226,13 +243,13 @@ describe('processTurnJob', () => {
     expect(calls.order[calls.order.length - 1]).toBe('turn_end')
     expect(calls.order).not.toContain('turn_error')
 
-    // The mutated turn state was flushed: the trigger + the stub assistant line
-    // are persisted to Redis (assert via loadTurnState).
+    // The mutated turn state was flushed (turn_end above is the cross-process
+    // completion signal). ft_history retired — PG-direct (MYT-68 §3.7); only
+    // summary/usage round-trip through Redis, and the stub tiers leave them at
+    // their zero values.
     const turnState = await sessionState.loadTurnState(CAMPAIGN)
-    expect(turnState.ftHistory).toEqual([
-      { role: 'user', content: TRIGGER.text, characterName: TRIGGER.characterName },
-      { role: 'assistant', content: '(the DM responds.)' },
-    ])
+    expect(turnState.summary).toBe('')
+    expect(turnState.usage).toEqual({ input: 0, output: 0 })
 
     expect(release).toHaveBeenCalledTimes(1)
     // The heartbeat timer is cleared in `finally` — no leaked interval.
@@ -258,7 +275,10 @@ describe('processTurnJob', () => {
     expect(calls.order).toEqual([])
 
     const turnState = await sessionState.loadTurnState(CAMPAIGN)
-    expect(turnState.ftHistory).toEqual([])
+    // ft_history retired — PG-direct (MYT-68 §3.7); the no-flush invariant now
+    // reads on summary/usage staying at the pre-turn (zero) snapshot.
+    expect(turnState.summary).toBe('')
+    expect(turnState.usage).toEqual({ input: 0, output: 0 })
   })
 
   it('lock-lost at the FIRST checkpoint (right after loadFromRedis) aborts before processDmTurn', async () => {
@@ -353,7 +373,10 @@ describe('processTurnJob', () => {
       'turn lock heartbeat failed',
     )
     const turnState = await sessionState.loadTurnState(CAMPAIGN)
-    expect(turnState.ftHistory).toEqual([])
+    // ft_history retired — PG-direct (MYT-68 §3.7); the no-flush invariant now
+    // reads on summary/usage staying at the pre-turn (zero) snapshot.
+    expect(turnState.summary).toBe('')
+    expect(turnState.usage).toEqual({ input: 0, output: 0 })
     expect(release).toHaveBeenCalledTimes(1)
   })
 
@@ -386,7 +409,10 @@ describe('processTurnJob', () => {
     // Not a lock-lost abort: never published turn_error, never flushed.
     expect(calls.order).not.toContain('turn_error')
     const turnState = await sessionState.loadTurnState(CAMPAIGN)
-    expect(turnState.ftHistory).toEqual([])
+    // ft_history retired — PG-direct (MYT-68 §3.7); the no-flush invariant now
+    // reads on summary/usage staying at the pre-turn (zero) snapshot.
+    expect(turnState.summary).toBe('')
+    expect(turnState.usage).toEqual({ input: 0, output: 0 })
     // finally still released the lock on the error path.
     expect(release).toHaveBeenCalledTimes(1)
   })
@@ -429,7 +455,10 @@ describe('processTurnJob', () => {
     expect(calls.order).not.toContain('turn_error')
 
     const turnState = await sessionState.loadTurnState(CAMPAIGN)
-    expect(turnState.ftHistory).toEqual([])
+    // ft_history retired — PG-direct (MYT-68 §3.7); the no-flush invariant now
+    // reads on summary/usage staying at the pre-turn (zero) snapshot.
+    expect(turnState.summary).toBe('')
+    expect(turnState.usage).toEqual({ input: 0, output: 0 })
 
     // The lock-lost branch warns and still releases in finally.
     expect(silentLogger.warn).toHaveBeenCalled()
@@ -778,9 +807,17 @@ describe('publishTerminalTurnError', () => {
     const publisher: TurnPublisher = {
       dmThinking: vi.fn((): Promise<void> => Promise.resolve()),
       textDelta: vi.fn((): Promise<void> => Promise.resolve()),
+      skillCheck: vi.fn((): Promise<void> => Promise.resolve()),
+      diceRoll: vi.fn((): Promise<void> => Promise.resolve()),
       turnEnd: vi.fn((): Promise<void> => Promise.resolve()),
       turnError: vi.fn((): Promise<void> => Promise.reject(publishErr)),
-      emitFor: vi.fn(() => (): Promise<void> => Promise.resolve()),
+      emitFor: vi.fn(
+        (): TurnEmitter => ({
+          emitText: (): Promise<void> => Promise.resolve(),
+          emitSkillCheck: (): Promise<void> => Promise.resolve(),
+          emitDiceRoll: (): Promise<void> => Promise.resolve(),
+        }),
+      ),
     }
     const original = new Error('the underlying turn failure')
 
@@ -837,14 +874,14 @@ describe('buildSessionTurnWorker', () => {
     const result = await cap.processor(payload())
     expect(result).toEqual({ ran: true })
 
-    // The stub FT line landed in the flushed turn state, proving makeTiers wired
-    // the real stubs into the controller.
+    // The turn ran end-to-end (result {ran:true} above), proving makeTiers
+    // wired the real stubs into the controller. ft_history retired — PG-direct
+    // (MYT-68 §3.7); the flushed turn state now carries only summary/usage,
+    // left at zero by the stub tiers.
     const ss = makeSessionState(redisRealtime, 'bw:')
     const ts = await ss.loadTurnState(CAMPAIGN)
-    expect(ts.ftHistory).toEqual([
-      { role: 'user', content: TRIGGER.text, characterName: TRIGGER.characterName },
-      { role: 'assistant', content: '(the DM responds.)' },
-    ])
+    expect(ts.summary).toBe('')
+    expect(ts.usage).toEqual({ input: 0, output: 0 })
     // The §4.7 watermark advanced (proving triggerState was wired into the deps).
     expect(await makeTriggerState(redisRealtime, 'bw:').respondedSeq(CAMPAIGN)).toBe(0)
   })

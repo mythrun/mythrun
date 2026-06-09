@@ -219,13 +219,12 @@ describe('makeSessionState — turn state', () => {
 
   it('loadTurnState round-trips an atomic flushTurnState', async () => {
     const s = makeSessionState(redis, 'p:')
+    // ft_history retired — PG-direct (MYT-68 §3.7); only summary/usage flush.
     await s.flushTurnState('c1', {
-      ftHistory: [{ role: 'user', content: 'hi' }],
       summary: 'sum',
       usage: { input: 2, output: 3 },
     })
     expect(await s.loadTurnState('c1')).toEqual({
-      ftHistory: [{ role: 'user', content: 'hi' }],
       summary: 'sum',
       usage: { input: 2, output: 3 },
     })
@@ -233,34 +232,29 @@ describe('makeSessionState — turn state', () => {
 
   it('loadTurnState returns empties when unset', async () => {
     expect(await makeSessionState(redis, 'p:').loadTurnState('c-none')).toEqual({
-      ftHistory: [],
       summary: '',
       usage: { input: 0, output: 0 },
     })
   })
 
   it('loadTurnState falls back to the zero values when a turn-state key holds corrupt JSON', async () => {
-    // parseJson's catch arm: a half-initialised / corrupt :ft_history and
-    // :usage key must NOT throw — each falls back to its empty default so the
-    // session still loads cleanly. :summary is read raw (no JSON parse) so a
-    // corrupt value there is simply returned as the string.
-    await redis.set('p:session:c-corrupt:ft_history', '{not json')
+    // parseJson's catch arm: a corrupt :usage key must NOT throw — it falls
+    // back to its empty default so the session still loads cleanly. :summary is
+    // read raw (no JSON parse) so a corrupt value there is simply returned as
+    // the string.
     await redis.set('p:session:c-corrupt:usage', 'not-json-either')
     expect(await makeSessionState(redis, 'p:').loadTurnState('c-corrupt')).toEqual({
-      ftHistory: [],
       summary: '',
       usage: { input: 0, output: 0 },
     })
   })
 
-  it('flushTurnState sets a TTL on all three turn-state keys', async () => {
+  it('flushTurnState sets a TTL on both turn-state keys', async () => {
     const s = makeSessionState(redis, 'p:')
     await s.flushTurnState('c1', {
-      ftHistory: [{ role: 'assistant', content: 'ok' }],
       summary: 's',
       usage: { input: 1, output: 1 },
     })
-    expect(await redis.ttl('p:session:c1:ft_history')).toBeGreaterThan(0)
     expect(await redis.ttl('p:session:c1:summary')).toBeGreaterThan(0)
     expect(await redis.ttl('p:session:c1:usage')).toBeGreaterThan(0)
   })
@@ -300,7 +294,6 @@ describe('makeSessionState — checkpoint', () => {
 
     // Seed turn-state so the widened envelope (H6) carries a non-empty turnState.
     await ss.flushTurnState(cId, {
-      ftHistory: [{ role: 'user', content: 'I search' }],
       summary: 'a running summary',
       usage: { input: 5, output: 9 },
     })
@@ -316,17 +309,16 @@ describe('makeSessionState — checkpoint', () => {
       maxSeq: number
       state: { mode?: string } | null
       turnState: {
-        ftHistory: { role: string; content: string }[]
         summary: string
         usage: { input: number; output: number }
       }
     }
-    // H6: envelope kind bumped to myt66 and now carries the turn-state superset.
-    expect(parsed.kind).toBe('myt66-checkpoint')
+    // H6: envelope kind bumped to myt68; the turn-state superset shed ft_history
+    // (PG-direct — §3.7), so the snapshot now carries only summary + usage.
+    expect(parsed.kind).toBe('myt68-checkpoint')
     expect(parsed.maxSeq).toBe(7)
     expect(parsed.state?.mode).toBe('exploration')
     expect(parsed.turnState).toEqual({
-      ftHistory: [{ role: 'user', content: 'I search' }],
       summary: 'a running summary',
       usage: { input: 5, output: 9 },
     })

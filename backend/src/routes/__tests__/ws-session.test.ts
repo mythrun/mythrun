@@ -901,9 +901,15 @@ function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
   return {
     dmThinking: vi.fn().mockResolvedValue(undefined),
     textDelta: vi.fn().mockResolvedValue(undefined),
+    skillCheck: vi.fn().mockResolvedValue(undefined),
+    diceRoll: vi.fn().mockResolvedValue(undefined),
     turnEnd: vi.fn().mockResolvedValue(undefined),
     turnError: vi.fn().mockResolvedValue(undefined),
-    emitFor: vi.fn().mockReturnValue(() => Promise.resolve(undefined)),
+    emitFor: vi.fn().mockReturnValue({
+      emitText: () => Promise.resolve(undefined),
+      emitSkillCheck: () => Promise.resolve(undefined),
+      emitDiceRoll: () => Promise.resolve(undefined),
+    }),
   }
 }
 

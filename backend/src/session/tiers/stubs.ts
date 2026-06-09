@@ -20,7 +20,7 @@ import type {
   ScribeResult,
   SlowThinker,
   StEvaluation,
-  TurnEmit,
+  TurnEmitter,
 } from './types.js'
 
 /** Never intervenes — the turn always flows straight to the Fast Thinker. */
@@ -33,9 +33,9 @@ export class StubSlowThinker implements SlowThinker {
 
 /** Emits exactly one canned text delta, then returns one canned assistant line. */
 export class StubFastThinker implements FastThinker {
-  async render(_ctx: FtTurnContext, emit: TurnEmit): Promise<AssistantMessage> {
-    await emit('(the DM considers the scene…)')
-    return { role: 'assistant', content: '(the DM responds.)' }
+  async render(_ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> {
+    await emit.emitText('(the DM considers the scene…)')
+    return { role: 'assistant', parts: [{ kind: 'text', text: '(the DM responds.)' }] }
   }
 }
 

@@ -200,13 +200,13 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
       { timeout: 5000, interval: 50 },
     )
 
-    // The flush ran: the trigger is appended as a user message and the stub
-    // assistant line follows it in ftHistory.
+    // The flush ran: turn-state summary/usage round-trip cleanly. ft_history
+    // retired — PG-direct (MYT-68 §3.7), so the appended transcript is no
+    // longer observable here; the turn_end + text_delta frames above are the
+    // turn-completed signal.
     const sessionState = makeSessionState(realtime, KEY_PREFIX)
     const turnState = await sessionState.loadTurnState(campaignId)
-    expect(turnState.ftHistory).toEqual([
-      { role: 'user', content: 'I look around', characterName: 'Mara' },
-      { role: 'assistant', content: '(the DM responds.)' },
-    ])
+    expect(turnState.summary).toBe('')
+    expect(turnState.usage).toEqual({ input: 0, output: 0 })
   })
 })
