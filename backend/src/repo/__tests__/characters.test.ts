@@ -10,7 +10,6 @@ import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
 import { createCharactersRepo } from '../characters.js'
 import { createSessionsRepo } from '../sessions.js'
-import { createSessionParticipantsRepo } from '../session-participants.js'
 import type { ClientLike } from '../_types.js'
 import {
   CharacterAlreadyInCampaignError,

@@ -24,8 +24,8 @@ vi.mock('ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ai')>()
   return {
     ...actual,
-    streamText: (...args: unknown[]) => streamTextMock(...args),
-    generateText: (...args: unknown[]) => generateTextMock(...args),
+    streamText: (...args: unknown[]): unknown => streamTextMock(...args),
+    generateText: (...args: unknown[]): unknown => generateTextMock(...args),
     Output: { object: vi.fn((opts: unknown) => opts) },
   }
 })
@@ -43,6 +43,7 @@ function makeUsage(input = 100, output = 50): {
 // A minimal fake fullStream yielding a single text-delta part.
 function makeFullStream(parts: readonly unknown[]): AsyncIterable<unknown> {
   return {
+    // eslint-disable-next-line @typescript-eslint/require-await -- async generator is required to satisfy AsyncIterable; the body has no await by design.
     async *[Symbol.asyncIterator]() {
       for (const p of parts) yield p
     },
@@ -94,8 +95,9 @@ describe('streamTextWithTools', () => {
       return {
         then<R1 = T, R2 = never>(
           onFulfilled?: ((v: T) => R1 | PromiseLike<R1>) | null,
-          _onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
+          onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
         ): PromiseLike<R1 | R2> {
+          void onRejected
           const result = onFulfilled !== undefined && onFulfilled !== null
             ? onFulfilled(value)
             : (value as unknown as R1)

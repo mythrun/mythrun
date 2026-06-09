@@ -61,7 +61,7 @@ export function calculateModifier(abilityScore: number): number {
   return Math.floor((abilityScore - 10) / 2)
 }
 
-const PROFICIENCY_TABLE: ReadonlyArray<readonly [number, number, number]> = [
+const PROFICIENCY_TABLE: readonly (readonly [number, number, number])[] = [
   [1, 4, 2], [5, 8, 3], [9, 12, 4], [13, 16, 5], [17, 20, 6],
 ]
 

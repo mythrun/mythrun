@@ -148,14 +148,14 @@ function parseRollRow(content: string, messageType: string, seq: number): RollRo
   try {
     parsed = JSON.parse(content)
   } catch {
-    throw new TranscriptCorruptError(`${messageType} row content is not valid JSON (seq ${seq})`)
+    throw new TranscriptCorruptError(`${messageType} row content is not valid JSON (seq ${String(seq)})`)
   }
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
     typeof (parsed as { toolCallId?: unknown }).toolCallId !== 'string'
   ) {
-    throw new TranscriptCorruptError(`${messageType} row JSON missing string toolCallId (seq ${seq})`)
+    throw new TranscriptCorruptError(`${messageType} row JSON missing string toolCallId (seq ${String(seq)})`)
   }
   const obj = parsed as { toolCallId: string; input?: unknown; output?: unknown }
   return { toolCallId: obj.toolCallId, input: obj.input, output: obj.output }

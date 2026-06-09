@@ -221,7 +221,10 @@ describe('resolveSkillCheck', () => {
   })
 
   it('unknown skill → ok:false naming the skill; neither the LLM nor mech is touched', async () => {
-    const mech = foundMech(makeCharacter(), [])
+    const findSpy = vi
+      .fn<MechanicalReads['findSessionParticipantCharacterByName']>()
+      .mockResolvedValue({ outcome: 'found', character: makeCharacter(), skills: [] })
+    const mech: MechanicalReads = { findSessionParticipantCharacterByName: findSpy }
     const deps = makeDeps({ mech })
 
     const result = await resolveSkillCheck(deps, {
@@ -234,7 +237,7 @@ describe('resolveSkillCheck', () => {
     if (result.ok) throw new Error('expected not ok')
     expect(result.errorConstraint).toContain('Basket Weaving')
     expect(mockGenerateText).not.toHaveBeenCalled()
-    expect(mech.findSessionParticipantCharacterByName).not.toHaveBeenCalled()
+    expect(findSpy).not.toHaveBeenCalled()
   })
 
   it('not_found roster outcome → ok:false naming the character', async () => {
@@ -334,6 +337,64 @@ describe('resolveSkillCheck', () => {
         context: 'x',
       }),
     ).resolves.toMatchObject({ ok: true })
+  })
+
+  it('fail tier: roll below the DC → outcomeTier "fail" + the fail constraint', async () => {
+    mockDcTableOnce() // dc 13
+    const character = makeCharacter() // dex 16 → +3
+    const mech = foundMech(character, []) // no proficiency → +3 total
+    // roll 5 + modifier 3 = 8 < 13 → fail.
+    const deps = makeDeps({ mech, rng: scriptedRng(5) })
+
+    const result = await resolveSkillCheck(deps, {
+      character_name: 'Vire',
+      skill: 'Stealth',
+      context: 'creeping',
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    expect(result.payload.outcomeTier).toBe('fail')
+    expect(result.payload.constraint).toBe('F')
+    expect(result.payload.total).toBe(8)
+  })
+
+  it('logs via the injected logger on unknown skill, roster failure, and Haiku fallback', async () => {
+    const warn = vi.fn()
+    const logger = { warn }
+
+    // Unknown skill → line 82 warn.
+    await resolveSkillCheck(makeDeps({ mech: foundMech(makeCharacter(), []), logger }), {
+      character_name: 'Vire',
+      skill: 'Underwater Basketry',
+      context: 'x',
+    })
+    expect(warn).toHaveBeenCalledWith({ skill: 'Underwater Basketry' }, 'skill-check: unknown skill')
+
+    // Roster not_found → line 90 warn.
+    const notFoundMech: MechanicalReads = {
+      findSessionParticipantCharacterByName: vi.fn().mockResolvedValue({ outcome: 'not_found' }),
+    }
+    await resolveSkillCheck(makeDeps({ mech: notFoundMech, logger }), {
+      character_name: 'Nobody',
+      skill: 'Stealth',
+      context: 'x',
+    })
+    expect(warn).toHaveBeenCalledWith(
+      { characterName: 'Nobody', outcome: 'not_found' },
+      'skill-check: roller resolution failed',
+    )
+
+    // Haiku DC-table failure → line 172 warn (fallback).
+    mockGenerateText.mockRejectedValueOnce(new Error('haiku down'))
+    await resolveSkillCheck(
+      makeDeps({ mech: foundMech(makeCharacter(), []), rng: scriptedRng(10), logger }),
+      { character_name: 'Vire', skill: 'Stealth', context: 'x' },
+    )
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ skill: 'Stealth' }),
+      'skill-check: DC table failed; using fallback',
+    )
   })
 
   it('threads the prompt vars (character summary + world tone) and the external abort signal to the SDK', async () => {

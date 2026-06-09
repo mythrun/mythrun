@@ -10,7 +10,9 @@ import {
 /** Deterministic RNG: pops values off a script. */
 const scripted = (...vals: number[]) => {
   let i = 0
-  return (_min: number, _maxExclusive: number): number => {
+  return (min: number, maxExclusive: number): number => {
+    void min
+    void maxExclusive
     const v = vals[i]
     i += 1
     if (v === undefined) throw new Error('scripted RNG exhausted')

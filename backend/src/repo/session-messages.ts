@@ -99,7 +99,7 @@ export function sessionMessagesNs(c: ClientLike) {
     }): Promise<void> => {
       if (input.rows.length !== input.seqs.length) {
         throw new Error(
-          `sessionMessages.appendDmTurn: rows/seqs length mismatch (${input.rows.length} vs ${input.seqs.length})`,
+          `sessionMessages.appendDmTurn: rows/seqs length mismatch (${String(input.rows.length)} vs ${String(input.seqs.length)})`,
         )
       }
       if (input.rows.length === 0) return
@@ -112,7 +112,7 @@ export function sessionMessagesNs(c: ClientLike) {
       const tuples = input.rows.map((row, i) => {
         const base = values.length
         values.push(uuidv7(), input.seqs[i], row.kind, row.content, i)
-        return `($${base + 1}, $1, $${base + 2}, NULL, $${base + 3}, $${base + 4}, $2, $${base + 5})`
+        return `($${String(base + 1)}, $1, $${String(base + 2)}, NULL, $${String(base + 3)}, $${String(base + 4)}, $2, $${String(base + 5)})`
       })
 
       await c.query(

@@ -261,6 +261,33 @@ describe('roll_skill_check tool', () => {
     expect(result.total).toBe(25)
   })
 
+  it('forwards advantage + disadvantage flags through the conditional spreads', async () => {
+    mockDcTableOnce()
+    const character = makeCharacter()
+    const mech = foundMech(character, [
+      { skill_name: 'Stealth', proficiency_level: 'proficient' },
+    ])
+    // advantage + disadvantage cancel → normal roll, one value consumed.
+    const tools = buildFtTools(makeDeps(mech), scriptedRng(15))
+    const exec = requireExecute(tools, 'roll_skill_check')
+
+    const result = (await exec(
+      {
+        character_name: 'Vire',
+        skill: 'Stealth',
+        context: 'creeping',
+        advantage: true,
+        disadvantage: true,
+      },
+      callOpts(),
+    )) as { roll_type: string; roll: number; roll2: number | null }
+
+    // Both flags reached the resolver (cancelled to a normal roll).
+    expect(result.roll_type).toBe('normal')
+    expect(result.roll).toBe(15)
+    expect(result.roll2).toBeNull()
+  })
+
   it("threads the SDK's abortSignal into the nested Haiku call", async () => {
     mockDcTableOnce()
     const character = makeCharacter()
