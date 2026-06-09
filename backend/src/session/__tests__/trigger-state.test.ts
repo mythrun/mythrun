@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import IoRedisMock from 'ioredis-mock'
-import type { Redis } from 'ioredis'
 import { makeTriggerState } from '../trigger-state.js'
-const mk = () => makeTriggerState(new IoRedisMock() as unknown as Redis, 't:')
+const mk = () => makeTriggerState(new IoRedisMock(), 't:')
 
 describe('trigger-state', () => {
   it('tracks typing presence with refresh + clear', async () => {

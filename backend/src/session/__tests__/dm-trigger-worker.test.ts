@@ -151,7 +151,7 @@ describe('processDmTriggerJob — late-reset re-validation (spec §4.3 step 1)',
     expect(rec.classifyCalls).toBe(0)
     expect(rec.debounceAdds).toHaveLength(1)
     // re-arm for the remaining quiet: QUIET_WINDOW_MS − sinceLastActivity.
-    expect(rec.debounceAdds[0]!.delayMs).toBe(QUIET_WINDOW_MS - 2_000)
+    expect(rec.debounceAdds[0]?.delayMs).toBe(QUIET_WINDOW_MS - 2_000)
   })
 })
 
@@ -185,7 +185,9 @@ describe('processDmTriggerJob — dead-air ceiling (spec §4.3 step 3, dead-air)
 
     expect(rec.classifyCalls).toBe(0)
     expect(rec.turnAdds).toHaveLength(1)
-    const p = rec.turnAdds[0]!
+    const [p] = rec.turnAdds
+    expect(p).toBeDefined()
+    if (!p) return
     expect(p.trigger.kind).toBe('auto')
     expect(p.trigger.classification).toEqual({
       intent: 'proactive',
@@ -207,7 +209,7 @@ describe('processDmTriggerJob — explicit pending (spec §4.3 step 3, explicit)
 
     expect(rec.classifyCalls).toBe(0)
     expect(rec.turnAdds).toHaveLength(1)
-    expect(rec.turnAdds[0]!.trigger).toEqual({ kind: 'explicit' })
+    expect(rec.turnAdds[0]?.trigger).toEqual({ kind: 'explicit' })
   })
 })
 
@@ -219,7 +221,7 @@ describe('processDmTriggerJob — solo (spec §4.3 step 3, solo)', () => {
 
     expect(rec.classifyCalls).toBe(0)
     expect(rec.turnAdds).toHaveLength(1)
-    expect(rec.turnAdds[0]!.trigger).toEqual({ kind: 'solo' })
+    expect(rec.turnAdds[0]?.trigger).toEqual({ kind: 'solo' })
   })
 })
 
@@ -231,7 +233,9 @@ describe('processDmTriggerJob — auto respond (spec §4.3 step 3, auto)', () =>
 
     expect(rec.classifyCalls).toBe(1)
     expect(rec.turnAdds).toHaveLength(1)
-    const p = rec.turnAdds[0]!
+    const [p] = rec.turnAdds
+    expect(p).toBeDefined()
+    if (!p) return
     expect(p.trigger.kind).toBe('auto')
     expect(p.trigger.classification).toEqual({
       intent: 'reactive',
@@ -282,8 +286,8 @@ describe('processDmTriggerJob — auto respond (spec §4.3 step 3, auto)', () =>
 
     await processDmTriggerJob(wrapped, job)
 
-    expect(calls[0]!.lastDmOutput).toBeNull()
-    expect(calls[0]!.sceneGrounding).toBeNull()
+    expect(calls[0]?.lastDmOutput).toBeNull()
+    expect(calls[0]?.sceneGrounding).toBeNull()
   })
 })
 
@@ -305,7 +309,7 @@ describe('processDmTriggerJob — auto sit-back (spec §4.3 step 3, auto false)'
     expect(rec.turnAdds).toHaveLength(0)
     expect(rec.debounceAdds).toHaveLength(1)
     // re-arm to fire at the dead-air mark: DEAD_AIR_MS − sinceLastActivity(5_000).
-    expect(rec.debounceAdds[0]!.delayMs).toBe(DEAD_AIR_MS - 5_000)
+    expect(rec.debounceAdds[0]?.delayMs).toBe(DEAD_AIR_MS - 5_000)
   })
 })
 

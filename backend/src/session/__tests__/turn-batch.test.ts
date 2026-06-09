@@ -16,24 +16,24 @@ function fakeRepo(opts: {
 }): Repo {
   return {
     sessionMessages: {
-      listAfterSeq: async (sessionId: string, afterSeq: number) => {
+      listAfterSeq: (sessionId: string, afterSeq: number) => {
         opts.onListAfterSeq?.(sessionId, afterSeq)
-        return opts.rows
+        return Promise.resolve(opts.rows)
       },
     },
     campaigns: {
-      listMembersBasic: async () => opts.members,
+      listMembersBasic: () => Promise.resolve(opts.members),
     },
   } as unknown as Repo
 }
 
 function msg(partial: Partial<SessionMessage> & { seq: number }): SessionMessage {
   return {
-    id: `m-${partial.seq}`,
+    id: `m-${String(partial.seq)}`,
     sessionId: SESSION_ID,
     userId: 'user-a',
     messageType: 'player_message',
-    content: `text ${partial.seq}`,
+    content: `text ${String(partial.seq)}`,
     createdAt: new Date(),
     ...partial,
   }
@@ -116,7 +116,7 @@ describe('buildTurnBatch', () => {
   it('caps to the last MAX_BATCH player messages', async () => {
     const rows: SessionMessage[] = []
     for (let i = 1; i <= MAX_BATCH + 5; i += 1) {
-      rows.push(msg({ seq: i, userId: 'user-a', content: `t${i}` }))
+      rows.push(msg({ seq: i, userId: 'user-a', content: `t${String(i)}` }))
     }
     const repo = fakeRepo({
       rows,
@@ -127,8 +127,8 @@ describe('buildTurnBatch', () => {
 
     expect(batch).toHaveLength(MAX_BATCH)
     // The cap keeps the LAST MAX_BATCH; first kept seq is (total - MAX_BATCH + 1).
-    expect(batch[0]?.text).toBe(`t${MAX_BATCH + 5 - MAX_BATCH + 1}`)
-    expect(batch[batch.length - 1]?.text).toBe(`t${MAX_BATCH + 5}`)
+    expect(batch[0]?.text).toBe(`t${String(MAX_BATCH + 5 - MAX_BATCH + 1)}`)
+    expect(batch[batch.length - 1]?.text).toBe(`t${String(MAX_BATCH + 5)}`)
     // maxSeq tracks the true highest player seq, even when capped.
     expect(maxSeq).toBe(MAX_BATCH + 5)
   })

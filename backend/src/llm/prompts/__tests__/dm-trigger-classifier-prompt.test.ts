@@ -3,7 +3,7 @@ import { loadPrompt, _resetPromptCacheForTests } from '../../prompts.js'
 
 describe('dm-trigger-classifier prompt', () => {
   it('loads and states the three-way decision + the confidence anchor + the public-only boundary', () => {
-    _resetPromptCacheForTests?.()
+    _resetPromptCacheForTests()
     const p = loadPrompt('session', 'dm-trigger-classifier')
     expect(p.toLowerCase()).toContain('respond')
     expect(p.toLowerCase()).toContain('sit back')

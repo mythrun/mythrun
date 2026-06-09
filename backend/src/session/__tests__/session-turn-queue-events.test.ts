@@ -115,11 +115,11 @@ function makeRedis(): Redis & { quitCalls: { n: number } } {
   const quitCalls = { n: 0 }
   r.quitCalls = quitCalls
   const origQuit = r.quit.bind(r)
-  r.quit = (async () => {
+  r.quit = async () => {
     quitCalls.n += 1
     return origQuit()
-  }) as Redis['quit']
-  r.duplicate = (() => r) as Redis['duplicate']
+  }
+  r.duplicate = () => r
   return r
 }
 
@@ -167,7 +167,9 @@ describe('buildSessionTurnQueueEvents', () => {
     captured.fromIdResult = makeJob()
     buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger)
 
-    await captured.failedHandler!({ jobId: 'j1', failedReason: 'stalled' })
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'j1', failedReason: 'stalled' })
     await tick()
 
     expect(captured.fromIdCalls).toEqual(['j1'])
@@ -184,7 +186,9 @@ describe('buildSessionTurnQueueEvents', () => {
     subscriber.on('pmessage', (_p: string, channel: string) => {
       channels.push(channel)
     })
-    await captured.failedHandler!({ jobId: 'j1', failedReason: 'stalled' })
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'j1', failedReason: 'stalled' })
     await tick()
 
     expect(channels).toContain(sessionChannel(KEY_PREFIX, CAMPAIGN))
@@ -198,8 +202,10 @@ describe('buildSessionTurnQueueEvents', () => {
     const realtime = makeRedis()
     buildSessionTurnQueueEvents(makeRedis(), realtime, KEY_PREFIX, recordingLogger())
 
-    await captured.failedHandler!({ jobId: 'j1', failedReason: 'stalled' })
-    await captured.failedHandler!({ jobId: 'j1', failedReason: 'stalled' })
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'j1', failedReason: 'stalled' })
+    await fire?.({ jobId: 'j1', failedReason: 'stalled' })
     await tick()
 
     expect(received).toEqual([{ type: 'turn_error', turnId: TURN, message: 'The turn failed. Please try again.' }])
@@ -210,7 +216,9 @@ describe('buildSessionTurnQueueEvents', () => {
     captured.fromIdResult = null
     buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger)
 
-    await captured.failedHandler!({ jobId: 'gone', failedReason: 'stalled' })
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'gone', failedReason: 'stalled' })
     await tick()
 
     expect(received).toEqual([])

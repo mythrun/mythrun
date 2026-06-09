@@ -1,16 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { FastifyBaseLogger } from 'fastify'
 import { parseClientFrame } from '../ws-session.js'
 
 // A no-op logger standing in for the per-connection FastifyBaseLogger.
 // parseClientFrame only calls `.warn(...)` on the oversize-drop path.
 const fakeLog = {
-  warn: () => {},
-  info: () => {},
-  error: () => {},
-  debug: () => {},
-  trace: () => {},
-  fatal: () => {},
+  warn: vi.fn(),
+  info: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  trace: vi.fn(),
+  fatal: vi.fn(),
 } as unknown as FastifyBaseLogger
 
 // The real wire path always hands parseClientFrame a Buffer (ws delivers text

@@ -37,7 +37,7 @@ import { HAIKU_CLASSIFY_TIMEOUT_MS } from '../session/dm-trigger-config.js'
  */
 export interface DmTriggerContext {
   /** The latest batch of player messages, attributed to speaking characters. */
-  readonly messages: ReadonlyArray<{ readonly characterName: string; readonly text: string }>
+  readonly messages: readonly { readonly characterName: string; readonly text: string }[]
   /** The DM's most recent player-facing output, or null if the DM hasn't spoken yet. */
   readonly lastDmOutput: string | null
   /** How many player turns have passed since the DM's last beat. */
@@ -65,7 +65,7 @@ function serializeContext(ctx: DmTriggerContext): string {
       ? 'Last DM beat: (no prior DM turn this scene)'
       : `Last DM beat: ${ctx.lastDmOutput}`
 
-  const pacingLine = `Pacing: ${ctx.secondsSinceLastDmBeat}s and ${ctx.turnsSinceLastDmBeat} message(s) since the DM last spoke`
+  const pacingLine = `Pacing: ${String(ctx.secondsSinceLastDmBeat)}s and ${String(ctx.turnsSinceLastDmBeat)} message(s) since the DM last spoke`
 
   const sections = [
     'Recent player messages:',

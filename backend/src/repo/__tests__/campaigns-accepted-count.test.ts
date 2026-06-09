@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
-import { uuidv7 } from '../uuidv7.js'
 import { createUsersRepo } from '../users.js'
 import { createWorldsRepo } from '../worlds.js'
 import { createCampaignsRepo } from '../campaigns.js'
