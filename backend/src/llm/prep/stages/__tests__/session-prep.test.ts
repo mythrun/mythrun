@@ -23,6 +23,38 @@ describe('session-prep template', () => {
     // that incidentally matches body prose.
     expect(TEMPLATE.toLowerCase()).toMatch(/always[\s\S]{0,40}shorter|\d,?\d00 words/)
   })
+
+  it('MYT-69: FT instructions tell the narrator to play the moment now, not stall for a cue', () => {
+    const lower = TEMPLATE.toLowerCase()
+    // Post-hoc model: stage directions arrive one turn late, so the prep must
+    // never tell the FT to wait/stall for a cue before narrating.
+    expect(lower).toContain('do not stall for a cue')
+    expect(lower).toContain('deeper moments develop over subsequent turns')
+    expect(lower).toContain('surfaces on a later beat')
+    // The old pre-FT-ST stall phrasings must be gone from the FT-facing text.
+    expect(TEMPLATE).not.toContain('wait for stage directions')
+    expect(TEMPLATE).not.toContain('wait for a stage direction before revealing')
+    expect(TEMPLATE).not.toContain('Stage directions will guide deeper moments when the time comes')
+    expect(TEMPLATE).not.toContain('stage directions will provide the specifics')
+  })
+
+  it('MYT-69: playbook authoring guidance marks entrusted-secret trust conditions', () => {
+    const lower = TEMPLATE.toLowerCase()
+    expect(lower).toContain('entrusted')
+    expect(lower).toContain('trust conditions')
+  })
+
+  it('MYT-69: revelation list marks critical-path vs corroborating clues', () => {
+    const lower = TEMPLATE.toLowerCase()
+    expect(lower).toContain('critical-path')
+    expect(lower).toContain('corroborating')
+    // critical-path clues must never be gated behind a stall-risking check.
+    expect(lower).toMatch(/never gate it behind a check/)
+  })
+
+  it('MYT-69: preserves the playbook [STAGE] authoring markup', () => {
+    expect(TEMPLATE).toContain('[STAGE] ... [/STAGE]')
+  })
 })
 
 // Mock the `../../ai.js` WRAPPER directly (not the underlying `ai` package):

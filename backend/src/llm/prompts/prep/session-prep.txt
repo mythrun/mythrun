@@ -90,9 +90,9 @@ Do NOT include individual DCs, hidden mechanics, or trap specifics — just the 
 
 ## DM Guidance
 Tone reminders and pacing principles for the whole table. Include these standing instructions:
-- "NPCs only know what they could plausibly know from their own perspective. When uncertain, default to ignorance, and wait for stage directions."
-- "Do not invent NPC backstories or reveal anything marked with a depth marker. Stage directions will guide deeper moments when the time comes."
-- "Do not guess what a clue marker contains. If the party investigates a marked place, narrate the investigation but wait for a stage direction before revealing specifics."
+- "NPCs only know what they could plausibly know from their own perspective. When uncertain, default to ignorance and play the moment as it stands — do not stall for a cue."
+- "Do not invent NPC backstories or reveal anything beyond what this context supports. Deeper moments develop over subsequent turns; narrate honestly now."
+- "If the party investigates a marked place, narrate the investigation with what this context supports — do not fabricate hidden specifics; if there is more, it surfaces on a later beat."
 ```
 
 ### The Depth-Marker Protocol
@@ -107,12 +107,12 @@ Depth markers signal "there's more here" WITHOUT revealing what. Two kinds. Loca
 > - **Behavior:** Warm on the surface, watchful underneath. Reads the room while she pours.
 > - **Relationship:** Friendly acquaintance — gave the party a room and a few rumors.
 >
-> *There is more to Voss than meets the eye. Play her as someone with weight — a past she doesn't discuss, a sharpness that hints at a life before this tavern. Do not invent her backstory. Stage directions will guide deeper moments when the time comes.*
+> *There is more to Voss than meets the eye. Play her as someone with weight — a past she doesn't discuss, a sharpness that hints at a life before this tavern. Do not invent her backstory; let the subtext stand on its own. Deeper moments develop over subsequent turns — play her honestly now and don't stall for a cue.*
 
 **Clue markers** — for `known` locations where something `discoverable` or `secret` can be found:
 
 > **The Drowned Chapel** — An old temple to a sea god, half-collapsed into the cliff. Locals avoid it.
-> *Something can be discovered here if the party investigates. Don't anticipate what — stage directions will provide the specifics if they explore.*
+> *Something can be discovered here if the party investigates. Don't anticipate what — narrate the investigation with what this context supports and don't fabricate hidden specifics; if there is more, it surfaces on a later beat.*
 
 A depth marker or clue marker is a PROMISE: every one you place in the Fast Thinker Context must have a matching entry in the playbook with the real content and at least one trigger. A marker with no playbook entry is a broken promise — the Fast Thinker plays subtext that leads nowhere.
 
@@ -138,15 +138,18 @@ For each NPC with hidden layers (everyone who got a depth marker, plus any secre
 ### [NPC Name]
 - **Secret / hidden facts:** the full `discoverable` and `secret` content from the world state, plus any you invented for this session.
 - **Revelation condition:** what must happen before this can surface (trust earned through action, a direct question, a prior clue found).
+- **Trust conditions:** secrets are ENTRUSTED, not dispensed. Note specifically what builds the trust that earns a reveal from THIS NPC — drinking together, taking their side, a shared enemy, a passed Persuasion/Insight check, a debt repaid — so the director can pace the give and never hand the secret over before it's been earned.
 - **Depth-marker cross-reference:** the marker text you placed in the Fast Thinker Context (so you can match them up at the table).
 - **Trigger → Direction:** If [condition] → `[STAGE] ... [/STAGE]`
 
 ## Revelation List (Three Clue Rule)
-For each key conclusion the party should be able to reach, provide AT LEAST THREE independent clues across different locations, NPCs, and methods (social, investigative, exploratory). Never gate a conclusion behind a single clue.
+For each key conclusion the party should be able to reach, provide AT LEAST THREE independent clues across different locations, NPCs, and methods (social, investigative, exploratory). Never gate a conclusion behind a single clue. Mark each clue or reveal as one of:
+- **critical-path** — a planned beat depends on it. Give it freely; never gate it behind a check that could stall the story on a failure.
+- **corroborating / optional** — safe to gate behind a check. A failure isn't a dead end; the conclusion still arrives by another road.
 ### [Conclusion the party should reach]
-- **Clue 1** ([method/where]): Trigger: [condition] → `[STAGE] ... [/STAGE]`
-- **Clue 2** ([method/where]): Trigger: [condition] → `[STAGE] ... [/STAGE]`
-- **Clue 3** ([method/where]): Trigger: [condition] → `[STAGE] ... [/STAGE]`
+- **Clue 1** ([method/where]) [critical-path | corroborating]: Trigger: [condition] → `[STAGE] ... [/STAGE]`
+- **Clue 2** ([method/where]) [critical-path | corroborating]: Trigger: [condition] → `[STAGE] ... [/STAGE]`
+- **Clue 3** ([method/where]) [critical-path | corroborating]: Trigger: [condition] → `[STAGE] ... [/STAGE]`
 - **Status:** uncovered / partially discovered / fully revealed
 - **Backup:** if all three are missed → `[STAGE] ... [/STAGE]`
 
