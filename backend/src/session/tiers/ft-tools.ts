@@ -25,6 +25,19 @@ import { z } from 'zod'
 import { tool, type ToolSet } from '../../llm/ai.js'
 import { MAX_DICE_COUNT, rollDice, STANDARD_DICE, type Rng } from '../dice/engine.js'
 import { resolveSkillCheck, type SkillCheckDeps } from '../skill-check.js'
+import { MAX_GOLD_TRANSACTION } from '../ft-config.js'
+import type { LedgerOps, LedgerTxRunner, RulesLawyerDeps } from '../rules-lawyer.js'
+import {
+  resolveAcquireResource,
+  resolveCastSpell,
+  resolveSpendResource,
+} from '../rules-lawyer-resources.js'
+import {
+  resolveAdjustHp,
+  resolveTakeRest,
+  resolveUpdateCondition,
+} from '../rules-lawyer-vitals.js'
+import type { ConditionName } from '../../repo/characters-ledger.js'
 
 export const ROLL_DICE_INPUT = z.object({
   count: z.number().int().min(1).max(MAX_DICE_COUNT),
@@ -49,6 +62,122 @@ export const ROLL_SKILL_CHECK_INPUT = z.object({
   disadvantage: z.boolean().optional(),
 })
 
+// ---------------------------------------------------------------------------
+// MYT-70 §5 — the Rules Lawyer ledger-tool input schemas. Structural validation
+// only (ZFC-exempt); the GAME-rule adjudication (XOR, level-iff-exhaustion,
+// known/castable, slot selection) lives in the resolvers. Bounds (gold cap,
+// hit-dice count) are policy enforcement, not judgment.
+// ---------------------------------------------------------------------------
+
+/** The 14 PHB conditions + the leveled `exhaustion` (level handled in the
+ *  resolver). Kept in lockstep with the repo's `ConditionName`. */
+const CONDITION_NAMES = [
+  'blinded',
+  'charmed',
+  'deafened',
+  'exhaustion',
+  'frightened',
+  'grappled',
+  'incapacitated',
+  'invisible',
+  'paralyzed',
+  'petrified',
+  'poisoned',
+  'prone',
+  'restrained',
+  'stunned',
+  'unconscious',
+] as const satisfies readonly ConditionName[]
+
+/** Sane per-call item count — a fat-finger guard mirroring the gold cap. Not a
+ *  game rule (stack ceilings are narrative); just a structural sanity bound. */
+const MAX_ITEM_TRANSACTION = 99
+
+export const CAST_SPELL_INPUT = z.object({
+  character_name: z.string().min(1),
+  spell_name: z.string().min(1),
+  slot_level: z.number().int().min(1).max(9).optional(),
+  ritual: z.boolean().optional(),
+})
+
+export const SPEND_RESOURCE_INPUT = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('gold'),
+    character_name: z.string().min(1),
+    amount: z.number().int().min(1).max(MAX_GOLD_TRANSACTION),
+  }),
+  z.object({
+    kind: z.literal('item'),
+    character_name: z.string().min(1),
+    name: z.string().min(1),
+    amount: z.number().int().min(1).max(MAX_ITEM_TRANSACTION).optional(),
+  }),
+  z.object({
+    kind: z.literal('feature'),
+    character_name: z.string().min(1),
+    name: z.string().min(1),
+  }),
+])
+
+export const ACQUIRE_RESOURCE_INPUT = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('gold'),
+    character_name: z.string().min(1),
+    amount: z.number().int().min(1).max(MAX_GOLD_TRANSACTION),
+  }),
+  z.object({
+    kind: z.literal('item'),
+    character_name: z.string().min(1),
+    name: z.string().min(1),
+    amount: z.number().int().min(1).max(MAX_ITEM_TRANSACTION).optional(),
+    consumable: z.boolean().optional(),
+  }),
+])
+
+export const ADJUST_HP_INPUT = z.object({
+  character_name: z.string().min(1),
+  kind: z.enum(['damage', 'heal']),
+  // EXACTLY-ONE-OF amount/dice is resolver-enforced — a z.object can't express
+  // the XOR cleanly without rejecting valid inputs the resolver fail-softs.
+  amount: z.number().int().min(1).optional(),
+  dice: z.string().min(1).optional(),
+})
+
+export const UPDATE_CONDITION_INPUT = z.object({
+  character_name: z.string().min(1),
+  condition: z.enum(CONDITION_NAMES),
+  action: z.enum(['apply', 'clear']),
+  // Required iff exhaustion — the level/exhaustion mismatch is resolver-enforced
+  // (structural validation that fail-softs, not a schema reject).
+  level: z.number().int().min(1).max(6).optional(),
+})
+
+export const TAKE_REST_INPUT = z.object({
+  type: z.enum(['short', 'long']),
+  hit_dice: z
+    .array(
+      z.object({
+        character_name: z.string().min(1),
+        count: z.number().int().min(1).max(20),
+      }),
+    )
+    .optional(),
+})
+
+/**
+ * `buildFtTools` deps: the skill-check resolver's scoped mechanical projection
+ * (minus the per-turn `abortSignal`, which the SDK threads into each `execute`)
+ * PLUS the Rules Lawyer's scoped ledger surface. The resolver's `sessionId` is
+ * the same one the skill check uses, so it is reused — only `ledger`, `runInTx`,
+ * and `turnId` are added. The per-call `toolCallId` is NOT here: the SDK assigns
+ * it and passes it into each `execute` (the `ToolExecutionOptions` arg).
+ */
+export type FtToolDeps = Omit<SkillCheckDeps, 'abortSignal'> & {
+  readonly ledger: LedgerOps
+  readonly runInTx: LedgerTxRunner
+  readonly turnId: string
+}
+
 /**
  * Build the FT's tool registry. `deps` is the skill-check resolver's SCOPED
  * mechanical projection (NOT the whole Repo) + session/tone; the per-turn
@@ -57,7 +186,19 @@ export const ROLL_SKILL_CHECK_INPUT = z.object({
  * call. `rng` is injectable for deterministic tests; production omits it and
  * the engine uses crypto.randomInt.
  */
-export function buildFtTools(deps: Omit<SkillCheckDeps, 'abortSignal'>, rng?: Rng): ToolSet {
+export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
+  /** Build the per-call Rules Lawyer deps from the closed-over ledger surface +
+   *  the SDK-assigned `toolCallId` (the journal idempotency key). `rng` is
+   *  conditional-spread for `exactOptionalPropertyTypes` (RulesLawyerDeps.rng is
+   *  `rng?`, not `Rng | undefined`). */
+  const rulesLawyerDeps = (toolCallId: string): RulesLawyerDeps => ({
+    ledger: deps.ledger,
+    runInTx: deps.runInTx,
+    sessionId: deps.sessionId,
+    turnId: deps.turnId,
+    toolCallId,
+    ...(rng !== undefined ? { rng } : {}),
+  })
   return {
     roll_dice: tool({
       description:
@@ -107,6 +248,125 @@ export function buildFtTools(deps: Omit<SkillCheckDeps, 'abortSignal'>, rng?: Rn
           context: p.context,
         }
       },
+    }),
+    // -----------------------------------------------------------------------
+    // MYT-70 §5 — the Rules Lawyer ledger tools. Each `execute` delegates to a
+    // TOTAL resolver and returns its result AS DATA (the §4 `LedgerResolution`
+    // / `ConditionResolution` / `TakeRestResolution` shape). On `ok:false` the
+    // structured constraint object surfaces unchanged — the model narrates HOW
+    // it falls short, never WHETHER; NO throw, NO frame. The SDK-assigned
+    // `toolCallId` is threaded into the resolver deps as the §10 idempotency key.
+    // -----------------------------------------------------------------------
+    cast_spell: tool({
+      description:
+        'Spend a spell slot to cast a known, prepared D&D 5e spell out of combat. Omit slot_level to ' +
+        'use the lowest available slot of sufficient level; pass slot_level to upcast deliberately; pass ' +
+        'ritual:true to cast a ritual spell without a slot. The returned constraint is the authoritative ' +
+        'outcome — narrate HOW it happens, never whether.',
+      inputSchema: CAST_SPELL_INPUT,
+      execute: (input, { toolCallId }) =>
+        resolveCastSpell(rulesLawyerDeps(toolCallId), {
+          character_name: input.character_name,
+          spell_name: input.spell_name,
+          ...(input.slot_level !== undefined ? { slot_level: input.slot_level } : {}),
+          ...(input.ritual !== undefined ? { ritual: input.ritual } : {}),
+        }),
+    }),
+    spend_resource: tool({
+      description:
+        'Spend a tracked, scarce resource: gold, a tracked consumable/item, or a limited feature use. ' +
+        'Do NOT call for improvised or environmental objects — a rock, a mug, a plank torn from a fence; ' +
+        'narrate those freely. The returned constraint is the authoritative outcome — narrate HOW it ' +
+        'happens, never whether.',
+      inputSchema: SPEND_RESOURCE_INPUT,
+      execute: (input, { toolCallId }) => {
+        const deps2 = rulesLawyerDeps(toolCallId)
+        if (input.kind === 'gold') {
+          return resolveSpendResource(deps2, {
+            kind: 'gold',
+            character_name: input.character_name,
+            amount: input.amount,
+          })
+        }
+        if (input.kind === 'item') {
+          return resolveSpendResource(deps2, {
+            kind: 'item',
+            character_name: input.character_name,
+            name: input.name,
+            ...(input.amount !== undefined ? { amount: input.amount } : {}),
+          })
+        }
+        return resolveSpendResource(deps2, {
+          kind: 'feature',
+          character_name: input.character_name,
+          name: input.name,
+        })
+      },
+    }),
+    acquire_resource: tool({
+      description:
+        'Credit a character with gold or an item the fiction has granted them (loot, a purchase, a gift). ' +
+        'No game-rule validation — this is the credit side of the ledger. Pass consumable:true for an item ' +
+        'that gets used up.',
+      inputSchema: ACQUIRE_RESOURCE_INPUT,
+      execute: (input, { toolCallId }) => {
+        const deps2 = rulesLawyerDeps(toolCallId)
+        if (input.kind === 'gold') {
+          return resolveAcquireResource(deps2, {
+            kind: 'gold',
+            character_name: input.character_name,
+            amount: input.amount,
+          })
+        }
+        return resolveAcquireResource(deps2, {
+          kind: 'item',
+          character_name: input.character_name,
+          name: input.name,
+          ...(input.amount !== undefined ? { amount: input.amount } : {}),
+          ...(input.consumable !== undefined ? { consumable: input.consumable } : {}),
+        })
+      },
+    }),
+    adjust_hp: tool({
+      description:
+        'Apply damage or healing to one character. Pass amount for a fixed value, or dice (e.g. "2d4+2") ' +
+        'for a variable amount — the dice are rolled by the engine; NEVER invent the numbers yourself. ' +
+        'HP clamps to [0, max]; hitting 0 auto-applies unconscious. The returned constraint is the ' +
+        'authoritative outcome — narrate HOW it happens, never whether.',
+      inputSchema: ADJUST_HP_INPUT,
+      execute: (input, { toolCallId }) =>
+        resolveAdjustHp(rulesLawyerDeps(toolCallId), {
+          character_name: input.character_name,
+          kind: input.kind,
+          ...(input.amount !== undefined ? { amount: input.amount } : {}),
+          ...(input.dice !== undefined ? { dice: input.dice } : {}),
+        }),
+    }),
+    update_condition: tool({
+      description:
+        'Apply or clear a D&D 5e condition on one character (blinded, poisoned, prone, exhaustion, …). ' +
+        'Pass level (1–6) only for exhaustion. Clearing unconscious while at 0 HP is rejected — heal them ' +
+        'first. The returned constraint is the authoritative outcome — narrate HOW it happens, never whether.',
+      inputSchema: UPDATE_CONDITION_INPUT,
+      execute: (input, { toolCallId }) =>
+        resolveUpdateCondition(rulesLawyerDeps(toolCallId), {
+          character_name: input.character_name,
+          condition: input.condition,
+          action: input.action,
+          ...(input.level !== undefined ? { level: input.level } : {}),
+        }),
+    }),
+    take_rest: tool({
+      description:
+        'Resolve a short or long rest for the WHOLE party (all session participants). For a short rest, ' +
+        'pass hit_dice to spend a character’s hit dice for healing; a long rest restores HP, slots, and ' +
+        'features. The returned constraint is the authoritative outcome — narrate HOW it happens, never whether.',
+      inputSchema: TAKE_REST_INPUT,
+      execute: (input, { toolCallId }) =>
+        resolveTakeRest(rulesLawyerDeps(toolCallId), {
+          type: input.type,
+          ...(input.hit_dice !== undefined ? { hit_dice: input.hit_dice } : {}),
+        }),
     }),
   }
 }
