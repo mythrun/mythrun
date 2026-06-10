@@ -10,6 +10,7 @@ import type {
   AssistantMessage,
   FastThinker,
   FtTurnContext,
+  PartyLedgerSnapshot,
   TriggerMessage,
   TurnEmitter,
 } from '../tiers/types.js'
@@ -150,6 +151,10 @@ function recordingPublisher(calls: PublisherCalls): TurnPublisher {
       calls.order.push('dice_roll')
       return Promise.resolve()
     }),
+    ledgerUpdate: vi.fn((): Promise<void> => {
+      calls.order.push('ledger_update')
+      return Promise.resolve()
+    }),
     turnError: vi.fn((campaignId: string, turnId: string, message: string): Promise<void> => {
       calls.order.push('turn_error')
       calls.turnErrorArgs.push({ campaignId, turnId, message })
@@ -170,6 +175,10 @@ function recordingPublisher(calls: PublisherCalls): TurnPublisher {
         },
         emitDiceRoll: (): Promise<void> => {
           calls.order.push('dice_roll')
+          return Promise.resolve()
+        },
+        emitLedgerUpdate: (): Promise<void> => {
+          calls.order.push('ledger_update')
           return Promise.resolve()
         },
       }
@@ -240,6 +249,12 @@ function fakeRepo(overrides?: {
    *  FT prompt roster; the userId→name map is the codec's player attribution.
    *  Default [] → an empty roster. */
   participants?: readonly { userId: string; name: string }[]
+  /** MYT-70 §7: a recorder of the sessionIds `readPartyLedgerSnapshot` was
+   *  called with — proves the fresh-run arm loads the snapshot (and the
+   *  non-rendering paths do NOT). */
+  partyLedgerCalls?: string[]
+  /** MYT-70 §7: the party-ledger snapshot the read returns (default []). */
+  partyLedger?: PartyLedgerSnapshot
 }): TurnWorkerRepo {
   const session = overrides?.session === undefined ? { sessionNumber: 1 } : overrides.session
   const prep = overrides?.ftContext == null ? null : { ftContext: overrides.ftContext }
@@ -263,6 +278,10 @@ function fakeRepo(overrides?: {
     characters: {
       findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
       listSessionParticipantCharacters: () => Promise.resolve(overrides?.participants ?? []),
+      readPartyLedgerSnapshot: (sessionId: string) => {
+        overrides?.partyLedgerCalls?.push(sessionId)
+        return Promise.resolve(overrides?.partyLedger ?? [])
+      },
     },
   }
 }
@@ -1403,6 +1422,144 @@ describe('processTurnJob', () => {
     expect(userMsg?.role === 'user' ? userMsg.characterName : undefined).toBe('Bryn')
   })
 
+  // ── MYT-70 §7 — per-turn party-ledger snapshot load ──────────────────────
+  it('fresh run loads the party-ledger snapshot and threads it into the controller deps (§7)', async () => {
+    // The fresh-run arm reads repo.characters.readPartyLedgerSnapshot(sessionId)
+    // alongside the roster, and constructs the controller with `partyLedger` set.
+    // Capture the ctor deps off the controller instance (the same capture seam
+    // the §6 direction-slot test uses).
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const partyLedgerCalls: string[] = []
+
+    const snapshot: PartyLedgerSnapshot = [
+      {
+        characterId: 'ch1',
+        name: 'Mara',
+        hitPoints: 11,
+        maxHitPoints: 14,
+        hitDie: 8,
+        hitDiceRemaining: 2,
+        level: 3,
+        gold: 25,
+        slots: [],
+        conditions: [],
+        trackedFeatures: [],
+        spells: [],
+        equipment: [],
+      },
+    ]
+
+    const captureSpy = vi.spyOn(SessionController.prototype, 'loadFromRedis')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ partyLedgerCalls, partyLedger: snapshot }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The snapshot read was driven exactly once, for this session.
+    expect(partyLedgerCalls).toEqual([SESSION])
+    // The controller received the snapshot on its deps.
+    const ctorDeps = (captureSpy.mock.instances[0] as unknown as {
+      deps: { partyLedger?: PartyLedgerSnapshot }
+    }).deps
+    expect(ctorDeps.partyLedger).toEqual(snapshot)
+
+    captureSpy.mockRestore()
+  })
+
+  it('the converge path does NOT load the party-ledger snapshot (fresh-run-only read, §7)', async () => {
+    // A durable turn converges before the fresh-run arm — it must not issue the
+    // per-turn snapshot read (matching the roster-load placement).
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const partyLedgerCalls: string[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: true, partyLedgerCalls }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order).toEqual(['turn_end'])
+    expect(partyLedgerCalls).toEqual([])
+  })
+
+  it('the latch-terminal path does NOT load the party-ledger snapshot (§7)', async () => {
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const partyLedgerCalls: string[] = []
+
+    await triggerState.markTurnEmitted(TURN)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: false, partyLedgerCalls }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    await expect(processTurnJob(deps, payload())).rejects.toBeInstanceOf(UnrecoverableError)
+    expect(partyLedgerCalls).toEqual([])
+  })
+
+  it('a contention loser (no lock) does NOT load the party-ledger snapshot (§7)', async () => {
+    const calls = newCalls()
+    const partyLedgerCalls: string[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(null),
+      sessionState,
+      repo: fakeRepo({ partyLedgerCalls }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: false })
+    expect(partyLedgerCalls).toEqual([])
+  })
+
   // ── MYT-69 §6/§2 — direction slots + st-evaluation enqueue ────────────────
   it('fresh run takes the one-shot direction (GETDEL) and READS the standing directive (§6)', async () => {
     // The fresh-run arm resolves both direction slots AFTER the converge/latch
@@ -1710,6 +1867,10 @@ describe('makeLatchedEmitter', () => {
         order.push('inner.emitDiceRoll')
         return Promise.resolve()
       },
+      emitLedgerUpdate: (): Promise<void> => {
+        order.push('inner.emitLedgerUpdate')
+        return Promise.resolve()
+      },
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -1726,6 +1887,34 @@ describe('makeLatchedEmitter', () => {
     expect(mark).toHaveBeenCalledTimes(1)
   })
 
+  it('marks before the first inner emit when the first frame is a ledger_update', async () => {
+    const order: string[] = []
+    const inner: TurnEmitter = {
+      emitText: (): Promise<void> => Promise.resolve(),
+      emitSkillCheck: (): Promise<void> => Promise.resolve(),
+      emitDiceRoll: (): Promise<void> => Promise.resolve(),
+      emitLedgerUpdate: (): Promise<void> => {
+        order.push('inner.emitLedgerUpdate')
+        return Promise.resolve()
+      },
+    }
+    const mark = vi.fn((): Promise<void> => {
+      order.push('mark')
+      return Promise.resolve()
+    })
+
+    const latched = makeLatchedEmitter(inner, mark)
+    await latched.emitLedgerUpdate({
+      characterName: 'Mara',
+      kind: 'gold',
+      summary: 'Mara spends 5gp.',
+      gold: 42,
+    })
+
+    expect(order).toEqual(['mark', 'inner.emitLedgerUpdate'])
+    expect(mark).toHaveBeenCalledTimes(1)
+  })
+
   it('marks before the first inner emit when the first frame is a skill_check', async () => {
     const order: string[] = []
     const inner: TurnEmitter = {
@@ -1735,6 +1924,7 @@ describe('makeLatchedEmitter', () => {
         return Promise.resolve()
       },
       emitDiceRoll: (): Promise<void> => Promise.resolve(),
+      emitLedgerUpdate: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -1923,6 +2113,7 @@ describe('publishTerminalTurnError', () => {
       textDelta: vi.fn((): Promise<void> => Promise.resolve()),
       skillCheck: vi.fn((): Promise<void> => Promise.resolve()),
       diceRoll: vi.fn((): Promise<void> => Promise.resolve()),
+      ledgerUpdate: vi.fn((): Promise<void> => Promise.resolve()),
       turnEnd: vi.fn((): Promise<void> => Promise.resolve()),
       turnError: vi.fn((): Promise<void> => Promise.reject(publishErr)),
       emitFor: vi.fn(
@@ -1930,6 +2121,7 @@ describe('publishTerminalTurnError', () => {
           emitText: (): Promise<void> => Promise.resolve(),
           emitSkillCheck: (): Promise<void> => Promise.resolve(),
           emitDiceRoll: (): Promise<void> => Promise.resolve(),
+          emitLedgerUpdate: (): Promise<void> => Promise.resolve(),
         }),
       ),
     }

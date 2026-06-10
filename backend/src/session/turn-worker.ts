@@ -51,15 +51,17 @@ import { Queue, UnrecoverableError, Worker as BullmqWorker, type Job } from 'bul
 import { randomUUID } from 'node:crypto'
 import type { Redis } from 'ioredis'
 import type { Pool } from 'pg'
-import { createRepo } from '../repo/index.js'
+import { createRepo, expectCommitted } from '../repo/index.js'
 import { makeSessionState, type SessionState } from '../redis/session-state.js'
 import { SessionController, type TranscriptStore } from './session-controller.js'
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { SonnetFastThinker } from './tiers/fast-thinker.js'
 import { buildFtTools } from './tiers/ft-tools.js'
 import { StubScribe } from './tiers/stubs.js'
-import type { FastThinker, Scribe, TurnEmitter } from './tiers/types.js'
+import type { FastThinker, PartyLedgerSnapshot, Scribe, TurnEmitter } from './tiers/types.js'
 import type { MechanicalReads } from './skill-check.js'
+import type { LedgerOps } from '../repo/characters-ledger.js'
+import type { LedgerTxRunner } from './rules-lawyer.js'
 import { makeTriggerState, type TriggerState } from './trigger-state.js'
 import {
   rescheduleDebounce,
@@ -126,6 +128,11 @@ export interface TurnWorkerRepo {
     listSessionParticipantCharacters(
       sessionId: string,
     ): Promise<readonly { userId: string; name: string }[]>
+    /** MYT-70 §7: the per-turn party-ledger snapshot — each joined character's
+     *  live mechanical sheet (HP, hit dice, gold, slots, conditions, tracked
+     *  features, spells, equipment) as of turn start. Threaded onto the FT
+     *  context (public-by-construction; rendered as a non-persisted tail). */
+    readPartyLedgerSnapshot(sessionId: string): Promise<PartyLedgerSnapshot>
   }
 }
 
@@ -133,6 +140,9 @@ export interface TurnWorkerRepo {
  *  worker owns the latch wiring); the FT streams every frame through it. */
 export interface TierTurnArgs {
   readonly sessionId: string
+  /** MYT-70 §10: the per-turn id — the journal idempotency key the FT's ledger
+   *  tools thread into `RulesLawyerDeps.turnId`. */
+  readonly turnId: string
   readonly worldTone: string
   readonly emitter: TurnEmitter
 }
@@ -232,6 +242,10 @@ export function makeLatchedEmitter(inner: TurnEmitter, markEmitted: () => Promis
     emitDiceRoll: async (payload) => {
       await ensureMarked()
       await inner.emitDiceRoll(payload)
+    },
+    emitLedgerUpdate: async (payload) => {
+      await ensureMarked()
+      await inner.emitLedgerUpdate(payload)
     },
   }
 }
@@ -334,6 +348,11 @@ export async function processTurnJob(
     const sessionPcs = await deps.repo.characters.listSessionParticipantCharacters(sessionId)
     const participants = sessionPcs.map((p) => p.name)
     const attributionNames = new Map(sessionPcs.map((p) => [p.userId, p.name]))
+    // MYT-70 §7: load the party-ledger snapshot per turn (same fresh-run-only
+    // placement as the roster — a non-rendering converge/latch/contention path
+    // never needs it). Public-by-construction; the FT renders it as a
+    // non-persisted `[Party ledger: …]` tail.
+    const partyLedger = await deps.repo.characters.readPartyLedgerSnapshot(sessionId)
 
     // The latched emitter (§5): the FIRST frame of any kind marks the
     // emitted-anything latch BEFORE publishing, so a crash between mark and
@@ -349,7 +368,7 @@ export async function processTurnJob(
     const pendingDirection = await deps.triggerState.takeOneShotDirection(campaignId)
     const standingDirective = await deps.triggerState.readStandingDirection(campaignId)
 
-    const tiers = deps.makeTiers({ sessionId, worldTone, emitter })
+    const tiers = deps.makeTiers({ sessionId, turnId, worldTone, emitter })
 
     const controller = new SessionController(
       {
@@ -360,6 +379,7 @@ export async function processTurnJob(
         attributionNames,
         participants,
         ftContext,
+        partyLedger,
         ...(pendingDirection !== null ? { pendingDirection } : {}),
         ...(standingDirective !== null ? { standingDirective } : {}),
         allocSeq: () => deps.sessionState.nextSeq(campaignId),
@@ -519,6 +539,12 @@ export function buildSessionTurnWorker(
   const sessionTurnQueue: TurnQueueLike = { add: (n, d, o) => turnQueue.add(n, d, o) }
   // §2 post-turn st-evaluation producer (one Queue per process, like the others).
   const stEvalBullQueue = new Queue<StEvalPayload>(QUEUE_ST_EVAL, { connection: redisBatch })
+  // The enqueue closure only fires on the FULL FT-success path (enqueueStEval,
+  // gated on a flushed turn) — the buildSessionTurnWorker unit tests drive the §5
+  // CONVERGE path (no fresh FT response → no st-eval), so this passthrough is
+  // exercised by the §10 real-Anthropic E2E smoke, not vitest. (The sibling
+  // sessionTurnQueue/dmTriggerQueue closures DO fire on the converge drain path.)
+  /* c8 ignore next */
   const stEvalQueue: StEvalQueueLike = { add: (n, d, o) => stEvalBullQueue.add(n, d, o) }
 
   const deps: TurnProcessorDeps = {
@@ -537,15 +563,26 @@ export function buildSessionTurnWorker(
     /* c8 ignore start -- real-FT construction: invoking it spends Sonnet tokens;
        wiring is exercised by the §10 real-Anthropic E2E smoke (T19), and the
        converge-path builder tests prove the surrounding wiring */
-    makeTiers: ({ sessionId, worldTone }) => {
+    makeTiers: ({ sessionId, turnId, worldTone }) => {
       const mech: MechanicalReads = {
         findSessionParticipantCharacterByName: (sid, name) =>
           repo.characters.findSessionParticipantCharacterByName(sid, name),
       }
+      // MYT-70 §5/§10 — the scoped LedgerOps the FT's ledger tools resolve
+      // against. `repo.characters` composes `charactersLedgerNs`, so the
+      // pool-bound surface IS a LedgerOps superset (used for the pre-mutation
+      // reads). `runInTx` opens ONE repo transaction so each mutation + its
+      // journal row commit atomically: it binds the tx-scoped `tx.characters`
+      // (also a LedgerOps superset) into the resolver callback. The resolver
+      // never returns the ROLLBACK sentinel (it throws on failure), so
+      // `expectCommitted` narrows the `T | RollbackSignal` result back to `T`.
+      const ledger: LedgerOps = repo.characters
+      const runInTx: LedgerTxRunner = (fn) =>
+        repo.transaction((tx) => fn(tx.characters)).then(expectCommitted)
       return {
         scribe: new StubScribe(),
         ft: new SonnetFastThinker({
-          tools: buildFtTools({ mech, sessionId, worldTone, logger }, undefined),
+          tools: buildFtTools({ mech, ledger, runInTx, sessionId, turnId, worldTone, logger }, undefined),
           logger,
         }),
       }

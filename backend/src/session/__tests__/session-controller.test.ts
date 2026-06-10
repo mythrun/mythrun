@@ -38,6 +38,7 @@ import type {
   ConversationMessage,
   FastThinker,
   FtTurnContext,
+  PartyLedgerSnapshot,
   Scribe,
   ScribeResult,
   TurnEmitter,
@@ -141,6 +142,7 @@ function recordingEmitter(emitted: string[]): TurnEmitter {
     },
     emitSkillCheck: vi.fn((): Promise<void> => Promise.resolve()),
     emitDiceRoll: vi.fn((): Promise<void> => Promise.resolve()),
+    emitLedgerUpdate: vi.fn((): Promise<void> => Promise.resolve()),
   }
 }
 
@@ -209,6 +211,7 @@ interface BuildOpts {
   turnState?: TurnState
   participants?: readonly string[]
   ftContext?: string
+  partyLedger?: PartyLedgerSnapshot
   allocStart?: number
   logger?: { warn: ReturnType<typeof vi.fn> }
 }
@@ -247,6 +250,8 @@ function build(opts: BuildOpts = {}): {
     // exactOptionalPropertyTypes: a missing dep is ABSENT, never `undefined`).
     ...(opts.pendingDirection !== undefined ? { pendingDirection: opts.pendingDirection } : {}),
     ...(opts.standingDirective !== undefined ? { standingDirective: opts.standingDirective } : {}),
+    // §7 worker-resolved party-ledger snapshot (same conditional-spread discipline).
+    ...(opts.partyLedger !== undefined ? { partyLedger: opts.partyLedger } : {}),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   }
 
@@ -377,6 +382,39 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
 
     // The key must be ABSENT, not present-with-undefined.
     expect('standingDirective' in (capturedFtCtx.ctx ?? {})).toBe(false)
+  })
+
+  it('buildContext carries the partyLedger snapshot onto the FT context when the dep is set (§7)', async () => {
+    const snapshot: PartyLedgerSnapshot = [
+      {
+        characterId: 'ch1',
+        name: 'Mara',
+        hitPoints: 11,
+        maxHitPoints: 14,
+        hitDie: 8,
+        hitDiceRemaining: 2,
+        level: 3,
+        gold: 25,
+        slots: [],
+        conditions: [],
+        trackedFeatures: [],
+        spells: [],
+        equipment: [],
+      },
+    ]
+    const { controller, capturedFtCtx } = build({ partyLedger: snapshot })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    expect(capturedFtCtx.ctx?.partyLedger).toEqual(snapshot)
+  })
+
+  it('buildContext OMITS the partyLedger key when the dep is absent (exactOptionalPropertyTypes — key ABSENT, not undefined)', async () => {
+    const { controller, capturedFtCtx } = build()
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    expect('partyLedger' in (capturedFtCtx.ctx ?? {})).toBe(false)
   })
 
   it('emits NO turn_end: only the FT drives the injected emitter; there is no publisher dep', async () => {

@@ -38,6 +38,7 @@ import type {
   ConversationMessage,
   FastThinker,
   FtTurnContext,
+  PartyLedgerSnapshot,
   Scribe,
   TokenUsage,
   TurnEmitter,
@@ -101,6 +102,13 @@ export interface SessionControllerDeps {
    *  exactly like a fused one-shot. The FT appends it as a raw tail message
    *  AFTER the cache breakpoints (T14). Optional; absent when none is live. */
   readonly standingDirective?: string
+  /** §7 party ledger snapshot (worker-resolved per turn from
+   *  `repo.characters.readPartyLedgerSnapshot`). Public-by-construction — a
+   *  player's own mechanical sheet, no enforced-ignorance interaction. Threaded
+   *  onto the FT context; the FT renderer (T11) formats it into a non-persisted
+   *  `[Party ledger: …]` tail after the cache breakpoints. Optional; absent when
+   *  no characters are joined. */
+  readonly partyLedger?: PartyLedgerSnapshot
   /** Allocates the next server-ordered seq (bound to `sessionState.nextSeq`). */
   readonly allocSeq: () => Promise<number>
   readonly logger?: MinimalLogger
@@ -243,6 +251,11 @@ export class SessionController {
       // FT's buildModelMessages owns empty-string suppression — don't "tighten"
       // this guard and assume symmetry.
       ...(this.deps.standingDirective !== undefined ? { standingDirective: this.deps.standingDirective } : {}),
+      // §7 party ledger snapshot: public-by-construction, rides the FT-facing
+      // context. exactOptionalPropertyTypes — conditionally spread so the key is
+      // ABSENT when no snapshot was resolved (no joined characters), never
+      // present-with-undefined.
+      ...(this.deps.partyLedger !== undefined ? { partyLedger: this.deps.partyLedger } : {}),
     }
   }
 }

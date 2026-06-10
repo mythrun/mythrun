@@ -53,6 +53,7 @@ const e2eRepo: TurnWorkerRepo = {
   characters: {
     findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
     listSessionParticipantCharacters: () => Promise.resolve([]),
+    readPartyLedgerSnapshot: () => Promise.resolve([]),
   },
 }
 
