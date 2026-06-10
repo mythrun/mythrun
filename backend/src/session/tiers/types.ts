@@ -29,6 +29,36 @@
 // publisher agree on the field-by-field shape without either depending on the
 // other.
 
+/** §7 per-turn party ledger snapshot — the typed per-character mechanical
+ *  block (HP, hit dice, gold, slots, conditions, tracked features, spells,
+ *  equipment) read by `repo.characters.readPartyLedgerSnapshot`. Re-exported
+ *  here so the tier layer has ONE import point for the snapshot type (T11). */
+export type { PartyLedgerSnapshot } from '../../repo/characters-ledger.js'
+import type { PartyLedgerSnapshot } from '../../repo/characters-ledger.js'
+
+/** The post-mutation values the FT needs to narrate concretely (constraint-
+ *  injection: the resolver owns the outcome, the FT owns the telling). One
+ *  flat shape — `kind` discriminates which optional values are populated,
+ *  matching the §8 `ledger_update` frame one-for-one. CANONICAL HOME (T11):
+ *  the Rules Lawyer (`rules-lawyer.ts`) and the emit seam (§8) import it from
+ *  here; `rules-lawyer.ts` re-exports it so existing consumers keep their path. */
+export interface LedgerUpdatePayload {
+  readonly characterName: string
+  readonly kind: 'hp' | 'gold' | 'item' | 'feature' | 'spell_slot' | 'condition' | 'rest'
+  readonly summary: string
+  readonly hp?: number
+  readonly maxHp?: number
+  readonly gold?: number
+  readonly slotLevel?: number
+  readonly slotsRemaining?: number
+  readonly itemName?: string
+  readonly quantity?: number
+  readonly featureName?: string
+  readonly usesRemaining?: number
+  readonly condition?: string
+  readonly diceRolled?: readonly number[]
+}
+
 /** One player message that triggered this turn. Still rides the turn-queue
  *  payload for the MYT-67 trigger classifier. */
 export interface TriggerMessage {
@@ -94,6 +124,16 @@ export interface FtTurnContext {
    *  AFTER buildModelMessages places the cache breakpoints (T14). Optional;
    *  absent when no standing directive is live. */
   readonly standingDirective?: string
+  /** §7 party ledger snapshot: each session-participant character's live
+   *  mechanical sheet (HP, hit dice, gold, slot ledger, conditions, tracked
+   *  features, spells, equipment) as of turn START. PUBLIC-BY-CONSTRUCTION — a
+   *  player's own character sheet has NO enforced-ignorance interaction (it is
+   *  the players' own numbers, not plot/NPC secrets), exactly like the existing
+   *  public fields. The FT renderer (T11) formats it into ONE non-persisted
+   *  `[Party ledger: …]` tail message AFTER the breakpoints (the block changes
+   *  every turn — rendering it through the cached system prefix would bust the
+   *  static-payload cache, §7). Optional; absent when no characters are joined. */
+  readonly partyLedger?: PartyLedgerSnapshot
 }
 
 /**
@@ -142,6 +182,12 @@ export interface TurnEmitter {
   emitText(text: string): Promise<void>
   emitSkillCheck(payload: SkillCheckFramePayload): Promise<void>
   emitDiceRoll(payload: DiceRollFramePayload): Promise<void>
+  /** §8 post-mutation character-sheet delta. ONE emit per affected character:
+   *  the single-payload ledger tools (cast/spend/acquire/adjust_hp/condition)
+   *  emit once; `take_rest` emits once per character in its payload array. The
+   *  consume loop only emits on `ok:true` (and a non-no-op condition) — `ok:false`
+   *  rejections and idempotent no-ops emit nothing (§8). */
+  emitLedgerUpdate(payload: LedgerUpdatePayload): Promise<void>
 }
 
 export interface AssistantMessage {

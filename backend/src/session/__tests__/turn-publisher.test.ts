@@ -150,6 +150,87 @@ describe('createTurnPublisher', () => {
     })
   })
 
+  it('ledgerUpdate publishes a ledger_update frame field-by-field with only the populated optionals (no live seq)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.ledgerUpdate(CAMPAIGN, TURN, {
+      characterName: 'Mara',
+      kind: 'spell_slot',
+      summary: 'Mara casts Detect Magic, spending a level-1 slot.',
+      slotLevel: 1,
+      slotsRemaining: 1,
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    // Only the populated optionals (slotLevel/slotsRemaining) ride the frame —
+    // hp/gold/itemName/etc. are absent, NOT `undefined`.
+    expect(received[0]?.frame).toEqual({
+      type: 'ledger_update',
+      turnId: TURN,
+      characterName: 'Mara',
+      kind: 'spell_slot',
+      summary: 'Mara casts Detect Magic, spending a level-1 slot.',
+      slotLevel: 1,
+      slotsRemaining: 1,
+    })
+    // No live seq on the streamed frame (seq rides only the persisted replay).
+    expect((received[0]?.frame as { seq?: number }).seq).toBeUndefined()
+  })
+
+  it('ledgerUpdate carries diceRolled when present (an hp adjust rolled dice)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.ledgerUpdate(CAMPAIGN, TURN, {
+      characterName: 'Bram',
+      kind: 'hp',
+      summary: 'Bram takes 7 damage.',
+      hp: 11,
+      maxHp: 18,
+      diceRolled: [3, 4],
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'ledger_update',
+      turnId: TURN,
+      characterName: 'Bram',
+      kind: 'hp',
+      summary: 'Bram takes 7 damage.',
+      hp: 11,
+      maxHp: 18,
+      diceRolled: [3, 4],
+    })
+  })
+
+  it('ledgerUpdate carries every remaining optional (item/feature/condition fields) when set', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.ledgerUpdate(CAMPAIGN, TURN, {
+      characterName: 'Lio',
+      kind: 'feature',
+      summary: 'Lio drinks a healing potion and channels a divine domain use.',
+      itemName: 'Healing Potion',
+      quantity: 2,
+      featureName: 'Channel Divinity',
+      usesRemaining: 1,
+      condition: 'blessed',
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'ledger_update',
+      turnId: TURN,
+      characterName: 'Lio',
+      kind: 'feature',
+      summary: 'Lio drinks a healing potion and channels a divine domain use.',
+      itemName: 'Healing Potion',
+      quantity: 2,
+      featureName: 'Channel Divinity',
+      usesRemaining: 1,
+      condition: 'blessed',
+    })
+  })
+
   it('emitFor returns a bound TurnEmitter that publishes via each method', async () => {
     const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
     const emit = pub.emitFor(CAMPAIGN, TURN)
@@ -169,14 +250,21 @@ describe('createTurnPublisher', () => {
       outcomeTier: 'success',
       constraint: 'You clear the wall.',
     })
+    await emit.emitLedgerUpdate({
+      characterName: 'Bram',
+      kind: 'gold',
+      summary: 'Bram spends 5gp.',
+      gold: 42,
+    })
     await tick()
 
-    expect(received).toHaveLength(4)
+    expect(received).toHaveLength(5)
     expect(received.map((m) => m.frame.type)).toEqual([
       'text_delta',
       'text_delta',
       'dice_roll',
       'skill_check',
+      'ledger_update',
     ])
     expect(received.slice(0, 2).map((m) => m.frame)).toEqual([
       { type: 'text_delta', turnId: TURN, text: 'first' },

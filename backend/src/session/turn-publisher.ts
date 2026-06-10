@@ -22,6 +22,7 @@ import { sessionChannel } from '../contract/session-channel.js'
 import type { ServerFrame } from '../contract/session-events.js'
 import type {
   DiceRollFramePayload,
+  LedgerUpdatePayload,
   SkillCheckFramePayload,
   TurnEmitter,
 } from './tiers/types.js'
@@ -38,6 +39,7 @@ export interface TurnPublisher {
   textDelta(campaignId: string, turnId: string, text: string): Promise<void>
   skillCheck(campaignId: string, turnId: string, p: SkillCheckFramePayload): Promise<void>
   diceRoll(campaignId: string, turnId: string, p: DiceRollFramePayload): Promise<void>
+  ledgerUpdate(campaignId: string, turnId: string, p: LedgerUpdatePayload): Promise<void>
   turnEnd(campaignId: string, turnId: string): Promise<void>
   turnError(campaignId: string, turnId: string, message: string): Promise<void>
   /** A frame emitter bound to one (campaign, turn) for the Fast Thinker. */
@@ -89,6 +91,37 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     })
   }
 
+  // §8 ledger_update. Built field-by-field from the LedgerUpdatePayload — the
+  // optional value fields are conditional-spread (only the kind-relevant ones
+  // are populated; `exactOptionalPropertyTypes` forbids an explicit `undefined`).
+  // A live streamed frame carries NO seq (seq rides only the persisted replay row,
+  // reconstructed by ws-session's parseLedgerUpdateRow). Mirrors the replay-side
+  // payloadToLedgerFrame field-by-field map.
+  async function ledgerUpdate(
+    campaignId: string,
+    turnId: string,
+    p: LedgerUpdatePayload,
+  ): Promise<void> {
+    await publish(campaignId, {
+      type: 'ledger_update',
+      turnId,
+      characterName: p.characterName,
+      kind: p.kind,
+      summary: p.summary,
+      ...(p.hp !== undefined ? { hp: p.hp } : {}),
+      ...(p.maxHp !== undefined ? { maxHp: p.maxHp } : {}),
+      ...(p.gold !== undefined ? { gold: p.gold } : {}),
+      ...(p.slotLevel !== undefined ? { slotLevel: p.slotLevel } : {}),
+      ...(p.slotsRemaining !== undefined ? { slotsRemaining: p.slotsRemaining } : {}),
+      ...(p.itemName !== undefined ? { itemName: p.itemName } : {}),
+      ...(p.quantity !== undefined ? { quantity: p.quantity } : {}),
+      ...(p.featureName !== undefined ? { featureName: p.featureName } : {}),
+      ...(p.usesRemaining !== undefined ? { usesRemaining: p.usesRemaining } : {}),
+      ...(p.condition !== undefined ? { condition: p.condition } : {}),
+      ...(p.diceRolled !== undefined ? { diceRolled: [...p.diceRolled] } : {}),
+    })
+  }
+
   async function textDelta(campaignId: string, turnId: string, text: string): Promise<void> {
     await publish(campaignId, { type: 'text_delta', turnId, text })
   }
@@ -100,6 +133,7 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     textDelta,
     skillCheck,
     diceRoll,
+    ledgerUpdate,
     async turnEnd(campaignId, turnId): Promise<void> {
       await publish(campaignId, { type: 'turn_end', turnId })
     },
@@ -112,6 +146,8 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
         emitSkillCheck: (p: SkillCheckFramePayload): Promise<void> =>
           skillCheck(campaignId, turnId, p),
         emitDiceRoll: (p: DiceRollFramePayload): Promise<void> => diceRoll(campaignId, turnId, p),
+        emitLedgerUpdate: (p: LedgerUpdatePayload): Promise<void> =>
+          ledgerUpdate(campaignId, turnId, p),
       }
     },
   }

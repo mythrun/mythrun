@@ -23,32 +23,15 @@ import type {
   LedgerCharacterProjection,
   LedgerOps,
 } from '../repo/characters-ledger.js'
+// CANONICAL HOME (T11): `LedgerUpdatePayload` lives in `tiers/types.ts`. It was
+// defined locally here so Wave C could land in order; T11 re-homed it and this
+// module now imports + re-exports it so every existing consumer keeps its path.
+import type { LedgerUpdatePayload } from './tiers/types.js'
+export type { LedgerUpdatePayload } from './tiers/types.js'
 
 // ---------------------------------------------------------------------------
 // The §4 result contract
 // ---------------------------------------------------------------------------
-
-/** The post-mutation values the FT needs to narrate concretely (constraint-
- *  injection: the resolver owns the outcome, the FT owns the telling). One
- *  flat shape — `kind` discriminates which optional values are populated,
- *  matching the §8 `ledger_update` frame one-for-one. Re-homed into
- *  `tiers/types.ts` by T11; defined locally here so Wave C lands in order. */
-export interface LedgerUpdatePayload {
-  readonly characterName: string
-  readonly kind: 'hp' | 'gold' | 'item' | 'feature' | 'spell_slot' | 'condition' | 'rest'
-  readonly summary: string
-  readonly hp?: number
-  readonly maxHp?: number
-  readonly gold?: number
-  readonly slotLevel?: number
-  readonly slotsRemaining?: number
-  readonly itemName?: string
-  readonly quantity?: number
-  readonly featureName?: string
-  readonly usesRemaining?: number
-  readonly condition?: string
-  readonly diceRolled?: readonly number[]
-}
 
 /** §4 contract: success carries the payload (a real mutation OR a §10 idempotent
  *  replay); failure carries the §6 discriminators + the FT-facing constraint. */

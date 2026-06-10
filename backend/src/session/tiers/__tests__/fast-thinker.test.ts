@@ -20,7 +20,9 @@ import type {
   TurnEmitter,
   SkillCheckFramePayload,
   DiceRollFramePayload,
+  LedgerUpdatePayload,
   ConversationMessage,
+  PartyLedgerSnapshot,
 } from '../types.js'
 
 const streamTextMock = vi.fn()
@@ -33,7 +35,40 @@ vi.mock('ai', async (importOriginal) => {
   }
 })
 
-const { SonnetFastThinker, buildModelMessages } = await import('../fast-thinker.js')
+const { SonnetFastThinker, buildModelMessages, formatPartyLedger } = await import('../fast-thinker.js')
+
+// A §7 party-ledger snapshot fixture carrying the showstopper-fix NOUNS:
+// a named spell, a named equipment item, a slot ledger, conditions, and a
+// tracked feature with uses.
+const PARTY_LEDGER: PartyLedgerSnapshot = [
+  {
+    characterId: 'char-arin',
+    name: 'Arin',
+    hitPoints: 18,
+    maxHitPoints: 24,
+    hitDie: 8,
+    hitDiceRemaining: 2,
+    level: 3,
+    gold: 47,
+    slots: [
+      { slotLevel: 1, slotsMax: 4, slotsRemaining: 2 },
+      { slotLevel: 2, slotsMax: 2, slotsRemaining: 0 },
+    ],
+    conditions: [{ condition: 'poisoned', level: null }],
+    trackedFeatures: [
+      { name: 'Channel Divinity', maxUses: 1, usesRemaining: 1, recharge: 'short_rest' },
+    ],
+    spells: [
+      { name: 'Sacred Flame', level: 0, prepared: true, ritual: false },
+      { name: 'Detect Magic', level: 1, prepared: true, ritual: true },
+      { name: 'Spiritual Weapon', level: 2, prepared: false, ritual: false },
+    ],
+    equipment: [
+      { name: 'Healing Potion', quantity: 2, consumable: true },
+      { name: 'Longsword', quantity: 1, consumable: false },
+    ],
+  },
+]
 
 function makeUsage(input = 100, output = 50): {
   inputTokens: number
@@ -67,7 +102,7 @@ function mockResult(
 
 // Capturing emitter — records the ORDER and payloads of all emissions.
 interface Emission {
-  readonly kind: 'text' | 'skill_check' | 'dice_roll'
+  readonly kind: 'text' | 'skill_check' | 'dice_roll' | 'ledger_update'
   readonly payload: unknown
 }
 function makeEmitter(): { emit: TurnEmitter; seen: Emission[] } {
@@ -83,6 +118,10 @@ function makeEmitter(): { emit: TurnEmitter; seen: Emission[] } {
     },
     emitDiceRoll: (payload: DiceRollFramePayload) => {
       seen.push({ kind: 'dice_roll', payload })
+      return Promise.resolve()
+    },
+    emitLedgerUpdate: (payload: LedgerUpdatePayload) => {
+      seen.push({ kind: 'ledger_update', payload })
       return Promise.resolve()
     },
   }
@@ -500,6 +539,376 @@ describe('SonnetFastThinker.render', () => {
       if (part.kind === 'text') expect(part.text.startsWith('[DM direction:')).toBe(false)
     }
   })
+
+  it('16. party ledger: rides the streamText messages but is NEVER echoed into the returned parts', async () => {
+    mockResult([{ type: 'text-delta', id: '1', text: 'narration' }])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit } = makeEmitter()
+
+    const msg = await ft.render(makeCtx({ partyLedger: PARTY_LEDGER }), emit)
+
+    // The ledger tail is present in the model messages the FT sent.
+    const callArgs = streamTextMock.mock.calls[0]?.[0] as {
+      messages: import('../../../llm/ai.js').ModelMessage[]
+    }
+    const ledgerMsg = callArgs.messages.find(
+      (m) => typeof m.content === 'string' && m.content.startsWith('[Party ledger:'),
+    )
+    expect(ledgerMsg).toBeDefined()
+
+    // …but the FT never echoes the ledger block into the transcript it returns.
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'narration' }])
+    for (const part of msg.parts) {
+      if (part.kind === 'text') expect(part.text.startsWith('[Party ledger:')).toBe(false)
+    }
+  })
+
+  // ── MYT-70 Task 15: ledger_update emission (§8) ────────────────────────────
+
+  it('18. ledger_update: an ok:true ledger tool-result emits ONE emitLedgerUpdate with the payload, in stream-part order', async () => {
+    const payload: LedgerUpdatePayload = {
+      characterName: 'Arin',
+      kind: 'spell_slot',
+      summary: 'Arin casts Detect Magic, spending a level-1 slot.',
+      slotLevel: 1,
+      slotsRemaining: 1,
+    }
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'before' },
+      {
+        type: 'tool-call',
+        toolCallId: 's1',
+        toolName: 'cast_spell',
+        input: { character_name: 'Arin', spell_name: 'Detect Magic' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 's1',
+        toolName: 'cast_spell',
+        input: { character_name: 'Arin', spell_name: 'Detect Magic' },
+        output: { ok: true, payload },
+      },
+      { type: 'text-delta', id: '2', text: 'after' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.map((e) => e.kind)).toEqual(['text', 'ledger_update', 'text'])
+    expect(seen[1]?.payload).toEqual(payload)
+  })
+
+  it('19. ledger_update: an ok:false ledger tool-result emits NO emitLedgerUpdate (the loop continues)', async () => {
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 's1',
+        toolName: 'spend_resource',
+        input: { kind: 'gold', character_name: 'Arin', amount: 500 },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 's1',
+        toolName: 'spend_resource',
+        input: { kind: 'gold', character_name: 'Arin', amount: 500 },
+        output: { ok: false, binding: true, found: true, constraint: 'Arin has only 47gp.' },
+      },
+      { type: 'text-delta', id: '1', text: 'narrating the shortfall' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.some((e) => e.kind === 'ledger_update')).toBe(false)
+    expect(seen).toEqual([{ kind: 'text', payload: 'narrating the shortfall' }])
+  })
+
+  it('20. ledger_update: an update_condition no-op (changed:false) emits NO emitLedgerUpdate', async () => {
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'u1',
+        toolName: 'update_condition',
+        input: { character_name: 'Arin', condition: 'prone', action: 'clear' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'u1',
+        toolName: 'update_condition',
+        input: { character_name: 'Arin', condition: 'prone', action: 'clear' },
+        output: {
+          ok: true,
+          payload: {
+            characterName: 'Arin',
+            kind: 'condition',
+            summary: 'Arin was not prone; nothing changed.',
+            condition: 'prone',
+            changed: false,
+          },
+        },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.some((e) => e.kind === 'ledger_update')).toBe(false)
+  })
+
+  it('21. ledger_update: an update_condition real change (changed:true) emits ONE emitLedgerUpdate', async () => {
+    const payload = {
+      characterName: 'Arin',
+      kind: 'condition' as const,
+      summary: 'Arin is now poisoned.',
+      condition: 'poisoned',
+      changed: true,
+    }
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'u1',
+        toolName: 'update_condition',
+        input: { character_name: 'Arin', condition: 'poisoned', action: 'apply' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'u1',
+        toolName: 'update_condition',
+        input: { character_name: 'Arin', condition: 'poisoned', action: 'apply' },
+        output: { ok: true, payload },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.map((e) => e.kind)).toEqual(['ledger_update'])
+    // The publisher-facing payload carries the base LedgerUpdatePayload fields
+    // (the extra `changed` flag rides along harmlessly — it is not a frame field).
+    const seenPayload = seen[0]?.payload as LedgerUpdatePayload
+    expect(seenPayload.characterName).toBe('Arin')
+    expect(seenPayload.kind).toBe('condition')
+    expect(seenPayload.summary).toBe('Arin is now poisoned.')
+  })
+
+  it('22. ledger_update: a take_rest ok:true with TWO characters emits emitLedgerUpdate twice (one per character, §8)', async () => {
+    const arin: LedgerUpdatePayload = {
+      characterName: 'Arin',
+      kind: 'rest',
+      summary: 'Arin takes a long rest: HP and slots restored.',
+    }
+    const bel: LedgerUpdatePayload = {
+      characterName: 'Bel',
+      kind: 'rest',
+      summary: 'Bel takes a long rest: HP and slots restored.',
+    }
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'r1',
+        toolName: 'take_rest',
+        input: { type: 'long' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'r1',
+        toolName: 'take_rest',
+        input: { type: 'long' },
+        output: { ok: true, payload: [arin, bel] },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.map((e) => e.kind)).toEqual(['ledger_update', 'ledger_update'])
+    expect(seen[0]?.payload).toEqual(arin)
+    expect(seen[1]?.payload).toEqual(bel)
+  })
+
+  it('23. ledger_update: a take_rest with an empty payload array emits nothing', async () => {
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'r1',
+        toolName: 'take_rest',
+        input: { type: 'short' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'r1',
+        toolName: 'take_rest',
+        input: { type: 'short' },
+        output: { ok: true, payload: [] },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.some((e) => e.kind === 'ledger_update')).toBe(false)
+  })
+
+  it('24. ledger_update: an adjust_hp result carrying diceRolled threads the rolled faces onto the frame', async () => {
+    const payload = {
+      characterName: 'Arin',
+      kind: 'hp' as const,
+      summary: 'Arin takes 7 damage.',
+      hp: 11,
+      maxHp: 18,
+      diceRolled: [3, 4],
+    }
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'h1',
+        toolName: 'adjust_hp',
+        input: { character_name: 'Arin', amount: '2d6' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'h1',
+        toolName: 'adjust_hp',
+        input: { character_name: 'Arin', amount: '2d6' },
+        output: { ok: true, payload },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.map((e) => e.kind)).toEqual(['ledger_update'])
+    const seenPayload = seen[0]?.payload as LedgerUpdatePayload
+    expect(seenPayload.diceRolled).toEqual([3, 4])
+    expect(seenPayload.hp).toBe(11)
+  })
+
+  it('25. ledger_update: a payload carrying gold/item/feature value fields threads them all onto the frame', async () => {
+    // A single ok:true payload exercising the remaining optional-field
+    // present-arms in toLedgerUpdatePayload (gold, itemName, quantity,
+    // featureName, usesRemaining).
+    const payload = {
+      characterName: 'Arin',
+      kind: 'feature' as const,
+      summary: 'Arin spends a Channel Divinity use, buys a torch, and pays 5 gold.',
+      gold: 42,
+      itemName: 'Torch',
+      quantity: 3,
+      featureName: 'Channel Divinity',
+      usesRemaining: 0,
+    }
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 's1',
+        toolName: 'spend_resource',
+        input: { kind: 'feature', character_name: 'Arin', name: 'Channel Divinity' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 's1',
+        toolName: 'spend_resource',
+        input: { kind: 'feature', character_name: 'Arin', name: 'Channel Divinity' },
+        output: { ok: true, payload },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.map((e) => e.kind)).toEqual(['ledger_update'])
+    const seenPayload = seen[0]?.payload as LedgerUpdatePayload
+    expect(seenPayload.gold).toBe(42)
+    expect(seenPayload.itemName).toBe('Torch')
+    expect(seenPayload.quantity).toBe(3)
+    expect(seenPayload.featureName).toBe('Channel Divinity')
+    expect(seenPayload.usesRemaining).toBe(0)
+  })
+})
+
+describe('formatPartyLedger', () => {
+  it('17. carries the NOUNS: a spell name, an equipment name, and a slot-ledger string (the §7 showstopper fix)', () => {
+    const block = formatPartyLedger(PARTY_LEDGER)
+    // Spell name (cast_spell must be drivable from paraphrase → exact match).
+    expect(block).toContain('Spiritual Weapon')
+    // Equipment name (spend/use must be drivable from paraphrase).
+    expect(block).toContain('Healing Potion')
+    // Slot ledger in the `L1 2/4` style.
+    expect(block).toContain('L1 2/4')
+    expect(block).toContain('L2 0/2')
+    // HP cur/max + the character name + a condition + a tracked feature.
+    expect(block).toContain('Arin')
+    expect(block).toContain('18/24')
+    expect(block).toContain('poisoned')
+    expect(block).toContain('Channel Divinity')
+  })
+
+  it('renders "none" for every empty sub-list (all sub-lists empty)', () => {
+    const empty: PartyLedgerSnapshot = [
+      {
+        characterId: 'char-bare',
+        name: 'Bare',
+        hitPoints: 8,
+        maxHitPoints: 8,
+        hitDie: 6,
+        hitDiceRemaining: 1,
+        level: 1,
+        gold: 0,
+        slots: [],
+        conditions: [],
+        trackedFeatures: [],
+        spells: [],
+        equipment: [],
+      },
+    ]
+    const block = formatPartyLedger(empty)
+    expect(block).toContain('slots none')
+    expect(block).toContain('conditions none')
+    expect(block).toContain('features none')
+    expect(block).toContain('spells none')
+    expect(block).toContain('equipment none')
+  })
+
+  it('groups two spells at the same level into one Ln bucket and numbers exhaustion', () => {
+    const grouped: PartyLedgerSnapshot = [
+      {
+        characterId: 'char-mage',
+        name: 'Mage',
+        hitPoints: 10,
+        maxHitPoints: 10,
+        hitDie: 6,
+        hitDiceRemaining: 1,
+        level: 3,
+        gold: 5,
+        slots: [{ slotLevel: 1, slotsMax: 4, slotsRemaining: 4 }],
+        conditions: [{ condition: 'exhaustion', level: 2 }],
+        trackedFeatures: [
+          { name: 'Arcane Recovery', maxUses: 1, usesRemaining: 1, recharge: 'long_rest' },
+        ],
+        // Two level-1 spells → the second hits the existing-bucket push arm.
+        spells: [
+          { name: 'Magic Missile', level: 1, prepared: true, ritual: false },
+          { name: 'Shield', level: 1, prepared: false, ritual: false },
+        ],
+        equipment: [{ name: 'Dagger', quantity: 1, consumable: false }],
+      },
+    ]
+    const block = formatPartyLedger(grouped)
+    // Both same-level spells render in one L1 bucket.
+    expect(block).toContain('Magic Missile')
+    expect(block).toContain('Shield')
+    expect(block).toMatch(/L1: .*Magic Missile.*Shield/)
+    // A leveled condition (exhaustion) renders with its numeric level.
+    expect(block).toContain('exhaustion 2')
+  })
 })
 
 describe('buildModelMessages', () => {
@@ -648,5 +1057,79 @@ describe('buildModelMessages', () => {
     expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(without))
     // No tail message wrapped as a DM direction.
     expect(without.some((m) => typeof m.content === 'string' && m.content.startsWith('[DM direction:'))).toBe(false)
+  })
+
+  it('16. party ledger only: appends ONE raw uncached [Party ledger: …] tail as the LAST message', () => {
+    const ctx = makeCtx({
+      ftHistory: [
+        { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+        { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+        { v: 1, role: 'user', parts: [{ kind: 'text', text: 'two' }], characterName: 'Bel' },
+      ],
+      partyLedger: PARTY_LEDGER,
+    })
+    const messages = buildModelMessages(ctx)
+
+    const last = messages[messages.length - 1]
+    expect(typeof last?.content).toBe('string')
+    expect((last?.content as string).startsWith('[Party ledger:')).toBe(true)
+    // The ledger tail rides the always-uncached zone: NO providerOptions.
+    expect(last?.providerOptions).toBeUndefined()
+    // It carries the showstopper-fix nouns.
+    expect(last?.content as string).toContain('Spiritual Weapon')
+    expect(last?.content as string).toContain('Healing Potion')
+    expect(last?.content as string).toContain('L1 2/4')
+  })
+
+  it('16b. merge order: party ledger FIRST, standing directive LAST (the DM instruction is closest to generation)', () => {
+    const ctx = makeCtx({
+      ftHistory: [
+        { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+        { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+        { v: 1, role: 'user', parts: [{ kind: 'text', text: 'two' }], characterName: 'Bel' },
+      ],
+      partyLedger: PARTY_LEDGER,
+      standingDirective: 'Steer toward a close',
+    })
+    const messages = buildModelMessages(ctx)
+
+    const last = messages[messages.length - 1]
+    const secondToLast = messages[messages.length - 2]
+    // Standing directive LAST.
+    expect(last).toEqual({ role: 'user', content: '[DM direction: Steer toward a close]' })
+    // Party ledger immediately BEFORE it.
+    expect(typeof secondToLast?.content).toBe('string')
+    expect((secondToLast?.content as string).startsWith('[Party ledger:')).toBe(true)
+    expect(secondToLast?.providerOptions).toBeUndefined()
+  })
+
+  it('16c. party ledger does NOT shift the breakpoint: the same HISTORY message carries it with or without the tail', () => {
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'two' }], characterName: 'Bel' },
+    ]
+    const without = buildModelMessages(makeCtx({ ftHistory: history }))
+    const withTail = buildModelMessages(makeCtx({ ftHistory: history, partyLedger: PARTY_LEDGER }))
+
+    const baselineBreakpointed = without.find((m) => m.providerOptions !== undefined && m.role !== 'system')
+    expect(baselineBreakpointed).toBeDefined()
+    const tailedBreakpointed = withTail.find((m) => m.providerOptions !== undefined && m.role !== 'system')
+    expect(tailedBreakpointed).toEqual(baselineBreakpointed)
+    // And the breakpoint is NOT on the appended ledger tail.
+    expect(withTail[withTail.length - 1]?.providerOptions).toBeUndefined()
+  })
+
+  it('16d. no party ledger: no extra tail message (unchanged shape)', () => {
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+    ]
+    const without = buildModelMessages(makeCtx({ ftHistory: history }))
+    const withEmpty = buildModelMessages(makeCtx({ ftHistory: history, partyLedger: [] }))
+
+    // An empty roster snapshot renders no tail (no characters to show).
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(without))
+    expect(without.some((m) => typeof m.content === 'string' && m.content.startsWith('[Party ledger:'))).toBe(false)
   })
 })

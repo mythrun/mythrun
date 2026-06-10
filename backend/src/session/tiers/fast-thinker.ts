@@ -70,7 +70,9 @@ import type {
   ConversationMessage,
   SkillCheckFramePayload,
   DiceRollFramePayload,
+  LedgerUpdatePayload,
   TokenUsage,
+  PartyLedgerSnapshot,
 } from './types.js'
 
 /** Per-MESSAGE Anthropic cache breakpoint (§3.9). Attached to the system
@@ -153,19 +155,113 @@ interface ToolResultBlock {
   readonly output: { readonly type: 'json'; readonly value: JsonValue }
 }
 
+// ── Party ledger snapshot render (§7) ────────────────────────────────────────
+
+/** One character's block in the rendered ledger — derived from the snapshot
+ *  element so the formatter tracks the repo shape without re-importing each
+ *  sub-type. */
+type PartyLedgerCharacter = PartyLedgerSnapshot[number]
+
+/** The §7 slot ledger in `L1 2/4 · L2 0/2` style — only levels that exist for
+ *  this character (cantrips have no slot row). */
+function formatSlots(slots: PartyLedgerCharacter['slots']): string {
+  if (slots.length === 0) return 'none'
+  return slots
+    .map((s) => `L${String(s.slotLevel)} ${String(s.slotsRemaining)}/${String(s.slotsMax)}`)
+    .join(' · ')
+}
+
+/** Conditions with their numeric level where one applies (exhaustion). */
+function formatConditions(conditions: PartyLedgerCharacter['conditions']): string {
+  if (conditions.length === 0) return 'none'
+  return conditions
+    .map((c) => (c.level === null ? c.condition : `${c.condition} ${String(c.level)}`))
+    .join(', ')
+}
+
+/** Tracked features as `Name uses/max (recharge)` — only resource-bearing
+ *  features reach the snapshot (untracked ones are omitted upstream). */
+function formatFeatures(features: PartyLedgerCharacter['trackedFeatures']): string {
+  if (features.length === 0) return 'none'
+  return features
+    .map((f) => `${f.name} ${String(f.usesRemaining)}/${String(f.maxUses)} (${f.recharge})`)
+    .join(', ')
+}
+
+/** Spells grouped by level, each tagged castable/ritual so the FT can map a
+ *  paraphrase to the canonical name AND know whether a slot is needed (§7).
+ *  Cantrips render as `L0`. `prepared` is the §3.2 currently-castable flag. */
+function formatSpells(spells: PartyLedgerCharacter['spells']): string {
+  if (spells.length === 0) return 'none'
+  const byLevel = new Map<number, string[]>()
+  for (const sp of spells) {
+    const flags: string[] = []
+    flags.push(sp.prepared ? 'castable' : 'not-prepared')
+    if (sp.ritual) flags.push('ritual')
+    const entry = `${sp.name} [${flags.join(', ')}]`
+    const bucket = byLevel.get(sp.level)
+    if (bucket) bucket.push(entry)
+    else byLevel.set(sp.level, [entry])
+  }
+  return [...byLevel.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([lvl, entries]) => `L${String(lvl)}: ${entries.join(', ')}`)
+    .join(' | ')
+}
+
+/** Full equipment list with quantities, consumables flagged (the §7
+ *  showstopper-fix nouns — eliding them makes spend/use undrivable). */
+function formatEquipment(equipment: PartyLedgerCharacter['equipment']): string {
+  if (equipment.length === 0) return 'none'
+  return equipment
+    .map((e) => `${e.name} x${String(e.quantity)}${e.consumable ? ' (consumable)' : ''}`)
+    .join(', ')
+}
+
+/** One character's compact-but-complete mechanical line. */
+function formatCharacter(c: PartyLedgerCharacter): string {
+  return [
+    `${c.name} (L${String(c.level)}): HP ${String(c.hitPoints)}/${String(c.maxHitPoints)}`,
+    `hit dice ${String(c.hitDiceRemaining)}d${String(c.hitDie)}`,
+    `gold ${String(c.gold)}gp`,
+    `slots ${formatSlots(c.slots)}`,
+    `conditions ${formatConditions(c.conditions)}`,
+    `features ${formatFeatures(c.trackedFeatures)}`,
+    `spells ${formatSpells(c.spells)}`,
+    `equipment ${formatEquipment(c.equipment)}`,
+  ].join('; ')
+}
+
+/**
+ * Format the §7 party ledger snapshot into the body of the render-time
+ * `[Party ledger: …]` tail message (EXPORTED for tests; pure + deterministic).
+ * Carries the NUMBERS AND the NOUNS per character — HP cur/max, hit dice, gold,
+ * the slot ledger, active conditions, tracked features + uses, spells grouped
+ * by level with castable/ritual flags, and the full equipment list with
+ * consumable flags. The names are the showstopper fix: eliding them makes
+ * `cast_spell`/spend undrivable from a paraphrase and silently defeats slot
+ * enforcement. STALENESS (§7): this is turn-START state — post-mutation truth
+ * within the turn comes from the tool-result payloads, not this block.
+ */
+export function formatPartyLedger(snapshot: PartyLedgerSnapshot): string {
+  return snapshot.map(formatCharacter).join('\n')
+}
+
 /**
  * Build the SDK message array for a turn (EXPORTED for tests; deterministic —
  * the same ctx maps to byte-identical messages). Layout:
  *   [ system(ft_context + roster, cache breakpoint),
  *     ...history mapped to user/assistant/tool messages,
- *     (optional) [DM direction: …] standing-directive tail ]
+ *     (optional) [Party ledger: …] snapshot tail (§7),
+ *     (optional) [DM direction: …] standing-directive tail (§6) ]
  * The cache breakpoint also rides the last SETTLED history message
- * (second-to-last entry; the current batch stays uncached). The §6 standing
- * directive, when live, is appended as ONE raw user message AFTER the
- * breakpoint placement — it rides the always-uncached zone past the last
- * breakpoint, never perturbing the cached prefix and never shifting the
- * sliding-breakpoint index. It is render-only: never persisted, never pushed
- * into ftHistory.
+ * (second-to-last entry; the current batch stays uncached). Both tails, when
+ * live, are appended as raw user messages AFTER the breakpoint placement — they
+ * ride the always-uncached zone past the last breakpoint, never perturbing the
+ * cached prefix and never shifting the sliding-breakpoint index. They are
+ * render-only: never persisted, never pushed into ftHistory. MERGE-ORDER PIN:
+ * the party-ledger snapshot goes FIRST, the standing directive LAST (the
+ * directive is the most recent DM instruction, closest to generation).
  */
 export function buildModelMessages(ctx: FtTurnContext): ModelMessage[] {
   const system = loadPrompt('session', 'ft-system', {
@@ -191,6 +287,19 @@ export function buildModelMessages(ctx: FtTurnContext): ModelMessage[] {
     { role: 'system', content: system, providerOptions: ANTHROPIC_CACHE_BREAKPOINT },
     ...historyMessages,
   ]
+
+  // §7 party ledger snapshot: a raw, uncached tail message AFTER the breakpoints
+  // and BEFORE the standing-directive tail (MERGE-ORDER PIN — the standing
+  // directive is the most recent "DM instruction" and stays closest to the
+  // generation point). The block changes every turn, so it rides the
+  // always-uncached zone past the last breakpoint — rendering it through the
+  // cached system prefix would bust the static-payload cache (§7). NEVER
+  // persisted, NEVER pushed into ftHistory; an empty snapshot (no joined
+  // characters) renders no tail. Staleness rule: turn-START state — in-turn
+  // post-mutation truth comes from the tool-result payloads.
+  if (ctx.partyLedger !== undefined && ctx.partyLedger.length > 0) {
+    messages.push({ role: 'user', content: `[Party ledger: ${formatPartyLedger(ctx.partyLedger)}]` })
+  }
 
   // §6 standing directive: a raw, uncached tail message AFTER the breakpoints.
   // NEVER persisted, NEVER pushed into ftHistory (that would shift the
@@ -252,6 +361,74 @@ function toDiceRollFrame(
     results,
     total: Number(output.total),
   }
+}
+
+/** The six MYT-70 Rules Lawyer ledger tools (§5). Their `execute` returns a
+ *  resolver result AS DATA — `{ ok: true, payload }` (a `LedgerUpdatePayload`,
+ *  or an ARRAY of them for `take_rest`, or a `ConditionPayload` carrying
+ *  `changed` for `update_condition`) or an `ok:false` rejection. The §8 emit
+ *  rules live in `emitLedgerUpdates`. */
+const LEDGER_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'cast_spell',
+  'spend_resource',
+  'acquire_resource',
+  'adjust_hp',
+  'update_condition',
+  'take_rest',
+])
+
+/** Map a resolver payload record onto the §8 `LedgerUpdatePayload` the emit
+ *  seam carries. The payload comes straight from the (typed) resolver, but the
+ *  consume loop sees it as `unknown` — coerce the required fields the way
+ *  `toSkillCheckFrame` does, and conditional-spread the optional value fields
+ *  for `exactOptionalPropertyTypes`. The `changed` flag a `ConditionPayload`
+ *  carries is NOT a frame field — it is consumed in `emitLedgerUpdates` and
+ *  dropped here. */
+function toLedgerUpdatePayload(p: Record<string, unknown>): LedgerUpdatePayload {
+  return {
+    characterName: String(p.characterName),
+    kind: p.kind as LedgerUpdatePayload['kind'],
+    summary: String(p.summary),
+    ...(typeof p.hp === 'number' ? { hp: p.hp } : {}),
+    ...(typeof p.maxHp === 'number' ? { maxHp: p.maxHp } : {}),
+    ...(typeof p.gold === 'number' ? { gold: p.gold } : {}),
+    ...(typeof p.slotLevel === 'number' ? { slotLevel: p.slotLevel } : {}),
+    ...(typeof p.slotsRemaining === 'number' ? { slotsRemaining: p.slotsRemaining } : {}),
+    ...(typeof p.itemName === 'string' ? { itemName: p.itemName } : {}),
+    ...(typeof p.quantity === 'number' ? { quantity: p.quantity } : {}),
+    ...(typeof p.featureName === 'string' ? { featureName: p.featureName } : {}),
+    ...(typeof p.usesRemaining === 'number' ? { usesRemaining: p.usesRemaining } : {}),
+    ...(typeof p.condition === 'string' ? { condition: p.condition } : {}),
+    ...(Array.isArray(p.diceRolled) && p.diceRolled.every((d): d is number => typeof d === 'number')
+      ? { diceRolled: p.diceRolled }
+      : {}),
+  }
+}
+
+/**
+ * §8 ledger emission. The resolver result rides the tool output as
+ * `{ ok, payload }`. On `ok:false` (a binding/structural rejection) NOTHING is
+ * emitted — the model narrates the shortfall from the constraint, no frame.
+ * On `ok:true`:
+ *   - `take_rest` carries an ARRAY payload → emit ONE frame per character (§8:
+ *     players watch their own row); an empty array emits nothing.
+ *   - `update_condition` carries `changed` → an idempotent no-op (`changed:false`)
+ *     emits nothing; a real change emits one frame.
+ *   - every other ledger tool carries a single payload → emit one frame.
+ */
+async function emitLedgerUpdates(out: Record<string, unknown>, emit: TurnEmitter): Promise<void> {
+  if (out.ok !== true) return
+  const payload = out.payload
+  if (Array.isArray(payload)) {
+    for (const entry of payload) {
+      await emit.emitLedgerUpdate(toLedgerUpdatePayload(asRecord(entry)))
+    }
+    return
+  }
+  const rec = asRecord(payload)
+  // §8 idempotent no-op: a condition update that changed nothing emits no frame.
+  if (rec.changed === false) return
+  await emit.emitLedgerUpdate(toLedgerUpdatePayload(rec))
 }
 
 // ── Stream-part assembly helpers ─────────────────────────────────────────────
@@ -396,6 +573,13 @@ export class SonnetFastThinker implements FastThinker {
     }
     if (toolName === 'roll_dice') {
       await emit.emitDiceRoll(toDiceRollFrame(out, callInput))
+      return
+    }
+    // §8 ledger tools: the resolver result rides the output as `{ ok, payload }`.
+    // emitLedgerUpdates applies the §8 rules (ok:false / no-op → no frame;
+    // take_rest → one frame per character).
+    if (LEDGER_TOOL_NAMES.has(toolName)) {
+      await emitLedgerUpdates(out, emit)
     }
   }
 }
