@@ -27,9 +27,14 @@
 //      post-turn re-mature drains it — §4.7); else enqueue one `session-turn`
 //      and structured-log the decision (the §4.9 dev signal).
 //
-// Enforced ignorance: the classifier sees ONLY public table material — the
-// player-message batch + the public running summary as `lastDmOutput` /
-// `sceneGrounding`. No plot/secret slot exists on its input (§4.4).
+// The classifier is ST-side-adjacent infrastructure: its output
+// (shouldRespond/intent/complexity) is consumed by CODE only and never reaches
+// a player or the Fast Thinker — exactly like the MYT-69 Haiku gate. As of
+// MYT-69 the running summary it reads as scene grounding deliberately carries
+// secret-adjacent state (rapport/ladder); that is acceptable because there is
+// no output path from this call to a player-facing surface (the §4.4
+// "public-only" framing is superseded by "no output path to a player-facing
+// surface").
 
 import { Worker as BullmqWorker, Queue, type Job } from 'bullmq'
 import { randomUUID } from 'node:crypto'
@@ -87,9 +92,10 @@ interface RepoReads {
   readonly campaigns: { countAcceptedMembers(campaignId: string): Promise<number> }
 }
 
-/** The narrow session-state slice — only the public running summary is read
- *  here (used as both `lastDmOutput` and `sceneGrounding` while ST/Scribe are
- *  stubbed; §4.4). */
+/** The narrow session-state slice — the running summary is read here as scene
+ *  grounding (used as both `lastDmOutput` and `sceneGrounding`); post-MYT-69 it
+ *  carries secret-adjacent state, acceptable because this call's output never
+ *  reaches a player-facing surface (ST-side-adjacent infra). */
 interface SessionStateReads {
   loadTurnState(campaignId: string): Promise<{ summary: string }>
 }
@@ -252,8 +258,8 @@ async function decide(
   return null
 }
 
-/** Read the public running summary (the only public scene material available
- *  while ST/Scribe are stubbed — §4.4). */
+/** Read the running summary — the scene material the classifier grounds on
+ *  (secret-adjacent post-MYT-69; ST-side-adjacent infra — output is code-only). */
 async function loadSummary(deps: DmTriggerProcessorDeps, campaignId: string): Promise<string> {
   const { summary } = await deps.sessionState.loadTurnState(campaignId)
   return summary
